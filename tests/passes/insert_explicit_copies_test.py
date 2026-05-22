@@ -304,11 +304,10 @@ def test_insert_validates_after_pass():
     sdfg.validate()
 
 
-def test_insert_view_dst_round_trip_lifts_source_edge():
-    """An AN -> View -> AN round-trip collapses so the source array's single out-edge targets the
-    ``CopyLibraryNode`` and the View is removed."""
+def test_insert_view_src_round_trip_lifts_movement_edge():
+    """``A -> A_view -> sink``: alias edge kept, movement edge lifted to ``A -> A_view -> Copy -> sink``."""
     cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_dst_intermediate")
+    sdfg = dace.SDFG("view_src_movement")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
     sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
     sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
@@ -323,55 +322,65 @@ def test_insert_view_dst_round_trip_lifts_source_edge():
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    out_edges = list(st.out_edges(a))
-    assert len(out_edges) == 1 and isinstance(out_edges[0].dst, CopyLibraryNode)
-    assert v not in st.nodes()
-
-
-def test_insert_view_src_round_trip_lifts_destination_edge():
-    """An AN -> View -> AN round-trip collapses so the sink's single in-edge comes from the
-    ``CopyLibraryNode`` and the View is removed."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_src_intermediate")
-    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
-    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
-    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
-
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    v = st.add_access("A_view")
-    out = st.add_access("sink")
-    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
-    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-
-    in_edges = list(st.in_edges(out))
-    assert len(in_edges) == 1 and isinstance(in_edges[0].src, CopyLibraryNode)
-    assert v not in st.nodes()
-
-
-def test_insert_view_round_trip_collapses_to_single_copy():
-    """An AN -> View -> AN round-trip yields exactly one ``CopyLibraryNode`` and the now-unused View is removed."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_round_trip")
-    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
-    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
-    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
-
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    v = st.add_access("A_view")
-    out = st.add_access("sink")
-    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
-    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-
+    assert v in st.nodes(), "the view must be preserved as a copy endpoint"
     assert _count_copy_nodes(sdfg) == 1
-    assert v not in st.nodes()
+    a_out = list(st.out_edges(a))
+    assert len(a_out) == 1 and a_out[0].dst is v, "alias edge A -> A_view must be untouched"
+    v_out = list(st.out_edges(v))
+    assert len(v_out) == 1 and isinstance(v_out[0].dst, CopyLibraryNode)
+    assert isinstance(list(st.in_edges(out))[0].src, CopyLibraryNode)
+
+
+def test_insert_view_src_round_trip_numerical():
+    """The copy lifted onto a source-side view reads the viewed slice correctly end to end."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("view_src_numerical")
+    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
+    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    v = st.add_access("A_view")
+    out = st.add_access("sink")
+    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
+    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_copynd(sdfg)
+
+    A = np.arange(4 * 5 * 6, dtype=np.float64).reshape(4, 5, 6).copy()
+    sink = np.zeros((5, 6), dtype=np.float64)
+    sdfg(A=A, sink=sink)
+    np.testing.assert_array_equal(sink, A[1])
+
+
+def test_insert_view_dst_round_trip_numerical():
+    """``src -> dst_view -> dst``: the view is preserved and data lands in the viewed slice."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("view_dst_numerical")
+    sdfg.add_array("src", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_view("dst_view", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_array("dst", [4, 5, 6], dace.float64, storage=cpu)
+
+    st = sdfg.add_state("s")
+    s_node = st.add_access("src")
+    dv = st.add_access("dst_view")
+    d = st.add_access("dst")
+    st.add_edge(s_node, None, dv, None, Memlet("src[0:5, 0:6]"))
+    st.add_edge(dv, None, d, None, Memlet("dst[1, 0:5, 0:6]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert dv in st.nodes(), "the view must be preserved as a copy endpoint"
+    assert _count_copy_nodes(sdfg) == 1
+
+    _assert_no_copynd(sdfg)
+    src = np.arange(5 * 6, dtype=np.float64).reshape(5, 6).copy()
+    dst = np.zeros((4, 5, 6), dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    np.testing.assert_array_equal(dst[1], src)
+    assert np.all(dst[0] == 0) and np.all(dst[2:] == 0)
 
 
 def test_insert_self_copy_subset_is_dst_side():
@@ -549,10 +558,9 @@ def test_iec_skips_array_to_view_edge():
     assert len(in_e) == 1 and in_e[0].src is a
 
 
-def test_iec_collapses_round_trip_view():
-    """An A -> View -> sink round-trip collapses to one ``CopyLibraryNode``, removes the View, and stays
-    numerically correct."""
-    sdfg = dace.SDFG('collapse_round_trip_view')
+def test_iec_round_trip_view_lifts_one_copy():
+    """An A -> View -> sink round-trip lifts one ``CopyLibraryNode``, keeps the View, and stays correct."""
+    sdfg = dace.SDFG('round_trip_view')
     sdfg.add_array('A', [4, 5, 6], dace.float64)
     sdfg.add_view('Av', [5, 6], dace.float64)
     sdfg.add_array('sink', [5, 6], dace.float64)
@@ -564,7 +572,7 @@ def test_iec_collapses_round_trip_view():
     state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
     InsertExplicitCopies().apply_pass(sdfg, {})
     assert _count_copy_nodes(sdfg) == 1
-    assert v not in state.nodes()
+    assert v in state.nodes()
     sdfg.validate()
     A = np.copy(np.arange(120, dtype=np.float64).reshape(4, 5, 6))
     sink = np.zeros((5, 6), dtype=np.float64)
@@ -572,9 +580,9 @@ def test_iec_collapses_round_trip_view():
     assert np.array_equal(sink, A[1])
 
 
-def test_iec_collapse_keeps_view_with_other_consumers():
-    """A round-trip collapse keeps the View when it still has another consumer edge."""
-    sdfg = dace.SDFG('collapse_keeps_view_with_other_consumers')
+def test_iec_view_multiple_consumers_each_lifted():
+    """Each movement edge off a multiply-consumed View is lifted; the View is kept."""
+    sdfg = dace.SDFG('view_multiple_consumers')
     sdfg.add_array('A', [4, 5, 6], dace.float64)
     sdfg.add_view('Av', [5, 6], dace.float64)
     sdfg.add_array('sink', [5, 6], dace.float64)
@@ -588,8 +596,8 @@ def test_iec_collapse_keeps_view_with_other_consumers():
     state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
     state.add_edge(v, None, other, None, Memlet('Av[0:5, 0:6]'))
     InsertExplicitCopies().apply_pass(sdfg, {})
-    # v survives because v->also_reads still consumes it after the collapse.
     assert v in state.nodes()
+    assert _count_copy_nodes(sdfg) == 2
     sdfg.validate()
 
 
