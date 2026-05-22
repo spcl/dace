@@ -644,7 +644,13 @@ class SDFG(ControlFlowRegion):
             self.reset_cfg_list()
             source_files = self.compute_debuginfo_files()
 
-        tmp = super().to_json()
+        # Serialize the control-flow graph (states and interstate edges) under this
+        # SDFG's declared symbols, so symbolic expressions outside any dataflow scope
+        # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
+        # Each nested SDFG re-pushes its own symbols, and the previous authority is
+        # restored on exit.
+        with symbolic.serialization_symbol_dtypes(self.symbols):
+            tmp = super().to_json()
         if is_root:
             tmp['source_files'] = source_files
 
