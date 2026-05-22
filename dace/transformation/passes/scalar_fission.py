@@ -88,3 +88,25 @@ class ScalarFission(ppl.Pass):
 
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+
+
+@transformation.explicit_cf_compatible
+class PrivatizeScalars(ppl.Pipeline):
+    """Give every write-before-read transient scalar its own name (scalar privatization).
+
+    A self-contained pipeline that runs :class:`ScalarFission` together with the
+    analysis it depends on (``ScalarWriteShadowScopes`` and that pass's own
+    dependencies), so it can be applied on its own --
+    ``PrivatizeScalars().apply_pass(sdfg, {})`` -- or dropped in as a single
+    element of a larger pipeline such as simplify. ``ScalarFission`` declares
+    those dependencies but cannot resolve them outside a pipeline.
+
+    A size-1 transient reused as a per-iteration temporary is written before it
+    is read on every iteration, so the iterations share only its *name*, not a
+    real value. Splitting each dominating write into its own container removes
+    that false write-after-write, which is what otherwise makes a shared
+    loop-local scalar block ``LoopToMap``.
+    """
+
+    def __init__(self):
+        super().__init__([ScalarFission()])
