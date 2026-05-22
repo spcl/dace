@@ -6,7 +6,7 @@ from dace.sdfg import nodes
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes import SymbolPropagation
+from dace.transformation.passes import SymbolPropagation, ScalarToSymbolPromotion
 
 
 def _count_loops(sdfg: dace.SDFG):
@@ -273,6 +273,71 @@ def test_scalars():
     assert A[0] == 5
 
 
+def test_cloudsc_kidia_kfdia_promote_then_propagate():
+    """CloudSC subset: scalar arguments ``kidia`` / ``kfdia`` used as the
+    inclusive horizontal loop bound ``range(kidia, kfdia + 1)`` across several
+    level nests (the ``DO JK=1,KLEV; DO JL=KIDIA,KFDIA`` shape). ``simplify``
+    promotes ``kfdia + 1`` to per-nest symbols ``kfdia_plus_1_N = kfdia + 1``.
+
+    SymbolPropagation alone does NOT fold them: ``kfdia`` is a non-transient
+    scalar ARGUMENT, so values referencing it are (correctly) skipped by the
+    scalar filter -- the pass is a no-op (``apply_pass`` returns ``None``).
+    Promoting the scalar arguments to symbols first with
+    ``ScalarToSymbolPromotion(transients_only=False)`` makes ``kfdia`` a symbol,
+    after which SymbolPropagation folds ``kfdia_plus_1 -> (kfdia + 1)``. The
+    scalar-skip filter itself is unchanged (genuine scalars are still skipped --
+    see ``test_scalars``). Value-preserving throughout."""
+    klev, klon = dace.symbol('klev'), dace.symbol('klon')
+
+    @dace.program
+    def cloudsc_kidia_kfdia(pt: dace.float64[klev, klon], ptend: dace.float64[klev, klon], kidia: dace.int32,
+                            kfdia: dace.int32):
+        for jk in range(klev):
+            for jl in range(kidia, kfdia + 1):
+                ptend[jk, jl] = pt[jk, jl] * 2.0
+        for jk in range(klev):
+            for jl in range(kidia, kfdia + 1):
+                ptend[jk, jl] = ptend[jk, jl] + 3.0
+
+    def _kfdia_plus1_syms(g):
+        return {k for e in g.all_interstate_edges() for k in e.data.assignments if k.startswith('kfdia_plus_1')}
+
+    nlev, nlon = 5, 8
+    rng = np.random.default_rng(0)
+    pt = rng.standard_normal((nlev, nlon))
+
+    # Reference (un-promoted) output.
+    ref = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
+    ref_out = np.zeros((nlev, nlon))
+    ref(pt=pt.copy(), ptend=ref_out, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
+
+    # (1) Without promotion: kfdia is a scalar argument -> symprop is a no-op.
+    sdfg = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
+    assert _kfdia_plus1_syms(sdfg), 'simplify should promote kfdia + 1 to kfdia_plus_1 symbols'
+    assert isinstance(sdfg.arrays.get('kfdia'), dace.data.Scalar)
+    assert SymbolPropagation().apply_pass(sdfg, {}) is None, \
+        'symprop must skip values referencing the scalar argument kfdia (no-op)'
+
+    # (2) Promote the scalar arguments to symbols first, then symprop folds them.
+    sdfg2 = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
+    s2s = ScalarToSymbolPromotion()
+    s2s.transients_only = False
+    promoted = s2s.apply_pass(sdfg2, {})
+    assert promoted and {'kidia', 'kfdia'} <= promoted, f'expected kidia/kfdia promoted, got {promoted}'
+    assert 'kfdia' in sdfg2.symbols and 'kfdia' not in sdfg2.arrays
+
+    ret = SymbolPropagation().apply_pass(sdfg2, {})
+    assert ret is not None and any(s.startswith('kfdia_plus_1') for s in ret), \
+        f'after promotion symprop must fold kfdia_plus_1 -> (kfdia + 1); propagated={ret}'
+    sdfg2.validate()
+
+    # Value-preserving (kidia/kfdia are now symbols).
+    out2 = np.zeros((nlev, nlon))
+    sdfg2(pt=pt.copy(), ptend=out2, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
+    assert np.allclose(out2, ref_out)
+    assert np.allclose(out2, pt * 2.0 + 3.0)
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
@@ -280,4 +345,6 @@ if __name__ == "__main__":
     test_multiple_sources()
     test_multiple_edge_assignments()
     test_deeply_nested_sdfg()
+    test_scalars()
+    test_cloudsc_kidia_kfdia_promote_then_propagate()
     test_scalars()
