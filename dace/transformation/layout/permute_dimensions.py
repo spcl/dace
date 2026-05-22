@@ -40,35 +40,9 @@ def _is_memcpy_tasklet_between(state, src_an, dst_an) -> bool:
     return False
 
 
-def _has_init_copy_in(state, t_name: str) -> bool:
-    """``state`` initialises ``t_name`` via a non-transient -> transient
-    full-extent copy (implicit AN->AN, or AN->memcpy_tasklet->AN)."""
-    sdfg = state.parent
-    t_arr = sdfg.arrays.get(t_name)
-    if t_arr is None or not t_arr.transient:
-        return False
-    for an in state.data_nodes():
-        if an.data != t_name:
-            continue
-        for ie in state.in_edges(an):
-            # Implicit AN -> AN
-            if isinstance(ie.src, nd.AccessNode):
-                src_arr = sdfg.arrays.get(ie.src.data)
-                if src_arr and not src_arr.transient and _is_full_extent(ie.data, t_arr):
-                    return True
-            # Lifted: AN(non-trans) -> memcpy_tasklet -> AN(T)
-            elif isinstance(ie.src, nd.Tasklet) and ie.src.label.startswith('memcpy_'):
-                for tin in state.in_edges(ie.src):
-                    if isinstance(tin.src, nd.AccessNode):
-                        src_arr = sdfg.arrays.get(tin.src.data)
-                        if (src_arr and not src_arr.transient and _is_memcpy_tasklet_between(state, tin.src, an)):
-                            return True
-    return False
-
-
 def _has_final_copy_in(state, t_name: str) -> bool:
     """``state`` drains ``t_name`` to a non-transient via a full-extent
-    copy (mirror of ``_has_init_copy_in``)."""
+    copy (implicit AN->AN, or AN->memcpy_tasklet->AN)."""
     sdfg = state.parent
     t_arr = sdfg.arrays.get(t_name)
     if t_arr is None or not t_arr.transient:
@@ -88,13 +62,6 @@ def _has_final_copy_in(state, t_name: str) -> bool:
                         if (dst_arr and not dst_arr.transient and _is_memcpy_tasklet_between(state, an, tout.dst)):
                             return True
     return False
-
-
-def _find_init_copy_state(sdfg, t_name: str):
-    for state in sdfg.all_states():
-        if _has_init_copy_in(state, t_name):
-            return state
-    return None
 
 
 def _find_final_copy_state(sdfg, t_name: str):
@@ -406,53 +373,57 @@ class PermuteDimensions(ppl.Pass):
                                               old_name=new_name,
                                               new_name=old_name)
 
-                # Per-transient handling. For each transient T being
-                # permuted, look for two structural patterns:
+                # Per-transient handling. For each permuted transient T:
                 #
-                #   * INIT  -- a state that initialises T via a non-trans
-                #              -> trans full-extent copy (cudaMemcpy or
-                #              the lifted memcpy_<...> tasklet). If found,
-                #              insert ``permute_after_<T>`` immediately
-                #              after it (forward permute T -> permuted_T).
-                #   * FINAL -- a state that drains T to a non-trans via
-                #              a full-extent copy. If found, insert
-                #              ``permute_before_<T>`` immediately before
-                #              it (inverse permute permuted_T -> T).
+                #   * Zero-initialized T needs no transpose: the init Map is
+                #     renamed and re-zeros over the permuted domain (handled by
+                #     the ``_is_zero_initialized`` skip below).
+                #   * Otherwise T has a unique full-extent writer (init Map or
+                #     copy). That writer keeps the original layout, and a
+                #     ``permute_after_<T>`` state transposes T -> permuted_T so
+                #     the body reads the permuted layout.
+                #   * A T that is drained to a non-transient via a full-extent
+                #     copy gets the mirror ``permute_before_<T>`` (inverse
+                #     transpose) just before that drain.
                 #
-                # If neither pattern exists (pure-scratch transient,
-                # zero-init, body-only writers), no extra state is
-                # inserted; the rename loop further down rewrites every
-                # body memlet's subscripts, which is a sufficient and
-                # correct transform on its own.
-                #
-                # Any other top-level full-extent write/read of T (e.g. a
-                # bare Tasklet or LibraryNode that fully writes T outside
-                # a body Map) is unhandled and triggers a loud warning.
+                # A transient with no unique full-extent writer is a hard error
+                # (``_find_full_extent_writer`` raises). Any other top-level
+                # full-extent write/read of T outside a body Map triggers a loud
+                # warning.
                 for old_name, new_name in transient_name_map.items():
                     if _is_zero_initialized(sdfg, old_name):
                         permute_states_to_skip.add(None)  # no-op marker
                         continue
 
-                    init_state = _find_init_copy_state(sdfg, old_name)
+                    # The initializer (Map or full-extent copy) keeps writing the
+                    # original layout, so its state is excluded from the rename
+                    # below; the real transpose into the permuted layout happens
+                    # in the inserted ``permute_after_<T>`` state. Raises when no
+                    # unique full-extent writer exists.
+                    init_state, _ = _find_full_extent_writer(sdfg, old_name)
                     final_state = _find_final_copy_state(sdfg, old_name)
                     _warn_unhandled_full_extent_ops(sdfg, old_name, init_state, final_state)
+                    permute_states_to_skip.add(init_state)
 
                     old_shape = sdfg.arrays[old_name].shape
                     new_shape = sdfg.arrays[new_name].shape
                     permute_indices = permute_map[old_name]
 
-                    if init_state is not None:
-                        after = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
-                        permute_states_to_skip.add(after)
-                        self._add_permute_map(sdfg=sdfg,
-                                              state=after,
-                                              old_shape=old_shape,
-                                              new_shape=new_shape,
-                                              permute_indices=permute_indices,
-                                              old_name=old_name,
-                                              new_name=new_name)
+                    after = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
+                    permute_states_to_skip.add(after)
+                    self._add_permute_map(sdfg=sdfg,
+                                          state=after,
+                                          old_shape=old_shape,
+                                          new_shape=new_shape,
+                                          permute_indices=permute_indices,
+                                          old_name=old_name,
+                                          new_name=new_name)
 
                     if final_state is not None:
+                        # Mirror of the init: the drain copy keeps reading the
+                        # original layout, fed by an inverse transpose inserted
+                        # just before it.
+                        permute_states_to_skip.add(final_state)
                         before = sdfg.add_state_before(final_state, f"permute_before_{old_name}")
                         permute_states_to_skip.add(before)
                         inverse = self._inverse_permute_indices(permute_indices)
