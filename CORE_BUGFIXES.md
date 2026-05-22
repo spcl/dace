@@ -430,22 +430,25 @@ Parse-once memoization; IndexedBase-aware ``_resolve`` (replacing the ``"["``
 string guard); cross-CFG if-else grouping refinement. None are correctness
 bugs.
 
-### L-H. TODO — `SymbolPropagation` numerical bug on CloudSC (correctness)
-- **Finding (2026-05-22):** applied to the *simplified* inlined CloudSC SDFG,
-  ``SymbolPropagation`` changes floating-point outputs -- 8 arrays differ
-  (``tendency_loc_t``, ``tendency_loc_cld``, ``pfsqlf``, ``pfsqif``, ``pfsqrf``,
-  ``pfsqsf``, ``pfplsn``, ``pfhpsn``) by ~1e-4..1e-6 versus the same simplified
-  SDFG without the pass. The pass rewrites symbolic (integer-exact) quantities
-  only, so it must not change a single float -- this is a genuine correctness
-  bug, not floating-point reassociation (the comparison baseline is
-  simplify-only, so ``simplify``'s own reassociation is excluded).
-- **Repro:** `tests/corpus/cloudsc_symbol_propagation_test.py` (strict xfail);
-  uses the inlined ``cloudsc_py`` and `tests/corpus/generate_data_for_cloudsc.py`
-  (simplify-only reference vs simplify + ``SymbolPropagation`` candidate, run on
-  identical inputs). Un-xfail when fixed.
-- **Next:** bisect which propagation changes a float -- likely a scalar/value
-  symbol propagated into a tasklet (changing the evaluated expression), or a
-  mis-propagation that alters a memlet/index feeding a floating-point read.
+### L-H. `SymbolPropagation` on CloudSC — NOT a bug (was parallel FP nondeterminism, RESOLVED 2026-05-22)
+- **Investigation (2026-05-22):** the apparent "symprop changes 8 CloudSC float
+  arrays by ~1e-4..1e-6" was **not** a SymbolPropagation bug. (1) ``apply_pass``
+  returns ``None`` and a positional diff of the simplified CloudSC SDFG before
+  vs after shows **zero** changes (tasklets, memlets, interstate
+  assignments/conditions, nested ``symbol_mapping`` s) -- symprop is a
+  structural no-op here. (2) Under **sequential** schedules the comparison is
+  exact: simplified-vs-(simplified+symprop) MATCH, and even simplified vs an
+  identical deepcopy (no transform at all) MATCH. The ~1e-5 deltas came purely
+  from CloudSC's 2 parallel (OpenMP) maps reordering floating-point reductions
+  run-to-run between the two separately-compiled binaries.
+- **Fix (test, not production):** ``run_and_compare`` now forces both SDFGs
+  sequential (``make_sequential`` in `tests/corpus/generate_data_for_cloudsc.py`)
+  so the equivalence comparison is deterministic; the symprop test
+  (`tests/corpus/cloudsc_symbol_propagation_test.py`) un-xfailed and PASSES.
+- **LATER (separate):** verify whether ``simplify`` itself changes CloudSC
+  outputs by comparing raw (un-simplified) vs simplify-only **under sequential
+  schedules** (the earlier raw-vs-simplify ~1e-5 was likely the same parallel
+  nondeterminism; a sequential comparison gives a clean signal).
 
 ### L-E. TODO — re-roll (untile) a manually-unrolled lane chain
 - **Shape:** a loop with step ``S != 1`` whose body is ``S`` manually-unrolled
