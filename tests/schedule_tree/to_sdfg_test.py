@@ -987,6 +987,31 @@ def test_assign_nodes_avoid_duplicate_boundaries():
     assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
 
 
+def test_multiple_copy_nodes() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.CopyNode('A', dace.Memlet("A[0] -> [10]")),
+            tn.CopyNode('A', dace.Memlet("A[1] -> [11]")),
+            tn.CopyNode('A', dace.Memlet("A[2] -> [12]")),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+
+    states = sdfg.states()
+    assert len(states) == 1, "expect one state"
+
+    nodes = states[0].nodes()
+    assert len(nodes) == 4, "expect four access nodes"
+    for node in nodes:
+        assert isinstance(node, dace.nodes.AccessNode)
+        assert node.data == "A"
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -1029,3 +1054,4 @@ if __name__ == '__main__':
     test_assign_nodes_force_state_transition()
     test_assign_nodes_multiple_force_one_transition()
     test_assign_nodes_avoid_duplicate_boundaries()
+    test_multiple_copy_nodes()
