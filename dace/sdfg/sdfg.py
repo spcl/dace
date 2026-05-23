@@ -10,6 +10,7 @@ import json
 from hashlib import md5, sha256
 import random
 import shutil
+import sympy
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
@@ -176,21 +177,9 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = DictProperty(
-        key_type=str,
-        value_type=str,
-        desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-        # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
-        #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
-        #       assignments as symbolic expressions without specialized to/from_json functions.
-        to_json=lambda d: {
-            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
-            for k, v in d.items()
-        },
-        from_json=(lambda d, *args, context=None, **kwargs: {
-            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
-            for k, v in d.items()
-        }))
+    assignments = DictProperty(key_type=str,
+                               value_type=sympy.Basic,
+                               desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
 
