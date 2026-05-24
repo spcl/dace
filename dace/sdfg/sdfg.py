@@ -333,9 +333,7 @@ class InterstateEdge(object):
                 _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
+            newv = v.subs(repl)
             if newv != v:
                 self.assignments[k] = newv
         condition = ast.parse(self.condition.as_string)
@@ -375,7 +373,7 @@ class InterstateEdge(object):
         # Symbols already defined
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
-            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs)
             # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
             if lhs not in rhs_symbols:
                 lhs_symbols.add(lhs)
@@ -393,7 +391,7 @@ class InterstateEdge(object):
         result: List[mm.Memlet] = []
         result.extend(memlets_in_ast(self.condition.code[0], arrays))
         for assign in self.assignments.values():
-            vast = ast.parse(assign)
+            vast = ast.parse(symbolic.symstr(assign))
             result.extend(memlets_in_ast(vast, arrays))
 
         return result
