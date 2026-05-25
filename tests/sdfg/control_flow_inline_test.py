@@ -140,10 +140,10 @@ def test_loop_inlining_do_for():
     assert len(states) == 8
     assign_edges = sdfg.in_edges(guard)
     assert len(assign_edges) == 1
-    assert assign_edges[0].data.assignments == {'i': '(i + 1)'}
+    assert assign_edges[0].data.assignments == {'i': dace.symbolic.pystr_to_symbolic('(i + 1)')}
     init_edges = sdfg.out_edges(init_state)
     assert len(init_edges) == 1
-    assert init_edges[0].data.assignments == {'i': '0'}
+    assert init_edges[0].data.assignments == {'i': dace.symbolic.pystr_to_symbolic('0')}
     assert state0 in states
     assert state1 in states
     assert state2 in states

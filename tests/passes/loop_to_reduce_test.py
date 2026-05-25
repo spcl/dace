@@ -381,7 +381,7 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar():
     # Outgoing interstate edge assigns the original symbol from the bridge.
     for e in sdfg.all_interstate_edges():
         if "tmp_call_13" in (e.data.assignments or {}):
-            assert e.data.assignments["tmp_call_13"] == bridge_names[0]
+            assert e.data.assignments["tmp_call_13"] == dace.symbol(bridge_names[0])
             break
     else:
         raise AssertionError("no interstate edge assigning tmp_call_13 from the bridge")

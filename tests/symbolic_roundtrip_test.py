@@ -100,7 +100,7 @@ def test_array_rename_through_subscript():
 
     e2 = dace.InterstateEdge(assignments={'x': 'A_row[i]'})
     e2.replace_dict({'A_row': 'gpu_A_row'})
-    assert e2.assignments['x'] == 'gpu_A_row[i]'
+    assert e2.assignments['x'] == dace.symbolic.pystr_to_symbolic('gpu_A_row[i]')
 
     renamed = pystr_to_symbolic('A_row[i]').subs(symbolic.symbol('A_row'), symbolic.symbol('gpu_A_row'))
     assert arrays(renamed) == {'gpu_A_row'}
@@ -161,7 +161,7 @@ def test_scalar_to_symbol_promotion_moves_scalar_out_of_scalars():
 
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
 
-    assert sdfg.edges()[0].data.assignments['i'] == 's'  # expression unchanged
+    assert sdfg.edges()[0].data.assignments['i'] == dace.symbol('s')  # expression unchanged
     assert symbolic.scalars('s', sdfg.arrays) == set()  # no longer a scalar descriptor
     assert 's' in sdfg.symbols  # now a symbol
 

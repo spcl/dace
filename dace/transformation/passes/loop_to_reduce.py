@@ -390,14 +390,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         assignments = edge.data.assignments or {}
         if len(assignments) != 1:
             return None
-        ((target, expr_str), ) = assignments.items()
+        ((target, expr), ) = assignments.items()
         # Interstate-edge assignment targets are always DaCe symbols.
         if target not in sdfg.symbols:
-            return None
-
-        try:
-            expr = symbolic.pystr_to_symbolic(expr_str)
-        except Exception:
             return None
 
         # ``pystr_to_symbolic`` renders ``B[i]`` as ``Subscript(B, i)`` (head, indices).

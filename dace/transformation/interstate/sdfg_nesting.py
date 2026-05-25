@@ -1147,7 +1147,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     for k, v in isedge.data.assignments.items():
                         vast = ast.parse(v)
                         refiner.visit(vast)
-                        isedge.data.assignments[k] = astutils.unparse(vast)
+                        isedge.data.assignments[k] = symbolic.pystr_to_symbolic(astutils.unparse(vast))
                     if isedge.data.condition.language is dtypes.Language.Python:
                         for i, stmt in enumerate(isedge.data.condition.code):
                             isedge.data.condition.code[i] = refiner.visit(stmt)

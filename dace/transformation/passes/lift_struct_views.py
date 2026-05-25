@@ -12,7 +12,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace import data as dt
-from dace import dtypes
+from dace import dtypes, symbolic
 
 from typing import Literal
 
@@ -391,7 +391,7 @@ class LiftStructViews(ppl.Pass):
                 if isinstance(container, (dt.Structure, dt.ContainerArray)):
                     visitor = InterstateEdgeRecoder(cfg.sdfg, edge, data, container)
                     new_code = visitor.visit(assignment_ast)
-                    edge.data.assignments[k] = astutils.unparse(new_code)
+                    edge.data.assignments[k] = symbolic.pystr_to_symbolic(astutils.unparse(new_code))
                     assignment_ast = new_code
                     if visitor.views_constructed:
                         result[data].update(visitor.views_constructed)
