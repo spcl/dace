@@ -43,16 +43,19 @@ from dace import properties, subsets
 from dace.sdfg.nodes import MapEntry
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileStore
+
+from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileMaskGen, TileStore
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
     _is_assign_tasklet,
     _is_numeric_literal,
     _tile_region_subset,
 )
+from dace.transformation.passes.vectorization.utils.lane_expansion import fan_out_tile_gather_index_symbols
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-from dace.transformation.passes.vectorization.utils.name_schemes import TileConnectors
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme, TileConnectors
 from dace.transformation.passes.vectorization.utils.tile_dims import (
+    TileAccessClassification,
     TileAccessKind,
     TileDimSpec,
     classify_tile_access,
@@ -214,8 +217,83 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     ed.data = dace.Memlet(data=ed.data.data, subset=subsets.Range(list(tile_subset.ranges)))
         return reshaped
 
+    def _tilevar_in(self, expr, tile_var_set: Set[str]) -> Optional[str]:
+        """Return the tile iter-var referenced by ``expr``, or ``None``.
+
+        :param expr: A subset begin expression.
+        :param tile_var_set: The tile iter-var names.
+        :returns: The first tile iter-var name in ``expr``, else ``None``.
+        """
+        syms = expr.free_symbols if hasattr(expr, "free_symbols") else set()
+        for s in syms:
+            if str(s) in tile_var_set:
+                return str(s)
+        return None
+
+    def _widen_boundary_connectors(self, parent_state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                                   spec: TileDimSpec) -> None:
+        """Widen length-1 boundary connectors carrying a tile-var offset to ``(W,)`` tiles.
+
+        The frontend lowers a single-element boundary access ``a[i]`` (the
+        destination, or an extra elementwise input ``e[i]``) into a length-1
+        NSDFG connector whose tile-var offset sits in the *outer* edge, with
+        the inner access at ``[0]`` — unlike a ``vbor``-style full-array
+        connector accessed at ``a[i]``. To tile such a body the connector is
+        reshaped ``(1,) -> (W,)``, its outer edge grown to the tile region
+        (``a[i] -> a[i:i+W]``), and its inner ``[0]`` memlets to the full tile
+        ``[0:W]`` — after which it is a trivial contiguous full-tile
+        load/store (see :meth:`_box_classification`). The gather index
+        connector (already ``(W,)`` after the fan-out) and lane-invariant
+        scalar inputs (outer edge with no tile var) are left untouched.
+
+        K=1 only — the separable / K-D boundary cases land with the wider
+        gather-descent slice.
+
+        :param parent_state: State holding the map + NSDFG.
+        :param nsdfg_node: The body NestedSDFG node.
+        :param spec: Tile spec.
+        """
+        inner = nsdfg_node.sdfg
+        W = tuple(spec.widths)
+        tile_var_set = set(spec.iter_vars)
+        tile_var_to_width = dict(zip(spec.iter_vars, W))
+        full = subsets.Range([(0, w - 1, 1) for w in W])
+        conn_edges = ([(e.dst_conn, e) for e in parent_state.in_edges(nsdfg_node)] +
+                      [(e.src_conn, e) for e in parent_state.out_edges(nsdfg_node)])
+        for conn, oe in conn_edges:
+            if conn is None or conn not in inner.arrays or conn == _INNER_MASK:
+                continue
+            arr = inner.arrays[conn]
+            if arr.transient or tuple(arr.shape) != (1, ) or oe.data is None or oe.data.subset is None:
+                continue
+            if not any(self._tilevar_in(b, tile_var_set) is not None for (b, _e, _s) in oe.data.subset):
+                continue
+            dtype = arr.dtype
+            inner.remove_data(conn, validate=False)
+            inner.add_array(conn, list(W), dtype, storage=dace.dtypes.StorageType.Register, transient=False)
+            new_ranges = []
+            for (b, e, s) in oe.data.subset:
+                tvar = self._tilevar_in(b, tile_var_set)
+                if tvar is not None:
+                    new_ranges.append((b, b + (tile_var_to_width[tvar] - 1), 1))
+                else:
+                    new_ranges.append((b, e, s))
+            oe.data.subset = subsets.Range(new_ranges)
+            for istate in inner.states():
+                for ed in istate.edges():
+                    if ed.data is not None and ed.data.data == conn:
+                        ed.data = dace.Memlet(data=conn, subset=subsets.Range(list(full.ranges)))
+
     def _box_classification(self, subset: subsets.Range, arr: dace.data.Data, iter_vars: Tuple[str, ...]):
         """Classify a connector access and require a perfect box.
+
+        A register-tile boundary connector (shape exactly the tile widths,
+        widened from a length-1 per-lane connector by
+        :meth:`_widen_boundary_connectors`) carries its tile-var offset in
+        the NSDFG's *outer* edge, so the inner access is the full tile and
+        :func:`classify_tile_access` would see a tile-var-free subset
+        (``BROADCAST_SYMBOL``). Treat it directly as a contiguous full-tile
+        load/store.
 
         :param subset: Per-iteration subset on the connector array.
         :param arr: The connector array descriptor.
@@ -223,12 +301,154 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         :returns: The :class:`TileAccessClassification`.
         :raises NotImplementedError: For non-box (gather/structured) access.
         """
+        if tuple(arr.shape) == tuple(self.widths):
+            K = len(self.widths)
+            return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS,
+                                            dim_strides=(1, ) * K, match_dims=tuple(range(K)))
         cls = classify_tile_access(subset, tuple(arr.strides), iter_vars)
         if cls.kind not in _BOX_KINDS:
             raise NotImplementedError(
                 f"PromoteNSDFGBodyToTiles: connector access {subset} is {cls.kind.value}; "
                 f"only perfect-box (contiguous / strided) loads/stores are supported in this slice")
         return cls
+
+    def _gather_index_symbols(self, subset: subsets.Range, tile_var_set: set) -> List[Tuple[int, str]]:
+        """Find source dims indexed by a (non-tile-var) gather symbol.
+
+        After the fan-out pass, a data gather reads ``src[__sym]`` where
+        ``__sym`` is a point-access symbol that is NOT a tile iter-var (it is
+        bound, via an interstate assignment, to a widened index tile element).
+
+        :param subset: The source-access subset.
+        :param tile_var_set: The tile iter-var names.
+        :returns: ``[(source_dim, symbol_name), ...]`` for the gather dims.
+        """
+        out: List[Tuple[int, str]] = []
+        for d, (b, e, _s) in enumerate(subset):
+            if not hasattr(b, "free_symbols"):
+                continue
+            fs = {str(x) for x in b.free_symbols}
+            if not fs or (fs & tile_var_set):
+                continue
+            try:
+                is_point = bool(dace.symbolic.simplify(e - b) == 0)
+            except Exception:
+                is_point = False
+            if is_point and len(fs) == 1 and str(b) in fs:
+                out.append((d, next(iter(fs))))
+        return out
+
+    def _index_array_for_symbol(self, inner: dace.SDFG, sym: str) -> Optional[str]:
+        """Return the widened index-tile array that a gather symbol reads.
+
+        The fan-out rebinds ``__sym = idxc[0]`` (lane 0 of the widened ``(W,)``
+        index tile). This extracts ``idxc``.
+
+        :param inner: The body SDFG.
+        :param sym: The gather index symbol name.
+        :returns: The index-tile array name, or ``None`` if not resolvable.
+        """
+        for ie in inner.all_interstate_edges():
+            if sym not in ie.data.assignments:
+                continue
+            for name in dace.symbolic.free_symbols_and_functions(ie.data.assignments[sym]):
+                if name in inner.arrays:
+                    return name
+        return None
+
+    def _collapse_tile_gathers(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                               mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> set:
+        """Collapse a fanned-out data gather into a masked :class:`TileGather`.
+
+        Mirrors the 1D ``DetectGather`` collapse: a ``src[__sym]`` read whose
+        ``__sym`` was fanned out into a widened index tile becomes
+        ``TileGather(src, idx_tile, mask) -> src_tile`` and the consumer is
+        rerouted to ``src_tile``. The gather symbols are returned for the
+        caller to simplify away.
+
+        :param istate: Inner state being rewritten.
+        :param nsdfg_node: The body NestedSDFG node.
+        :param mask_acc: This state's inner mask access node.
+        :param spec: Tile spec.
+        :returns: The set of consumed gather base-symbol names.
+        :raises NotImplementedError: For gather shapes this slice does not
+            handle (mixed affine + data-gather source dims, unresolved index).
+        """
+        inner = istate.sdfg
+        W = tuple(spec.widths)
+        tile_var_set = set(spec.iter_vars)
+        out_subset = ", ".join(f"0:{w}" for w in W)
+        consumed: set = set()
+        for tasklet in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
+            for e in list(istate.in_edges(tasklet)):
+                if not isinstance(e.src, dace.nodes.AccessNode):
+                    continue
+                src_name = e.src.data
+                if (src_name not in nsdfg_node.in_connectors or inner.arrays[src_name].transient
+                        or src_name == _INNER_MASK or e.data is None or e.data.subset is None):
+                    continue
+                gather_syms = self._gather_index_symbols(e.data.subset, tile_var_set)
+                if not gather_syms:
+                    continue
+                src_arr = inner.arrays[src_name]
+                src_ndim = len(src_arr.shape)
+                if len(gather_syms) != src_ndim:
+                    raise NotImplementedError(
+                        f"PromoteNSDFGBodyToTiles: gather on {src_name!r} indexes {len(gather_syms)} of "
+                        f"{src_ndim} source dims; mixed affine + data-gather source dims not yet supported")
+                gather = TileGather(name=f"gather_{src_name}", widths=W, source_ndim=src_ndim, has_mask=True)
+                istate.add_node(gather)
+                istate.add_edge(e.src, None, gather, TileConnectors.SRC, dace.Memlet.from_array(src_name, src_arr))
+                for k, (_dim, sym) in enumerate(gather_syms):
+                    idx_arr = self._index_array_for_symbol(inner, sym)
+                    if idx_arr is None:
+                        raise NotImplementedError(
+                            f"PromoteNSDFGBodyToTiles: gather index {sym!r} on {src_name!r} did not resolve "
+                            f"to a widened index tile; run fan_out_tile_gather_index_symbols first")
+                    istate.add_edge(istate.add_access(idx_arr), None, gather, TileConnectors.idx(k),
+                                    dace.Memlet(f"{idx_arr}[{out_subset}]"))
+                    consumed.add(sym)
+                istate.add_edge(mask_acc, None, gather, TileConnectors.MASK,
+                                dace.Memlet(f"{_INNER_MASK}[{out_subset}]"))
+                tile_name = f"{src_name}_gather"
+                suffix = 0
+                while tile_name in inner.arrays:
+                    suffix += 1
+                    tile_name = f"{src_name}_gather_{suffix}"
+                inner.add_array(tile_name, list(W), src_arr.dtype,
+                                storage=dace.dtypes.StorageType.Register, transient=True)
+                tile_acc = istate.add_access(tile_name)
+                istate.add_edge(gather, TileConnectors.DST, tile_acc, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
+                istate.remove_edge(e)
+                istate.add_edge(tile_acc, None, tasklet, e.dst_conn, dace.Memlet(f"{tile_name}[{out_subset}]"))
+        return consumed
+
+    def _drop_gather_symbols(self, inner: dace.SDFG, base_syms: set) -> None:
+        """Simplify away the gather symbols consumed by :meth:`_collapse_tile_gathers`.
+
+        Removes the base symbol and its per-lane ``_laneid_`` fan from every
+        interstate edge, so no stray index symbol remains (the tile mirror of
+        the 1D laneid simplification).
+
+        :param inner: The body SDFG.
+        :param base_syms: The consumed gather base-symbol names.
+        """
+        for ie in inner.all_interstate_edges():
+            kept = {}
+            for k, v in ie.data.assignments.items():
+                parsed = LaneIdScheme.parse(k)
+                base = parsed[0] if parsed is not None else k
+                if base in base_syms:
+                    continue
+                kept[k] = v
+            ie.data.assignments = kept
+        # Drop the now-undefined gather symbols from the symbol registry so
+        # they no longer count as free symbols requiring an outer mapping.
+        for name in list(inner.symbols.keys()):
+            parsed = LaneIdScheme.parse(name)
+            base = parsed[0] if parsed is not None else name
+            if base in base_syms:
+                inner.remove_symbol(name)
 
     def _promote_loads(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                        mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> None:
@@ -404,9 +624,19 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         W = tuple(spec.widths)
         inner = nsdfg_node.sdfg
         self._thread_mask(parent_state, map_entry, nsdfg_node, mask_name, W)
+        # Gather descent (mirrors 1D expand -> DetectGather): fan a per-lane
+        # gather index ``__sym = idx[i]`` into a widened ``(W,)`` index tile,
+        # then collapse the ``src[__sym]`` reads into a TileGather and drop the
+        # now-unused index symbols. K=1 only for now (the separable / K-D index
+        # cases land in a later slice).
+        if len(W) == 1:
+            fan_out_tile_gather_index_symbols(inner, nsdfg_node, parent_state, W[0], spec.iter_vars[0])
+            self._widen_boundary_connectors(parent_state, nsdfg_node, spec)
         self._reshape_transients(inner, W)
+        consumed: set = set()
         for istate in inner.states():
             mask_acc = istate.add_access(_INNER_MASK)
+            consumed |= self._collapse_tile_gathers(istate, nsdfg_node, mask_acc, spec)
             self._promote_loads(istate, nsdfg_node, mask_acc, spec)
             self._promote_binops(istate, mask_acc, spec)
             self._promote_stores(istate, nsdfg_node, mask_acc, spec)
@@ -414,6 +644,8 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if istate.degree(mask_acc) == 0:
                 istate.remove_node(mask_acc)
             self._drop_isolated(istate)
+        if consumed:
+            self._drop_gather_symbols(inner, consumed)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[Set[MapEntry]]:
         """Promote every eligible flat body-NSDFG map to tile ops.

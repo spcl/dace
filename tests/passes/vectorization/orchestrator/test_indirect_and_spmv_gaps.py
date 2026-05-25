@@ -2,22 +2,25 @@
 """Gap tests pinning the v2 MVP's reject behaviour on kernels that need
 ``TileGather`` / ``TileScatter`` / ``TileReduce``.
 
-Three kernel families are checked rigorously here. Each one is
-expected to fail through :class:`VectorizeCPUMultiDim` today with a
-loud :class:`NotImplementedError` from :class:`EmitTileOps` (the
-operand classification returns ``UNRECOGNIZED`` for indirect / reduction
-patterns, which the v2 MVP refuses). The future ``TileGather`` /
-``TileScatter`` / ``TileReduce`` lib-node slices flip these tests
-green.
+Each kernel family below is checked rigorously. The **1D data gather**
+``a[i] = b[idx[i]] + ...`` now lands through
+:class:`PromoteNSDFGBodyToTiles` (the gather-descent slice: fan the
+per-lane index into a ``(W,)`` index tile, collapse the ``b[__sym]``
+reads into a :class:`TileGather`), so its test is an end-to-end
+numerical equivalence assertion. The **2D / separable / SPMV (gather +
+reduction)** families are still refused with a loud
+:class:`NotImplementedError` (their descent + ``TileReduce`` slices are
+pending); those tests stay ``pytest.raises``.
 
-This file is the executable contract: when the post-MVP slices land,
-each ``pytest.raises(NotImplementedError)`` block must be replaced by
-an end-to-end numerical equivalence assertion.
+This file is the executable contract: when each remaining post-MVP
+slice lands, its ``pytest.raises(NotImplementedError)`` block is
+replaced by an end-to-end numerical equivalence assertion.
 """
 import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops import TileGather
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     classify_tile_access,
@@ -84,21 +87,51 @@ def test_classify_tile_access_indirect_returns_gather():
     assert cls.kind == TileAccessKind.GATHER
 
 
-def test_vectorize_cpu_multi_dim_refuses_1d_indirect_stencil():
-    """1D indirect stencil ``a[i] = b[idx[i]] + 1.0`` raises
-    ``NotImplementedError`` (T-post ``TileGather`` + new operand kind
-    ``Gather`` will flip this green).
+@pytest.mark.parametrize("n", [16, 17, 23])
+def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
+    """1D indirect stencil ``a[i] = b[idx[i]] + 1.0`` lowers via the
+    gather-descent slice and matches the unvectorized reference.
 
-    The compute lives in a body NSDFG, so ``PromoteNSDFGBodyToTiles``
-    (the flat-body descent) reaches the indirect ``b[idx[i]]`` access
-    first and refuses the non-box load; either that pass or ``EmitTileOps``
-    surfaces the refusal."""
+    The compute lives in a body NSDFG; ``PromoteNSDFGBodyToTiles`` fans
+    the per-lane index ``idx[i]`` into a ``(W,)`` index tile and collapses
+    the ``b[idx[i]]`` reads into a :class:`TileGather`. The ``n=17, 23``
+    cases exercise the masked tail (trip not a multiple of ``W=8``)."""
+    rng = np.random.default_rng(seed=n)
+    b = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
+    a_ref = np.zeros(n)
+    a_vec = np.zeros(n)
+
+    ref = _build_1d_indirect_stencil()
+    ref.name = f"ind1d_ref{n}"
+    vec = _build_1d_indirect_stencil()
+    vec.name = f"ind1d_vec{n}"
+    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+
+    ref.compile()(a=a_ref, b=b.copy(), idx=idx.copy(), N=n)
+    vec.compile()(a=a_vec, b=b.copy(), idx=idx.copy(), N=n)
+    np.testing.assert_allclose(a_vec, a_ref, rtol=1e-12, atol=1e-12)
+
+
+def test_1d_indirect_stencil_emits_tilegather():
+    """The 1D data gather lowers to a :class:`TileGather` lib node (checked
+    before ``expand_library_nodes`` collapses it to its ``pure`` form)."""
+    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+        CleanAccessNodeToScalarSliceToTaskletPattern, )
+    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
+        GenerateTileIterationMask, )
+    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
+        PromoteNSDFGBodyToTiles, )
+    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
+        StrideMapByTileWidths, )
     sdfg = _build_1d_indirect_stencil()
-    with pytest.raises(NotImplementedError) as ei:
-        VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(sdfg, {})
-    msg = str(ei.value)
-    assert ("EmitTileOps" in msg or "PromoteNSDFGBodyToTiles" in msg or "Unrecognized" in msg
-            or "perfect-box" in msg or "Gather" in msg or "input" in msg)
+    for p in (CleanAccessNodeToScalarSliceToTaskletPattern(), MarkTileDims(widths=(8,)),
+              GenerateTileIterationMask(widths=(8,)), StrideMapByTileWidths(widths=(8,)),
+              PromoteNSDFGBodyToTiles(widths=(8,))):
+        p.apply_pass(sdfg, {})
+    assert any(isinstance(node, TileGather) for node, _ in sdfg.all_nodes_recursive()), \
+        "expected a TileGather for the 1D data gather"
 
 
 def test_vectorize_cpu_multi_dim_refuses_2d_indirect_stencil():

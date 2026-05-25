@@ -37,6 +37,37 @@ def _structured_kernel(b: dace.float64[N], c: dace.float64[N], out: dace.float64
         out[i] = b[i // 2] + c[i]
 
 
+@dace.program
+def _data_gather_binop_kernel(a: dace.float64[N], b: dace.float64[N],
+                              e: dace.float64[N], idx: dace.int32[N]):
+    for i in range(N):
+        a[i] = b[idx[i]] + e[i]
+
+
+@pytest.mark.parametrize("n", [16, 17, 23])
+def test_data_gather_with_elementwise_input_matches_reference(n):
+    """``a[i] = b[idx[i]] + e[i]`` lowers through the gather-descent slice
+    and matches the reference.
+
+    Beyond the bare ``b[idx[i]]`` gather, this exercises the length-1
+    boundary connector for the elementwise input ``e[i]`` (and the
+    destination ``a[i]``): both carry their tile-var offset in the NSDFG's
+    outer edge and are widened ``(1,) -> (W,)`` before the binop / store.
+    ``n=17, 23`` exercise the masked tail."""
+    rng = np.random.default_rng(seed=n)
+    b = rng.random(n); e = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
+    a_ref, a_vec = np.zeros(n), np.zeros(n)
+
+    ref = _data_gather_binop_kernel.to_sdfg(simplify=True); ref.name = f"dgb_ref{n}"
+    vec = _data_gather_binop_kernel.to_sdfg(simplify=True); vec.name = f"dgb_vec{n}"
+    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+
+    ref.compile()(a=a_ref, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
+    vec.compile()(a=a_vec, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
+    np.testing.assert_allclose(a_vec, a_ref, rtol=1e-12, atol=1e-12)
+
+
 @pytest.mark.parametrize("n", [16, 17])
 def test_structured_int_floor_replication_matches_reference(n):
     """``b[i // 2]`` (int_floor replication, STRUCTURED) lowers to a gather over
