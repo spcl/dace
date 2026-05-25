@@ -687,21 +687,12 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                         loop_work = loop_work.subs({var: loop_var})
                         loop_depth = loop_depth.subs({var: loop_var})
 
-                # prepare loop bounds such that we can write the work as a nice summation from 0 to an upper bound
-                loop_var = loop_var.subs(subs1)
-                shifted_hi = (upper_bound-lower_bound)//step
-                shifted_hi = shifted_hi.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
-                lower_bound = lower_bound.subs(subs1) if step.evalf()>0 else upper_bound.subs(subs1)
-                shifted_lo = sp.sympify(0)
-                step:sp.Expr = sp.Abs(step)
-
-                loop_work = loop_work.subs({loop_var: (step*loop_var+lower_bound)})
-                loop_depth = loop_depth.subs({loop_var: (step*loop_var+lower_bound)})
-
-                # write the work and depth of the loop as a sum of the work of one iteration over the number of loop iterations
-                # (we have cannot use a simple multiplication as work and depth of one loop iteration might be dependent on the loop variable)
-                loop_work = sp.Sum(loop_work, (loop_var, shifted_lo, shifted_hi)).doit()
-                loop_depth = sp.Sum(loop_depth, (loop_var, shifted_lo, shifted_hi)).doit()
+                # Accumulate the per-iteration work and depth over the loop range (shared with the
+                # map handler), so iteration-dependent work is summed rather than multiplied.
+                loop_work = accumulate_over_range(loop_work, loop_var, lower_bound, upper_bound, step, equality_subs,
+                                                  subs1)
+                loop_depth = accumulate_over_range(loop_depth, loop_var, lower_bound, upper_bound, step, equality_subs,
+                                                   subs1)
 
                 # Do equality subs
                 loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
@@ -1035,6 +1026,40 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
     return cfr_result
 
 
+def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr, step: sp.Expr,
+                          equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
+                          subs1: Dict[str, sp.Expr]) -> sp.Expr:
+    """
+    Accumulate ``expr`` over one map/loop dimension ``var`` ranging over ``lower:upper:step`` (with
+    ``upper`` inclusive). Shared by the loop and map handlers so both accumulate identically.
+
+    The summation is written as ``Sum(expr[var -> step*var + lower], (var, 0, (upper-lower)//step))``,
+    which both sums iteration-dependent work (e.g. the inner bound of a triangular nest) and reduces
+    to a multiplication when ``expr`` does not depend on ``var``. The iteration symbol is first
+    aligned with the assumption-substituted symbol that appears in ``expr`` (via ``subs1``).
+
+    :param expr: The per-iteration work or depth expression.
+    :param var: The iteration variable.
+    :param lower: Inclusive lower bound of the iteration range.
+    :param upper: Inclusive upper bound of the iteration range.
+    :param step: Iteration stride.
+    :param equality_subs: Substitution dicts for the equality assumptions.
+    :param subs1: Substitution dict for the greater/lesser assumptions.
+    :return: The accumulated expression over the range.
+    """
+    lower, upper, step = sp.sympify(lower), sp.sympify(upper), sp.sympify(step)
+    # Align the iteration symbol with the (assumption-substituted) symbol used inside ``expr``.
+    var = var.subs(subs1)
+    for sym in expr.free_symbols:
+        if sym.name == var.name and sym != var:
+            expr = expr.subs({sym: var})
+    shifted_hi = ((upper - lower) // step).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
+    lower = lower.subs(subs1) if step.evalf() > 0 else upper.subs(subs1)
+    step = sp.Abs(step)
+    expr = expr.subs({var: step * var + lower})
+    return sp.Sum(expr, (var, sp.sympify(0), shifted_hi)).doit()
+
+
 def scope_work_depth(
     state: SDFGState,
     w_d_map: Dict[str, sp.Expr],
@@ -1147,12 +1172,14 @@ def scope_work_depth(
             w_d_map[get_uuid(node, state)] = (lib_node_work, lib_node_depth)
 
     if entry is not None:
-        # If the scope being analyzed is a map, multiply the work by the number of iterations of the map.
+        # If the scope being analyzed is a map, accumulate the body work over its iteration domain.
+        # We accumulate per dimension (summing when the work depends on that map parameter, else
+        # multiplying), so that work depending on an enclosing iteration variable -- e.g. a
+        # triangular map whose inner bound is the outer parameter -- is summed, not multiplied.
         if isinstance(entry, nd.MapEntry):
-            nmap: nd.Map = entry.map
-            range: Range = nmap.range
-            n_exec = range.num_elements()
-            work = sp.simplify(work * n_exec.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+            for param, (begin, end, step) in zip(entry.map.params, entry.map.range):
+                work = accumulate_over_range(work, pystr_to_symbolic(param), begin, end, step, equality_subs, subs1)
+            work = sp.simplify(work)
         else:
             print('WARNING: Only Map scopes are supported in work analysis for now. Assuming 1 iteration.')
 
