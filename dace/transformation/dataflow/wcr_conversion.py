@@ -16,26 +16,45 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     """
     Converts an augmented assignment ("a += b", "a = a + b") into a tasklet
     with a write-conflict resolution.
+
+    A third pattern handles the *copy-wrapped* read-modify-write the array
+    frontends (HLFIR, Python) emit, where the accumulator slice is materialized
+    into a scalar transient before the combining tasklet and copied back after
+    it (``arr[S] -> copy_in -> tasklet -> copy_out -> arr[S]``). Those
+    materialization copies cannot be folded away by the redundant-array passes,
+    because ``arr`` is both read and written in the same state; recognising the
+    shape directly is what lets loop-carried reductions (cloudsc/ICON
+    accumulators) become WCR writes and so parallelize via ``LoopToMap``.
     """
     input = transformation.PatternNode(nodes.AccessNode)
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
     map_entry = transformation.PatternNode(nodes.MapEntry)
     map_exit = transformation.PatternNode(nodes.MapExit)
+    copy_in = transformation.PatternNode(nodes.AccessNode)
+    copy_out = transformation.PatternNode(nodes.AccessNode)
 
     _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
     _FUNCTIONS = ['min', 'max']
     _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
     _PYOP_MAP = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.BitXor: '^', ast.Mod: '%', ast.Div: '/'}
+    # Order-independent combines accepted for the copy-wrapped RMW pattern.
+    # Subtraction is admitted only with the accumulator on the left (checked
+    # at match time): ``a - b1 - b2 == a - (b1 + b2)`` is order-independent.
+    _RMW_BINOPS = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*'}
 
     @classmethod
     def expressions(cls):
         return [
             sdutil.node_path_graph(cls.input, cls.tasklet, cls.output),
-            sdutil.node_path_graph(cls.input, cls.map_entry, cls.tasklet, cls.map_exit, cls.output)
+            sdutil.node_path_graph(cls.input, cls.map_entry, cls.tasklet, cls.map_exit, cls.output),
+            sdutil.node_path_graph(cls.input, cls.copy_in, cls.tasklet, cls.copy_out, cls.output),
         ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if expr_index == 2:
+            return self._can_be_applied_rmw_copy(graph, sdfg)
+
         inarr = self.input
         tasklet = self.tasklet
         outarr = self.output
@@ -141,6 +160,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         return False
 
     def apply(self, state: SDFGState, sdfg: SDFG):
+        if self.expr_index == 2:
+            return self._apply_rmw_copy(state, sdfg)
+
         input: nodes.AccessNode = self.input
         tasklet: nodes.Tasklet = self.tasklet
         output: nodes.AccessNode = self.output
@@ -268,6 +290,140 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can
             # traverse further up
+
+    def _classify_rmw_rhs(self, rhs, acc_conn, tasklet):
+        """Classify the combining tasklet's RHS as an order-independent reduction
+        of the accumulator (read on connector ``acc_conn``) with one other input.
+
+        :param rhs: the RHS AST node of the tasklet's single assignment.
+        :param acc_conn: the input connector carrying the loaded accumulator.
+        :param tasklet: the combining tasklet (for its input-connector set).
+        :returns: ``(op, other_operand_ast, acc_on_left)`` where ``op`` is the
+                  WCR operator symbol / function name, or ``(None, None, None)``
+                  if the RHS is not such a combine.
+        """
+        in_conns = set(tasklet.in_connectors)
+        if isinstance(rhs, ast.BinOp) and type(rhs.op) in self._RMW_BINOPS:
+            op = self._RMW_BINOPS[type(rhs.op)]
+            left, right = rhs.left, rhs.right
+            if (isinstance(left, ast.Name) and left.id == acc_conn and isinstance(right, ast.Name)
+                    and right.id in in_conns and right.id != acc_conn):
+                return op, right, True
+            if (isinstance(right, ast.Name) and right.id == acc_conn and isinstance(left, ast.Name)
+                    and left.id in in_conns and left.id != acc_conn):
+                return op, left, False
+        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in self._FUNCTIONS
+              and len(rhs.args) == 2 and all(isinstance(a, ast.Name) for a in rhs.args)):
+            a0, a1 = rhs.args
+            if a0.id == acc_conn and a1.id in in_conns and a1.id != acc_conn:
+                return rhs.func.id, a1, True
+            if a1.id == acc_conn and a0.id in in_conns and a0.id != acc_conn:
+                return rhs.func.id, a0, False
+        return None, None, None
+
+    def _rmw_copy_edges(self, graph):
+        """Return the four spine edges ``(load, ine, oute, store)`` of the
+        copy-wrapped RMW, or ``None`` if the spine is not a clean single path."""
+        load = graph.edges_between(self.input, self.copy_in)
+        ine = graph.edges_between(self.copy_in, self.tasklet)
+        oute = graph.edges_between(self.tasklet, self.copy_out)
+        store = graph.edges_between(self.copy_out, self.output)
+        if len(load) != 1 or len(ine) != 1 or len(oute) != 1 or len(store) != 1:
+            return None
+        return load[0], ine[0], oute[0], store[0]
+
+    def _can_be_applied_rmw_copy(self, graph, sdfg):
+        """Match ``arr[S] -> copy_in -> tasklet -> copy_out -> arr[S]`` where the
+        tasklet combines the loaded accumulator with one other input via an
+        order-independent reduction. The copy nodes must be private single-use
+        transients and the load / store must hit the same accumulator slice."""
+        inp, cin, tlet, cout, out = (self.input, self.copy_in, self.tasklet, self.copy_out, self.output)
+        if inp.data != out.data:
+            return False
+        # Only free RMWs: an enclosing map index would mean disjoint writes
+        # (no conflict, hence no reduction to resolve).
+        if graph.entry_node(tlet) is not None:
+            return False
+        # copy_in / copy_out must be private single-use transients.
+        for node in (cin, cout):
+            desc = sdfg.arrays.get(node.data)
+            if desc is None or not desc.transient:
+                return False
+        if graph.in_degree(cin) != 1 or graph.out_degree(cin) != 1:
+            return False
+        if graph.in_degree(cout) != 1 or graph.out_degree(cout) != 1:
+            return False
+
+        edges = self._rmw_copy_edges(graph)
+        if edges is None:
+            return False
+        load, ine, oute, store = edges
+        if load.data.wcr is not None or store.data.wcr is not None:
+            return False
+        # Same accumulator slice loaded and stored.
+        acc_subset = store.data.get_dst_subset(store, graph)
+        load_subset = load.data.get_src_subset(load, graph)
+        if acc_subset is None or load_subset is None or acc_subset != load_subset:
+            return False
+
+        # The tasklet must be a single Python assignment with exactly two data
+        # inputs (accumulator + increment) and one data output.
+        if tlet.language is not dtypes.Language.Python or len(tlet.code.code) != 1:
+            return False
+        node = tlet.code.code[0]
+        if (not isinstance(node, ast.Assign) or len(node.targets) != 1
+                or not isinstance(node.targets[0], ast.Name) or node.targets[0].id != oute.src_conn):
+            return False
+        data_in = [e for e in graph.in_edges(tlet) if e.data is not None and not e.data.is_empty()]
+        data_out = [e for e in graph.out_edges(tlet) if e.data is not None and not e.data.is_empty()]
+        if len(data_in) != 2 or len(data_out) != 1:
+            return False
+
+        op, _, acc_on_left = self._classify_rmw_rhs(node.value, ine.dst_conn, tlet)
+        if op is None:
+            return False
+        if op == '-' and not acc_on_left:
+            return False
+        return True
+
+    def _apply_rmw_copy(self, state: SDFGState, sdfg: SDFG):
+        """Rewrite the copy-wrapped RMW into a WCR write: drop the accumulator
+        load, emit only the increment from the tasklet, and write it straight
+        into the accumulator slice with the reduction WCR (the scalar copy-out
+        transient is removed)."""
+        inp, cin, tlet, cout, out = (self.input, self.copy_in, self.tasklet, self.copy_out, self.output)
+        load, ine, oute, store = self._rmw_copy_edges(state)
+
+        node = tlet.code.code[0]
+        op, other_ast, _ = self._classify_rmw_rhs(node.value, ine.dst_conn, tlet)
+
+        # The tasklet now emits only the increment (accumulator operand dropped).
+        tlet.code.code = [ast.copy_location(ast.Assign(targets=node.targets, value=other_ast), node)]
+
+        # Write the increment straight into the accumulator with the WCR,
+        # bypassing the scalar copy-out transient.
+        acc_subset = store.data.get_dst_subset(store, state)
+        wcr = f'lambda a,b: {op}(a, b)' if op in self._FUNCTIONS else f'lambda a,b: a {op} b'
+        state.remove_edge(oute)
+        state.remove_edge(store)
+        state.add_edge(tlet, oute.src_conn, out, store.dst_conn,
+                       Memlet(data=out.data, subset=acc_subset, wcr=wcr))
+        if state.degree(cout) == 0:
+            state.remove_node(cout)
+
+        # Drop the accumulator load path (input -> copy_in -> tasklet); the
+        # WCR now supplies the previous accumulator value at write time.
+        acc_conn = ine.dst_conn
+        state.remove_edge(ine)
+        state.remove_edge(load)
+        if acc_conn in tlet.in_connectors:
+            tlet.remove_in_connector(acc_conn)
+        if state.degree(cin) == 0:
+            state.remove_node(cin)
+        if state.degree(inp) == 0:
+            state.remove_node(inp)
+
+        propagate_memlets_state(sdfg, state)
 
     def isolate_tasklet(
         self,
