@@ -756,10 +756,10 @@ class AST_translator:
             if not found:
                 if local_name.name in write_names:
                     ast_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
-                                               self.name_mapping[new_sdfg][local_name.name], memlet)
+                                               self.name_mapping[new_sdfg][local_name.name], dpcp(memlet))
                 if local_name.name in read_names:
                     ast_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
-                                              self.name_mapping[new_sdfg][local_name.name], memlet)
+                                              self.name_mapping[new_sdfg][local_name.name], dpcp(memlet))
 
         for i in addedmemlets:
 

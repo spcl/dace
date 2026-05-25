@@ -86,12 +86,27 @@ Conversion
   (``"N + 2*M"``) into a SymPy expression while honoring DaCe's
   conventions (e.g., ``int_floor`` for ``//``).
 * :func:`~dace.symbolic.symstr` renders a SymPy expression back to a
-  Python-style string. This is the inverse used when serializing the
-  IR.
+  Python-style string for generated code and Python-facing utilities.
 * :func:`dace.codegen.common.sym2cpp` emits a C/C++-friendly string from
   the same expression. Code generators should use ``sym2cpp`` instead of
   ``str(expr)`` so that integer division, ``min``/``max``, and the DaCe
   helper functions produce valid C++.
+
+Serialized symbolic form
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+JSON serialization uses
+:func:`~dace.symbolic.serialize_symbolic` and
+:func:`~dace.symbolic.deserialize_symbolic` rather than
+``pystr_to_symbolic``. The serialized strings are type-accurate and
+bijective:
+
+* symbols are emitted as ``$name``;
+* symbols with non-default type/assumptions use
+  ``symbol($name, dtype=dace.uint64, nonnegative=True)``;
+* constants carry an explicit suffix such as ``2i16`` or ``8.0f64``;
+* :class:`~dace.symbolic.SymExpr` values serialize as
+  ``SymExpr(expr, overapprox)``.
 
 Mutation and simplification
 ---------------------------

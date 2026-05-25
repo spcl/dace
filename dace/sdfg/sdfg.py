@@ -644,15 +644,13 @@ class SDFG(ControlFlowRegion):
             self.reset_cfg_list()
             source_files = self.compute_debuginfo_files()
 
-        tmp = super().to_json()
-        # A transparent SDFG subclass -- one that does not customise
-        # serialisation (e.g. a frontend runtime wrapper) -- must
-        # round-trip as a plain SDFG so a loader that has not imported
-        # the subclass (e.g. distributed_compile on another rank, or
-        # any standalone .sdfg load) can deserialise it.  A subclass
-        # that overrides ``to_json`` keeps its own type.
-        if type(self).to_json is SDFG.to_json:
-            tmp['type'] = 'SDFG'
+        # Serialize the control-flow graph (states and interstate edges) under this
+        # SDFG's declared symbols, so symbolic expressions outside any dataflow scope
+        # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
+        # Each nested SDFG re-pushes its own symbols, and the previous authority is
+        # restored on exit.
+        with symbolic.serialization_symbol_dtypes(self.symbols):
+            tmp = super().to_json()
         if is_root:
             tmp['source_files'] = source_files
 
