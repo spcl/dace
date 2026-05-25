@@ -7,14 +7,14 @@ from collections import deque
 from dace.sdfg import nodes as nd, propagation, InterstateEdge
 from dace import SDFG, SDFGState, dtypes
 from dace.subsets import Range
-from typing import List, Tuple, Dict, Callable, Sequence, Union
+from typing import List, Optional, Set, Tuple, Dict, Callable, Sequence, Union
 import os
 import sympy as sp
 from copy import deepcopy
 from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
 from dace.libraries.standard import Reduce
 from dace.libraries.linalg import Transpose
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions
 import ast
 import astunparse
 import warnings
@@ -617,7 +617,8 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                                    symbols: Dict[str, str],
                                    equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
                                    subs1: Dict[str, sp.Expr],
-                                   detailed_analysis: bool = False) -> Tuple[sp.Expr|List[Tuple[sp.Expr, sp.Expr]], sp.Expr|List[Tuple[sp.Expr, sp.Expr]]]:
+                                   detailed_analysis: bool = False,
+                                   data_symbols: Optional[Set[str]] = None) -> Tuple[sp.Expr|List[Tuple[sp.Expr, sp.Expr]], sp.Expr|List[Tuple[sp.Expr, sp.Expr]]]:
     """
     Analyze the work and depth of a given (structured) ControlFLowRegion.
     First we determine the work and depth of each state. Then we break loops in the state machine, such that we get a DAG.
@@ -632,8 +633,13 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
     as computation time sky-rockets, since expression can became HUGE (depending on number of branches etc.).
     :param equality_subs: Substitution dict taking care of the equality assumptions.
     :param subs1: First substitution dict for greater/lesser assumptions.
+    :param data_symbols: The compute symbols of the owning SDFG (see :func:`compute_symbols`); computed once and
+                         reused across the recursion. Interstate-edge arithmetic only counts as work for these.
     :return: A tuple containing the work and depth of the SDFG.
     """
+    if data_symbols is None:
+        data_symbols = compute_symbols(cfr if isinstance(cfr, SDFG) else cfr.sdfg)
+
     # First determine the work and depth of each ControlFlowRegion individually.
     # Keep track of the work and depth for each state in a dictionary
     region_depths: Dict[AbstractControlFlowRegion, sp.Expr] = {}
@@ -670,7 +676,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
             
             # Recursively get the work and depth of the loop body
             loop_work, loop_depth = control_flow_region_work_depth(loop, w_d_map, analyze_tasklet, symbols,
-                                                                   equality_subs, subs1, detailed_analysis)
+                                                                   equality_subs, subs1, detailed_analysis, data_symbols)
             
             if not fallback:
                 # If static loop bounds are available, we can write the work and depth of the loop as a summation over the loop variable from the lower to the upper bound.
@@ -722,7 +728,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                     if condition is not None else sp.sympify(True)
                 )
                 branch_works[branch], branch_depths[branch] = control_flow_region_work_depth(
-                    branch, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis
+                    branch, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis, data_symbols
                 )
 
             if analyze_tasklet == get_tasklet_avg_par:
@@ -765,7 +771,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
             w_d_map[get_uuid(region)] = (sp.sympify(0), sp.sympify(0))
         else:
             function_work, function_depth = control_flow_region_work_depth(region, w_d_map, analyze_tasklet, symbols,
-                                                                   equality_subs, subs1, detailed_analysis)
+                                                                   equality_subs, subs1, detailed_analysis, data_symbols)
             function_work = sp.simplify(function_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
             function_depth = sp.simplify(function_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
 
@@ -776,9 +782,12 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
     for isedge in cfr.edges():
         edge_work, edge_depth = sp.sympify(0), sp.sympify(0)
         if isedge.data.assignments:
-            for v in isedge.data.assignments.values():
+            for sym, v in isedge.data.assignments.items():
                 edge_depth = sp.Max(edge_depth, count_depth_code(v))
-                edge_work += count_arithmetic_ops_code(v)
+                # Only count arithmetic that computes a value consumed by computation; arithmetic
+                # assigned to addressing-only symbols (indices, bounds) is address computation, not work.
+                if sym in data_symbols:
+                    edge_work += count_arithmetic_ops_code(v)
         edge_w_d_map[(get_uuid(isedge.src), get_uuid(isedge.dst))] = (edge_work, edge_depth)
 
     # Prepare the SDFG for a depth analysis by breaking loops. This removes the edge between the last loop state and
@@ -1024,6 +1033,40 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
         w_d_map[k] = (v_w, v_d)
 
     return cfr_result
+
+
+def compute_symbols(sdfg: SDFG) -> Set[str]:
+    """
+    Return the names of symbols whose value is consumed by computation (as opposed to addressing).
+
+    A symbol is a compute symbol if it is read inside a tasklet's code, or if it (transitively,
+    through interstate-edge assignments) feeds such a symbol. The complement -- symbols used only in
+    memlet subsets, map ranges and loop/branch conditions -- are addressing symbols. This lets the
+    work analysis attribute interstate-edge assignment arithmetic to computation rather than to
+    address calculation (e.g. the bitwise arithmetic on the loop-carried scalars of a CRC kernel is
+    compute, whereas an ``idx = j * N`` index helper is not).
+
+    :param sdfg: The SDFG to inspect.
+    :return: The set of compute-symbol names.
+    """
+    data_symbols: Set[str] = set()
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nd.Tasklet):
+            data_symbols |= {str(s) for s in node.free_symbols}
+    # Transitive closure: if a compute symbol is assigned an expression, the symbols feeding that
+    # expression are compute symbols too.
+    assignment_edges = [e for e, _ in sdfg.all_edges_recursive() if getattr(e.data, 'assignments', None)]
+    changed = True
+    while changed:
+        changed = False
+        for edge in assignment_edges:
+            for lhs, rhs in edge.data.assignments.items():
+                if lhs in data_symbols:
+                    for sym in free_symbols_and_functions(rhs):
+                        if sym not in data_symbols:
+                            data_symbols.add(sym)
+                            changed = True
+    return data_symbols
 
 
 def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr, step: sp.Expr,
