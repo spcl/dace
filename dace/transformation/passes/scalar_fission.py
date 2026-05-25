@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
@@ -46,12 +47,20 @@ class ScalarFission(ppl.Pass):
             if desc.total_size != 1:
                 continue
 
-            # If there is only one scope, don't do anything.
-            if len(write_scope_dict) <= 1:
-                continue
-
             # Don't rename anything that's not transient, as it may be used externally.
             if not desc.transient:
+                continue
+
+            # Privatize the undominated (``None``) scope -- accesses whose reads are
+            # not dominated by a single write, e.g. a scalar written in every
+            # branch of a conditional and read after the merge (the cloudsc
+            # zcor/zfac/zqe pattern). These are loop-local (no upward-exposed use),
+            # so each enclosing loop gets its own copy -- scalar privatization.
+            if None in write_scope_dict:
+                self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results)
+
+            # If there is only one (dominating) scope, no further fission is needed.
+            if len([w for w in write_scope_dict if w is not None]) <= 1:
                 continue
 
             for write, shadowed_reads in write_scope_dict.items():
@@ -88,6 +97,187 @@ class ScalarFission(ppl.Pass):
 
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+
+    # ------------------------------------------------------------------ #
+    #  Privatization of undominated (None-scope) loop-local scalars
+    # ------------------------------------------------------------------ #
+
+    def _privatize_loop_local_undominated(self, sdfg: SDFG, name: str, accesses: Set[Tuple], results):
+        """Give a separate container to each loop's copy of a scalar whose reads
+        are not dominated by a single write (the ``None`` write-scope), when it
+        is provably loop-local. This is scalar privatization; it is legal only if
+        the scalar has **no upward-exposed use** in that loop (it is definitely
+        written before any read on every path -- e.g. written in all branches of
+        a conditional, read after the merge). A scalar that may be read before it
+        is written (a non-exhaustive ``if``) is loop-carried and is left alone.
+
+        :param sdfg: The SDFG being modified.
+        :param name: The size-1 transient scalar.
+        :param accesses: The ``None``-scope ``(block, node-or-edge)`` accesses.
+        :param results: Accumulator mapping the original name to new names.
+        """
+        by_loop: Dict[LoopRegion, List[Tuple]] = defaultdict(list)
+        outside_loop = False
+        for block, node in accesses:
+            loop = self._innermost_loop(block)
+            if loop is None:
+                outside_loop = True
+                break
+            by_loop[loop].append((block, node))
+        if outside_loop:
+            # An undominated access at non-loop scope is not loop-local; leave the
+            # whole scalar alone rather than split a value across scopes.
+            return
+
+        for loop, loop_accesses in by_loop.items():
+            # Only privatize if every undominated access of ``name`` in this loop
+            # is in this group (don't split a single value) and the scalar has no
+            # upward-exposed use in the loop (privatization legality).
+            if not self._no_upward_exposed_use(loop, name, defined_on_entry=False):
+                continue
+            newname = sdfg.add_datadesc(name, sdfg.arrays[name].clone(), find_new_name=True)
+            for block, node in loop_accesses:
+                if isinstance(node, nd.AccessNode):
+                    node.data = newname
+                    for e in block.in_edges(node):
+                        if e.data.data == name:
+                            e.data.data = newname
+                    for e in block.out_edges(node):
+                        if e.data.data == name:
+                            e.data.data = newname
+                elif isinstance(node, InterstateEdge):
+                    node.replace_dict({name: newname})
+            results[name].add(newname)
+
+    @staticmethod
+    def _innermost_loop(block) -> Optional[LoopRegion]:
+        """Find the innermost loop enclosing a block.
+
+        :param block: The control-flow block to search from.
+        :returns: The innermost enclosing ``LoopRegion``, or ``None`` if the block
+                  is not inside any loop.
+        """
+        region = block.parent_graph
+        while region is not None:
+            if isinstance(region, LoopRegion):
+                return region
+            region = region.parent_graph
+        return None
+
+    def _no_upward_exposed_use(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> bool:
+        """Test scalar-privatization legality: ``name`` has no upward-exposed use
+        in ``region``, i.e. every read is preceded by a write on every path
+        (``name`` is definitely assigned before use). Path-insensitive must-def
+        analysis -- a non-exhaustive conditional does not establish a definition.
+
+        :param region: The region (typically a loop) to test.
+        :param name: The scalar data container.
+        :param defined_on_entry: Whether ``name`` is already defined on entry.
+        :returns: ``True`` if ``name`` has no upward-exposed use (privatizable).
+        """
+        return self._analyze_region(region, name, defined_on_entry)[1]
+
+    def _analyze_region(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> Tuple[bool, bool]:
+        """Forward must-def analysis of ``name`` over ``region``.
+
+        The fixpoint is seeded pessimistically (``False`` off the entry), so
+        cycles and unanalyzable shapes stay conservative -- a possibly-carried
+        scalar is never reported as privatizable.
+
+        :param region: The region to analyze.
+        :param name: The scalar data container.
+        :param defined_on_entry: Whether ``name`` is defined on entry to ``region``.
+        :returns: ``(definitely_defined_at_exit, no_upward_exposed_use)``.
+        """
+        blocks = list(region.nodes())
+        if not blocks:
+            return defined_on_entry, True
+        bdef = {b: self._block_defines(b, name) for b in blocks}
+        start = region.start_block
+        defn = {b: False for b in blocks}
+        for _ in range(len(blocks) + 1):
+            changed = False
+            for b in blocks:
+                if b is start:
+                    nv = defined_on_entry
+                else:
+                    preds = [e.src for e in region.in_edges(b)]
+                    nv = all(defn[p] or bdef[p] for p in preds) if preds else False
+                if nv != defn[b]:
+                    defn[b] = nv
+                    changed = True
+            if not changed:
+                break
+        no_ue = all(not self._block_ue(b, name, defn[b]) for b in blocks)
+        sinks = [b for b in blocks if region.out_degree(b) == 0]
+        must_def_exit = bool(sinks) and all(defn[b] or bdef[b] for b in sinks)
+        return must_def_exit, no_ue
+
+    def _block_defines(self, block, name: str) -> bool:
+        """Whether ``block`` definitely writes ``name`` on every path through it.
+        A conditional defines only if it is exhaustive (has an ``else``) and every
+        branch defines; a loop may run zero times and so never definitely defines.
+
+        :param block: The control-flow block.
+        :param name: The scalar data container.
+        :returns: ``True`` if ``name`` is written on every path through ``block``.
+        """
+        if isinstance(block, SDFGState):
+            return self._state_defines(block, name)
+        if isinstance(block, ConditionalBlock):
+            has_else = any(cond is None for cond, _ in block.branches)
+            return has_else and all(self._analyze_region(br, name, False)[0] for _, br in block.branches)
+        if isinstance(block, LoopRegion):
+            return False
+        if isinstance(block, ControlFlowRegion):
+            return self._analyze_region(block, name, False)[0]
+        return False
+
+    def _block_ue(self, block, name: str, defined_on_entry: bool) -> bool:
+        """Whether ``block`` has an upward-exposed read of ``name``.
+
+        :param block: The control-flow block.
+        :param name: The scalar data container.
+        :param defined_on_entry: Whether ``name`` is already defined on entry.
+        :returns: ``True`` if a read of ``name`` may execute before any write.
+        """
+        if defined_on_entry:
+            return False
+        if isinstance(block, SDFGState):
+            return self._state_reads_before_write(block, name)
+        if isinstance(block, ConditionalBlock):
+            return any(not self._analyze_region(br, name, False)[1] for _, br in block.branches)
+        if isinstance(block, ControlFlowRegion):
+            return not self._analyze_region(block, name, False)[1]
+        return True  # unknown block type -> conservative
+
+    @staticmethod
+    def _state_defines(state: SDFGState, name: str) -> bool:
+        """Whether ``state`` writes ``name`` (has a non-empty write to it).
+
+        :param state: The state to inspect.
+        :param name: The scalar data container.
+        :returns: ``True`` if ``name`` is written in ``state``.
+        """
+        return any(n.data == name and any(not e.data.is_empty() for e in state.in_edges(n)) for n in state.data_nodes())
+
+    @staticmethod
+    def _state_reads_before_write(state: SDFGState, name: str) -> bool:
+        """Whether ``state`` has an upward-exposed read of ``name``: an access
+        node that is read (has out-edges) but not written in the state (no
+        non-empty in-edge) reads the value coming from before the state.
+
+        :param state: The state to inspect.
+        :param name: The scalar data container.
+        :returns: ``True`` if a read precedes any write of ``name`` in ``state``.
+        """
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            written = any(not e.data.is_empty() for e in state.in_edges(node))
+            if state.out_degree(node) > 0 and not written:
+                return True
+        return False
 
 
 @transformation.explicit_cf_compatible
