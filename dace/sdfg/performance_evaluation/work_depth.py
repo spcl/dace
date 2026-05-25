@@ -13,7 +13,7 @@ import sympy as sp
 from copy import deepcopy
 from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
 from dace.libraries.standard import Reduce
-from dace.libraries.linalg import Transpose
+from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
 from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions
 import ast
 import astunparse
@@ -127,6 +127,49 @@ def count_depth_dot(node, symbols, state):
     # optimal depth for dot product is 1 for multiplications and logarithmic for additions
     result = 1+sp.log(sp.Max(1, symeval(X_memlet.data.subset.size()[-1], symbols)), 2)
     return sp.sympify(result)
+
+
+def count_work_cholesky(node, symbols, state):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    N = symeval(A_memlet.data.subset.size()[-1], symbols)
+    # Cholesky factorization of an N x N matrix: ~N^3/3 flops.
+    return sp.sympify(N**3 / 3)
+
+
+def count_depth_cholesky(node, symbols, state):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    N = symeval(A_memlet.data.subset.size()[-1], symbols)
+    # N sequential elimination steps.
+    return sp.Max(1, N)
+
+
+def count_work_inv(node, symbols, state):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    N = symeval(A_memlet.data.subset.size()[-1], symbols)
+    # LU factorization (~2N^3/3) plus inversion of the factors (~4N^3/3): ~2N^3 flops.
+    return sp.sympify(2 * N**3)
+
+
+def count_depth_inv(node, symbols, state):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    N = symeval(A_memlet.data.subset.size()[-1], symbols)
+    return sp.Max(1, N)
+
+
+def count_work_solve(node, symbols, state):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    B_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_bin')
+    N = symeval(A_memlet.data.subset.size()[-1], symbols)
+    b_size = B_memlet.data.subset.size()
+    rhs = symeval(b_size[-1], symbols) if len(b_size) >= 2 else 1
+    # LU factorization (~2N^3/3) plus forward/back substitution (~2N^2 per right-hand side).
+    return sp.sympify(2 * N**3 / 3 + 2 * N**2 * rhs)
+
+
+def count_depth_solve(node, symbols, state):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    N = symeval(A_memlet.data.subset.size()[-1], symbols)
+    return sp.Max(1, N)
 
 def count_work_gemm(node, symbols, state):
     """
@@ -274,6 +317,9 @@ LIBNODES_TO_WORK = {
     Transpose: lambda *args: 0,
     Reduce: count_work_reduce,
     Dot: count_work_dot,
+    Cholesky: count_work_cholesky,
+    Inv: count_work_inv,
+    Solve: count_work_solve,
 }
 
 LIBNODES_TO_DEPTH = {
@@ -283,6 +329,9 @@ LIBNODES_TO_DEPTH = {
     Transpose: lambda *args: 0,
     Reduce: count_depth_reduce,
     Dot: count_depth_dot,
+    Cholesky: count_depth_cholesky,
+    Inv: count_depth_inv,
+    Solve: count_depth_solve,
 }
 
 # Type-cast calls (e.g. ``int``, ``float``, ``dace.float64``, ``dace.uint16``) perform no
