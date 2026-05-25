@@ -285,11 +285,15 @@ LIBNODES_TO_DEPTH = {
     Dot: count_depth_dot,
 }
 
+# Type-cast calls (e.g. ``int``, ``float``, ``dace.float64``, ``dace.uint16``) perform no
+# arithmetic and count as zero work. The names are derived from the available DaCe data types plus
+# the Python/C builtins, so new dtypes need no maintenance here.
+_TYPECAST_NAMES = ({'int', 'float', 'complex', 'bool', 'double'}
+                   | {name for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)})
+_TYPECAST_NAMES |= {f'dace.{name}' for name in _TYPECAST_NAMES}
+
 PYFUNC_TO_ARITHMETICS = {
-    'float': 0,
-    'dace.float64': 0,
-    'dace.int64': 0,
-    'dace.complex128': 0,
+    **{name: 0 for name in _TYPECAST_NAMES},
     'math.exp': 1,
     'exp': 1,
     'math.tanh': 1,
@@ -299,11 +303,13 @@ PYFUNC_TO_ARITHMETICS = {
     'math.sqrt': 1,
     'sqrt': 1,
     'atan2': 1,
+    'int_floor': 1,  # integer (floor) division
+    'int_ceil': 1,  # integer (ceil) division
     'min': 0,
     'max': 0,
     'ceiling': 0,
     'floor': 0,
-    'abs': 0
+    'abs': 0,
 }
 
 
