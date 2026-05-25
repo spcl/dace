@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-
 NI = dace.symbol('NI')
 NJ = dace.symbol('NJ')
 NK = dace.symbol('NK')

@@ -143,7 +143,10 @@ def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
                 non_static_symbols.add(data_sym)
 
     static_symbol_mapping = {k: v for (k, v) in static_symbol_mapping.items() if k not in non_static_symbols}
-    static_symbol_mapping = {k: subs_till_fixed_point(v, static_symbol_mapping) for k, v in static_symbol_mapping.items()}
+    static_symbol_mapping = {
+        k: subs_till_fixed_point(v, static_symbol_mapping)
+        for k, v in static_symbol_mapping.items()
+    }
     return static_symbol_mapping
 
 
@@ -297,9 +300,8 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
             except Exception:
                 # Fall back to the (statically estimated) number of executions of the loop body.
                 loop_executions = cfr.start_block.executions
-                range_var_stack.append(
-                    (f"byte_access_loop_range_var_{len(range_var_stack)}", (sp.sympify(0), loop_executions,
-                                                                            sp.sympify(1))))
+                range_var_stack.append((f"byte_access_loop_range_var_{len(range_var_stack)}",
+                                        (sp.sympify(0), loop_executions, sp.sympify(1))))
                 inner_read, inner_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
                 del range_var_stack[-1:]
                 region_volume_map[cfr] = (inner_read, inner_write)

@@ -340,6 +340,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
     sdfg_nx.remove_node(artificial_end_node)
     return nodes_oNodes_exits
 
+
 def get_legacy_loop_body(cfr, guard, tail, exits):
     """
     Get all nodes in a legacy loop body.
@@ -358,7 +359,7 @@ def get_legacy_loop_body(cfr, guard, tail, exits):
         forward_reachable.add(node)
         for edge in cfr.out_edges(node):
             queue.append(edge.dst)
-    
+
     # Backward reachability to tail
     backward_reachable = set()
     queue = deque([tail])
@@ -369,11 +370,12 @@ def get_legacy_loop_body(cfr, guard, tail, exits):
         backward_reachable.add(node)
         for edge in cfr.in_edges(node):
             queue.append(edge.src)
-    
+
     # Loop body = (forward AND backward) - exits
     loop_body = (forward_reachable & backward_reachable) - set(exits)
-    
+
     return loop_body
+
 
 def get_legacy_loop_ranges(cfr: ControlFlowRegion) -> Dict[SDFGState, Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Symbol]]:
     """
@@ -400,16 +402,17 @@ def get_legacy_loop_ranges(cfr: ControlFlowRegion) -> Dict[SDFGState, Tuple[sp.E
         loop_var: sp.Symbol = sp.Symbol(itvar_str)
 
         # guard.ranges[itvar] is a subsets.Range with one entry: [(start, stop, stride)]
-        rng = node.ranges[itvar_str][0]   # -> (start, stop, stride)
-        start  = sp.sympify(rng[0])
-        stop   = sp.sympify(rng[1])
+        rng = node.ranges[itvar_str][0]  # -> (start, stop, stride)
+        start = sp.sympify(rng[0])
+        stop = sp.sympify(rng[1])
         stride = sp.sympify(rng[2])
 
         result[node] = (loop_var, start, stop, stride)
 
     return result
 
-def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
+
+def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]):
     """
     Takes a sympy expression and a symbol mapping and applies the mapping to the expression until a fixed point is reached
     Needs the guarantee that the symbol mapping does not have cyclic dependencies.
@@ -427,39 +430,30 @@ def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
         curr = curr.subs(symbol_map)
     return curr
 
+
 def get_static_symbols(sdfg: SDFG):
     """
     Returns a mapping of symbols that are assigned exactly at one point in the sdfg.
-    
+
     :param sdfg: The sdfg for which we want to find the static symbols and their corresponding assignment
     :return: The mapping of the symbols to higher levels (iterated to a fixed point)
     """
 
-    
     patterns = [
-        "dace.complex128",
-        "dace.float64",
-        "dace.float32",
-        "dace.int64",
-        "dace.int32",
-        "dace.int16",
-        "dace.uint32",
-        "dace.uint16",
-        "dace.uint8",
-        "float",
-        "int"
+        "dace.complex128", "dace.float64", "dace.float32", "dace.int64", "dace.int32", "dace.int16", "dace.uint32",
+        "dace.uint16", "dace.uint8", "float", "int"
     ]
 
     type_regex = re.compile("|".join(map(re.escape, patterns)))
-    static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
-    non_static_symbols = set() 
+    static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
+    non_static_symbols = set()
     for node, containing_state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.AccessNode):
-            
+
             if containing_state.in_degree(node) == 1:
                 edge = containing_state.in_edges(node)[0]
                 source = edge.src
-                
+
                 if edge.data.volume == 1:
                     if isinstance(source, nodes.Tasklet):
                         tasklet = source
@@ -481,7 +475,7 @@ def get_static_symbols(sdfg: SDFG):
                         code = tasklet.code.as_string.strip()
                         # Expect a single assignment
                         lines = [l.strip() for l in code.splitlines() if l.strip()]
-                        lhs, rhs = lines[0].split('=',1)
+                        lhs, rhs = lines[0].split('=', 1)
                         lhs = lhs.strip()
                         rhs = rhs.strip()
                         rhs = type_regex.sub("", rhs)
@@ -508,5 +502,8 @@ def get_static_symbols(sdfg: SDFG):
                             non_static_symbols.add(data_sym)
 
     static_symbol_mapping = {k: v for (k, v) in static_symbol_mapping.items() if k not in non_static_symbols}
-    static_symbol_mapping = {str(k): subs_till_fixed_point(v, static_symbol_mapping) for k,v in static_symbol_mapping.items()}
+    static_symbol_mapping = {
+        str(k): subs_till_fixed_point(v, static_symbol_mapping)
+        for k, v in static_symbol_mapping.items()
+    }
     return static_symbol_mapping

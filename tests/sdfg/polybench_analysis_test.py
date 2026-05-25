@@ -32,18 +32,56 @@ _POLYBENCH_DIR = pathlib.Path(__file__).resolve().parents[1] / 'polybench'
 
 # Problem size at which the symbolic results are evaluated for comparison.
 _SIZES = {
-    'N': 13, 'M': 11, 'NI': 7, 'NJ': 8, 'NK': 9, 'NL': 10, 'NM': 12, 'NP': 5, 'NQ': 6, 'NR': 4,
-    'NX': 7, 'NY': 8, 'TMAX': 3, 'tsteps': 4, 'H': 6, 'W': 5
+    'N': 13,
+    'M': 11,
+    'NI': 7,
+    'NJ': 8,
+    'NK': 9,
+    'NL': 10,
+    'NM': 12,
+    'NP': 5,
+    'NQ': 6,
+    'NR': 4,
+    'NX': 7,
+    'NY': 8,
+    'TMAX': 3,
+    'tsteps': 4,
+    'H': 6,
+    'W': 5
 }
 
 # kernel file stem -> the dace.program defined in it.
 _KERNEL_FUNCS = {
-    '2mm': 'k2mm', '3mm': 'k3mm', 'adi': 'adi', 'atax': 'atax', 'bicg': 'bicg', 'cholesky': 'cholesky',
-    'correlation': 'correlation', 'covariance': 'covariance', 'deriche': 'deriche', 'doitgen': 'doitgen',
-    'durbin': 'durbin', 'fdtd-2d': 'fdtd2d', 'floyd-warshall': 'floyd_warshall', 'gemm': 'gemm', 'gemver': 'gemver',
-    'gesummv': 'gesummv', 'gramschmidt': 'gramschmidt', 'heat-3d': 'heat3d', 'jacobi-1d': 'jacobi1d',
-    'jacobi-2d': 'jacobi2d', 'lu': 'lu', 'ludcmp': 'ludcmp', 'mvt': 'mvt', 'nussinov': 'nussinov',
-    'seidel-2d': 'seidel2d', 'symm': 'symm', 'syr2k': 'syr2k', 'syrk': 'syrk', 'trisolv': 'trisolv', 'trmm': 'trmm'
+    '2mm': 'k2mm',
+    '3mm': 'k3mm',
+    'adi': 'adi',
+    'atax': 'atax',
+    'bicg': 'bicg',
+    'cholesky': 'cholesky',
+    'correlation': 'correlation',
+    'covariance': 'covariance',
+    'deriche': 'deriche',
+    'doitgen': 'doitgen',
+    'durbin': 'durbin',
+    'fdtd-2d': 'fdtd2d',
+    'floyd-warshall': 'floyd_warshall',
+    'gemm': 'gemm',
+    'gemver': 'gemver',
+    'gesummv': 'gesummv',
+    'gramschmidt': 'gramschmidt',
+    'heat-3d': 'heat3d',
+    'jacobi-1d': 'jacobi1d',
+    'jacobi-2d': 'jacobi2d',
+    'lu': 'lu',
+    'ludcmp': 'ludcmp',
+    'mvt': 'mvt',
+    'nussinov': 'nussinov',
+    'seidel-2d': 'seidel2d',
+    'symm': 'symm',
+    'syr2k': 'syr2k',
+    'syrk': 'syrk',
+    'trisolv': 'trisolv',
+    'trmm': 'trmm'
 }
 
 # kernel -> (compute work, read bytes, write bytes) evaluated at _SIZES. A ``None`` read marks a
@@ -173,11 +211,14 @@ def test_linalg_library_node_work(program, expected_work):
     # Compare at a concrete size (divisible by 3); the analysis and the reference use distinct N
     # symbol instances, so substitute by name rather than subtracting symbolically.
     work_n = work.subs({s: 12 for s in work.free_symbols if s.name == 'N'})
-    expected_n = sp.sympify(expected_work).subs({s: 12 for s in sp.sympify(expected_work).free_symbols if s.name == 'N'})
+    expected_n = sp.sympify(expected_work).subs(
+        {s: 12
+         for s in sp.sympify(expected_work).free_symbols if s.name == 'N'})
     assert work_n == expected_n
 
 
 # --- Compute vs. address classification of interstate-edge arithmetic ------------------------------
+
 
 def test_interstate_edge_compute_vs_address():
     """Arithmetic assigned to an addressing-only symbol is excluded from work; arithmetic assigned
@@ -199,6 +240,7 @@ def test_interstate_edge_compute_vs_address():
 
 
 # --- Loop-carried integer compute (the work lives in interstate-edge assignments) ------------------
+
 
 @dace.program
 def _bitwise_accumulate(data: dace.uint32[N]):

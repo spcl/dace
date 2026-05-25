@@ -180,10 +180,12 @@ def gemm_library_node(x: dc.float64[456, 200], y: dc.float64[200, 111], z: dc.fl
 def gemm_library_node_symbolic(x: dc.float64[M, K], y: dc.float64[K, N], z: dc.float64[M, N]):
     z[:] = x @ y
 
+
 @dc.program
-def loop_var_dependent_work(x: dc.float64[N], y: dc.float64[N], z:dc.float64[N]):
-    for i in range(1, N+1):
-        z[i-1] = np.dot(x[:i], y[:i])
+def loop_var_dependent_work(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
+    for i in range(1, N + 1):
+        z[i - 1] = np.dot(x[:i], y[:i])
+
 
 #(sdfg, (expected_work, expected_depth))
 work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]] = {
@@ -203,19 +205,22 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'break_for_loop': (break_for_loop, (N**2, N)),
     'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_0') * N, sp.Symbol('num_execs_0_0'))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
-    'reduction_library_node': (reduction_library_node, (456, sp.log(456)/sp.log(2))),
-    'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N))/sp.log(2))),
-    'gemm_library_node': (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200)/sp.log(2))),
-    'gemm_library_node_symbolic': (gemm_library_node_symbolic, (2 * M * K * N, sp.Max(1, sp.log(sp.Max(1, K))/sp.log(2)))),
-    'loop_var_dependent_work': (loop_var_dependent_work, (N**2, N+sp.Sum(sp.log(sp.Symbol("_p_i", nonnegative=True) + 1), (sp.Symbol("_p_i", nonnegative=True), 0, N - 1))/sp.log(2)))
+    'reduction_library_node': (reduction_library_node, (456, sp.log(456) / sp.log(2))),
+    'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N)) / sp.log(2))),
+    'gemm_library_node': (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200) / sp.log(2))),
+    'gemm_library_node_symbolic':
+    (gemm_library_node_symbolic, (2 * M * K * N, sp.Max(1,
+                                                        sp.log(sp.Max(1, K)) / sp.log(2)))),
+    'loop_var_dependent_work':
+    (loop_var_dependent_work, (N**2, N + sp.Sum(sp.log(sp.Symbol("_p_i", nonnegative=True) + 1),
+                                                (sp.Symbol("_p_i", nonnegative=True), 0, N - 1)) / sp.log(2)))
 }
 
+
 def standardize(expr):
-    new_expr = expr.replace(
-        lambda x: isinstance(x, sp.Symbol), 
-        lambda x: sp.Symbol(x.name)
-    )
+    new_expr = expr.replace(lambda x: isinstance(x, sp.Symbol), lambda x: sp.Symbol(x.name))
     return new_expr
+
 
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
@@ -247,11 +252,12 @@ def test_work_depth(test_name):
     assert res[0].expand() == correct[0].expand()
     assert res[1].expand() == correct[1].expand()
 
+
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth_inlined(test_name):
     if test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']:
         pytest.skip('Different state naming when ControlFLowRegios are inlined')
-    
+
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
@@ -260,12 +266,11 @@ def test_work_depth_inlined(test_name):
     if 'nested_maps' in test.name:
         sdfg.apply_transformations(MapExpansion)
 
-    # test 
+    # test
     inline_control_flow_regions(sdfg)
-    sdfg.save(test_name+".sdfg")
+    sdfg.save(test_name + ".sdfg")
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_explicit_control_flow = False
-
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
@@ -276,6 +281,7 @@ def test_work_depth_inlined(test_name):
     # check result
     assert res[0].expand() == correct[0].expand()
     assert res[1].expand() == correct[1].expand()
+
 
 #(sdfg, expected_avg_par)
 tests_cases_avg_par = {
@@ -290,11 +296,14 @@ tests_cases_avg_par = {
     'unbounded_nonnegify': (unbounded_nonnegify, N),
     'break_for_loop': (break_for_loop, N),
     'break_while_loop': (break_while_loop, N),
-    'reduction_library_node': (reduction_library_node, 456 / (sp.log(456)/sp.log(2))),
-    'reduction_library_node_symbolic': (reduction_library_node_symbolic, N*sp.log(2)/sp.log(sp.Max(1, N))),
-    'gemm_library_node': (gemm_library_node, 2 * 456 * 200 * 111 / (sp.log(200)/sp.log(2))),
-    'gemm_library_node_symbolic': (gemm_library_node_symbolic, 2*K*M*N/sp.Max(1, sp.log(sp.Max(1, K))/sp.log(2))),
+    'reduction_library_node': (reduction_library_node, 456 / (sp.log(456) / sp.log(2))),
+    'reduction_library_node_symbolic': (reduction_library_node_symbolic, N * sp.log(2) / sp.log(sp.Max(1, N))),
+    'gemm_library_node': (gemm_library_node, 2 * 456 * 200 * 111 / (sp.log(200) / sp.log(2))),
+    'gemm_library_node_symbolic':
+    (gemm_library_node_symbolic, 2 * K * M * N / sp.Max(1,
+                                                        sp.log(sp.Max(1, K)) / sp.log(2))),
 }
+
 
 @pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
 def test_avg_par(test_name: str):
@@ -394,6 +403,7 @@ def test_assumption_system_contradictions(assumptions):
     # check that the Exception gets raised.
     with raises(ContradictingAssumptions):
         parse_assumptions(assumptions, set())
+
 
 def test_depth_counter_vs_work_counter():
     """

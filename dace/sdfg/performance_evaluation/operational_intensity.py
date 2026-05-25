@@ -25,6 +25,8 @@ from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_taskle
 from dace.transformation.passes.analysis import loop_analysis
 
 import traceback
+
+
 class SymbolRange():
     """ Used to describe an SDFG symbol associated with a range (start, stop, step) of values. """
 
@@ -140,9 +142,11 @@ def update_mapping(mapping, e):
             update[k] = pystr_to_symbolic(v).subs(mapping)
     mapping.update(update)
 
+
 def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
     # regex pattern to detect buffer name and index if applicable
-    pattern = re.compile(r"""
+    pattern = re.compile(
+        r"""
     ^\s*
     (?P<name>[a-zA-Z_]\w*)      # variable name
     (?:\[
@@ -150,7 +154,7 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
     \])?
     \s*$
 """, re.VERBOSE)
-    
+
     misses = 0
     for lhs, rhs in edge.data.assignments.items():
         m_lhs = pattern.match(lhs)
@@ -168,23 +172,25 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
             if rhs_index and not rhs_index.isdigit():
                 rhs_index = sp.Symbol(m_rhs.group("index"))
             elif rhs_index and rhs_index.isdigit():
-                lhs_index = sp.Expr(int(rhs_index)) 
+                lhs_index = sp.Expr(int(rhs_index))
 
             if lhs_name in clt.array_info or (lhs_name in array_names and array_names[lhs_name] in clt.array_info):
                 line_id = clt.cache_line_id(lhs_name if lhs_name not in array_names else array_names[lhs_name],
-                    ([lhs_index.subs(mapping)] if isinstance(lhs_index, sp.Expr) else []), mapping)
+                                            ([lhs_index.subs(mapping)] if isinstance(lhs_index, sp.Expr) else []),
+                                            mapping)
                 line_id = int(line_id.subs(symbols).subs(mapping) if isinstance(line_id, sp.Expr) else line_id)
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
 
             if rhs_name in clt.array_info or (rhs_name in array_names and array_names[rhs_name] in clt.array_info):
                 line_id = clt.cache_line_id(rhs_name if rhs_name not in array_names else array_names[rhs_name],
-                    ([rhs_index.subs(mapping)] if isinstance(rhs_index, sp.Expr) else []), mapping)
+                                            ([rhs_index.subs(mapping)] if isinstance(rhs_index, sp.Expr) else []),
+                                            mapping)
                 line_id = int(line_id.subs(symbols).subs(mapping) if isinstance(line_id, sp.Expr) else line_id)
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
         except Exception as e:
-            traceback.print_exc() # full stack trace
+            traceback.print_exc()  # full stack trace
     return misses
 
 
@@ -196,7 +202,8 @@ def update_map_iterators(map, mapping, symbols):
     for p, range in zip(map.params[::-1], map.range[::-1]):  # reversed order
         curr_value = mapping[p]
         if not isinstance(range[1], SymExpr):
-            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].subs(symbols).subs(mapping):
+            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].subs(
+                    symbols).subs(mapping):
                 # update this value and then we are done
                 mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
                 map_exhausted = False
@@ -205,7 +212,8 @@ def update_map_iterators(map, mapping, symbols):
                 # set current param to start again and continue
                 mapping[p] = range[0].subs(symbols).subs(mapping)
         else:
-            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].expr.subs(symbols).subs(mapping):
+            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].expr.subs(
+                    symbols).subs(mapping):
                 # update this value and we done
                 mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
                 map_exhausted = False
@@ -226,24 +234,24 @@ def map_op_in(state: SDFGState, op_in_map: Dict[str, sp.Expr], entry, mapping, s
     while True:
         # do analysis of map contents
         map_misses += scope_misses(state, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
-                                  ask_user, entry)
+                                   ask_user, entry)
 
-        if update_map_iterators(entry.map, mapping,symbols):
+        if update_map_iterators(entry.map, mapping, symbols):
             break
     return map_misses
 
 
 def scope_misses(state: SDFGState,
-                op_in_map: Dict[str, sp.Expr],
-                mapping,
-                stack: AccessStack,
-                clt: CacheLineTracker,
-                C,
-                symbols,
-                array_names,
-                decided_branches,
-                ask_user,
-                entry=None):
+                 op_in_map: Dict[str, sp.Expr],
+                 mapping,
+                 stack: AccessStack,
+                 clt: CacheLineTracker,
+                 C,
+                 symbols,
+                 array_names,
+                 decided_branches,
+                 ask_user,
+                 entry=None):
     """
     Computes the operational intensity of a single scope (scope is either an SDFG state or a map scope).
 
@@ -352,7 +360,8 @@ def scope_misses(state: SDFGState,
         update_map(op_in_map, get_uuid(state), scope_misses, average=False)
     return scope_misses
 
-def cfr_misses(cfr:ControlFlowRegion,
+
+def cfr_misses(cfr: ControlFlowRegion,
                op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
                mapping,
                stack: AccessStack,
@@ -366,8 +375,8 @@ def cfr_misses(cfr:ControlFlowRegion,
     region_misses = 0
     if isinstance(cfr, SDFGState):
         region_misses = scope_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
-                                  ask_user, None)
-        
+                                     ask_user, None)
+
     elif isinstance(cfr, LoopRegion):
         loop_var = cfr.loop_variable
         loop_condition = pystr_to_symbolic(cfr.loop_condition.as_string)
@@ -376,7 +385,18 @@ def cfr_misses(cfr:ControlFlowRegion,
         mapping[loop_var] = start.subs(mapping)
         region_misses = 0
         while (loop_condition.subs(mapping) == True):
-            iter_misses = cfg_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user, start=cfr.start_block,end=None)
+            iter_misses = cfg_misses(cfr,
+                                     op_in_map,
+                                     mapping,
+                                     stack,
+                                     clt,
+                                     C,
+                                     symbols,
+                                     array_names,
+                                     decided_branches,
+                                     ask_user,
+                                     start=cfr.start_block,
+                                     end=None)
             mapping[loop_var] = mapping[loop_var] + step
             region_misses += iter_misses
     elif isinstance(cfr, ConditionalBlock):
@@ -399,14 +419,15 @@ def cfr_misses(cfr:ControlFlowRegion,
             else:
                 possible_branches.append(branch)
 
-        ### if the branch is not decided by a true condition we 
+        ### if the branch is not decided by a true condition we
         # 1- ask the userif he hasn't decided yet
         # 2- take the one we took last time if he has decided
         # 3- take the worst case if he opted not to decide
         possibilities = true_branches + possible_branches + [else_branch]
-        if not true_branches and len(possible_branches)>0 and ask_user and (cfr not in decided_branches or decided_branches[cfr] not in possibilities):
+        if not true_branches and len(possible_branches) > 0 and ask_user and (
+                cfr not in decided_branches or decided_branches[cfr] not in possibilities):
             possibilities = true_branches + possible_branches + ['else_branch']
-            if len(possibilities)>1:        
+            if len(possibilities) > 1:
                 print(f'\n\nWhich branch to take at {cfr.name}')
                 for i in range(len(possibilities)):
                     print(f'({i}) for branch {possibilities[i] if possibilities[i] else "else_branch"}')
@@ -424,7 +445,6 @@ def cfr_misses(cfr:ControlFlowRegion,
         else:
             # else we check all possibilities and take the max
             branches = possibilities
-            
 
         max_branch_misses = 0
         mapping_after_cond, stack_after_cond, decided_branches_after_cond = mapping, stack, decided_branches
@@ -437,22 +457,35 @@ def cfr_misses(cfr:ControlFlowRegion,
             stack_copy = deepcopy(stack)
             symbols_copy = deepcopy(symbols)
             decided_branches_copy = deepcopy(decided_branches)
-            branch_misses = cfg_misses(branch, op_in_map, mapping_copy, stack_copy, clt, C, symbols_copy, array_names, decided_branches_copy, ask_user, branch.start_block, None)
-            
+            branch_misses = cfg_misses(branch, op_in_map, mapping_copy, stack_copy, clt, C, symbols_copy, array_names,
+                                       decided_branches_copy, ask_user, branch.start_block, None)
+
             if branch_misses > max_branch_misses:
                 max_branch_misses = branch_misses
                 mapping_after_cond, stack_after_cond, decided_branches_after_cond = mapping_copy, stack_copy, decided_branches_copy
 
         mapping.update(mapping_after_cond)
         stack.replace_self(stack_after_cond)
-        decided_branches.update(decided_branches_after_cond)  
+        decided_branches.update(decided_branches_after_cond)
         region_misses = max_branch_misses
     elif isinstance(cfr, FunctionCallRegion):
-        region_misses = cfg_misses(cfr, op_in_map,mapping,stack,clt,C,symbols,array_names,decided_branches,ask_user,start=cfr.start_block,end=None)
+        region_misses = cfg_misses(cfr,
+                                   op_in_map,
+                                   mapping,
+                                   stack,
+                                   clt,
+                                   C,
+                                   symbols,
+                                   array_names,
+                                   decided_branches,
+                                   ask_user,
+                                   start=cfr.start_block,
+                                   end=None)
     elif isinstance(cfr, (ReturnBlock, ContinueBlock, BreakBlock)):
         region_misses = 0
-    
+
     return region_misses
+
 
 def cfg_misses(cfg: ControlFlowRegion,
                op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
@@ -499,10 +532,10 @@ def cfg_misses(cfg: ControlFlowRegion,
     total_misses = 0
     # traverse this SDFG's ControlFlowRegions
     while True:
-        
+
         region_misses = cfr_misses(curr_state, op_in_map, mapping, stack, clt, C, symbols, array_names,
-                                        decided_branches, ask_user)
-                
+                                   decided_branches, ask_user)
+
         total_misses += region_misses
         if len(cfg.out_edges(curr_state)) == 0:
             # we reached an end state --> stop
@@ -593,11 +626,11 @@ def cfg_misses(cfg: ControlFlowRegion,
                             curr_state = final_e.dst
         if curr_state == end:
             break
-    
+
     if end is None:
         # only update if we were actually analyzing a whole sdfg (not just start to end state)
         update_map(op_in_map, get_uuid(cfg), total_misses, average=False)
-        
+
     return total_misses
 
 
@@ -629,7 +662,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
 
     # from now on we take C as the number of lines that fit into cache
     C = C // L
-    
+
     sdfg = deepcopy(sdfg)
     # apply SSA pass
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
@@ -645,9 +678,9 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             range_symbol[sym] = SymbolRange(int(x) for x in assumptions[sym].split(','))
             del assumptions[sym]
     work_map = {}
-    
+
     assumptions_list = [f'{x}=={y}' for x, y in assumptions.items()]
-    
+
     analyze_sdfg(sdfg, work_map, get_tasklet_work, assumptions_list)
 
     if len(undefined_symbols) > 0:
@@ -668,7 +701,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
 
             mapping.update(assumptions)
 
-            mapping = {k: subs_till_fixed_point(v, mapping) for k,v in mapping.items()}
+            mapping = {k: subs_till_fixed_point(v, mapping) for k, v in mapping.items()}
             stack = AccessStack(C)
             clt = CacheLineTracker(L)
 
@@ -687,7 +720,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             while True:
                 new_val = False
                 for sym, r in range_symbol.items():
-                    
+
                     val = r.next()
                     if val > -1:
                         new_val = True
@@ -708,7 +741,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                 static_symbols = get_static_symbols(r_sdfg)
                 mapping.update(static_symbols)
                 mapping.update(assumptions)
-                mapping = {k: subs_till_fixed_point(v, mapping) for k,v in mapping.items()}
+                mapping = {k: subs_till_fixed_point(v, mapping) for k, v in mapping.items()}
 
                 stack = AccessStack(C)
                 clt = CacheLineTracker(L)
