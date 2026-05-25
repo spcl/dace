@@ -331,10 +331,7 @@ class Range(Subset):
         ret = []
 
         def a2s(obj):
-            if isinstance(obj, symbolic.SymExpr):
-                return {'main': str(obj.expr), 'approx': str(obj.approx)}
-            else:
-                return _simplified_str(obj)
+            return symbolic.serialize_symbolic(obj)
 
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
@@ -352,15 +349,9 @@ class Range(Subset):
         ranges = obj['ranges']
         tuples = []
 
-        def p2s(x):
-            pts = symbolic.pystr_to_symbolic
-            if isinstance(x, str):
-                return pts(x)
-            else:
-                return symbolic.SymExpr(pts(x['main']), pts(x['approx']))
-
         for r in ranges:
-            tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']), p2s(r['tile'])))
+            tuples.append((symbolic.deserialize_symbolic(r['start']), symbolic.deserialize_symbolic(r['end']),
+                           symbolic.deserialize_symbolic(r['step']), symbolic.deserialize_symbolic(r['tile'])))
 
         return Range(tuples)
 
