@@ -517,7 +517,7 @@ def cfg_misses(cfg: ControlFlowRegion,
                     try:
                         total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                         update_mapping(mapping, e)
-                    except:
+                    except Exception:
                         print('\nWARNING: Uncommon assignment detected on InterstateEdge (e.g. bitwise operators).'
                               'Analysis may give wrong results.')
                         print(e.data.assignments, 'was the edge\'s assignments.')

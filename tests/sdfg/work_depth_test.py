@@ -1,7 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the work depth analysis. """
 from typing import Dict, List, Tuple
-from unittest import result
 
 import pytest
 import dace as dc
