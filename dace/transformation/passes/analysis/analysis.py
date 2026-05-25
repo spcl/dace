@@ -540,14 +540,14 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
                         other_accesses = result[sym][iedges[0]]
                         coarsen = False
                         for a_state_or_edge in other_accesses:
-                            if isinstance(a_state_or_edge, SDFGState):
-                                if a_state_or_edge in reach:
-                                    coarsen = True
-                                    break
-                            else:
-                                if a_state_or_edge.src in reach:
-                                    coarsen = True
-                                    break
+                            # An access location is either a control-flow block (state, loop or
+                            # conditional region) or an interstate edge; reduce both to the block to
+                            # test against the reachable set.
+                            block = (a_state_or_edge
+                                     if isinstance(a_state_or_edge, ControlFlowBlock) else a_state_or_edge.src)
+                            if block in reach:
+                                coarsen = True
+                                break
                         if coarsen:
                             other_accesses.update(accesses)
                             other_accesses.add(write)
