@@ -72,6 +72,21 @@ def test_write_read_roundtrip_i32(tmp_path):
     np.testing.assert_array_equal(r0, a0)
 
 
+def test_write_read_roundtrip_2d(tmp_path):
+    """A 2-D array round-trips: the whole array is one list-directed transfer,
+    so write order and read order match element-for-element."""
+    path = str(tmp_path / "vals_2d.txt")
+    shapes = [[2, 3]]
+    a0 = np.arange(1.0, 7.0, dtype=np.float64).reshape(2, 3)
+
+    _write_sdfg(path, shapes, dace.float64, "_2d")(a0=a0.copy())
+
+    r0 = np.zeros((2, 3), dtype=np.float64)
+    _read_sdfg(path, shapes, dace.float64, "_2d")(a0=r0)
+
+    np.testing.assert_allclose(r0, a0)
+
+
 def test_write_read_roundtrip_f32(tmp_path):
     path = str(tmp_path / "vals_f32.txt")
     shapes = [[3]]
