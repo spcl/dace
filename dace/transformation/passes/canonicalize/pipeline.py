@@ -91,12 +91,9 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # assignment that keeps the original symbol declaration live across
     # NestedSDFG boundaries and re-introduces the alias hazard the pass
     # exists to remove.
-    _uniq = UniqueLoopIterators()
-    _uniq.assign_loop_iterator_post_value = False
-    _uniq2 = UniqueLoopIterators()
-    _uniq2.assign_loop_iterator_post_value = False
-    _uniq_fis = UniqueLoopIterators()
-    _uniq_fis.assign_loop_iterator_post_value = False
+    _uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    _uniq2 = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    _uniq_fis = UniqueLoopIterators(assign_loop_iterator_post_value=False)
 
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
