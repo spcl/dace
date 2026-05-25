@@ -1054,7 +1054,9 @@ def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: 
         if sym.name == var.name and sym != var:
             expr = expr.subs({sym: var})
     shifted_hi = ((upper - lower) // step).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
-    lower = lower.subs(subs1) if step.evalf() > 0 else upper.subs(subs1)
+    # Iterate from the lower bound unless the step is known-negative (a symbolic step, e.g. a tile
+    # size, is treated as forward; map steps are never negative).
+    lower = lower.subs(subs1) if step.is_negative is not True else upper.subs(subs1)
     step = sp.Abs(step)
     expr = expr.subs({var: step * var + lower})
     return sp.Sum(expr, (var, sp.sympify(0), shifted_hi)).doit()
