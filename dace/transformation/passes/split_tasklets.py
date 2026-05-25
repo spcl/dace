@@ -2,7 +2,6 @@
 import copy
 import re
 
-import sympy
 import dace
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -256,7 +255,10 @@ class SplitTasklets(ppl.Pass):
                 if k not in sdfg.symbols:
                     symexpr = dace.symbolic.SymExpr(v)
                     dtypes = set()
-                    funcs = [a.name for a in symexpr.atoms(sympy.Function)]
+                    # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names
+                    # come from ``arrays`` (the old ``atoms(Function).name`` form no
+                    # longer reports the array head).
+                    funcs = list(dace.symbolic.arrays(symexpr))
                     for token in funcs:
                         if str(token) in sdfg.arrays:
                             dtypes.add(sdfg.arrays[str(token)].dtype)

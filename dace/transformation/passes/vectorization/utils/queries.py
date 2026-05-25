@@ -333,26 +333,12 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             continue
 
                         assignment_expr = dace.symbolic.SymExpr(assignment)
-                        # Define functions to ignore (common arithmetic + piecewise +
-                        # rounding). ``int_floor`` / ``int_ceil`` are dace integer
-                        # arithmetic (e.g. a ``a[i // M]`` replication divisor), not an
-                        # array access — they carry no ``.name`` and must not be read as
-                        # an indirect access.
-                        ignored = {
-                            sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt, sympy.Abs, sympy.floor,
-                            sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan, sympy.sinh,
-                            sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh,
-                            dace.symbolic.int_floor, dace.symbolic.int_ceil
-                        }
-
-                        # Collect only user-defined or nonstandard functions - in intersate edge this means array accees.
-                        # A surviving function is an array access only if it carries a ``.name`` (the array name);
-                        # any other arithmetic function without a name is not an indirect access.
-                        funcs = {
-                            f.name
-                            for f in assignment_expr.atoms(sympy.Function)
-                            if f.func not in ignored and hasattr(f, "name")
-                        }
+                        # The array names this assignment reads. ``arrays`` reports the
+                        # ``Subscript`` heads, matching what the old ``atoms(Function)``
+                        # ``.name`` form reported before #2378 made array accesses
+                        # ``Subscript`` nodes (arithmetic functions like ``int_floor``
+                        # carry no subscript and are handled by ``unhandled_replication``).
+                        funcs = dace.symbolic.arrays(assignment_expr)
                         # Any array on the right-hand-side -> big problem
                         # Check for scalar / array accesses like this too
                         scalars = {str(s)

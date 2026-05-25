@@ -486,9 +486,16 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         if _is_number(str(c1)):
             _set_template(ctx, None, None, c1, None, lhs, "=")
         else:
-            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
+            # Per-lane materialisation of a laneid index (``_idx[i] = base_laneid_i``).
+            # This carries no SIMD intrinsic, so keep it a Python tasklet: emitting
+            # CPP here hides the ``base_laneid_i`` symbols from ``free_symbols``, so
+            # ``resolve_missing_laneid_symbols`` never binds ``base_laneid_i = base + i``
+            # and codegen references an undeclared symbol. CPP lowering is reserved for
+            # the intrinsic ops; the matching ``SCALAR_SYMBOL`` / ``SYMBOL_SYMBOL`` /
+            # ``SCALAR_SCALAR`` per-lane assignments stay Python for the same reason.
+            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i}"
                                                                   for i in range(vw)]) + "\n",
-                                                  language=dace.Language.CPP)
+                                                  language=dace.Language.Python)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         # A binop operand whose connector reads a single (non-vectorized)
         # element is a scalar value at the C level, not a vector pointer.

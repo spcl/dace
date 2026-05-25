@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
 from typing import Any, Dict
-import sympy
 import dace
 from dace import SDFG, data, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
@@ -65,7 +64,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                         # Remove array names
                         # Remove symbols coming from parent sdfg can't be demoted
                         # => Exclude them
-                        func_calls = {str(f.func) for f in expr.atoms(sympy.Function)}
+                        func_calls = symbolic.arrays(expr)
                         boolean_func_calls = {
                             "OR", "Or", "or", "AND", "And", "and", "not", "Not", "NOT", "False", "True", "false",
                             "true", "FALSE", "TRUE"

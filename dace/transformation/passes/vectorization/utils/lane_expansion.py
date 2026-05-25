@@ -180,10 +180,12 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                 new_k = LaneIdScheme.make(k, i)
                 v_expr = dace.symbolic.SymExpr(v)
 
-                funcs = {str(f) for f in v_expr.atoms(sympy.Function)}
-                non_func_free_syms = {str(s) for s in v_expr.free_symbols if str(s) not in funcs}
-                array_accesses = {f for f in funcs if f in inner_sdfg.arrays}
-                variant_array_accesses = (array_accesses.union(non_func_free_syms)) - invariant_data
+                # Lane-variance is carried by the free symbols of the assignment
+                # (an array head is no longer a free symbol of a ``Subscript``,
+                # and the legacy ``array_accesses`` set was always empty here
+                # because ``str(Function)`` never matched an array name, so this
+                # restores that effective behaviour).
+                variant_array_accesses = {str(s) for s in v_expr.free_symbols} - invariant_data
 
                 if len(variant_array_accesses) == 0:
                     # Whole expression is invariant — keep the original (un-expanded) symbol only.
@@ -403,15 +405,12 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
         all_function_args = set()
         for sym_assignment in sym_assignments:
             sym_assign_expr = dace.symbolic.SymExpr(sym_assignment)
-            # Collect all array accesses (they are functions that are present in the sdfg)
-            # Also try to support And and Or if this happens
-            from sympy.logic.boolalg import And, Or
-            atoms = (sym_assign_expr.atoms(sympy.Function) | sym_assign_expr.atoms(And) | sym_assign_expr.atoms(Or))
-            funcs = {(getattr(a, "func", type(a)).__name__, a)
-                     for a in atoms if hasattr(a, "func") and callable(a.func)}
-            for fname, f in funcs:
-                if fname in inner_sdfg.arrays:
-                    for arg in f.args:
+            # Collect the index symbols of every array access. Array accesses are
+            # ``Subscript`` nodes: ``args[0]`` is the array head, ``args[1:]`` the
+            # indices, so gather the free symbols of the indices.
+            for sub in sym_assign_expr.atoms(dace.symbolic.Subscript):
+                if str(sub.args[0]) in inner_sdfg.arrays:
+                    for arg in sub.args[1:]:
                         all_function_args = all_function_args.union({str(s) for s in arg.free_symbols})
 
         # If all function args are s

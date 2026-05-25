@@ -548,8 +548,14 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             if sdfg.parent_nsdfg_node is not None and cond_sym in sdfg.parent_nsdfg_node.symbol_mapping:
                 del sdfg.parent_nsdfg_node.symbol_mapping[cond_sym]
 
+        # Collect the arrays the RHS reads. A subscripted access ``c[i]``
+        # is a :class:`Subscript` node whose ``free_symbols`` are only the
+        # indices, so ``free_symbols_and_functions`` no longer reports the
+        # array head — :func:`symbolic.arrays` is the accessor for that.
+        # Union both so a bare array reference (``cond_sym = c``) and a
+        # bracketed one (``cond_sym = c[i]``) are each picked up.
         try:
-            free_vars = symbolic.free_symbols_and_functions(rhs)
+            free_vars = set(symbolic.arrays(rhs)) | set(symbolic.free_symbols_and_functions(rhs))
         except Exception:
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)

@@ -351,7 +351,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         for ie in inner.all_interstate_edges():
             if sym not in ie.data.assignments:
                 continue
-            for name in dace.symbolic.free_symbols_and_functions(ie.data.assignments[sym]):
+            # ``idxc[0]`` is a Subscript node, whose array head is reported by
+            # ``arrays`` (not ``free_symbols_and_functions``); union both so a
+            # bare ``idxc`` reference is also covered.
+            expr = ie.data.assignments[sym]
+            for name in set(dace.symbolic.arrays(expr)) | set(dace.symbolic.free_symbols_and_functions(expr)):
                 if name in inner.arrays:
                     return name
         return None

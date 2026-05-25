@@ -2525,8 +2525,21 @@ def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str,
     rewrites: Dict[sympy.Basic, sympy.Basic] = {}
     arr_subsets: Dict[str, str] = {}
     for node in sympy.preorder_traversal(base):
-        # Array/scalar read with subscript: arr[...] -> Function('arr')(...)
-        if isinstance(node, sympy.Function):
+        # Subscripted read ``arr[i, j]`` -> ``Subscript(arr, i, j)``. The head
+        # (the array) is ``args[0]`` and the indices are ``args[1:]``; printing
+        # ``str(node.func)`` would yield ``"Subscript"`` rather than the array
+        # name, so this case must precede the generic ``Function`` branch (a
+        # ``Subscript`` is a ``Function`` subclass). Replace the whole node with
+        # the connector symbol and capture the index subset.
+        if isinstance(node, Subscript):
+            head = str(node.args[0])
+            if head in arr_to_connector:
+                rewrites[node] = sympy.Symbol(arr_to_connector[head])
+                if head not in arr_subsets:
+                    args_str = ", ".join(printer.doprint(a) for a in node.args[1:])
+                    arr_subsets[head] = f"[{args_str}]"
+        # Legacy array/scalar read modelled as ``Function('arr')(...)``.
+        elif isinstance(node, sympy.Function):
             fname = str(node.func)
             if fname in arr_to_connector:
                 rewrites[node] = sympy.Symbol(arr_to_connector[fname])

@@ -213,16 +213,17 @@ class GenerateIterationMask(ppl.Pass):
         :param iter_var: The vectorised loop parameter.
         :returns: Number of lane-variant indirect gather dims.
         """
-        import sympy
         from dace.transformation.passes.vectorization.utils.lane_expansion import find_symbol_assignment
         arrays = set(inner_sdfg.arrays)
 
         def _reads_array_with_iter(expr) -> bool:
             if not hasattr(expr, "free_symbols"):
                 return False
-            fnames = {getattr(f.func, "__name__", str(f.func)) for f in expr.atoms(sympy.Function)}
+            # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names come
+            # from ``arrays`` (a bare-name scalar would be a free symbol instead).
+            arr_reads = dace.symbolic.arrays(expr)
             fsyms = {str(s) for s in expr.free_symbols}
-            return bool((fnames | fsyms) & arrays) and (iter_var in fsyms)
+            return bool((arr_reads | fsyms) & arrays) and (iter_var in fsyms)
 
         count = 0
         for dim in sub:
