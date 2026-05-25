@@ -45,6 +45,31 @@ def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]) -> 
     return curr
 
 
+def safe_summation(summand: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr) -> sp.Expr:
+    """
+    Symbolically sum ``summand`` over ``var`` from ``lower`` to ``upper`` (both inclusive).
+
+    Works around a SymPy limitation: ``summation`` may internally call ``posify``, which builds
+    ``Dummy(s.name, positive=True, **s.assumptions0)`` for each free symbol. DaCe size symbols
+    already carry ``positive=True`` in their assumptions, so this raises ``TypeError`` (the keyword
+    is passed twice). The symbols are therefore stripped of their assumptions for the duration of
+    the summation and restored afterwards; this does not affect the (polynomial) result.
+
+    :param summand: The expression to sum.
+    :param var: The summation variable.
+    :param lower: Inclusive lower bound of the summation.
+    :param upper: Inclusive upper bound of the summation.
+    :return: The closed-form (or, if SymPy cannot evaluate it, unevaluated) sum.
+    """
+    lower = sp.sympify(lower)
+    upper = sp.sympify(upper)
+    free_syms = summand.free_symbols | lower.free_symbols | upper.free_symbols
+    plain = {s: sp.Symbol(s.name) for s in free_syms if s != var and s.assumptions0}
+    restore = {v: k for k, v in plain.items()}
+    result = sp.summation(summand.subs(plain), (var, lower.subs(plain), upper.subs(plain)))
+    return result.subs(restore)
+
+
 def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
     """
     Find the symbols that are assigned at exactly one point in the SDFG (i.e., statically known).
@@ -188,18 +213,18 @@ def scope_volume(state: SDFGState,
                 sp_var = sp.Symbol(var)
 
                 if var in read_symbol_map.keys():
-                    access_node_read_volume = sp.summation(
-                        access_node_read_volume.subs(read_symbol_map[var], (sp.sympify(step) * sp_var + lo)),
-                        (sp_var, shifted_lo, shifted_hi))
+                    access_node_read_volume = safe_summation(
+                        access_node_read_volume.subs(read_symbol_map[var], (sp.sympify(step) * sp_var + lo)), sp_var,
+                        shifted_lo, shifted_hi)
                 else:
-                    access_node_read_volume = sp.summation(access_node_read_volume, (sp_var, shifted_lo, shifted_hi))
+                    access_node_read_volume = safe_summation(access_node_read_volume, sp_var, shifted_lo, shifted_hi)
 
                 if var in write_symbol_map.keys():
-                    access_node_write_volume = sp.summation(
-                        access_node_write_volume.subs(write_symbol_map[var], (sp.sympify(step) * sp_var + lo)),
-                        (sp_var, shifted_lo, shifted_hi))
+                    access_node_write_volume = safe_summation(
+                        access_node_write_volume.subs(write_symbol_map[var], (sp.sympify(step) * sp_var + lo)), sp_var,
+                        shifted_lo, shifted_hi)
                 else:
-                    access_node_write_volume = sp.summation(access_node_write_volume, (sp_var, shifted_lo, shifted_hi))
+                    access_node_write_volume = safe_summation(access_node_write_volume, sp_var, shifted_lo, shifted_hi)
 
             read += sp.simplify(access_node_read_volume)
             write += sp.simplify(access_node_write_volume)
@@ -328,24 +353,26 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
     return region_volume_map[control_flow_region]
 
 
-def analyze_sdfg(sdfg: SDFG) -> Tuple[sp.Expr, sp.Expr]:
+def analyze_sdfg(sdfg: SDFG, optimize: bool = True) -> Tuple[sp.Expr, sp.Expr]:
     """
     Estimate the global-memory read and write byte volume of an SDFG.
 
-    The SDFG is deep-copied and auto-optimized (to approximate the effect of compiler
-    optimizations) before the symbolic volume is computed and resolved against statically known
-    symbols.
+    The SDFG is deep-copied before the symbolic volume is computed and resolved against statically
+    known symbols.
 
     :param sdfg: The SDFG to analyze (left unmodified).
+    :param optimize: If True, auto-optimize the SDFG copy first to approximate the effect of
+                     compiler optimizations; if False, analyze the raw data volume.
     :return: A tuple of ``(read_volume, write_volume)`` in bytes, as symbolic expressions.
     """
     # Deep-copy so the original SDFG is not modified.
     sdfg = deepcopy(sdfg)
-    # Try to use an optimized version of the SDFG to account for compiler optimizations.
-    try:
-        auto_optimize(sdfg, dtypes.DeviceType.CPU)
-    except Exception:
-        pass
+    if optimize:
+        # Try to use an optimized version of the SDFG to account for compiler optimizations.
+        try:
+            auto_optimize(sdfg, dtypes.DeviceType.CPU)
+        except Exception:
+            pass
 
     infer_types.set_default_schedule_and_storage_types(sdfg)
     region_volume_map: RegionVolumeMap = {}
