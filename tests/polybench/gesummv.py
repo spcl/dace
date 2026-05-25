@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 N = dace.symbol('N')
 
@@ -53,4 +52,5 @@ def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, outputs, init_array, gesummv)

@@ -1,9 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-try:
-    import polybench
-except ImportError:
-    polybench = None
 
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
@@ -69,6 +65,10 @@ def init_array(A, B, n, tsteps):
 
 
 if __name__ == '__main__':
+    try:
+        import polybench
+    except ImportError:
+        polybench = None
     if polybench:
         polybench.main(sizes, args, [(0, 'A')], init_array, jacobi2d)
     else:

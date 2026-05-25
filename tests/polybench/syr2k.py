@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -56,4 +55,5 @@ def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: dataty
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, outputs, init_array, syr2k)

@@ -1,10 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-try:
-    import polybench
-except ImportError:
-    polybench = None
 
 NI = dace.symbol('NI')
 NJ = dace.symbol('NJ')
@@ -94,6 +90,10 @@ def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datat
 
 
 if __name__ == '__main__':
+    try:
+        import polybench
+    except ImportError:
+        polybench = None
     if polybench:
         polybench.main(sizes, args, [(4, 'G')], init_array, k3mm)
     else:

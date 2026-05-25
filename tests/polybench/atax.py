@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -66,4 +65,5 @@ def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(2, 'y')], init_array, atax)

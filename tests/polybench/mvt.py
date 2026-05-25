@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 N = dace.symbol('N')
 
@@ -49,4 +48,5 @@ def mvt(x1: datatype[N], x2: datatype[N], y_1: datatype[N], y_2: datatype[N], A:
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(0, 'x1'), (1, 'x2')], init_array, mvt)
