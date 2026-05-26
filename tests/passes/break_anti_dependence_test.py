@@ -1,0 +1,102 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for the optional BreakAntiDependence pass (snapshot-rename to break a
+loop-carried WAR so LoopToMap can parallelize). SDFGs via the Python frontend."""
+import contextlib
+import os
+
+import numpy as np
+import pytest
+
+import dace
+from dace.sdfg.state import LoopRegion
+from dace.sdfg import nodes
+from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes import BreakAntiDependence
+
+N = dace.symbol('N')
+
+
+def _nmaps(sdfg):
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+def _nloops(sdfg):
+    return len([r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable])
+
+
+def _l2m(sdfg):
+    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+        sdfg.apply_transformations_repeated(LoopToMap)
+
+
+def test_break_anti_dependence_read_ahead_parallelizes():
+    """``a[i] = a[i+1] + b[i]`` is a read-ahead WAR: renaming snapshots ``a`` so the
+    loop maps, value-preserving (TSVC s121)."""
+
+    @dace.program
+    def s121(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - 1):
+            a[i] = a[i + 1] + b[i]
+
+    base = s121.to_sdfg(simplify=True)
+    _l2m(base)
+    assert _nmaps(base) == 0  # LoopToMap alone refuses the anti-dependence
+
+    sdfg = s121.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    _l2m(sdfg)
+    sdfg.validate()
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+
+    a = np.arange(1, 9, dtype=np.float64)
+    b = np.arange(8, dtype=np.float64) * 0.5
+    ref = a.copy()
+    for i in range(7):
+        ref[i] = a[i + 1] + b[i]  # reads ORIGINAL a (read-ahead)
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), N=8)
+    assert np.allclose(out, ref)
+
+
+def test_break_anti_dependence_read_behind_refused():
+    """``a[i] = a[i-1] + b[i]`` is a read-behind RAW recurrence: renaming would be
+    unsound, so the pass refuses and the loop stays sequential (TSVC s112)."""
+
+    @dace.program
+    def s112(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(1, N):
+            a[i] = a[i - 1] + b[i]
+
+    sdfg = s112.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None  # refused
+    _l2m(sdfg)
+    assert _nloops(sdfg) >= 1  # recurrence stays a sequential loop
+
+    a = np.arange(1, 9, dtype=np.float64)
+    b = np.arange(8, dtype=np.float64) * 0.5
+    ref = a.copy()
+    for i in range(1, 8):
+        ref[i] = ref[i - 1] + b[i]
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), N=8)
+    assert np.allclose(out, ref)
+
+
+def test_break_anti_dependence_out_of_place_noop():
+    """An out-of-place shifted read ``c[i] = a[i+1] + b[i]`` is already parallel
+    (distinct arrays); the pass leaves it alone."""
+
+    @dace.program
+    def shift(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        for i in range(N - 1):
+            c[i] = a[i + 1] + b[i]
+
+    sdfg = shift.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None  # nothing to break
+    sdfg.validate()
+
+
+if __name__ == '__main__':
+    test_break_anti_dependence_read_ahead_parallelizes()
+    test_break_anti_dependence_read_behind_refused()
+    test_break_anti_dependence_out_of_place_noop()
