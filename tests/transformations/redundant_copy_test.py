@@ -308,6 +308,58 @@ def test_in():
     assert np.allclose(A_arr, D_arr.T)
 
 
+def test_in_failure_partial_copy():
+    """RedundantArrayCopyingIn must refuse a chain whose copies are not full
+    identity copies: ``A -> B -> C -> D`` where only ``B[0:2]`` flows through.
+    Collapsing the writers of ``B`` straight onto ``D`` would silently widen the
+    partial copy to a full one and corrupt the region the chain never wrote."""
+
+    def build():
+        sdfg = dace.SDFG('rcin_failure_partial_copy')
+        state = sdfg.add_state()
+        sdfg.add_array('A', [4], dace.float64)
+        sdfg.add_transient('B', [4], dace.float64)
+        sdfg.add_transient('C', [4], dace.float64)
+        sdfg.add_array('D', [4], dace.float64)
+        A, B, C, D = (state.add_access(x) for x in 'ABCD')
+        state.add_nedge(A, B, dace.Memlet('A[0:4] -> [0:4]'))  # B = A (full)
+        state.add_nedge(B, C, dace.Memlet('B[0:2] -> [0:2]'))  # C[0:2] = B[0:2] (partial)
+        state.add_nedge(C, D, dace.Memlet('C[0:2] -> [0:2]'))  # D[0:2] = C[0:2] (partial)
+        sdfg.validate()
+        return sdfg
+
+    sdfg = build()
+    applied = sdfg.apply_transformations_repeated(RedundantArrayCopyingIn)
+    assert applied == 0
+
+    A_arr = np.arange(1, 5, dtype=np.float64)
+    D_arr = np.zeros(4, dtype=np.float64)
+    sdfg(A=A_arr, D=D_arr)
+    assert np.allclose(D_arr, [1.0, 2.0, 0.0, 0.0])
+
+
+def test_in_failure_extra_consumer():
+    """RedundantArrayCopyingIn must refuse when the middle array feeds a second
+    consumer: ``apply`` removes the middle node, which would orphan that
+    consumer's source."""
+    sdfg = dace.SDFG('rcin_failure_extra_consumer')
+    state = sdfg.add_state()
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_transient('B', [4], dace.float64)
+    sdfg.add_transient('C', [4], dace.float64)
+    sdfg.add_array('D', [4], dace.float64)
+    sdfg.add_array('E', [4], dace.float64)
+    A, B, C, D, E = (state.add_access(x) for x in 'ABCDE')
+    state.add_nedge(A, B, dace.Memlet('A[0:4] -> [0:4]'))
+    state.add_nedge(B, C, dace.Memlet('B[0:4] -> [0:4]'))
+    state.add_nedge(C, D, dace.Memlet('C[0:4] -> [0:4]'))
+    state.add_nedge(C, E, dace.Memlet('C[0:4] -> [0:4]'))  # second consumer of C
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(RedundantArrayCopyingIn) == 0
+    assert C in state.nodes()
+
+
 def test_view_array_array():
     sdfg = dace.SDFG('redarrtest')
     sdfg.add_view('v', [2, 10], dace.float64)
