@@ -110,6 +110,13 @@ CPU_RESIDENT_STORAGES = frozenset({
     StorageType.CPU_Pinned,
     StorageType.CPU_ThreadLocal,
 })
+# Storages whose memory a GPU kernel can directly dereference (device-global, shared,
+# and thread-local registers); host-resident storages are reachable only after a copy.
+GPU_KERNEL_ACCESSIBLE_STORAGES = frozenset({
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.Register,
+})
 
 
 class ReductionType(Enum):
