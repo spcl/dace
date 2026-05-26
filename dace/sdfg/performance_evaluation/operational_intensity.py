@@ -602,26 +602,34 @@ def cfg_misses(cfg: ControlFlowRegion,
                             curr_state = e.dst
                             print(2 * '\n')
                         else:
-                            final_e = next_edge_candidates.pop()
-                            final_misses = 0
-                            for e in next_edge_candidates:
-
-                                # copy the state of the analysis
-                                curr_mapping = dict(mapping)
-                                curr_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
-                                update_mapping(curr_mapping, e)
-                                curr_stack = stack.copy()
-                                curr_clt = clt.copy()
-                                curr_symbols = dict(symbols)
-                                curr_array_names = dict(array_names)
-
-                                curr_state = e.dst
-                                # walk down this branch until merge_state
-                                cfg_misses(cfg, op_in_map, curr_mapping, curr_stack, curr_clt, C, curr_symbols,
-                                           curr_array_names, decided_branches, ask_user, curr_state, merge_state)
-
-                            update_mapping(mapping, final_e)
-                            curr_state = final_e.dst
+                            # Cannot decide and not asking the user: analyze every candidate branch
+                            # up to the merge state and continue along the worst-case (most misses)
+                            # one. Each branch is explored on copies of the mapping and stack so its
+                            # cache effects do not leak into the others; the chosen branch's state is
+                            # then committed before traversal resumes at the merge state.
+                            candidates = next_edge_candidates or cfg.out_edges(curr_state)
+                            best_misses = None
+                            best = None
+                            for e in candidates:
+                                branch_mapping = dict(mapping)
+                                branch_stack = stack.copy()
+                                branch_symbols = dict(symbols)
+                                branch_array_names = dict(array_names)
+                                branch_misses = assignment_misses(e, branch_mapping, branch_stack, clt, C,
+                                                                  branch_symbols, branch_array_names)
+                                update_mapping(branch_mapping, e)
+                                branch_misses += cfg_misses(cfg, op_in_map, branch_mapping, branch_stack, clt, C,
+                                                            branch_symbols, branch_array_names, decided_branches,
+                                                            ask_user, e.dst, merge_state)
+                                if best_misses is None or branch_misses > best_misses:
+                                    best_misses = branch_misses
+                                    best = (branch_mapping, branch_stack, branch_symbols, branch_array_names)
+                            total_misses += best_misses
+                            mapping.update(best[0])
+                            stack.replace_self(best[1])
+                            symbols.update(best[2])
+                            array_names.update(best[3])
+                            curr_state = merge_state
         if curr_state == end:
             break
 

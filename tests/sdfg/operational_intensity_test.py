@@ -11,6 +11,7 @@ import sympy as sp
 import numpy as np
 from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
 from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.utils import inline_control_flow_regions
 from dace.symbolic import pystr_to_symbolic
 from dace.frontend.python.parser import DaceProgram
 
@@ -261,9 +262,29 @@ def test_operational_intensity_range_simulation():
         assert isclose(float(op_in.subs(N, n)), 1 / 24, rel_tol=1e-6)
 
 
+def test_operational_intensity_inlined_branch_worst_case():
+    """ When control flow is inlined to plain conditional interstate edges (no ConditionalBlock), an
+    undecidable data-dependent branch is handled by the legacy traversal in ``cfg_misses``. Without
+    ``ask_user`` it must analyze every candidate branch and continue along the worst-case one,
+    giving the same operational intensity as the ConditionalBlock form of the same program. """
+    op_in_cfg: Dict[str, sp.Expr] = {}
+    sdfg_cfg = ask_user_branch.to_sdfg()
+    sdfg_cfg.simplify()
+    analyze_sdfg_op_in(sdfg_cfg, op_in_cfg, 1024, 64, {})
+
+    op_in_legacy: Dict[str, sp.Expr] = {}
+    sdfg_legacy = ask_user_branch.to_sdfg()
+    sdfg_legacy.simplify()
+    inline_control_flow_regions(sdfg_legacy)
+    analyze_sdfg_op_in(sdfg_legacy, op_in_legacy, 1024, 64, {})
+
+    assert isclose(float(op_in_cfg[get_uuid(sdfg_cfg)]), float(op_in_legacy[get_uuid(sdfg_legacy)]))
+
+
 if __name__ == '__main__':
     for test_name in test_cases.keys():
         test_operational_intensity(test_name)
     test_operational_intensity_ask_user_branch_selection()
     test_operational_intensity_ask_user_decision_reused_in_loop()
     test_operational_intensity_range_simulation()
+    test_operational_intensity_inlined_branch_worst_case()
