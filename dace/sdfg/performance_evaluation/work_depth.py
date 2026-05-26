@@ -76,7 +76,6 @@ def evaluate_symbols(base, new):
 def count_work_matmul(node, symbols, state):
     """Work of a matrix-multiply library node: 2*M*N*K flops, times the batch size if present."""
     A_memlet = next(state.in_edges_by_connector(node, '_a'))
-    B_memlet = next(state.in_edges_by_connector(node, '_b'))
     C_memlet = next(state.out_edges_by_connector(node, '_c'))
     result = 2  # Multiply, add
     # Batch
@@ -122,8 +121,6 @@ def count_depth_reduce(node, symbols, state):
 def count_work_dot(node, symbols, state):
     """Work of a dot-product library node: 2*N - 1 flops (N multiplies and N-1 additions)."""
     X_memlet = next(state.in_edges_by_connector(node, '_x'))
-    Y_memlet = next(state.in_edges_by_connector(node, '_y'))
-    RES_memlet = next(state.out_edges_by_connector(node, '_result'))
     result = 2 * symeval(X_memlet.data.subset.size()[-1], symbols) - 1
     return sp.sympify(result)
 
@@ -131,8 +128,6 @@ def count_work_dot(node, symbols, state):
 def count_depth_dot(node, symbols, state):
     """Depth of a dot product: one multiply layer plus O(log N) for the addition tree."""
     X_memlet = next(state.in_edges_by_connector(node, '_x'))
-    Y_memlet = next(state.in_edges_by_connector(node, '_y'))
-    RES_memlet = next(state.out_edges_by_connector(node, '_result'))
     result = 1 + sp.log(sp.Max(1, symeval(X_memlet.data.subset.size()[-1], symbols)), 2)
     return sp.sympify(result)
 
@@ -192,7 +187,6 @@ def count_work_gemm(node, symbols, state):
     - Beta scaling + addition: 2*M*N (if beta != 0)
     """
     A_memlet = next(state.in_edges_by_connector(node, '_a'))
-    B_memlet = next(state.in_edges_by_connector(node, '_b'))
     C_memlet = next(state.out_edges_by_connector(node, '_c'))
 
     # Get dimensions
@@ -260,8 +254,6 @@ def count_work_gemv(node, symbols, state):
     - Beta scaling + addition: 2*M (if beta != 0)
     """
     A_memlet = next(state.in_edges_by_connector(node, '_A'))
-    x_memlet = next(state.in_edges_by_connector(node, '_x'))
-    y_memlet = next(state.out_edges_by_connector(node, '_y'))
 
     # Get dimensions from A matrix
     A_shape = A_memlet.data.subset.size()
