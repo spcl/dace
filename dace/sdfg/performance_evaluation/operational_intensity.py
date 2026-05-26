@@ -3,7 +3,6 @@
 or from the VS Code extension. """
 
 import argparse
-from collections import deque
 from dace.sdfg import nodes as nd
 from dace import dtypes, SDFG
 from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
@@ -25,6 +24,7 @@ from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_taskle
 
 from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.analysis import cfg
+from dace.sdfg.utils import nodes_in_all_simple_paths
 
 
 class SymbolRange():
@@ -86,28 +86,15 @@ def mem_accesses_on_path(states):
     return mem_accesses
 
 
-def find_states_between(sdfg: SDFG, start_state: SDFGState, end_state: SDFGState):
-    traversal_q = deque()
-    traversal_q.append(start_state)
-    visited = set()
-    states = []
-    while traversal_q:
-        curr_state = traversal_q.popleft()
-        if curr_state == end_state:
-            continue
-        if curr_state not in visited:
-            visited.add(curr_state)
-            states.append(curr_state)
-            for e in sdfg.out_edges(curr_state):
-                traversal_q.append(e.dst)
-    return states
+def find_states_between(region: ControlFlowRegion, start_state: SDFGState, end_state: SDFGState):
+    """ Return the states on any path from ``start_state`` up to (but excluding) ``end_state``. """
+    return nodes_in_all_simple_paths(region.nx, start_state, end_state) - {end_state}
 
 
-def find_merge_state(sdfg: SDFG, state: SDFGState):
-    """
-    Adapted from ``cfg.stateorder_topological_sort``.
-    """
-    merges = cfg.branch_merges(sdfg)
+def find_merge_state(region: ControlFlowRegion, state: SDFGState):
+    """ Return the state where the branches out of ``state`` re-converge (via ``cfg.branch_merges``),
+    or ``None`` (with a warning) if no single merge state exists. """
+    merges = cfg.branch_merges(region)
     if state in merges:
         return merges[state]
 
