@@ -1025,6 +1025,8 @@ class int_floor(sympy.Function):
             return x // y
         if y.is_Number and y == 1:
             return x
+        if y.is_Number and y == -1:  # floor(x / -1) = floor(-x) = -x for integer x
+            return -x
 
     def _eval_is_integer(self):
         return True
@@ -1050,6 +1052,10 @@ class int_ceil(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return sympy.ceiling(x / y)
+        if y.is_Number and y == 1:
+            return x
+        if y.is_Number and y == -1:  # ceil(x / -1) = ceil(-x) = -x for integer x
+            return -x
 
     def _eval_is_integer(self):
         return True

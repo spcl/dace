@@ -4,13 +4,18 @@ and written to global memory by a DaCe program, as a closed-form symbolic expres
 program's free symbols. Can be used from the command line as a Python script.
 
 Cost model (where the "bytes moved" come from): every access node touching global memory contributes
-the size of its accessed region -- the propagated boundary memlet -- times the element size. That
-region is counted **once per enclosing parallel map nest** (data reused across a map is assumed to
-stay on chip: infinite cache *within* a nest), but is **multiplied by the trip count of every
-enclosing sequential loop** (the cache is assumed flushed on each loop iteration, and there is no
-reuse between non-nested scopes). So a stencil whose spatial sweep is a map and whose time axis is a
-loop costs ``tsteps * working_set``, while a triangular solver written as sequential loops pays for
-its re-reads across those loops.
+the size of its accessed region times the element size. That region is counted **once per enclosing
+parallel map nest** (data reused across a map is assumed to stay on chip: infinite cache *within* a
+nest), but is **multiplied by the trip count of every enclosing sequential loop** (the cache is
+assumed flushed on each loop iteration, and there is no reuse between non-nested scopes). So a stencil
+whose spatial sweep is a map and whose time axis is a loop costs ``tsteps * working_set``, while a
+triangular solver written as sequential loops pays for its re-reads across those loops.
+
+The accessed region of a map is estimated as the tighter (``Min``) of two upper bounds on the working
+set: the propagated boundary memlet (a bounding box, which over-counts disjoint slices such as a row
+and a column of a triangular access) and the sum of the individual per-connector footprints (which
+over-counts overlapping slices such as a stencil's neighbourhood). So a triangular access reading a
+row and a column costs the two slices, not the dense box spanning them.
 
 This is therefore the *compulsory traffic assuming reuse only within a parallel nest* -- a
 cache-infinite-within-a-nest estimate. It is deliberately NOT the cache-size-parametric I/O-optimal
@@ -33,6 +38,7 @@ from dace.dtypes import StorageType
 from dace.sdfg import infer_types, nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.performance_evaluation.helpers import get_static_symbols, has_unstructured_control_flow
+from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic, symbol, int_floor, simplify
 from dace.transformation.auto.auto_optimize import auto_optimize
@@ -40,6 +46,10 @@ from dace.transformation.passes.analysis import loop_analysis
 
 RegionVolumeMap = Dict[AbstractControlFlowRegion, Tuple[sp.Expr, sp.Expr]]
 RangeVarStack = List[Tuple[str, Tuple[sp.Expr, sp.Expr, sp.Expr]]]
+
+# Problem sizes at which a residual Max/Min (one no loop range could resolve) is compared to pick the
+# dominant -- tighter -- operand; the choice must agree across all of them or the node is left as-is.
+_DOMINANCE_PROBE_SIZES = (64, 257, 1024)
 
 
 def safe_summation(summand: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr) -> sp.Expr:
@@ -114,7 +124,18 @@ def resolve_minmax_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upp
         if canon_var not in canon_node.free_symbols:
             continue
         a, b = canon_node.args
-        diff = sp.expand(a - b)
+        # A positive common factor makes ``Min(c*X, d*X) = X*Min(c, d)``: divide it out so the
+        # comparison becomes affine in ``var`` (e.g. ``Min(2*j, j*(i - j + 1))`` -> compare ``2`` vs
+        # ``i - j + 1``). Comparing the reduced operands is valid because the factor is nonnegative
+        # in the canonical positive namespace, so it preserves the ordering of ``a`` and ``b``.
+        a_cmp, b_cmp = a, b
+        try:
+            common = sp.gcd(a, b)
+        except Exception:
+            common = sp.Integer(1)
+        if common != 1 and common.is_nonnegative:
+            a_cmp, b_cmp = sp.expand(a / common), sp.expand(b / common)
+        diff = sp.expand(a_cmp - b_cmp)
         coeff = diff.coeff(canon_var)
         if sp.expand(diff - coeff * canon_var).has(canon_var):  # not affine in var
             continue
@@ -151,6 +172,76 @@ def calculate_edge_volume(state: SDFGState, edge: MultiConnectorEdge) -> sp.Expr
     return vol * state.sdfg.arrays[edge.data.data].dtype.bytes
 
 
+def resolve_size_dominated_minmax(expr: sp.Expr) -> sp.Expr:
+    """
+    Resolve any residual two-argument ``Max``/``Min`` -- one that no loop range could fix, e.g. a
+    stencil's bounding box versus its per-connector sum -- by dominance at representative large
+    problem sizes (:data:`_DOMINANCE_PROBE_SIZES`).
+
+    Both operands are valid upper bounds on the accessed working set (see :func:`_edge_access_volume`),
+    so resolving the node to either one is sound; this picks the dominant -- tighter -- operand for a
+    clean closed form, and only when the choice agrees across all sample sizes (otherwise a crossover
+    is possible and the node is left symbolic).
+
+    :param expr: The volume expression possibly containing residual ``Max``/``Min`` nodes.
+    :return: The expression with size-dominated ``Max``/``Min`` nodes resolved to a single operand.
+    """
+    expr = pystr_to_symbolic(expr)
+    replacements = {}
+    for node in expr.atoms(sp.Max, sp.Min):
+        if len(node.args) != 2:
+            continue
+        free_symbols = list(node.free_symbols)
+        if not free_symbols:
+            continue
+        winners = set()
+        for sample in _DOMINANCE_PROBE_SIZES:
+            try:
+                values = [float(arg.subs({s: sample for s in free_symbols})) for arg in node.args]
+            except (TypeError, ValueError):
+                winners.clear()
+                break
+            dominant = min(values) if isinstance(node, sp.Min) else max(values)
+            winners.add(node.args[values.index(dominant)])
+        if len(winners) == 1:
+            replacements[node] = winners.pop()
+    return expr.subs(replacements) if replacements else expr
+
+
+def _edge_access_volume(state: SDFGState, edge: MultiConnectorEdge, neighbor) -> sp.Expr:
+    """
+    Compute the bytes moved by one memlet ``edge`` crossing into or out of a scope.
+
+    When the edge crosses a map scope, the accessed region is taken as the tighter (``Min``) of two
+    valid upper bounds on the working set: the propagated boundary memlet (a bounding box, which
+    over-counts disjoint slices such as a row and a column of a triangular access) and the sum of the
+    individual per-connector footprints (which over-counts overlapping slices such as a stencil's
+    neighbourhood). Otherwise the boundary memlet is used directly.
+
+    :param edge: The memlet edge whose byte volume is computed.
+    :param neighbor: Callable returning the node on the other end of the edge (the scope node for a
+                     map-crossing edge).
+    :return: The byte volume of the edge.
+    """
+    bounding_box = calculate_edge_volume(state, edge)
+    scope_node = neighbor(edge)
+    if not isinstance(scope_node, (nd.MapEntry, nd.MapExit)):
+        return bounding_box
+    # The per-connector footprints are the inner edges on the same array, each propagated over the
+    # map on its own (rather than unioned into the single boundary memlet).
+    inner_edges = state.out_edges(scope_node) if isinstance(scope_node, nd.MapEntry) else state.in_edges(scope_node)
+    inner_edges = [e for e in inner_edges if e.data.data == edge.data.data and e.data.subset is not None]
+    if not inner_edges:
+        return bounding_box
+    element_bytes = state.sdfg.arrays[edge.data.data].dtype.bytes
+    try:
+        per_connector = sum(
+            propagate_memlet(state, e.data, scope_node, False).subset.num_elements() for e in inner_edges)
+    except Exception:
+        return bounding_box
+    return sp.Min(bounding_box, per_connector * element_bytes)
+
+
 def _access_volume(state: SDFGState, node: nd.AccessNode, edges, neighbor) -> sp.Expr:
     """
     Sum the byte volume of an access node's ``edges`` that touch global memory.
@@ -163,7 +254,7 @@ def _access_volume(state: SDFGState, node: nd.AccessNode, edges, neighbor) -> sp
     if state.sdfg.arrays[node.data].storage not in (StorageType.CPU_Heap, StorageType.GPU_Global):
         return pystr_to_symbolic(0)
     return pystr_to_symbolic(
-        sum(calculate_edge_volume(state, e) for e in edges if not isinstance(neighbor(e), nd.NestedSDFG)))
+        sum(_edge_access_volume(state, e, neighbor) for e in edges if not isinstance(neighbor(e), nd.NestedSDFG)))
 
 
 def _accumulate_volume_over_var(volume: sp.Expr, var: str, lo: sp.Expr, hi: sp.Expr, step: sp.Expr) -> sp.Expr:
@@ -179,8 +270,13 @@ def _accumulate_volume_over_var(volume: sp.Expr, var: str, lo: sp.Expr, hi: sp.E
     shifted_hi = int_floor(hi - lo, step)
     present = {s.name: s for s in volume.free_symbols}
     if var in present:
-        # Resolve Max/Min fixed by this range (e.g. a triangular access) before summing for a closed form.
-        volume = resolve_minmax_over_range(volume, present[var], lo, hi)
+        # Resolve Max/Min fixed by this range (e.g. a triangular access) before summing for a closed
+        # form. Iterate to a fixed point so nested nodes collapse inside-out (an inner ``Max(i, j)``
+        # must resolve before the ``Min`` containing it becomes comparable).
+        previous = None
+        while volume != previous:
+            previous = volume
+            volume = resolve_minmax_over_range(volume, present[var], lo, hi)
         volume = volume.subs(present[var], pystr_to_symbolic(step) * sp_var + lo)
     return safe_summation(volume, sp_var, pystr_to_symbolic(0), shifted_hi)
 
@@ -390,8 +486,9 @@ def analyze_sdfg(sdfg: SDFG, optimize: bool = True) -> Tuple[sp.Expr, sp.Expr]:
     static_symbol_mapping = get_static_symbols(sdfg)
 
     read, write = cfr_volume(sdfg, region_volume_map, [], False)
-    read = read.subs(static_symbol_mapping)
-    write = write.subs(static_symbol_mapping)
+    # Resolve residual Max/Min (per-connector vs bounding box left where no loop range fixed it).
+    read = resolve_size_dominated_minmax(read.subs(static_symbol_mapping))
+    write = resolve_size_dominated_minmax(write.subs(static_symbol_mapping))
     return read, write
 
 

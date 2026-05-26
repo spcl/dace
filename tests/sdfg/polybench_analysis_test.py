@@ -107,26 +107,23 @@ _KERNEL_FUNCS = {
 # 3*NI*NJ*NK+NI*NJ also counts the alpha/beta scaling), cholesky ~N**3/3, lu/ludcmp ~2*N**3/3
 # (the analysis counts the unary negate in ``-a*b`` as a separate op, so its leading term is ~3/2x the
 # textbook flop count), floyd-warshall ~N**3, stencils ~tsteps*flops_per_point*interior, BLAS-2 ~N**2.
-# The triangular reads (cholesky/lu/ludcmp) are O(N**4): the propagated boundary memlet over a row and
-# a column access is a dense bounding box (see total_volume's cost-model docstring).
+# The triangular reads (cholesky/lu/ludcmp) are O(N**3): the analysis takes the tighter of the
+# propagated boundary memlet (a dense box over a row and a column) and the per-connector slice sum
+# (see total_volume's cost-model docstring).
 EXPECTED = {
     '2mm': (('NI*(3*NJ*NK + 2*NJ*NL + NL)', 2702), ('8*NI*NJ + 8*NI*NK + 8*NI*NL + 8*NJ*NK + 8*NJ*NL + 16', 2744),
             ('16*NI*(NJ + NL)', 2016)),
     '3mm': (('2*NJ*(NI*NK + NI*NL + NL*NM)', 4048), ('8*NI*NJ + 8*NI*NK + 8*NJ*NK + 8*NJ*NL + 8*NJ*NM + 8*NL*NM', 3896),
             ('8*NI*NJ + 8*NI*NL + 8*NJ*NL', 1648)),
-    'adi': (('2*tsteps*(N - 2)*(17*N + 2*int_floor(3 - N, -1) - 32) + 40',
-             18432), ('16*tsteps*(14*N**2 + 3*N*int_floor(3 - N, -1) - 43*N - 6*int_floor(3 - N, -1) + 39)', 139264),
-            ('80*N**2*tsteps + 16*N*tsteps*int_floor(3 - N, -1) - 136*N*tsteps - 32*tsteps*int_floor(3 - N, -1) '
-             '- 48*tsteps + 48', 53904)),
+    'adi': (('38*tsteps*(N - 2)**2 + 40', 18432), ('16*tsteps*(17*N**2 - 58*N + 57)', 139264),
+            ('96*N**2*tsteps - 216*N*tsteps + 48*tsteps + 48', 53904)),
     'atax': (('4*M*N', 572), ('8*M*(3*N + 1)', 3520), ('8*M*N + 8*M + 8*N', 1336)),
     'bicg': (('4*M*N', 572), ('8*M*N + 8*M + 8*N', 1336), ('16*M + 8*N', 280)),
-    'cholesky': (('N**2*(N + 1)/2', 1183), ('N*(N**3 + 2*N**2 + 23*N - 2)/3', 12272), ('8*N*(N + 1)', 1456)),
+    'cholesky': (('N**2*(N + 1)/2', 1183), ('4*N*(2*N**2 + 3*N + 1)/3', 6552), ('8*N*(N + 1)', 1456)),
     'correlation':
     (('M*(M*N + 8*N + 3)', 2750), ('32*M*N + 40*M + 8*(M - 1)**2', 5816), ('24*M**2 + 8*M*N + 16', 4064)),
     'covariance': (('M*(M*N + M + 3*N + 2)', 2145), ('4*M*(2*M*N + M + 8*N + 5)', 17864), ('8*M*(3*M + N + 5)', 4488)),
-    'deriche': (('2*H*W + 7*H*(int_floor(1 - W, -1) + 1) + W*(16*H + 7*int_floor(1 - H, -1) + 7)',
-                 960), ('48*H*W + 20*H*(int_floor(1 - W, -1) + 1) + 20*W*(int_floor(1 - H, -1) + 1)', 2640),
-                ('40*H*W + 20*H*int_floor(1 - W, -1) + 48*H + 20*W*int_floor(1 - H, -1) + 48*W', 2708)),
+    'deriche': (('32*H*W', 960), ('88*H*W', 2640), ('80*H*W + 28*H + 28*W', 2708)),
     'doitgen': (('2*NP**2*NQ*NR', 1200), ('8*NP*(NP*NQ*NR + NP + 2*NQ*NR)', 6920), ('16*NP*NQ*NR', 1920)),
     'durbin': (('2*N**2 + 4*N - 4', 386), ('16*N**2 + 40*N - 48', 3176), ('8*N**2 + 32*N - 16', 1752)),
     'fdtd-2d': (('TMAX*(11*NX*NY - 8*NX - 8*NY + 5)', 1503), ('8*TMAX*(7*NX*NY - 3*NX - 3*NY + 2)', 8376),
@@ -140,18 +137,10 @@ EXPECTED = {
     'heat-3d': (('30*tsteps*(N - 2)**3', 159720), ('16*N**3*tsteps', 140608), ('16*tsteps*(N - 2)**3', 85184)),
     'jacobi-1d': (('6*tsteps*(N - 2)', 264), ('16*N*tsteps', 832), ('16*tsteps*(N - 2)', 704)),
     'jacobi-2d': (('10*tsteps*(N - 2)**2', 4840), ('16*N**2*tsteps', 10816), ('16*tsteps*(N - 2)**2', 7744)),
-    'lu': (('N**2*(N - 1)', 2028), ('2*N*(N**3 + 2*N**2 + 5*N - 4)', 67496), ('4*N*(3*N - 1)', 1976)),
-    'ludcmp': (('N**3 + N**2/2 + 3*N*int_floor(1 - N, -1) + 3*N/2 - 3*int_floor(1 - N, -1)**2/2 '
-                '- 7*int_floor(1 - N, -1)/2 - 2', 2509),
-               ('2*N**4 + 4*N**3 + 30*N**2 + 4*N + 8*int_floor(1 - N, -1)**2 + 32*int_floor(1 - N, -1) + 24',
-                72592), ('24*N**2 + 24*N + 24*int_floor(1 - N, -1) + 24', 4680)),
+    'lu': (('N**2*(N - 1)', 2028), ('16*N*(N**2 - 1)/3', 11648), ('4*N*(3*N - 1)', 1976)),
+    'ludcmp': (('N*(N**2 + 2*N - 2)', 2509), ('4*N*(4*N**2 + 21*N + 17)/3', 16744), ('24*N*(N + 2)', 4680)),
     'mvt': (('4*N**2', 676), ('8*N*(N + 2)', 1560), ('16*N', 208)),
-    'nussinov': (('N**2*int_floor(1 - N, -1)/2 + N**2/2 - N*int_floor(1 - N, -1)**2/2 + N/2 '
-                  '+ int_floor(1 - N, -1)**3/6 - 7*int_floor(1 - N, -1)/6 - 1',
-                  442), ('2*int_floor(1 - N, -1)**3 + 8*int_floor(1 - N, -1)**2 + 6*int_floor(1 - N, -1) '
-                         '+ Max(4*(int_floor(1 - N, -1) + 1)*int_floor(1 - N, -1), '
-                         '8*(int_floor(1 - N, -1) + 1)*int_floor(1 - N, -1))', 5928),
-                 ('2*(int_floor(1 - N, -1)**2 + 9*int_floor(1 - N, -1) + 8)*int_floor(1 - N, -1)/3', 2080)),
+    'nussinov': (('N*(N**2 + 3*N - 4)/6', 442), ('2*N*(N**2 + 5*N - 6)', 5928), ('2*N*(N**2 + 6*N - 7)/3', 2080)),
     'seidel-2d': (('9*tsteps*(N - 2)**2', 4356), ('72*tsteps*(N - 2)**2', 34848), ('8*tsteps*(N - 2)**2', 3872)),
     'symm': (('M*N*(5*M + 7)/2', 4433), ('8*M**2*N + 8*M**2 + 64*M*N + 16', 22720), ('4*M*N*(M + 3)', 8008)),
     'syr2k': (('N*(6*M + 1)*(N + 1)/2', 6097), ('16*M*N + 8*N**2 + 16', 3656), ('16*N**2', 2704)),
