@@ -1,7 +1,7 @@
 import ast
 import copy
 import numpy
-from sympy import Function, preorder_traversal, pycode
+from sympy import Function, pycode
 import re
 import sympy
 import dace
@@ -317,15 +317,12 @@ class BranchElimination(transformation.MultiStateTransformation):
     def _move_interstate_assignment_to_state(self, state: dace.SDFGState, rhs: str, lhs: str,
                                              parent_nsdfg_state: dace.SDFGState,
                                              parent_nsdfg_node: dace.nodes.NestedSDFG):
-        # Parse rhs of itnerstate edge assignment to a symbolic expression
-        # array accesses are shown as functions e.g. arr1[i, j] is treated as a function arr1(i, j)
-        # do not consider functions that are native python operators as functions (e.g. AND)
-        rhs_as_symexpr = dace.symbolic.SymExpr(rhs)
-        free_vars = {str(sym)
-                     for sym in rhs_as_symexpr.free_symbols}.union({
-                         str(node.func)
-                         for node in preorder_traversal(rhs_as_symexpr) if isinstance(node, Function)
-                     }) - {"AND", "OR", "NOT", "and", "or", "not", "And", "Or", "Not"}
+        # Collect every name the RHS references. Array accesses are ``Subscript``
+        # nodes (their head is reported by ``arrays``, not as a function); genuine
+        # symbols and user-functions come from ``free_symbols_and_functions``.
+        # Drop the native python boolean operators.
+        free_vars = (dace.symbolic.free_symbols_and_functions(rhs)
+                     | dace.symbolic.arrays(rhs)) - {"AND", "OR", "NOT", "and", "or", "not", "And", "Or", "Not"}
 
         # Collect inputs we need
         arr_inputs = {var for var in free_vars if var in state.sdfg.arrays}
@@ -345,9 +342,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                         if sym_name in ie_assigns:
                             rhs_expr = ie_assigns[sym_name]
                             try:
-                                rhs_sym = dace.symbolic.SymExpr(rhs_expr)
-                                rhs_arr_atoms = {str(f.func)
-                                                 for f in rhs_sym.atoms(Function)} & set(state.sdfg.arrays.keys())
+                                rhs_arr_atoms = dace.symbolic.arrays(rhs_expr) & set(state.sdfg.arrays.keys())
                             except Exception:
                                 rhs_arr_atoms = set()
                             if len(rhs_arr_atoms) == 1:
@@ -1729,15 +1724,17 @@ class BranchElimination(transformation.MultiStateTransformation):
         # Collect all free symbols
         all_syms = expr.free_symbols
 
-        # Collect symbols appearing in function calls
-        func_arg_syms = set()
+        # Collect symbols used only as array-access indices. Array accesses are
+        # ``Subscript`` nodes; ``args[0]`` is the array head and ``args[1:]`` the
+        # indices, so the indices (not "function arguments") are what to exclude.
+        index_syms = set()
         for node in sympy.preorder_traversal(expr):
-            if isinstance(node, sympy.Function):
-                for arg in node.args:
-                    func_arg_syms |= arg.free_symbols
+            if isinstance(node, dace.symbolic.Subscript):
+                for arg in node.args[1:]:
+                    index_syms |= arg.free_symbols
 
-        # Keep only symbols that are not used as function arguments
-        outside_syms = all_syms - func_arg_syms
+        # Keep only symbols that are not used as array-access indices
+        outside_syms = all_syms - index_syms
 
         # Filter to symbols known to the SDFG
         return {str(s).strip() for s in outside_syms if str(s) in sdfg_symbols}

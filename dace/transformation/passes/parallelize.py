@@ -29,8 +29,13 @@ from typing import Any, Dict, Optional
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import AugAssignToWCR, TrivialTaskletElimination
-from dace.transformation.interstate import LoopToMap
+# Import the concrete transformation modules (not the ``dataflow`` / ``interstate``
+# package ``__init__``) to avoid a circular import: those packages pull in every
+# transformation, some of which import ``dace.transformation.passes`` -- which is
+# what loads this module.
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
