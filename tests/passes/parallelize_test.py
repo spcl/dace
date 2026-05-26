@@ -73,9 +73,9 @@ def test_parallelize_runs_once_idempotent():
             C[i] = A[i] + B[i]
 
     sdfg = add.to_sdfg(simplify=True)
-    assert ParallelizePipeline().apply_pass(sdfg, {}) == 5
+    assert ParallelizePipeline().apply_pass(sdfg, {}) == 6
     # Re-running is harmless (nothing left to parallelize).
-    assert ParallelizePipeline().apply_pass(sdfg, {}) == 5
+    assert ParallelizePipeline().apply_pass(sdfg, {}) == 6
     sdfg.validate()
 
     A = np.random.default_rng(2).random(8)
@@ -85,7 +85,44 @@ def test_parallelize_runs_once_idempotent():
     assert np.allclose(C, A + B)
 
 
+def test_parallelize_unrolls_short_constant_loop():
+    """A short constant-trip loop is fully unrolled (no loop, no atomics) below the
+    limit, and left alone above it; the result is value-preserving either way."""
+
+    @dace.program
+    def short_reduce(A: dace.float64[5], B: dace.float64[1]):
+        acc = 0.0
+        for j in range(5):
+            acc += A[j]
+        B[0] = acc
+
+    # The unroll gate fires only at/below the limit (probe the stage directly,
+    # since downstream LoopToReduce would also eliminate the loop).
+    below = short_reduce.to_sdfg(simplify=True)
+    assert _num_loops(below) == 1
+    ParallelizePipeline(unroll_limit=8)._unroll_short_loops(below)
+    assert _num_loops(below) == 0  # trip 5 <= 8 -> unrolled
+
+    above = short_reduce.to_sdfg(simplify=True)
+    ParallelizePipeline(unroll_limit=4)._unroll_short_loops(above)
+    assert _num_loops(above) == 1  # trip 5 > 4 -> left alone
+
+    off = short_reduce.to_sdfg(simplify=True)
+    ParallelizePipeline(unroll_limit=0)._unroll_short_loops(off)
+    assert _num_loops(off) == 1  # disabled
+
+    # Full pipeline (default limit 8) is value-preserving end to end.
+    sdfg = short_reduce.to_sdfg(simplify=True)
+    parallelize(sdfg, validate=True)
+    assert _num_loops(sdfg) == 0
+    A = np.random.default_rng(4).random(5)
+    B = np.zeros(1)
+    sdfg(A=A, B=B)
+    assert np.allclose(B[0], A.sum())
+
+
 if __name__ == '__main__':
     test_parallelize_independent_loop_maps_value_preserving()
     test_parallelize_rowsum_reduction_value_preserving()
     test_parallelize_runs_once_idempotent()
+    test_parallelize_unrolls_short_constant_loop()
