@@ -29,11 +29,6 @@ from typing import Any, Dict, Optional
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import AugAssignToWCR, TrivialTaskletElimination
-from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes.loop_to_reduce import LoopToReduce
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.passes.scalar_fission import PrivatizeScalars
 
 
 @properties.make_properties
@@ -71,6 +66,16 @@ class ParallelizePipeline(ppl.Pass):
         :param sdfg: The SDFG to parallelize.
         :returns: The number of stages applied.
         """
+        # Imported lazily: ``passes/__init__`` imports this module, so a
+        # module-level ``from dace.transformation.interstate import LoopToMap``
+        # would form an import cycle (``interstate`` -> ``passes`` -> here ->
+        # ``interstate``) that breaks a cold ``from interstate import LoopToMap``.
+        from dace.transformation.dataflow import AugAssignToWCR, TrivialTaskletElimination
+        from dace.transformation.interstate import LoopToMap
+        from dace.transformation.passes.loop_to_reduce import LoopToReduce
+        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+        from dace.transformation.passes.scalar_fission import PrivatizeScalars
+
         stages = [
             PrivatizeScalars(),
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
