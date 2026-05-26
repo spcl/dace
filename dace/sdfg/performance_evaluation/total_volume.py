@@ -34,7 +34,7 @@ from dace.sdfg import infer_types, nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.performance_evaluation.helpers import get_static_symbols, has_unstructured_control_flow
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion
-from dace.symbolic import pystr_to_symbolic, symbol, int_floor
+from dace.symbolic import pystr_to_symbolic, symbol, int_floor, simplify
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -58,8 +58,8 @@ def safe_summation(summand: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.E
     :param upper: Inclusive upper bound of the summation.
     :return: The closed-form (or, if SymPy cannot evaluate it, unevaluated) sum.
     """
-    lower = sp.sympify(lower)
-    upper = sp.sympify(upper)
+    lower = pystr_to_symbolic(lower)
+    upper = pystr_to_symbolic(upper)
     free_syms = summand.free_symbols | lower.free_symbols | upper.free_symbols
     plain = {s: symbol(s.name) for s in free_syms if s != var and s.assumptions0}
     restore = {v: k for k, v in plain.items()}
@@ -85,8 +85,8 @@ def resolve_minmax_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upp
     :param upper: Inclusive upper bound of the summation range.
     :return: ``expr`` with the resolvable Max/Min nodes replaced.
     """
-    lower = sp.sympify(lower)
-    upper = sp.sympify(upper)
+    lower = pystr_to_symbolic(lower)
+    upper = pystr_to_symbolic(upper)
     var_name = var.name
 
     # Symbols of the same name may be distinct instances (different assumptions), so e.g. the ``i``
@@ -117,9 +117,9 @@ def resolve_minmax_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upp
             minimum, maximum = diff.subs(canon_var, canon_upper), diff.subs(canon_var, canon_lower)
         else:
             continue
-        if (sp.simplify(minimum) >= 0) == True:  # a >= b over the whole range
+        if (simplify(minimum) >= 0) == True:  # a >= b over the whole range
             winner = a if isinstance(node, sp.Max) else b
-        elif (sp.simplify(maximum) <= 0) == True:  # a <= b over the whole range
+        elif (simplify(maximum) <= 0) == True:  # a <= b over the whole range
             winner = b if isinstance(node, sp.Max) else a
         else:
             continue
@@ -166,8 +166,8 @@ def scope_volume(state: SDFGState,
         range_var_stack = []
 
     scope_nodes = state.scope_children()[entry]
-    read = sp.sympify(0)
-    write = sp.sympify(0)
+    read = pystr_to_symbolic(0)
+    write = pystr_to_symbolic(0)
     for node in scope_nodes:
         if isinstance(node, nd.AccessNode):
             if isinstance(state.sdfg.arrays[node.data], View):
@@ -179,7 +179,7 @@ def scope_volume(state: SDFGState,
                 if state.sdfg.arrays[node.data].storage in (StorageType.CPU_Heap, StorageType.GPU_Global):
                     read_edge_volumes.append(calculate_edge_volume(state, edge))
 
-            access_node_read_volume = sp.sympify(sum(read_edge_volumes))
+            access_node_read_volume = pystr_to_symbolic(sum(read_edge_volumes))
             write_edge_volumes = []
             for edge in state.in_edges(node):
                 if isinstance(edge.src, nd.NestedSDFG):
@@ -187,13 +187,13 @@ def scope_volume(state: SDFGState,
                 if state.sdfg.arrays[node.data].storage in (StorageType.CPU_Heap, StorageType.GPU_Global):
                     write_edge_volumes.append(calculate_edge_volume(state, edge))
 
-            access_node_write_volume = sp.sympify(sum(write_edge_volumes))
+            access_node_write_volume = pystr_to_symbolic(sum(write_edge_volumes))
             for (var, (lo, hi, step)) in reversed(range_var_stack):
                 read_symbol_map = {sym.name: sym for sym in access_node_read_volume.free_symbols}
                 write_symbol_map = {sym.name: sym for sym in access_node_write_volume.free_symbols}
 
                 shifted_hi = int_floor(hi - lo, step)
-                shifted_lo = sp.sympify(0)
+                shifted_lo = pystr_to_symbolic(0)
                 sp_var = symbol(var)
 
                 if var in read_symbol_map.keys():
@@ -202,7 +202,7 @@ def scope_volume(state: SDFGState,
                     # summing, so the sum has a closed form.
                     access_node_read_volume = resolve_minmax_over_range(access_node_read_volume, rvar, lo, hi)
                     access_node_read_volume = safe_summation(
-                        access_node_read_volume.subs(rvar, (sp.sympify(step) * sp_var + lo)), sp_var, shifted_lo,
+                        access_node_read_volume.subs(rvar, (pystr_to_symbolic(step) * sp_var + lo)), sp_var, shifted_lo,
                         shifted_hi)
                 else:
                     access_node_read_volume = safe_summation(access_node_read_volume, sp_var, shifted_lo, shifted_hi)
@@ -211,13 +211,13 @@ def scope_volume(state: SDFGState,
                     wvar = write_symbol_map[var]
                     access_node_write_volume = resolve_minmax_over_range(access_node_write_volume, wvar, lo, hi)
                     access_node_write_volume = safe_summation(
-                        access_node_write_volume.subs(wvar, (sp.sympify(step) * sp_var + lo)), sp_var, shifted_lo,
-                        shifted_hi)
+                        access_node_write_volume.subs(wvar, (pystr_to_symbolic(step) * sp_var + lo)), sp_var,
+                        shifted_lo, shifted_hi)
                 else:
                     access_node_write_volume = safe_summation(access_node_write_volume, sp_var, shifted_lo, shifted_hi)
 
-            read += sp.simplify(access_node_read_volume)
-            write += sp.simplify(access_node_write_volume)
+            read += simplify(access_node_read_volume)
+            write += simplify(access_node_write_volume)
 
         elif isinstance(node, nd.NestedSDFG):
             # Analyze the nested SDFG separately, then rename its symbols to match the parent SDFG.
@@ -287,8 +287,9 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
             except Exception:
                 # Fall back to the (statically estimated) number of executions of the loop body.
                 loop_executions = cfr.start_block.executions
-                range_var_stack.append((f"byte_access_loop_range_var_{len(range_var_stack)}",
-                                        (sp.sympify(0), loop_executions, sp.sympify(1))))
+                range_var_stack.append(
+                    (f"byte_access_loop_range_var_{len(range_var_stack)}", (pystr_to_symbolic(0), loop_executions,
+                                                                            pystr_to_symbolic(1))))
                 inner_read, inner_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
                 del range_var_stack[-1:]
                 region_volume_map[cfr] = (inner_read, inner_write)
@@ -299,7 +300,7 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
             branch_writes = []
             for (condition, branch) in cfr.branches:
                 branch_conditions[branch] = (pystr_to_symbolic(condition.as_string)
-                                             if condition is not None else sp.sympify(True))
+                                             if condition is not None else pystr_to_symbolic(True))
                 branch_read, branch_write = cfr_volume(branch, region_volume_map, range_var_stack)
                 branch_reads.append(branch_read)
                 branch_writes.append(branch_write)
@@ -320,8 +321,8 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
     traversal_q = deque()
     traversal_q.append((control_flow_region.start_block, {}))
 
-    region_reads = sp.sympify(0)
-    region_writes = sp.sympify(0)
+    region_reads = pystr_to_symbolic(0)
+    region_writes = pystr_to_symbolic(0)
     while traversal_q:
         current_region, current_mapping = traversal_q.popleft()
         for oedge in control_flow_region.out_edges(current_region):
@@ -364,7 +365,7 @@ def analyze_sdfg(sdfg: SDFG, optimize: bool = True) -> Tuple[sp.Expr, sp.Expr]:
         warnings.warn('Memory-volume analysis supports only structured control flow (LoopRegion / '
                       'ConditionalBlock); the SDFG contains a legacy loop or unstructured branch, '
                       'so no result is produced.')
-        return sp.sympify(0), sp.sympify(0)
+        return pystr_to_symbolic(0), pystr_to_symbolic(0)
 
     if optimize:
         # Try to use an optimized version of the SDFG to account for compiler optimizations.

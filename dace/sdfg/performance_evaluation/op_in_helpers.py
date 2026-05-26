@@ -8,7 +8,7 @@ import sympy as sp
 from collections import deque
 from scipy.optimize import curve_fit
 import numpy as np
-from dace import symbol
+from dace.symbolic import symbol, pystr_to_symbolic
 
 
 class CacheLineTracker:
@@ -33,7 +33,8 @@ class CacheLineTracker:
         one_d_index = 0
         for dim in range(len(access)):
             i = access[dim]
-            one_d_index += (i + sp.sympify(arr.offset[dim]).subs(mapping)) * sp.sympify(arr.strides[dim]).subs(mapping)
+            one_d_index += (i + pystr_to_symbolic(arr.offset[dim]).subs(mapping)) * pystr_to_symbolic(
+                arr.strides[dim]).subs(mapping)
 
         # divide by L to get the cache line id
         return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
@@ -149,7 +150,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
     ax[0].scatter(x, cache_misses, label=f'C={C*L}, L={L}')
     b = []
     for curr in a:
-        b.append(sp.N(sp.sympify(sympy_f).subs(symbol_name, curr)))
+        b.append(sp.N(pystr_to_symbolic(sympy_f).subs(symbol_name, curr)))
     ax[0].plot(a, b)
 
     c = []
@@ -165,7 +166,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
     ax[1].scatter(x, c, label=f'C={C*L}, L={L}')
     b = []
     for curr in a:
-        b.append(sp.N(sp.sympify(op_in_map).subs(symbol_name, curr)))
+        b.append(sp.N(pystr_to_symbolic(op_in_map).subs(symbol_name, curr)))
     ax[1].plot(a, b)
 
     ax[0].set_ylim(bottom=0, top=max(cache_misses) + max(cache_misses) / 10)

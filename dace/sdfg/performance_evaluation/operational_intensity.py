@@ -10,7 +10,7 @@ from typing import Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic, SymExpr, symbol
+from dace.symbolic import pystr_to_symbolic, SymExpr, symbol, simplify
 import re
 import warnings
 
@@ -87,7 +87,7 @@ def symeval(val, symbols):
     """
     first_replacement = {pystr_to_symbolic(k): pystr_to_symbolic('__REPLSYM_' + k) for k in symbols.keys()}
     second_replacement = {pystr_to_symbolic('__REPLSYM_' + k): v for k, v in symbols.items()}
-    return sp.simplify(val.subs(first_replacement).subs(second_replacement))
+    return simplify(val.subs(first_replacement).subs(second_replacement))
 
 
 def evaluate_symbols(base, new):
@@ -343,7 +343,7 @@ def cfr_misses(cfr: ControlFlowRegion,
         loop_var = cfr.loop_variable
         loop_condition = pystr_to_symbolic(cfr.loop_condition.as_string)
         start = loop_analysis.get_init_assignment(cfr).subs(mapping)
-        step = sp.sympify(loop_analysis.get_loop_stride(cfr))
+        step = pystr_to_symbolic(loop_analysis.get_loop_stride(cfr))
         mapping[loop_var] = start.subs(mapping)
         region_misses = 0
         while (loop_condition.subs(mapping) == True):
@@ -675,7 +675,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             for k, v in cache_miss_measurements.items():
 
                 final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
-                op_in_map[k] = sp.simplify(sympy_f * L)
+                op_in_map[k] = simplify(sympy_f * L)
                 sympy_fs[k] = sympy_f
                 if k == get_uuid(sdfg):
                     # compute MAPE on total SDFG

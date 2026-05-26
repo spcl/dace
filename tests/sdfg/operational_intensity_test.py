@@ -12,7 +12,7 @@ import numpy as np
 from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.utils import inline_control_flow_regions
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.parser import DaceProgram
 
 from math import isclose
@@ -108,7 +108,7 @@ def reduction_library_node(x: dace.float64[N]):
 
 
 #(sdfg, c, l, assumptions, expected_result)
-test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dace.symbolic.SymbolicType]] = {
+test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]] = {
     'single_map64_even': (single_map64, 64 * 64, 64, {
         'N': 512
     }, 1 / 24),

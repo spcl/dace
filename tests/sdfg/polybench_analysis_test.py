@@ -41,7 +41,7 @@ import dace
 from dace.sdfg import nodes as nd
 from dace.sdfg.performance_evaluation import total_volume, work_depth
 from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, Subscript
 
 _POLYBENCH_DIR = pathlib.Path(__file__).resolve().parents[1] / 'polybench'
 
@@ -310,7 +310,6 @@ def test_spmv_data_dependent_known_limitation():
     indexed by the loop variable), so the analyses cannot produce a closed form in the size symbols
     alone -- the result legitimately depends on a per-iteration execution symbol. We accept and
     verify that the analyses run and return such a symbolic result rather than a wrong constant."""
-    from dace import symbolic
     sdfg = _spmv.to_sdfg(simplify=True)
     work = pystr_to_symbolic(_compute_work(sdfg))
     read, _write = total_volume.analyze_sdfg(sdfg, optimize=False)
@@ -320,7 +319,7 @@ def test_spmv_data_dependent_known_limitation():
     def depends_on_data_or_iterator(expr) -> bool:
         # Either an array value (``rowptr[i]``, a Subscript) leaks into the result, or a loop
         # iterator (a non-size free symbol) was never summed away.
-        return bool(expr.atoms(symbolic.Subscript)) or any(s.name not in size_symbols for s in expr.free_symbols)
+        return bool(expr.atoms(Subscript)) or any(s.name not in size_symbols for s in expr.free_symbols)
 
     # Work depends on the row-pointer values (rowptr[H] - rowptr[0] = number of non-zeros).
     assert depends_on_data_or_iterator(work)

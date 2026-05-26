@@ -8,6 +8,7 @@ from dace import SDFG
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.performance_evaluation.total_volume import analyze_sdfg
+from dace.symbolic import simplify
 
 
 def make_copy_sdfg(name: str, shape, dtype) -> SDFG:
@@ -59,8 +60,8 @@ def test_empty_sdfg():
     sdfg = SDFG('empty')
     sdfg.add_state('s0')
     read, write = analyze_sdfg(sdfg)
-    assert sp.simplify(read) == 0
-    assert sp.simplify(write) == 0
+    assert simplify(read) == 0
+    assert simplify(write) == 0
 
 
 def test_returns_sympy():
@@ -75,8 +76,8 @@ def test_copy_float64():
     """Copying 8 float64s: expect 64 bytes read and 64 bytes written."""
     sdfg = make_copy_sdfg('copy_f64', [8], dace.float64)
     read, write = analyze_sdfg(sdfg)
-    assert sp.simplify(read - 64) == 0
-    assert sp.simplify(write - 64) == 0
+    assert simplify(read - 64) == 0
+    assert simplify(write - 64) == 0
 
 
 def test_copy_float32_half_bytes():
@@ -85,15 +86,15 @@ def test_copy_float32_half_bytes():
     sdfg32 = make_copy_sdfg('copy_f32', [16], dace.float32)
     r64, w64 = analyze_sdfg(sdfg64)
     r32, w32 = analyze_sdfg(sdfg32)
-    assert sp.simplify(r64 - 2 * r32) == 0
-    assert sp.simplify(w64 - 2 * w32) == 0
+    assert simplify(r64 - 2 * r32) == 0
+    assert simplify(w64 - 2 * w32) == 0
 
 
 def test_read_write_symmetry_on_copy():
     """A pure copy should read and write the same volume."""
     sdfg = make_copy_sdfg('copy_sym', [32], dace.float64)
     read, write = analyze_sdfg(sdfg)
-    assert sp.simplify(read - write) == 0
+    assert simplify(read - write) == 0
 
 
 def test_two_independent_copies():
@@ -111,8 +112,8 @@ def test_two_independent_copies():
         state.add_nedge(state.add_read(src), state.add_write(dst), dace.Memlet(f'{src}[0:8]'))
 
     read, write = analyze_sdfg(sdfg)
-    assert sp.simplify(read - 128) == 0
-    assert sp.simplify(write - 128) == 0
+    assert simplify(read - 128) == 0
+    assert simplify(write - 128) == 0
 
 
 def test_symbolic_shape():
@@ -147,8 +148,8 @@ def test_view_access_node_excluded():
     read, write = analyze_sdfg(sdfg)
     # V is a View, so its edges must not contribute a second time: the read
     # volume should reflect only A, not A + V.
-    assert sp.simplify(read - 64) == 0  # 8 elements * 8 bytes from A
-    assert sp.simplify(write - 64) == 0  # 8 elements * 8 bytes into B
+    assert simplify(read - 64) == 0  # 8 elements * 8 bytes from A
+    assert simplify(write - 64) == 0  # 8 elements * 8 bytes into B
 
 
 def test_map_doubles_volume():
@@ -169,8 +170,8 @@ def test_map_doubles_volume():
 
     read, write = analyze_sdfg(sdfg)
     # 2 iterations * 8 elements * 8 bytes = 128 bytes each
-    assert sp.simplify(read - 128) == 0
-    assert sp.simplify(write - 128) == 0
+    assert simplify(read - 128) == 0
+    assert simplify(write - 128) == 0
 
 
 def test_loop_multiplies_volume():
@@ -179,8 +180,8 @@ def test_loop_multiplies_volume():
     read, write = analyze_sdfg(sdfg)
     # 8 elements * 8 bytes * N iterations = 64*N bytes
     expected = 64 * dace.symbol('N')
-    assert sp.simplify(read - expected) == 0
-    assert sp.simplify(write - expected) == 0
+    assert simplify(read - expected) == 0
+    assert simplify(write - expected) == 0
 
 
 def test_bails_on_unstructured_control_flow():

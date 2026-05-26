@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 import dace
-from dace import symbolic
+from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
                                                          parse_assumptions, count_arithmetic_ops_code, count_depth_code)
@@ -195,7 +195,7 @@ def loop_var_dependent_work(x: dace.float64[N], y: dace.float64[N], z: dace.floa
 
 
 #(sdfg, (expected_work, expected_depth))
-work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]] = {
+work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[SymbolicType, SymbolicType]]] = {
     'single_map': (single_map, (N, 1)),
     'single_for_loop': (single_for_loop, (N, N)),
     'if_else': (if_else, (1000, 100)),
@@ -239,7 +239,7 @@ def test_work_depth(test_name):
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
-    correct = (symbolic.pystr_to_symbolic(correct[0]), symbolic.pystr_to_symbolic(correct[1]))
+    correct = (pystr_to_symbolic(correct[0]), pystr_to_symbolic(correct[1]))
     assert res[0].expand() == correct[0].expand()
     assert res[1].expand() == correct[1].expand()
 
@@ -280,7 +280,7 @@ def test_avg_par(test_name: str):
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)]
-    correct = symbolic.pystr_to_symbolic(correct)
+    correct = pystr_to_symbolic(correct)
     assert res.expand() == correct.expand()
 
 
