@@ -1,14 +1,14 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Helper functions used by the work depth analysis. """
 
-from dace import SDFG, SDFGState, nodes
+from dace import SDFG, SDFGState, dtypes, nodes
 from collections import deque
 from typing import List, Dict, Set, Tuple, Optional, Union
 import networkx as nx
 import re
 import sympy as sp
 from dace.sdfg.state import ControlFlowRegion
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, symbol
 
 NodeT = str
 EdgeT = Tuple[NodeT, NodeT]
@@ -412,14 +412,15 @@ def get_legacy_loop_ranges(cfr: ControlFlowRegion) -> Dict[SDFGState, Tuple[sp.E
     return result
 
 
-def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]):
+def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]) -> sp.Expr:
     """
-    Takes a sympy expression and a symbol mapping and applies the mapping to the expression until a fixed point is reached
-    Needs the guarantee that the symbol mapping does not have cyclic dependencies.
+    Apply a symbol mapping to a symbolic expression repeatedly until a fixed point is reached.
 
-    :param expr: Description
-    :param symbol_map: Description
-    :return: Description
+    Requires that the symbol mapping has no cyclic dependencies, otherwise it would not converge.
+
+    :param expr: The expression to substitute into (non-symbolic values are returned unchanged).
+    :param symbol_map: Mapping from symbols to their replacement expressions.
+    :return: The expression after substituting to a fixed point.
     """
     if not isinstance(expr, sp.Expr):
         return expr
@@ -431,79 +432,80 @@ def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]):
     return curr
 
 
-def get_static_symbols(sdfg: SDFG):
+def get_static_symbols(sdfg: SDFG) -> Dict[str, sp.Expr]:
     """
-    Returns a mapping of symbols that are assigned exactly at one point in the sdfg.
+    Find the symbols that are assigned at exactly one point in the SDFG (i.e., statically known).
 
-    :param sdfg: The sdfg for which we want to find the static symbols and their corresponding assignment
-    :return: The mapping of the symbols to higher levels (iterated to a fixed point)
+    A symbol is static if it is written by a single length-1 access (from a tasklet performing one
+    assignment, or by a single copy from another access node). Symbols written in more than one
+    place are excluded.
+
+    :param sdfg: The SDFG for which to find static symbols and their assignments.
+    :return: Mapping from each static symbol name to its defining expression (resolved to a fixed
+             point). String keys let callers both substitute and index the result by symbol name.
     """
+    # Strip type-cast prefixes (e.g. ``dace.float64``, ``int``) from a tasklet RHS so the cast does
+    # not interfere with the symbolic parse below. The DaCe type names are derived from
+    # ``dace.dtypes`` (rather than hard-coded), and matched longest-first so ``dace.float64`` wins
+    # over ``float``.
+    cast_names = {'int', 'float', 'complex', 'bool'}
+    cast_names |= {f'dace.{name}' for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)}
+    type_regex = re.compile("|".join(re.escape(name) for name in sorted(cast_names, key=len, reverse=True)))
 
-    patterns = [
-        "dace.complex128", "dace.float64", "dace.float32", "dace.int64", "dace.int32", "dace.int16", "dace.uint32",
-        "dace.uint16", "dace.uint8", "float", "int"
-    ]
-
-    type_regex = re.compile("|".join(map(re.escape, patterns)))
-    static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
+    static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {symbol(a): symbol(a) for a in sdfg.arg_names}
     non_static_symbols = set()
     for node, containing_state in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.AccessNode):
+        if not isinstance(node, nodes.AccessNode):
+            continue
+        if containing_state.in_degree(node) != 1:
+            continue
+        edge = containing_state.in_edges(node)[0]
+        source = edge.src
+        if edge.data.volume != 1:
+            continue
 
-            if containing_state.in_degree(node) == 1:
-                edge = containing_state.in_edges(node)[0]
-                source = edge.src
+        if isinstance(source, nodes.Tasklet):
+            tasklet = source
+            in_map = {}
+            out_map = {}
+            # Incoming edges: symbols feeding the tasklet.
+            for e in containing_state.in_edges(tasklet):
+                if not isinstance(e.src, nodes.AccessNode):
+                    continue
+                in_map[e.dst_conn] = str(e.src.data)
+            # Outgoing edges: symbols written by the tasklet (expected to be a single edge).
+            for e in containing_state.out_edges(tasklet):
+                if not isinstance(e.dst, nodes.AccessNode):
+                    continue
+                out_map[e.src_conn] = str(e.dst.data)
 
-                if edge.data.volume == 1:
-                    if isinstance(source, nodes.Tasklet):
-                        tasklet = source
-                        in_map = {}
-                        out_map = {}
-                        # Incoming edges: symbols feeding the tasklet
-                        for e in containing_state.in_edges(tasklet):
-                            if not isinstance(e.src, nodes.AccessNode):
-                                continue
-                            sym = str(e.src.data)
-                            in_map[e.dst_conn] = sym
-                        # Outgoing edges: symbols written by the tasklet
-                        # Out edges should only be one, but for safety we iterate
-                        for e in containing_state.out_edges(tasklet):
-                            if not isinstance(e.dst, nodes.AccessNode):
-                                continue
-                            sym = sp.Symbol(e.dst.data)
-                            out_map[e.src_conn] = sym
-                        code = tasklet.code.as_string.strip()
-                        # Expect a single assignment
-                        lines = [l.strip() for l in code.splitlines() if l.strip()]
-                        lhs, rhs = lines[0].split('=', 1)
-                        lhs = lhs.strip()
-                        rhs = rhs.strip()
-                        rhs = type_regex.sub("", rhs)
-                        # Parse RHS using SymPy, with tasklet inputs substituted
-                        lhs_sympy = pystr_to_symbolic(lhs)
-                        lhs_sympy = lhs_sympy.subs(out_map)
+            in_map = {symbol(k): symbol(v) for k, v in in_map.items()}
+            out_map = {symbol(k): symbol(v) for k, v in out_map.items()}
+            code = tasklet.code.as_string.strip()
+            # Expect a single assignment.
+            lines = [l.strip() for l in code.splitlines() if l.strip()]
+            if len(lines) > 1:
+                non_static_symbols.add(node.data)
+                continue
+            lhs, rhs = lines[0].split('=', 1)
+            lhs = lhs.strip()
+            rhs = type_regex.sub("", rhs.strip())
+            lhs_sympy = pystr_to_symbolic(lhs).subs(out_map)
 
-                        if not lhs_sympy in static_symbol_mapping.keys():
-                            try:
-                                rhs_sympy = pystr_to_symbolic(rhs)
-                                rhs_sympy = rhs_sympy.subs(in_map)
-                                static_symbol_mapping[lhs_sympy] = rhs_sympy
-                            except Exception:
-                                non_static_symbols.add(lhs_sympy)
-                        else:
-                            non_static_symbols.add(lhs_sympy)
+            if lhs_sympy not in static_symbol_mapping.keys():
+                try:
+                    static_symbol_mapping[lhs_sympy] = pystr_to_symbolic(rhs).subs(in_map)
+                except Exception:
+                    non_static_symbols.add(lhs_sympy)
+            else:
+                non_static_symbols.add(lhs_sympy)
 
-                    elif isinstance(source, nodes.AccessNode):
-                        data_sym = sp.Symbol(source.data)
-                        nd_sym = sp.Symbol(node.data)
-                        if not data_sym in static_symbol_mapping.keys():
-                            static_symbol_mapping[data_sym] = nd_sym
-                        else:
-                            non_static_symbols.add(data_sym)
+        elif isinstance(source, nodes.AccessNode):
+            data_sym = symbol(source.data)
+            if data_sym not in static_symbol_mapping.keys():
+                static_symbol_mapping[data_sym] = symbol(node.data)
+            else:
+                non_static_symbols.add(data_sym)
 
     static_symbol_mapping = {k: v for (k, v) in static_symbol_mapping.items() if k not in non_static_symbols}
-    static_symbol_mapping = {
-        str(k): subs_till_fixed_point(v, static_symbol_mapping)
-        for k, v in static_symbol_mapping.items()
-    }
-    return static_symbol_mapping
+    return {str(k): subs_till_fixed_point(v, static_symbol_mapping) for k, v in static_symbol_mapping.items()}
