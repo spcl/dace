@@ -160,11 +160,13 @@ def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
     :param sdfg: The SDFG for which to find static symbols and their assignments.
     :return: Mapping from each static symbol to its defining expression (resolved to a fixed point).
     """
-    patterns = [
-        "dace.complex128", "dace.float64", "dace.float32", "dace.int64", "dace.int32", "dace.int16", "dace.uint32",
-        "dace.uint16", "dace.uint8", "float", "int"
-    ]
-    type_regex = re.compile("|".join(map(re.escape, patterns)))
+    # Strip type-cast prefixes (e.g. ``dace.float64``, ``int``) from a tasklet RHS so the cast does
+    # not interfere with the symbolic parse below. The DaCe type names are derived from
+    # ``dace.dtypes`` (rather than hard-coded), and matched longest-first so ``dace.float64`` wins
+    # over ``float``.
+    cast_names = {'int', 'float', 'complex', 'bool'}
+    cast_names |= {f'dace.{name}' for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)}
+    type_regex = re.compile("|".join(re.escape(name) for name in sorted(cast_names, key=len, reverse=True)))
 
     static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {symbol(a): symbol(a) for a in sdfg.arg_names}
     non_static_symbols = set()

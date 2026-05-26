@@ -74,9 +74,10 @@ def evaluate_symbols(base, new):
 
 
 def count_work_matmul(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
-    B_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_b')
-    C_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_c')
+    """Work of a matrix-multiply library node: 2*M*N*K flops, times the batch size if present."""
+    A_memlet = next(state.in_edges_by_connector(node, '_a'))
+    B_memlet = next(state.in_edges_by_connector(node, '_b'))
+    C_memlet = next(state.out_edges_by_connector(node, '_c'))
     result = 2  # Multiply, add
     # Batch
     if len(C_memlet.data.subset) == 3:
@@ -91,13 +92,14 @@ def count_work_matmul(node, symbols, state):
 
 
 def count_depth_matmul(node, symbols, state):
-    # optimal depth of a matrix multiplication is O(log(size of shared dimension)):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    """Depth of a matrix multiply: O(log K) over the shared (contracted) dimension K."""
+    A_memlet = next(state.in_edges_by_connector(node, '_a'))
     size_shared_dimension = symeval(A_memlet.data.subset.size()[-1], symbols)
     return sp.Max(1, sp.log(sp.Max(1, size_shared_dimension), 2))
 
 
 def count_work_reduce(node, symbols, state):
+    """Work of a reduction library node: the WCR's arithmetic cost times the number of reduced elements."""
     result = 0
     if node.wcr is not None:
         result += count_arithmetic_ops_code(node.wcr)
@@ -113,66 +115,70 @@ def count_work_reduce(node, symbols, state):
 
 
 def count_depth_reduce(node, symbols, state):
-    # optimal depth of reduction is log of the work
+    """Depth of a reduction: O(log(work)) for a balanced reduction tree."""
     return sp.log(sp.Max(1, count_work_reduce(node, symbols, state)), 2)
 
 
 def count_work_dot(node, symbols, state):
-    X_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_x')
-    Y_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_y')
-    RES_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_result')
+    """Work of a dot-product library node: 2*N - 1 flops (N multiplies and N-1 additions)."""
+    X_memlet = next(state.in_edges_by_connector(node, '_x'))
+    Y_memlet = next(state.in_edges_by_connector(node, '_y'))
+    RES_memlet = next(state.out_edges_by_connector(node, '_result'))
     result = 2 * symeval(X_memlet.data.subset.size()[-1], symbols) - 1
     return sp.sympify(result)
 
 
 def count_depth_dot(node, symbols, state):
-    X_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_x')
-    Y_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_y')
-    RES_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_result')
-    # optimal depth for dot product is 1 for multiplications and logarithmic for additions
+    """Depth of a dot product: one multiply layer plus O(log N) for the addition tree."""
+    X_memlet = next(state.in_edges_by_connector(node, '_x'))
+    Y_memlet = next(state.in_edges_by_connector(node, '_y'))
+    RES_memlet = next(state.out_edges_by_connector(node, '_result'))
     result = 1 + sp.log(sp.Max(1, symeval(X_memlet.data.subset.size()[-1], symbols)), 2)
     return sp.sympify(result)
 
 
 def count_work_cholesky(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    """Work of a Cholesky factorization library node: ~N**3/3 flops for an N x N matrix."""
+    A_memlet = next(state.in_edges_by_connector(node, '_a'))
     N = symeval(A_memlet.data.subset.size()[-1], symbols)
-    # Cholesky factorization of an N x N matrix: ~N^3/3 flops.
     return sp.sympify(N**3 / 3)
 
 
 def count_depth_cholesky(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    """Depth of a Cholesky factorization: N sequential elimination steps."""
+    A_memlet = next(state.in_edges_by_connector(node, '_a'))
     N = symeval(A_memlet.data.subset.size()[-1], symbols)
-    # N sequential elimination steps.
     return sp.Max(1, N)
 
 
 def count_work_inv(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    """Work of a matrix-inverse library node: ~2*N**3 flops (LU ~2N**3/3 plus inversion ~4N**3/3)."""
+    A_memlet = next(state.in_edges_by_connector(node, '_ain'))
     N = symeval(A_memlet.data.subset.size()[-1], symbols)
-    # LU factorization (~2N^3/3) plus inversion of the factors (~4N^3/3): ~2N^3 flops.
     return sp.sympify(2 * N**3)
 
 
 def count_depth_inv(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    """Depth of a matrix inverse: N sequential elimination steps."""
+    A_memlet = next(state.in_edges_by_connector(node, '_ain'))
     N = symeval(A_memlet.data.subset.size()[-1], symbols)
     return sp.Max(1, N)
 
 
 def count_work_solve(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
-    B_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_bin')
+    """Work of a linear-solve library node: LU (~2*N**3/3) plus forward/back substitution
+    (~2*N**2 per right-hand side)."""
+    A_memlet = next(state.in_edges_by_connector(node, '_ain'))
+    B_memlet = next(state.in_edges_by_connector(node, '_bin'))
     N = symeval(A_memlet.data.subset.size()[-1], symbols)
     b_size = B_memlet.data.subset.size()
     rhs = symeval(b_size[-1], symbols) if len(b_size) >= 2 else 1
-    # LU factorization (~2N^3/3) plus forward/back substitution (~2N^2 per right-hand side).
     return sp.sympify(2 * N**3 / 3 + 2 * N**2 * rhs)
 
 
 def count_depth_solve(node, symbols, state):
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_ain')
+    """Depth of a linear solve: N sequential elimination steps."""
+    A_memlet = next(state.in_edges_by_connector(node, '_ain'))
     N = symeval(A_memlet.data.subset.size()[-1], symbols)
     return sp.Max(1, N)
 
@@ -185,9 +191,9 @@ def count_work_gemm(node, symbols, state):
     - Alpha scaling: M*N (if alpha != 1)
     - Beta scaling + addition: 2*M*N (if beta != 0)
     """
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
-    B_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_b')
-    C_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_c')
+    A_memlet = next(state.in_edges_by_connector(node, '_a'))
+    B_memlet = next(state.in_edges_by_connector(node, '_b'))
+    C_memlet = next(state.out_edges_by_connector(node, '_c'))
 
     # Get dimensions
     # Handle batch dimension if present
@@ -223,7 +229,7 @@ def count_depth_gemm(node, symbols, state):
     """
     Optimal depth for GEMM: log(K) for the reduction + constant for scaling/addition
     """
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    A_memlet = next(state.in_edges_by_connector(node, '_a'))
     K = symeval(A_memlet.data.subset.size()[-1], symbols)
 
     # Depth is dominated by the reduction over K dimension
@@ -253,9 +259,9 @@ def count_work_gemv(node, symbols, state):
     - Alpha scaling: M (if alpha != 1)
     - Beta scaling + addition: 2*M (if beta != 0)
     """
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_A')
-    x_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_x')
-    y_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_y')
+    A_memlet = next(state.in_edges_by_connector(node, '_A'))
+    x_memlet = next(state.in_edges_by_connector(node, '_x'))
+    y_memlet = next(state.out_edges_by_connector(node, '_y'))
 
     # Get dimensions from A matrix
     A_shape = A_memlet.data.subset.size()
@@ -290,7 +296,7 @@ def count_depth_gemv(node, symbols, state):
     Optimal depth for GEMV: log(N) for the reduction + constant for scaling/addition
     where N is the reduction dimension
     """
-    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_A')
+    A_memlet = next(state.in_edges_by_connector(node, '_A'))
     A_shape = A_memlet.data.subset.size()
     M = symeval(A_shape[-2], symbols)
     N = symeval(A_shape[-1], symbols)
