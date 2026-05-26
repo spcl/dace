@@ -1,10 +1,24 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import json
+import tempfile
+
 import dace
 import numpy as np
 import pytest
 
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.state import LoopRegion
+
+
+def _assert_roundtrip_json_stable(sdfg):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path1 = f'{tmpdir}/test.sdfg'
+        path2 = f'{tmpdir}/test2.sdfg'
+        sdfg.save(path1, hash=False)
+        dace.SDFG.from_file(path1).save(path2, hash=False)
+
+        with open(path1, 'r') as fp1, open(path2, 'r') as fp2:
+            assert json.load(fp1) == json.load(fp2)
 
 
 @dace.program
@@ -102,6 +116,11 @@ def test_while_loop():
     A = sdfg()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A, A_ref))
+
+
+def test_while_loop_roundtrip_is_stable():
+    while_loop.use_explicit_cf = True
+    _assert_roundtrip_json_stable(while_loop.to_sdfg())
 
 
 @dace.program

@@ -780,7 +780,7 @@ class Stream(Data):
     """ Stream (or stream array) data descriptor. """
 
     # Properties
-    offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
+    offset = ListProperty(element_type=sp.Basic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
 
     def __init__(self,
