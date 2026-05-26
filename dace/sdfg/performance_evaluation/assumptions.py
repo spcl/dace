@@ -3,6 +3,8 @@
 import sympy as sp
 from typing import Dict
 
+from dace import symbolic
+
 
 class UnionFind:
     """
@@ -112,7 +114,9 @@ def propagate_assumptions(x, y, condensed_assumptions):
         condensed_assumptions[y] = Assumptions()
     assum_y = condensed_assumptions[y]
     for e in assum_x.equal:
-        if e is not sp.Symbol(y):
+        # Skip a self-reference (the symbol named ``y`` itself); compare by name because DaCe
+        # symbols, unlike sympy symbols, are not interned, so an ``is`` check would never match.
+        if not (isinstance(e, sp.Symbol) and e.name == y):
             assum_y.add_equal(e)
     for g in assum_x.greater:
         assum_y.add_greater(g)
@@ -150,7 +154,7 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
         for other in condensed_assumptions[sym].equal:
             if isinstance(other, sp.Symbol):
                 propagate_assumptions(sym, uf.find(sym), condensed_assumptions)
-                equality_subs1.update({sym: sp.Symbol(uf.find(sym))})
+                equality_subs1.update({sym: symbolic.symbol(uf.find(sym))})
 
     equality_subs2 = {}
     # In a second step, each symbol gets replaced with its equal number (if present)
@@ -227,7 +231,7 @@ def parse_assumptions(assumptions, array_symbols):
             try:
                 condensed_assumptions[symbol].add_equal(int(rhs))
             except ValueError:
-                condensed_assumptions[symbol].add_equal(sp.Symbol(rhs))
+                condensed_assumptions[symbol].add_equal(symbolic.symbol(rhs))
         elif '>' in a:
             symbol, rhs = a.split('>')
             if symbol not in condensed_assumptions:
@@ -235,11 +239,11 @@ def parse_assumptions(assumptions, array_symbols):
             try:
                 condensed_assumptions[symbol].add_greater(int(rhs))
             except ValueError:
-                condensed_assumptions[symbol].add_greater(sp.Symbol(rhs))
+                condensed_assumptions[symbol].add_greater(symbolic.symbol(rhs))
                 # add the opposite, i.e. for x>y, we add y<x
                 if rhs not in condensed_assumptions:
                     condensed_assumptions[rhs] = Assumptions()
-                condensed_assumptions[rhs].add_lesser(sp.Symbol(symbol))
+                condensed_assumptions[rhs].add_lesser(symbolic.symbol(symbol))
         elif '<' in a:
             symbol, rhs = a.split('<')
             if symbol not in condensed_assumptions:
@@ -247,11 +251,11 @@ def parse_assumptions(assumptions, array_symbols):
             try:
                 condensed_assumptions[symbol].add_lesser(int(rhs))
             except ValueError:
-                condensed_assumptions[symbol].add_lesser(sp.Symbol(rhs))
+                condensed_assumptions[symbol].add_lesser(symbolic.symbol(rhs))
                 # add the opposite, i.e. for x<y, we add y>x
                 if rhs not in condensed_assumptions:
                     condensed_assumptions[rhs] = Assumptions()
-                condensed_assumptions[rhs].add_greater(sp.Symbol(symbol))
+                condensed_assumptions[rhs].add_greater(symbolic.symbol(symbol))
 
     # Handle equal assumptions.
     equality_subs = propagate_assumptions_equal_symbols(condensed_assumptions)
@@ -272,14 +276,14 @@ def parse_assumptions(assumptions, array_symbols):
     for sym, assum in condensed_assumptions.items():
         i = 0
         for g in assum.greater:
-            replacement_symbol = sp.Symbol(f'_p_{sym}', nonnegative=True, integer=True)
-            all_subs[i][0].update({sp.Symbol(sym): replacement_symbol + g})
-            all_subs[i][1].update({replacement_symbol: sp.Symbol(sym) - g})
+            replacement_symbol = symbolic.symbol(f'_p_{sym}', nonnegative=True)
+            all_subs[i][0].update({symbolic.symbol(sym): replacement_symbol + g})
+            all_subs[i][1].update({replacement_symbol: symbolic.symbol(sym) - g})
             i += 1
         for l in assum.lesser:
-            replacement_symbol = sp.Symbol(f'_n_{sym}', negative=True, integer=True)
-            all_subs[i][0].update({sp.Symbol(sym): replacement_symbol + l})
-            all_subs[i][1].update({replacement_symbol: sp.Symbol(sym) - l})
+            replacement_symbol = symbolic.symbol(f'_n_{sym}', negative=True)
+            all_subs[i][0].update({symbolic.symbol(sym): replacement_symbol + l})
+            all_subs[i][1].update({replacement_symbol: symbolic.symbol(sym) - l})
             i += 1
 
     return equality_subs, all_subs

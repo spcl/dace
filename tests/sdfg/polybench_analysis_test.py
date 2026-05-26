@@ -286,7 +286,7 @@ def test_loop_carried_integer_compute():
     non-zero, size-dependent work."""
     work = _compute_work(_bitwise_accumulate.to_sdfg(simplify=True))
     assert work != 0
-    assert sp.Symbol('N') in sp.sympify(work).free_symbols
+    assert N in sp.sympify(work).free_symbols
 
 
 # Data-dependent sparse matrix-vector (known limitation).

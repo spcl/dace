@@ -3,7 +3,7 @@
 from typing import Dict, List, Tuple
 
 import pytest
-import dace as dc
+import dace
 from dace import symbolic
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
@@ -19,24 +19,24 @@ from dace.transformation.dataflow import MapExpansion
 
 from pytest import raises
 
-N = dc.symbol('N')
-M = dc.symbol('M')
-K = dc.symbol('K')
+N = dace.symbol('N')
+M = dace.symbol('M')
+K = dace.symbol('K')
 
 
-@dc.program
-def single_map(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
+@dace.program
+def single_map(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
     z[:] = x + y
 
 
-@dc.program
-def single_for_loop(x: dc.float64[N], y: dc.float64[N]):
+@dace.program
+def single_for_loop(x: dace.float64[N], y: dace.float64[N]):
     for i in range(N):
         x[i] += y[i]
 
 
-@dc.program
-def if_else(x: dc.int64[1000], y: dc.int64[1000], z: dc.int64[1000], sum: dc.int64[1]):
+@dace.program
+def if_else(x: dace.int64[1000], y: dace.int64[1000], z: dace.int64[1000], sum: dace.int64[1]):
     if x[10] > 50:
         z[:] = x + y  # 1000 work, 1 depth
     else:
@@ -44,8 +44,8 @@ def if_else(x: dc.int64[1000], y: dc.int64[1000], z: dc.int64[1000], sum: dc.int
             sum += x[i]
 
 
-@dc.program
-def if_else_sym(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64[1]):
+@dace.program
+def if_else_sym(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], sum: dace.int64[1]):
     if x[10] > 50:
         z[:] = x + y  # N work, 1 depth
     else:
@@ -53,26 +53,26 @@ def if_else_sym(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64[1]
             sum += x[i]
 
 
-@dc.program
-def nested_sdfg(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
+@dace.program
+def nested_sdfg(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
     single_map(x, y, z)
     single_for_loop(x, y)
 
 
-@dc.program
-def nested_maps(x: dc.float64[N, M], y: dc.float64[N, M], z: dc.float64[N, M]):
+@dace.program
+def nested_maps(x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[N, M]):
     z[:, :] = x + y
 
 
-@dc.program
-def nested_for_loops(x: dc.float64[N], y: dc.float64[K]):
+@dace.program
+def nested_for_loops(x: dace.float64[N], y: dace.float64[K]):
     for i in range(N):
         for j in range(K):
             x[i] += y[j]
 
 
-@dc.program
-def nested_if_else(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64[1]):
+@dace.program
+def nested_if_else(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], sum: dace.int64[1]):
     if x[10] > 50:
         if x[9] > 40:
             z[:] = x + y  # N work, 1 depth
@@ -89,8 +89,8 @@ def nested_if_else(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64
             # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
 
 
-@dc.program
-def max_of_positive_symbol(x: dc.float64[N]):
+@dace.program
+def max_of_positive_symbol(x: dace.float64[N]):
     if x[0] > 0:
         for i in range(2 * N):  # work 2*N^2, depth 2*N
             x += 1
@@ -100,9 +100,9 @@ def max_of_positive_symbol(x: dc.float64[N]):
             # total is work 3*N^2, depth 3*N without any max
 
 
-@dc.program
-def multiple_array_sizes(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], x2: dc.int64[M], y2: dc.int64[M],
-                         z2: dc.int64[M], x3: dc.int64[K], y3: dc.int64[K], z3: dc.int64[K]):
+@dace.program
+def multiple_array_sizes(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], x2: dace.int64[M], y2: dace.int64[M],
+                         z2: dace.int64[M], x3: dace.int64[K], y3: dace.int64[K], z3: dace.int64[K]):
     if x[0] > 0:
         z[:] = 2 * x + y  # work 2*N, depth 2
     elif x[1] > 0:
@@ -115,14 +115,14 @@ def multiple_array_sizes(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], x2: dc.
         # --> work= Max(3*N, 2*M, 2*K) and depth = 5
 
 
-@dc.program
-def unbounded_while_do(x: dc.float64[N]):
+@dace.program
+def unbounded_while_do(x: dace.float64[N]):
     while x[0] < 100:
         x += 1
 
 
-@dc.program
-def unbounded_nonnegify(x: dc.float64[N]):
+@dace.program
+def unbounded_nonnegify(x: dace.float64[N]):
     while x[0] < 100:
         if x[1] < 42:
             x += 3 * x
@@ -130,31 +130,31 @@ def unbounded_nonnegify(x: dc.float64[N]):
             x += x
 
 
-@dc.program
-def break_for_loop(x: dc.float64[N]):
+@dace.program
+def break_for_loop(x: dace.float64[N]):
     for i in range(N):
         if x[i] > 100:
             break
         x += 1
 
 
-@dc.program
-def break_while_loop(x: dc.float64[N]):
+@dace.program
+def break_while_loop(x: dace.float64[N]):
     while x[0] > 10:
         if x[1] > 100:
             break
         x += 1
 
 
-@dc.program
-def early_return(x: dc.float64[N]):
+@dace.program
+def early_return(x: dace.float64[N]):
     if x[0] > 0:
         return
     x += 1
 
 
-@dc.program
-def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]):  # --> cannot assume N, M to be positive
+@dace.program
+def sequntial_ifs(x: dace.float64[N + 1], y: dace.float64[M + 1]):  # --> cannot assume N, M to be positive
     if x[0] > 5:
         x[:] += 1  # N+1 work, 1 depth
     else:
@@ -168,28 +168,28 @@ def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]):  # --> cannot ass
     #       Depth: Max(1, M) + 1
 
 
-@dc.program
-def reduction_library_node(x: dc.float64[456]):
+@dace.program
+def reduction_library_node(x: dace.float64[456]):
     return np.sum(x)
 
 
-@dc.program
-def reduction_library_node_symbolic(x: dc.float64[N]):
+@dace.program
+def reduction_library_node_symbolic(x: dace.float64[N]):
     return np.sum(x)
 
 
-@dc.program
-def gemm_library_node(x: dc.float64[456, 200], y: dc.float64[200, 111], z: dc.float64[456, 111]):
+@dace.program
+def gemm_library_node(x: dace.float64[456, 200], y: dace.float64[200, 111], z: dace.float64[456, 111]):
     z[:] = x @ y
 
 
-@dc.program
-def gemm_library_node_symbolic(x: dc.float64[M, K], y: dc.float64[K, N], z: dc.float64[M, N]):
+@dace.program
+def gemm_library_node_symbolic(x: dace.float64[M, K], y: dace.float64[K, N], z: dace.float64[M, N]):
     z[:] = x @ y
 
 
-@dc.program
-def loop_var_dependent_work(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
+@dace.program
+def loop_var_dependent_work(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
     for i in range(1, N + 1):
         z[i - 1] = np.dot(x[:i], y[:i])
 
@@ -206,9 +206,11 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'nested_if_else': (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
     'max_of_positive_symbols': (max_of_positive_symbol, (3 * N**2, 3 * N)),
     'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
-    'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_0') * N, sp.Symbol('num_execs_0_0'))),
+    'unbounded_while_do': (unbounded_while_do, (dace.symbol('num_execs_0_0', nonnegative=True) * N,
+                                                dace.symbol('num_execs_0_0', nonnegative=True))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_0') * N, 2 * sp.Symbol('num_execs_0_0'))),
+    'unbounded_nonnegify': (unbounded_nonnegify, (2 * dace.symbol('num_execs_0_0', nonnegative=True) * N,
+                                                  2 * dace.symbol('num_execs_0_0', nonnegative=True))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
     'reduction_library_node': (reduction_library_node, (456, sp.log(456) / sp.log(2))),
     'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N)) / sp.log(2))),
@@ -217,24 +219,14 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     (gemm_library_node_symbolic, (2 * M * K * N, sp.Max(1,
                                                         sp.log(sp.Max(1, K)) / sp.log(2)))),
     'loop_var_dependent_work':
-    (loop_var_dependent_work, (N**2, N + sp.Sum(sp.log(sp.Symbol("_p_i", nonnegative=True) + 1),
-                                                (sp.Symbol("_p_i", nonnegative=True), 0, N - 1)) / sp.log(2)))
+    (loop_var_dependent_work, (N**2, N + sp.Sum(sp.log(dace.symbol("_p_i", nonnegative=True) + 1),
+                                                (dace.symbol("_p_i", nonnegative=True), 0, N - 1)) / sp.log(2)))
 }
-
-
-def standardize(expr):
-    # Drop symbol assumptions (so e.g. N and N(positive) compare equal) and collapse the
-    # auto-generated loop-execution-count symbols (num_execs_<cfg>_<node>, used for unbounded loops)
-    # to a single opaque name.
-    def canonical(sym):
-        return sp.Symbol('num_execs' if sym.name.startswith('num_execs') else sym.name)
-
-    return expr.replace(lambda x: isinstance(x, sp.Symbol), canonical)
 
 
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
-    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
+    if (dace.Config.get_bool('optimizer', 'automatic_simplification') == False
             and test_name in ['unbounded_while_do', 'unbounded_nonnegify']):
         pytest.skip('Malformed loop when not simplifying')
     test, correct = work_depth_test_cases[test_name]
@@ -247,11 +239,7 @@ def test_work_depth(test_name):
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
-    # substitue each symbol without assumptions.
-    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-    res = (standardize(res[0]), standardize(res[1]))
-    correct = (standardize(sp.sympify(correct[0])), standardize(sp.sympify(correct[1])))
-    # check result
+    correct = (sp.sympify(correct[0]), sp.sympify(correct[1]))
     assert res[0].expand() == correct[0].expand()
     assert res[1].expand() == correct[1].expand()
 
@@ -278,7 +266,7 @@ tests_cases_avg_par = {
 
 @pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
 def test_avg_par(test_name: str):
-    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
+    if (dace.Config.get_bool('optimizer', 'automatic_simplification') == False
             and test_name in ['unbounded_while_do', 'unbounded_nonnegify']):
         pytest.skip('Malformed loop when not simplifying')
 
@@ -292,13 +280,7 @@ def test_avg_par(test_name: str):
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)]
-    # substitue each symbol without assumptions.
-    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-    reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
-    res = res.subs(reps)
-    reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
-    correct = sp.sympify(correct).subs(reps)
-    # check result
+    correct = sp.sympify(correct)
     assert res.expand() == correct.expand()
 
 
@@ -326,7 +308,7 @@ def test_work_depth_bails_on_unstructured_control_flow():
     assert w_d_map[get_uuid(sdfg)] == (sp.sympify(0), sp.sympify(0))
 
 
-x, y, z, a = sp.symbols('x y z a')
+x, y, z, a = dace.symbol('x'), dace.symbol('y'), dace.symbol('z'), dace.symbol('a')
 
 # (expr, assumptions, result)
 assumptions_tests = [

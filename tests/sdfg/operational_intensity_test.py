@@ -6,7 +6,7 @@ from typing import Dict, Tuple
 from unittest import mock
 
 import pytest
-import dace as dc
+import dace
 import sympy as sp
 import numpy as np
 from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
@@ -17,37 +17,37 @@ from dace.frontend.python.parser import DaceProgram
 
 from math import isclose
 
-N = dc.symbol('N')
-M = dc.symbol('M')
-K = dc.symbol('K')
+N = dace.symbol('N')
+M = dace.symbol('M')
+K = dace.symbol('K')
 
-TILE_SIZE = dc.symbol('TILE_SIZE')
+TILE_SIZE = dace.symbol('TILE_SIZE')
 
 
-@dc.program
-def single_map64(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
+@dace.program
+def single_map64(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
     z[:] = x + y
     # does N work, loads 3*N elements of 8 bytes
     # --> op_in should be N / 3*8*N = 1/24 (no reuse) assuming L divides N
 
 
-@dc.program
-def single_map16(x: dc.float16[N], y: dc.float16[N], z: dc.float16[N]):
+@dace.program
+def single_map16(x: dace.float16[N], y: dace.float16[N], z: dace.float16[N]):
     z[:] = x + y
     # does N work, loads 3*N elements of 2 bytes
     # --> op_in should be N / 3*2*N = 1/6 (no reuse) assuming L divides N
 
 
-@dc.program
-def single_for_loop(x: dc.float64[N], y: dc.float64[N]):
+@dace.program
+def single_for_loop(x: dace.float64[N], y: dace.float64[N]):
     for i in range(N):
         x[i] += y[i]
     # N work, 2*N*8 bytes loaded
     # --> 1/16 op in
 
 
-@dc.program
-def if_else(x: dc.int64[100], sum: dc.int64[1]):
+@dace.program
+def if_else(x: dace.int64[100], sum: dace.int64[1]):
     if x[10] > 50:
         for i in range(100):
             sum += x[i]
@@ -57,15 +57,15 @@ def if_else(x: dc.int64[100], sum: dc.int64[1]):
     # no else --> simply analyze the ifs. if cache big enough, everything is reused;
 
 
-@dc.program
-def unaligned_for_loop(x: dc.float32[100], sum: dc.int64[1]):
+@dace.program
+def unaligned_for_loop(x: dace.float32[100], sum: dace.int64[1]):
     for i in range(17, 53):
         sum += x[i]
     # 36 = 144byte array elemets accessed 1 = 4byte scalar accessed 36 ops -> 64byte line size=> 3 lines + 1 line scalar => op in = 9/64
 
 
-@dc.program
-def sequential_maps(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
+@dace.program
+def sequential_maps(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
     z[:] = x + y
     z[:] *= 2
     z[:] += x
@@ -73,8 +73,8 @@ def sequential_maps(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
     # --> op_in should be N / 3*8*N = 1/24 (no reuse) assuming L divides N
 
 
-@dc.program
-def nested_reuse(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N], result: dc.float64[1]):
+@dace.program
+def nested_reuse(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N], result: dace.float64[1]):
     # load x, y and z
     z[:] = x + y
     result[0] = np.sum(z)
@@ -82,33 +82,33 @@ def nested_reuse(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N], result: d
     # to z outside of the nested SDFG.
 
 
-@dc.program
-def mmm(x: dc.float64[N, N], y: dc.float64[N, N], z: dc.float64[N, N]):
-    for n, k, m in dc.map[0:N, 0:N, 0:N]:
+@dace.program
+def mmm(x: dace.float64[N, N], y: dace.float64[N, N], z: dace.float64[N, N]):
+    for n, k, m in dace.map[0:N, 0:N, 0:N]:
         z[n, k] += x[n, m] * y[m, k]
 
 
-@dc.program
-def tiled_mmm(x: dc.float64[N, N], y: dc.float64[N, N], z: dc.float64[N, N]):
-    for n_TILE, k_TILE, m_TILE in dc.map[0:N:TILE_SIZE, 0:N:TILE_SIZE, 0:N:TILE_SIZE]:
-        for n, k, m in dc.map[n_TILE:n_TILE + TILE_SIZE, k_TILE:k_TILE + TILE_SIZE, m_TILE:m_TILE + TILE_SIZE]:
+@dace.program
+def tiled_mmm(x: dace.float64[N, N], y: dace.float64[N, N], z: dace.float64[N, N]):
+    for n_TILE, k_TILE, m_TILE in dace.map[0:N:TILE_SIZE, 0:N:TILE_SIZE, 0:N:TILE_SIZE]:
+        for n, k, m in dace.map[n_TILE:n_TILE + TILE_SIZE, k_TILE:k_TILE + TILE_SIZE, m_TILE:m_TILE + TILE_SIZE]:
             z[n, k] += x[n, m] * y[m, k]
 
 
-@dc.program
-def tiled_mmm_32(x: dc.float32[N, N], y: dc.float32[N, N], z: dc.float32[N, N]):
-    for n_TILE, k_TILE, m_TILE in dc.map[0:N:TILE_SIZE, 0:N:TILE_SIZE, 0:N:TILE_SIZE]:
-        for n, k, m in dc.map[n_TILE:n_TILE + TILE_SIZE, k_TILE:k_TILE + TILE_SIZE, m_TILE:m_TILE + TILE_SIZE]:
+@dace.program
+def tiled_mmm_32(x: dace.float32[N, N], y: dace.float32[N, N], z: dace.float32[N, N]):
+    for n_TILE, k_TILE, m_TILE in dace.map[0:N:TILE_SIZE, 0:N:TILE_SIZE, 0:N:TILE_SIZE]:
+        for n, k, m in dace.map[n_TILE:n_TILE + TILE_SIZE, k_TILE:k_TILE + TILE_SIZE, m_TILE:m_TILE + TILE_SIZE]:
             z[n, k] += x[n, m] * y[m, k]
 
 
-@dc.program
-def reduction_library_node(x: dc.float64[N]):
+@dace.program
+def reduction_library_node(x: dace.float64[N]):
     return np.sum(x)
 
 
 #(sdfg, c, l, assumptions, expected_result)
-test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dc.symbolic.SymbolicType]] = {
+test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dace.symbolic.SymbolicType]] = {
     'single_map64_even': (single_map64, 64 * 64, 64, {
         'N': 512
     }, 1 / 24),
@@ -152,7 +152,7 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dc.symbolic.S
     }, (2 * 24**3) / (16 * 12 * 6**3)),
     'reduction_library_node': (reduction_library_node, 1024, 64, {
         'N': 128
-    }, 128.0 / (dc.symbol('Reduce_misses') * 64.0 + 64.0)),
+    }, 128.0 / (dace.symbol('Reduce_misses', positive=True) * 64.0 + 64.0)),
 }
 
 
@@ -168,13 +168,8 @@ def test_operational_intensity(test_name: str):
     analyze_sdfg_op_in(sdfg, op_in_map, c * l, l, assumptions)
     res = (op_in_map[get_uuid(sdfg)])
     if test_name == 'reduction_library_node':
-        # substitue each symbol without assumptions.
-        # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-        reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
-        res = res.subs(reps)
-        reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
-        correct = sp.sympify(correct).subs(reps)
-        assert correct == res
+        # Symbolic result (depends on the opaque Reduce_misses symbol); compare expressions directly.
+        assert sp.sympify(correct) == res
     else:
         assert isclose(correct, res)
 
@@ -182,8 +177,8 @@ def test_operational_intensity(test_name: str):
 _ASK_USER_LOOP_ITERS = 8
 
 
-@dc.program
-def ask_user_branch(x: dc.float64[64], y: dc.float64[64]):
+@dace.program
+def ask_user_branch(x: dace.float64[64], y: dace.float64[64]):
     # Data-dependent branches doing different amounts of work, so the chosen branch changes the result.
     if x[0] > 0:
         y[:] = x + 1.0
@@ -191,8 +186,8 @@ def ask_user_branch(x: dc.float64[64], y: dc.float64[64]):
         y[:] = x * x * x * x
 
 
-@dc.program
-def ask_user_branch_in_loop(x: dc.float64[64], y: dc.float64[64]):
+@dace.program
+def ask_user_branch_in_loop(x: dace.float64[64], y: dace.float64[64]):
     for _ in range(_ASK_USER_LOOP_ITERS):
         if x[0] > 0:
             y[:] = x + 1.0
