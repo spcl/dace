@@ -11,6 +11,7 @@ import sympy as sp
 import numpy as np
 from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
 from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.symbolic import pystr_to_symbolic
 from dace.frontend.python.parser import DaceProgram
 
 from math import isclose
@@ -242,8 +243,27 @@ def test_operational_intensity_ask_user_decision_reused_in_loop():
     assert isclose(loop_op_in, _ASK_USER_LOOP_ITERS * single_op_in)
 
 
+def test_operational_intensity_range_simulation():
+    """ Smoke-test the simulation-based path: giving a symbol a range ``'start,stop,step'`` instead
+    of a concrete value makes the analysis sample the symbol, simulate cache misses for each sample,
+    and fit the operational intensity as a function of that symbol. For ``single_map64`` (a pure
+    streaming ``z = x + y``) there is no reuse, so the fitted intensity is the constant ``1 / 24``
+    (one add per element over three 8-byte accesses) independent of the symbol's value. """
+    op_in_map: Dict[str, sp.Expr] = {}
+    sdfg = single_map64.to_sdfg()
+    # Sampling at multiples of 8 keeps the 64-byte cache lines (8 doubles) evenly divided.
+    analyze_sdfg_op_in(sdfg, op_in_map, 64 * 64, 64, {'N': '64,576,64'}, test_set_size=2)
+
+    # The fitted result is a string expression in N; parse it (``pystr_to_symbolic`` avoids the
+    # collision between the symbol ``N`` and SymPy's numeric-evaluation function ``N``).
+    op_in = pystr_to_symbolic(op_in_map[get_uuid(sdfg)])
+    for n in (64, 256, 512):
+        assert isclose(float(op_in.subs(N, n)), 1 / 24, rel_tol=1e-6)
+
+
 if __name__ == '__main__':
     for test_name in test_cases.keys():
         test_operational_intensity(test_name)
     test_operational_intensity_ask_user_branch_selection()
     test_operational_intensity_ask_user_decision_reused_in_loop()
+    test_operational_intensity_range_simulation()
