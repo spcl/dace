@@ -157,32 +157,19 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
 
 
 def update_map_iterators(map, mapping, symbols):
-    # update the map params and return False
-    # if all iterations exhausted, return True
-    # always increase the last one. If it is exhausted, increase the next one and so forth
+    # Advance the map iteration variables (innermost first); return True when all are exhausted.
+    # Increment the last param; if it overflows its range, reset it and carry to the next one.
     map_exhausted = True
-    for p, range in zip(map.params[::-1], map.range[::-1]):  # reversed order
-        curr_value = mapping[p]
-        if not isinstance(range[1], SymExpr):
-            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].subs(
-                    symbols).subs(mapping):
-                # update this value and then we are done
-                mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
-                map_exhausted = False
-                break
-            else:
-                # set current param to start again and continue
-                mapping[p] = range[0].subs(symbols).subs(mapping)
-        else:
-            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].expr.subs(
-                    symbols).subs(mapping):
-                # update this value and we done
-                mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
-                map_exhausted = False
-                break
-            else:
-                # set current param to start again and continue
-                mapping[p] = range[0].subs(symbols).subs(mapping)
+    for p, rng in zip(map.params[::-1], map.range[::-1]):  # reversed order
+        lo, hi, step = rng[0], (rng[1].expr if isinstance(rng[1], SymExpr) else rng[1]), rng[2]
+        curr = mapping[p].subs(symbols).subs(mapping)
+        step = step.subs(symbols).subs(mapping)
+        if curr + step <= hi.subs(symbols).subs(mapping):
+            mapping[p] = curr + step
+            map_exhausted = False
+            break
+        # this dimension is exhausted: reset it to its start and carry to the next
+        mapping[p] = lo.subs(symbols).subs(mapping)
     return map_exhausted
 
 
@@ -201,6 +188,23 @@ def map_op_in(state: SDFGState, op_in_map: Dict[str, sp.Expr], entry, mapping, s
         if update_map_iterators(entry.map, mapping, symbols):
             break
     return map_misses
+
+
+def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack: AccessStack, C) -> int:
+    """
+    Account a single memlet access against the cache.
+
+    :return: 1 if accessing the edge's data is a cache miss (or a first-ever touch), else 0. Edges
+             whose data is not a tracked global-memory array contribute nothing.
+    """
+    data = edge.data.data
+    if data not in clt.array_info and not (data in array_names and array_names[data] in clt.array_info):
+        return 0
+    line_id = clt.cache_line_id(data if data not in array_names else array_names[data],
+                                [x[0].subs(mapping) for x in edge.data.subset.ranges], mapping)
+    line_id = int(line_id.subs(symbols).subs(mapping))
+    dist = stack.touch(line_id)
+    return 1 if dist >= C or dist == -1 else 0
 
 
 def scope_misses(state: SDFGState,
@@ -245,38 +249,19 @@ def scope_misses(state: SDFGState,
             scope_misses += map_misses
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
-            # analyze the memory accesses of this tasklet and whether they hit in cache or not
+            # Account each tasklet memory access. If a connected node is a transient written/read by a
+            # single access node, follow that edge so the access maps to the correct cache line.
             for e in state.in_edges(node):
-                # Check if source node is just a transient node to map to correct cache line
-                data_node = e.src
-                data_node_in_edges = state.in_edges(data_node)
-                if len(data_node_in_edges) == 1 and isinstance(data_node_in_edges[0].src, nd.AccessNode):
-                    e = data_node_in_edges[0]
-
-                if e.data.data in clt.array_info or (e.data.data in array_names
-                                                     and array_names[e.data.data] in clt.array_info):
-                    line_id = clt.cache_line_id(
-                        e.data.data if e.data.data not in array_names else array_names[e.data.data],
-                        [x[0].subs(mapping) for x in e.data.subset.ranges], mapping)
-                    line_id = int(line_id.subs(symbols).subs(mapping))
-                    dist = stack.touch(line_id)
-                    tasklet_misses += 1 if dist >= C or dist == -1 else 0
+                src_in = state.in_edges(e.src)
+                if len(src_in) == 1 and isinstance(src_in[0].src, nd.AccessNode):
+                    e = src_in[0]
+                tasklet_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
 
             for e in state.out_edges(node):
-                # Check if destination node is just a transient node to map to correct cache line
-                data_node = e.dst
-                data_node_out_edges = state.out_edges(data_node)
-                if len(data_node_out_edges) == 1 and isinstance(data_node_out_edges[0].src, nd.AccessNode):
-                    e = data_node_out_edges[0]
-
-                if e.data.data in clt.array_info or (e.data.data in array_names
-                                                     and array_names[e.data.data] in clt.array_info):
-                    line_id = clt.cache_line_id(
-                        e.data.data if e.data.data not in array_names else array_names[e.data.data],
-                        [x[0].subs(mapping) for x in e.data.subset.ranges], mapping)
-                    line_id = int(line_id.subs(symbols).subs(mapping))
-                    dist = stack.touch(line_id)
-                    tasklet_misses += 1 if dist >= C or dist == -1 else 0
+                dst_out = state.out_edges(e.dst)
+                if len(dst_out) == 1 and isinstance(dst_out[0].src, nd.AccessNode):
+                    e = dst_out[0]
+                tasklet_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
 
             scope_misses += tasklet_misses
             # a tasklet can get passed multiple times... we report the average misses in the end

@@ -143,6 +143,40 @@ def calculate_edge_volume(state: SDFGState, edge: MultiConnectorEdge) -> sp.Expr
     return vol * state.sdfg.arrays[edge.data.data].dtype.bytes
 
 
+def _access_volume(state: SDFGState, node: nd.AccessNode, edges, neighbor) -> sp.Expr:
+    """
+    Sum the byte volume of an access node's ``edges`` that touch global memory.
+
+    :param edges: The incoming or outgoing edges of ``node`` to account.
+    :param neighbor: Callable returning the node on the other end of an edge; edges to/from a
+                     ``NestedSDFG`` are skipped, since the nested SDFG is analyzed on its own.
+    :return: The total byte volume, or zero if the array is not in global memory.
+    """
+    if state.sdfg.arrays[node.data].storage not in (StorageType.CPU_Heap, StorageType.GPU_Global):
+        return pystr_to_symbolic(0)
+    return pystr_to_symbolic(
+        sum(calculate_edge_volume(state, e) for e in edges if not isinstance(neighbor(e), nd.NestedSDFG)))
+
+
+def _accumulate_volume_over_var(volume: sp.Expr, var: str, lo: sp.Expr, hi: sp.Expr, step: sp.Expr) -> sp.Expr:
+    """
+    Sum a per-iteration access ``volume`` over one enclosing loop/map variable ``var`` ranging over
+    ``[lo, hi]`` with stride ``step`` (the volume is summed across a sequential range).
+
+    :param volume: The byte volume accessed in one iteration.
+    :param var: The iteration variable name.
+    :return: The volume summed over the range.
+    """
+    sp_var = symbol(var)
+    shifted_hi = int_floor(hi - lo, step)
+    present = {s.name: s for s in volume.free_symbols}
+    if var in present:
+        # Resolve Max/Min fixed by this range (e.g. a triangular access) before summing for a closed form.
+        volume = resolve_minmax_over_range(volume, present[var], lo, hi)
+        volume = volume.subs(present[var], pystr_to_symbolic(step) * sp_var + lo)
+    return safe_summation(volume, sp_var, pystr_to_symbolic(0), shifted_hi)
+
+
 def scope_volume(state: SDFGState,
                  entry: Optional[nd.MapEntry] = None,
                  region_volume_map: Optional[RegionVolumeMap] = None,
@@ -172,49 +206,12 @@ def scope_volume(state: SDFGState,
         if isinstance(node, nd.AccessNode):
             if isinstance(state.sdfg.arrays[node.data], View):
                 continue
-            read_edge_volumes = []
-            for edge in state.out_edges(node):
-                if isinstance(edge.dst, nd.NestedSDFG):
-                    continue
-                if state.sdfg.arrays[node.data].storage in (StorageType.CPU_Heap, StorageType.GPU_Global):
-                    read_edge_volumes.append(calculate_edge_volume(state, edge))
-
-            access_node_read_volume = pystr_to_symbolic(sum(read_edge_volumes))
-            write_edge_volumes = []
-            for edge in state.in_edges(node):
-                if isinstance(edge.src, nd.NestedSDFG):
-                    continue
-                if state.sdfg.arrays[node.data].storage in (StorageType.CPU_Heap, StorageType.GPU_Global):
-                    write_edge_volumes.append(calculate_edge_volume(state, edge))
-
-            access_node_write_volume = pystr_to_symbolic(sum(write_edge_volumes))
+            # Read edges leave the access node (its data feeds consumers); write edges enter it.
+            access_node_read_volume = _access_volume(state, node, state.out_edges(node), lambda e: e.dst)
+            access_node_write_volume = _access_volume(state, node, state.in_edges(node), lambda e: e.src)
             for (var, (lo, hi, step)) in reversed(range_var_stack):
-                read_symbol_map = {sym.name: sym for sym in access_node_read_volume.free_symbols}
-                write_symbol_map = {sym.name: sym for sym in access_node_write_volume.free_symbols}
-
-                shifted_hi = int_floor(hi - lo, step)
-                shifted_lo = pystr_to_symbolic(0)
-                sp_var = symbol(var)
-
-                if var in read_symbol_map.keys():
-                    rvar = read_symbol_map[var]
-                    # Resolve Max/Min fixed by this iteration range (e.g. triangular access) before
-                    # summing, so the sum has a closed form.
-                    access_node_read_volume = resolve_minmax_over_range(access_node_read_volume, rvar, lo, hi)
-                    access_node_read_volume = safe_summation(
-                        access_node_read_volume.subs(rvar, (pystr_to_symbolic(step) * sp_var + lo)), sp_var, shifted_lo,
-                        shifted_hi)
-                else:
-                    access_node_read_volume = safe_summation(access_node_read_volume, sp_var, shifted_lo, shifted_hi)
-
-                if var in write_symbol_map.keys():
-                    wvar = write_symbol_map[var]
-                    access_node_write_volume = resolve_minmax_over_range(access_node_write_volume, wvar, lo, hi)
-                    access_node_write_volume = safe_summation(
-                        access_node_write_volume.subs(wvar, (pystr_to_symbolic(step) * sp_var + lo)), sp_var,
-                        shifted_lo, shifted_hi)
-                else:
-                    access_node_write_volume = safe_summation(access_node_write_volume, sp_var, shifted_lo, shifted_hi)
+                access_node_read_volume = _accumulate_volume_over_var(access_node_read_volume, var, lo, hi, step)
+                access_node_write_volume = _accumulate_volume_over_var(access_node_write_volume, var, lo, hi, step)
 
             read += simplify(access_node_read_volume)
             write += simplify(access_node_write_volume)
