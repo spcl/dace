@@ -1145,7 +1145,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
                 for isedge in nsdfg.all_interstate_edges():
                     for k, v in isedge.data.assignments.items():
-                        vast = ast.parse(v)
+                        vast = ast.parse(symbolic.symstr(v))
                         refiner.visit(vast)
                         isedge.data.assignments[k] = symbolic.pystr_to_symbolic(astutils.unparse(vast))
                     if isedge.data.condition.language is dtypes.Language.Python:

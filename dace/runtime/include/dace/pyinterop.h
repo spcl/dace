@@ -48,10 +48,9 @@ template <typename U, typename... T>
 static DACE_HDFI U Max(U val, T... vals) {
     return max(val, vals...);
 }
-template <typename T>
-static DACE_HDFI T Abs(T val) {
-    return abs(val);
-}
+#define Abs(x) abs(x)
+#define Sign(x) sgn(x)
+
 template <typename T, typename U>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue, const U& iffalse)
 {

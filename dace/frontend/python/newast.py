@@ -2671,13 +2671,13 @@ class ProgramVisitor(ExtNodeVisitor):
         for node, parent in loop_region.all_nodes_recursive(lambda n, _: not isinstance(n, (LoopRegion, SDFGState))):
             if isinstance(node, BreakBlock):
                 for in_edge in parent.in_edges(node):
-                    in_edge.data.assignments['__dace_did_break_' + loop_region.label] = '1'
+                    in_edge.data.assignments['__dace_did_break_' + loop_region.label] = symbolic.pystr_to_symbolic('1')
 
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
         did_break_symbol = '__dace_did_break_' + loop_region.label
         self.sdfg.add_symbol(did_break_symbol, dace.int32)
         for iedge in self.cfg_target.in_edges(loop_region):
-            iedge.data.assignments[did_break_symbol] = '0'
+            iedge.data.assignments[did_break_symbol] = symbolic.pystr_to_symbolic('0')
         oedges = self.cfg_target.out_edges(loop_region)
         if len(oedges) > 1:
             raise DaceSyntaxError('Multiple exits to a loop with for-else syntax')
@@ -4247,9 +4247,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 desc = self.sdfg.arrays[local]
                 self.sdfg.add_symbol(newsym, desc.dtype)
                 if isinstance(desc, data.Array):
-                    isedge.data.assignments[newsym] = f'{local}[0]'
+                    isedge.data.assignments[newsym] = symbolic.pystr_to_symbolic(f'{local}[0]')
                 else:
-                    isedge.data.assignments[newsym] = local
+                    isedge.data.assignments[newsym] = symbolic.pystr_to_symbolic(local)
 
                 # Replace mapping with symbol
                 mapping[sym] = newsym
@@ -5403,7 +5403,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             pass
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = state.parent_graph.in_edges(state)[0]
-                    edge.data.assignments = {str(sym): scalar}
+                    edge.data.assignments = {str(sym): symbolic.pystr_to_symbolic(scalar)}
                     return sym
             return scalar
 
