@@ -1,14 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Validation of the work-depth (compute) and total-volume (memory) analyses on the canonical
-PolyBench kernels, reusing the kernels under ``tests/polybench`` rather than redefining them.
+PolyBench kernels, reusing the kernels under ``tests/polybench`` rather than redefining them. The
+two analyses together approximate the *best-case operational complexity* of each kernel -- the flops
+needed and the minimum global-memory traffic assuming on-chip reuse within a nest -- as opposed to a
+cache-size-parametric I/O analysis (cf. IOLB, a future extension).
 
-The expected values pin the analysis output at a fixed problem size (a regression guard); the
-leading-order textbook count is noted alongside in :data:`EXPECTED`. Compute work is the actual
-operation count of the generated SDFG (e.g. ``gemm`` is ``3*NI*NJ*NK + NI*NJ`` rather than the
-textbook ``2*NI*NJ*NK``, because the ``alpha`` scaling is not folded). Memory is asserted on the
-un-optimized data volume (working set times the element size); the auto-optimized path is exercised
-separately to confirm it stays correct.
+Where the numbers come from:
+
+* **Compute (flops):** :func:`work_depth.analyze_sdfg`, the actual arithmetic-operation count of the
+  generated SDFG. This is intentionally the realised count, not a textbook formula: e.g. ``gemm`` is
+  ``3*NI*NJ*NK + NI*NJ`` (the ``alpha`` scaling is not folded), whereas the textbook leading term is
+  ``2*NI*NJ*NK``. Published per-kernel flop counts for cross-reference: PolyBench/Python (Abella et
+  al., CC 2021, https://inria.hal.science/hal-03153351/document) and the PolyBench/C
+  ``polybench_set_program_flops`` values. The leading-order textbook term is noted in :data:`EXPECTED`.
+* **Memory (bytes):** :func:`total_volume.analyze_sdfg` with ``optimize=False``. See its module
+  docstring for the cost model: each accessed region is counted once per enclosing map nest (reuse
+  within a parallel nest) and multiplied by the trip count of every enclosing sequential loop (no
+  reuse across loop iterations or non-nested scopes). So stencils scale by ``tsteps`` and the
+  triangular solvers pay for re-reads across their sequential loops.
+
+The expected values pin the analysis output at a fixed problem size (:data:`_SIZES`) as a regression
+guard. The auto-optimized memory path (``optimize=True``) is exercised separately to confirm it stays
+valid (its exact value is implementation-dependent, so it is not pinned).
 
 This file also covers the library-node counters (Cholesky/Inv/Solve), the compute-vs-address
 classification of interstate-edge arithmetic, the loop-carried integer-compute case (counting the
@@ -209,6 +223,29 @@ def test_linalg_library_node_work(program, expected_work):
         {s: 12
          for s in sp.sympify(expected_work).free_symbols if s.name == 'N'})
     assert work_n == expected_n
+
+
+def _make_unary_func_sdfg(func_name: str) -> dace.SDFG:
+    """An SDFG that applies ``func_name`` element-wise over N values (one call per iteration)."""
+    sdfg = dace.SDFG(f'{func_name}_kernel')
+    sdfg.add_array('x', [N], dace.float64)
+    sdfg.add_array('y', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', {'i': '0:N'})
+    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, f'out = {func_name}(inp)')
+    state.add_memlet_path(state.add_read('x'), entry, tasklet, dst_conn='inp', memlet=dace.Memlet('x[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('y'), src_conn='out', memlet=dace.Memlet('y[i]'))
+    return sdfg
+
+
+def test_user_defined_function_flop_cost(monkeypatch):
+    """A user can override a function's flop cost: e.g. declaring sin to cost 65 flops instead of 1
+    (the costs live in the public work_depth.PYFUNC_TO_ARITHMETICS registry)."""
+    sdfg = _make_unary_func_sdfg('sin')
+    n = _SIZES['N']
+    assert _value(_compute_work(sdfg)) == n  # default: one sin per element, sin = 1 flop
+    monkeypatch.setitem(work_depth.PYFUNC_TO_ARITHMETICS, 'sin', 65)
+    assert _value(_compute_work(sdfg)) == 65 * n  # user-provided cost: sin = 65 flops
 
 
 # --- Compute vs. address classification of interstate-edge arithmetic ------------------------------

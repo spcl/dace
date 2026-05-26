@@ -1,7 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Symbolic memory-volume analysis for any input SDFG. Estimates the number of bytes read from
 and written to global memory by a DaCe program, as a closed-form symbolic expression in the
-program's free symbols. Can be used from the command line as a Python script. """
+program's free symbols. Can be used from the command line as a Python script.
+
+Cost model (where the "bytes moved" come from): every access node touching global memory contributes
+the size of its accessed region -- the propagated boundary memlet -- times the element size. That
+region is counted **once per enclosing parallel map nest** (data reused across a map is assumed to
+stay on chip: infinite cache *within* a nest), but is **multiplied by the trip count of every
+enclosing sequential loop** (the cache is assumed flushed on each loop iteration, and there is no
+reuse between non-nested scopes). So a stencil whose spatial sweep is a map and whose time axis is a
+loop costs ``tsteps * working_set``, while a triangular solver written as sequential loops pays for
+its re-reads across those loops.
+
+This is therefore the *compulsory traffic assuming reuse only within a parallel nest* -- a
+cache-infinite-within-a-nest estimate. It is deliberately NOT the cache-size-parametric I/O-optimal
+lower bound (cf. IOLB, Olivry et al., PLDI 2020, https://inria.hal.science/hal-02910961/document;
+a possible future extension corresponds to taking the fast-memory size ``S -> infinity``), and not a
+fully naive per-scalar-access count. """
 
 import argparse
 import os
