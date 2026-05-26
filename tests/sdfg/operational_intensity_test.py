@@ -169,7 +169,7 @@ def test_operational_intensity(test_name: str):
     res = (op_in_map[get_uuid(sdfg)])
     if test_name == 'reduction_library_node':
         # Symbolic result (depends on the opaque Reduce_misses symbol); compare expressions directly.
-        assert sp.sympify(correct) == res
+        assert pystr_to_symbolic(correct) == res
     else:
         assert isclose(correct, res)
 

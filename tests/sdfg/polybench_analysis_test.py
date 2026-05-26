@@ -41,6 +41,7 @@ import dace
 from dace.sdfg import nodes as nd
 from dace.sdfg.performance_evaluation import total_volume, work_depth
 from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.symbolic import pystr_to_symbolic
 
 _POLYBENCH_DIR = pathlib.Path(__file__).resolve().parents[1] / 'polybench'
 
@@ -147,7 +148,7 @@ def _load_kernel(stem: str):
 
 def _value(expr):
     """Evaluate a symbolic analysis result at :data:`_SIZES`; return ``None`` if it stays symbolic."""
-    expr = sp.sympify(expr)
+    expr = pystr_to_symbolic(expr)
     subs = {s: _SIZES[s.name] for s in expr.free_symbols if s.name in _SIZES}
     value = sp.simplify(expr.subs(subs).doit())
     try:
@@ -215,13 +216,13 @@ def test_linalg_library_node_work(program, expected_work):
     """Cholesky/Inv/Solve library nodes report their leading-order factorization flop count."""
     sdfg = program.to_sdfg(simplify=True)
     assert any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
-    work = sp.sympify(_compute_work(sdfg))
+    work = pystr_to_symbolic(_compute_work(sdfg))
     # Compare at a concrete size (divisible by 3); the analysis and the reference use distinct N
     # symbol instances, so substitute by name rather than subtracting symbolically.
     work_n = work.subs({s: 12 for s in work.free_symbols if s.name == 'N'})
-    expected_n = sp.sympify(expected_work).subs(
+    expected_n = pystr_to_symbolic(expected_work).subs(
         {s: 12
-         for s in sp.sympify(expected_work).free_symbols if s.name == 'N'})
+         for s in pystr_to_symbolic(expected_work).free_symbols if s.name == 'N'})
     assert work_n == expected_n
 
 
@@ -286,7 +287,7 @@ def test_loop_carried_integer_compute():
     non-zero, size-dependent work."""
     work = _compute_work(_bitwise_accumulate.to_sdfg(simplify=True))
     assert work != 0
-    assert N in sp.sympify(work).free_symbols
+    assert N in pystr_to_symbolic(work).free_symbols
 
 
 # Data-dependent sparse matrix-vector (known limitation).
@@ -311,9 +312,9 @@ def test_spmv_data_dependent_known_limitation():
     verify that the analyses run and return such a symbolic result rather than a wrong constant."""
     from dace import symbolic
     sdfg = _spmv.to_sdfg(simplify=True)
-    work = sp.sympify(_compute_work(sdfg))
+    work = pystr_to_symbolic(_compute_work(sdfg))
     read, _write = total_volume.analyze_sdfg(sdfg, optimize=False)
-    read = sp.sympify(read)
+    read = pystr_to_symbolic(read)
     size_symbols = {'H', 'W', 'NNZ'}
 
     def depends_on_data_or_iterator(expr) -> bool:

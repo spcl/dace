@@ -239,7 +239,7 @@ def test_work_depth(test_name):
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
-    correct = (sp.sympify(correct[0]), sp.sympify(correct[1]))
+    correct = (symbolic.pystr_to_symbolic(correct[0]), symbolic.pystr_to_symbolic(correct[1]))
     assert res[0].expand() == correct[0].expand()
     assert res[1].expand() == correct[1].expand()
 
@@ -280,7 +280,7 @@ def test_avg_par(test_name: str):
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)]
-    correct = sp.sympify(correct)
+    correct = symbolic.pystr_to_symbolic(correct)
     assert res.expand() == correct.expand()
 
 
@@ -292,7 +292,7 @@ def test_work_depth_bails_on_nonlocal_exit(prog: DaceProgram):
     w_d_map: Dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match='structured control flow'):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
-    assert w_d_map[get_uuid(sdfg)] == (sp.sympify(0), sp.sympify(0))
+    assert w_d_map[get_uuid(sdfg)] == (0, 0)
 
 
 def test_work_depth_bails_on_unstructured_control_flow():
@@ -305,7 +305,7 @@ def test_work_depth_bails_on_unstructured_control_flow():
     w_d_map: Dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match='structured control flow'):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
-    assert w_d_map[get_uuid(sdfg)] == (sp.sympify(0), sp.sympify(0))
+    assert w_d_map[get_uuid(sdfg)] == (0, 0)
 
 
 x, y, z, a = dace.symbol('x'), dace.symbol('y'), dace.symbol('z'), dace.symbol('a')
