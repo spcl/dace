@@ -347,6 +347,9 @@ def analyze_sdfg(sdfg: SDFG, optimize: bool = True) -> Tuple[sp.Expr, sp.Expr]:
     The SDFG is deep-copied before the symbolic volume is computed and resolved against statically
     known symbols.
 
+    :note: Only structured control flow is supported (loops as ``LoopRegion``, branches as
+        ``ConditionalBlock``, no ``break`` / ``continue`` / ``return``). An SDFG with unstructured
+        control flow is not analyzed: the analysis warns and returns a zero result.
     :param sdfg: The SDFG to analyze (left unmodified).
     :param optimize: If True, auto-optimize the SDFG copy first to approximate the effect of
                      compiler optimizations; if False, analyze the raw data volume.

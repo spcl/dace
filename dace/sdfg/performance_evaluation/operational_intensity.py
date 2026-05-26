@@ -538,6 +538,9 @@ def analyze_sdfg_op_in(sdfg: SDFG,
     """
     Computes the operational intensity of the input SDFG.
 
+    :note: Only structured control flow is supported (loops as ``LoopRegion``, branches as
+        ``ConditionalBlock``, no ``break`` / ``continue`` / ``return``). An SDFG with unstructured
+        control flow is not analyzed: the analysis warns and returns a zero result.
     :param sdfg: The SDFG to analyze.
     :param op_in_map: Dictionary storing the resulting operational intensity for each SDFG element.
     :param C: Cache size in bytes.

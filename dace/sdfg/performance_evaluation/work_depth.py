@@ -675,9 +675,10 @@ def control_flow_region_work_depth(
     data_symbols: Optional[Set[str]] = None
 ) -> Tuple[sp.Expr | List[Tuple[sp.Expr, sp.Expr]], sp.Expr | List[Tuple[sp.Expr, sp.Expr]]]:
     """
-    Analyze the work and depth of a given (structured) ControlFLowRegion.
-    First we determine the work and depth of each state. Then we break loops in the state machine, such that we get a DAG.
-    Lastly, we compute the path with most work and the path with the most depth in order to get the total work depth.
+    Analyze the work and depth of a given (structured) ControlFlowRegion.
+    First we determine the work and depth of each block (loops are ``LoopRegion`` and branches are
+    ``ConditionalBlock``, so the region itself is a DAG). Then we compute the path with the most work
+    and the path with the most depth to get the region's total work and depth.
 
     :param cfr: The ControlFLowRegion to analyze.
     :param w_d_map: Dictionary which will save the result.
@@ -1297,6 +1298,9 @@ def analyze_sdfg(sdfg: SDFG,
     """
     Analyze a given SDFG. We can either analyze work, work and depth or average parallelism.
 
+    :note: Only structured control flow is supported (loops as ``LoopRegion``, branches as
+        ``ConditionalBlock``, no ``break`` / ``continue`` / ``return``). An SDFG with unstructured
+        control flow is not analyzed: the analysis warns and returns a zero result.
     :note: SDFGs should have split interstate edges. This means there should be no interstate edges containing both a
         condition and an assignment.
     :param sdfg: The SDFG to analyze.
