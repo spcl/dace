@@ -696,7 +696,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             stack = AccessStack(C)
             clt = CacheLineTracker(L)
 
-            total_misses = cfg_misses(sdfg, op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
+            cfg_misses(sdfg, op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
             # compute bytes
             for k, v in op_in_map.items():
                 op_in_map[k] = v[0] / v[1] * L
