@@ -153,9 +153,9 @@ class BestEffortLoopPeeling(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def _peel_loops(self, sdfg: SDFG, count: int, direction: str) -> int:
-        """Peel ``count`` iterations off every peelable loop and return how many
-        loops were peeled. ``direction`` is ``'front'``, ``'back'`` or ``'both'``.
+    def _peel_one_loop(self, sdfg: SDFG, loop: LoopRegion, count: int, direction: str) -> bool:
+        """Peel ``count`` iterations off ``loop`` (``'front'`` / ``'back'`` /
+        ``'both'``). Returns whether it peeled. Does NOT prune -- callers prune.
 
         Uses ``verify=False`` so loops with symbolic bounds (where peeling a
         boundary is most useful) are not rejected by ``LoopUnroll``'s
@@ -163,38 +163,104 @@ class BestEffortLoopPeeling(ppl.Pass):
         """
         from dace.transformation.interstate.loop_peeling import LoopPeeling
         sides = {'front': [True], 'back': [False], 'both': [True, False]}[direction]
-        peeled = 0
-        for loop in _loops(sdfg):
-            # A loop short enough to be fully consumed by the peel is the unroll
-            # pass's job, not peeling's.
-            trip = _constant_trip_count(loop, sdfg)
-            if trip is not None and trip <= count * len(sides):
+        # A loop short enough to be fully consumed by the peel is the unroll
+        # pass's job, not peeling's.
+        trip = _constant_trip_count(loop, sdfg)
+        if trip is not None and trip <= count * len(sides):
+            return False
+        did = False
+        for idx, begin in enumerate(sides):
+            try:
+                if idx > 0:
+                    # LoopPeeling names the peeled iteration regions after the loop
+                    # label; a second peel on the same loop would reuse those names.
+                    # Relabel the remainder loop first so front/back peels differ.
+                    loop.label = _unique_block_label(loop.sdfg, loop.label)
+                # Properties must go through ``options=`` -- bare kwargs are not
+                # applied, leaving ``count`` at LoopUnroll's default 0 (a no-op).
+                LoopPeeling().apply_to(sdfg=loop.sdfg,
+                                       loop=loop,
+                                       verify=False,
+                                       options={'count': count, 'begin': begin})
+                did = True
+            except Exception:
                 continue
-            did = False
-            for idx, begin in enumerate(sides):
-                try:
-                    if idx > 0:
-                        # LoopPeeling names the peeled iteration regions after the
-                        # loop label; a second peel on the same loop would reuse
-                        # those names. Relabel the remainder loop first so the
-                        # front and back peels produce distinct region names.
-                        loop.label = _unique_block_label(loop.sdfg, loop.label)
-                    # Properties must go through ``options=`` -- bare kwargs are not
-                    # applied, leaving ``count`` at LoopUnroll's default 0 (a no-op).
-                    LoopPeeling().apply_to(sdfg=loop.sdfg,
-                                           loop=loop,
-                                           verify=False,
-                                           options={'count': count, 'begin': begin})
-                    did = True
-                except Exception:
-                    continue
-            peeled += int(did)
+        return did
+
+    def _peel_loops(self, sdfg: SDFG, count: int, direction: str) -> int:
+        """Peel every peelable loop in ``sdfg`` (used directly in tests). Prunes
+        the dead boundary guards a peel leaves behind."""
+        peeled = sum(int(self._peel_one_loop(sdfg, loop, count, direction)) for loop in _loops(sdfg))
         if peeled:
-            # Peeling moves the boundary iteration out but leaves the remainder
-            # loop body unchanged; a guard like ``if i == N-1`` is now dead over
-            # the remainder's range. Pruning it is what actually frees LoopToMap.
             self._prune_dead_loop_branches(sdfg)
         return peeled
+
+    def _isolate_loop(self, loop: LoopRegion, sdfg: SDFG):
+        """Build a throwaway mini-SDFG containing only a copy of ``loop`` and the
+        arrays / symbols it references, so the peel search can experiment cheaply
+        without deep-copying the whole SDFG. Returns ``(mini, mini_loop)`` or
+        ``(None, None)`` if the nest cannot be isolated cleanly."""
+        import dace
+        from dace import serialize
+        try:
+            mini = dace.SDFG(sdfg.name + '_peelprobe')
+            for sname, stype in sdfg.symbols.items():
+                mini.add_symbol(sname, stype)
+            # Arrays referenced by the loop body and its interstate edges.
+            needed = set()
+            for st in loop.all_states():
+                for n in st.data_nodes():
+                    needed.add(n.data)
+                for e in st.edges():
+                    if e.data is not None and e.data.data is not None:
+                        needed.add(e.data.data)
+            for e in loop.all_interstate_edges():
+                needed |= e.data.used_arrays(sdfg.arrays)
+            for name in needed:
+                if name in sdfg.arrays and name not in mini.arrays:
+                    mini.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
+            # Copy the loop region via a JSON round-trip (reparents to `mini`).
+            mini_loop = serialize.from_json(serialize.to_json(loop), context={'sdfg': mini})
+            mini.add_node(mini_loop, is_start_block=True)
+            mini.reset_cfg_list()
+            mini.validate()
+            return mini, mini_loop
+        except Exception:
+            return None, None
+
+    def _best_peel_for(self, loop: LoopRegion, sdfg: SDFG):
+        """Find the ``(count, direction)`` peel that unblocks the most maps for
+        ``loop``, experimenting on an isolated mini-SDFG; ``None`` if no peel
+        beats leaving it alone (or the loop already maps)."""
+        mini, _ = self._isolate_loop(loop, sdfg)
+        if mini is None:
+            return None
+        base = copy.deepcopy(mini)
+        try:
+            baseline = self._l2m_candidate_maps(base)
+        except Exception:
+            return None
+        if not _loops(base):
+            return None  # already maps in isolation -> no peel needed
+
+        best_count, best = baseline, None
+        for direction in ('front', 'back', 'both'):
+            for count in range(1, self.peel_limit + 1):
+                cand = copy.deepcopy(mini)
+                cloops = _loops(cand)
+                if not cloops:
+                    break
+                if not self._peel_one_loop(cand, cloops[0], count, direction):
+                    continue
+                self._prune_dead_loop_branches(cand)
+                try:
+                    cand.validate()  # only a peel that stays valid is a working parameter
+                    n_maps = self._l2m_candidate_maps(cand)
+                except Exception:
+                    continue
+                if n_maps > best_count:
+                    best_count, best = n_maps, (count, direction)
+        return best
 
     def _cond_dead_over_range(self, cond, ivar: str, start, end, sdfg: SDFG) -> bool:
         """Whether the guard ``cond`` is provably false for every ``ivar`` in
@@ -301,26 +367,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         return _num_maps(candidate)
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Apply the best peel found (or none); returns the peel count applied or None."""
+        """For each loop, find the best peel on an isolated copy of just that
+        loop-nest and apply it on the real SDFG; returns the number of loops
+        peeled or None. Experimenting on the isolated nest (not the whole SDFG)
+        keeps the search cheap and revertible."""
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
-
-        baseline = self._l2m_candidate_maps(copy.deepcopy(sdfg))
-        best_count, best = baseline, None
-        for direction in ('front', 'back', 'both'):
-            for count in range(1, self.peel_limit + 1):
-                candidate = copy.deepcopy(sdfg)
-                if self._peel_loops(candidate, count, direction) == 0:
-                    continue
-                try:
-                    candidate.validate()  # only a peel that stays valid is a working parameter
-                    n_maps = self._l2m_candidate_maps(candidate)
-                except Exception:
-                    continue
-                if n_maps > best_count:
-                    best_count, best = n_maps, (count, direction)
-
-        if best is None:
-            return None
-        self._peel_loops(sdfg, *best)
-        return best[0]
+        applied = 0
+        for loop in list(_loops(sdfg)):
+            best = self._best_peel_for(loop, sdfg)
+            if best is not None and self._peel_one_loop(sdfg, loop, *best):
+                self._prune_dead_loop_branches(sdfg)
+                applied += 1
+        return applied or None
