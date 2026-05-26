@@ -424,7 +424,6 @@ def cfr_misses(cfr: ControlFlowRegion,
         possibilities = true_branches + possible_branches + [else_branch]
         if not true_branches and len(possible_branches) > 0 and ask_user and (
                 cfr not in decided_branches or decided_branches[cfr] not in possibilities):
-            possibilities = true_branches + possible_branches + ['else_branch']
             if len(possibilities) > 1:
                 print(f'\n\nWhich branch to take at {cfr.name}')
                 for i in range(len(possibilities)):
@@ -440,6 +439,9 @@ def cfr_misses(cfr: ControlFlowRegion,
         elif true_branches:
             # if we have true branches we take the first one
             branches = [true_branches[0]]
+        elif cfr in decided_branches and decided_branches[cfr] in possibilities:
+            # reuse the branch the user decided on a previous visit (e.g. a conditional inside a loop)
+            branches = [decided_branches[cfr]]
         else:
             # else we check all possibilities and take the max
             branches = possibilities

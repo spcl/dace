@@ -1,6 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the operational intensity analysis. """
+import contextlib
+import io
 from typing import Dict, Tuple
+from unittest import mock
 
 import pytest
 import dace as dc
@@ -174,6 +177,73 @@ def test_operational_intensity(test_name: str):
         assert isclose(correct, res)
 
 
+_ASK_USER_LOOP_ITERS = 8
+
+
+@dc.program
+def ask_user_branch(x: dc.float64[64], y: dc.float64[64]):
+    # A data-dependent conditional with an explicit else; the two branches do different amounts
+    # of work so that selecting one over the other changes the operational intensity.
+    if x[0] > 0:
+        y[:] = x + 1.0
+    else:
+        y[:] = x * x * x * x
+
+
+@dc.program
+def ask_user_branch_in_loop(x: dc.float64[64], y: dc.float64[64]):
+    for _ in range(_ASK_USER_LOOP_ITERS):
+        if x[0] > 0:
+            y[:] = x + 1.0
+        else:
+            y[:] = x * x * x * x
+
+
+def _op_in_with_choice(program: DaceProgram, choice: int) -> Tuple[int, float]:
+    """ Run the operational-intensity analysis in ``ask_user`` mode, always answering the branch
+    prompt with ``choice``.
+
+    :param program: The DaCe program to analyze.
+    :param choice: The branch index to feed to every prompt.
+    :returns: A tuple of the number of prompts raised and the resulting operational intensity.
+    """
+    sdfg = program.to_sdfg()
+    sdfg.simplify()
+    prompts = []
+
+    def fake_input(*_):
+        prompts.append(choice)
+        return str(choice)
+
+    op_in_map: Dict[str, sp.Expr] = {}
+    with mock.patch('builtins.input', fake_input), contextlib.redirect_stdout(io.StringIO()):
+        analyze_sdfg_op_in(sdfg, op_in_map, 1024, 64, {}, ask_user=True)
+    return len(prompts), float(op_in_map[get_uuid(sdfg)])
+
+
+def test_operational_intensity_ask_user_branch_selection():
+    """ ``ask_user`` lets the user pick which branch of a data-dependent conditional to analyze.
+    Each choice (including the implicit else) must complete without error, and the two branches,
+    which do different amounts of work, must yield different operational intensities. """
+    prompts_true, op_in_true = _op_in_with_choice(ask_user_branch, 0)
+    prompts_else, op_in_else = _op_in_with_choice(ask_user_branch, 1)
+    assert prompts_true == 1 and prompts_else == 1
+    assert not isclose(op_in_true, op_in_else)
+
+
+def test_operational_intensity_ask_user_decision_reused_in_loop():
+    """ A branch chosen once is reused on every later visit of the same conditional, so a
+    conditional inside a loop prompts the user only once and the chosen branch is taken on every
+    iteration (i.e. the loop intensity is the single-iteration intensity scaled by the trip
+    count). """
+    single_prompts, single_op_in = _op_in_with_choice(ask_user_branch, 0)
+    loop_prompts, loop_op_in = _op_in_with_choice(ask_user_branch_in_loop, 0)
+    assert single_prompts == 1 and loop_prompts == 1
+    assert isclose(loop_op_in, _ASK_USER_LOOP_ITERS * single_op_in)
+
+
 if __name__ == '__main__':
     for test_name in test_cases.keys():
         test_operational_intensity(test_name)
+    test_operational_intensity_ask_user_branch_selection()
+    test_operational_intensity_ask_user_decision_reused_in_loop()
