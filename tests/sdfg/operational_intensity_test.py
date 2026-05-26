@@ -255,22 +255,17 @@ def test_operational_intensity_range_simulation():
         assert isclose(float(op_in.subs(N, n)), 1 / 24, rel_tol=1e-6)
 
 
-def test_operational_intensity_inlined_branch_worst_case():
-    """ Inlining control flow to plain conditional interstate edges routes an undecidable branch
-    through the legacy ``cfg_misses`` traversal, which (without ``ask_user``) takes the worst-case
-    branch -- giving the same intensity as the ConditionalBlock form of the same program. """
-    op_in_cfg: Dict[str, sp.Expr] = {}
-    sdfg_cfg = ask_user_branch.to_sdfg()
-    sdfg_cfg.simplify()
-    analyze_sdfg_op_in(sdfg_cfg, op_in_cfg, 1024, 64, {})
-
-    op_in_legacy: Dict[str, sp.Expr] = {}
-    sdfg_legacy = ask_user_branch.to_sdfg()
-    sdfg_legacy.simplify()
-    inline_control_flow_regions(sdfg_legacy)
-    analyze_sdfg_op_in(sdfg_legacy, op_in_legacy, 1024, 64, {})
-
-    assert isclose(float(op_in_cfg[get_uuid(sdfg_cfg)]), float(op_in_legacy[get_uuid(sdfg_legacy)]))
+def test_operational_intensity_bails_on_unstructured_control_flow():
+    """ The analysis only models structured control flow. On an inlined SDFG (LoopRegions and
+    ConditionalBlocks flattened to a legacy state machine) it must warn and produce a zero result
+    rather than a wrong one. """
+    sdfg = ask_user_branch.to_sdfg()
+    sdfg.simplify()
+    inline_control_flow_regions(sdfg)
+    op_in_map: Dict[str, sp.Expr] = {}
+    with pytest.warns(UserWarning, match='structured control flow'):
+        analyze_sdfg_op_in(sdfg, op_in_map, 1024, 64, {})
+    assert op_in_map[get_uuid(sdfg)] == 0
 
 
 if __name__ == '__main__':
@@ -279,4 +274,4 @@ if __name__ == '__main__':
     test_operational_intensity_ask_user_branch_selection()
     test_operational_intensity_ask_user_decision_reused_in_loop()
     test_operational_intensity_range_simulation()
-    test_operational_intensity_inlined_branch_worst_case()
+    test_operational_intensity_bails_on_unstructured_control_flow()

@@ -6,6 +6,7 @@ import sympy as sp
 import dace
 from dace import SDFG
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.performance_evaluation.total_volume import analyze_sdfg
 
 
@@ -171,6 +172,31 @@ def test_loop_multiplies_volume():
     expected = 64 * N
     assert sp.simplify(read - expected) == 0
     assert sp.simplify(write - expected) == 0
+
+
+def test_bails_on_unstructured_control_flow():
+    """ Inlined control flow (a LoopRegion flattened to a legacy state-machine loop) is not
+    supported; the analysis must warn and return a zero (read, write) result. """
+    sdfg = SDFG('unstructured')
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('A', shape=[8], dtype=dace.float64)
+    sdfg.add_array('B', shape=[8], dtype=dace.float64)
+    loop = LoopRegion('loop',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      inverted=False,
+                      sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.start_block = sdfg.node_id(loop)
+    body = loop.add_state('body')
+    body.add_nedge(body.add_read('A'), body.add_write('B'), dace.Memlet('A[0:8]'))
+
+    inline_control_flow_regions(sdfg)
+    with pytest.warns(UserWarning, match='structured control flow'):
+        read, write = analyze_sdfg(sdfg)
+    assert read == 0 and write == 0
 
 
 # Note: per-kernel volume checks on real kernels (jacobi-1d, jacobi-2d, ...) live in

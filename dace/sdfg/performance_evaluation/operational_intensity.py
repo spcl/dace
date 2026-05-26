@@ -14,7 +14,8 @@ from dace.symbolic import pystr_to_symbolic, SymExpr
 import re
 import warnings
 
-from dace.sdfg.performance_evaluation.helpers import get_uuid, get_static_symbols, subs_till_fixed_point
+from dace.sdfg.performance_evaluation.helpers import (get_uuid, get_static_symbols, subs_till_fixed_point,
+                                                      has_unstructured_control_flow)
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
@@ -23,8 +24,6 @@ from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, Acc
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
 
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.analysis import cfg
-from dace.sdfg.utils import nodes_in_all_simple_paths
 
 
 class SymbolRange():
@@ -77,28 +76,6 @@ def calculate_op_in(op_in_map, work_map, stringify=False, assumptions={}):
             op_in_map[uuid] = sp.N(work / op_in_map[uuid])
         if stringify:
             op_in_map[uuid] = str(op_in_map[uuid])
-
-
-def mem_accesses_on_path(states):
-    mem_accesses = 0
-    for state in states:
-        mem_accesses += len(state.read_and_write_sets())
-    return mem_accesses
-
-
-def find_states_between(region: ControlFlowRegion, start_state: SDFGState, end_state: SDFGState):
-    """ Return the states on any path from ``start_state`` up to (but excluding) ``end_state``. """
-    return nodes_in_all_simple_paths(region.nx, start_state, end_state) - {end_state}
-
-
-def find_merge_state(region: ControlFlowRegion, state: SDFGState):
-    """ Return the state where the branches out of ``state`` re-converge (via ``cfg.branch_merges``),
-    or ``None`` (with a warning) if no single merge state exists. """
-    merges = cfg.branch_merges(region)
-    if state in merges:
-        return merges[state]
-
-    warnings.warn(f'No merge state could be detected for branch state "{state.name}".')
 
 
 def symeval(val, symbols):
@@ -524,97 +501,23 @@ def cfg_misses(cfg: ControlFlowRegion,
                                    decided_branches, ask_user)
 
         total_misses += region_misses
-        if len(cfg.out_edges(curr_state)) == 0:
-            # we reached an end state --> stop
+        out_edges = cfg.out_edges(curr_state)
+        if len(out_edges) == 0:
+            # reached an end state --> stop
             break
-        else:
-            # take first edge with True condition
-            found = False
-            for e in cfg.out_edges(curr_state):
-                if e.data.is_unconditional() or e.data.condition_sympy().subs(mapping) == True:
-                    # save e's assignments in mapping and update curr_state
-                    # replace values first with mapping, then update mapping
-                    try:
-                        total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
-                        update_mapping(mapping, e)
-                    except Exception:
-                        warnings.warn('Uncommon assignment on an interstate edge (e.g. bitwise '
-                                      'operators); analysis may give wrong results. Assignments: %s' %
-                                      e.data.assignments)
-                    curr_state = e.dst
-                    found = True
-                    break
-            if not found:
-                # We need to check if we are in an implicit end state (i.e. all outgoing edge conditions evaluate to False)
-                all_false = True
-                for e in cfg.out_edges(curr_state):
-                    if e.data.condition_sympy().subs(mapping) != False:
-                        all_false = False
-                if all_false:
-                    break
-
-                if curr_state in decided_branches:
-                    # if the user already decided this branch in a previous iteration, take the same branch again.
-                    e = decided_branches[curr_state]
-                    total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
-                    update_mapping(mapping, e)
-                    curr_state = e.dst
-                else:
-                    # we cannot determine which branch to take --> check if both contain work
-                    merge_state = find_merge_state(cfg, curr_state)
-                    next_edge_candidates = []
-                    for e in cfg.out_edges(curr_state):
-                        states = find_states_between(cfg, e.dst, merge_state)
-                        curr_work = mem_accesses_on_path(states)
-                        if sp.sympify(curr_work).subs(mapping) > 0:
-                            next_edge_candidates.append(e)
-
-                    if len(next_edge_candidates) == 1:
-                        e = next_edge_candidates[0]
-                        total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
-                        update_mapping(mapping, e)
-                        decided_branches[curr_state] = e
-                        curr_state = e.dst
-                    else:
-                        if ask_user:
-                            edges = cfg.out_edges(curr_state)
-                            print(f'\n\nWhich branch to take at {curr_state.name}')
-                            for i in range(len(edges)):
-                                print(f'({i}) for edge to state {edges[i].dst.name}')
-                            chosen = int(input('Choose an option from above: '))
-                            e = edges[chosen]
-                            total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
-                            update_mapping(mapping, e)
-                            decided_branches[curr_state] = e
-                            curr_state = e.dst
-                            print(2 * '\n')
-                        else:
-                            # Cannot decide and not asking the user: explore every candidate branch
-                            # on copies of the mapping and stack (so their cache effects stay
-                            # isolated), then continue along and commit the worst-case one.
-                            candidates = next_edge_candidates or cfg.out_edges(curr_state)
-                            best_misses = None
-                            best = None
-                            for e in candidates:
-                                branch_mapping = dict(mapping)
-                                branch_stack = stack.copy()
-                                branch_symbols = dict(symbols)
-                                branch_array_names = dict(array_names)
-                                branch_misses = assignment_misses(e, branch_mapping, branch_stack, clt, C,
-                                                                  branch_symbols, branch_array_names)
-                                update_mapping(branch_mapping, e)
-                                branch_misses += cfg_misses(cfg, op_in_map, branch_mapping, branch_stack, clt, C,
-                                                            branch_symbols, branch_array_names, decided_branches,
-                                                            ask_user, e.dst, merge_state)
-                                if best_misses is None or branch_misses > best_misses:
-                                    best_misses = branch_misses
-                                    best = (branch_mapping, branch_stack, branch_symbols, branch_array_names)
-                            total_misses += best_misses
-                            mapping.update(best[0])
-                            stack.replace_self(best[1])
-                            symbols.update(best[2])
-                            array_names.update(best[3])
-                            curr_state = merge_state
+        # Structured control flow: a block has a single successor (branches are ConditionalBlocks,
+        # loops are LoopRegions). A statically-false condition on that edge is an implicit end.
+        edge = out_edges[0]
+        if not edge.data.is_unconditional() and edge.data.condition_sympy().subs(mapping) == False:
+            break
+        # Save the edge's assignments into the mapping and advance.
+        try:
+            total_misses += assignment_misses(edge, mapping, stack, clt, C, symbols, array_names)
+            update_mapping(mapping, edge)
+        except Exception:
+            warnings.warn('Uncommon assignment on an interstate edge (e.g. bitwise operators); '
+                          'analysis may give wrong results. Assignments: %s' % edge.data.assignments)
+        curr_state = edge.dst
         if curr_state == end:
             break
 
@@ -655,6 +558,16 @@ def analyze_sdfg_op_in(sdfg: SDFG,
     C = C // L
 
     sdfg = deepcopy(sdfg)
+
+    # The analysis only models structured control flow. If the SDFG has a legacy loop or
+    # unstructured branching, bail out with a zero result rather than producing a wrong one.
+    if has_unstructured_control_flow(sdfg):
+        warnings.warn('Operational-intensity analysis supports only structured control flow '
+                      '(LoopRegion / ConditionalBlock); the SDFG contains a legacy loop or '
+                      'unstructured branch, so no result is produced.')
+        op_in_map[get_uuid(sdfg)] = 0
+        return
+
     # apply SSA pass
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})

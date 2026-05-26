@@ -20,6 +20,7 @@ fully naive per-scalar-access count. """
 
 import argparse
 import os
+import warnings
 from collections import deque
 from copy import deepcopy
 from typing import Dict, List, Optional, Tuple
@@ -31,7 +32,7 @@ from dace.data import View
 from dace.dtypes import StorageType
 from dace.sdfg import infer_types, nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.performance_evaluation.helpers import get_static_symbols
+from dace.sdfg.performance_evaluation.helpers import get_static_symbols, has_unstructured_control_flow
 from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion,
                              ReturnBlock)
 from dace.symbolic import pystr_to_symbolic, symbol
@@ -356,6 +357,15 @@ def analyze_sdfg(sdfg: SDFG, optimize: bool = True) -> Tuple[sp.Expr, sp.Expr]:
     """
     # Deep-copy so the original SDFG is not modified.
     sdfg = deepcopy(sdfg)
+
+    # The analysis only models structured control flow. If the SDFG has a legacy loop or
+    # unstructured branching, bail out with a zero result rather than producing a wrong one.
+    if has_unstructured_control_flow(sdfg):
+        warnings.warn('Memory-volume analysis supports only structured control flow (LoopRegion / '
+                      'ConditionalBlock); the SDFG contains a legacy loop or unstructured branch, '
+                      'so no result is produced.')
+        return sp.sympify(0), sp.sympify(0)
+
     if optimize:
         # Try to use an optimized version of the SDFG to account for compiler optimizations.
         try:

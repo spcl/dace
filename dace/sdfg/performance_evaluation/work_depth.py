@@ -18,7 +18,7 @@ import ast
 import astunparse
 import warnings
 
-from dace.sdfg.performance_evaluation.helpers import LoopExtractionError, get_uuid, find_loop_guards_tails_exits, get_legacy_loop_body, get_legacy_loop_ranges, get_static_symbols
+from dace.sdfg.performance_evaluation.helpers import get_uuid, get_static_symbols, has_unstructured_control_flow
 from dace.sdfg.performance_evaluation.assumptions import parse_assumptions
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
@@ -846,107 +846,9 @@ def control_flow_region_work_depth(
                     edge_work += count_arithmetic_ops_code(v)
         edge_w_d_map[(get_uuid(isedge.src), get_uuid(isedge.dst))] = (edge_work, edge_depth)
 
-    # Prepare the SDFG for a depth analysis by breaking loops. This removes the edge between the last loop state and
-    # the guard, and instead places an edge between the last loop state and the exit state.
-    # This transforms the state machine into a DAG. Hence, we can find the "heaviest" and "deepest" paths in linear time.
-    # Additionally, construct a dummy exit state and connect every state that has no outgoing edges to it.
-
-    # ================================= Handling of Legacy Loops =================================
-    # identify legacy loops (i.e. loops that aren't LoopRegions) in the CFR
-    try:
-        nodes_oNodes_exits = find_loop_guards_tails_exits(cfr._nx)
-    except LoopExtractionError:
-        # If loop detection fails, we cannot make proper propagation.
-        warnings.warn('Analysis failed since not all loops were detected (more structured loop '
-                      'constructs may help); per-state analysis remains correct, but no SDFG-wide '
-                      'result can be produced.')
-        sdfg_result = (sp.oo, sp.oo)
-        w_d_map[get_uuid(cfr)] = sdfg_result
-
-        for k, (v_w, v_d) in w_d_map.items():
-            # The symeval replaces nested SDFG symbols with their global counterparts.
-            v_w = symeval(v_w, symbols)
-            v_d = symeval(v_d, symbols)
-            w_d_map[k] = (v_w, v_d)
-        return sdfg_result
-
-    legacy_loop_ranges = get_legacy_loop_ranges(cfr)
-
-    for guard, tail, exits in nodes_oNodes_exits:
-
-        if guard not in legacy_loop_ranges:
-            # propagate_states didn't recognise this as an annotated for-loop
-            # (e.g. while-loop or dynamic unbounded).  Fall back to the
-            # execution-count symbol approach as before.
-            iter_sym = sp.Symbol(f'num_execs_{guard.parent.cfg_id}_{guard.parent.node_id(guard)}', nonnegative=True)
-            loop_body_nodes = get_legacy_loop_body(cfr, guard, tail, exits)
-            for node in loop_body_nodes:
-                if node is guard:
-                    continue
-                node_uuid = get_uuid(node)
-                if node_uuid not in w_d_map:
-                    continue
-                node_work, node_depth = w_d_map[node_uuid]
-                region_works[node] = sp.simplify(node_work * iter_sym)
-                region_depths[node] = sp.simplify(node_depth * iter_sym)
-                w_d_map[node_uuid] = (region_works[node], region_depths[node])
-            continue
-
-        loop_var, start, stop, stride = legacy_loop_ranges[guard]
-        loop_body_nodes = get_legacy_loop_body(cfr, guard, tail, exits)
-
-        loop_var = loop_var.subs(subs1)
-        # Shift loop variable to start from 0 with step 1
-        shifted_hi = (stop - start) // stride
-        shifted_hi = shifted_hi.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
-
-        lower_bound = start.subs(subs1) if stride.evalf() > 0 else stop.subs(subs1)
-        abs_stride = sp.Abs(stride)
-
-        for node in loop_body_nodes:
-            if node is guard:
-                continue
-            node_uuid = get_uuid(node)
-            if node_uuid not in w_d_map:
-                continue
-            node_work = w_d_map[node_uuid][0]
-            node_depth = w_d_map[node_uuid][1]
-            # Substitute loop_var -> (abs_stride * loop_var + lower_bound), matching
-            # the LoopRegion branch exactly.
-            node_work = node_work.subs({loop_var: abs_stride * loop_var + lower_bound})
-            node_depth = node_depth.subs({loop_var: abs_stride * loop_var + lower_bound})
-
-            node_work = sp.Sum(node_work, (loop_var, sp.sympify(0), shifted_hi)).doit()
-            node_depth = sp.Sum(node_depth, (loop_var, sp.sympify(0), shifted_hi)).doit()
-
-            node_work = sp.simplify(node_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
-            node_depth = sp.simplify(node_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
-
-            # Write the summed result back into ONLY the guard, so the downstream
-            # BFS traversal picks up one single node representing the whole loop.
-            region_works[node] = node_work
-            region_depths[node] = node_depth
-            w_d_map[get_uuid(node)] = (node_work, node_depth)
-
-    # Now we need to go over each triple (node, oNode, exits). For each triple, we
-    #       - remove edge (oNode, node), i.e. the backward edge
-    #       - for all exits e, add edge (oNode, e). This edge may already exist
-    #       - remove edge from node to exit (if present, i.e. while-do loop)
-    #           - This ensures that every node with > 1 outgoing edge is a branch guard
-    #               - useful for detailed anaylsis.
-    for node, oNode, exits in nodes_oNodes_exits:
-        cfr.remove_edge(cfr.edges_between(oNode, node)[0])
-        for e in exits:
-            if len(cfr.edges_between(oNode, e)) == 0:
-                # no edge there yet
-                cfr.add_edge(oNode, e, InterstateEdge())
-            if len(cfr.edges_between(node, e)) > 0:
-                # edge present --> remove it
-                cfr.remove_edge(cfr.edges_between(node, e)[0])
-
-    # ================================= End of Legacy Loop Handling =================================
-
-    # add a dummy exit to the SDFG, such that each path ends there.
+    # Add a dummy exit so every path ends there. The analysis assumes structured control flow, so
+    # loops are LoopRegions (single nodes here) and this control-flow region is already a DAG; the
+    # BFS below can find the heaviest/deepest paths in linear time.
     dummy_exit = cfr.add_state('dummy_exit')
     for region in cfr.nodes():
         if len(cfr.out_edges(region)) == 0 and region is not dummy_exit:
@@ -1410,6 +1312,16 @@ def analyze_sdfg(sdfg: SDFG,
     """
     # deepcopy such that original sdfg not changed
     sdfg = deepcopy(sdfg)
+
+    # The analysis only models structured control flow. If the SDFG has a legacy loop or
+    # unstructured branching, bail out with a zero result rather than producing a wrong one.
+    if has_unstructured_control_flow(sdfg):
+        warnings.warn('Work-depth analysis supports only structured control flow (LoopRegion / '
+                      'ConditionalBlock); the SDFG contains a legacy loop or unstructured branch, '
+                      'so no result is produced.')
+        result = (sp.sympify(0), sp.sympify(0)) if analyze_tasklet == get_tasklet_work_depth else sp.sympify(0)
+        w_d_map[get_uuid(sdfg)] = result
+        return result
 
     # apply SSA pass
     pipeline = FixedPointPipeline([StrictSymbolSSA()])

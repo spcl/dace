@@ -202,8 +202,6 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_0') * N, sp.Symbol('num_execs_0_0'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
     'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_0') * N, 2 * sp.Symbol('num_execs_0_0'))),
-    'break_for_loop': (break_for_loop, (N**2, N)),
-    'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_0') * N, sp.Symbol('num_execs_0_0'))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
     'reduction_library_node': (reduction_library_node, (456, sp.log(456) / sp.log(2))),
     'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N)) / sp.log(2))),
@@ -219,9 +217,8 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
 
 def standardize(expr):
     # Drop symbol assumptions (so e.g. N and N(positive) compare equal) and collapse the
-    # auto-generated loop-execution-count symbols (num_execs_<cfg>_<node>): their names depend on
-    # SDFG structure -- they differ between the control-flow-region and inlined forms -- but denote
-    # the same opaque count.
+    # auto-generated loop-execution-count symbols (num_execs_<cfg>_<node>, used for unbounded loops)
+    # to a single opaque name.
     def canonical(sym):
         return sp.Symbol('num_execs' if sym.name.startswith('num_execs') else sym.name)
 
@@ -231,7 +228,7 @@ def standardize(expr):
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
     if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
-            and test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
+            and test_name in ['unbounded_while_do', 'unbounded_nonnegify']):
         pytest.skip('Malformed loop when not simplifying')
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
@@ -240,39 +237,6 @@ def test_work_depth(test_name):
         sdfg.apply_transformations(NestSDFG)
     if 'nested_maps' in test.name:
         sdfg.apply_transformations(MapExpansion)
-
-    # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    # inline_control_flow_regions(sdfg)
-    # This is now not necessary anymore. Work-depth analysis still works for inlined SDFGs, but this imposes other names which fails test cases 'unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop'
-
-    #fg.all_sdfgs_recursive():
-    #   sd.using_explicit_control_flow = False
-
-    analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
-    res = w_d_map[get_uuid(sdfg)]
-    # substitue each symbol without assumptions.
-    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-    res = (standardize(res[0]), standardize(res[1]))
-    correct = (standardize(sp.sympify(correct[0])), standardize(sp.sympify(correct[1])))
-    # check result
-    assert res[0].expand() == correct[0].expand()
-    assert res[1].expand() == correct[1].expand()
-
-
-@pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
-def test_work_depth_inlined(test_name):
-    test, correct = work_depth_test_cases[test_name]
-    w_d_map: Dict[str, sp.Expr] = {}
-    sdfg = test.to_sdfg()
-    if 'nested_sdfg' in test.name:
-        sdfg.apply_transformations(NestSDFG)
-    if 'nested_maps' in test.name:
-        sdfg.apply_transformations(MapExpansion)
-
-    # test
-    inline_control_flow_regions(sdfg)
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.using_explicit_control_flow = False
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
@@ -296,8 +260,6 @@ tests_cases_avg_par = {
     'max_of_positive_symbol': (max_of_positive_symbol, N),
     'unbounded_while_do': (unbounded_while_do, N),
     'unbounded_nonnegify': (unbounded_nonnegify, N),
-    'break_for_loop': (break_for_loop, N),
-    'break_while_loop': (break_while_loop, N),
     'reduction_library_node': (reduction_library_node, 456 / (sp.log(456) / sp.log(2))),
     'reduction_library_node_symbolic': (reduction_library_node_symbolic, N * sp.log(2) / sp.log(sp.Max(1, N))),
     'gemm_library_node': (gemm_library_node, 2 * 456 * 200 * 111 / (sp.log(200) / sp.log(2))),
@@ -310,7 +272,7 @@ tests_cases_avg_par = {
 @pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
 def test_avg_par(test_name: str):
     if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
-            and test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
+            and test_name in ['unbounded_while_do', 'unbounded_nonnegify']):
         pytest.skip('Malformed loop when not simplifying')
 
     test, correct = tests_cases_avg_par[test_name]
@@ -321,11 +283,6 @@ def test_avg_par(test_name: str):
     if 'nested_maps' in test_name:
         sdfg.apply_transformations(MapExpansion)
 
-    # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    # inline_control_flow_regions(sdfg)
-    # This is now not necessary anymore. Work-depth analysis still works for inlined SDFGs, but this imposes other names which fails test cases 'unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop'
-    #for sd in sdfg.all_sdfgs_recursive():
-    #    sd.using_explicit_control_flow = False
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)]
     # substitue each symbol without assumptions.
@@ -338,30 +295,28 @@ def test_avg_par(test_name: str):
     assert res.expand() == correct.expand()
 
 
-@pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
-def test_avg_par_inlined(test_name: str):
-    test, correct = tests_cases_avg_par[test_name]
-    w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
-    sdfg = test.to_sdfg()
-    if 'nested_sdfg' in test_name:
-        sdfg.apply_transformations(NestSDFG)
-    if 'nested_maps' in test_name:
-        sdfg.apply_transformations(MapExpansion)
+@pytest.mark.parametrize('prog', [break_for_loop, break_while_loop])
+def test_work_depth_bails_on_break_continue(prog: DaceProgram):
+    """ ``break`` / ``continue`` are not supported (early loop exits are not modeled); the analysis
+    must warn and produce a zero (work, depth) result rather than a wrong one. """
+    sdfg = prog.to_sdfg()
+    w_d_map: Dict[str, sp.Expr] = {}
+    with pytest.warns(UserWarning, match='structured control flow'):
+        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
+    assert w_d_map[get_uuid(sdfg)] == (sp.sympify(0), sp.sympify(0))
 
+
+def test_work_depth_bails_on_unstructured_control_flow():
+    """ Inlined control flow (LoopRegions / ConditionalBlocks flattened to a legacy state machine)
+    is not supported; the analysis must warn and produce a zero (work, depth) result. """
+    sdfg = single_for_loop.to_sdfg()
     inline_control_flow_regions(sdfg)
-
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_explicit_control_flow = False
-    analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
-    res = w_d_map[get_uuid(sdfg)]
-    # substitue each symbol without assumptions.
-    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-    reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
-    res = res.subs(reps)
-    reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
-    correct = sp.sympify(correct).subs(reps)
-    # check result
-    assert res.expand() == correct.expand()
+    w_d_map: Dict[str, sp.Expr] = {}
+    with pytest.warns(UserWarning, match='structured control flow'):
+        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
+    assert w_d_map[get_uuid(sdfg)] == (sp.sympify(0), sp.sympify(0))
 
 
 x, y, z, a = sp.symbols('x y z a')
