@@ -351,15 +351,28 @@ PYFUNC_TO_ARITHMETICS = {
         name: 0
         for name in _TYPECAST_NAMES
     },
+    # Transcendental intrinsics each count as one realised operation (np.* and math.* both lower to
+    # the bare C name in tasklet code); a user wanting hardware flop counts overrides these.
     'math.exp': 1,
     'exp': 1,
+    'exp2': 1,
     'math.tanh': 1,
     'sin': 1,
     'cos': 1,
+    'tan': 1,
+    'asin': 1,
+    'acos': 1,
+    'atan': 1,
+    'atan2': 1,
+    'sinh': 1,
+    'cosh': 1,
     'tanh': 1,
+    'log': 1,
+    'log2': 1,
+    'log10': 1,
     'math.sqrt': 1,
     'sqrt': 1,
-    'atan2': 1,
+    'cbrt': 1,
     'int_floor': 1,  # integer (floor) division
     'int_ceil': 1,  # integer (ceil) division
     'min': 0,

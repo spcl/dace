@@ -261,6 +261,14 @@ def _make_unary_func_sdfg(func_name: str) -> dace.SDFG:
     return sdfg
 
 
+@pytest.mark.parametrize('func_name', ['tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'log', 'log2', 'log10', 'cbrt'])
+def test_transcendental_flop_cost_recognized(func_name):
+    """Common transcendental intrinsics are recognized and counted (one op per call), not silently
+    dropped as zero work via the unrecognized-function path."""
+    sdfg = _make_unary_func_sdfg(func_name)
+    assert _value(_compute_work(sdfg)) == _SIZES['N']
+
+
 def test_user_defined_function_flop_cost(monkeypatch):
     """A user can override a function's flop cost: e.g. declaring sin to cost 65 flops instead of 1
     (the costs live in the public work_depth.PYFUNC_TO_ARITHMETICS registry)."""
