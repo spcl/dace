@@ -218,8 +218,14 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
 
 
 def standardize(expr):
-    new_expr = expr.replace(lambda x: isinstance(x, sp.Symbol), lambda x: sp.Symbol(x.name))
-    return new_expr
+    # Drop symbol assumptions (so e.g. N and N(positive) compare equal) and collapse the
+    # auto-generated loop-execution-count symbols (num_execs_<cfg>_<node>): their names depend on
+    # SDFG structure -- they differ between the control-flow-region and inlined forms -- but denote
+    # the same opaque count.
+    def canonical(sym):
+        return sp.Symbol('num_execs' if sym.name.startswith('num_execs') else sym.name)
+
+    return expr.replace(lambda x: isinstance(x, sp.Symbol), canonical)
 
 
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
@@ -255,9 +261,6 @@ def test_work_depth(test_name):
 
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth_inlined(test_name):
-    if test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']:
-        pytest.skip('Different state naming when ControlFLowRegios are inlined')
-
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
@@ -268,7 +271,6 @@ def test_work_depth_inlined(test_name):
 
     # test
     inline_control_flow_regions(sdfg)
-    sdfg.save(test_name + ".sdfg")
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_explicit_control_flow = False
 
@@ -338,9 +340,6 @@ def test_avg_par(test_name: str):
 
 @pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
 def test_avg_par_inlined(test_name: str):
-    if test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']:
-        pytest.skip('Different state naming when ControlFLowRegios are inlined')
-
     test, correct = tests_cases_avg_par[test_name]
     w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
     sdfg = test.to_sdfg()
