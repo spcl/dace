@@ -103,6 +103,14 @@ def resolve_minmax_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upp
         if len(node.args) != 2:
             continue
         canon_node = canonical(node)
+        # Canonicalization can resolve the node outright (e.g. ``Max(j, j - 1)`` -> ``j``), leaving
+        # fewer than two arguments; the surviving expression already names the winning operand.
+        if not isinstance(canon_node, (sp.Max, sp.Min)) or len(canon_node.args) != 2:
+            for original_operand in node.args:
+                if canonical(original_operand) == canon_node:
+                    replacements[node] = original_operand
+                    break
+            continue
         if canon_var not in canon_node.free_symbols:
             continue
         a, b = canon_node.args
@@ -278,8 +286,12 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
                 if not loop_var:
                     raise ValueError('Loop region has no loop variable')
                 range_var_stack.append((loop_var, (lower_bound, upper_bound, step)))
-                loop_read, loop_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
-                del range_var_stack[-1:]
+                # Pop in ``finally`` so a failure inside the recursion cannot leak the frame and
+                # inflate sibling/enclosing scopes (the leaked range would multiply their volume).
+                try:
+                    loop_read, loop_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
+                finally:
+                    del range_var_stack[-1:]
                 region_volume_map[cfr] = (loop_read, loop_write)
             except Exception:
                 # Fall back to the (statically estimated) number of executions of the loop body.
@@ -287,8 +299,10 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
                 range_var_stack.append(
                     (f"byte_access_loop_range_var_{len(range_var_stack)}", (pystr_to_symbolic(0), loop_executions,
                                                                             pystr_to_symbolic(1))))
-                inner_read, inner_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
-                del range_var_stack[-1:]
+                try:
+                    inner_read, inner_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
+                finally:
+                    del range_var_stack[-1:]
                 region_volume_map[cfr] = (inner_read, inner_write)
 
         elif isinstance(cfr, ConditionalBlock):

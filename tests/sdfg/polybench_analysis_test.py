@@ -41,7 +41,7 @@ import dace
 from dace.sdfg import nodes as nd
 from dace.sdfg.performance_evaluation import total_volume, work_depth
 from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.symbolic import pystr_to_symbolic, Subscript
+from dace.symbolic import pystr_to_symbolic, simplify, Subscript
 
 _POLYBENCH_DIR = pathlib.Path(__file__).resolve().parents[1] / 'polybench'
 
@@ -99,41 +99,65 @@ _KERNEL_FUNCS = {
     'trmm': 'trmm'
 }
 
-# kernel -> (compute work, read bytes, write bytes) evaluated at _SIZES.
-# Leading-order references: gemm ~2*NI*NJ*NK, cholesky ~N**3/3, lu/ludcmp ~2*N**3/3,
-# floyd-warshall ~N**3, the stencils ~tsteps*flops_per_point*interior, the BLAS-2 kernels ~N**2.
-# The triangular-access kernels (cholesky/lu/ludcmp) now produce a closed-form volume too.
+# kernel -> (work, read bytes, write bytes), each a (symbolic, value-at-_SIZES) pair shown
+# side-by-side: the symbolic form is the analysis' closed form in the kernel's size symbols (manually
+# verifiable against the kernel source), and the value pins that same form evaluated at _SIZES as a
+# regression guard. The test asserts the analysis equals the symbolic form and that the two columns
+# agree. Leading-order references for the symbolic work: gemm ~2*NI*NJ*NK (bare matmul; the analysis'
+# 3*NI*NJ*NK+NI*NJ also counts the alpha/beta scaling), cholesky ~N**3/3, lu/ludcmp ~2*N**3/3
+# (the analysis counts the unary negate in ``-a*b`` as a separate op, so its leading term is ~3/2x the
+# textbook flop count), floyd-warshall ~N**3, stencils ~tsteps*flops_per_point*interior, BLAS-2 ~N**2.
+# The triangular reads (cholesky/lu/ludcmp) are O(N**4): the propagated boundary memlet over a row and
+# a column access is a dense bounding box (see total_volume's cost-model docstring).
 EXPECTED = {
-    '2mm': (2702, 2744, 2016),
-    '3mm': (4048, 3896, 1648),
-    'adi': (18432, 139264, 53904),
-    'atax': (572, 3520, 1336),
-    'bicg': (572, 1336, 280),
-    'cholesky': (1183, 12272, 1456),
-    'correlation': (2750, 5816, 4064),
-    'covariance': (2145, 17864, 4488),
-    'deriche': (960, 2640, 2708),
-    'doitgen': (1200, 6920, 1920),
-    'durbin': (386, 3176, 1752),
-    'fdtd-2d': (1503, 8376, 3528),
-    'floyd-warshall': (2197, 676, 676),
-    'gemm': (1568, 1544, 896),
-    'gemver': (1703, 4904, 1664),
-    'gesummv': (715, 3032, 312),
-    'gramschmidt': (4732, 31720, 17056),
-    'heat-3d': (159720, 140608, 85184),
-    'jacobi-1d': (264, 832, 704),
-    'jacobi-2d': (4840, 10816, 7744),
-    'lu': (2028, 266968, 4160),
-    'ludcmp': (2509, 312624, 18720),
-    'mvt': (676, 1560, 208),
-    'nussinov': (442, 5928, 2080),
-    'seidel-2d': (4356, 34848, 3872),
-    'symm': (4433, 22720, 8008),
-    'syr2k': (6097, 3656, 2704),
-    'syrk': (3094, 2512, 2704),
-    'trisolv': (247, 1560, 312),
-    'trmm': (1716, 15760, 2288),
+    '2mm': (('NI*(3*NJ*NK + 2*NJ*NL + NL)', 2702), ('8*NI*NJ + 8*NI*NK + 8*NI*NL + 8*NJ*NK + 8*NJ*NL + 16', 2744),
+            ('16*NI*(NJ + NL)', 2016)),
+    '3mm': (('2*NJ*(NI*NK + NI*NL + NL*NM)', 4048), ('8*NI*NJ + 8*NI*NK + 8*NJ*NK + 8*NJ*NL + 8*NJ*NM + 8*NL*NM', 3896),
+            ('8*NI*NJ + 8*NI*NL + 8*NJ*NL', 1648)),
+    'adi': (('2*tsteps*(N - 2)*(17*N + 2*int_floor(3 - N, -1) - 32) + 40',
+             18432), ('16*tsteps*(14*N**2 + 3*N*int_floor(3 - N, -1) - 43*N - 6*int_floor(3 - N, -1) + 39)', 139264),
+            ('80*N**2*tsteps + 16*N*tsteps*int_floor(3 - N, -1) - 136*N*tsteps - 32*tsteps*int_floor(3 - N, -1) '
+             '- 48*tsteps + 48', 53904)),
+    'atax': (('4*M*N', 572), ('8*M*(3*N + 1)', 3520), ('8*M*N + 8*M + 8*N', 1336)),
+    'bicg': (('4*M*N', 572), ('8*M*N + 8*M + 8*N', 1336), ('16*M + 8*N', 280)),
+    'cholesky': (('N**2*(N + 1)/2', 1183), ('N*(N**3 + 2*N**2 + 23*N - 2)/3', 12272), ('8*N*(N + 1)', 1456)),
+    'correlation':
+    (('M*(M*N + 8*N + 3)', 2750), ('32*M*N + 40*M + 8*(M - 1)**2', 5816), ('24*M**2 + 8*M*N + 16', 4064)),
+    'covariance': (('M*(M*N + M + 3*N + 2)', 2145), ('4*M*(2*M*N + M + 8*N + 5)', 17864), ('8*M*(3*M + N + 5)', 4488)),
+    'deriche': (('2*H*W + 7*H*(int_floor(1 - W, -1) + 1) + W*(16*H + 7*int_floor(1 - H, -1) + 7)',
+                 960), ('48*H*W + 20*H*(int_floor(1 - W, -1) + 1) + 20*W*(int_floor(1 - H, -1) + 1)', 2640),
+                ('40*H*W + 20*H*int_floor(1 - W, -1) + 48*H + 20*W*int_floor(1 - H, -1) + 48*W', 2708)),
+    'doitgen': (('2*NP**2*NQ*NR', 1200), ('8*NP*(NP*NQ*NR + NP + 2*NQ*NR)', 6920), ('16*NP*NQ*NR', 1920)),
+    'durbin': (('2*N**2 + 4*N - 4', 386), ('16*N**2 + 40*N - 48', 3176), ('8*N**2 + 32*N - 16', 1752)),
+    'fdtd-2d': (('TMAX*(11*NX*NY - 8*NX - 8*NY + 5)', 1503), ('8*TMAX*(7*NX*NY - 3*NX - 3*NY + 2)', 8376),
+                ('8*TMAX*(3*NX*NY - 2*NX - NY + 1)', 3528)),
+    'floyd-warshall': (('N**3', 2197), ('4*N**2', 676), ('4*N**2', 676)),
+    'gemm': (('NI*NJ*(3*NK + 1)', 1568), ('8*NI*NJ + 8*NI*NK + 8*NJ*NK + 16', 1544), ('16*NI*NJ', 896)),
+    'gemver': (('N*(10*N + 1)', 1703), ('24*N**2 + 64*N + 16', 4904), ('8*N*(N + 3)', 1664)),
+    'gesummv': (('N*(4*N + 3)', 715), ('16*N**2 + 24*N + 16', 3032), ('24*N', 312)),
+    'gramschmidt':
+    (('N*(5*M*N + M + 2)/2', 4732), ('4*N*(4*M*N + 2*M + N + 3)', 31720), ('4*N*(2*M*N + 3*N + 3)', 17056)),
+    'heat-3d': (('30*tsteps*(N - 2)**3', 159720), ('16*N**3*tsteps', 140608), ('16*tsteps*(N - 2)**3', 85184)),
+    'jacobi-1d': (('6*tsteps*(N - 2)', 264), ('16*N*tsteps', 832), ('16*tsteps*(N - 2)', 704)),
+    'jacobi-2d': (('10*tsteps*(N - 2)**2', 4840), ('16*N**2*tsteps', 10816), ('16*tsteps*(N - 2)**2', 7744)),
+    'lu': (('N**2*(N - 1)', 2028), ('2*N*(N**3 + 2*N**2 + 5*N - 4)', 67496), ('4*N*(3*N - 1)', 1976)),
+    'ludcmp': (('N**3 + N**2/2 + 3*N*int_floor(1 - N, -1) + 3*N/2 - 3*int_floor(1 - N, -1)**2/2 '
+                '- 7*int_floor(1 - N, -1)/2 - 2', 2509),
+               ('2*N**4 + 4*N**3 + 30*N**2 + 4*N + 8*int_floor(1 - N, -1)**2 + 32*int_floor(1 - N, -1) + 24',
+                72592), ('24*N**2 + 24*N + 24*int_floor(1 - N, -1) + 24', 4680)),
+    'mvt': (('4*N**2', 676), ('8*N*(N + 2)', 1560), ('16*N', 208)),
+    'nussinov': (('N**2*int_floor(1 - N, -1)/2 + N**2/2 - N*int_floor(1 - N, -1)**2/2 + N/2 '
+                  '+ int_floor(1 - N, -1)**3/6 - 7*int_floor(1 - N, -1)/6 - 1',
+                  442), ('2*int_floor(1 - N, -1)**3 + 8*int_floor(1 - N, -1)**2 + 6*int_floor(1 - N, -1) '
+                         '+ Max(4*(int_floor(1 - N, -1) + 1)*int_floor(1 - N, -1), '
+                         '8*(int_floor(1 - N, -1) + 1)*int_floor(1 - N, -1))', 5928),
+                 ('2*(int_floor(1 - N, -1)**2 + 9*int_floor(1 - N, -1) + 8)*int_floor(1 - N, -1)/3', 2080)),
+    'seidel-2d': (('9*tsteps*(N - 2)**2', 4356), ('72*tsteps*(N - 2)**2', 34848), ('8*tsteps*(N - 2)**2', 3872)),
+    'symm': (('M*N*(5*M + 7)/2', 4433), ('8*M**2*N + 8*M**2 + 64*M*N + 16', 22720), ('4*M*N*(M + 3)', 8008)),
+    'syr2k': (('N*(6*M + 1)*(N + 1)/2', 6097), ('16*M*N + 8*N**2 + 16', 3656), ('16*N**2', 2704)),
+    'syrk': (('N*(3*M + 1)*(N + 1)/2', 3094), ('8*M*N + 8*N**2 + 16', 2512), ('16*N**2', 2704)),
+    'trisolv': (('N*(3*N - 1)/2', 247), ('8*N*(N + 2)', 1560), ('24*N', 312)),
+    'trmm': (('M*N*(M + 1)', 1716), ('8*M**2*N + 8*M**2 + 16*M*N - 8*M + 8', 15760), ('16*M*N', 2288)),
 }
 
 
@@ -150,11 +174,20 @@ def _value(expr):
     """Evaluate a symbolic analysis result at :data:`_SIZES`; return ``None`` if it stays symbolic."""
     expr = pystr_to_symbolic(expr)
     subs = {s: _SIZES[s.name] for s in expr.free_symbols if s.name in _SIZES}
-    value = sp.simplify(expr.subs(subs).doit())
+    value = simplify(expr.subs(subs).doit())
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _assert_matches(analysis, expected):
+    """Check an analysis result against its pinned ``(symbolic, value-at-_SIZES)`` reference: the
+    closed forms must be symbolically equal, and the pinned value must be that form evaluated at
+    :data:`_SIZES` (so the two side-by-side columns are kept in sync)."""
+    symbolic, value = expected
+    assert simplify(pystr_to_symbolic(analysis) - pystr_to_symbolic(symbolic)) == 0
+    assert _value(symbolic) == value
 
 
 def _compute_work(sdfg) -> sp.Expr:
@@ -165,16 +198,16 @@ def _compute_work(sdfg) -> sp.Expr:
 
 @pytest.mark.parametrize('stem', sorted(_KERNEL_FUNCS))
 def test_polybench_compute(stem):
-    """The compute work of each PolyBench kernel matches its pinned (leading-order) value."""
+    """The compute work of each PolyBench kernel matches its pinned closed form and value."""
     work = _compute_work(_load_kernel(stem).to_sdfg(simplify=True))
-    assert _value(work) == EXPECTED[stem][0]
+    _assert_matches(work, EXPECTED[stem][0])
 
 
 @pytest.mark.parametrize('optimize', [False, True])
 @pytest.mark.parametrize('stem', sorted(_KERNEL_FUNCS))
 def test_polybench_memory(stem, optimize):
-    """The un-optimized memory volume matches the pinned working-set bytes; the optimized form must
-    still yield a valid, non-negative volume."""
+    """The un-optimized memory volume matches the pinned closed form and value; the optimized form
+    must still yield a valid, non-negative volume."""
     read, write = total_volume.analyze_sdfg(_load_kernel(stem).to_sdfg(simplify=True), optimize=optimize)
     if optimize:
         # The auto-optimized form is implementation-dependent (fusion, vectorization tiling), so we
@@ -183,8 +216,8 @@ def test_polybench_memory(stem, optimize):
             value = _value(volume)
             assert value is None or value >= 0
         return
-    assert _value(read) == EXPECTED[stem][1]
-    assert _value(write) == EXPECTED[stem][2]
+    _assert_matches(read, EXPECTED[stem][1])
+    _assert_matches(write, EXPECTED[stem][2])
 
 
 # Library-node counters (exercised directly on the linalg solver nodes).
