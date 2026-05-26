@@ -19,7 +19,7 @@ from dace.sdfg import infer_types, nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion,
                              ReturnBlock)
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, symbol
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -64,10 +64,74 @@ def safe_summation(summand: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.E
     lower = sp.sympify(lower)
     upper = sp.sympify(upper)
     free_syms = summand.free_symbols | lower.free_symbols | upper.free_symbols
-    plain = {s: sp.Symbol(s.name) for s in free_syms if s != var and s.assumptions0}
+    plain = {s: symbol(s.name) for s in free_syms if s != var and s.assumptions0}
     restore = {v: k for k, v in plain.items()}
     result = sp.summation(summand.subs(plain), (var, lower.subs(plain), upper.subs(plain)))
     return result.subs(restore)
+
+
+def resolve_minmax_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr) -> sp.Expr:
+    """
+    Resolve ``Max``/``Min`` nodes involving ``var`` when the iteration range ``[lower, upper]`` fixes
+    the sign of the comparison.
+
+    For a two-argument ``Max(a, b)``/``Min(a, b)`` whose difference ``a - b`` is affine in ``var``,
+    the difference is monotonic over the range, so its sign there is determined by the relevant
+    endpoint; when that sign is constant the node is replaced by the larger/smaller operand. This is
+    needed because a triangular access (the inner index bounded by the outer one, e.g. cholesky, lu,
+    ludcmp) yields ``Max``/``Min`` in the summand that SymPy's ``refine`` cannot simplify, leaving the
+    volume as an unevaluated sum.
+
+    :param expr: The summand to simplify.
+    :param var: The summation variable.
+    :param lower: Inclusive lower bound of the summation range.
+    :param upper: Inclusive upper bound of the summation range.
+    :return: ``expr`` with the resolvable Max/Min nodes replaced.
+    """
+    lower = sp.sympify(lower)
+    upper = sp.sympify(upper)
+    var_name = var.name
+
+    # Symbols of the same name may be distinct instances (different assumptions), so e.g. the ``i``
+    # inside ``Max(i, j)`` would not cancel against the ``i`` in a bound ``i - 1``. Compare in a
+    # canonical positive-integer namespace so such names cancel and bounds become concrete.
+    def canonical(e: sp.Expr) -> sp.Expr:
+        return e.subs({s: symbol(s.name, positive=True) for s in e.free_symbols})
+
+    canon_var = symbol(var_name, positive=True)
+    canon_lower, canon_upper = canonical(lower), canonical(upper)
+
+    replacements = {}
+    for node in expr.atoms(sp.Max, sp.Min):
+        if len(node.args) != 2:
+            continue
+        canon_node = canonical(node)
+        if canon_var not in canon_node.free_symbols:
+            continue
+        a, b = canon_node.args
+        diff = sp.expand(a - b)
+        coeff = diff.coeff(canon_var)
+        if sp.expand(diff - coeff * canon_var).has(canon_var):  # not affine in var
+            continue
+        # The affine difference is monotonic in var: take its extremes at the range endpoints.
+        if coeff.is_nonnegative:
+            minimum, maximum = diff.subs(canon_var, canon_lower), diff.subs(canon_var, canon_upper)
+        elif coeff.is_nonpositive:
+            minimum, maximum = diff.subs(canon_var, canon_upper), diff.subs(canon_var, canon_lower)
+        else:
+            continue
+        if (sp.simplify(minimum) >= 0) == True:  # a >= b over the whole range
+            winner = a if isinstance(node, sp.Max) else b
+        elif (sp.simplify(maximum) <= 0) == True:  # a <= b over the whole range
+            winner = b if isinstance(node, sp.Max) else a
+        else:
+            continue
+        # Map the canonical winner back to the original operand (operand order may differ).
+        for original_operand in node.args:
+            if canonical(original_operand) == winner:
+                replacements[node] = original_operand
+                break
+    return expr.subs(replacements) if replacements else expr
 
 
 def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
@@ -87,7 +151,7 @@ def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
     ]
     type_regex = re.compile("|".join(map(re.escape, patterns)))
 
-    static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
+    static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {symbol(a): symbol(a) for a in sdfg.arg_names}
     non_static_symbols = set()
     for node, containing_state in sdfg.all_nodes_recursive():
         if not isinstance(node, nd.AccessNode):
@@ -114,8 +178,8 @@ def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
                     continue
                 out_map[e.src_conn] = str(e.dst.data)
 
-            in_map = {sp.Symbol(k): sp.Symbol(v) for k, v in in_map.items()}
-            out_map = {sp.Symbol(k): sp.Symbol(v) for k, v in out_map.items()}
+            in_map = {symbol(k): symbol(v) for k, v in in_map.items()}
+            out_map = {symbol(k): symbol(v) for k, v in out_map.items()}
             code = tasklet.code.as_string.strip()
             # Expect a single assignment.
             lines = [l.strip() for l in code.splitlines() if l.strip()]
@@ -136,9 +200,9 @@ def get_static_symbols(sdfg: SDFG) -> Dict[sp.Symbol, sp.Expr]:
                 non_static_symbols.add(lhs_sympy)
 
         elif isinstance(source, nd.AccessNode):
-            data_sym = sp.Symbol(source.data)
+            data_sym = symbol(source.data)
             if data_sym not in static_symbol_mapping.keys():
-                static_symbol_mapping[data_sym] = sp.Symbol(node.data)
+                static_symbol_mapping[data_sym] = symbol(node.data)
             else:
                 non_static_symbols.add(data_sym)
 
@@ -213,19 +277,25 @@ def scope_volume(state: SDFGState,
 
                 shifted_hi = (hi - lo) // step
                 shifted_lo = sp.sympify(0)
-                sp_var = sp.Symbol(var)
+                sp_var = symbol(var)
 
                 if var in read_symbol_map.keys():
+                    rvar = read_symbol_map[var]
+                    # Resolve Max/Min fixed by this iteration range (e.g. triangular access) before
+                    # summing, so the sum has a closed form.
+                    access_node_read_volume = resolve_minmax_over_range(access_node_read_volume, rvar, lo, hi)
                     access_node_read_volume = safe_summation(
-                        access_node_read_volume.subs(read_symbol_map[var], (sp.sympify(step) * sp_var + lo)), sp_var,
-                        shifted_lo, shifted_hi)
+                        access_node_read_volume.subs(rvar, (sp.sympify(step) * sp_var + lo)), sp_var, shifted_lo,
+                        shifted_hi)
                 else:
                     access_node_read_volume = safe_summation(access_node_read_volume, sp_var, shifted_lo, shifted_hi)
 
                 if var in write_symbol_map.keys():
+                    wvar = write_symbol_map[var]
+                    access_node_write_volume = resolve_minmax_over_range(access_node_write_volume, wvar, lo, hi)
                     access_node_write_volume = safe_summation(
-                        access_node_write_volume.subs(write_symbol_map[var], (sp.sympify(step) * sp_var + lo)), sp_var,
-                        shifted_lo, shifted_hi)
+                        access_node_write_volume.subs(wvar, (sp.sympify(step) * sp_var + lo)), sp_var, shifted_lo,
+                        shifted_hi)
                 else:
                     access_node_write_volume = safe_summation(access_node_write_volume, sp_var, shifted_lo, shifted_hi)
 
@@ -242,7 +312,7 @@ def scope_volume(state: SDFGState,
             # Rename purely local symbols to avoid clashes with parent-level names.
             for sym in node.sdfg.symbols.keys():
                 if sym not in node.symbol_mapping:
-                    mapping[sym] = sp.Symbol(f"{sym}_{node.sdfg.cfg_id}")
+                    mapping[sym] = symbol(f"{sym}_{node.sdfg.cfg_id}")
             read += read_nested.subs(mapping)
             write += write_nested.subs(mapping)
 

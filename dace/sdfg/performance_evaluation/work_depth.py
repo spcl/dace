@@ -1113,7 +1113,9 @@ def compute_symbols(sdfg: SDFG) -> Set[str]:
             data_symbols |= {str(s) for s in node.free_symbols}
     # Transitive closure: if a compute symbol is assigned an expression, the symbols feeding that
     # expression are compute symbols too.
-    assignment_edges = [e for e, _ in sdfg.all_edges_recursive() if getattr(e.data, 'assignments', None)]
+    assignment_edges = [
+        e for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, InterstateEdge) and e.data.assignments
+    ]
     changed = True
     while changed:
         changed = False

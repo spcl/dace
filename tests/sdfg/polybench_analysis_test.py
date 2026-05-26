@@ -84,18 +84,17 @@ _KERNEL_FUNCS = {
     'trmm': 'trmm'
 }
 
-# kernel -> (compute work, read bytes, write bytes) evaluated at _SIZES. A ``None`` read marks a
-# kernel whose un-optimized read volume the analysis leaves as an unevaluated triangular-access sum
-# (cholesky/lu/ludcmp) -- a documented limitation; only its work and write volume are pinned.
+# kernel -> (compute work, read bytes, write bytes) evaluated at _SIZES.
 # Leading-order references: gemm ~2*NI*NJ*NK, cholesky ~N**3/3, lu/ludcmp ~2*N**3/3,
 # floyd-warshall ~N**3, the stencils ~tsteps*flops_per_point*interior, the BLAS-2 kernels ~N**2.
+# The triangular-access kernels (cholesky/lu/ludcmp) now produce a closed-form volume too.
 EXPECTED = {
     '2mm': (2702, 2744, 2016),
     '3mm': (4048, 3896, 1648),
     'adi': (18432, 139264, 53904),
     'atax': (572, 3520, 1336),
     'bicg': (572, 1336, 280),
-    'cholesky': (1183, None, 1456),
+    'cholesky': (1183, 12272, 1456),
     'correlation': (2750, 5816, 4064),
     'covariance': (2145, 17864, 4488),
     'deriche': (960, 2640, 2708),
@@ -110,8 +109,8 @@ EXPECTED = {
     'heat-3d': (159720, 140608, 85184),
     'jacobi-1d': (264, 832, 704),
     'jacobi-2d': (4840, 10816, 7744),
-    'lu': (2028, None, 1976),
-    'ludcmp': (2509, None, 4680),
+    'lu': (2028, 266968, 4160),
+    'ludcmp': (2509, 312624, 18720),
     'mvt': (676, 1560, 208),
     'nussinov': (442, 5928, 2080),
     'seidel-2d': (4356, 34848, 3872),
@@ -169,13 +168,8 @@ def test_polybench_memory(stem, optimize):
             value = _value(volume)
             assert value is None or value >= 0
         return
-    expected_read, expected_write = EXPECTED[stem][1], EXPECTED[stem][2]
-    if expected_read is None:
-        # cholesky/lu/ludcmp: the triangular-access read volume stays an unevaluated sum.
-        assert isinstance(read, sp.Basic)
-    else:
-        assert _value(read) == expected_read
-    assert _value(write) == expected_write
+    assert _value(read) == EXPECTED[stem][1]
+    assert _value(write) == EXPECTED[stem][2]
 
 
 # --- Library-node counters (exercised directly on the linalg solver nodes) -------------------------
