@@ -33,8 +33,7 @@ from dace.dtypes import StorageType
 from dace.sdfg import infer_types, nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.performance_evaluation.helpers import get_static_symbols, has_unstructured_control_flow
-from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion,
-                             ReturnBlock)
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic, symbol
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.analysis import loop_analysis
@@ -312,8 +311,6 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
             else:
                 cond_read, cond_write = (sp.Max(*branch_reads), sp.Max(*branch_writes))
             region_volume_map[cfr] = (cond_read, cond_write)
-        elif isinstance(cfr, (ReturnBlock, ContinueBlock, BreakBlock)):
-            region_volume_map[cfr] = (sp.sympify(0), sp.sympify(0))
         else:
             # With control-flow regions, branching is handled by control-flow blocks, so the
             # remaining regions form a single path and their volumes can simply be summed.

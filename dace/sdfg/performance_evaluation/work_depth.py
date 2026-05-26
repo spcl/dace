@@ -24,7 +24,7 @@ from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
 
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock
 
 math_funcs = set()
 
@@ -821,9 +821,6 @@ def control_flow_region_work_depth(
                 region_depths[region] = sp.Piecewise(*depth_condition)
             w_d_map[get_uuid(region)] = (region_works[region], region_depths[region])
 
-        elif isinstance(region, (ReturnBlock, ContinueBlock, BreakBlock)):
-            region_works[region], region_depths[region] = (sp.sympify(0), sp.sympify(0))
-            w_d_map[get_uuid(region)] = (sp.sympify(0), sp.sympify(0))
         else:
             function_work, function_depth = control_flow_region_work_depth(region, w_d_map, analyze_tasklet, symbols,
                                                                            equality_subs, subs1, detailed_analysis,

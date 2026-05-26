@@ -8,7 +8,7 @@ from typing import Dict
 import sympy as sp
 
 from dace import SDFG, SDFGState, dtypes, nodes
-from dace.sdfg.state import BreakBlock, ContinueBlock, UnstructuredControlFlow
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, UnstructuredControlFlow
 from dace.symbolic import pystr_to_symbolic, symbol
 
 UUID_SEPARATOR = '/'
@@ -35,10 +35,10 @@ def has_unstructured_control_flow(sdfg: SDFG) -> bool:
     Check whether the SDFG contains control flow the performance analyses do not model.
 
     They assume structured control flow -- loops as ``LoopRegion`` and branches as
-    ``ConditionalBlock`` -- and do not model early loop exits. The following are therefore reported
-    as unsupported: a legacy loop (a cycle not encapsulated in a ``LoopRegion``), unstructured
-    branching (a block with more than one outgoing edge), and ``break`` / ``continue``
-    (``BreakBlock`` / ``ContinueBlock``).
+    ``ConditionalBlock`` -- and model neither non-local exits nor legacy state machines. The
+    following are therefore reported as unsupported: a legacy loop (a cycle not encapsulated in a
+    ``LoopRegion``), unstructured branching (a block with more than one outgoing edge), and
+    ``break`` / ``continue`` / ``return`` (``BreakBlock`` / ``ContinueBlock`` / ``ReturnBlock``).
 
     :param sdfg: The SDFG to inspect.
     :return: True if any (possibly nested) control-flow region is unstructured.
@@ -47,7 +47,7 @@ def has_unstructured_control_flow(sdfg: SDFG) -> bool:
         if isinstance(region, UnstructuredControlFlow) or region.has_cycles():
             return True
         for block in region.nodes():
-            if isinstance(block, (BreakBlock, ContinueBlock)) or len(region.out_edges(block)) > 1:
+            if isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)) or len(region.out_edges(block)) > 1:
                 return True
     return False
 

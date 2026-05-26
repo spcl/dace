@@ -147,6 +147,13 @@ def break_while_loop(x: dc.float64[N]):
 
 
 @dc.program
+def early_return(x: dc.float64[N]):
+    if x[0] > 0:
+        return
+    x += 1
+
+
+@dc.program
 def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]):  # --> cannot assume N, M to be positive
     if x[0] > 5:
         x[:] += 1  # N+1 work, 1 depth
@@ -295,10 +302,10 @@ def test_avg_par(test_name: str):
     assert res.expand() == correct.expand()
 
 
-@pytest.mark.parametrize('prog', [break_for_loop, break_while_loop])
-def test_work_depth_bails_on_break_continue(prog: DaceProgram):
-    """ ``break`` / ``continue`` are not supported (early loop exits are not modeled); the analysis
-    must warn and produce a zero (work, depth) result rather than a wrong one. """
+@pytest.mark.parametrize('prog', [break_for_loop, break_while_loop, early_return])
+def test_work_depth_bails_on_nonlocal_exit(prog: DaceProgram):
+    """ ``break`` / ``continue`` / ``return`` are not supported (non-local exits are not modeled);
+    the analysis must warn and produce a zero (work, depth) result rather than a wrong one. """
     sdfg = prog.to_sdfg()
     w_d_map: Dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match='structured control flow'):

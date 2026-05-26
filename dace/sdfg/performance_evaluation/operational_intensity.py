@@ -5,7 +5,7 @@ or from the VS Code extension. """
 import argparse
 from dace.sdfg import nodes as nd
 from dace import dtypes, SDFG
-from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
+from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock
 from typing import Tuple, Dict
 import os
 import sympy as sp
@@ -445,8 +445,6 @@ def cfr_misses(cfr: ControlFlowRegion,
                                    ask_user,
                                    start=cfr.start_block,
                                    end=None)
-    elif isinstance(cfr, (ReturnBlock, ContinueBlock, BreakBlock)):
-        region_misses = 0
 
     return region_misses
 
