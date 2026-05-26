@@ -34,7 +34,7 @@ from dace.sdfg import infer_types, nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.performance_evaluation.helpers import get_static_symbols, has_unstructured_control_flow
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion
-from dace.symbolic import pystr_to_symbolic, symbol
+from dace.symbolic import pystr_to_symbolic, symbol, int_floor
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -192,7 +192,7 @@ def scope_volume(state: SDFGState,
                 read_symbol_map = {sym.name: sym for sym in access_node_read_volume.free_symbols}
                 write_symbol_map = {sym.name: sym for sym in access_node_write_volume.free_symbols}
 
-                shifted_hi = (hi - lo) // step
+                shifted_hi = int_floor(hi - lo, step)
                 shifted_lo = sp.sympify(0)
                 sp_var = symbol(var)
 

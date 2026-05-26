@@ -13,7 +13,7 @@ from copy import deepcopy
 from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
 from dace.libraries.standard import Reduce
 from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
-from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions
+from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions, symbol, int_floor
 import ast
 import astunparse
 import warnings
@@ -720,7 +720,8 @@ def control_flow_region_work_depth(
             # We try to get a closed form solution for the work and depth of the loop. If this is not possible (e.g. because there are no static loop bounds),
             # we fall back to just multiplying the work and depth of one loop iteration with the number of loop iterations. This can lead to incorrect results,
             # since it does not take into account that work and depth of one loop iteration might be dependent on the loop variable.
-            loop_var = sp.Symbol(loop.loop_variable)
+            # An unbounded loop may have no loop variable; ``None`` then forces the fallback below.
+            loop_var = symbol(loop.loop_variable) if loop.loop_variable else None
             lower_bound = loop_analysis.get_init_assignment(loop)
             upper_bound = loop_analysis.get_loop_end(loop)
             step = sp.sympify(loop_analysis.get_loop_stride(loop))
@@ -769,8 +770,8 @@ def control_flow_region_work_depth(
                     loop_work = loop_work * executions
                     loop_depth = loop_depth * executions
                 else:
-                    exec_symbol = sp.Symbol(f'num_execs_{region.sdfg.cfg_id}_{region.sdfg.node_id(region)}',
-                                            nonnegative=True)
+                    exec_symbol = symbol(f'num_execs_{region.sdfg.cfg_id}_{region.sdfg.node_id(region)}',
+                                         nonnegative=True)
                     loop_work = loop_work * exec_symbol
                     loop_depth = loop_depth * exec_symbol
 
@@ -1048,7 +1049,7 @@ def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: 
     for sym in expr.free_symbols:
         if sym.name == var.name and sym != var:
             expr = expr.subs({sym: var})
-    shifted_hi = ((upper - lower) // step).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
+    shifted_hi = int_floor(upper - lower, step).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
     # Iterate from the lower bound unless the step is known-negative (a symbolic step, e.g. a tile
     # size, is treated as forward; map steps are never negative).
     lower = lower.subs(subs1) if step.is_negative is not True else upper.subs(subs1)
@@ -1152,7 +1153,7 @@ def scope_work_depth(
                     # Such a library node was already encountered by the analysis.
                     # Hence, we don't need to add anyting.
                     pass
-                lib_node_work = sp.Symbol(f'{node.name}_work', positive=True)
+                lib_node_work = symbol(f'{node.name}_work', positive=True)
             lib_node_depth = sp.sympify(-1)
             if analyze_tasklet != get_tasklet_work:
                 # we are analyzing depth
@@ -1164,7 +1165,7 @@ def scope_work_depth(
                         top_level_sdfg.add_symbol(f'{node.name}_depth', dtypes.int64)
                     except FileExistsError:
                         pass
-                    lib_node_depth = sp.Symbol(f'{node.name}_depth', positive=True)
+                    lib_node_depth = symbol(f'{node.name}_depth', positive=True)
             lib_node_work, lib_node_depth = do_initial_subs(lib_node_work, lib_node_depth, equality_subs, subs1)
             work += lib_node_work
             w_d_map[get_uuid(node, state)] = (lib_node_work, lib_node_depth)

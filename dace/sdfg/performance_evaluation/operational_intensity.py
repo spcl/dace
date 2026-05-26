@@ -10,7 +10,7 @@ from typing import Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic, SymExpr
+from dace.symbolic import pystr_to_symbolic, SymExpr, symbol
 import re
 import warnings
 
@@ -125,14 +125,14 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
             lhs_name = m_lhs.group("name")
             lhs_index = m_lhs.group("index")
             if lhs_index and not lhs_index.isdigit():
-                lhs_index = sp.Symbol(m_lhs.group("index"))
+                lhs_index = pystr_to_symbolic(m_lhs.group("index"))
             elif lhs_index and lhs_index.isdigit():
                 lhs_index = sp.Expr(int(lhs_index))
 
             rhs_name = m_rhs.group("name")
             rhs_index = m_rhs.group("index")
             if rhs_index and not rhs_index.isdigit():
-                rhs_index = sp.Symbol(m_rhs.group("index"))
+                rhs_index = pystr_to_symbolic(m_rhs.group("index"))
             elif rhs_index and rhs_index.isdigit():
                 lhs_index = sp.Expr(int(rhs_index))
 
@@ -313,7 +313,7 @@ def scope_misses(state: SDFGState,
                 top_level_sdfg.add_symbol(f'{node.name}_misses', dtypes.int64)
             except FileExistsError:
                 pass
-            lib_node_misses = sp.Symbol(f'{node.name}_misses', positive=True)
+            lib_node_misses = symbol(f'{node.name}_misses', positive=True)
             lib_node_misses = lib_node_misses.subs(mapping)
             scope_misses += lib_node_misses
             update_map(op_in_map, get_uuid(node, state), lib_node_misses)
