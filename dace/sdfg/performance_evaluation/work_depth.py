@@ -397,9 +397,7 @@ class ArithmeticCounter(ast.NodeVisitor):
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
         if fname not in PYFUNC_TO_ARITHMETICS:
-            print(
-                'WARNING: Unrecognized python function "%s". If this is a type conversion, like "dace.float64", then this is fine.'
-                % fname)
+            warnings.warn('Unrecognized function "%s" in tasklet code; assuming it performs zero work.' % fname)
             return self.generic_visit(node)
         self.count += PYFUNC_TO_ARITHMETICS[fname]
         return self.generic_visit(node)
@@ -462,9 +460,7 @@ class DepthCounter(ast.NodeVisitor):
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
         if fname not in PYFUNC_TO_ARITHMETICS:
-            print(
-                'WARNING: Unrecognized python function "%s". If this is a type conversion, like "dace.float64", then this is fine.'
-                % fname)
+            warnings.warn('Unrecognized function "%s" in tasklet code; assuming it performs zero work.' % fname)
             # Still need to visit arguments to get their depth
             arg_depths = [self.visit(arg) for arg in node.args]
             return max(arg_depths) if arg_depths else 0
@@ -736,9 +732,8 @@ def control_flow_region_work_depth(
             upper_bound = loop_analysis.get_loop_end(loop)
             step = sp.sympify(loop_analysis.get_loop_stride(loop))
             if any(v is None for v in (loop_var, lower_bound, upper_bound)):
-                print(
-                    "Because the loop does not provide a loop variable and static bounds, we fell back to just using its number of iterations. Mind that this can affect the correctness of the expression "
-                )
+                warnings.warn('Loop without a static loop variable/bounds; falling back to its '
+                              'execution count, which can affect the resulting expression.')
                 fallback = True
                 executions = loop.start_block.executions
                 executions = executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
@@ -870,8 +865,9 @@ def control_flow_region_work_depth(
         nodes_oNodes_exits = find_loop_guards_tails_exits(cfr._nx)
     except LoopExtractionError:
         # If loop detection fails, we cannot make proper propagation.
-        print('Analysis failed since not all loops got detected. It may help to use more structured loop constructs.' +
-              ' The analysis per state remains correct, but no SDFG-wide analysis can be performed.')
+        warnings.warn('Analysis failed since not all loops were detected (more structured loop '
+                      'constructs may help); per-state analysis remains correct, but no SDFG-wide '
+                      'result can be produced.')
         sdfg_result = (sp.oo, sp.oo)
         w_d_map[get_uuid(cfr)] = sdfg_result
 
@@ -904,7 +900,6 @@ def control_flow_region_work_depth(
                 w_d_map[node_uuid] = (region_works[node], region_depths[node])
             continue
 
-        print(f'Handling legacy loop with guard {guard} and tail {tail} and loops bounds {legacy_loop_ranges[guard]}')
         loop_var, start, stop, stride = legacy_loop_ranges[guard]
         loop_body_nodes = get_legacy_loop_body(cfr, guard, tail, exits)
 
@@ -1293,7 +1288,7 @@ def scope_work_depth(
                 work = accumulate_over_range(work, pystr_to_symbolic(param), begin, end, step, equality_subs, subs1)
             work = sp.simplify(work)
         else:
-            print('WARNING: Only Map scopes are supported in work analysis for now. Assuming 1 iteration.')
+            warnings.warn('Only Map scopes are supported in work analysis; assuming 1 iteration.')
 
     # Work inside a state can simply be summed up. But now we need to find the depth of a state (i.e. longest path).
     # Since dataflow graph is a DAG, this can be done in linear time.

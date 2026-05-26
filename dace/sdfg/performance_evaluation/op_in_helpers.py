@@ -109,15 +109,6 @@ class AccessStack:
             dist += 1
         return res
 
-    def debug_print(self):
-        # prints the whole stack
-        print('\n')
-        curr = self.top
-        while curr is not None:
-            print(curr.v, end=', ')
-            curr = curr.next
-        print('\n')
-
     def copy(self):
         new_stack = AccessStack(self.C)
         cache_content = self.in_cache_as_list()

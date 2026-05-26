@@ -13,6 +13,7 @@ import sympy as sp
 from copy import deepcopy
 from dace.symbolic import pystr_to_symbolic, SymExpr
 import re
+import warnings
 
 from dace.sdfg.performance_evaluation.helpers import get_uuid, get_static_symbols, subs_till_fixed_point
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
@@ -113,7 +114,7 @@ def find_merge_state(sdfg: SDFG, state: SDFGState):
     if state in merges:
         return merges[state]
 
-    print(f'WARNING: No merge state could be detected for branch state "{state.name}".', )
+    warnings.warn(f'No merge state could be detected for branch state "{state.name}".')
 
 
 def symeval(val, symbols):
@@ -551,9 +552,9 @@ def cfg_misses(cfg: ControlFlowRegion,
                         total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                         update_mapping(mapping, e)
                     except Exception:
-                        print('\nWARNING: Uncommon assignment detected on InterstateEdge (e.g. bitwise operators).'
-                              'Analysis may give wrong results.')
-                        print(e.data.assignments, 'was the edge\'s assignments.')
+                        warnings.warn('Uncommon assignment on an interstate edge (e.g. bitwise '
+                                      'operators); analysis may give wrong results. Assignments: %s' %
+                                      e.data.assignments)
                     curr_state = e.dst
                     found = True
                     break
@@ -594,8 +595,6 @@ def cfg_misses(cfg: ControlFlowRegion,
                             print(f'\n\nWhich branch to take at {curr_state.name}')
                             for i in range(len(edges)):
                                 print(f'({i}) for edge to state {edges[i].dst.name}')
-                                print(edges[i].dst._read_and_write_sets())
-                            print('merge state is named ', merge_state)
                             chosen = int(input('Choose an option from above: '))
                             e = edges[chosen]
                             total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
@@ -776,11 +775,8 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                     # compute MAPE on total SDFG
                     mape = compute_mape(final_f, x_values[-test_set_size:], v[-test_set_size:], test_set_size)
                     if mape > 0.2:
-                        print('High MAPE detected:', mape)
-                        print('It is suggested to generate plots and analyze those.')
-                        print('R^2 is:', r_s)
-                        print('A hight R^2 (i.e. close to 1) suggests that we are fitting the test data well.')
-                        print('This combined with high MAPE tells us that our test data does not generalize.')
+                        warnings.warn('High MAPE (%s) with R^2 = %s: the fit matches the test data but '
+                                      'may not generalize; generating plots is suggested.' % (mape, r_s))
             calculate_op_in(op_in_map, work_map, not generate_plots)
 
             if generate_plots:
