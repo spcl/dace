@@ -225,12 +225,22 @@ def _edge_access_volume(state: SDFGState, edge: MultiConnectorEdge, neighbor) ->
     """
     bounding_box = calculate_edge_volume(state, edge)
     scope_node = neighbor(edge)
-    if not isinstance(scope_node, (nd.MapEntry, nd.MapExit)):
+    # Associate this edge with the inner edges fed by its own connector (``IN_x`` <-> ``OUT_x``), each
+    # propagated over the map on its own rather than unioned into the single boundary memlet. Pairing
+    # by connector (not by array name) accounts an array entering the map through several connectors
+    # once per connector instead of summing every connector's footprint into each. Any connector
+    # outside that convention falls back to the bounding box.
+    if isinstance(scope_node, nd.MapEntry):
+        if not edge.dst_conn or not edge.dst_conn.startswith('IN_'):
+            return bounding_box
+        inner_edges = state.out_edges_by_connector(scope_node, 'OUT_' + edge.dst_conn[len('IN_'):])
+    elif isinstance(scope_node, nd.MapExit):
+        if not edge.src_conn or not edge.src_conn.startswith('OUT_'):
+            return bounding_box
+        inner_edges = state.in_edges_by_connector(scope_node, 'IN_' + edge.src_conn[len('OUT_'):])
+    else:
         return bounding_box
-    # The per-connector footprints are the inner edges on the same array, each propagated over the
-    # map on its own (rather than unioned into the single boundary memlet).
-    inner_edges = state.out_edges(scope_node) if isinstance(scope_node, nd.MapEntry) else state.in_edges(scope_node)
-    inner_edges = [e for e in inner_edges if e.data.data == edge.data.data and e.data.subset is not None]
+    inner_edges = [e for e in inner_edges if e.data.subset is not None]
     if not inner_edges:
         return bounding_box
     element_bytes = state.sdfg.arrays[edge.data.data].dtype.bytes
