@@ -5,7 +5,6 @@ Further, provides a curve fitting method and plotting function. """
 import warnings
 from dace.data import Array
 import sympy as sp
-from collections import deque
 from scipy.optimize import curve_fit
 import numpy as np
 from dace.symbolic import symbol, pystr_to_symbolic
@@ -38,13 +37,6 @@ class CacheLineTracker:
 
         # divide by L to get the cache line id
         return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
-
-    def copy(self):
-        new_clt = CacheLineTracker(self.L)
-        new_clt.array_info = dict(self.array_info)
-        new_clt.start_lines = dict(self.start_lines)
-        new_clt.next_free_line = self.next_free_line
-        return new_clt
 
 
 class Node:
@@ -95,31 +87,6 @@ class AccessStack:
             distance = -1
 
         return distance
-
-    def in_cache_as_list(self):
-        """
-        Returns a list of cache ids currently in cache. Index 0 is the most recently used.
-        """
-        res = deque()
-        curr = self.top
-        dist = 0
-        while curr is not None and dist < self.C:
-            res.append(curr.v)
-            curr = curr.next
-            dist += 1
-        return res
-
-    def copy(self):
-        new_stack = AccessStack(self.C)
-        cache_content = self.in_cache_as_list()
-        if len(cache_content) > 0:
-            new_top_value = cache_content.popleft()
-            new_stack.top = Node(new_top_value)
-            curr = new_stack.top
-            for x in cache_content:
-                curr.next = Node(x)
-                curr = curr.next
-        return new_stack
 
     def replace_self(self, other: 'AccessStack'):
         self.top = other.top
