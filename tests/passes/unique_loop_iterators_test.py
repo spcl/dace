@@ -688,5 +688,78 @@ def test_disambiguates_duplicate_iterators():
     assert all(v.startswith('_loop_it_') for v in after), after
 
 
+def test_seeds_counter_past_existing_map_params():
+    """The counter must seed past iterators already in ``_loop_it_<N>`` form on
+    **maps**, not only on loops. ``LoopToMap`` keeps the loop's ``_loop_it_<N>``
+    name as the map parameter, so when this pass runs after a LoopToMap stage a
+    map carries that name. Here a map parameter ``_loop_it_5`` coexists with a
+    loop named ``i``; ``i`` must become ``_loop_it_6`` (not reuse 0 or collide
+    with the map's 5 -- the collision aliased two iteration variables and
+    silently corrupted results)."""
+    sdfg = dace.SDFG('seed_past_map')
+    sdfg.add_array('mout', [5], dace.int64)
+    sdfg.add_array('out', [10], dace.int64)
+
+    # A map whose parameter is already in unique ``_loop_it_5`` form.
+    mstate = sdfg.add_state('mstate', is_start_block=True)
+    mstate.add_mapped_tasklet('themap', {'_loop_it_5': '0:5'}, {},
+                              '_o = _loop_it_5', {'_o': dace.Memlet('mout[_loop_it_5]')},
+                              external_edges=True)
+
+    # A fresh loop to be renamed; it must not reuse the map's id.
+    fresh = LoopRegion('fresh', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(fresh)
+    sdfg.add_edge(mstate, fresh, dace.InterstateEdge())
+    fs = fresh.add_state('fs', is_start_block=True)
+    ft = fs.add_tasklet('w', set(), {'_o'}, '_o = i')
+    fa = fs.add_access('out')
+    fs.add_edge(ft, '_o', fa, None, dace.Memlet('out[i]'))
+
+    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    sdfg.validate()
+
+    loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    assert loopvars == {'_loop_it_6'}, f'fresh iterator must seed past the map parameter 5 (-> 6): {loopvars}'
+    mapparams = {p for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) for p in n.map.params}
+    assert mapparams == {'_loop_it_5'}, f'map parameter must be left untouched: {mapparams}'
+
+
+def test_loop_and_map_coexist_no_collision_value_preserving():
+    """End-to-end: a map (parameter ``_loop_it_0``) and a separate loop (``i``)
+    coexist. Renaming the loop must avoid the map's id and stay value-preserving.
+    Regression for the ``_first_free_id`` map blindness that produced a
+    ``_loop_it_0`` collision and corrupted output."""
+    sdfg = dace.SDFG('loop_map_coexist')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('b', [8], dace.float64)
+
+    # Map already in unique ``_loop_it_0`` form (as LoopToMap would leave it).
+    ms = sdfg.add_state('ms', is_start_block=True)
+    ms.add_mapped_tasklet('themap', {'_loop_it_0': '0:8'}, {'_i': dace.Memlet('a[_loop_it_0]')},
+                          '_o = _i * 2.0', {'_o': dace.Memlet('a[_loop_it_0]')},
+                          external_edges=True)
+
+    # A separate loop writing a different array.
+    loop = LoopRegion('loop', condition_expr='i < 8', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(ms, loop, dace.InterstateEdge())
+    ls = loop.add_state('ls', is_start_block=True)
+    t = ls.add_tasklet('w', set(), {'_o'}, '_o = i')
+    ls.add_edge(t, '_o', ls.add_access('b'), None, dace.Memlet('b[i]'))
+
+    a = np.arange(8, dtype=np.float64)
+    ref_a, ref_b = a * 2.0, np.arange(8, dtype=np.float64)
+
+    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    sdfg.validate()
+
+    loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    assert loopvars == {'_loop_it_1'}, f'loop must seed past the map id 0 (-> 1): {loopvars}'
+
+    got_a, got_b = a.copy(), np.zeros(8, dtype=np.float64)
+    sdfg(a=got_a, b=got_b)
+    assert np.allclose(got_a, ref_a) and np.allclose(got_b, ref_b)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
