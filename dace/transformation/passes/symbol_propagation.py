@@ -12,7 +12,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, properties, SDFGState
 from typing import Any, Dict, Set, Optional
 from dace import data as dt
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, scalars
 
 
 def _free_symbols(value) -> Set[str]:
@@ -176,14 +176,8 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
-            # Also skip scalars
-            sym_table = {
-                k: v
-                for k, v in sym_table.items() if v is None or not any([
-                    str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.Scalar)
-                    for s in pystr_to_symbolic(v).free_symbols
-                ])
-            }
+            # Also skip assignments that read a scalar (scalars cannot be propagated as symbols)
+            sym_table = {k: v for k, v in sym_table.items() if v is None or not scalars(v, sdfg.arrays)}
 
             # Combine the symbols
             if i == 0:
