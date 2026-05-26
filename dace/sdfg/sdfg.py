@@ -176,13 +176,27 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = Property(dtype=dict, desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
+    assignments = DictProperty(
+        key_type=str,
+        value_type=str,
+        desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
+        # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
+        #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
+        #       assignments as symbolic expressions without specialized to/from_json functions.
+        to_json=lambda d: {
+            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
+            for k, v in d.items()
+        },
+        from_json=(lambda d, *args, context=None, **kwargs: {
+            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
+            for k, v in d.items()
+        }))
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
-                 assignments: Optional[Dict] = None):
+                 assignments: Optional[Dict[str, str | ast.AST]] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -246,7 +260,7 @@ class InterstateEdge(object):
         # Symbols in conditions and assignments
         result = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(assign)
+            result |= symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)
 
         return result
 
@@ -399,7 +413,6 @@ class InterstateEdge(object):
         return {
             'type': type(self).__name__,
             'attributes': dace.serialize.all_properties_to_json(self),
-            'label': self.label
         }
 
     @staticmethod
@@ -409,24 +422,6 @@ class InterstateEdge(object):
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
-
-    @property
-    def label(self):
-        assignments = ','.join(['%s=%s' % (k, v) for k, v in self.assignments.items()])
-
-        # Edge with assignment only (no condition)
-        if self.condition.as_string == '1':
-            # Edge without conditions or assignments
-            if len(self.assignments) == 0:
-                return ''
-            return assignments
-
-        # Edge with condition only (no assignment)
-        if len(self.assignments) == 0:
-            return self.condition.as_string
-
-        # Edges with assignments and conditions
-        return self.condition.as_string + '; ' + assignments
 
 
 @make_properties
@@ -649,7 +644,13 @@ class SDFG(ControlFlowRegion):
             self.reset_cfg_list()
             source_files = self.compute_debuginfo_files()
 
-        tmp = super().to_json()
+        # Serialize the control-flow graph (states and interstate edges) under this
+        # SDFG's declared symbols, so symbolic expressions outside any dataflow scope
+        # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
+        # Each nested SDFG re-pushes its own symbols, and the previous authority is
+        # restored on exit.
+        with symbolic.serialization_symbol_dtypes(self.symbols):
+            tmp = super().to_json()
         if is_root:
             tmp['source_files'] = source_files
 
