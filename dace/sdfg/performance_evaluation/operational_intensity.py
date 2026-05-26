@@ -602,11 +602,9 @@ def cfg_misses(cfg: ControlFlowRegion,
                             curr_state = e.dst
                             print(2 * '\n')
                         else:
-                            # Cannot decide and not asking the user: analyze every candidate branch
-                            # up to the merge state and continue along the worst-case (most misses)
-                            # one. Each branch is explored on copies of the mapping and stack so its
-                            # cache effects do not leak into the others; the chosen branch's state is
-                            # then committed before traversal resumes at the merge state.
+                            # Cannot decide and not asking the user: explore every candidate branch
+                            # on copies of the mapping and stack (so their cache effects stay
+                            # isolated), then continue along and commit the worst-case one.
                             candidates = next_edge_candidates or cfg.out_edges(curr_state)
                             best_misses = None
                             best = None

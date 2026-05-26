@@ -184,8 +184,7 @@ _ASK_USER_LOOP_ITERS = 8
 
 @dc.program
 def ask_user_branch(x: dc.float64[64], y: dc.float64[64]):
-    # A data-dependent conditional with an explicit else; the two branches do different amounts
-    # of work so that selecting one over the other changes the operational intensity.
+    # Data-dependent branches doing different amounts of work, so the chosen branch changes the result.
     if x[0] > 0:
         y[:] = x + 1.0
     else:
@@ -202,12 +201,11 @@ def ask_user_branch_in_loop(x: dc.float64[64], y: dc.float64[64]):
 
 
 def _op_in_with_choice(program: DaceProgram, choice: int) -> Tuple[int, float]:
-    """ Run the operational-intensity analysis in ``ask_user`` mode, always answering the branch
-    prompt with ``choice``.
+    """ Run the analysis in ``ask_user`` mode, answering every branch prompt with ``choice``.
 
     :param program: The DaCe program to analyze.
     :param choice: The branch index to feed to every prompt.
-    :returns: A tuple of the number of prompts raised and the resulting operational intensity.
+    :returns: The number of prompts raised and the resulting operational intensity.
     """
     sdfg = program.to_sdfg()
     sdfg.simplify()
@@ -224,9 +222,8 @@ def _op_in_with_choice(program: DaceProgram, choice: int) -> Tuple[int, float]:
 
 
 def test_operational_intensity_ask_user_branch_selection():
-    """ ``ask_user`` lets the user pick which branch of a data-dependent conditional to analyze.
-    Each choice (including the implicit else) must complete without error, and the two branches,
-    which do different amounts of work, must yield different operational intensities. """
+    """ ``ask_user`` picks which branch of a data-dependent conditional to analyze. Both choices
+    must complete without error and, since the branches differ in work, yield different results. """
     prompts_true, op_in_true = _op_in_with_choice(ask_user_branch, 0)
     prompts_else, op_in_else = _op_in_with_choice(ask_user_branch, 1)
     assert prompts_true == 1 and prompts_else == 1
@@ -234,10 +231,8 @@ def test_operational_intensity_ask_user_branch_selection():
 
 
 def test_operational_intensity_ask_user_decision_reused_in_loop():
-    """ A branch chosen once is reused on every later visit of the same conditional, so a
-    conditional inside a loop prompts the user only once and the chosen branch is taken on every
-    iteration (i.e. the loop intensity is the single-iteration intensity scaled by the trip
-    count). """
+    """ A branch chosen once is reused on later visits, so a conditional inside a loop prompts only
+    once and the loop intensity is the single-iteration intensity scaled by the trip count. """
     single_prompts, single_op_in = _op_in_with_choice(ask_user_branch, 0)
     loop_prompts, loop_op_in = _op_in_with_choice(ask_user_branch_in_loop, 0)
     assert single_prompts == 1 and loop_prompts == 1
@@ -245,11 +240,9 @@ def test_operational_intensity_ask_user_decision_reused_in_loop():
 
 
 def test_operational_intensity_range_simulation():
-    """ Smoke-test the simulation-based path: giving a symbol a range ``'start,stop,step'`` instead
-    of a concrete value makes the analysis sample the symbol, simulate cache misses for each sample,
-    and fit the operational intensity as a function of that symbol. For ``single_map64`` (a pure
-    streaming ``z = x + y``) there is no reuse, so the fitted intensity is the constant ``1 / 24``
-    (one add per element over three 8-byte accesses) independent of the symbol's value. """
+    """ Smoke-test the simulation path: a symbol given a range ``'start,stop,step'`` is sampled, its
+    cache misses simulated per sample, and the operational intensity fitted as a function of it.
+    Streaming ``single_map64`` has no reuse, so the fit is the constant ``1 / 24``. """
     op_in_map: Dict[str, sp.Expr] = {}
     sdfg = single_map64.to_sdfg()
     # Sampling at multiples of 8 keeps the 64-byte cache lines (8 doubles) evenly divided.
@@ -263,10 +256,9 @@ def test_operational_intensity_range_simulation():
 
 
 def test_operational_intensity_inlined_branch_worst_case():
-    """ When control flow is inlined to plain conditional interstate edges (no ConditionalBlock), an
-    undecidable data-dependent branch is handled by the legacy traversal in ``cfg_misses``. Without
-    ``ask_user`` it must analyze every candidate branch and continue along the worst-case one,
-    giving the same operational intensity as the ConditionalBlock form of the same program. """
+    """ Inlining control flow to plain conditional interstate edges routes an undecidable branch
+    through the legacy ``cfg_misses`` traversal, which (without ``ask_user``) takes the worst-case
+    branch -- giving the same intensity as the ConditionalBlock form of the same program. """
     op_in_cfg: Dict[str, sp.Expr] = {}
     sdfg_cfg = ask_user_branch.to_sdfg()
     sdfg_cfg.simplify()
