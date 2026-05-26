@@ -18,6 +18,8 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.symbol_propagation import SymbolPropagation
+from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
@@ -32,6 +34,11 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.passes.scalar_fission import PrivatizeScalars
+from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
+                                                             DEFAULT_UNROLL_LIMIT)
+from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -65,8 +72,48 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
             (label, PatternMatchAndApplyRepeated([InlineSDFG()]))]
 
 
-def _build_stages() -> List[Tuple[str, ppl.Pass]]:
+@properties.make_properties
+class _PrivatizeScalarsStage(ppl.Pass):
+    """Self-contained adapter for ``PrivatizeScalars`` in the recipe.
+
+    ``PrivatizeScalars`` resolves its analysis dependencies itself when applied
+    with empty results, but it is unhashable so it cannot be wrapped in a
+    ``Pipeline`` (whose dependency graph keys on the pass). Adapting it here keeps
+    the self-contained-stage invariant (:func:`_assert_self_contained`) honest.
+    """
+
+    CATEGORY: str = 'Canonicalization'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        return PrivatizeScalars().apply_pass(sdfg, {})
+
+
+def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+                  peel_limit: int = 0,
+                  break_anti_dependence: bool = False) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
+
+    :param unroll_limit: Fully unroll constant-trip loops with at most this many
+                         iterations before the reduction/parallelize stages
+                         (``ShortLoopUnroll``; 0 disables).
+    :param peel_limit: Best-effort loop peeling before ``parallelize``
+                       (``BestEffortLoopPeeling``); 0 (default) disables it. Even
+                       with the per-loop-isolated, can-be-applied-pre-filtered
+                       search, running it on every stuck loop of every canonicalize
+                       invocation is too costly to enable by default; it is opt-in
+                       here and on by default in the standalone ``parallelize``.
+    :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
+                                  loops before ``parallelize`` (``BreakAntiDependence``);
+                                  off by default (it adds a transient + a copy).
 
     Every map is lowered to a ``LoopRegion`` up front so all canonicalization
     runs on a single representation (one fission/normalize/reduce path, no
@@ -94,11 +141,12 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     _uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     _uniq2 = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     _uniq_fis = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    _uniq_unroll = UniqueLoopIterators(assign_loop_iterator_post_value=False)
 
-    # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
-    # -> the single SimplifyPass (only here and at the end).
-    s += [('clean', _uniq), ('clean', SplitTasklets()),
-          ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
+    # clean: unique loop iterators -> split tasklets -> the single SimplifyPass
+    # (only here and at the end). Trivial-tasklet elimination now opens the
+    # 'reduce' recipe (after simplify), not here.
+    s += [('clean', _uniq), ('clean', SplitTasklets()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
@@ -123,35 +171,84 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # normalize rescales it).
     s += [('reroll', RerollUnrolledLoops())]
 
-    # move_if_into_loop: push guarding conditionals into loop bodies. The
-    # genuine inner imperfect nest (a bare tasklet beside an inner loop,
-    # inside an enclosing loop) takes the free-state path: the bare sibling
-    # is wrapped in a trivial single-iteration loop and the guard duplicated
-    # into every sibling loop. The wrapper is spliced out again by the
-    # 'untrivialize' stage before LoopToMap can mangle it.
-    s += [('move_if_into_loop', MoveIfIntoLoop())]
+    # reduce: the front-loaded reduction + parallelization-prep recipe, run right
+    # after lowering (before loop fission / perfect nesting), in this exact order:
+    #   trivial_tasklet_elimination  -- drop the frontend's ``__out = __inp`` copy
+    #     tasklets, exposing the bare read-modify-write spine of accumulators;
+    #   WCRToAugAssign               -- normalise any write-conflict-resolution
+    #     write back into an explicit ``a = a + b`` augmented assignment, so every
+    #     reduction (WCR-form or frontend copy-wrapped) reaches ``loop_to_reduce``
+    #     in the one shape it recognises;
+    #   short_loop_unroll            -- fully unroll tiny constant-trip loops to
+    #     straight-line code;
+    #   scalar_fission (PrivatizeScalars) -- privatize loop-local scalars (drop
+    #     false carried deps);
+    #   symbol_propagation + constant_propagation -- fold the concrete iteration
+    #     indices unrolling exposes, simplifying bounds and guards;
+    #   loop_to_reduce               -- lift the augmented-assignment accumulator
+    #     loops to ``Reduce`` library nodes.
+    # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
+    # via ``loop_to_reduce`` -> ``Reduce`` nodes, not a WCR-on-Map. ``PrivatizeScalars``
+    # is adapted (``_PrivatizeScalarsStage``) so its analysis dependencies resolve.
+    s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
+          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+    if unroll_limit > 0:
+        # UniqueLoopIterators must run AFTER unrolling: a fully-unrolled body is
+        # straight-line code, but the loops it *leaves* (and any the unroll cloned)
+        # must carry unique ``_loop_it_<N>`` names before the parallelism checks
+        # (loop_to_reduce / the early LoopToMap) read them.
+        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+    s += [('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation()),
+          ('reduce', LoopToReduce())]
 
-    # cascade_iedges_up (post-move-if): MoveIfIntoLoop may have buried an
-    # invariant interstate-edge assignment (e.g. ``kfdia_plus_1 = kfdia + 1``,
-    # the Python-frontend bound promotion) inside the loop it pushed the
-    # guard into. Lift it back out *past every enclosing loop* (all-or-
-    # nothing upward, see ``CASCADE_UP_DESIGN.md``) so LoopToMap's
-    # body-assigns-loop-range-symbol refuse-check does not later block
-    # parallelization. Standalone and idempotent -- can be invoked again.
+    # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
+    # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
+    # upward, see ``CASCADE_UP_DESIGN.md``) so the later body-assigns-range-symbol
+    # refuse-check sees the cleaned-up shape.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
-    # fission: loop distribution + block-level perfect-loop-nesting. Fission
-    # clones a loop into siblings that keep the same ``_loop_it_<N>`` name;
-    # re-running UniqueLoopIterators here disambiguates those duplicates so the
-    # later LoopToMap is not blocked by a sibling appearing to read the shared
-    # iterator after a parallelized loop.
+    # peel / break_antidep (optional knobs, off by default): last-resort attempts to
+    # unblock loops LoopToMap would refuse, run BEFORE move_if / fission so the
+    # transform sees the whole guarded loop. Peeling splits a boundary iteration off
+    # and prunes the now-dead boundary guard (e.g. ``if i == 0: A[N-1] += 1``),
+    # leaving a disjoint-write remainder; break_anti_dependence snapshot-renames a
+    # pure read-ahead WAR (``a[i] = a[i+1]``). Both target loops that FAIL
+    # parallelization (peel via a LoopToMap-can-apply pre-filter, break_antidep via
+    # WAR detection), so they no-op on already-mappable loops, and both only PROBE
+    # ``can_be_applied`` -- the actual LoopToMap is the 'parallelize' stage. (Loop
+    # reversal is intentionally NOT a separate pass: reversing a loop only changes a
+    # dependence's direction, never removes one, so it cannot make a dependent loop
+    # parallelizable while preserving values -- clearing the anti-dependence does.)
+    if peel_limit > 0:
+        s += [('peel', BestEffortLoopPeeling(peel_limit))]
+    if break_anti_dependence:
+        s += [('break_antidep', BreakAntiDependence())]
+    # Re-prep the freshly-unblocked loops: peel/break-antidep PROBE mappability with
+    # the prep recipe but only APPLY the peel / snapshot-rename, so the peeled
+    # remainder (and any body-assigned range symbol the peel introduced) still needs
+    # scalar fission + symbol/constant propagation -- the same prep the reduce stage
+    # ran -- before LoopToMap can map it. Only runs when a knob is enabled.
+    if peel_limit > 0 or break_anti_dependence:
+        s += [('peel', _PrivatizeScalarsStage()), ('peel', SymbolPropagation()), ('peel', ConstantPropagation())]
+
+    # move_if_into_loop: push guarding conditionals into loop bodies. The genuine
+    # inner imperfect nest (a bare tasklet beside an inner loop) takes the
+    # free-state path: the bare sibling is wrapped in a trivial single-iteration
+    # loop, spliced out again by 'untrivialize' before LoopToMap.
+    s += [('move_if_into_loop', MoveIfIntoLoop())]
+
+    # cascade_iedges_up (post-move-if): MoveIfIntoLoop may bury an invariant
+    # iedge assignment inside the loop it pushed the guard into; lift it back out.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+
+    # fission: loop distribution + block-level perfect-loop-nesting. Fission clones
+    # a loop into siblings that keep the same ``_loop_it_<N>`` name; re-running
+    # UniqueLoopIterators disambiguates those duplicates so the later LoopToMap is
+    # not blocked by a sibling appearing to read the shared iterator.
     s += [('fission', LoopFission()), ('fission', _uniq_fis)]
 
     # normalize: every loop range -> 0:trip:1.
     s += [('normalize', NormalizeLoopsAndMaps())]
-
-    # reduce / ssa: lift accumulator loops, unique loop iterators.
-    s += [('reduce', LoopToReduce()), ('ssa', _uniq2)]
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
@@ -161,30 +258,22 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # symbolic-safe MinimizeStridePermutation.
     s += [('loop_stride_permutation', LoopStridePermutation())]
 
-    # untrivialize: the perfect-nesting scaffold (the single-iteration trivial
-    # loops MoveIfIntoLoop wrapped bare siblings in) has done its job for
-    # fission/normalize/reduce/ssa. Splice it out *while still a LoopRegion*
-    # (reusing TrivialLoopElimination) -- before LoopToMap, which would
-    # otherwise turn it into a sticky NestedSDFG that breaks idempotence and
-    # re-lowering.
+    # untrivialize: splice out the single-iteration trivial-loop scaffold (the
+    # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
+    # before LoopToMap turns it into a sticky NestedSDFG.
     s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
 
-    # cascade_iedges_up (pre-parallelize): re-run after fission / normalize /
-    # ssa, since each of those rewrites the CFG and may expose new hoisting
-    # opportunities (e.g. an iedge that was previously inside a body block
-    # is now the only block on a clean linear chain). Critically: this MUST
-    # run before LoopToMap so the refuse-check on body-assigned range
-    # symbols sees the cleaned-up shape.
-    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+    # cascade_iedges_up (pre-parallelize): re-run after fission / normalize rewrite
+    # the CFG; MUST precede LoopToMap. Re-unique the iterators (ssa) so the
+    # distributed siblings are independent.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', _uniq2)]
 
-    # NOTE: MoveLoopInvariantIfUp is deliberately NOT wired at this
-    # pre-parallelize point. It is the dual of the earlier ``MoveIfIntoLoop``
-    # stage (which pushes guards INTO loops to enable sibling-loop fusion), so
-    # hoisting guards back out here would simply undo that work and ping-pong.
-    # The terminal ``hoist_guards`` stage runs MLIU once, AFTER fuse, where the
-    # fusion it would otherwise undo has already happened.
+    # NOTE: MoveLoopInvariantIfUp is deliberately NOT wired here. It is the dual of
+    # the earlier ``MoveIfIntoLoop`` stage, so hoisting guards back out here would
+    # undo that work and ping-pong. The terminal ``hoist_guards`` stage runs it
+    # once, AFTER fuse, where the fusion it would otherwise undo has happened.
 
-    # parallelize: canonical loops -> parallel maps.
+    # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
     # post_l2m: insert assign tasklets at map boundary, then structural
@@ -302,16 +391,48 @@ class CanonicalizationPipeline(ppl.Pass):
 
     :param validate: Validate the SDFG once at the end.
     :param validate_all: Validate the SDFG after each stage.
+    :param unroll_limit: Fully unroll constant-trip loops with at most this many
+                         iterations (0 disables).
+    :param peel_limit: Best-effort loop peeling before parallelize (0 disables;
+                       off by default -- the per-loop search is expensive).
+    :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
+                                  loops before parallelize (off by default).
+    :param symbol_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
+                             ``{'nclv': 5}``) substituted into the SDFG via
+                             ``replace_dict`` BEFORE canonicalization. Symbolic
+                             trip counts that become concrete (the ``nclv`` /
+                             ``nclv - 1`` species loops) then unroll under
+                             ``ShortLoopUnroll``; on the unspecialized build they
+                             stay symbolic and unroll nothing. ``None`` leaves
+                             every symbol symbolic.
     """
 
     CATEGORY: str = 'Canonicalization'
 
     validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Validate the SDFG after each stage.')
+    unroll_limit = properties.Property(dtype=int,
+                                       default=DEFAULT_UNROLL_LIMIT,
+                                       desc='Unroll constant-trip loops <= this many iterations (0 disables).')
+    peel_limit = properties.Property(dtype=int,
+                                     default=0,
+                                     desc='Best-effort loop peeling before parallelize (0 disables).')
+    break_anti_dependence = properties.Property(
+        dtype=bool, default=False, desc='Snapshot-rename read-ahead anti-dependence loops before parallelize.')
 
-    def __init__(self, validate: bool = False, validate_all: bool = False):
+    def __init__(self,
+                 validate: bool = False,
+                 validate_all: bool = False,
+                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+                 peel_limit: int = 0,
+                 break_anti_dependence: bool = False,
+                 symbol_constants: Optional[Dict[str, int]] = None):
         self.validate = validate
         self.validate_all = validate_all
+        self.unroll_limit = unroll_limit
+        self.peel_limit = peel_limit
+        self.break_anti_dependence = break_anti_dependence
+        self._symbol_constants = symbol_constants or {}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -328,7 +449,18 @@ class CanonicalizationPipeline(ppl.Pass):
         :param sdfg: The SDFG to canonicalize.
         :returns: The number of passes applied.
         """
-        stages = _build_stages()
+        # Specialize chosen symbols to constants first (e.g. ``nclv = 5``), so the
+        # otherwise-symbolic species-loop trip counts become concrete and unroll.
+        # ``specialize_symbol`` descends into nested SDFGs (and strips their
+        # ``symbol_mapping``); a plain ``replace_dict`` would leave nested-SDFG
+        # bodies -- the bulk of a real cloudsc build -- unspecialized.
+        if self._symbol_constants:
+            from dace.sdfg.utils import specialize_symbol
+            for sym, val in self._symbol_constants.items():
+                specialize_symbol(sdfg, sym, val)
+        stages = _build_stages(unroll_limit=self.unroll_limit,
+                               peel_limit=self.peel_limit,
+                               break_anti_dependence=self.break_anti_dependence)
         for _label, unit in stages:
             _assert_self_contained(unit)
             unit.apply_pass(sdfg, {})
@@ -339,7 +471,13 @@ class CanonicalizationPipeline(ppl.Pass):
         return len(stages)
 
 
-def canonicalize(sdfg: SDFG, validate: bool = True, validate_all: bool = False) -> SDFG:
+def canonicalize(sdfg: SDFG,
+                 validate: bool = True,
+                 validate_all: bool = False,
+                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+                 peel_limit: int = 0,
+                 break_anti_dependence: bool = False,
+                 symbol_constants: Optional[Dict[str, int]] = None) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -347,7 +485,18 @@ def canonicalize(sdfg: SDFG, validate: bool = True, validate_all: bool = False) 
     :param sdfg: The SDFG to canonicalize.
     :param validate: Validate the SDFG after canonicalization.
     :param validate_all: Validate the SDFG after each stage.
+    :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
+    :param peel_limit: Best-effort loop peeling before parallelize (0 disables).
+    :param break_anti_dependence: Snapshot-rename read-ahead anti-dependence loops.
+    :param symbol_constants: Optional ``{symbol: value}`` substituted (``replace_dict``)
+                             before canonicalization, so symbolic trip counts that
+                             become concrete unroll (e.g. ``{'nclv': 5}``).
     :returns: The same ``sdfg`` instance, canonicalized.
     """
-    CanonicalizationPipeline(validate=validate, validate_all=validate_all).apply_pass(sdfg, {})
+    CanonicalizationPipeline(validate=validate,
+                             validate_all=validate_all,
+                             unroll_limit=unroll_limit,
+                             peel_limit=peel_limit,
+                             break_anti_dependence=break_anti_dependence,
+                             symbol_constants=symbol_constants).apply_pass(sdfg, {})
     return sdfg

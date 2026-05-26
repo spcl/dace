@@ -20,7 +20,7 @@ import copy
 from typing import Any, Dict, Optional
 
 from dace import properties, symbolic
-from dace.sdfg import SDFG, nodes
+from dace.sdfg import SDFG
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 
@@ -33,10 +33,6 @@ DEFAULT_PEEL_LIMIT = 8
 
 def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-
-
-def _num_maps(sdfg: SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
 
 
 def _unique_block_label(sdfg: SDFG, base: str) -> str:
@@ -127,9 +123,11 @@ class BestEffortLoopPeeling(ppl.Pass):
     For each of front / back / both and each peel count ``k`` in
     ``1..peel_limit``, peel ``k`` boundary iterations off the loops and run a
     cheap candidate check (scalar fission -> symbol propagation -> constant
-    propagation -> LoopToMap) counting the resulting maps. Keep the single peel
-    that yields the most maps; if none beats the no-peel baseline, leave the SDFG
-    unpeeled. The search runs on ``copy.deepcopy`` copies (revertible by
+    propagation), then COUNT the loops ``LoopToMap`` *could* parallelize via
+    ``can_be_applied_to`` -- WITHOUT applying it (peeling is a preparation pass;
+    the actual parallelization is the pipeline's job). Keep the single peel that
+    yields the most mappable loops; if none beats the no-peel baseline, leave the
+    SDFG unpeeled. The search runs on ``copy.deepcopy`` copies (revertible by
     construction); only the winning peel is applied to the real SDFG.
     """
 
@@ -181,7 +179,10 @@ class BestEffortLoopPeeling(ppl.Pass):
                 LoopPeeling().apply_to(sdfg=loop.sdfg,
                                        loop=loop,
                                        verify=False,
-                                       options={'count': count, 'begin': begin})
+                                       options={
+                                           'count': count,
+                                           'begin': begin
+                                       })
                 did = True
             except Exception:
                 continue
@@ -232,16 +233,23 @@ class BestEffortLoopPeeling(ppl.Pass):
         """Find the ``(count, direction)`` peel that unblocks the most maps for
         ``loop``, experimenting on an isolated mini-SDFG; ``None`` if no peel
         beats leaving it alone (or the loop already maps)."""
+        # Cheap pre-filter: a loop LoopToMap can already map needs no peel. This
+        # skips the (comparatively expensive) isolate-and-search for the common
+        # case, leaving the search only for genuinely stuck loops.
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        try:
+            if LoopToMap.can_be_applied_to(sdfg, loop=loop):
+                return None
+        except Exception:
+            pass
         mini, _ = self._isolate_loop(loop, sdfg)
         if mini is None:
             return None
         base = copy.deepcopy(mini)
         try:
-            baseline = self._l2m_candidate_maps(base)
+            baseline = self._mappable_loop_count(base)
         except Exception:
             return None
-        if not _loops(base):
-            return None  # already maps in isolation -> no peel needed
 
         best_count, best = baseline, None
         for direction in ('front', 'back', 'both'):
@@ -255,11 +263,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                 self._prune_dead_loop_branches(cand)
                 try:
                     cand.validate()  # only a peel that stays valid is a working parameter
-                    n_maps = self._l2m_candidate_maps(cand)
+                    n_mappable = self._mappable_loop_count(cand)
                 except Exception:
                     continue
-                if n_maps > best_count:
-                    best_count, best = n_maps, (count, direction)
+                if n_mappable > best_count:
+                    best_count, best = n_mappable, (count, direction)
         return best
 
     def _cond_dead_over_range(self, cond, ivar: str, start, end, sdfg: SDFG) -> bool:
@@ -351,20 +359,28 @@ class BestEffortLoopPeeling(ppl.Pass):
             PruneEmptyConditionalBranches().apply_pass(sdfg, {})
         return changed
 
-    def _l2m_candidate_maps(self, candidate: SDFG) -> int:
-        """Cheap proxy: does the peel unblock more ``LoopToMap``? Runs scalar
-        fission -> symbol propagation -> constant propagation -> LoopToMap (no
-        reduction passes) and returns the map count. Mutates ``candidate``."""
+    def _mappable_loop_count(self, candidate: SDFG) -> int:
+        """Cheap proxy for "does the peel unblock parallelization?": run scalar
+        fission -> symbol propagation -> constant propagation (no reduction passes),
+        then COUNT the loops ``LoopToMap`` *could* parallelize -- via
+        ``can_be_applied_to``, WITHOUT applying it. Peeling is a preparation pass;
+        the actual ``LoopToMap`` is the pipeline's ``parallelize`` stage, so the
+        search only probes ``can_be_applied``. Mutates ``candidate`` (the prep)."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.constant_propagation import ConstantPropagation
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
         PrivatizeScalars().apply_pass(candidate, {})
         SymbolPropagation().apply_pass(candidate, {})
         ConstantPropagation().apply_pass(candidate, {})
-        PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(candidate, {})
-        return _num_maps(candidate)
+        count = 0
+        for loop in _loops(candidate):
+            try:
+                if LoopToMap.can_be_applied_to(candidate, loop=loop):
+                    count += 1
+            except Exception:
+                pass
+        return count
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """For each loop, find the best peel on an isolated copy of just that

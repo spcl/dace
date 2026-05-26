@@ -36,8 +36,8 @@ from typing import Any, Dict, List, Optional
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
-                                                             DEFAULT_PEEL_LIMIT, DEFAULT_UNROLL_LIMIT)
+from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll, DEFAULT_PEEL_LIMIT,
+                                                             DEFAULT_UNROLL_LIMIT)
 
 
 @properties.make_properties
@@ -56,9 +56,11 @@ class ParallelizePipeline(ppl.Pass):
 
     validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Validate the SDFG after each stage.')
-    unroll_limit = properties.Property(dtype=int, default=DEFAULT_UNROLL_LIMIT,
+    unroll_limit = properties.Property(dtype=int,
+                                       default=DEFAULT_UNROLL_LIMIT,
                                        desc='See ShortLoopUnroll (0 disables).')
-    peel_limit = properties.Property(dtype=int, default=DEFAULT_PEEL_LIMIT,
+    peel_limit = properties.Property(dtype=int,
+                                     default=DEFAULT_PEEL_LIMIT,
                                      desc='See BestEffortLoopPeeling (0 disables).')
 
     def __init__(self,
@@ -90,11 +92,16 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
         return [
+            # Loop-structure transforms first (unroll, peel; reversal lives inside
+            # peeling). Then symbol/constant propagation folds the constant
+            # iteration values and guard symbols those expose -- it must run after
+            # them, not before. The rest (privatize, trivial-tasklet, AugWCR,
+            # reduce, loop-to-map) is order-insensitive to propagation.
             ShortLoopUnroll(self.unroll_limit),
             BestEffortLoopPeeling(self.peel_limit),
-            PrivatizeScalars(),
             SymbolPropagation(),
             ConstantPropagation(),
+            PrivatizeScalars(),
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
             PatternMatchAndApplyRepeated([AugAssignToWCR()]),
             LoopToReduce(),
@@ -133,8 +140,6 @@ def parallelize(sdfg: SDFG,
     :param peel_limit: See :class:`BestEffortLoopPeeling`.
     :returns: The same ``sdfg`` instance, parallelized.
     """
-    ParallelizePipeline(validate=validate,
-                        validate_all=validate_all,
-                        unroll_limit=unroll_limit,
+    ParallelizePipeline(validate=validate, validate_all=validate_all, unroll_limit=unroll_limit,
                         peel_limit=peel_limit).apply_pass(sdfg, {})
     return sdfg
