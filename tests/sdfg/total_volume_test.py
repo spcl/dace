@@ -29,6 +29,32 @@ def make_copy_sdfg(name: str, shape, dtype) -> SDFG:
     return sdfg
 
 
+def make_loop_volume_sdfg(name: str) -> SDFG:
+    """
+    Build an SDFG that copies 8 ``float64`` elements of ``A`` into ``B`` inside a ``LoopRegion``
+    iterating ``i`` over ``[0, N)``.
+
+    :param name: Name of the SDFG.
+    :return: The constructed SDFG.
+    """
+    sdfg = SDFG(name)
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('A', shape=[8], dtype=dace.float64)
+    sdfg.add_array('B', shape=[8], dtype=dace.float64)
+    loop = LoopRegion('loop',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      inverted=False,
+                      sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.start_block = sdfg.node_id(loop)
+    body = loop.add_state('body')
+    body.add_nedge(body.add_read('A'), body.add_write('B'), dace.Memlet('A[0:8]'))
+    return sdfg
+
+
 def test_empty_sdfg():
     sdfg = SDFG('empty')
     sdfg.add_state('s0')
@@ -149,27 +175,10 @@ def test_map_doubles_volume():
 
 def test_loop_multiplies_volume():
     """A loop region iterating N times should scale the volume by N."""
-    sdfg = SDFG('loop_test')
-    N = dace.symbol('N', dace.int32)
-    sdfg.add_array('A', shape=[8], dtype=dace.float64)
-    sdfg.add_array('B', shape=[8], dtype=dace.float64)
-
-    loop = LoopRegion('loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = 0',
-                      update_expr='i = i + 1',
-                      inverted=False,
-                      sdfg=sdfg)
-    sdfg.add_node(loop)
-    sdfg.start_block = sdfg.node_id(loop)
-
-    body = loop.add_state('body')
-    body.add_nedge(body.add_read('A'), body.add_write('B'), dace.Memlet('A[0:8]'))
-
+    sdfg = make_loop_volume_sdfg('loop_test')
     read, write = analyze_sdfg(sdfg)
     # 8 elements * 8 bytes * N iterations = 64*N bytes
-    expected = 64 * N
+    expected = 64 * dace.symbol('N')
     assert sp.simplify(read - expected) == 0
     assert sp.simplify(write - expected) == 0
 
@@ -177,22 +186,7 @@ def test_loop_multiplies_volume():
 def test_bails_on_unstructured_control_flow():
     """ Inlined control flow (a LoopRegion flattened to a legacy state-machine loop) is not
     supported; the analysis must warn and return a zero (read, write) result. """
-    sdfg = SDFG('unstructured')
-    sdfg.add_symbol('N', dace.int32)
-    sdfg.add_array('A', shape=[8], dtype=dace.float64)
-    sdfg.add_array('B', shape=[8], dtype=dace.float64)
-    loop = LoopRegion('loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = 0',
-                      update_expr='i = i + 1',
-                      inverted=False,
-                      sdfg=sdfg)
-    sdfg.add_node(loop)
-    sdfg.start_block = sdfg.node_id(loop)
-    body = loop.add_state('body')
-    body.add_nedge(body.add_read('A'), body.add_write('B'), dace.Memlet('A[0:8]'))
-
+    sdfg = make_loop_volume_sdfg('unstructured')
     inline_control_flow_regions(sdfg)
     with pytest.warns(UserWarning, match='structured control flow'):
         read, write = analyze_sdfg(sdfg)

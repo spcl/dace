@@ -186,7 +186,7 @@ def test_polybench_memory(stem, optimize):
     assert _value(write) == EXPECTED[stem][2]
 
 
-# --- Library-node counters (exercised directly on the linalg solver nodes) -------------------------
+# Library-node counters (exercised directly on the linalg solver nodes).
 
 N = dace.symbol('N')
 
@@ -248,7 +248,7 @@ def test_user_defined_function_flop_cost(monkeypatch):
     assert _value(_compute_work(sdfg)) == 65 * n  # user-provided cost: sin = 65 flops
 
 
-# --- Compute vs. address classification of interstate-edge arithmetic ------------------------------
+# Compute vs. address classification of interstate-edge arithmetic.
 
 
 def test_interstate_edge_compute_vs_address():
@@ -270,7 +270,7 @@ def test_interstate_edge_compute_vs_address():
     assert _value(_compute_work(sdfg)) == 2
 
 
-# --- Loop-carried integer compute (the work lives in interstate-edge assignments) ------------------
+# Loop-carried integer compute (the work lives in interstate-edge assignments).
 
 
 @dace.program
@@ -289,7 +289,7 @@ def test_loop_carried_integer_compute():
     assert sp.Symbol('N') in sp.sympify(work).free_symbols
 
 
-# --- Data-dependent sparse matrix-vector (known limitation) ----------------------------------------
+# Data-dependent sparse matrix-vector (known limitation).
 
 H = dace.symbol('H')
 W = dace.symbol('W')

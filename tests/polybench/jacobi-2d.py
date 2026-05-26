@@ -65,12 +65,5 @@ def init_array(A, B, n, tsteps):
 
 
 if __name__ == '__main__':
-    try:
-        import polybench
-    except ImportError:
-        polybench = None
-    if polybench:
-        polybench.main(sizes, args, [(0, 'A')], init_array, jacobi2d)
-    else:
-        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
-        jacobi2d(*args)
+    import polybench
+    polybench.main(sizes, args, [(0, 'A')], init_array, jacobi2d)

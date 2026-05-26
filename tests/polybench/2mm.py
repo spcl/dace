@@ -94,12 +94,5 @@ def k2mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NL], D: datat
 
 
 if __name__ == '__main__':
-    try:
-        import polybench
-    except ImportError:
-        polybench = None
-    if polybench:
-        polybench.main(sizes, args, [(3, 'D')], init_array, k2mm)
-    else:
-        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
-        k2mm(*args)
+    import polybench
+    polybench.main(sizes, args, [(3, 'D')], init_array, k2mm)

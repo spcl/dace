@@ -89,12 +89,5 @@ def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datat
 
 
 if __name__ == '__main__':
-    try:
-        import polybench
-    except ImportError:
-        polybench = None
-    if polybench:
-        polybench.main(sizes, args, [(4, 'G')], init_array, k3mm)
-    else:
-        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
-        k3mm(*args)
+    import polybench
+    polybench.main(sizes, args, [(4, 'G')], init_array, k3mm)

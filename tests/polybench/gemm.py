@@ -70,12 +70,5 @@ def gemm(C: datatype[NI, NJ], A: datatype[NI, NK], B: datatype[NK, NJ], alpha: d
 
 
 if __name__ == '__main__':
-    try:
-        import polybench
-    except ImportError:
-        polybench = None
-    if polybench:
-        polybench.main(sizes, args, [(0, 'C')], init_array, gemm)
-    else:
-        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
-        gemm(*args)
+    import polybench
+    polybench.main(sizes, args, [(0, 'C')], init_array, gemm)

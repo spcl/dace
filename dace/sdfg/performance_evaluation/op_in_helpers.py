@@ -2,7 +2,6 @@
 """ Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
 and class AccessStack which which corresponds to the stack used to compute the stack distance.
 Further, provides a curve fitting method and plotting function. """
-from __future__ import annotations
 import warnings
 from dace.data import Array
 import sympy as sp
@@ -121,7 +120,7 @@ class AccessStack:
                 curr = curr.next
         return new_stack
 
-    def replace_self(self, other: AccessStack):
+    def replace_self(self, other: 'AccessStack'):
         self.top = other.top
         self.num_calls = other.num_calls
         self.lengh = other.length
