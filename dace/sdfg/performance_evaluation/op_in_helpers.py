@@ -129,12 +129,11 @@ class AccessStack:
 
 
 def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, element, name):
-    plt = None
+    # matplotlib is an optional dependency, imported lazily so the rest of the module works without it.
     try:
-        import matplotlib.pyplot as plt_import
-        plt = plt_import
+        import matplotlib.pyplot as plt
     except ModuleNotFoundError:
-        pass
+        plt = None
 
     if plt is None:
         warnings.warn('Plotting only possible with matplotlib installed')

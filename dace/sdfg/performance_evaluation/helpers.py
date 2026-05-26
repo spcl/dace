@@ -488,7 +488,7 @@ def get_static_symbols(sdfg: SDFG):
                                 rhs_sympy = pystr_to_symbolic(rhs)
                                 rhs_sympy = rhs_sympy.subs(in_map)
                                 static_symbol_mapping[lhs_sympy] = rhs_sympy
-                            except:
+                            except Exception:
                                 non_static_symbols.add(lhs_sympy)
                         else:
                             non_static_symbols.add(lhs_sympy)

@@ -1065,7 +1065,6 @@ def control_flow_region_work_depth(
                     })
                     traversal_q.append((oedge.dst, 0, 0, oedge, new_cond_stack, new_cse_stack, new_value_map))
                 else:
-                    # value_map.update(oedge.data.assignments)
                     value_map.update({
                         pystr_to_symbolic(k):
                         pystr_to_symbolic(v).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)

@@ -24,8 +24,7 @@ from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, Acc
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
 
 from dace.transformation.passes.analysis import loop_analysis
-
-import traceback
+from dace.sdfg.analysis import cfg
 
 
 class SymbolRange():
@@ -108,8 +107,6 @@ def find_merge_state(sdfg: SDFG, state: SDFGState):
     """
     Adapted from ``cfg.stateorder_topological_sort``.
     """
-    from dace.sdfg.analysis import cfg
-
     merges = cfg.branch_merges(sdfg)
     if state in merges:
         return merges[state]
@@ -191,7 +188,7 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
         except Exception as e:
-            traceback.print_exc()  # full stack trace
+            warnings.warn('Skipping a cache-miss contribution from an unparsable edge assignment: %s' % e)
     return misses
 
 
