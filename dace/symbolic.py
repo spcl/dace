@@ -565,7 +565,12 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
 
 def _format_float(value: float) -> str:
     # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
-    s = f'{float(value):.15g}'
+    f = float(value)
+    s = f'{f:.15g}'
+    if float(s) != f:
+        # 15 significant figures did not round-trip (e.g. ``0.1 + 0.2`` or a near-max
+        # double that needs 16-17 digits); fall back to the shortest exact form.
+        s = repr(f)
     if 'e' in s or 'E' in s:
         return s
     if '.' not in s:
@@ -1000,10 +1005,14 @@ def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
-        # Preserve explicit sympy.Float if finite, so 0.0 stays 0.0 in codegen.
+        # Preserve a finite float -- sympy.Float, Python float, or numpy float --
+        # so an integer-valued float like 1.0 stays 1.0 and is never collapsed to
+        # int 1 below: that would change its type (min(x, 1) mixes double and int)
+        # and round-trip through SymPy as a mistyped Min/Max. 0.0 was only spared by
+        # the ``expr != 0`` clause; a Python float 1.0 hit the int() collapse.
         # Non-finite values (+-1.8e308 -> inf) fall through to the overflow path.
-        if isinstance(expr, sympy.Float) and math.isfinite(float(expr)):
-            return expr
+        if isinstance(expr, (sympy.Float, float, numpy.floating)) and math.isfinite(float(expr)):
+            return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
         try:
             if numpy.int64(expr) == expr and expr != 0:
                 return int(expr)
@@ -2010,7 +2019,13 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
-        return _format_float(float(sympy_numeric_fix(expr)))
+        nf = sympy_numeric_fix(expr)
+        if not math.isfinite(float(nf)):
+            # The value exceeds a C double (e.g. Fortran ``HUGE``, just over the max):
+            # let sympy print its own shortest decimal instead of overflowing through
+            # ``float()`` to a spurious ``inf`` (which would then render as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_Add(self, expr):
         flat_args = []
@@ -2263,24 +2278,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         self._settings['full_prec'] = False
 
     def _print_Float(self, expr):
+        # Shortest round-tripping form, always keeping one fractional digit so an
+        # integer-valued float stays floating-point (``5.0``, not ``5``).
         nf = sympy_numeric_fix(expr)
-        # Format with enough precision, then strip trailing zeros
-        # but always keep at least one digit after the dot.
-        # 5.00000000000000 -> "5.0"
-        # 0.00000000000000 -> "0.0"
-        # 3.14000000000000 -> "3.14"
-        # 1e-14            -> "1e-14"
-        fval = float(nf)
-        s = f"{fval:.15g}"
-        if '.' not in s and 'e' not in s and 'E' not in s:
-            s += '.0'
-        elif '.' in s and 'e' not in s and 'E' not in s:
-            # Strip trailing zeros but keep at least one after dot
-            # to avoid unwanted promotions to integers
-            int_part, frac_part = s.split('.')
-            frac_part = frac_part.rstrip('0') or '0'
-            s = f"{int_part}.{frac_part}"
-        return s
+        if not math.isfinite(float(nf)):
+            # Exceeds a C double (e.g. Fortran ``HUGE``): keep sympy's shortest
+            # decimal rather than overflowing to ``inf`` (rendered as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_TypedConstant(self, expr):
         value = self._print(expr.value)
