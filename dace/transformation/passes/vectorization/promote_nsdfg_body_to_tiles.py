@@ -45,10 +45,11 @@ from dace.sdfg.nodes import MapEntry
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 
-from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileMerge, TileScatter, TileStore
+from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileMerge, TileScatter, TileStore, TileUnop
 from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
+    _classify_unop_tasklet_body,
     _constant_store_value,
     _is_assign_tasklet,
     _is_numeric_literal,
@@ -781,6 +782,73 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 istate.remove_edge(e)
             istate.remove_node(t)
 
+    def _promote_unops(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mask_acc: dace.nodes.AccessNode,
+                       spec: TileDimSpec) -> None:
+        """Replace split unary tasklets with :class:`TileUnop`.
+
+        The single-operand mirror of :meth:`_promote_binops`: recognises the
+        function forms (``abs``/``exp``/``log``/``sqrt``/``sin``/``cos``/
+        ``floor``/``ceil``/``tanh`` + dace-mangled shims) and unary minus via
+        ``_classify_unop_tasklet_body``. Tasklets that already classify as a
+        binop are left to :meth:`_promote_binops`. The operand is wired with the
+        same kind logic — a numeric literal is an inline ``Symbol``, a length-1 /
+        ``Scalar`` connector a broadcast ``Scalar``, everything else a ``Tile``.
+
+        :param istate: Inner state being rewritten.
+        :param nsdfg_node: The body NestedSDFG node (for connector names).
+        :param mask_acc: This state's inner mask access node.
+        :param spec: Tile spec.
+        """
+        inner = istate.sdfg
+        W = tuple(spec.widths)
+        subset = ", ".join(f"0:{w}" for w in W)
+        unops = []
+        for t in istate.nodes():
+            if not isinstance(t, dace.nodes.Tasklet) or _is_assign_tasklet(t):
+                continue
+            # A binop is _promote_binops' job; only classify genuine unops here.
+            if _classify_binop_tasklet_body(t) is not None:
+                continue
+            parsed = _classify_unop_tasklet_body(t)
+            if parsed is not None:
+                unops.append((t, parsed))
+        for t, (out_conn, op, a_tok) in unops:
+            out_edge = istate.out_edges(t)[0]
+            out_access = out_edge.dst
+            if _is_numeric_literal(a_tok):
+                kind_a, info_a = "Symbol", a_tok
+            else:
+                ie = [e for e in istate.in_edges(t) if e.dst_conn == a_tok]
+                if len(ie) != 1 or not isinstance(ie[0].src, dace.nodes.AccessNode):
+                    raise NotImplementedError(
+                        f"PromoteNSDFGBodyToTiles: unop {t.label!r} operand {a_tok!r} not a single tile read")
+                src = ie[0].src
+                src_desc = inner.arrays[src.data]
+                is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
+                             and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )))
+                kind_a, info_a = ("Scalar", src) if is_scalar else ("Tile", src)
+            kwargs = dict(name=f"{t.label}_unop",
+                          widths=W,
+                          op=op,
+                          has_mask=mask_acc is not None,
+                          kind_a=kind_a)
+            if kind_a == "Symbol":
+                kwargs["expr_a"] = info_a
+            unop = TileUnop(**kwargs)
+            istate.add_node(unop)
+            if kind_a == "Tile":
+                istate.add_edge(info_a, None, unop, TileConnectors.A, dace.Memlet(f"{info_a.data}[{subset}]"))
+            elif kind_a == "Scalar":
+                istate.add_edge(info_a, None, unop, TileConnectors.A, dace.Memlet(f"{info_a.data}[0]"))
+            # Symbol: nothing to wire (embedded inline).
+            self._wire_mask(istate, mask_acc, unop, subset)
+            write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
+            istate.add_edge(unop, TileConnectors.C, write_access, write_conn,
+                            dace.Memlet(f"{write_access.data}[{subset}]"))
+            for e in list(istate.in_edges(t)) + list(istate.out_edges(t)):
+                istate.remove_edge(e)
+            istate.remove_node(t)
+
     def _materialize_connector_reads(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                      mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> None:
         """Copy each widened (strided-view) boundary connector read directly by a
@@ -1129,6 +1197,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             self._materialize_connector_reads(istate, nsdfg_node, mask_acc, spec)
             self._promote_const_stores(istate, mask_acc, spec)
             self._promote_binops(istate, nsdfg_node, mask_acc, spec)
+            self._promote_unops(istate, nsdfg_node, mask_acc, spec)
             self._promote_merges(istate, nsdfg_node, mask_acc, spec)
             # Route a data-scatter store (``dst[idx[i]]`` — value tile already
             # produced by the binop/merge above) through a TileScatter before the

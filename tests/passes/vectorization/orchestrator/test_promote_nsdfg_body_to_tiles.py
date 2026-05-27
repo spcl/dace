@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileLoad, TileStore
+from dace.libraries.tileops import TileBinop, TileLoad, TileStore, TileUnop
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -33,6 +33,24 @@ def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L],
               a1 * c1 * f1 + a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
         b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
+        d1 = d1 * e1 * f1
+        x[i] = a1 * b1 * c1 * d1
+
+
+@dace.program
+def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L],
+                d: dace.float64[L], e: dace.float64[L], x: dace.float64[L]):
+    # vbor verbatim with two unary-minus unops injected on reused scalars: same
+    # boundary-connector structure as _vbor (known to tile e2e through the
+    # descent), so the e2e isolates the descent's TileUnop path.
+    for i in range(L):
+        a1 = a[i]; b1 = b[i]; c1 = c[i]; d1 = d[i]; e1 = e[i]; f1 = a[i]
+        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 +
+              a1 * c1 * f1 + a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        a1 = -a1                              # unary-minus unop on a reused scalar
+        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
+        c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
+        c1 = -c1                              # unary-minus unop
         d1 = d1 * e1 * f1
         x[i] = a1 * b1 * c1 * d1
 
@@ -96,6 +114,51 @@ def test_vbor_emits_tile_ops():
     assert loads, "expected TileLoad nodes for the connector reads"
     assert binops, "expected TileBinop nodes for the scalar chain"
     assert len(stores) == 1, "expected one TileStore for x[i]"
+
+
+@pytest.mark.parametrize("n", [16, 17])
+def test_unop_chain_descent_matches_reference(n):
+    """A reused-scalar chain with unary-minus unops tiles through the descent
+    (NSDFG body) and matches the unvectorized reference (n=17 forces the
+    masked i-tail). Proves the descent's TileUnop path is numerically correct."""
+    rng = np.random.default_rng(seed=n)
+    arrays = {k: rng.random(n) for k in "abcde"}
+    arrays["x"] = np.zeros(n)
+    ref = _build(_unop_chain, f"unop_ref{n}")
+    vec = _build(_unop_chain, f"unop_vec{n}")
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+
+    rf = {k: v.copy() for k, v in arrays.items()}
+    vf = {k: v.copy() for k, v in arrays.items()}
+    ref.compile()(**rf, LEN_2D=n)
+    vec.compile()(**vf, LEN_2D=n)
+    np.testing.assert_allclose(vf["x"], rf["x"], rtol=1e-12, atol=1e-12)
+
+
+def test_unop_chain_emits_tile_unop():
+    """The descent emits a TileUnop for the unary-minus tasklets in a reused-
+    scalar (NSDFG-body) chain — the capability EmitTileOps had but the descent
+    previously lacked. Because the body is an NSDFG the descent owns it (and
+    EmitTileOps is threaded to skip it), so a TileUnop here proves the descent
+    produced it."""
+    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+        CleanAccessNodeToScalarSliceToTaskletPattern, )
+    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
+    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import PromoteNSDFGBodyToTiles
+    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
+
+    sdfg = _build(_unop_chain, "unop_struct")
+    W = (8, )
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    res = MarkTileDims(widths=W).apply_pass(sdfg, {})
+    GenerateTileIterationMask(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
+    StrideMapByTileWidths(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
+    handled = PromoteNSDFGBodyToTiles(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
+
+    assert handled, "expected the unop-chain map to be handled by the descent"
+    unops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileUnop)]
+    assert unops, "expected TileUnop nodes for the unary-minus tasklets"
 
 
 def test_s231_loopregion_body_still_clean_skips():
