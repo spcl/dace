@@ -20,73 +20,121 @@ import pytest
 
 @pytest.fixture(params=["fp_factor", "merge"])
 def branch_mode(request) -> str:
+    """Branch lowering variant the K=1 tile path must support:
+
+    - ``"merge"`` — same-write-set if/else -> per-lane ``TileMerge`` select.
+    - ``"fp_factor"`` — ``c*x + (1-c)*y`` arithmetic (the legacy
+      ``EliminateBranches`` form), lowered on the tile path via tile binops.
+
+    Both must produce numerically identical results against the unvectorized
+    scalar reference."""
     return request.param
 
 
 @pytest.fixture(params=["default", "sve_style"])
 def emission_style(request) -> str:
-    """Parametrise tests over the vectorizer emission model.
+    """Emission model the K=1 tile path must support:
 
-    - ``"default"`` — today's pipeline (``sve_style=None``); the
-      ``branch_mode`` / ``remainder_strategy`` fixtures still apply.
-    - ``"sve_style"`` — SVE-style always-mask emission (``sve_style=
-      "fixed"``): the per-core block runs as a masked while-loop, the
-      tail is handled by the global ``_iter_mask`` (no remainder split).
-      ``branch_mode`` is forced to ``merge`` and ``remainder_strategy``
-      is N/A under this style (the harness skips incompatible param
-      combos rather than passing them through).
+    - ``"default"`` — fixed-width tile maps + remainder per ``remainder_strategy``.
+    - ``"sve_style"`` — SVE-style always-mask emission: the per-core block runs
+      as a masked while-loop, the tail handled by the iteration mask (no
+      remainder split).
 
-    Both must produce numerically identical results against the
-    unvectorized scalar reference."""
+    Both must produce numerically identical results against the unvectorized
+    scalar reference."""
     return request.param
 
 
 def pytest_configure(config):
-    """Register the ``tile_nodes`` marker (opt-in tile-op config arm).
+    """Register the ``tile_nodes`` marker (kept for back-compat; the tile-op
+    config is now the only arm, so the marker is a no-op selector).
 
     :param config: The pytest config object.
     """
     config.addinivalue_line(
         "markers",
-        "tile_nodes: also run this test under the K-dim tile-op config "
-        "(VectorizeCPUMultiDim), in addition to the default scalar_postamble.",
+        "tile_nodes: legacy marker; the K-dim tile-op config "
+        "(VectorizeCPUMultiDim) is now the sole vectorize_config arm.",
     )
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrise ``vectorize_config`` per the ``tile_nodes`` marker.
+    """Parametrise ``vectorize_config`` over the tile-op path only.
 
-    Running *every* vectorization test under the tile-op config is
-    wasteful; the tile path is validated on a curated subset that
-    maximises distinct-pattern coverage (strided load/store, scatter,
-    gather, buffer-reuse, long cloudsc kernels, ...). A test (or a whole
-    module, via ``pytestmark``) opts that subset in with
-    ``@pytest.mark.tile_nodes``; unmarked tests run only
-    ``scalar_postamble``.
+    The legacy 1D ``VectorizeCPU`` (``scalar_postamble``, K=1 / VLEN=8) arm
+    has been dropped: the K-dim tile-op path (``VectorizeCPUMultiDim``) now
+    covers both K=1 and K>=2, so the full sweep runs through it alone.
 
     :param metafunc: The pytest metafunc for the test being collected.
     """
     if "vectorize_config" not in metafunc.fixturenames:
         return
-    configs = ["scalar_postamble"]
-    if metafunc.definition.get_closest_marker("tile_nodes") is not None:
-        configs.append("tile_nodes")
-    metafunc.parametrize("vectorize_config", configs, indirect=True)
+    metafunc.parametrize("vectorize_config", ["tile_nodes"], indirect=True)
+
+
+def _knob_combo_supported(params: dict) -> bool:
+    """Whether a (branch_mode, remainder_strategy, emission_style) combo is a
+    valid tile-pipeline configuration — independent of the kernel.
+
+    Only the knobs present in ``params`` constrain the result (a test that
+    declares just ``remainder_strategy`` is never deselected on the others).
+    The locked rules:
+
+    - ``emission_style='sve_style'`` (always-masked, no remainder split) forces
+      ``branch_mode='merge'`` and ``remainder_strategy='scalar'``.
+    - ``branch_mode='fp_factor'`` (``c*x + (1-c)*y`` arithmetic) requires
+      ``remainder_strategy='scalar'`` and ``emission_style='default'`` (it
+      cannot combine with a masked remainder — the locked plan rule).
+
+    :param params: The item's parametrization (callspec ``params``).
+    :returns: ``False`` for a globally-invalid combo (deselected at collection
+        so it is never reported as a skip), ``True`` otherwise.
+    """
+    branch = params.get("branch_mode")
+    remainder = params.get("remainder_strategy")
+    emission = params.get("emission_style")
+    if emission == "sve_style":
+        if branch not in (None, "merge") or remainder not in (None, "scalar"):
+            return False
+    if branch == "fp_factor":
+        if remainder not in (None, "scalar") or emission not in (None, "default"):
+            return False
+    return True
+
+
+def pytest_collection_modifyitems(config, items):
+    """Deselect globally-invalid knob combinations at collection time.
+
+    The ``branch_mode`` x ``remainder_strategy`` x ``emission_style`` cross
+    product contains combinations no tile pipeline supports (e.g.
+    ``fp_factor`` + ``masked``). Previously each ran and SKIPPED, inflating the
+    skip count with pure knob-incompatibility noise. We now drop them before
+    collection so the remaining skips reflect genuine feature gaps only.
+
+    :param config: The pytest config object.
+    :param items: The collected test items (filtered in place).
+    """
+    kept, deselected = [], []
+    for item in items:
+        params = getattr(getattr(item, "callspec", None), "params", {})
+        (kept if _knob_combo_supported(params) else deselected).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
 
 
 @pytest.fixture
 def vectorize_config(request) -> str:
-    """Backend pipeline under test (parametrised by ``pytest_generate_tests``):
+    """Backend pipeline under test (parametrised by ``pytest_generate_tests``).
 
-    - ``"scalar_postamble"`` — today's ``VectorizeCPU`` (1D path, scalar
-      postamble for the remainder tail). The default for every test that
-      takes this fixture.
-    - ``"tile_nodes"`` — the K-dim routing: K=1 falls back to
-      ``VectorizeCPU`` (direct tasklet swap), K>=2 uses the
-      ``VectorizeCPUMultiDim`` tile-op libnodes. Added only for tests
-      carrying the ``tile_nodes`` marker.
+    - ``"tile_nodes"`` — the K-dim tile-op routing through
+      ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
+      (TileBinop / TileLoad / TileStore / TileMerge / TileGather /
+      TileScatter), expanded to the per-ISA backend (scalar reference in
+      the harness). The sole arm now that the legacy ``scalar_postamble``
+      1D path has been dropped.
 
-    Both arms must match the unvectorized scalar reference."""
+    The tile arm must match the unvectorized scalar reference."""
     return request.param
 
 

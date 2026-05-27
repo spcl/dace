@@ -13,6 +13,12 @@ from tests.passes.vectorization.helpers.harness import (
 
 _OPT_PARAMS = [(True, True), (True, False), (False, True), (False, False)]
 
+# Also run the cloudsc snippets through the K-dim tile-op path
+# (VectorizeCPUMultiDim). The ``vectorize_config`` fixture (conftest) adds a
+# ``tile_nodes`` arm to every test that takes it; the harness clean-skips the
+# arms the locked tile config does not support.
+pytestmark = pytest.mark.tile_nodes
+
 
 @dace.program
 def cloudsc_snippet_one(
@@ -58,7 +64,7 @@ def cloudsc_snippet_two(
                 E[i, j] = 0.0
 
 
-def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_style):
+def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_style, vectorize_config):
     _S = 64
     A = numpy.random.random((2, _S, _S))
     B = numpy.random.random((_S, _S))
@@ -81,7 +87,8 @@ def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_styl
                            sdfg_name="cloudsc_snippet_two",
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
-                           emission_style=emission_style)
+                           emission_style=emission_style,
+                           vectorize_config=vectorize_config)
 
 
 def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
@@ -141,7 +148,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                           "the vector width was produced")
 
 
-def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_style):
+def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_style, vectorize_config):
     klev = 64
     kfdia = 32
 
@@ -174,7 +181,8 @@ def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_styl
                            cleanup=True,
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
-                           emission_style=emission_style)
+                           emission_style=emission_style,
+                           vectorize_config=vectorize_config)
 
 
 def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):

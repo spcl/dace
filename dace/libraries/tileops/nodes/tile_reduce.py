@@ -104,11 +104,9 @@ class ExpandTileReducePure(ExpandTransformation):
             scalar_dst = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
             writeback = "_dst = __acc;" if scalar_dst else "_dst[0] = __acc;"
             body = f"{lane_gate}__acc = {combine_acc};"
-            code = (
-                f"{ctype} __acc = {init};\n"
-                f"{nested_loops(widths, body)}\n"
-                f"{writeback}"
-            )
+            code = (f"{ctype} __acc = {init};\n"
+                    f"{nested_loops(widths, body)}\n"
+                    f"{writeback}")
         else:
             ax = node.axis
             if not (0 <= ax < K):
@@ -125,14 +123,13 @@ class ExpandTileReducePure(ExpandTransformation):
             combine_dst = _combine_expr(op, f"_dst[{kept_off}]", f"_src[{src_off}]")
             reduce_body = f"{lane_gate}_dst[{kept_off}] = {combine_dst};"
             init_widths = [w for _, w in kept_widths]
-            code = (
-                f"{nested_loops(init_widths, init_body)}\n"
-                f"{nested_loops(widths, reduce_body)}"
-            )
+            code = (f"{nested_loops(init_widths, init_body)}\n"
+                    f"{nested_loops(widths, reduce_body)}")
         inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_pure",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,
@@ -168,7 +165,8 @@ class ExpandTileReduceCute(ExpandTransformation):
         inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_cute",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"__output": None},
             code=body,
             language=dace.dtypes.Language.Python,
@@ -191,6 +189,15 @@ class TileReduce(nodes.LibraryNode):
 
     implementations = {"pure": ExpandTileReducePure, "cute": ExpandTileReduceCute}
     default_implementation = "pure"
+
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
 
     widths = properties.ListProperty(
         element_type=int,

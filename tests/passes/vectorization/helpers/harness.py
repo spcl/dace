@@ -106,21 +106,15 @@ def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int):
     """
     K = _collapsible_innermost_K(sdfg)
     if K is None or K < 1:
-        return (vector_width,)
+        return (vector_width, )
     if K == 1:
-        return (vector_width,)
+        return (vector_width, )
     return (8, vector_width)
 
 
-def _tile_nodes_skip_reason(sdfg: dace.SDFG,
-                            branch_mode: str,
-                            remainder_strategy: str,
-                            emission_style: str,
-                            fuse_overlapping_loads: bool,
-                            lower_to_intrinsics: bool,
-                            collapse_laneid_index_loads: bool,
-                            loop_to_map_permissive: bool,
-                            filter_map):
+def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strategy: str, emission_style: str,
+                            fuse_overlapping_loads: bool, lower_to_intrinsics: bool, collapse_laneid_index_loads: bool,
+                            loop_to_map_permissive: bool, filter_map):
     """Return a non-empty skip reason for the ``tile_nodes`` arm when
     the test's knob combination is outside the v2 locked-knob shape.
 
@@ -128,12 +122,21 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG,
     :returns: A short string explaining the skip, or ``""`` when the
         knobs are compatible with the v2 path.
     """
-    if branch_mode != "merge":
-        return f"branch_mode={branch_mode!r} (v2 requires merge)"
-    if remainder_strategy != "scalar":
-        return f"remainder_strategy={remainder_strategy!r} (v2 has no remainder arm yet)"
-    if emission_style != "default":
-        return f"emission_style={emission_style!r} (v2 has no SVE arm)"
+    # fp_factor lowers branches to ``c*x + (1-c)*y`` (single-op tile binops); it
+    # pairs only with the scalar postamble (incompatible with a masked remainder,
+    # the locked plan rule), so skip the masked / sve_style fp_factor combos.
+    if branch_mode == "fp_factor" and (remainder_strategy != "scalar" or emission_style != "default"):
+        return f"branch_mode=fp_factor requires scalar remainder + default emission (got "\
+               f"{remainder_strategy}/{emission_style})"
+    # ``scalar`` -> the single masked W-strided map (full_mask); ``masked`` ->
+    # the masked-tail split (mask-free divisible interior + masked boundary).
+    if remainder_strategy not in ("scalar", "masked"):
+        return f"remainder_strategy={remainder_strategy!r} (tile path supports scalar/masked)"
+    # ``sve_style`` (legacy: always-masked, no remainder split, merge branch) maps
+    # to the tile path's ``full_mask`` (single W-strided masked map, iter_mask on
+    # every tile) — its faithful K-dim analogue. ``default`` is also supported.
+    if emission_style not in ("default", "sve_style"):
+        return f"emission_style={emission_style!r} (tile path supports default/sve_style)"
     if fuse_overlapping_loads:
         return "fuse_overlapping_loads (v2 has no overlap-load fusion yet)"
     if lower_to_intrinsics:
@@ -171,7 +174,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
                            num_cores: int = 8,
-                           vectorize_config: str = "scalar_postamble"):
+                           vectorize_config: str = "tile_nodes"):
 
     # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
     # plan decision (the masked path emits merge tasklets / iter_mask blends
@@ -289,47 +292,56 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         filter_map = None
 
     if vectorize_config == "tile_nodes":
-        # v2 K-dim tile-op path. The locked single-knob shape rejects
-        # every fixture combination except (branch_mode=merge,
-        # remainder_strategy=scalar, emission_style=default,
-        # fuse_overlapping_loads=False, insert_copies=False, no_inline=
-        # False, lower_to_intrinsics=False, loop_to_map_permissive=
-        # False); skip per-arm rather than propagate.
+        # v2 tile-op path (VectorizeCPUMultiDim), unified for K=1 and K>=2: the
+        # tile lib nodes (TileBinop / TileLoad / TileStore / TileMerge / ...)
+        # are emitted for every K and then expanded to tasklets (the ``pure``
+        # expansion). K=1 is the degenerate single-tile-dim case — it is NOT
+        # routed to the legacy 1D ``VectorizeCPU`` here; that mature
+        # scalar-tasklet path is exercised by the ``scalar_postamble`` config.
+        # The locked single-knob shape rejects fixture combinations outside
+        # (branch_mode=merge, remainder in {scalar, masked}, emission_style=
+        # default, no fuse / intrinsics / filter_map); skip per-arm rather than
+        # propagate.
         _skip_reason = _tile_nodes_skip_reason(
-            copy_sdfg, branch_mode, remainder_strategy, emission_style,
-            fuse_overlapping_loads, lower_to_intrinsics,
-            collapse_laneid_index_loads, loop_to_map_permissive, filter_map,
+            copy_sdfg,
+            branch_mode,
+            remainder_strategy,
+            emission_style,
+            fuse_overlapping_loads,
+            lower_to_intrinsics,
+            collapse_laneid_index_loads,
+            loop_to_map_permissive,
+            filter_map,
         )
         if _skip_reason:
             _pytest.skip(f"tile_nodes arm: {_skip_reason}")
         widths = _auto_tile_widths(copy_sdfg, vector_width)
-        if len(widths) == 1:
-            # K=1 -> existing tasklet emission (VectorizeCPU). The tile
-            # libnodes are reserved for genuine K>=2 tiles; a 1D kernel
-            # uses the mature scalar-tasklet path. (VectorizeCPUMultiDim
-            # can still emit 1D tiles — that capability is exercised by
-            # the dedicated 1D-tile-op audit tests, not this arm.)
-            try:
-                VectorizeCPU(vector_width=widths[0],
-                             insert_copies=insert_copies,
-                             apply_on_maps=filter_map,
-                             no_inline=no_inline,
-                             fail_on_unvectorizable=True,
-                             remainder_strategy="scalar",
-                             use_fp_factor=False,
-                             branch_normalization=True).apply_pass(copy_sdfg, {})
-            except NotImplementedError as _e:
-                _pytest.skip(f"tile_nodes arm (K=1 fallback): NotImplementedError ({_e})")
-            copy_sdfg.validate()
-        else:
-            from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-                VectorizeCPUMultiDim,
-            )
-            try:
-                VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(copy_sdfg, {})
-            except NotImplementedError as _e:
-                _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
-            copy_sdfg.validate()
+        from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
+            VectorizeCPUMultiDim, )
+        # Map the test knobs to the tile orchestrator's remainder strategy:
+        #   emission_style=sve_style -> full_mask (SVE always-masked analogue);
+        #   remainder=masked         -> masked_tail (mask-free interior + masked
+        #     boundary regions);
+        #   remainder=scalar         -> scalar_postamble (W-strided interior +
+        #     step-1 scalar tail).
+        # scalar_postamble is K=1-only by design: passing it (remainder=scalar)
+        # at K>=2 makes the orchestrator RAISE NotImplementedError, which the
+        # try/except below turns into an honest skip (NOT a silent full_mask
+        # fallback, which would hide that the knob is unsupported at K>=2).
+        if emission_style == "sve_style":
+            tile_remainder = "full_mask"
+        elif remainder_strategy == "masked":
+            tile_remainder = "masked_tail"
+        else:  # remainder == "scalar"
+            tile_remainder = "scalar_postamble"
+        try:
+            VectorizeCPUMultiDim(widths=widths,
+                                 target_isa="SCALAR",
+                                 remainder_strategy=tile_remainder,
+                                 branch_mode=branch_mode).apply_pass(copy_sdfg, {})
+        except NotImplementedError as _e:
+            _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
+        copy_sdfg.validate()
     else:
         if branch_mode == "fp_factor":
             branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)

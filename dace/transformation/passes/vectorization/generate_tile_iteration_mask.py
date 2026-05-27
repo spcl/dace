@@ -14,6 +14,7 @@ from dace import properties
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileMaskGen
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
@@ -62,7 +63,7 @@ class GenerateTileIterationMask(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8,)):
+    def __init__(self, widths: Tuple[int, ...] = (8, )):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -70,9 +71,7 @@ class GenerateTileIterationMask(ppl.Pass):
         """
         super().__init__()
         if not (1 <= len(widths) <= 3):
-            raise ValueError(
-                f"GenerateTileIterationMask: widths length {len(widths)} not in {{1, 2, 3}}"
-            )
+            raise ValueError(f"GenerateTileIterationMask: widths length {len(widths)} not in {{1, 2, 3}}")
         self.widths = list(widths)
 
     def modifies(self) -> ppl.Modifies:
@@ -104,10 +103,7 @@ class GenerateTileIterationMask(ppl.Pass):
         global_ubs = tuple(str(r[1] + 1) for r in ranges[-K:])
         return TileDimSpec(iter_vars=iter_vars, widths=tuple(self.widths), global_ubs=global_ubs)
 
-    def _attach_mask(self,
-                     parent_sdfg: dace.SDFG,
-                     parent_state: dace.SDFGState,
-                     map_entry: MapEntry,
+    def _attach_mask(self, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState, map_entry: MapEntry,
                      spec: TileDimSpec) -> bool:
         """Add the mask transient + the producer :class:`TileMaskGen`
         inside the map scope.
@@ -169,9 +165,16 @@ class GenerateTileIterationMask(ppl.Pass):
                 continue
             if not is_innermost_map(g, n):
                 continue
+            if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: no mask
+                continue
             if specs is not None and n not in specs:
                 continue
             if len(n.map.params) < K:
+                continue
+            # The all-main interior region of a ``masked_tail`` split is fully
+            # in bounds on every tiled dim — skip the mask so the descent / emit
+            # lower it with ``has_mask=False`` (the fast path).
+            if n.map.label.endswith(TILE_MAIN_MARKER):
                 continue
             spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
             if self._attach_mask(g.sdfg, g, n, spec):

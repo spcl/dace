@@ -13,7 +13,6 @@ from typing import Set
 import sympy
 
 import dace
-import dace.sdfg.construction_utils as cutil
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 import dace.sdfg.utils as sdutil
 from dace.sdfg.state import LoopRegion
@@ -255,11 +254,10 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                                 total = inner_desc.total_size
                                 total_simpl = dace.symbolic.simplify(total - need)
                                 if getattr(total_simpl, "is_Integer", False) and int(total_simpl) < 0:
-                                    raise RuntimeError(
-                                        f"Lane fan-out for '{free_sym_str}': inner connector size "
-                                        f"{total} < required strided span {need} (stride c={c}, "
-                                        f"W={vector_width}); the NSDFG-input window and the inner "
-                                        f"connector disagree (reshape inconsistency).")
+                                    raise RuntimeError(f"Lane fan-out for '{free_sym_str}': inner connector size "
+                                                       f"{total} < required strided span {need} (stride c={c}, "
+                                                       f"W={vector_width}); the NSDFG-input window and the inner "
+                                                       f"connector disagree (reshape inconsistency).")
                                 v_expr = v_expr.subs(free_sym, f"{free_sym}({c} * {i})")
                             else:
                                 v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
@@ -289,8 +287,12 @@ def _widen_index_connector_to_tile(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes
 
     The frontend loads the per-lane index into a ``(1,)`` connector (``idx[i]``).
     To gather the ``W`` per-lane indices, the inner connector array is reshaped
-    to ``(W,)`` and its outer edge subset is grown from ``idx[i]`` to the tile
-    region ``idx[i:i+W]`` (the dim whose ``begin`` references the tile var).
+    to ``(W,)`` and its outer edge subset is grown from ``idx[c*i]`` to the tile
+    region ``idx[c*i : c*i + c*(W-1) : c]`` (the dim whose ``begin`` references
+    the tile var). The window is ``c``-strided, where ``c`` is the tile var's
+    coefficient in ``begin``: lane ``l`` reads ``begin(i + l) = c*i + c*l``, so
+    ``b[idx[2*i]]`` gathers ``idx[2*i], idx[2*i+2], ...`` not ``idx[2*i+1]``.
+    A unit coefficient recovers the contiguous ``idx[i:i+W]`` window.
     Idempotent: a connector already of shape ``(W,)`` is left untouched.
 
     :param inner_sdfg: The tile-body SDFG.
@@ -304,9 +306,17 @@ def _widen_index_connector_to_tile(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes
     if tuple(arr.shape) == (vector_width, ):
         return
     dtype = arr.dtype
-    inner_sdfg.remove_data(idx_conn, validate=False)
-    inner_sdfg.add_array(idx_conn, [vector_width], dtype, storage=dace.dtypes.StorageType.Register, transient=False)
     sym = dace.symbolic.symbol(tile_iter_var)
+    # ``begin = c*i + d`` (affine in the tile var): lane ``l`` reads
+    # ``begin + c*l``, so the per-lane index window is ``c``-strided. The outer
+    # edge is grown to the CONTIGUOUS bounding window ``idx[c*i : c*i+c*(W-1)]``
+    # (``c*(W-1)+1`` elements) and the connector keeps that contiguous shape:
+    # the ``c``-strided per-lane pick is realised at the gather, which reads
+    # ``_idx[c*l]`` (TileGather ``index_strides``). A strided memlet / strided
+    # connector would NOT work because the NSDFG argument is a base pointer
+    # (``&idx[c*i]``) that drops the source stride. A unit ``c`` recovers the
+    # plain ``idx[i:i+W]`` window.
+    lane_stride = 1
     for oe in parent_state.in_edges(nsdfg_node):
         if oe.dst_conn != idx_conn or oe.data is None or oe.data.subset is None:
             continue
@@ -314,15 +324,22 @@ def _widen_index_connector_to_tile(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes
         for (b, e, s) in oe.data.subset:
             b_syms = b.free_symbols if hasattr(b, "free_symbols") else set()
             if sym in b_syms:
-                new_ranges.append((b, b + (vector_width - 1), 1))
+                coeff = b.coeff(sym)
+                affine = sym not in (b - coeff * sym).free_symbols
+                lane_stride = coeff if (affine and coeff != 0) else 1
+                new_ranges.append((b, b + lane_stride * (vector_width - 1), 1))
             else:
                 new_ranges.append((b, e, s))
         oe.data.subset = dace.subsets.Range(new_ranges)
+    inner_sdfg.remove_data(idx_conn, validate=False)
+    inner_sdfg.add_array(idx_conn, [lane_stride * (vector_width - 1) + 1],
+                         dtype,
+                         storage=dace.dtypes.StorageType.Register,
+                         transient=False)
 
 
 def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
-                                      parent_state: dace.SDFGState, vector_width: int,
-                                      tile_iter_var: str) -> Set[str]:
+                                      parent_state: dace.SDFGState, vector_width: int, tile_iter_var: str) -> Set[str]:
     """Tile analog of :func:`expand_interstate_assignments_to_lanes` for gather indices.
 
     A frontend-lowered gather ``src[idx[i]]`` leaves the per-lane index in a
@@ -360,9 +377,8 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
             v_expr = dace.symbolic.SymExpr(v)
             idx_conns = sorted({
                 str(s)
-                for s in v_expr.free_symbols
-                if str(s) in nsdfg_node.in_connectors and not inner_sdfg.arrays[str(s)].transient
-                and tuple(inner_sdfg.arrays[str(s)].shape) == (1, )
+                for s in v_expr.free_symbols if str(s) in nsdfg_node.in_connectors
+                and not inner_sdfg.arrays[str(s)].transient and tuple(inner_sdfg.arrays[str(s)].shape) == (1, )
             })
             if not idx_conns:
                 new_assignments[k] = v
@@ -380,6 +396,63 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
                     new_assignments[k] = lane_v
         edge.data.assignments = new_assignments
     return widened
+
+
+def _index_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
+    """Collect symbols used for indirect accessing (inside a memlet subset).
+
+    A symbol that appears in any memlet subset is a gather/scatter index
+    (``src[sym]``). Such symbols must stay symbols so the gather fan-out can
+    widen them into an index tile; every other interstate symbol may be
+    demoted to a scalar.
+
+    :param inner_sdfg: The nested SDFG whose memlets to scan.
+    :returns: Symbol names referenced by any memlet subset.
+    """
+    index_syms: Set[str] = set()
+    for state in inner_sdfg.all_states():
+        for edge in state.edges():
+            if edge.data.subset is None:
+                continue
+            available = state.symbols_defined_at(edge.dst)
+            index_syms |= {
+                str(s)
+                for s in edge.data.free_symbols if str(s) in inner_sdfg.symbols or str(s) in available
+            }
+    return index_syms
+
+
+def demote_non_index_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
+    """Demote every interstate-edge symbol to a Register scalar unless it is
+    used for indirect accessing.
+
+    ``ScalarToSymbolPromotion`` demotes integer-valued tile computations to
+    interstate-edge symbol assignments (``sym = A_slice[0] + B_slice[0]``)
+    consumed by a trivial store tasklet. On the tile path such symbols are
+    loop-dependent (they cannot be broadcast), and fanning them per lane
+    explodes combinatorially in K dimensions. Reversing the promotion —
+    turning ``sym = expr`` back into a scalar dataflow tasklet via
+    :func:`dace.sdfg.utils.demote_symbol_to_scalar` — lets the standard
+    TileLoad / TileBinop / TileStore promotion lower the computation
+    tile-natively, with no ``_laneid_`` symbols minted.
+
+    Symbols used as an array index (``src[sym]``) are NOT demoted: they stay
+    symbols for the gather fan-out (:func:`fan_out_tile_gather_index_symbols`)
+    to widen into an index tile. Running this before the fan-out also shrinks
+    how much the fan-out has to expand.
+
+    :param inner_sdfg: The tile-body SDFG whose interstate symbols to demote.
+    :returns: The set of demoted symbol names.
+    """
+    index_syms = _index_symbols(inner_sdfg)
+    assigned: Set[str] = set()
+    for edge in inner_sdfg.all_interstate_edges():
+        assigned |= set(edge.data.assignments.keys())
+    demotable = sorted(assigned - index_syms)
+    for sym in demotable:
+        stype = inner_sdfg.symbols.get(sym, dace.int64)
+        sdutil.demote_symbol_to_scalar(inner_sdfg, sym, stype)
+    return set(demotable)
 
 
 def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:

@@ -12,12 +12,45 @@ The pure expansion returns a CPP tasklet whose body is a single
 """
 from typing import Optional, Tuple
 
+import numpy as np
+
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
+from .. import _isa_codegen
+from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
+
+
+def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
+    """Whether a Tile operand of dtype ``src`` may be promoted to the output
+    dtype ``dst`` before the op (a widening conversion).
+
+    Allowed (widening): same dtype; integer -> wider-or-equal integer; integer
+    -> float / double; float -> double. Disallowed (narrowing -> the caller must
+    crash): float / double -> integer; double -> float; integer narrowing
+    (e.g. int64 -> int32).
+
+    :param src: The Tile operand's element dtype.
+    :param dst: The output (``_c``) element dtype.
+    :returns: ``True`` iff promoting ``src`` to ``dst`` is non-narrowing.
+    """
+    if src == dst:
+        return True
+    s_int = np.issubdtype(src.type, np.integer)
+    d_int = np.issubdtype(dst.type, np.integer)
+    s_flt = np.issubdtype(src.type, np.floating)
+    d_flt = np.issubdtype(dst.type, np.floating)
+    if s_int and d_flt:  # int -> float / double
+        return True
+    if s_int and d_int and dst.bytes >= src.bytes:  # integer widening
+        return True
+    if s_flt and d_flt and dst.bytes >= src.bytes:  # float -> double
+        return True
+    return False
+
 
 _TILE = "Tile"
 _SYMBOL = "Symbol"
@@ -88,9 +121,8 @@ class ExpandTileBinopPure(ExpandTransformation):
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b)
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
-        out_dtype = parent_sdfg.arrays[
-            next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data
-        ].dtype.ctype
+        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
+                                            if e.src_conn == "_c").data.data].dtype.ctype
         if node.has_mask:
             body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
         else:
@@ -105,7 +137,8 @@ class ExpandTileBinopPure(ExpandTransformation):
             inputs.discard("_mask")
         return nodes.Tasklet(
             label=f"{node.label}_pure",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"_c": None},
             code=code,
             language=dace.dtypes.Language.CPP,
@@ -152,6 +185,7 @@ class ExpandTileBinopCute(ExpandTransformation):
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A Python-language tasklet with the element-wise body.
         """
+
         def _cute_operand(kind, tile_conn, scalar_conn, expr):
             """cuTile operand reference: inline expr for Symbol, the
             tile connector for Tile, the scalar connector (broadcasts
@@ -177,11 +211,76 @@ class ExpandTileBinopCute(ExpandTransformation):
             inputs.add("__const2")
         return nodes.Tasklet(
             label=f"{node.label}_cute",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"__output": None},
             code=body,
             language=dace.dtypes.Language.Python,
         )
+
+
+@library.expansion
+class ExpandTileBinopScalar(ExpandTransformation):
+    """K=1 scalar-backend lowering: a call to ``dace::tileops::tile_binop`` in
+    ``dace/tile_ops/scalar.h`` (pulled in via :class:`TileOpsScalar`).
+
+    The shared :func:`~dace.libraries.tileops._isa_codegen.make_binop_tasklet`
+    maps ``op`` -> a one-char op code, each operand's ``kind`` -> a broadcast
+    boolean, and ``has_mask`` -> the ``Masked`` boolean. K=1 only (the selector
+    routes K>=2 to ``pure``). The avx512 / avx2 / neon / sve siblings emit the
+    identical call and differ only in the backend header their environment pulls
+    in.
+    """
+
+    environments = [TileOpsScalar]
+
+    @staticmethod
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "scalar")
+
+
+@library.expansion
+class ExpandTileBinopAVX512(ExpandTransformation):
+    """AVX-512 lowering of :class:`TileBinop` (``dace/tile_ops/avx512.h``)."""
+
+    environments = [TileOpsAVX512]
+
+    @staticmethod
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "avx512")
+
+
+@library.expansion
+class ExpandTileBinopAVX2(ExpandTransformation):
+    """AVX2 lowering of :class:`TileBinop` (``dace/tile_ops/avx2.h``)."""
+
+    environments = [TileOpsAVX2]
+
+    @staticmethod
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "avx2")
+
+
+@library.expansion
+class ExpandTileBinopNeon(ExpandTransformation):
+    """ARM NEON lowering of :class:`TileBinop` (``dace/tile_ops/arm_neon.h``)."""
+
+    environments = [TileOpsNeon]
+
+    @staticmethod
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "neon")
+
+
+@library.expansion
+class ExpandTileBinopSVE(ExpandTransformation):
+    """ARM SVE lowering of :class:`TileBinop` (``dace/tile_ops/arm_sve.h``)."""
+
+    environments = [TileOpsSVE]
+
+    @staticmethod
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
 @library.node
@@ -202,9 +301,27 @@ class TileBinop(nodes.LibraryNode):
     :cvar default_implementation: ``"pure"``.
     """
 
-    implementations = {"pure": ExpandTileBinopPure, "cute": ExpandTileBinopCute}
+    implementations = {
+        "pure": ExpandTileBinopPure,
+        "cute": ExpandTileBinopCute,
+        # K=1 ISA backends: a call into dace/tile_ops/<backend>.h (same call;
+        # the backend's env pulls in the matching header).
+        "scalar": ExpandTileBinopScalar,
+        "avx512": ExpandTileBinopAVX512,
+        "avx2": ExpandTileBinopAVX2,
+        "neon": ExpandTileBinopNeon,
+        "sve": ExpandTileBinopSVE,
+    }
     default_implementation = "pure"
 
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
     op = properties.Property(
         dtype=str,
         allow_none=False,
@@ -283,11 +400,6 @@ class TileBinop(nodes.LibraryNode):
         for label, kind in (("kind_a", kind_a), ("kind_b", kind_b)):
             if kind not in _VALID_KINDS:
                 raise ValueError(f"TileBinop: {label} must be one of {_VALID_KINDS}, got {kind!r}")
-        if kind_a != _TILE and kind_b != _TILE:
-            raise ValueError(
-                "TileBinop: at least one operand must be 'Tile'; a non-tile / non-tile pair "
-                "belongs outside the tile path."
-            )
         if kind_a == _SYMBOL and not expr_a:
             raise ValueError("TileBinop: kind_a='Symbol' requires expr_a")
         if kind_b == _SYMBOL and not expr_b:
@@ -309,9 +421,7 @@ class TileBinop(nodes.LibraryNode):
         self.expr_a = expr_a
         self.expr_b = expr_b
 
-    def validate(self,
-                 sdfg: dace.SDFG,
-                 state: dace.SDFGState) -> None:
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Validate connector counts at expansion time.
 
         :param sdfg: SDFG that owns ``state``.
@@ -327,18 +437,17 @@ class TileBinop(nodes.LibraryNode):
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         c_arr = sdfg.arrays[out_e["_c"].data.data]
-        dtypes_ = {c_arr.dtype}
         for label, kind in (("_a", self.kind_a), ("_b", self.kind_b)):
             if kind in (_TILE, _SCALAR):
                 if label not in in_e:
                     raise ValueError(f"{self.label}: kind={kind!r} but {label!r} not connected")
-                # Only Tile operands must match the output element type;
-                # a Scalar operand of a different dtype broadcasts and
-                # promotes (e.g. an fp64 scale on an fp64 tile is fine).
+                # Each Tile / Scalar operand is promoted to the output dtype
+                # before the op (the expansion casts on lowering). Widening
+                # (int -> float/double, int -> wider int, float -> double) is
+                # allowed; a narrowing conversion (e.g. double -> int) raises.
                 if kind == _TILE:
-                    dtypes_.add(sdfg.arrays[in_e[label].data.data].dtype)
-        if len(dtypes_) > 1:
-            raise NotImplementedError(
-                f"{self.label}: TileBinop requires uniform dtype across Tile operands and _c "
-                f"(got {dtypes_}); cast via separate tasklet first."
-            )
+                    src = sdfg.arrays[in_e[label].data.data].dtype
+                    if not _promotion_ok(src, c_arr.dtype):
+                        raise NotImplementedError(
+                            f"{self.label}: Tile operand {label!r} dtype {src} cannot be promoted to output "
+                            f"dtype {c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")

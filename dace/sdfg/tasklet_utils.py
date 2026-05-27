@@ -878,13 +878,20 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
     info_dict = {
         "type": None,
         "lhs": lhs,
+        # Unified operand slots: rhs1/rhs2/rhs3 (connector names) and the
+        # parallel constant1/2/3 (symbol/literal operands). rhs3/constant3 are
+        # populated only for the 3-operand ternary (merge / if-then-else) and
+        # stay ``None`` for unops (rhs1 only) and binops (rhs1, rhs2).
         "rhs1": None,
         "rhs2": None,
+        "rhs3": None,
         "constant1": None,
         "constant2": None,
+        "constant3": None,
         "op": None,
-        # Semantic operands for ``TERNARY_ARRAY`` (merge). Populated only
-        # for that type, kept ``None`` for every other tasklet shape.
+        # Semantic aliases for ``TERNARY_ARRAY`` (merge): cond == rhs1,
+        # then_arm == rhs2, else_arm == rhs3. Kept for the legacy
+        # ``instantiate_tasklet_from_info`` consumer.
         "cond": None,
         "then_arm": None,
         "else_arm": None,
@@ -1030,6 +1037,9 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             raise NotImplementedError(f"classify_tasklet: merge args must be simple connector names, got {code_str!r}")
         info_dict.update({
             "type": TaskletType.TERNARY_ARRAY,
+            "rhs1": arg_names[0],
+            "rhs2": arg_names[1],
+            "rhs3": arg_names[2],
             "cond": arg_names[0],
             "then_arm": arg_names[1],
             "else_arm": arg_names[2],

@@ -24,8 +24,9 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileScatter, TileStore
+from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileScatter, TileStore, TileUnop
 from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileConnectors
 from dace.transformation.passes.vectorization.utils.tile_dims import (
@@ -66,31 +67,41 @@ def _lane_index_expr(begin_str: str, iter_vars: Tuple[str, ...]) -> Optional[str
         b = b.subs(subs)
     return symbolic.symstr(b)
 
+
 _OPERAND = r"(?:[A-Za-z_]\w*|\d+\.?\d*(?:[eE][+-]?\d+)?)"
-_BINOP_RE = re.compile(
-    rf"^\s*(?P<out>\w+)\s*=\s*"
-    rf"(?:\(\s*)?(?P<a>{_OPERAND})\s*(?P<op>\+|-|\*|/|<=|>=|==|!=|<|>|and|or)\s*"
-    rf"(?P<b>{_OPERAND})\s*\)?\s*;?\s*$"
-)
+_BINOP_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*"
+                       rf"(?:\(\s*)?(?P<a>{_OPERAND})\s*(?P<op>\+|-|\*|/|<=|>=|==|!=|<|>|and|or)\s*"
+                       rf"(?P<b>{_OPERAND})\s*\)?\s*;?\s*$")
 
+# Function-call binops ``out = max(a, b)`` / ``out = min(a, b)`` — two-operand
+# ops with no infix spelling. They map to the same TileBinop the infix ops use
+# (``max`` -> 'M', ``min`` -> 'm' in the backend headers), so they are binops,
+# not unops: capture both operands and the function name.
+_FUNC_BINOP_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*(?P<op>max|min)\s*\(\s*"
+                            rf"(?P<a>{_OPERAND})\s*,\s*(?P<b>{_OPERAND})\s*\)\s*;?\s*$")
 
-_CONST_STORE_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*(?P<val>-?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*;?\s*$")
+# A numeric literal RHS, allowing one layer of parens and a space after a
+# unary minus (the frontend emits ``A[i, j] = -999`` as ``(- 999)``). Matched
+# before the unop classifier so a negative constant stays a constant store
+# (a TileUnop(neg, literal) would be a wasteful round-trip and mis-handled).
+_CONST_STORE_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*\(?\s*(?P<val>-?\s*\d+\.?\d*(?:[eE][+-]?\d+)?)\s*\)?\s*;?\s*$")
 
 
 def _constant_store_value(tasklet: dace.nodes.Tasklet) -> Optional[str]:
     """Return the literal a constant-store tasklet writes, or ``None``.
 
-    A no-binop body ``out = <numeric literal>`` (e.g. ``aa[j, i] = 0.0``) is a
-    broadcast store: every lane gets the same constant. Recognised so it can
-    lower to a constant-fill tile + ``TileStore`` rather than be mis-parsed as
-    a binop.
+    A no-binop body ``out = <numeric literal>`` (e.g. ``aa[j, i] = 0.0`` or
+    ``A[i, j] = -999`` -> ``(- 999)``) is a broadcast store: every lane gets the
+    same constant. Recognised so it can lower to a constant-fill tile +
+    ``TileStore`` rather than be mis-parsed as a binop / unary-minus.
 
     :param tasklet: Tasklet to inspect.
-    :returns: The literal string (e.g. ``"0.0"``), or ``None``.
+    :returns: The literal string with internal spaces removed (e.g. ``"0.0"``,
+        ``"-999"``), or ``None``.
     """
     body = tasklet.code.as_string.strip().rstrip(";").strip()
     m = _CONST_STORE_RE.match(body)
-    return m.group("val") if m else None
+    return m.group("val").replace(" ", "") if m else None
 
 
 def _is_numeric_literal(token: str) -> bool:
@@ -108,25 +119,40 @@ def _is_numeric_literal(token: str) -> bool:
 
 
 _PY_TO_TILEBINOP_OP = {
-    "+": "+", "-": "-", "*": "*", "/": "/",
-    "<": "<", "<=": "<=", ">": ">", ">=": ">=", "==": "==", "!=": "!=",
-    "and": "&&", "or": "||",
+    "+": "+",
+    "-": "-",
+    "*": "*",
+    "/": "/",
+    "<": "<",
+    "<=": "<=",
+    ">": ">",
+    ">=": ">=",
+    "==": "==",
+    "!=": "!=",
+    "and": "&&",
+    "or": "||",
 }
 _ASSIGN_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*(?P<inp>\w+)\s*;?\s*$")
 
 
 def _is_assign_tasklet(tasklet: dace.nodes.Tasklet) -> bool:
-    """Return True iff the tasklet body is a trivial ``out = inp`` copy.
+    """Return True iff the tasklet body is a trivial connector-to-connector
+    ``out = inp`` copy.
 
     The frontend emits these at the end of multi-tasklet chains (post-
     ``SplitTasklets``) to route an intermediate transient to the outer
-    access node; they are pass-throughs for the tile-op rewrite.
+    access node; they are pass-throughs for the tile-op rewrite. The RHS must
+    be an actual input connector: ``out = 0`` (a constant store, handled by
+    :func:`_constant_store_value`) and ``out = N`` (a symbol read) both match
+    the bare ``\\w+`` RHS but are NOT copies and have no input edge.
 
     :param tasklet: Tasklet to inspect.
-    :returns: True iff ``tasklet.code`` matches ``out = inp``.
+    :returns: True iff the body is ``out = inp`` with ``out`` an output
+        connector and ``inp`` an input connector.
     """
     body = tasklet.code.as_string.strip().rstrip(";").strip()
-    return _ASSIGN_RE.match(body) is not None
+    m = _ASSIGN_RE.match(body)
+    return (m is not None and m.group("out") in tasklet.out_connectors and m.group("inp") in tasklet.in_connectors)
 
 
 def _classify_binop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[str, str, str, str]]:
@@ -142,17 +168,76 @@ def _classify_binop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[
     """
     body = tasklet.code.as_string.strip().rstrip(";").strip()
     m = _BINOP_RE.match(body)
-    if m is None:
-        return None
-    out = m.group("out")
-    if out not in tasklet.out_connectors:
-        return None
-    return out, m.group("a"), _PY_TO_TILEBINOP_OP[m.group("op")], m.group("b")
+    if m is not None:
+        out = m.group("out")
+        if out not in tasklet.out_connectors:
+            return None
+        return out, m.group("a"), _PY_TO_TILEBINOP_OP[m.group("op")], m.group("b")
+    # Function-form two-operand op (``max`` / ``min``): same TileBinop spelling.
+    fm = _FUNC_BINOP_RE.match(body)
+    if fm is not None:
+        out = fm.group("out")
+        if out not in tasklet.out_connectors:
+            return None
+        return out, fm.group("a"), fm.group("op"), fm.group("b")
+    return None
 
 
-def _tile_region_subset(orig_subset: subsets.Range,
-                        iter_vars: Tuple[str, ...],
-                        widths: Tuple[int, ...]) -> subsets.Range:
+# Unary function name (as emitted by the frontend / math-lowering) -> the
+# TileUnop op spelling. The dace-mangled ``dace_<fn>_d`` / ``dace_<fn>_f``
+# math shims map to the same op as the bare name.
+_FUNC_UNOP = {
+    "abs": "abs",
+    "fabs": "abs",
+    "exp": "exp",
+    "dace_exp_d": "exp",
+    "dace_exp_f": "exp",
+    "log": "log",
+    "dace_log_d": "log",
+    "dace_log_f": "log",
+    "sqrt": "sqrt",
+    "dace_sqrt_d": "sqrt",
+    "dace_sqrt_f": "sqrt",
+    "sin": "sin",
+    "cos": "cos",
+    "floor": "floor",
+    "ceil": "ceil",
+    "tanh": "tanh",
+}
+_FUNC_UNOP_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*(?P<fn>\w+)\s*\(\s*(?P<a>{_OPERAND})\s*\)\s*;?\s*$")
+_NEG_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*\(?\s*-\s*(?P<a>{_OPERAND})\s*\)?\s*;?\s*$")
+
+
+def _classify_unop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[str, str, str]]:
+    """Parse a single-operand unary tasklet ``out = <op> a``, or ``None``.
+
+    Recognises the function forms ``out = abs(a)`` / ``exp(a)`` / ``log(a)`` /
+    ``sqrt(a)`` / ``sin``/``cos``/``floor``/``ceil``/``tanh`` (and the
+    dace-mangled ``dace_<fn>_d`` math shims) plus unary minus ``out = -a``.
+
+    :param tasklet: Compute tasklet to inspect.
+    :returns: ``(out_conn, op, operand_token)`` with ``op`` a :class:`TileUnop`
+        spelling, or ``None`` if the body is not a recognised unop or the
+        output is not a declared out-connector.
+    """
+    body = tasklet.code.as_string.strip().rstrip(";").strip()
+    fm = _FUNC_UNOP_RE.match(body)
+    if fm is not None and fm.group("fn") in _FUNC_UNOP:
+        out = fm.group("out")
+        if out not in tasklet.out_connectors:
+            return None
+        return out, _FUNC_UNOP[fm.group("fn")], fm.group("a")
+    nm = _NEG_RE.match(body)
+    if nm is not None:
+        out = nm.group("out")
+        if out not in tasklet.out_connectors:
+            return None
+        return out, "neg", nm.group("a")
+    return None
+
+
+def _tile_region_subset(orig_subset: subsets.Range, iter_vars: Tuple[str, ...], widths: Tuple[int,
+                                                                                              ...]) -> subsets.Range:
     """Promote a per-iteration scalar subset to its tile-region slice.
 
     :param orig_subset: The per-iteration subset (one ``(b, e, s)`` per
@@ -175,6 +260,31 @@ def _tile_region_subset(orig_subset: subsets.Range,
         else:
             new_ranges.append((b, e, s))
     return subsets.Range(new_ranges)
+
+
+def _mask_name_for_map(state: dace.SDFGState, map_entry: MapEntry) -> Optional[str]:
+    """Return the iteration-mask transient produced inside ``map_entry``'s
+    scope, or ``None`` for an unmasked tile map.
+
+    Each map in a state has its own per-map mask (``_tile_iter_mask``,
+    ``_tile_iter_mask_1``, ...), so the name is read from THIS map's scope. A
+    map with no :class:`TileMaskGen` in scope is the provably-divisible interior
+    of a ``masked_tail`` split — every tile is fully in bounds, so ``None``
+    routes emission / descent to the ``has_mask=False`` fast path.
+
+    :param state: Parent state.
+    :param map_entry: Inner map entry.
+    :returns: The ``TileMaskGen`` output array name, or ``None`` if the scope
+        has no mask producer.
+    """
+    from dace.libraries.tileops import TileMaskGen
+    scope = state.all_nodes_between(map_entry, state.exit_node(map_entry)) or set()
+    for node in scope:
+        if isinstance(node, TileMaskGen):
+            oe = [e for e in state.out_edges(node) if e.src_conn == TileConnectors.O]
+            if oe:
+                return oe[0].data.data
+    return None
 
 
 @properties.make_properties
@@ -201,7 +311,7 @@ class EmitTileOps(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8,)):
+    def __init__(self, widths: Tuple[int, ...] = (8, )):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -243,9 +353,7 @@ class EmitTileOps(ppl.Pass):
             global_ubs=tuple(str(r[1] + 1) for r in ranges[-K:]),
         )
 
-    def _find_body_tasklets(self,
-                            state: dace.SDFGState,
-                            map_entry: MapEntry) -> List[dace.nodes.Tasklet]:
+    def _find_body_tasklets(self, state: dace.SDFGState, map_entry: MapEntry) -> List[dace.nodes.Tasklet]:
         """Return the tasklets sitting in ``map_entry``'s scope.
 
         :param state: Parent state.
@@ -265,16 +373,11 @@ class EmitTileOps(ppl.Pass):
         parsed = _classify_binop_tasklet_body(tasklet)
         if parsed is None:
             body = tasklet.code.as_string.strip().rstrip(";").strip()
-            raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} body {body!r} is not 'out = lhs OP rhs' "
-                f"with the output in out_connectors; run SplitTasklets first."
-            )
+            raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} body {body!r} is not 'out = lhs OP rhs' "
+                                      f"with the output in out_connectors; run SplitTasklets first.")
         return parsed
 
-    def _operand_kind(self,
-                      state: dace.SDFGState,
-                      tasklet: dace.nodes.Tasklet,
-                      conn_name: str,
+    def _operand_kind(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, conn_name: str,
                       spec: TileDimSpec) -> Tuple[str, Optional[Tuple]]:
         """Decide whether ``conn_name`` reads a tile region or a symbol.
 
@@ -290,15 +393,11 @@ class EmitTileOps(ppl.Pass):
         """
         in_e = [e for e in state.in_edges(tasklet) if e.dst_conn == conn_name]
         if len(in_e) != 1:
-            raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} has "
-                f"{len(in_e)} in-edges; expected exactly 1"
-            )
+            raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} has "
+                                      f"{len(in_e)} in-edges; expected exactly 1")
         edge = in_e[0]
         if edge.data is None or edge.data.data is None:
-            raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} has no memlet"
-            )
+            raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} has no memlet")
         src_data_name = edge.data.data
         src_arr = state.sdfg.arrays[src_data_name]
         cls = classify_tile_access(
@@ -331,14 +430,10 @@ class EmitTileOps(ppl.Pass):
             return "Gather", (source_edge, edge, edge.data.subset)
         raise NotImplementedError(
             f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} access "
-            f"{source_edge.data!r} is {cls.kind.value}; T5 MVP only handles Tile / Scalar / Symbol"
-        )
+            f"{source_edge.data!r} is {cls.kind.value}; T5 MVP only handles Tile / Scalar / Symbol")
 
-    def _add_tile_transient(self,
-                            sdfg: dace.SDFG,
-                            base: str,
-                            dtype: dace.dtypes.typeclass,
-                            widths: Tuple[int, ...]) -> str:
+    def _add_tile_transient(self, sdfg: dace.SDFG, base: str, dtype: dace.dtypes.typeclass, widths: Tuple[int,
+                                                                                                          ...]) -> str:
         """Add a fresh tile-shape register transient and return its name.
 
         :param sdfg: SDFG receiving the new array.
@@ -361,17 +456,9 @@ class EmitTileOps(ppl.Pass):
         )
         return name
 
-    def _emit_tile_load(self,
-                        state: dace.SDFGState,
-                        tasklet: dace.nodes.Tasklet,
-                        conn: str,
-                        source_edge,
-                        in_edge,
-                        per_iter_subset: subsets.Range,
-                        dim_strides: Tuple[int, ...],
-                        src_dims: Tuple[int, ...],
-                        spec: TileDimSpec,
-                        mask_name: str) -> str:
+    def _emit_tile_load(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, conn: str, source_edge, in_edge,
+                        per_iter_subset: subsets.Range, dim_strides: Tuple[int, ...], src_dims: Tuple[int, ...],
+                        spec: TileDimSpec, mask_name: str) -> str:
         """Insert a :class:`TileLoad` materializing one tile transient.
 
         :param state: Parent state.
@@ -390,33 +477,32 @@ class EmitTileOps(ppl.Pass):
         sdfg = state.sdfg
         src_arr = sdfg.arrays[src_name]
         tile_name = self._add_tile_transient(
-            sdfg, f"_tile_{conn.lstrip('_')}", src_arr.dtype, spec.widths,
+            sdfg,
+            f"_tile_{conn.lstrip('_')}",
+            src_arr.dtype,
+            spec.widths,
         )
         load = TileLoad(
             name=f"{tasklet.label}_load_{conn.lstrip('_')}",
             widths=spec.widths,
             dim_strides=tuple(dim_strides),
             src_dims=tuple(src_dims),
-            has_mask=True,
+            has_mask=mask_name is not None,
         )
         state.add_node(load)
         promoted_subset = _tile_region_subset(per_iter_subset, spec.iter_vars, spec.widths)
         state.add_edge(in_edge.src, in_edge.src_conn, load, TileConnectors.SRC,
                        dace.Memlet(data=src_name, subset=promoted_subset))
-        mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
-        state.add_edge(mask_access, None, load, TileConnectors.MASK,
-                       dace.Memlet(f"{mask_name}[{subset}]"))
+        mask_access = self._mask_access_or_none(state, mask_name)
+        if mask_access is not None:
+            state.add_edge(mask_access, None, load, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
         tile_access = state.add_access(tile_name)
         state.add_edge(load, TileConnectors.DST, tile_access, None, dace.Memlet(f"{tile_name}[{subset}]"))
         return tile_name, tile_access
 
-    def _emit_gather_index_tiles(self,
-                                 state: dace.SDFGState,
-                                 map_entry: MapEntry,
-                                 per_iter_subset: subsets.Range,
-                                 src_ndim: int,
-                                 spec: TileDimSpec) -> List[dace.nodes.AccessNode]:
+    def _emit_gather_index_tiles(self, state: dace.SDFGState, map_entry: MapEntry, per_iter_subset: subsets.Range,
+                                 src_ndim: int, spec: TileDimSpec) -> List[dace.nodes.AccessNode]:
         """Build one affine per-dim index tile (the "gather map") per source
         array dim. Each ``_gidx_k`` tile is filled by a small CPP tasklet
         ``_gidx_k[lane] = begin_k + sum_p coeff_p * __l_p`` (begin_k read from
@@ -439,9 +525,8 @@ class EmitTileOps(ppl.Pass):
             begin_str = str(per_iter_subset.ranges[k][0])
             expr = _lane_index_expr(begin_str, spec.iter_vars)
             if expr is None:
-                raise NotImplementedError(
-                    f"EmitTileOps: gather index dim {k} ({begin_str!r}) is not affine "
-                    f"in the tile vars (indirect gather not yet emitted)")
+                raise NotImplementedError(f"EmitTileOps: gather index dim {k} ({begin_str!r}) is not affine "
+                                          f"in the tile vars (indirect gather not yet emitted)")
             idx_name = self._add_tile_transient(sdfg, "_gidx", dace.int64, spec.widths)
             # Use a generic ``_out`` connector (not the array name) — a tasklet
             # connector must not collide with an SDFG data/symbol name.
@@ -461,14 +546,8 @@ class EmitTileOps(ppl.Pass):
             idx_accesses.append(idx_acc)
         return idx_accesses
 
-    def _emit_gather_load(self,
-                          state: dace.SDFGState,
-                          tasklet: dace.nodes.Tasklet,
-                          conn: str,
-                          source_edge,
-                          in_edge,
-                          per_iter_subset: subsets.Range,
-                          spec: TileDimSpec,
+    def _emit_gather_load(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, conn: str, source_edge, in_edge,
+                          per_iter_subset: subsets.Range, spec: TileDimSpec,
                           mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
         """Insert a :class:`TileGather` materializing one tile transient from a
         non-box (diagonal / affine-indirect) read.
@@ -483,27 +562,26 @@ class EmitTileOps(ppl.Pass):
         idx_accesses = self._emit_gather_index_tiles(state, map_entry, per_iter_subset, src_ndim, spec)
         tile_name = self._add_tile_transient(sdfg, f"_tile_{conn.lstrip('_')}", src_arr.dtype, spec.widths)
         gather = TileGather(name=f"{tasklet.label}_gather_{conn.lstrip('_')}",
-                            widths=spec.widths, source_ndim=src_ndim, has_mask=True)
+                            widths=spec.widths,
+                            source_ndim=src_ndim,
+                            has_mask=mask_name is not None)
         state.add_node(gather)
         full = ", ".join(f"0:{s}" for s in src_arr.shape)
         state.add_edge(in_edge.src, in_edge.src_conn, gather, TileConnectors.SRC,
                        dace.Memlet(data=src_name, subset=subsets.Range.from_string(full)))
         for k, idx_acc in enumerate(idx_accesses):
-            state.add_edge(idx_acc, None, gather, TileConnectors.idx(k), dace.Memlet(f"{idx_acc.data}[{', '.join(f'0:{w}' for w in spec.widths)}]"))
+            state.add_edge(idx_acc, None, gather, TileConnectors.idx(k),
+                           dace.Memlet(f"{idx_acc.data}[{', '.join(f'0:{w}' for w in spec.widths)}]"))
         out_subset = ", ".join(f"0:{w}" for w in spec.widths)
-        mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
-        state.add_edge(mask_access, None, gather, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{out_subset}]"))
+        mask_access = self._mask_access_or_none(state, mask_name)
+        if mask_access is not None:
+            state.add_edge(mask_access, None, gather, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{out_subset}]"))
         tile_access = state.add_access(tile_name)
         state.add_edge(gather, TileConnectors.DST, tile_access, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
         return tile_name, tile_access
 
-    def _emit_scatter_store(self,
-                            state: dace.SDFGState,
-                            map_entry: MapEntry,
-                            out_access: dace.nodes.AccessNode,
-                            out_edge,
-                            spec: TileDimSpec,
-                            mask_access: dace.nodes.AccessNode) -> None:
+    def _emit_scatter_store(self, state: dace.SDFGState, map_entry: MapEntry, out_access: dace.nodes.AccessNode,
+                            out_edge, spec: TileDimSpec, mask_access: dace.nodes.AccessNode) -> None:
         """Scatter a result tile back to a non-box (diagonal / affine) output
         via a :class:`TileScatter` over the same affine index map.
 
@@ -520,22 +598,22 @@ class EmitTileOps(ppl.Pass):
         dst_ndim = len(dst_arr.shape)
         out_subset = ", ".join(f"0:{w}" for w in spec.widths)
         idx_accesses = self._emit_gather_index_tiles(state, map_entry, out_edge.data.subset, dst_ndim, spec)
-        scatter = TileScatter(name=f"{out_access.data}_scatter", widths=spec.widths,
-                              dest_ndim=dst_ndim, has_mask=True)
+        scatter = TileScatter(name=f"{out_access.data}_scatter",
+                              widths=spec.widths,
+                              dest_ndim=dst_ndim,
+                              has_mask=mask_access is not None)
         state.add_node(scatter)
         state.add_edge(out_access, None, scatter, TileConnectors.SRC, dace.Memlet(f"{out_access.data}[{out_subset}]"))
         for k, idx_acc in enumerate(idx_accesses):
             state.add_edge(idx_acc, None, scatter, TileConnectors.idx(k), dace.Memlet(f"{idx_acc.data}[{out_subset}]"))
-        state.add_edge(mask_access, None, scatter, TileConnectors.MASK, dace.Memlet(f"{mask_access.data}[{out_subset}]"))
+        if mask_access is not None:
+            state.add_edge(mask_access, None, scatter, TileConnectors.MASK,
+                           dace.Memlet(f"{mask_access.data}[{out_subset}]"))
         full = ", ".join(f"0:{s}" for s in dst_arr.shape)
         state.add_edge(scatter, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
                        dace.Memlet(data=dst_name, subset=subsets.Range.from_string(full)))
 
-    def _emit_const_tile(self,
-                         state: dace.SDFGState,
-                         map_entry: MapEntry,
-                         tasklet: dace.nodes.Tasklet,
-                         val: str,
+    def _emit_const_tile(self, state: dace.SDFGState, map_entry: MapEntry, tasklet: dace.nodes.Tasklet, val: str,
                          spec: TileDimSpec) -> Tuple[str, dace.nodes.AccessNode]:
         """Materialize a tile filled with a constant (for a ``out = <const>``
         broadcast-store body), returning ``(out_data, tile_access)``.
@@ -587,35 +665,43 @@ class EmitTileOps(ppl.Pass):
         :param mask_name: Name of the iteration-mask transient.
         :returns: The producer-fed access node, or ``None``.
         """
-        producers = [
-            n for n in state.data_nodes()
-            if n.data == mask_name and state.in_edges(n)
-        ]
+        producers = [n for n in state.data_nodes() if n.data == mask_name and state.in_edges(n)]
         return producers[0] if producers else None
 
-    def _mask_name_for_map(self, state: dace.SDFGState, map_entry: MapEntry) -> str:
-        """Return the iteration-mask transient name produced inside
-        ``map_entry``'s scope.
+    def _mask_access_or_none(self, state: dace.SDFGState, mask_name: Optional[str]) -> Optional[dace.nodes.AccessNode]:
+        """Resolve the mask access node for ``mask_name``, or ``None`` when
+        the map is unmasked (``mask_name is None``).
 
-        Multiple maps in one state each have their own per-map mask
-        (``_tile_iter_mask``, ``_tile_iter_mask_1``, ...), so the name
-        must be read from THIS map's scope, not assumed global.
+        :param state: Parent state.
+        :param mask_name: Iteration-mask transient name, or ``None``.
+        :returns: The mask access node, or ``None`` for the unmasked fast path.
+        """
+        if mask_name is None:
+            return None
+        return self._find_mask_access(state, mask_name) or state.add_access(mask_name)
+
+    def _resolve_map_mask(self, state: dace.SDFGState, map_entry: MapEntry) -> Optional[str]:
+        """Resolve the map's mask name, enforcing the no-mask safety contract.
+
+        A map with no :class:`TileMaskGen` in scope is only legitimately
+        unmasked when it is the ``masked_tail`` split's provably-divisible
+        interior (the ``__tile_main`` marker) — every tile is fully in bounds,
+        so ``has_mask=False`` is OOB-safe. An *unmarked* map with no mask means
+        :class:`GenerateTileIterationMask` was not run (or the map is not a
+        divisible interior); emitting ``has_mask=False`` there could be
+        OOB-unsafe, so refuse loudly.
 
         :param state: Parent state.
         :param map_entry: Inner map entry.
-        :returns: The mask array name produced inside the map scope.
-        :raises NotImplementedError: If the scope has no mask producer.
+        :returns: The mask array name, or ``None`` for the marked interior.
+        :raises NotImplementedError: If the map is unmasked but not a
+            ``__tile_main`` interior.
         """
-        from dace.libraries.tileops import TileMaskGen
-        scope = state.all_nodes_between(map_entry, state.exit_node(map_entry)) or set()
-        for node in scope:
-            if isinstance(node, TileMaskGen):
-                oe = [e for e in state.out_edges(node) if e.src_conn == TileConnectors.O]
-                if oe:
-                    return oe[0].data.data
-        raise NotImplementedError(
-            f"EmitTileOps: map {map_entry.label!r} has no TileMaskGen in scope; "
-            f"run GenerateTileIterationMask first.")
+        mask_name = _mask_name_for_map(state, map_entry)
+        if mask_name is None and not map_entry.map.label.endswith(TILE_MAIN_MARKER):
+            raise NotImplementedError(f"EmitTileOps: map {map_entry.label!r} has no TileMaskGen in scope and is not a "
+                                      f"masked_tail interior (__tile_main); run GenerateTileIterationMask first.")
+        return mask_name
 
     def _drop_mask_placeholder_edge(self, state: dace.SDFGState, mask_name: str, map_entry: MapEntry) -> None:
         """Remove the placeholder empty-memlet edge
@@ -675,12 +761,7 @@ class EmitTileOps(ppl.Pass):
             return edge, intermediates
         return edge, intermediates
 
-    def _wire_scalar_operand(self,
-                             state: dace.SDFGState,
-                             binop,
-                             conn: str,
-                             source_edge,
-                             in_edge) -> None:
+    def _wire_scalar_operand(self, state: dace.SDFGState, binop, conn: str, source_edge, in_edge) -> None:
         """Wire a Scalar (length-1 / ``dace.data.Scalar``) operand into
         ``binop`` via its ``_a`` / ``_b`` connector, reusing the original
         in-edge's source (the MapEntry pass-through) so no connector is
@@ -694,8 +775,7 @@ class EmitTileOps(ppl.Pass):
         :param in_edge: The original binop tasklet's in-edge for this
             operand (carries the MapEntry pass-through source + conn).
         """
-        state.add_edge(in_edge.src, in_edge.src_conn, binop, conn,
-                       copy.deepcopy(in_edge.data))
+        state.add_edge(in_edge.src, in_edge.src_conn, binop, conn, copy.deepcopy(in_edge.data))
 
     def _drop_dangling_scope_connectors(self, state: dace.SDFGState, map_entry: MapEntry) -> None:
         """Remove MapEntry / MapExit pass-through connectors that lost
@@ -744,9 +824,7 @@ class EmitTileOps(ppl.Pass):
         oe = list(state.out_edges(binop))
         return oe[0].data.data if oe else None
 
-    def _topo_order_binops(self,
-                           state: dace.SDFGState,
-                           binops: List[dace.nodes.Tasklet]) -> List[dace.nodes.Tasklet]:
+    def _topo_order_binops(self, state: dace.SDFGState, binops: List[dace.nodes.Tasklet]) -> List[dace.nodes.Tasklet]:
         """Order body binop tasklets so each is emitted after the binops
         that produce its intermediate inputs.
 
@@ -764,9 +842,9 @@ class EmitTileOps(ppl.Pass):
             progressed = False
             for b in list(remaining):
                 deps = {
-                    e.data.data for e in state.in_edges(b)
-                    if isinstance(e.src, dace.nodes.AccessNode) and e.data.data in produced_by_binop
-                    and e.data.data != out_data[b]
+                    e.data.data
+                    for e in state.in_edges(b) if isinstance(e.src, dace.nodes.AccessNode)
+                    and e.data.data in produced_by_binop and e.data.data != out_data[b]
                 }
                 if deps <= produced:
                     ordered.append(b)
@@ -775,15 +853,10 @@ class EmitTileOps(ppl.Pass):
                     remaining.remove(b)
                     progressed = True
             if not progressed:
-                raise NotImplementedError(
-                    "EmitTileOps: cyclic / unresolvable binop dependency in map body"
-                )
+                raise NotImplementedError("EmitTileOps: cyclic / unresolvable binop dependency in map body")
         return ordered
 
-    def _emit_one_binop(self,
-                        state: dace.SDFGState,
-                        tasklet: dace.nodes.Tasklet,
-                        spec: TileDimSpec,
+    def _emit_one_binop(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
                         tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
                         mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
         """Emit a single :class:`TileBinop` for one body tasklet.
@@ -812,9 +885,8 @@ class EmitTileOps(ppl.Pass):
                 return "Symbol", token
             in_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == token]
             if len(in_edges) != 1:
-                raise NotImplementedError(
-                    f"EmitTileOps: tasklet {tasklet.label!r} operand {token!r} has "
-                    f"{len(in_edges)} in-edges")
+                raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} operand {token!r} has "
+                                          f"{len(in_edges)} in-edges")
             edge = in_edges[0]
             src_data = edge.data.data
             if isinstance(edge.src, dace.nodes.AccessNode) and src_data in tile_map:
@@ -827,14 +899,17 @@ class EmitTileOps(ppl.Pass):
         norm_a = "Tile" if kind_a in ("Tile-existing", "Gather") else kind_a
         norm_b = "Tile" if kind_b in ("Tile-existing", "Gather") else kind_b
         if norm_a != "Tile" and norm_b != "Tile":
-            raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} has no Tile operand "
-                f"({norm_a}/{norm_b})")
+            raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} has no Tile operand "
+                                      f"({norm_a}/{norm_b})")
 
         out_dtype = state.sdfg.arrays[self._binop_output_data(state, tasklet)].dtype
         out_tile_name = self._add_tile_transient(state.sdfg, "_tile_t", out_dtype, spec.widths)
-        kwargs = dict(name=f"{tasklet.label}_binop", widths=spec.widths, op=op,
-                      has_mask=True, kind_a=norm_a, kind_b=norm_b)
+        kwargs = dict(name=f"{tasklet.label}_binop",
+                      widths=spec.widths,
+                      op=op,
+                      has_mask=mask_name is not None,
+                      kind_a=norm_a,
+                      kind_b=norm_b)
         if norm_a == "Symbol":
             kwargs["expr_a"] = info_a
         if norm_b == "Symbol":
@@ -846,12 +921,12 @@ class EmitTileOps(ppl.Pass):
             if kind == "Tile-existing":
                 state.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[{subset}]"))
             elif kind == "Tile":
-                tname, tacc = self._emit_tile_load(
-                    state, tasklet, conn[-1], info[0], info[1], info[2], info[3], info[4], spec, mask_name)
+                tname, tacc = self._emit_tile_load(state, tasklet, conn[-1], info[0], info[1], info[2], info[3],
+                                                   info[4], spec, mask_name)
                 state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
             elif kind == "Gather":
-                tname, tacc = self._emit_gather_load(
-                    state, tasklet, conn[-1], info[0], info[1], info[2], spec, mask_name)
+                tname, tacc = self._emit_gather_load(state, tasklet, conn[-1], info[0], info[1], info[2], spec,
+                                                     mask_name)
                 state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
             elif kind == "Scalar":
                 self._wire_scalar_operand(state, binop, conn, info[0], info[1])
@@ -859,16 +934,82 @@ class EmitTileOps(ppl.Pass):
 
         _wire(kind_a, info_a, TileConnectors.A)
         _wire(kind_b, info_b, TileConnectors.B)
-        mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
-        state.add_edge(mask_access, None, binop, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
+        mask_access = self._mask_access_or_none(state, mask_name)
+        if mask_access is not None:
+            state.add_edge(mask_access, None, binop, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
         out_access = state.add_access(out_tile_name)
         state.add_edge(binop, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
         return self._binop_output_data(state, tasklet), out_access
 
-    def _rewrite_one_map(self,
-                         state: dace.SDFGState,
-                         map_entry: MapEntry,
-                         spec: TileDimSpec) -> None:
+    def _emit_one_unop(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
+                       tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
+                       mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
+        """Emit a single :class:`TileUnop` for one unary body tasklet.
+
+        Resolves the operand to a Tile (existing intermediate from
+        ``tile_map`` or a fresh :class:`TileLoad` / :class:`TileGather`), a
+        Scalar (broadcast), or a Symbol (inline), then writes the result to a
+        fresh tile transient. Mirrors :meth:`_emit_one_binop` with one operand.
+
+        :param state: Parent state.
+        :param tasklet: The unary tasklet.
+        :param spec: Per-dim tile specification.
+        :param tile_map: Intermediate-data-name -> ``(tile_name, tile_access)``.
+        :param mask_name: Iteration-mask transient name.
+        :returns: ``(out_data_name, out_tile_access)``.
+        :raises NotImplementedError: For operand shapes not handled.
+        """
+        out_conn, op, a_tok = _classify_unop_tasklet_body(tasklet)
+        subset = ", ".join(f"0:{w}" for w in spec.widths)
+
+        if _is_numeric_literal(a_tok):
+            kind_a, info_a = "Symbol", a_tok
+        else:
+            in_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == a_tok]
+            if len(in_edges) != 1:
+                raise NotImplementedError(f"EmitTileOps: unop {tasklet.label!r} operand {a_tok!r} has "
+                                          f"{len(in_edges)} in-edges")
+            src_data = in_edges[0].data.data
+            if isinstance(in_edges[0].src, dace.nodes.AccessNode) and src_data in tile_map:
+                kind_a, info_a = "Tile-existing", tile_map[src_data][1]
+            else:
+                kind_a, info_a = self._operand_kind(state, tasklet, a_tok, spec)
+        norm_a = "Tile" if kind_a in ("Tile-existing", "Gather") else kind_a
+
+        out_dtype = state.sdfg.arrays[self._binop_output_data(state, tasklet)].dtype
+        out_tile_name = self._add_tile_transient(state.sdfg, "_tile_t", out_dtype, spec.widths)
+        kwargs = dict(name=f"{tasklet.label}_unop",
+                      widths=spec.widths,
+                      op=op,
+                      has_mask=mask_name is not None,
+                      kind_a=norm_a)
+        if norm_a == "Symbol":
+            kwargs["expr_a"] = info_a
+        unop = TileUnop(**kwargs)
+        state.add_node(unop)
+
+        if kind_a == "Tile-existing":
+            state.add_edge(info_a, None, unop, TileConnectors.A, dace.Memlet(f"{info_a.data}[{subset}]"))
+        elif kind_a == "Tile":
+            tname, tacc = self._emit_tile_load(state, tasklet, TileConnectors.A[-1], info_a[0], info_a[1], info_a[2],
+                                               info_a[3], info_a[4], spec, mask_name)
+            state.add_edge(tacc, None, unop, TileConnectors.A, dace.Memlet(f"{tname}[{subset}]"))
+        elif kind_a == "Gather":
+            tname, tacc = self._emit_gather_load(state, tasklet, TileConnectors.A[-1], info_a[0], info_a[1], info_a[2],
+                                                 spec, mask_name)
+            state.add_edge(tacc, None, unop, TileConnectors.A, dace.Memlet(f"{tname}[{subset}]"))
+        elif kind_a == "Scalar":
+            self._wire_scalar_operand(state, unop, TileConnectors.A, info_a[0], info_a[1])
+        # Symbol: nothing to wire (embedded inline).
+
+        mask_access = self._mask_access_or_none(state, mask_name)
+        if mask_access is not None:
+            state.add_edge(mask_access, None, unop, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
+        out_access = state.add_access(out_tile_name)
+        state.add_edge(unop, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
+        return self._binop_output_data(state, tasklet), out_access
+
+    def _rewrite_one_map(self, state: dace.SDFGState, map_entry: MapEntry, spec: TileDimSpec) -> None:
         """Replace the body of ``map_entry`` with a tile-op chain.
 
         Walks the body's binop tasklets in dataflow order, emitting one
@@ -890,8 +1031,10 @@ class EmitTileOps(ppl.Pass):
             raise NotImplementedError(
                 f"EmitTileOps: map {map_entry.label!r} body has no binop or constant-store tasklet")
 
-        mask_name = self._mask_name_for_map(state, map_entry)
+        mask_name = self._resolve_map_mask(state, map_entry)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
+        # Compute tasklets (binops + unops) share one dataflow order; each is
+        # dispatched to the right tile node by its body shape.
         ordered = self._topo_order_binops(state, binops)
 
         tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]] = {}
@@ -899,7 +1042,10 @@ class EmitTileOps(ppl.Pass):
         all_intermediates: set = set()
         for t in ordered:
             out_e = list(state.out_edges(t))
-            out_data, out_access = self._emit_one_binop(state, t, spec, tile_map, mask_name)
+            if _classify_unop_tasklet_body(t) is not None:
+                out_data, out_access = self._emit_one_unop(state, t, spec, tile_map, mask_name)
+            else:
+                out_data, out_access = self._emit_one_binop(state, t, spec, tile_map, mask_name)
             tile_map[out_data] = (out_access.data, out_access)
             final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
             all_intermediates |= set(inters)
@@ -918,24 +1064,25 @@ class EmitTileOps(ppl.Pass):
             out_dst_name = out_edge.data.data
             out_arr = state.sdfg.arrays[out_dst_name]
             out_cls = classify_tile_access(out_edge.data.subset, tuple(out_arr.strides), spec.iter_vars)
-            mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
+            mask_access = self._mask_access_or_none(state, mask_name)
             if out_cls.kind in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
                 # Non-box / structured write (``a[i,i]=…`` / ``a[i//2]=…``):
                 # scatter the tile back through the same per-dim index map.
                 self._emit_scatter_store(state, map_entry, out_access, out_edge, spec, mask_access)
                 continue
             if out_cls.kind not in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
-                raise NotImplementedError(
-                    f"EmitTileOps: output {out_dst_name!r} access is {out_cls.kind.value}; "
-                    f"only perfect-box (strided) or gather stores are supported")
+                raise NotImplementedError(f"EmitTileOps: output {out_dst_name!r} access is {out_cls.kind.value}; "
+                                          f"only perfect-box (strided) or gather stores are supported")
             promoted = _tile_region_subset(out_edge.data.subset, spec.iter_vars, spec.widths)
-            store = TileStore(name=f"{out_access.data}_store", widths=spec.widths,
-                              dim_strides=out_cls.dim_strides, dst_dims=out_cls.match_dims, has_mask=True)
+            store = TileStore(name=f"{out_access.data}_store",
+                              widths=spec.widths,
+                              dim_strides=out_cls.dim_strides,
+                              dst_dims=out_cls.match_dims,
+                              has_mask=mask_access is not None)
             state.add_node(store)
-            state.add_edge(out_access, None, store, TileConnectors.SRC,
-                           dace.Memlet(f"{out_access.data}[{subset}]"))
-            state.add_edge(mask_access, None, store, TileConnectors.MASK,
-                           dace.Memlet(f"{mask_name}[{subset}]"))
+            state.add_edge(out_access, None, store, TileConnectors.SRC, dace.Memlet(f"{out_access.data}[{subset}]"))
+            if mask_access is not None:
+                state.add_edge(mask_access, None, store, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
             state.add_edge(store, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
                            dace.Memlet(data=out_dst_name, subset=promoted))
 
@@ -972,15 +1119,18 @@ class EmitTileOps(ppl.Pass):
                 continue
             if not is_innermost_map(g, n):
                 continue
+            if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: stays scalar
+                continue
             if n in handled:
                 continue
             if specs is not None and n not in specs:
                 continue
             if len(n.map.params) < K:
                 continue
-            # Verify this map's scope has its own mask producer (raises
-            # NotImplementedError otherwise).
-            self._mask_name_for_map(g, n)
+            # Verify this map either has a mask producer in scope or is a
+            # masked_tail divisible interior (raises NotImplementedError
+            # otherwise — a forgotten GenerateTileIterationMask).
+            self._resolve_map_mask(g, n)
             spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
             self._rewrite_one_map(g, n, spec)
             rewritten += 1

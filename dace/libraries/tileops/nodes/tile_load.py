@@ -13,6 +13,8 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, offset_via_strides, tile_offset
+from .. import _isa_codegen
+from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 
 @library.expansion
@@ -48,9 +50,8 @@ class ExpandTileLoadPure(ExpandTransformation):
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
         src_off = offset_via_strides(coeff, src_strides)
         dst_off = tile_offset(widths)
-        dst_dtype = parent_sdfg.arrays[
-            next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst").data.data
-        ].dtype.ctype
+        dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
+                                            if e.src_conn == "_dst").data.data].dtype.ctype
         if node.has_mask:
             body = f"_dst[{dst_off}] = _mask[{dst_off}] ? _src[{src_off}] : {dst_dtype}(0);"
         else:
@@ -59,7 +60,8 @@ class ExpandTileLoadPure(ExpandTransformation):
         inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_pure",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,
@@ -96,18 +98,77 @@ class ExpandTileLoadCute(ExpandTransformation):
         shape_tuple = ", ".join(str(w) for w in widths)
         index_tuple = ", ".join(f"__pid{k}" for k in range(K))
         lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
-        lines.append(
-            f"__output = ct.load(__src, index=({index_tuple},), shape=({shape_tuple},),"
-            f" padding_mode=ct.PaddingMode.ZERO)"
-        )
+        lines.append(f"__output = ct.load(__src, index=({index_tuple},), shape=({shape_tuple},),"
+                     f" padding_mode=ct.PaddingMode.ZERO)")
         inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_cute",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"__output": None},
             code="\n".join(lines),
             language=dace.dtypes.Language.Python,
         )
+
+
+@library.expansion
+class ExpandTileLoadScalar(ExpandTransformation):
+    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsScalar]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "scalar")
+
+
+@library.expansion
+class ExpandTileLoadAVX512(ExpandTransformation):
+    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX512]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "avx512")
+
+
+@library.expansion
+class ExpandTileLoadAVX2(ExpandTransformation):
+    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX2]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "avx2")
+
+
+@library.expansion
+class ExpandTileLoadNeon(ExpandTransformation):
+    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsNeon]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "neon")
+
+
+@library.expansion
+class ExpandTileLoadSVE(ExpandTransformation):
+    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsSVE]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
 @library.node
@@ -121,8 +182,25 @@ class TileLoad(nodes.LibraryNode):
     (contiguous).
     """
 
-    implementations = {"pure": ExpandTileLoadPure, "cute": ExpandTileLoadCute}
+    implementations = {
+        "pure": ExpandTileLoadPure,
+        "cute": ExpandTileLoadCute,
+        "scalar": ExpandTileLoadScalar,
+        "avx512": ExpandTileLoadAVX512,
+        "avx2": ExpandTileLoadAVX2,
+        "neon": ExpandTileLoadNeon,
+        "sve": ExpandTileLoadSVE
+    }
     default_implementation = "pure"
+
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
 
     widths = properties.ListProperty(
         element_type=int,
@@ -170,9 +248,7 @@ class TileLoad(nodes.LibraryNode):
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileLoad: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
-            raise ValueError(
-                f"TileLoad: dim_strides length {len(dim_strides)} != widths length {len(widths)}"
-            )
+            raise ValueError(f"TileLoad: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
         inputs = {"_src"} | ({"_mask"} if has_mask else set())
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)

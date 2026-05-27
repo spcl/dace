@@ -20,6 +20,20 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
+from .. import _isa_codegen
+from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
+
+
+def _strided_lane(stride: int, off: str) -> str:
+    """Per-lane index into a (possibly strided) index tile.
+
+    :param stride: The lane stride ``c`` into the index tile.
+    :param off: The contiguous lane-offset expression (e.g. ``__l0``).
+    :returns: ``off`` when ``stride == 1`` (contiguous index tile), else
+        ``(c) * (off)`` — lane ``l`` reads ``_idx[c*l]`` from a
+        ``c``-strided index window.
+    """
+    return off if stride == 1 else f"({stride}) * ({off})"
 
 
 @library.expansion
@@ -46,12 +60,12 @@ class ExpandTileGatherPure(ExpandTransformation):
         src_ndim = node.source_ndim
         src_strides = [symstr(s) for s in src_arr.strides[-src_ndim:]]
         off = tile_offset(widths)
+        idx_strides = node.index_strides or [1] * src_ndim
         flat_offset = " + ".join(
-            f"((std::ptrdiff_t)_idx_{k}[{off}] * ({src_strides[k]}))" for k in range(src_ndim)
-        )
-        dst_dtype = parent_sdfg.arrays[
-            next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst").data.data
-        ].dtype.ctype
+            f"((std::ptrdiff_t)_idx_{k}[{_strided_lane(idx_strides[k], off)}] * ({src_strides[k]}))"
+            for k in range(src_ndim))
+        dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
+                                            if e.src_conn == "_dst").data.data].dtype.ctype
         if node.has_mask:
             body = f"_dst[{off}] = _mask[{off}] ? _src[{flat_offset}] : {dst_dtype}(0);"
         else:
@@ -62,7 +76,8 @@ class ExpandTileGatherPure(ExpandTransformation):
             inputs.add("_mask")
         return nodes.Tasklet(
             label=f"{node.label}_pure",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,
@@ -104,11 +119,72 @@ class ExpandTileGatherCute(ExpandTransformation):
             inputs.add("__mask")
         return nodes.Tasklet(
             label=f"{node.label}_cute",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"__output": None},
             code=body,
             language=dace.dtypes.Language.Python,
         )
+
+
+@library.expansion
+class ExpandTileGatherScalar(ExpandTransformation):
+    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsScalar]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_gather_tasklet(node, parent_state, parent_sdfg, "scalar")
+
+
+@library.expansion
+class ExpandTileGatherAVX512(ExpandTransformation):
+    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX512]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_gather_tasklet(node, parent_state, parent_sdfg, "avx512")
+
+
+@library.expansion
+class ExpandTileGatherAVX2(ExpandTransformation):
+    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX2]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_gather_tasklet(node, parent_state, parent_sdfg, "avx2")
+
+
+@library.expansion
+class ExpandTileGatherNeon(ExpandTransformation):
+    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsNeon]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_gather_tasklet(node, parent_state, parent_sdfg, "neon")
+
+
+@library.expansion
+class ExpandTileGatherSVE(ExpandTransformation):
+    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsSVE]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_gather_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
 @library.node
@@ -131,8 +207,25 @@ class TileGather(nodes.LibraryNode):
     arbitrary stride arrays).
     """
 
-    implementations = {"pure": ExpandTileGatherPure, "cute": ExpandTileGatherCute}
+    implementations = {
+        "pure": ExpandTileGatherPure,
+        "cute": ExpandTileGatherCute,
+        "scalar": ExpandTileGatherScalar,
+        "avx512": ExpandTileGatherAVX512,
+        "avx2": ExpandTileGatherAVX2,
+        "neon": ExpandTileGatherNeon,
+        "sve": ExpandTileGatherSVE
+    }
     default_implementation = "pure"
+
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
 
     widths = properties.ListProperty(
         element_type=int,
@@ -146,6 +239,15 @@ class TileGather(nodes.LibraryNode):
         desc="Number of dims of the source array; ``source_ndim`` index "
         "connectors (``_idx_0`` .. ``_idx_{source_ndim-1}``) are declared.",
     )
+    index_strides = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-source-dim lane stride into each ``_idx_<k>`` tile. Empty "
+        "(or all-1) means contiguous index tiles (``_idx_<k>[lane]``). A "
+        "stride ``c>1`` means ``_idx_<k>`` is a contiguous bounding window of "
+        "``c*(W-1)+1`` elements and lane ``l`` reads ``_idx_<k>[c*l]`` — the "
+        "tile gather of a ``c``-strided index, e.g. ``b[idx[c*i]]``.",
+    )
     has_mask = properties.Property(
         dtype=bool,
         allow_none=False,
@@ -158,6 +260,7 @@ class TileGather(nodes.LibraryNode):
                  widths: Tuple[int, ...],
                  source_ndim: int = 1,
                  has_mask: bool = False,
+                 index_strides: Tuple[int, ...] = (),
                  location: Optional[str] = None):
         """Construct a ``TileGather`` node.
 
@@ -166,14 +269,20 @@ class TileGather(nodes.LibraryNode):
         :param source_ndim: Number of dims of the source array
             (defaults to 1 for 1D-source gather).
         :param has_mask: When True, declare the ``_mask`` input.
+        :param index_strides: Per-source-dim lane stride into each index
+            tile (defaults to all-1: contiguous index tiles).
         :param location: Optional DaCe node location override.
         :raises ValueError: If ``widths`` is empty or longer than 3, or
-            if ``source_ndim`` < 1.
+            if ``source_ndim`` < 1, or if ``index_strides`` length mismatches
+            ``source_ndim``.
         """
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileGather: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if source_ndim < 1:
             raise ValueError(f"TileGather: source_ndim must be >= 1, got {source_ndim}")
+        if index_strides and len(index_strides) != source_ndim:
+            raise ValueError(f"TileGather: index_strides {index_strides!r} must have source_ndim={source_ndim} "
+                             f"entries (or be empty for all-1)")
         inputs = {"_src"} | {f"_idx_{k}" for k in range(source_ndim)}
         if has_mask:
             inputs.add("_mask")
@@ -181,6 +290,7 @@ class TileGather(nodes.LibraryNode):
         self.widths = list(widths)
         self.source_ndim = int(source_ndim)
         self.has_mask = has_mask
+        self.index_strides = list(index_strides) if index_strides else [1] * int(source_ndim)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.

@@ -13,7 +13,7 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -36,7 +36,7 @@ class StrideMapByTileWidths(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8,)):
+    def __init__(self, widths: Tuple[int, ...] = (8, )):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -105,6 +105,8 @@ class StrideMapByTileWidths(ppl.Pass):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
             if not is_innermost_map(g, n):
+                continue
+            if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: keep step 1
                 continue
             if specs is not None and n not in specs:
                 continue

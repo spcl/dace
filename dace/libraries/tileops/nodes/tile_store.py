@@ -12,6 +12,8 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, offset_via_strides, tile_offset
+from .. import _isa_codegen
+from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 
 @library.expansion
@@ -55,7 +57,8 @@ class ExpandTileStorePure(ExpandTransformation):
         inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_pure",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,
@@ -92,27 +95,82 @@ class ExpandTileStoreCute(ExpandTransformation):
         lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
         if node.has_mask:
             for k, w in enumerate(widths):
-                lines.append(
-                    f"__idx{k} = ct.arange({w}, dtype=ct.int32) + __pid{k} * {w}"
-                )
+                lines.append(f"__idx{k} = ct.arange({w}, dtype=ct.int32) + __pid{k} * {w}")
             idx_tuple = ", ".join(f"__idx{k}" for k in range(K))
-            lines.append(
-                f"ct.scatter(__output, ({idx_tuple},), __src, mask=__mask)"
-            )
+            lines.append(f"ct.scatter(__output, ({idx_tuple},), __src, mask=__mask)")
         else:
             index_tuple = ", ".join(f"__pid{k}" for k in range(K))
             shape_tuple = ", ".join(str(w) for w in widths)
-            lines.append(
-                f"ct.store(__output, index=({index_tuple},), tile=__src)"
-            )
+            lines.append(f"ct.store(__output, index=({index_tuple},), tile=__src)")
         inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_cute",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"__output": None},
             code="\n".join(lines),
             language=dace.dtypes.Language.Python,
         )
+
+
+@library.expansion
+class ExpandTileStoreScalar(ExpandTransformation):
+    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsScalar]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "scalar")
+
+
+@library.expansion
+class ExpandTileStoreAVX512(ExpandTransformation):
+    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX512]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "avx512")
+
+
+@library.expansion
+class ExpandTileStoreAVX2(ExpandTransformation):
+    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX2]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "avx2")
+
+
+@library.expansion
+class ExpandTileStoreNeon(ExpandTransformation):
+    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsNeon]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "neon")
+
+
+@library.expansion
+class ExpandTileStoreSVE(ExpandTransformation):
+    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsSVE]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
 @library.node
@@ -125,8 +183,25 @@ class TileStore(nodes.LibraryNode):
     strides into the destination view.
     """
 
-    implementations = {"pure": ExpandTileStorePure, "cute": ExpandTileStoreCute}
+    implementations = {
+        "pure": ExpandTileStorePure,
+        "cute": ExpandTileStoreCute,
+        "scalar": ExpandTileStoreScalar,
+        "avx512": ExpandTileStoreAVX512,
+        "avx2": ExpandTileStoreAVX2,
+        "neon": ExpandTileStoreNeon,
+        "sve": ExpandTileStoreSVE
+    }
     default_implementation = "pure"
+
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
 
     widths = properties.ListProperty(
         element_type=int,
@@ -174,9 +249,7 @@ class TileStore(nodes.LibraryNode):
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileStore: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
-            raise ValueError(
-                f"TileStore: dim_strides length {len(dim_strides)} != widths length {len(widths)}"
-            )
+            raise ValueError(f"TileStore: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
         inputs = {"_src"} | ({"_mask"} if has_mask else set())
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)

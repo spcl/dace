@@ -36,8 +36,7 @@ class ExpandTileMaskGenPure(ExpandTransformation):
         iter_vars = list(node.iter_vars)
         global_ubs = list(node.global_ubs)
         off = tile_offset(widths)
-        terms = [f"((({iv}) + __l{k}) < ({ub}))"
-                 for k, (iv, ub) in enumerate(zip(iter_vars, global_ubs))]
+        terms = [f"((({iv}) + __l{k}) < ({ub}))" for k, (iv, ub) in enumerate(zip(iter_vars, global_ubs))]
         cond = " && ".join(terms) if terms else "true"
         body = f"_o[{off}] = {cond};"
         code = nested_loops(widths, body)
@@ -113,6 +112,15 @@ class TileMaskGen(nodes.LibraryNode):
     implementations = {"pure": ExpandTileMaskGenPure, "cute": ExpandTileMaskGenCute}
     default_implementation = "pure"
 
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
+
     widths = properties.ListProperty(
         element_type=int,
         default=[],
@@ -147,10 +155,8 @@ class TileMaskGen(nodes.LibraryNode):
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileMaskGen: widths length {len(widths)} not in {{1, 2, 3}}")
         if len(iter_vars) != len(widths) or len(global_ubs) != len(widths):
-            raise ValueError(
-                f"TileMaskGen: widths / iter_vars / global_ubs lengths must agree; "
-                f"got {len(widths)}, {len(iter_vars)}, {len(global_ubs)}"
-            )
+            raise ValueError(f"TileMaskGen: widths / iter_vars / global_ubs lengths must agree; "
+                             f"got {len(widths)}, {len(iter_vars)}, {len(global_ubs)}")
         super().__init__(name, location=location, inputs=set(), outputs={"_o"})
         self.widths = list(widths)
         self.iter_vars = list(iter_vars)

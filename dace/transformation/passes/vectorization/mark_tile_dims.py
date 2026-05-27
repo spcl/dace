@@ -15,6 +15,7 @@ import dace
 from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -48,7 +49,7 @@ class MarkTileDims(ppl.Pass):
         "raising. Default is loud failure so the orchestrator surfaces the problem.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8,), skip_ineligible: bool = False):
+    def __init__(self, widths: Tuple[int, ...] = (8, ), skip_ineligible: bool = False):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -90,25 +91,20 @@ class MarkTileDims(ppl.Pass):
         params = list(map_entry.map.params)
         ranges = list(map_entry.map.range.ranges)
         if len(params) < K:
-            return self._fail_or_skip(
-                f"map {map_entry.label!r} has only {len(params)} params (< K={K})"
-            )
+            return self._fail_or_skip(f"map {map_entry.label!r} has only {len(params)} params (< K={K})")
         iter_vars = tuple(params[-K:])
         slice_ranges = ranges[-K:]
         global_ubs = []
         for (lb, ub, step), iv in zip(slice_ranges, iter_vars):
             if step != 1 and str(step) != "1":
                 return self._fail_or_skip(
-                    f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1"
-                )
+                    f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1")
             trip_expr = symbolic.simplify(ub - lb + 1)
             try:
                 trip_int = int(trip_expr)
                 if trip_int <= 1:
-                    return self._fail_or_skip(
-                        f"map {map_entry.label!r} dim {iv!r} has degenerate trip {trip_int} "
-                        f"(must be > 1); flatten the map first"
-                    )
+                    return self._fail_or_skip(f"map {map_entry.label!r} dim {iv!r} has degenerate trip {trip_int} "
+                                              f"(must be > 1); flatten the map first")
             except (TypeError, ValueError):
                 pass
             global_ubs.append(str(ub + 1))
@@ -146,6 +142,8 @@ class MarkTileDims(ppl.Pass):
             if not isinstance(g, dace.SDFGState):
                 continue
             if not is_innermost_map(g, n):
+                continue
+            if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: stays scalar
                 continue
             spec = self._classify_one(n)
             if spec is not None:

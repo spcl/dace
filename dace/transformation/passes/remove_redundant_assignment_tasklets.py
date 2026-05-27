@@ -28,6 +28,29 @@ class RemoveRedundantAssignmentTasklets(ppl.Pass):
     def _arr_appears_in_conditional(self, arr_name: str, conditional: ConditionalBlock):
         pass
 
+    def _is_removable(self, state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:
+        """Whether ``node`` is a TRULY redundant ``_out = _in`` copy that can be
+        folded into a single AccessNode -> AccessNode edge.
+
+        Only a copy between two AccessNodes with no reduction is removable.
+        A tasklet whose single input comes from a map/scope node (a map *body*,
+        e.g. the reduction body ``_s = _a``) or whose output carries a ``wcr``
+        is NOT a redundant copy: removing it would drop the map body / the
+        accumulation. (The earlier version asserted ``ie.src`` was an AccessNode
+        and dropped the ``wcr``, crashing on / silently corrupting those.)
+
+        :param state: The state owning ``node``.
+        :param node: A single-in single-out tasklet matching the copy pattern.
+        :returns: ``True`` iff it is safe to fold the copy away.
+        """
+        ie = state.in_edges(node)[0]
+        oe = state.out_edges(node)[0]
+        if not isinstance(ie.src, dace.nodes.AccessNode) or not isinstance(oe.dst, dace.nodes.AccessNode):
+            return False
+        if ie.data.wcr is not None or oe.data.wcr is not None:
+            return False
+        return True
+
     def _apply(self, sdfg: dace.SDFG):
         for state in sdfg.all_states():
             nodes_to_rm = set()
@@ -39,17 +62,15 @@ class RemoveRedundantAssignmentTasklets(ppl.Pass):
                         if (node.code.as_string == f"{out_conn_name} = {in_conn_name}"
                                 or node.code.as_string == f"{out_conn_name} = {in_conn_name};"
                                 or node.code.as_string == f"vector_copy({out_conn_name}, {in_conn_name});"):
-                            # Can rm this node
-                            nodes_to_rm.add(node)
+                            if self._is_removable(state, node):
+                                nodes_to_rm.add(node)
 
-            print(nodes_to_rm)
             for node in nodes_to_rm:
                 ie = state.in_edges(node)[0]
                 oe = state.out_edges(node)[0]
 
                 state.remove_node(node)
 
-                assert isinstance(ie.src, dace.nodes.AccessNode)
                 state.add_edge(
                     ie.src, None, oe.dst, oe.dst_conn,
                     dace.memlet.Memlet(

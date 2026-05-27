@@ -18,6 +18,8 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
+from .. import _isa_codegen
+from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 
 @library.expansion
@@ -44,9 +46,7 @@ class ExpandTileScatterPure(ExpandTransformation):
         dst_ndim = node.dest_ndim
         dst_strides = [symstr(s) for s in dst_arr.strides[-dst_ndim:]]
         off = tile_offset(widths)
-        flat_offset = " + ".join(
-            f"((std::ptrdiff_t)_idx_{k}[{off}] * ({dst_strides[k]}))" for k in range(dst_ndim)
-        )
+        flat_offset = " + ".join(f"((std::ptrdiff_t)_idx_{k}[{off}] * ({dst_strides[k]}))" for k in range(dst_ndim))
         if node.has_mask:
             body = f"if (_mask[{off}]) {{ _dst[{flat_offset}] = _src[{off}]; }}"
         else:
@@ -57,7 +57,8 @@ class ExpandTileScatterPure(ExpandTransformation):
             inputs.add("_mask")
         return nodes.Tasklet(
             label=f"{node.label}_pure",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,
@@ -96,11 +97,72 @@ class ExpandTileScatterCute(ExpandTransformation):
             inputs.add("__mask")
         return nodes.Tasklet(
             label=f"{node.label}_cute",
-            inputs={c: None for c in inputs},
+            inputs={c: None
+                    for c in inputs},
             outputs={"__output": None},
             code=body,
             language=dace.dtypes.Language.Python,
         )
+
+
+@library.expansion
+class ExpandTileScatterScalar(ExpandTransformation):
+    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsScalar]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_scatter_tasklet(node, parent_state, parent_sdfg, "scalar")
+
+
+@library.expansion
+class ExpandTileScatterAVX512(ExpandTransformation):
+    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX512]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_scatter_tasklet(node, parent_state, parent_sdfg, "avx512")
+
+
+@library.expansion
+class ExpandTileScatterAVX2(ExpandTransformation):
+    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsAVX2]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_scatter_tasklet(node, parent_state, parent_sdfg, "avx2")
+
+
+@library.expansion
+class ExpandTileScatterNeon(ExpandTransformation):
+    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsNeon]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_scatter_tasklet(node, parent_state, parent_sdfg, "neon")
+
+
+@library.expansion
+class ExpandTileScatterSVE(ExpandTransformation):
+    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
+    the other ISA backends, differing only in the included header."""
+
+    environments = [TileOpsSVE]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _isa_codegen.make_scatter_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
 @library.node
@@ -120,8 +182,25 @@ class TileScatter(nodes.LibraryNode):
     ``sum_k _idx_<k>[lane] * dst_strides[k]``.
     """
 
-    implementations = {"pure": ExpandTileScatterPure, "cute": ExpandTileScatterCute}
+    implementations = {
+        "pure": ExpandTileScatterPure,
+        "cute": ExpandTileScatterCute,
+        "scalar": ExpandTileScatterScalar,
+        "avx512": ExpandTileScatterAVX512,
+        "avx2": ExpandTileScatterAVX2,
+        "neon": ExpandTileScatterNeon,
+        "sve": ExpandTileScatterSVE
+    }
     default_implementation = "pure"
+
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
 
     widths = properties.ListProperty(
         element_type=int,
