@@ -2715,6 +2715,32 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
 
+def specialize_symbol(sdfg: 'dace.SDFG', symbol_name: str, value: Union[float, int, str]):
+    """Bake a free symbol to a constant value, recursively through nested SDFGs.
+
+    Substitutes ``symbol_name`` with ``value`` everywhere (subsets, memlets,
+    tasklets, interstate edges) and drops the now-unused symbol. ``replace_dict``
+    on a single SDFG does not descend into nested SDFG bodies, so this walks every
+    SDFG via :meth:`all_sdfgs_recursive` and also strips the symbol from each
+    nested SDFG node's ``symbol_mapping``. For a *scalar data container* holding
+    the value, use :func:`specialize_scalar`.
+
+    :param sdfg: The SDFG to specialize.
+    :param symbol_name: The symbol to replace.
+    :param value: The constant value to substitute in.
+    """
+    val = str(value)
+    for sd in list(sdfg.all_sdfgs_recursive()):
+        if symbol_name in sd.symbols or any(str(s) == symbol_name for s in sd.free_symbols):
+            sd.replace_dict({symbol_name: val})
+        if symbol_name in sd.symbols:
+            sd.remove_symbol(symbol_name)
+    # Strip the symbol from any nested SDFG node's symbol_mapping that still maps it.
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, NestedSDFG):
+            node.symbol_mapping.pop(symbol_name, None)
+
+
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                             symbol_str: str,
                             default_type: 'dace.dtypes.typeclass' = None,
