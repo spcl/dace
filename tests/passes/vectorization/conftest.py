@@ -15,6 +15,8 @@ to ``run_vectorization_test``. Tests with no branches do not need it.
 Both modes must produce numerically identical results against the
 unvectorized scalar reference, otherwise the two lowerings have drifted.
 """
+import os
+
 import pytest
 
 
@@ -72,6 +74,45 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize("vectorize_config", ["tile_nodes"], indirect=True)
 
 
+#: Test files that exercise ONLY the legacy 1D ``VectorizeCPU`` / ``VectorizeSVE``
+#: / ``VectorizeBreak`` path (they directly instantiate those orchestrators and
+#: never route through the tile harness ``run_vectorization_test`` /
+#: ``VectorizeCPUMultiDim``). The branch is migrating to the K-dim tile-op path,
+#: so these are disabled for now (user directive). Re-enable by removing an entry
+#: as its kernels gain tile-path coverage. Paths are relative to this directory.
+_LEGACY_ONLY_FILES = frozenset({
+    "kernels/test_disjoint_chain.py",
+    "kernels/test_gather_scatter_knob.py",
+    "kernels/test_int_floor.py",
+    "kernels/test_inter_lane_stride.py",
+    "kernels/test_multi_element_strided.py",
+    "kernels/test_remainder_required.py",
+    "passes/test_detect_multi_dim_strided.py",
+    "passes/test_force_op_variant.py",
+    "sve/test_sve_style.py",
+    "sve/test_sve_style_parity.py",
+    "sve/test_sve_variable_probe.py",
+    "tsvc_1d/test_bulk.py",
+    "tsvc_1d/test_misc.py",
+    "tsvc_1d/test_vector_ops.py",
+    "tsvc_2d/test_misc_2d.py",
+})
+
+
+def _is_legacy_only(item) -> bool:
+    """Whether ``item`` belongs to a legacy-only (non-tile-path) test file.
+
+    :param item: A collected pytest item.
+    :returns: ``True`` if the item's file is in :data:`_LEGACY_ONLY_FILES`.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        rel = os.path.relpath(os.fspath(item.path), here)
+    except (AttributeError, ValueError):
+        return False
+    return rel.replace(os.sep, "/") in _LEGACY_ONLY_FILES
+
+
 def _knob_combo_supported(params: dict) -> bool:
     """Whether a (branch_mode, remainder_strategy, emission_style) combo is a
     valid tile-pipeline configuration — independent of the kernel.
@@ -117,7 +158,10 @@ def pytest_collection_modifyitems(config, items):
     kept, deselected = [], []
     for item in items:
         params = getattr(getattr(item, "callspec", None), "params", {})
-        (kept if _knob_combo_supported(params) else deselected).append(item)
+        if _is_legacy_only(item) or not _knob_combo_supported(params):
+            deselected.append(item)
+        else:
+            kept.append(item)
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = kept

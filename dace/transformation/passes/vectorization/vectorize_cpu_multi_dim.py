@@ -58,6 +58,11 @@ from dace.transformation.passes.vectorization.utils.name_schemes import (
 # dace.libraries.tileops._dispatch.detect_host_isa); the others pin one backend.
 _VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR")
 
+#: Convergence cap for the per-NSDFG ``RefineNestedAccess`` re-check loop (one
+#: application already refines every candidate; the cap guards against a
+#: pathological non-converging fixpoint).
+_MAX_REFINE_ITERS = 8
+
 
 def _is_power_of_two(n: int) -> bool:
     """Return True iff ``n`` is a strictly-positive power of 2.
@@ -188,13 +193,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         #     / fp_factor merge arithmetic) so the tile emitter can classify each.
         #   * RemoveMathCall — drop the ``math.`` prefix the power expansion emits
         #     so ``math.exp``/``math.log`` match TileUnop's ``exp``/``log``.
-        # (``MapCollapse`` runs in ``apply_pass``. ``LoopToMap``, ``InlineSDFGs``
-        # and ``InsertAssignTaskletsAtMapBoundary`` are intentionally NOT run:
-        # InlineSDFGs would flatten the body NSDFGs that ``PromoteNSDFGBodyToTiles``
-        # descends into; InsertAssignTaskletsAtMapBoundary and LoopToMap perturb
-        # the gather / strided staging edges the tile descent classifies — e.g.
-        # LoopToMap rewrites the ``a[i]=b[idx[i]]+e[i]`` gather so the tile body
-        # loses its per-tile offset, duplicating tile 0 into every tile.)
+        # (``WCRToAugAssign``, ``LoopToMap``, ``RefineNestedAccess`` and
+        # ``MapCollapse`` run in ``apply_pass``. ``InlineSDFGs`` and
+        # ``InsertAssignTaskletsAtMapBoundary`` are intentionally NOT run:
+        # InlineSDFGs would flatten the body NSDFGs ``PromoteNSDFGBodyToTiles``
+        # descends into; InsertAssignTaskletsAtMapBoundary perturbs the gather /
+        # strided staging edges.)
         passes += [
             RemoveRedundantAssignmentTasklets(),
             RemoveFPTypeCasts(),
@@ -260,19 +264,57 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
         from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
+        from dace.transformation.interstate import LoopToMap, RefineNestedAccess
         # The vectorization / tile path does NOT handle WCR: convert every
         # write-conflict-resolution memlet (a reduction ``s += a[i]``) into an
         # explicit augmented-assignment RMW tasklet (``s = s + a[i]``) so no WCR
         # is left for the tile passes (matches the SVE path's pass-0 convention).
-        # Then collapse perfectly-nested single-param maps into one multi-param
-        # map so a K-dim tile genuinely spans K dims. (``LoopToMap`` is NOT run:
-        # it rewrites the gather staging so tiles lose their per-tile offset.)
-        sdfg.apply_transformations_repeated([WCRToAugAssign, MapCollapse], permissive=False, validate=False)
+        sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+        # ``LoopToMap`` parallelises every data-parallel ``for`` loop into a map
+        # so the tile path can tile it. On its own it propagates WHOLE-array body
+        # edges (``e[0:N]`` instead of the per-iteration slice ``e[i]`` a
+        # hand-written ``dace.map`` produces), which the tile boundary-widening
+        # mis-tiles (duplicate tiles). ``RefineNestedAccess`` is the canonicaliser
+        # that recovers the per-iteration form: it tightens the outer memlet to
+        # what the body NSDFG actually accesses (``e[i]``; a gather ``b[idx[i]]``
+        # stays the whole-array ``b(1)[0:N]``, matching the hand-map granularity).
+        self._refine_loop_to_map_bodies(sdfg, LoopToMap, RefineNestedAccess)
+        # ``MapCollapse`` then collapses perfectly-nested single-param maps into
+        # one multi-param map so a K-dim tile genuinely spans K dims.
+        sdfg.apply_transformations_repeated(MapCollapse, permissive=False, validate=False)
         result = super().apply_pass(sdfg, pipeline_results)
         self._select_tile_implementations(sdfg)
         sdfg.expand_library_nodes()
         assert_no_laneid_in_tile_path(sdfg)
         return result
+
+    def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:
+        """Parallelise data-parallel loops, then canonicalise ONLY the body
+        NSDFGs ``LoopToMap`` just created to per-iteration memlets.
+
+        Refinement is scoped to the new NSDFGs (those absent before
+        ``LoopToMap`` ran) so a pre-existing hand-built map body is left as-is:
+        e.g. the cloudsc multi-write RMW chain accesses ``zqlhs[i, 0, 0]``
+        inside (vbor-style), which the tile descent handles directly — globally
+        refining it to the outer-offset boundary form (inner ``[0, 0, 0]``)
+        instead mis-tiles the chain.
+
+        :param sdfg: SDFG to transform in place.
+        :param loop_to_map: The ``LoopToMap`` transformation class.
+        :param refine_nested_access: The ``RefineNestedAccess`` transformation class.
+        """
+        pre = {id(n) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
+        sdfg.apply_transformations_repeated(loop_to_map, permissive=False, validate=False)
+        for node, graph in list(sdfg.all_nodes_recursive()):
+            if not isinstance(node, dace.nodes.NestedSDFG) or id(node) in pre:
+                continue
+            parent = graph.sdfg
+            # One application refines every candidate connector; the bounded
+            # re-check converges (each pass tightens strictly fewer dims).
+            for _ in range(_MAX_REFINE_ITERS):
+                if not refine_nested_access.can_be_applied_to(parent, nsdfg=node):
+                    break
+                refine_nested_access.apply_to(parent, nsdfg=node, save=False)
 
     def _select_tile_implementations(self, sdfg: dace.SDFG) -> None:
         """Stamp ``target_isa`` on every emitted tile lib node and resolve its

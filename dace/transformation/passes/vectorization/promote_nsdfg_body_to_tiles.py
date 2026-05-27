@@ -265,6 +265,41 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 return str(s)
         return None
 
+    def _inner_access_is_boundary_point(self, inner: dace.SDFG, conn: str, tile_var_set: Set[str]) -> bool:
+        """Whether every inner access to ``conn`` is a tile-var-free single point.
+
+        A boundary connector carries its per-tile offset in the NSDFG's *outer*
+        edge and is read/written inside at a fixed point (``[0]``). This covers
+        both the frontend's length-1 ``(1,)`` connector and the
+        ``RefineNestedAccess``-canonicalised form (outer ``e[i]``, inner array
+        still ``(N,)`` but accessed at ``[0]``). It deliberately excludes:
+
+        * a ``vbor``-style full-array connector accessed inside at ``a[i]`` (the
+          tile var lives in the inner subset) — left for :meth:`_box_classification`;
+        * an already-widened ``(W,)`` index/gather tile (read as the range
+          ``[0:W]``, not a point).
+
+        :param inner: The body SDFG.
+        :param conn: Connector array name.
+        :param tile_var_set: Tile iter-var names.
+        :returns: ``True`` iff ``conn`` is a boundary connector to widen.
+        """
+        seen = False
+        for istate in inner.states():
+            for ed in istate.edges():
+                if ed.data is None or ed.data.data != conn or ed.data.subset is None:
+                    continue
+                seen = True
+                for (b, e, _s) in ed.data.subset:
+                    if self._tilevar_in(b, tile_var_set) is not None or self._tilevar_in(e, tile_var_set) is not None:
+                        return False
+                    try:
+                        if dace.symbolic.simplify(e - b) != 0:
+                            return False
+                    except Exception:
+                        return False
+        return seen
+
     def _widen_boundary_connectors(self, parent_state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                    spec: TileDimSpec) -> None:
         """Widen length-1 boundary connectors carrying a tile-var offset to ``(W,)`` tiles.
@@ -307,9 +342,15 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if conn is None or conn not in inner.arrays or conn == _INNER_MASK:
                 continue
             arr = inner.arrays[conn]
-            if arr.transient or tuple(arr.shape) != (1, ) or oe.data is None or oe.data.subset is None:
+            if arr.transient or oe.data is None or oe.data.subset is None:
                 continue
             if not any(self._tilevar_in(b, tile_var_set) is not None for (b, _e, _s) in oe.data.subset):
+                continue
+            # Widen genuine boundary connectors only: the per-tile offset lives
+            # in this outer edge and the inner access is a fixed point. An
+            # already-widened ``(W,)`` tile (range inner access) or a vbor-style
+            # full-array connector accessed inside at ``a[i]`` is left alone.
+            if not self._inner_access_is_boundary_point(inner, conn, tile_var_set):
                 continue
             dtype = arr.dtype
             # The source array (in the parent SDFG) supplies the per-dim strides;
