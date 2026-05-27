@@ -111,15 +111,20 @@ def _match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlo
         if lvar in cfree or (cfree & loop_w):
             continue  # condition loop-invariant
         # Prep states + the chain's edge assignments must be loop-invariant:
-        # not depend on the loop var, not clobber loop-written data.
+        # not depend on the loop var, not clobber loop-written data. They must
+        # also not *produce* anything the loop's own bounds consume: _move sinks
+        # the prep into the loop body, so a prep that computes a bound (e.g. a
+        # materialized ``LEN_1D_minus_k = LEN_1D - k`` feeding ``i < LEN_1D_minus_k``)
+        # would leave that bound uninitialized at the first condition check.
+        bound_syms = _loop_bound_symbols(loop)
         bad = False
         for p in prep:
             acc = {n.data for n in p.nodes() if isinstance(n, nodes.AccessNode)}
-            if lvar in acc or (_state_writes(p) & loop_w):
+            if lvar in acc or (_state_writes(p) & loop_w) or (_state_writes(p) & bound_syms):
                 bad = True
         for e in region.edges():
             for lhs, rhs in e.data.assignments.items():
-                if lhs in loop_w or lvar in _free(rhs) or (_free(rhs) & loop_w):
+                if lhs in loop_w or lhs in bound_syms or lvar in _free(rhs) or (_free(rhs) & loop_w):
                     bad = True
         if bad:
             continue
@@ -130,6 +135,22 @@ def _match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlo
 def _state_writes(st: SDFGState) -> set:
     """Data containers written in ``st``."""
     return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0}
+
+
+def _loop_bound_symbols(loop: LoopRegion) -> set:
+    """Names referenced by ``loop``'s bound expressions (init/condition/update),
+    excluding the loop variable itself.
+
+    The loop's trip count is decided from these before the body runs, so any
+    name here must already hold its value at loop entry. Used to refuse sinking
+    a prep that *produces* a bound name into the body (which would leave the
+    first condition check reading an uninitialized value)."""
+    names = set()
+    for stmt in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        if stmt is not None:
+            names |= {str(s) for s in stmt.get_free_symbols()}
+    names.discard(str(loop.loop_variable))
+    return names
 
 
 def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:

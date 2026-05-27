@@ -284,6 +284,31 @@ class SplitTasklets(ppl.Pass):
                         ktype = dace.float64
                     sdfg.add_symbol(k, ktype)
 
+    def _symbol_lifted_data(self, sdfg: SDFG) -> Set[str]:
+        """
+        Collect the data names read by an interstate-edge assignment right-hand side.
+
+        A scalar promoted to a symbol on an interstate edge (e.g. ``__sym_off = off``,
+        an index symbol the frontend lifts out of ``a[off]``) is reconstructed
+        symbolically downstream from the *single* tasklet that computes it. Splitting
+        that producer across intermediate register transients leaves the downstream
+        propagation referencing a transient that is local to another state, so such
+        producers must be left intact.
+
+        :param sdfg: The SDFG to scan (recursively into nested SDFGs).
+        :returns: The set of data names read by any interstate-edge assignment.
+        """
+        names: Set[str] = set()
+        for e in sdfg.all_interstate_edges():
+            for v in e.data.assignments.values():
+                try:
+                    symexpr = dace.symbolic.pystr_to_symbolic(v)
+                except Exception:
+                    continue
+                names.update(str(s) for s in symexpr.free_symbols)
+                names.update(str(s) for s in dace.symbolic.arrays(symexpr))
+        return names
+
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         """
         Split every multi-operation Python tasklet in the SDFG into single-op tasklets.
@@ -295,12 +320,21 @@ class SplitTasklets(ppl.Pass):
         self._add_missing_symbols(sdfg)
         split_access_counter = 0
 
+        symbol_lifted_data = self._symbol_lifted_data(sdfg)
+
         tasklets_to_split = list()  # tasklet, parent_graph, ssa_statements
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, dace.nodes.Tasklet):
                 c: CodeBlock = n.code
                 # Can't split a tasklet that has >1 outputs
                 if len(n.out_connectors) > 1:
+                    continue
+
+                # Leave intact a producer whose scalar output is symbol-lifted on an
+                # interstate edge (the value is reconstructed symbolically downstream
+                # from this one tasklet; splitting it would expose an intermediate
+                # transient that is local to another state).
+                if any(oe.data is not None and oe.data.data in symbol_lifted_data for oe in g.out_edges(n)):
                     continue
 
                 input_types = set()
@@ -374,10 +408,15 @@ class SplitTasklets(ppl.Pass):
 
             tasklet_in_degree = state.in_degree(tasklet)
             tasklet_in_edges = state.in_edges(tasklet)
+            # A body name is a symbol (to be inlined) rather than a data input
+            # connector iff it is in scope as a symbol. ``symbols_defined_at`` and
+            # ``sdfg.symbols`` miss loop-region iterators (e.g. ``_loop_it_0``),
+            # so we also add the original tasklet's own ``free_symbols``: those are
+            # exactly the names it reads that are not connectors, i.e. its symbols.
             available_symbols = {str(s)
                                  for s in state.symbols_defined_at(tasklet)
                                  }.union({str(s)
-                                          for s in sdfg.symbols.keys()})
+                                          for s in sdfg.symbols.keys()}).union(tasklet.free_symbols)
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line

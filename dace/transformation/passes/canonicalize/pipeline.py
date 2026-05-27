@@ -50,26 +50,32 @@ from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvar
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+from dace.transformation.interstate.state_fusion import StateFusion
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
 def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
-    """Between-pass structural cleanup (never ``SimplifyPass`` mid-pipeline):
-    ``StateFusionExtended``, then both inliners to a fixpoint.
+    """Between-phase structural cleanup (never ``SimplifyPass`` mid-pipeline):
+    fuse adjacent states, flatten nested SDFGs, then drop empty states, so each
+    phase starts from a tidy state machine.
 
-    ``InlineSDFG`` only flattens a single-``SDFGState`` NestedSDFG;
-    ``InlineMultistateSDFG`` flattens the control-flow-bearing NestedSDFGs
-    that map->loop lowering produces (a NestedSDFG wrapping a ``LoopRegion``
-    / ``ConditionalBlock``). Without the latter those NestedSDFGs are
-    permanent, burying loops so ``MoveIfIntoLoop`` and cross-nest fusion
-    cannot see them. Both run so single- and multi-state nestings collapse.
+    Order: ``StateFusion`` then ``StateFusionExtended`` (the latter also fuses
+    across happens-before dependencies) collapse adjacent states; both inliners
+    flatten nestings -- ``InlineSDFG`` a single-``SDFGState`` NestedSDFG,
+    ``InlineMultistateSDFG`` the control-flow-bearing NestedSDFGs that map->loop
+    lowering produces (a NestedSDFG wrapping a ``LoopRegion``/``ConditionalBlock``);
+    without the latter those nestings are permanent, burying loops so
+    ``MoveIfIntoLoop`` and cross-nest fusion cannot see them. ``EmptyStateElimination``
+    then removes the empty states fusion/inlining leave behind. None of these
+    changes the computation; they only normalize structure.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
-    return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
+    return [(label, PatternMatchAndApplyRepeated([StateFusion()])),
+            (label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
-            (label, PatternMatchAndApplyRepeated([InlineSDFG()]))]
+            (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, EmptyStateElimination())]
 
 
 @properties.make_properties
