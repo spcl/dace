@@ -289,15 +289,24 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         return result
 
     def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:
-        """Parallelise data-parallel loops, then canonicalise ONLY the body
-        NSDFGs ``LoopToMap`` just created to per-iteration memlets.
+        """Parallelise data-parallel loops, then canonicalise body-NSDFG memlets
+        to the per-iteration form the tile descent tiles correctly.
 
-        Refinement is scoped to the new NSDFGs (those absent before
-        ``LoopToMap`` ran) so a pre-existing hand-built map body is left as-is:
-        e.g. the cloudsc multi-write RMW chain accesses ``zqlhs[i, 0, 0]``
-        inside (vbor-style), which the tile descent handles directly — globally
-        refining it to the outer-offset boundary form (inner ``[0, 0, 0]``)
-        instead mis-tiles the chain.
+        ``RefineNestedAccess`` tightens a whole-array outer edge (``e[0:N]``,
+        what ``LoopToMap`` emits) to what the body actually reads (``e[i]``) and
+        offsets the inner access to ``[0]``. This is exactly the per-iteration
+        boundary form the tile-load widening wants, and it also makes a
+        pre-existing multi-dim-destination write (``zqx[i, j, 4]`` into a 3-D
+        array) tile-valid.
+
+        It is applied to every body NSDFG EXCEPT a pre-existing one with an
+        inout connector (an array in both ``in_connectors`` and
+        ``out_connectors``). Such a body is a read-modify-write chain — e.g. the
+        cloudsc snippet accumulating into ``zqlhs[i, 0, 0]`` across 6 tasklets —
+        which the tile descent handles in its vbor-style form (inner access
+        carries the tile var); refining it to the outer-offset boundary form
+        instead mis-tiles the chain. A ``LoopToMap``-created body is always
+        refined (its whole-array edges must be tightened to tile at all).
 
         :param sdfg: SDFG to transform in place.
         :param loop_to_map: The ``LoopToMap`` transformation class.
@@ -306,7 +315,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         pre = {id(n) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
         sdfg.apply_transformations_repeated(loop_to_map, permissive=False, validate=False)
         for node, graph in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, dace.nodes.NestedSDFG) or id(node) in pre:
+            if not isinstance(node, dace.nodes.NestedSDFG):
+                continue
+            preexisting_rmw_chain = id(node) in pre and bool(set(node.in_connectors) & set(node.out_connectors))
+            if preexisting_rmw_chain:
                 continue
             parent = graph.sdfg
             # One application refines every candidate connector; the bounded
