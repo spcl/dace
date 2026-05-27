@@ -1043,7 +1043,6 @@ def test_map_invariant_scalar_read_hoist_uses_inner_memlet():
     of a map must use the inner edge's single-element memlet, not the MapEntry's
     whole-array memlet -- the latter fed the scalar-copy tasklet a pointer and
     produced a malformed ``_out = _in`` that failed to compile."""
-    import copy
     from dace.transformation.interstate import LoopToMap
     n = 64
     rng = np.random.default_rng(0)

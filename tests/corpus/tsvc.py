@@ -30,7 +30,7 @@ import ast
 from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 # Some kernels (e.g. s451) call ``sin``/``cos`` unqualified; the original
 # VectraArtifacts source imports them here, so do the same.
-from math import sin, cos, log, exp, pow  # noqa: F401
+from math import sin, cos  # noqa: F401  -- resolved unqualified inside kernel bodies
 
 import numpy as np
 

@@ -16,7 +16,6 @@ compute the reference result. A Map that silently pins a carried value and diver
 is caught here. Comparison treats matching ``nan``/``inf``/``-inf`` as equal.
 """
 import contextlib
-import copy
 import io
 
 import numpy as np

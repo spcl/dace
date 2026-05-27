@@ -15,7 +15,6 @@ diverges from the numpy reference. Comparison always treats matching
 ``nan``/``inf``/``-inf`` as equal (``equal_nan=True``).
 """
 import contextlib
-import copy
 import io
 
 import numpy as np
