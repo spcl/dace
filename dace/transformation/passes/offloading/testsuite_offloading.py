@@ -12,6 +12,9 @@ Usage:
 import pytest
 import numpy as np
 import dace
+import runpy
+import sys
+from pathlib import Path
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace import dtypes
@@ -65,30 +68,6 @@ def scalar_to_gpu_sdfg():
     t2 = s2.add_tasklet("t2", {"a"}, {"y"}, "y = a * 2")
     s2.add_memlet_path(a_s2, me, t2, memlet=dace.Memlet("A[i]"), dst_conn="a")
     s2.add_memlet_path(t2, mx, out_s2, memlet=dace.Memlet("out[i]"), src_conn="y")
-    sdfg.validate()
-    return sdfg
-
-
-def conditional_branch_map_sdfg():
-    """
-    Frontend-built SDFG with:
-      - one symbolic conditional
-      - a true branch that maps over the input array and writes back to it
-      - a false branch that updates only the first element
-      - a final map that copies input to output
-    """
-    @dace.program
-    def conditional_branch_program(inp: dace.float64[5], out: dace.float64[5], flag: dace.int32):
-        if flag > 0:
-            for i in dace.map[0:5]:
-                inp[i] = inp[i] + 1.0
-        else:
-            inp[0] = inp[0] - 1.0
-
-        for i in dace.map[0:5]:
-            out[i] = inp[i]
-
-    sdfg = conditional_branch_program.to_sdfg()
     sdfg.validate()
     return sdfg
 
@@ -189,6 +168,53 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
 
     sdfg.validate()
     return sdfg
+
+
+def conditional_branch_map_sdfg():
+    """
+    Frontend-built SDFG with:
+      - one symbolic conditional
+      - a true branch that maps over the input array and writes back to it
+      - a false branch that updates only the first element
+      - a final map that copies input to output
+    """
+    @dace.program
+    def conditional_branch_program(inp: dace.float64[5], out: dace.float64[5], flag: dace.int32):
+        if flag > 0:
+            for i in dace.map[0:5]:
+                inp[i] = inp[i] + 1.0
+        else:
+            inp[0] = inp[0] - 1.0
+
+        for i in dace.map[0:5]:
+            out[i] = inp[i]
+
+    sdfg = conditional_branch_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+def simple_nested_sdfg(N: int = 5):
+    """
+    Simple nested SDFG created from a DaCe program.
+    Computes: a[i] = a[i] + b[idx[i]] for all i in [0:N]
+    """
+    @dace.program
+    def program(a: dace.float64[5], b: dace.float64[5], idx: dace.int32[5]):
+        for i in dace.map[0:5]:
+            a[i] = a[i] + b[idx[i]]
+    
+    sdfg = program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+    # TODO: need only early to-gpu copies for array that live on gpu forever
+    # move away from as-late-as-possible to as-early-as possible
+    # -> keep in mind last time each array was used and whether is was on gpu or cpu
+    # -> if now needed elsewhere, insert copy right after last-used state
+    # doesn't yet fix as highlevel as possible
+    # -> also note any higher state alongside last-used?
+    # shifts paradigm from per-state to per-array...
+    # -> write down thoughts to later put into thesis
 
 
 def complex_sdfg():
@@ -402,11 +428,17 @@ after_loop => _SDFG_tail:         cpu = ['A', 'in', 'out'], gpu = []\n"
 @pytest.mark.copy_analysis
 def test_branch_with_cpu_else_gpu():
     sdfg = conditional_branch_map_sdfg()
+    sdfg.view()
     IR = OtA().get_IR(sdfg)
     print(IR)
 
 def test_nested_state():
-    pass
+    """Test the simple nested SDFG creation and view it."""
+    sdfg = simple_nested_sdfg()
+    sdfg.validate()
+    print(f"Created SDFG: {sdfg.name}")
+    print(f"Number of states: {len(list(sdfg.nodes()))}")
+    sdfg.view()
 
 # ============================================================================
 # OFFLOADING TESTS
@@ -414,10 +446,10 @@ def test_nested_state():
 
 # helper
 def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_array2, result_name="out"): 
-    # note: all parameters can be modified by this function
+    # NOTE: all function parameters can be modified by this method
     # deepcopy before passing if previous state needs to be retained
     sdfg.validate()
-
+    
     # compile and run sdfg without offloading (all on CPU)
     input1 = deepcopy(param_dict)
     input1[result_name] = result_array1
@@ -463,25 +495,27 @@ def test_cpu_scalars_no_copies():
         return sdfg
     
     sdfg = create_sdfg()
+    #sdfg.view()
     input = 3490.2378
     orig_output = np.array([0.0])
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-#@pytest.mark.gpu_offload
+@pytest.mark.gpu_offload
 def test_copy_scalar_to_gpu_and_back():
     sdfg = scalar_to_gpu_sdfg()
+    #sdfg.view()
     """
     must copy out & A to GPU before the 2nd state
     must copy out and & A back to CPU after the last state
     NOTE: possible optimization: first copy of A and out not necessary: write only
-    NOTE: possible optimization: last copy of A not necessary, not needed anymore after
     """
     
     input = -5678.0
     orig_output = np.array([0.0])
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
+    #sdfg.view()
 
 @pytest.mark.gpu_offload
 def test_loopregion_offload():
@@ -489,14 +523,93 @@ def test_loopregion_offload():
     # structural issue to be solved later
     # I want to see whether it shows up elsewhere too -> refactor or not -> patch
     sdfg = scalar_to_gpu_within_loopregion_sdfg()
-    #sdfg.view()
     
     input = 4321.1234
     orig_output = np.array([0.0])
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-    #sdfg.view()
+    sdfg.view()
+    
+#@pytest.mark.gpu_offload
+def test_branch_edgecase_offload():
+    sdfg = conditional_branch_map_sdfg()
+    sdfg.view()
+
+    # define params & consts
+    N = 5 # const!
+    seed = 7
+    rng = np.random.default_rng(seed)
+
+    # test flag == 0
+    input_arr = rng.random(N).astype(np.float64)
+    orig_output = np.zeros(N, dtype=np.float64)
+    new_output = np.zeros(N, dtype=np.float64)
+    run_numerical_offloading_test(sdfg,
+                                  {
+                                      "inp": input_arr,
+                                      "flag": 0,
+                                  },
+                                  orig_output,
+                                  new_output,
+                                  result_name="out")
+    
+    # test flag == 1
+    input_arr = rng.random(N).astype(np.float64)
+    orig_output = np.zeros(N, dtype=np.float64)
+    new_output = np.zeros(N, dtype=np.float64)
+    run_numerical_offloading_test(sdfg,
+                                  {
+                                    "inp": input_arr,
+                                     "flag": 1,
+                                  },
+                                  orig_output,
+                                  new_output,
+                                  result_name="out")
+
+
+#@pytest.mark.gpu_offload
+def test_heat3d():
+    # import: apparently there's an issue where python can't directly import files names with a - such as "heat-3d-py, so this is the patch"
+    heat3d_file = Path(__file__).resolve().parents[4] / "tests" / "polybench" / "heat-3d.py"
+    polybench_dir = str(heat3d_file.parent)
+    if polybench_dir not in sys.path:
+        sys.path.insert(0, polybench_dir)
+    had_polybench_module = "polybench" in sys.modules
+    if not had_polybench_module:
+        import types
+        sys.modules["polybench"] = types.ModuleType("polybench")
+    try:
+        heat3d = runpy.run_path(str(heat3d_file), run_name="polybench_heat3d")["heat3d"]
+    finally:
+        if not had_polybench_module:
+            sys.modules.pop("polybench", None)
+
+    # create sdfg
+    sdfg = heat3d.to_sdfg()
+
+    # set params
+    n = 8
+    time_steps = 4
+    seed = 42
+
+    # run test
+    rng = np.random.default_rng(seed)
+    initial_a = rng.random((n, n, n)).astype(np.float64)
+    initial_b = np.zeros((n, n, n), dtype=np.float64)
+    orig_output = initial_a.copy()
+    new_output = initial_a.copy()
+    run_numerical_offloading_test(sdfg,
+                                  {
+                                      "B": initial_b,
+                                      "N": n,
+                                      "tsteps": time_steps
+                                  },
+                                  orig_output,
+                                  new_output,
+                                  result_name="A")
+
+    sdfg.view()
 
 # ============================================================================
 # Fixtures and Helpers
@@ -520,7 +633,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "copy_analysis: mark test as copy analysis suite")
     config.addinivalue_line("markers", "gpu_offload: mark test as GPU offload suite")
 
-
 if __name__ == "__main__":
+    simple_nested_sdfg()
     # Run with: python testsuite_offloading.py
-    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "copy_analysis"])
+    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "gpu_offload"])

@@ -12,12 +12,17 @@ from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
 class OffloadingIRNode:
 
-    def __init__(self, block, cpu_set=set(), gpu_set=set(), next=set()):
+    STATE, COND, LOOP, NESTED, END, INIT = 0,1,2,3,4,5
+
+    def __init__(self, block, cpu_set=set(), gpu_set=set(), next=set(), node_type = 0):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"
         self.block : ControlFlowBlock = block
         self.cpu_set : set[str] = cpu_set
         self.gpu_set : set[str] = gpu_set
         self.next : set[OffloadingIRNode] = next
+        self.type : int = node_type
+
+        self.body : OffloadingIRNode = None
 
         self.debug_name = f"{block}"
 
@@ -61,6 +66,11 @@ class OffloadingIRNode:
         result = set()
         _find_all_leaves(self, result, set())
         return result
+    
+    def get_single_leaf(node):
+        leaves : set = node.get_all_leaves()
+        assert len(leaves) == 1
+        return leaves.pop()
 
     def is_leaf(self):
         return not self.next
@@ -98,6 +108,10 @@ class OffloadToAccelerator(ppl.Pass):
     #    """
     #    return None
 
+    def __init__(self):
+        super().__init__()
+        self._copy_states = {}
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
         """
         Applies the pass to the given SDFG.
@@ -132,7 +146,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 4: insert copies based on IR
         print("--- Copies ---")
-        self.eval_IR(sdfg, sdfgIR)
+        self.eval_IR(sdfg, sdfgIR, {array : (None, dtypes.StorageType.Default) for array in sdfg.arrays})
         print()
 
     # helper for testing, usually internal details are not exposed
@@ -551,22 +565,25 @@ class OffloadToAccelerator(ppl.Pass):
         # TODO: check if anything is already GPU or not default and create error
         
         # create inital node where all arrays must be on CPU
-        IR = OffloadingIRNode.make_empty("_SDFG_head")
+        IR = OffloadingIRNode.make_empty("_INIT")
         IR.cpu_set = all_arrays # all arrays are initially assumed to be on CPU
+        IR.type = OffloadingIRNode.INIT
 
         # create IR
         self._parse_to_IR(sdfg, sdfg, IR)
 
         # all arrays which aren't used by this state retain their previous status
-        self._propagate_arrays(IR)
+        # self._propagate_arrays(IR)
 
         # clean up
         #self._remove_empty_nodes(IR)
 
         # add final node where all arrays must be on CPU again
-        final = OffloadingIRNode.make_empty("_SDFG_tail")
+        final = OffloadingIRNode.make_empty("_END")
         final.cpu_set = all_arrays
+        final.type = OffloadingIRNode.END
 
+        print("final IR: {", [IR], "}")
         for leaf in IR.get_all_leaves():
             leaf.append_node(final)
 
@@ -626,24 +643,26 @@ class OffloadToAccelerator(ppl.Pass):
                 loop : LoopRegion = block
 
                 # get array accesses of init_statement, update_statement, and loop_condition add them to head's cpu_set
-                head = OffloadingIRNode.make_empty("_loop_head")
-                #head.block = block
+                loop_node = OffloadingIRNode(loop, node_type=OffloadingIRNode.LOOP)
+                curr_node.next = [loop_node]
+                
+                loop_node.body = OffloadingIRNode.make_empty("_loop_head")
                 for memlet in loop.get_meta_read_memlets():
                     if memlet.data in sdfg.arrays:
-                        head.cpu_set.add(memlet.data)
-                curr_node.append_node(head)
+                        loop_node.body.cpu_set.add(memlet.data)
 
-                # parse loop region and connect to head
-                self._parse_to_IR(sdfg, loop, head) # linked list representing all internal nodes of loop
+                # parse loop body and connect to head
+                self._parse_to_IR(sdfg, loop, loop_node.body) # linked list representing all internal nodes of loop
                 
                 # connect all tails to empty connector node
                 # connect connector to head again (-> loop)
-                tails = head.get_all_leaves()
-                curr_node = OffloadingIRNode.make_empty("_loop_tail")
-                #curr_node.block = block
-                for tail in tails:
-                    tail.append_node(head)
-                    tail.append_node(curr_node)
+                loop_tail = OffloadingIRNode.make_empty("_loop_tail")
+                for leaf in loop_node.body.get_all_leaves():
+                    leaf.append_node(loop_tail)
+
+                self._propagate_arrays(loop_node.body)
+
+                curr_node = loop_node
 
             # nested region -> flatten   
             elif isinstance(block, ControlFlowRegion):
@@ -701,7 +720,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         return recursion(node, set())
 
-    def eval_IR(self, sdfg, IR:OffloadingIRNode):
+    """def eval_IR(self, sdfg, IR:OffloadingIRNode):
         # modifies SDFG in place & inserts all necessary copies
         def recursion(sdfg, IR:OffloadingIRNode, visited_set:set):
             if IR in visited_set:
@@ -728,17 +747,200 @@ class OffloadToAccelerator(ppl.Pass):
             for next in IR.next:
                 recursion(sdfg, next, visited_set)
 
-        return recursion(sdfg, IR, set())
+        return recursion(sdfg, IR, set())"""
+
+
+    def eval_IR(self, sdfg:SDFG, prev:OffloadingIRNode, data:Dict):
+        print("eval IR ", prev.block.label if prev.block else None, ": ", prev.type)
+        match prev.type:
+            case OffloadingIRNode.STATE | OffloadingIRNode.INIT:
+                self.eval_state(sdfg, prev, data)
+            case OffloadingIRNode.COND:
+                self.eval_cond(sdfg, prev, data)
+            case OffloadingIRNode.LOOP:
+                self.eval_loop(sdfg, prev, data)
+            case OffloadingIRNode.NESTED:
+                self.eval_nested(sdfg, prev, data)
+            case OffloadingIRNode.END:
+                self.eval_end(sdfg, prev, data)
+                return
+
+        for curr in prev.next:
+            self.eval_IR(sdfg, curr, data)
+
+    def eval_state(self, sdfg, prev, data):
+        print("eval state ", prev.debug_name)
+        if prev.cpu_set & prev.gpu_set:
+            assert False, f"invalid: need to insert intrastate copy for {prev}"
+        
+        for curr in prev.next:
+            # intrastate copies
+            #gpu_copies, cpu_copies = self._get_neccessary_copies(curr, data) TODO
+            for array in curr.gpu_set:
+                last_access, curr_loc = data[array]
+                if curr_loc != dtypes.StorageType.GPU_Global:
+                    print(f"gpu copy of {array} with data {data[array]}")
+                    if last_access is None: # make copy at very beginning
+                        self.insert_initial_copy(sdfg, array, True)
+                    else: # has been accessed in a previous state
+                        self._add_copies_after_state(sdfg, last_access, [array], True)
+
+            for array in curr.cpu_set:
+                last_access, curr_loc = data[array]
+                if curr_loc != dtypes.StorageType.Default:
+                    print(f"cpu copy of {array} with data {data[array]}")
+                    if last_access is None: # make copy at very beginning
+                        self.insert_initial_copy(sdfg, array, False)
+                    else: # has been accessed in a previous state
+                        self._add_copies_after_state(sdfg, last_access, [array], False)
+
+            # update data
+            for array in curr.cpu_set:
+                data[array] = (curr.block, dtypes.StorageType.Default)
+
+            for array in curr.gpu_set:
+                data[array] = (curr.block, dtypes.StorageType.GPU_Global)
+                curr.block.replace_dict({array: self._gpu_name(array)})
+
+            print("after ", curr.debug_name, " data is: ", data)
+
+    def eval_cond(self, sdfg:SDFG, cf_block:ConditionalBlock, if_IR:OffloadingIRNode, else_IR:OffloadingIRNode, data:Dict):
+        old_data = data.copy()
+        if_data = data.copy()
+        else_data = data.copy()
+
+        # recursively ensure all inside copies are made
+        self.eval_IR(if_IR, if_data)
+        self.eval_IR(else_IR, else_data)
+
+        # fuse branches into one consistent state, insert copies where needed
+        if_accesses = self._get_accesses_by_comp(old_data, if_data)
+        else_accesses = self._get_accesses_by_comp(old_data, else_data)
+        next_used = self.next_used(sdfg, cf_block, if_accesses | else_accesses) # TODO
+
+        for branch, accesses, a_data in [(if_IR, if_accesses, if_data), (else_IR, else_accesses, else_data)]:
+            end_IR : OffloadingIRNode = branch.get_single_leaf()
+
+            gpu_copies, cpu_copies = [], []
+            for array in accesses:
+                _, curr_loc = a_data[array]
+                if curr_loc != next_used[array]:
+                    (gpu_copies if curr_loc == dtypes.StorageType.Default else cpu_copies).append(array)
+
+                # merge data from both branches into one consistent data dictionary
+                # and close conditional block at the same time
+                data[array] = (cf_block, curr_loc)
+
+            self.create_interstate_copy(sdfg, end_IR.block, None, gpu_copies, True)
+            self.create_interstate_copy(sdfg, end_IR.block, None, cpu_copies, False)
+
+
+    def eval_loop(self, sdfg:SDFG, loop_node:OffloadingIRNode, data:Dict):
+        old_data = data.copy()
+
+        # recursively ensure all inside copies are made
+        self.eval_IR(sdfg, loop_node.body, data)
+
+        # compare beginning and ending of loop
+        loop_end : OffloadingIRNode = loop_node.body.get_single_leaf()
+        iterative_gpu_copies, iterative_cpu_copies = self._get_neccessary_copies_between_IRs(loop_node.body, loop_end)
+        onetime_gpu_copies, onetime_cpu_copies = self._get_neccessary_copies(loop_node.body, old_data)
+        
+        # add one_time before & outside of loop
+        self._add_copies_before_state(sdfg, loop_node.block, onetime_gpu_copies, True)
+        self._add_copies_before_state(sdfg, loop_node.block, onetime_cpu_copies, False)
+       
+        # add iterative after last loop state within loop region
+        self._add_copies_after_state(sdfg, loop_end, iterative_gpu_copies, True)
+        self._add_copies_after_state(sdfg, loop_end, iterative_cpu_copies, False)
+       
+        # close block
+        print(f"data before closing {loop_node.debug_name}: {data}")
+        self.close_block(loop_node.block, data, old_data)
+        print(f"data after closing  {loop_node.debug_name}: {data}\n")
+
+    def eval_nested(self, cf_block:ControlFlowBlock, inside_IR:OffloadingIRNode, data:Dict):
+        old_data = data.copy()
+        
+        # recursively ensure all inside copies are made
+        self.eval_IR(inside_IR)
+
+        # close block
+        self.close_block(cf_block, data, old_data)
+
+    def _get_neccessary_copies(self, IR, data):
+        gpu_copies = {array for array in IR.gpu_set if data[array][0] != dtypes.StorageType.GPU_Global}
+        cpu_copies = {array for array in IR.cpu_set if data[array][0] != dtypes.StorageType.Default}
+        return gpu_copies, cpu_copies
     
+    def _get_neccessary_copies_between_IRs(self, IR1, IR2):
+        gpu_copies = IR1.cpu_set & IR2.gpu_set
+        cpu_copies = IR1.gpu_set & IR2.cpu_set
+        return gpu_copies, cpu_copies
+    
+    def close_block(self, block, data, old_data):
+        # mark the arrays which were last accessed within this state simply as "accessed by this state"
+        # any future copies will be added after this state rather than within it; for multiple nested states this creates a recursive wrapping
+        # => follow the "insert copies as high-level as possible" principle
+        # semantically: this state is finished and will be treated as a blackbox from here on out
+        for array in self._get_accesses_by_comp(old_data, data):
+           _, curr_loc = data[array]
+           data[array] = (block, curr_loc)
+            
+    def _get_accesses_by_comp(self, old_data, new_data) -> set:
+        changed_arrays = set()
+        for array in new_data:
+            previous_last_access, _ = old_data[array]
+            last_access, _ = new_data[array]
+            if previous_last_access != last_access:
+                changed_arrays.add(array)
+        return changed_arrays
+
+
+    def eval_end(self, sdfg:SDFG, prev:OffloadingIRNode, data:Dict, end_loc=dtypes.StorageType.Default):
+        copies = []
+
+        for array in data:
+            assert array in sdfg.arrays
+            if not sdfg.arrays[array].transient: 
+                continue # transient arrays don't need copies
+
+            _, curr_loc = data[array] # state which last accessed array & whether its currently on GPU or CPU
+            if curr_loc != end_loc:
+                copies.append(array)
+
+        print("copies:", copies)
+        self._add_copies_after_state(sdfg, prev.block, copies, to_gpu = end_loc==dtypes.StorageType.GPU_Global)
+
+
+    
+    
+
+
     ### Step 4: Copy Insertion ###
-    def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu:bool):
+    def insert_initial_copy(self, sdfg, array:str, to_gpu:bool):
+        print("initial copy of", array)
+        assert array in sdfg.arrays
+        array_desc = sdfg.arrays[array]
+        assert array_desc.storage == dtypes.StorageType.Default if to_gpu else dtypes.StorageType.GPU_Global
+        
+        if array_desc.transient: # allocate directly on device
+            array_desc.storage = dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default
+            if to_gpu: # TODO: better renaming scheme
+                sdfg.replace(array, self._gpu_name(array))
+        
+        else: # copy needed
+            self._add_copies_before_state(sdfg, sdfg.start_block, [array], to_gpu)
+
+    """
+    # TODO: ensure state1 and state2 can be ControlFlowBlocks
+    def create_interstate_copy(self, sdfg, state1:ControlFlowBlock, state2:ControlFlowBlock, array_names, to_gpu:bool):
         assert state1 is not None or state2 is not None, "invalid: both states are None"
         assert isinstance(array_names, set), f"array_names must be a set[str], got {type(array_names).__name__}"
         if not array_names: return
 
         # get name and storage location of new arrays
-        location = dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default
-        rename_map = {(name if to_gpu else name + "_gpu"): (name + "_gpu" if to_gpu else name) for name in array_names}
+        rename_map = {(name if to_gpu else self._gpu_name(name)): (self._gpu_name(name) if to_gpu else name) for name in array_names}
 
         # create ONE copy state for all arrays in array_names
         target_graph = state1.parent_graph if state1 is not None else state2.parent_graph
@@ -762,13 +964,8 @@ class OffloadToAccelerator(ppl.Pass):
             self._insert_state_on_interstate_edge(target_graph, outedges[0], copy_state)
 
         # build all copies inside the same inserted state
-        for old_name, new_name in rename_map.items():
-            if new_name not in sdfg.arrays:
-                sdfg.add_transient(new_name, [1], dace.float64, storage=location)
-            a_copy_in = copy_state.add_access(old_name)
-            a_gpu_copy_out = copy_state.add_access(new_name)
-            copy_state.add_edge(a_copy_in, None, a_gpu_copy_out, None, dace.Memlet(f"{old_name} -> {new_name}"))
-            
+        for name in array_names:
+            self._add_copy_to_state(sdfg, copy_state, name, to_gpu)
         
         if state2:
             # rename data nodes in successor state
@@ -784,10 +981,73 @@ class OffloadToAccelerator(ppl.Pass):
                         memlet.data = rename_map[memlet.data]
             
             # NOTE: map connector names are purely symbolic and are thus do not need renaming
-
+    """
             
     def _insert_state_on_interstate_edge(self, graph, edge, new_state):
         """Insert new_state on an interstate edge (between two control-flow blocks)."""
         graph.add_edge(edge.src, new_state, edge.data)              # src -> new_state (keep condition/assignments)
         graph.add_edge(new_state, edge.dst, dace.InterstateEdge())  # new_state -> dst (unconditional)
         graph.remove_edge(edge)  # del original edge
+
+
+    def _add_copies_after_state(self, sdfg:SDFG, state:SDFGState, names:list[str], to_gpu:bool):
+        self._add_copies(sdfg, state, names, to_gpu, True)
+    
+    def _add_copies_before_state(self, sdfg:SDFG, state:SDFGState, names:list[str], to_gpu:bool):
+        self._add_copies(sdfg, state, names, to_gpu, False)
+
+    def _add_copies(self, sdfg:SDFG, state:SDFGState, names:list[str], to_gpu:bool, after:bool=True):
+        # figure out naming (TODO)
+        if not names: return
+        rename_map = {(name if to_gpu else self._gpu_name(name)): (self._gpu_name(name) if to_gpu else name) for name in names}
+        print("rename_map: ", rename_map)
+
+        for old_name, new_name in rename_map.items():
+            if old_name not in sdfg.arrays:
+                raise KeyError(f"Unknown array: {old_name}")
+            
+            if new_name not in sdfg.arrays:
+                sdfg.add_transient(new_name, sdfg.arrays[old_name].shape, dace.float64, storage= dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default)
+        
+
+        # find copy state
+        assert state is not None
+        copy_state : SDFGState = None
+
+        if after: # copy state is after given state; default
+            if state in self._copy_states:
+                copy_state = self._copy_states[state]
+            else:
+                copy_state = sdfg.add_state_after(state, "copy_state_after_" + state.label, False)
+                self._copy_states[state] = copy_state
+
+        else: # copy state is before given state -> must find predecessor
+            pred_states = [e.src for e in state.parent_graph.in_edges(state)]
+            if not pred_states: pred_states = [None]
+
+            for pred_state in pred_states:
+                if pred_state in self._copy_states:
+                    copy_state = self._copy_states[pred_state]
+                    break
+
+            else:
+                copy_state = sdfg.add_state_before(state, "copy_state_before_" + state.label, is_start_block=(state.parent_graph.start_block is state))
+                for pred_state in pred_states:
+                    self._copy_states[pred_state] = copy_state
+
+
+        # add copies to copy state
+        for old_name, new_name in rename_map.items():
+            copy_in = copy_state.add_access(old_name)
+            copy_out = copy_state.add_access(new_name)
+            copy_state.add_edge(copy_in, None, copy_out, None, dace.Memlet(f"{old_name} -> {new_name}"))
+                
+    
+            
+    """def get_old_and_new_name(name, to_gpu):
+        old_name = name           if to_gpu else  name + "_gpu"
+        new_name = name + "_gpu"  if to_gpu else  name
+        return old_name, new_name"""
+    
+    def _gpu_name(self, name):
+        return name + "_gpu"
