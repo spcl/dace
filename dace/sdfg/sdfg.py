@@ -1427,41 +1427,25 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # Expand the stride/shape/offset symbols of arrays that are referenced
-        # in a control-flow code block (a ``ConditionalBlock`` guard or a
-        # ``LoopRegion`` condition/range) into the free set. Such an array's
-        # extent symbols are otherwise dropped, because the code block records
-        # only the array name -- not the symbols needed to compute its layout --
-        # which makes ``generate_nsdfg_header`` emit a nested function signature
-        # missing those symbols, creating an invalid SDFG. Memlet- and
-        # access-node-referenced arrays already contribute their extent symbols
-        # through the contents analysis above, and interstate-edge-referenced
-        # arrays are expanded by the parent ``ControlFlowRegion`` analysis; only
-        # code-block references need this extra step.
+        # An array named in a code block (a guard / loop condition) needs its
+        # extent symbols too, but only the array name is recorded there. Add them
+        # for code-block-referenced arrays only -- memlet/access-node arrays get
+        # theirs from the contents analysis above; declaring an unused array must
+        # not leak its shape symbol into the signature (issue #2382).
         res_free, res_defined, res_before = result
         if with_contents:
             for name in self._arrays_used_in_code_blocks(all_symbols):
                 res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
-            # Don't drag in symbols that are genuinely defined inside this
-            # SDFG (e.g., LoopRegion loop variables); keep only the ones
-            # outside ``defined_syms``.
-            res_free -= res_defined
+            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
     def _arrays_used_in_code_blocks(self, all_symbols: bool) -> Set[str]:
-        """
-        Returns the names of data descriptors that are referenced inside the
-        control-flow code blocks of this SDFG (conditional-block guards and
-        loop conditions/ranges), as opposed to merely being declared.
+        """Names of data descriptors referenced inside this SDFG's code blocks
+        (guards / loop conditions), as opposed to merely declared. Nested SDFGs
+        are not traversed.
 
-        An array is considered referenced when its name appears as a free
-        symbol of the code block once it has been parsed into a symbolic
-        expression. Nested SDFGs are not traversed: each computes the extent
-        symbols of its own referenced arrays.
-
-        :param all_symbols: If False, only symbols that are needed as arguments
-                            (used in the generated code) are considered.
-        :returns: A set of data-descriptor names referenced in code blocks.
+        :param all_symbols: If False, consider only argument-relevant symbols.
+        :returns: Data-descriptor names referenced in code blocks.
         """
         array_names = self.arrays.keys()
         used = set()
