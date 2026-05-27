@@ -45,7 +45,7 @@ from dace.sdfg.nodes import MapEntry
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 
-from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileMerge, TileStore
+from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileMerge, TileScatter, TileStore
 from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
@@ -553,6 +553,95 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 istate.add_edge(tile_acc, None, tasklet, e.dst_conn, dace.Memlet(f"{tile_name}[{out_subset}]"))
         return consumed
 
+    def _collapse_tile_scatters(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                                mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> set:
+        """Collapse a fanned-out data scatter into a masked :class:`TileScatter`.
+
+        The write-side mirror of :meth:`_collapse_tile_gathers`: a ``dst[__sym]``
+        store whose ``__sym`` was fanned out (by the same interstate-assignment
+        fan-out — ``__sym = idx[i]``) into a widened ``(W,)`` index tile becomes
+        ``TileScatter(value_tile, idx_tile, mask) -> dst``. The value reaches the
+        store either directly from a ``(W,)`` tile access node or through a
+        trivial assign tasklet (folded away). The scatter index symbols are
+        returned so the caller can simplify them away.
+
+        :param istate: Inner state being rewritten.
+        :param nsdfg_node: The body NestedSDFG node.
+        :param mask_acc: This state's inner mask access node.
+        :param spec: Tile spec.
+        :returns: The consumed scatter base-symbol names.
+        :raises NotImplementedError: For scatter shapes this slice does not
+            handle (mixed affine + data-scatter dest dims, strided index,
+            unresolved index, non-tile value source).
+        """
+        inner = istate.sdfg
+        W = tuple(spec.widths)
+        tile_var_set = set(spec.iter_vars)
+        out_subset = ", ".join(f"0:{w}" for w in W)
+        consumed: set = set()
+        for e in list(istate.edges()):
+            if not (isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data in nsdfg_node.out_connectors):
+                continue
+            if (e.data is None or e.data.subset is None or e.dst.data == _INNER_MASK
+                    or inner.arrays[e.dst.data].transient):
+                continue
+            dst_name = e.dst.data
+            scatter_syms = self._gather_index_symbols(e.data.subset, tile_var_set)
+            if not scatter_syms:
+                continue  # a perfect-box store; _promote_stores handles it
+            # The value to scatter is a ``(W, ...)`` tile, reached directly or
+            # through a trivial ``_out = _in`` assign tasklet (folded away).
+            if isinstance(e.src, dace.nodes.Tasklet) and _is_assign_tasklet(e.src):
+                assign = e.src
+                value_access = istate.in_edges(assign)[0].src
+                to_remove = assign
+            elif isinstance(e.src, dace.nodes.AccessNode):
+                value_access = e.src
+                to_remove = None
+            else:
+                raise NotImplementedError(
+                    f"PromoteNSDFGBodyToTiles: scatter into {dst_name!r} from {type(e.src).__name__} "
+                    f"unsupported (expected a tile value access node or assign tasklet)")
+            if not isinstance(value_access, dace.nodes.AccessNode):
+                raise NotImplementedError(
+                    f"PromoteNSDFGBodyToTiles: scatter value into {dst_name!r} is not an access node")
+            dst_arr = inner.arrays[dst_name]
+            dst_ndim = len(dst_arr.shape)
+            if len(scatter_syms) != dst_ndim:
+                raise NotImplementedError(
+                    f"PromoteNSDFGBodyToTiles: scatter on {dst_name!r} indexes {len(scatter_syms)} of "
+                    f"{dst_ndim} dest dims; mixed affine + data-scatter dest dims not yet supported")
+            idx_info = []  # (k, sym, idx_arr, window)
+            for k, (_dim, sym) in enumerate(scatter_syms):
+                idx_arr = self._index_array_for_symbol(inner, sym)
+                if idx_arr is None:
+                    raise NotImplementedError(
+                        f"PromoteNSDFGBodyToTiles: scatter index {sym!r} on {dst_name!r} did not resolve "
+                        f"to a widened index tile; run fan_out_tile_gather_index_symbols first")
+                window = inner.arrays[idx_arr].shape[0]
+                if _index_lane_stride(window, W[0]) != 1:
+                    raise NotImplementedError(
+                        f"PromoteNSDFGBodyToTiles: strided scatter index on {dst_name!r} (window {window}, "
+                        f"W {W[0]}) not yet supported")
+                idx_info.append((k, sym, idx_arr, window))
+            scatter = TileScatter(name=f"scatter_{dst_name}",
+                                  widths=W,
+                                  dest_ndim=dst_ndim,
+                                  has_mask=mask_acc is not None)
+            istate.add_node(scatter)
+            istate.add_edge(value_access, None, scatter, TileConnectors.SRC,
+                            dace.Memlet(f"{value_access.data}[{out_subset}]"))
+            for k, sym, idx_arr, window in idx_info:
+                istate.add_edge(istate.add_access(idx_arr), None, scatter, TileConnectors.idx(k),
+                                dace.Memlet(f"{idx_arr}[0:{window}]"))
+                consumed.add(sym)
+            self._wire_mask(istate, mask_acc, scatter, out_subset)
+            istate.add_edge(scatter, TileConnectors.DST, e.dst, e.dst_conn, dace.Memlet.from_array(dst_name, dst_arr))
+            istate.remove_edge(e)
+            if to_remove is not None and istate.degree(to_remove) == 0:
+                istate.remove_node(to_remove)
+        return consumed
+
     def _drop_gather_symbols(self, inner: dace.SDFG, base_syms: set) -> None:
         """Simplify away the gather symbols consumed by :meth:`_collapse_tile_gathers`.
 
@@ -1041,6 +1130,10 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             self._promote_const_stores(istate, mask_acc, spec)
             self._promote_binops(istate, nsdfg_node, mask_acc, spec)
             self._promote_merges(istate, nsdfg_node, mask_acc, spec)
+            # Route a data-scatter store (``dst[idx[i]]`` — value tile already
+            # produced by the binop/merge above) through a TileScatter before the
+            # box-store promotion, which would otherwise reject the non-box dst.
+            consumed |= self._collapse_tile_scatters(istate, nsdfg_node, mask_acc, spec)
             self._promote_stores(istate, nsdfg_node, mask_acc, spec)
             self._promote_internal_assigns(istate, nsdfg_node, spec)
             if mask_acc is not None and istate.degree(mask_acc) == 0:

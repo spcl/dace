@@ -614,7 +614,10 @@ def test_div_index_const3():
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_const3,
-        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
+        arrays={
+            "src": numpy.random.rand(N_val),
+            "dst": numpy.zeros(N_val)
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="div_index_const3",
@@ -626,7 +629,10 @@ def test_div_index_const4():
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_const4,
-        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
+        arrays={
+            "src": numpy.random.rand(N_val),
+            "dst": numpy.zeros(N_val)
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="div_index_const4",
@@ -640,8 +646,14 @@ def test_div_index_symbol(dv):
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_symbol,
-        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
-        params={"N": N_val, "DV": dv},
+        arrays={
+            "src": numpy.random.rand(N_val),
+            "dst": numpy.zeros(N_val)
+        },
+        params={
+            "N": N_val,
+            "DV": dv
+        },
         vector_width=8,
         sdfg_name=f"div_index_symbol_{dv}",
     )
@@ -896,7 +908,10 @@ def test_strided_through_nsdfg(remainder_strategy, branch_mode):
     b = numpy.random.rand(2 * n + 8).astype(numpy.float64)
     run_vectorization_test(
         dace_func=strided_through_nsdfg,
-        arrays={"a": a, "b": b},
+        arrays={
+            "a": a,
+            "b": b
+        },
         params={"N": n},
         sdfg_name="strided_through_nsdfg",
         remainder_strategy=remainder_strategy,
@@ -913,9 +928,7 @@ def _assert_laneid_fan_collapsed(vec_sdfg):
     tasklet reads its indices through an ``_idx`` connector."""
     from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
-    residual_syms = [
-        s for sd in vec_sdfg.all_sdfgs_recursive() for s in sd.symbols if LaneIdScheme.is_laneid(s)
-    ]
+    residual_syms = [s for sd in vec_sdfg.all_sdfgs_recursive() for s in sd.symbols if LaneIdScheme.is_laneid(s)]
     assert not residual_syms, f"laneid symbols survived the collapse: {residual_syms}"
     residual_ise = [
         k for sd in vec_sdfg.all_sdfgs_recursive() for e in sd.edges() for k in (e.data.assignments or {})
@@ -1126,6 +1139,36 @@ def test_scatter_loop_stencil_collapse_laneid():
     _assert_laneid_fan_collapsed(vec_sdfg)
 
 
+@pytest.mark.parametrize("n", [64, 17])
+def test_scatter_loop_permissive_tile(n):
+    """For-loop data scatter ``dst[idx[i]] = src[i] + 1.0`` tiles on the v2
+    path: ``loop_to_map_permissive`` parallelises the scatter loop (the write is
+    not uniquely indexed, so plain LoopToMap refuses) and the body descent routes
+    the ``dst[idx[i]]`` store through a :class:`TileScatter`. The result matches
+    the unvectorized reference (``n=17`` exercises the masked tail).
+
+    Driven through the orchestrator directly (not ``run_vectorization_test``)
+    because the harness's pre-orchestrator ``_innermost_map_K`` skip-check fires
+    on a for-loop kernel before LoopToMap has created the map."""
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+    src = numpy.random.random(n)
+    idx = numpy.random.permutation(n).astype(numpy.int64)
+    ref = scatter_loop_stencil.to_sdfg(simplify=True)
+    ref.name = f"scatter_loop_ref_{n}"
+    vec = scatter_loop_stencil.to_sdfg(simplify=True)
+    vec.name = f"scatter_loop_vec_{n}"
+    VectorizeCPUMultiDim(widths=(8, ),
+                         target_isa="SCALAR",
+                         remainder_strategy="scalar_postamble",
+                         branch_mode="merge",
+                         loop_to_map_permissive=True).apply_pass(vec, {})
+    vec.validate()
+    d_ref, d_vec = numpy.zeros(n), numpy.zeros(n)
+    ref.compile()(src=src.copy(), idx=idx.copy(), dst=d_ref, N=n)
+    vec.compile()(src=src.copy(), idx=idx.copy(), dst=d_vec, N=n)
+    numpy.testing.assert_allclose(d_vec, d_ref, rtol=1e-12, atol=1e-12)
+
+
 # Edge cases for collapse_laneid_index_loads not covered above.
 
 
@@ -1155,8 +1198,15 @@ def test_gather_collapse_laneid_vw4():
     dst = numpy.zeros(N_val)
     vec_sdfg = run_vectorization_test(
         dace_func=gather_load,
-        arrays={"src": src, "idx": idx, "dst": dst},
-        params={"N": N_val, "scale": 1.5},
+        arrays={
+            "src": src,
+            "idx": idx,
+            "dst": dst
+        },
+        params={
+            "N": N_val,
+            "scale": 1.5
+        },
         vector_width=4,
         sdfg_name="gather_collapse_laneid_vw4",
         collapse_laneid_index_loads=True,
@@ -1172,7 +1222,11 @@ def test_gather_collapse_laneid_fp32_data():
     dst = numpy.zeros(N_val, dtype=numpy.float32)
     vec_sdfg = run_vectorization_test(
         dace_func=gather_fp32_data,
-        arrays={"src": src, "idx": idx, "dst": dst},
+        arrays={
+            "src": src,
+            "idx": idx,
+            "dst": dst
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_collapse_laneid_fp32data",
@@ -1191,7 +1245,13 @@ def test_collapse_laneid_two_independent_gathers():
     c = numpy.zeros(N_val)
     vec_sdfg = run_vectorization_test(
         dace_func=two_gathers,
-        arrays={"a": a, "ia": ia, "b": b, "ib": ib, "c": c},
+        arrays={
+            "a": a,
+            "ia": ia,
+            "b": b,
+            "ib": ib,
+            "c": c
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="collapse_laneid_two_gathers",
@@ -1207,8 +1267,14 @@ def test_collapse_laneid_noop_without_indirection():
     dst = numpy.zeros(N_val)
     vec_sdfg = run_vectorization_test(
         dace_func=no_indirection,
-        arrays={"src": src, "dst": dst},
-        params={"N": N_val, "scale": 1.5},
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N_val,
+            "scale": 1.5
+        },
         vector_width=8,
         sdfg_name="collapse_laneid_noop",
         collapse_laneid_index_loads=True,
@@ -1228,8 +1294,15 @@ def test_gather_collapse_laneid_small_n():
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=gather_load,
-        arrays={"src": src, "idx": idx, "dst": dst},
-        params={"N": N_val, "scale": 1.5},
+        arrays={
+            "src": src,
+            "idx": idx,
+            "dst": dst
+        },
+        params={
+            "N": N_val,
+            "scale": 1.5
+        },
         vector_width=8,
         sdfg_name="gather_collapse_laneid_smalln",
         collapse_laneid_index_loads=True,
@@ -1262,7 +1335,11 @@ def test_gather_collapse_laneid_strided_index_2():
     idx = numpy.random.permutation(2 * N_val).astype(numpy.int64)
     vec_sdfg = run_vectorization_test(
         dace_func=gather_strided_index_2,
-        arrays={"a": a, "b": b, "idx": idx},
+        arrays={
+            "a": a,
+            "b": b,
+            "idx": idx
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_collapse_laneid_stridedidx2",
@@ -1278,7 +1355,11 @@ def test_gather_collapse_laneid_strided_index_3():
     idx = numpy.random.permutation(3 * N_val).astype(numpy.int64)
     vec_sdfg = run_vectorization_test(
         dace_func=gather_strided_index_3,
-        arrays={"a": a, "b": b, "idx": idx},
+        arrays={
+            "a": a,
+            "b": b,
+            "idx": idx
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_collapse_laneid_stridedidx3",
@@ -1302,7 +1383,11 @@ def test_gather_strided_index_2_knob_off():
     idx = numpy.random.permutation(2 * N_val).astype(numpy.int64)
     run_vectorization_test(
         dace_func=gather_strided_index_2,
-        arrays={"a": a, "b": b, "idx": idx},
+        arrays={
+            "a": a,
+            "b": b,
+            "idx": idx
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_strided_index_2_knoboff",
@@ -1319,7 +1404,11 @@ def test_gather_strided_index_3_knob_off():
     idx = numpy.random.permutation(3 * N_val).astype(numpy.int64)
     run_vectorization_test(
         dace_func=gather_strided_index_3,
-        arrays={"a": a, "b": b, "idx": idx},
+        arrays={
+            "a": a,
+            "b": b,
+            "idx": idx
+        },
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_strided_index_3_knoboff",
