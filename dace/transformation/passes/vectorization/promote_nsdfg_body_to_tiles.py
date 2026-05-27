@@ -990,8 +990,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 if kind == "Tile":
                     # Reuse the in-edge subset (a full ``[0:W]`` tile or a shifted
                     # ``[k:k+W]`` window subset) so a stencil neighbour reads the
-                    # right shifted slice of the bounding-window tile.
-                    istate.add_edge(info, None, binop, conn, dace.Memlet(data=info.data, subset=isub))
+                    # right shifted slice of the bounding-window tile. Build a
+                    # FRESH Range — when both operands are the same tile (``b*b``
+                    # from ``b**2``) the two edges must not share one subset object
+                    # (DaCe rejects a duplicate memlet reference).
+                    istate.add_edge(info, None, binop, conn,
+                                    dace.Memlet(data=info.data, subset=subsets.Range(list(isub.ranges))))
                 elif kind == "Scalar":
                     istate.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[0]"))
                 # Symbol: nothing to wire (embedded inline).
