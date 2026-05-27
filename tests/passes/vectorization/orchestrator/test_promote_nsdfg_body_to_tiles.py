@@ -56,10 +56,63 @@ def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L],
 
 
 @dace.program
+def _const_store(a: dace.float64[L]):
+    for i in range(L):
+        a[i] = 3.0
+
+
+@dace.program
 def _s231(aa: dace.float64[L, L], bb: dace.float64[L, L]):
     for i in range(L):
         for j in range(1, L):
             aa[j, i] = aa[j - 1, i] + bb[j, i]
+
+
+def _build_nested(prog, name):
+    """Build + force every innermost body into a NestedSDFG (P1) so the descent
+    owns it — the shape the orchestrator gets once nest-everything is on."""
+    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+        CleanAccessNodeToScalarSliceToTaskletPattern, )
+    from dace.transformation.passes.split_tasklets import SplitTasklets
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
+    sdfg = _build(prog, name)
+    normalize_loop_nests(sdfg)
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    SplitTasklets().apply_pass(sdfg, {})
+    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
+    return sdfg
+
+
+def _tile_via_descent(sdfg, W):
+    """Run the tile prep + descent (no EmitTileOps) + lib-node expansion."""
+    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
+    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import PromoteNSDFGBodyToTiles
+    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
+    res = MarkTileDims(widths=W).apply_pass(sdfg, {})
+    GenerateTileIterationMask(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
+    StrideMapByTileWidths(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
+    handled = PromoteNSDFGBodyToTiles(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
+    sdfg.expand_library_nodes()
+    return handled
+
+
+@pytest.mark.parametrize("n", [16, 17])
+def test_const_store_to_output_descent_matches_reference(n):
+    """``a[i] = 3.0`` into an output connector, nested into an NSDFG body, tiles
+    through the descent (const-fill tile + masked TileStore) and matches the
+    reference (n=17 forces the masked tail — the mask must keep the const out of
+    the OOB lanes of the output array)."""
+    ref = _build(_const_store, f"const_ref{n}")
+    vec = _build_nested(_const_store, f"const_vec{n}")
+    handled = _tile_via_descent(vec, (8, ))
+    assert handled, "expected the const-store map to be handled by the descent"
+    ra = np.full(n, -1.0)
+    va = np.full(n, -1.0)
+    ref.compile()(a=ra, LEN_2D=n)
+    vec.compile()(a=va, LEN_2D=n)
+    np.testing.assert_allclose(va, ra, rtol=1e-12, atol=1e-12)
 
 
 def _build(prog, name):

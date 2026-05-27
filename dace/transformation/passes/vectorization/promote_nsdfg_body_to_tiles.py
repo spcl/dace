@@ -947,17 +947,26 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         istate.add_edge(contig, None, out_access, out_conn, dace.Memlet(f"{out_access.data}[{subset}]"))
         return contig, None
 
-    def _promote_const_stores(self, istate: SDFGState, mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> None:
-        """Replace a constant-store tasklet ``__out = <literal>`` writing a
-        transient tile with a masked lane-wise fill.
+    def _promote_const_stores(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                              mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> None:
+        """Replace a constant-store tasklet ``__out = <literal>`` with a tile fill.
 
-        A branch's else-arm constant (``D[i, j] = 0.0``) lands as a
-        constant-store into the arm-local ``_else_<arr>`` tile. After the
-        transient was reshaped to ``(W, ...)`` the scalar tasklet's
-        single-element memlet no longer matches; replace it with a
-        nested-loop CPP fill ``_out[lane] = mask[lane] ? <literal> : 0``.
+        Two shapes:
+
+        * **Into a transient tile** (a branch arm-local ``_else_<arr>`` operand a
+          :class:`TileMerge` consumes): a mask-gated nested-loop fill
+          ``_out[lane] = mask[lane] ? <literal> : 0`` straight into the reshaped
+          ``(W, ...)`` transient (the merge store discards OOB lanes, so the gate
+          is just defensive).
+        * **Into an output-connector array** (``a[i] = 3.0`` — the widened
+          out-connector): fill a fresh contiguous transient tile UNMASKED, then
+          route it through :meth:`_route_output` so :meth:`_promote_stores` lowers
+          the connector write to a *masked* :class:`TileStore`. The mask must gate
+          the memory write here — filling ``0`` into OOB lanes of a widened
+          out-connector would write past the array's valid region.
 
         :param istate: Inner state being rewritten.
+        :param nsdfg_node: The body NestedSDFG node (for connector names).
         :param mask_acc: This state's inner mask access node.
         :param spec: Tile spec.
         """
@@ -975,30 +984,38 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if val is None:
                 continue
             out_edges = istate.out_edges(t)
-            # Only a write into a transient tile (an arm-local merge operand).
             if len(out_edges) != 1 or not isinstance(out_edges[0].dst, dace.nodes.AccessNode):
                 continue
-            if not inner.arrays[out_edges[0].dst.data].transient:
+            dst_desc = inner.arrays[out_edges[0].dst.data]
+            is_transient = dst_desc.transient
+            is_widened_conn = (out_edges[0].dst.data in nsdfg_node.out_connectors and not dst_desc.transient
+                               and tuple(dst_desc.shape) == W)
+            if not (is_transient or is_widened_conn):
                 continue
-            const_stores.append((t, val, out_edges[0]))
-        for t, val, out_edge in const_stores:
+            const_stores.append((t, val, out_edges[0], is_transient))
+        for t, val, out_edge, is_transient in const_stores:
             out_access = out_edge.dst
-            out_dtype = inner.arrays[out_access.data].dtype.ctype
-            if mask_acc is not None:
-                body = f"_out[{off}] = _mask[{off}] ? {val} : {out_dtype}(0);"
-                inputs = {"_mask"}
+            if is_transient:
+                out_dtype = inner.arrays[out_access.data].dtype.ctype
+                if mask_acc is not None:
+                    body = f"_out[{off}] = _mask[{off}] ? {val} : {out_dtype}(0);"
+                    inputs = {"_mask"}
+                else:
+                    body = f"_out[{off}] = {val};"
+                    inputs = set()
+                fill = istate.add_tasklet(name=f"const_{out_access.data}", inputs=inputs, outputs={"_out"},
+                                          code=nested_loops(list(W), body), language=dace.dtypes.Language.CPP)
+                self._wire_mask(istate, mask_acc, fill, subset)
+                istate.add_edge(fill, "_out", out_access, out_edge.dst_conn,
+                                dace.Memlet(f"{out_access.data}[{subset}]"))
             else:
-                body = f"_out[{off}] = {val};"
-                inputs = set()
-            fill = istate.add_tasklet(
-                name=f"const_{out_access.data}",
-                inputs=inputs,
-                outputs={"_out"},
-                code=nested_loops(list(W), body),
-                language=dace.dtypes.Language.CPP,
-            )
-            self._wire_mask(istate, mask_acc, fill, subset)
-            istate.add_edge(fill, "_out", out_access, out_edge.dst_conn, dace.Memlet(f"{out_access.data}[{subset}]"))
+                # Output-connector const store: fill a fresh contiguous transient
+                # tile (every lane) and let _promote_stores mask the store.
+                write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
+                fill = istate.add_tasklet(name=f"const_{out_access.data}", inputs=set(), outputs={"_out"},
+                                          code=nested_loops(list(W), f"_out[{off}] = {val};"),
+                                          language=dace.dtypes.Language.CPP)
+                istate.add_edge(fill, "_out", write_access, write_conn, dace.Memlet(f"{write_access.data}[{subset}]"))
             for e in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                 istate.remove_edge(e)
             istate.remove_node(t)
@@ -1195,7 +1212,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # Materialize strided-view connector reads into contiguous register
             # tiles before any binop/merge consumes them (K>=2 boundary loads).
             self._materialize_connector_reads(istate, nsdfg_node, mask_acc, spec)
-            self._promote_const_stores(istate, mask_acc, spec)
+            self._promote_const_stores(istate, nsdfg_node, mask_acc, spec)
             self._promote_binops(istate, nsdfg_node, mask_acc, spec)
             self._promote_unops(istate, nsdfg_node, mask_acc, spec)
             self._promote_merges(istate, nsdfg_node, mask_acc, spec)
