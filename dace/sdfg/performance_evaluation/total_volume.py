@@ -131,10 +131,10 @@ def resolve_minmax_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upp
         a_cmp, b_cmp = a, b
         try:
             common = sp.gcd(a, b)
+            if common != 1 and common.is_nonnegative:
+                a_cmp, b_cmp = sp.expand(a / common), sp.expand(b / common)
         except Exception:
-            common = sp.Integer(1)
-        if common != 1 and common.is_nonnegative:
-            a_cmp, b_cmp = sp.expand(a / common), sp.expand(b / common)
+            pass
         diff = sp.expand(a_cmp - b_cmp)
         coeff = diff.coeff(canon_var)
         if sp.expand(diff - coeff * canon_var).has(canon_var):  # not affine in var
@@ -189,21 +189,18 @@ def resolve_size_dominated_minmax(expr: sp.Expr) -> sp.Expr:
     expr = pystr_to_symbolic(expr)
     replacements = {}
     for node in expr.atoms(sp.Max, sp.Min):
-        if len(node.args) != 2:
+        if len(node.args) != 2 or not node.free_symbols:
             continue
-        free_symbols = list(node.free_symbols)
-        if not free_symbols:
+        dominant = min if isinstance(node, sp.Min) else max
+        try:
+            winners = {
+                dominant(node.args, key=lambda a, n=n: float(a.subs({s: n
+                                                                     for s in node.free_symbols})))
+                for n in _DOMINANCE_PROBE_SIZES
+            }
+        except (TypeError, ValueError):
             continue
-        winners = set()
-        for sample in _DOMINANCE_PROBE_SIZES:
-            try:
-                values = [float(arg.subs({s: sample for s in free_symbols})) for arg in node.args]
-            except (TypeError, ValueError):
-                winners.clear()
-                break
-            dominant = min(values) if isinstance(node, sp.Min) else max(values)
-            winners.add(node.args[values.index(dominant)])
-        if len(winners) == 1:
+        if len(winners) == 1:  # all sample sizes agree on the dominant operand (no crossover)
             replacements[node] = winners.pop()
     return expr.subs(replacements) if replacements else expr
 
