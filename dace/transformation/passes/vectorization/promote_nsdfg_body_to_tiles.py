@@ -359,6 +359,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # index them by the *tiled* subset dims, in subset order, so the
             # widened connector is a faithful strided view of the tile block.
             src_arr = parent_state.sdfg.arrays[oe.data.data]
+            # A pure-affine non-box gather (diagonal / structured) was already
+            # consumed by _collapse_affine_gathers (its outer edge is now the
+            # tile-var-free full-array subset, so it never reaches here). A
+            # non-box access still carrying a tile var is therefore a
+            # DATA-dependent / mixed gather (``zqx[jo-1, 0, i]``, jo = iorder[i])
+            # the descent does not yet handle — refuse cleanly instead of
+            # box-widening it into an invalid (cross-product) connector.
+            if classify_tile_access(oe.data.subset, tuple(src_arr.strides),
+                                    spec.iter_vars).kind not in _BOX_KINDS:
+                raise NotImplementedError(
+                    f"PromoteNSDFGBodyToTiles: boundary connector {conn!r} access {oe.data.subset} is a "
+                    f"data-dependent / mixed gather (not pure affine); not supported in the descent yet")
             tiled_widths: List[int] = []
             tiled_strides: List = []
             new_ranges = []
@@ -506,6 +518,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             src_arr = parent_state.sdfg.arrays[src_name]
             cls = classify_tile_access(oe.data.subset, tuple(src_arr.strides), spec.iter_vars)
             if cls.kind not in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
+                continue
+            # Only a PURE affine/structured gather is handled here: every
+            # non-constant index dim must be a function of the tile vars (the
+            # lane substitution tvar -> tvar + l varies it). A tile-var-free
+            # non-constant dim (``zqx[jo-1, 0, i]`` with ``jo = iorder[i]``) is a
+            # DATA-dependent / mixed gather — leave it for the data-gather path /
+            # a clean downstream refusal rather than emit a wrong per-lane-constant
+            # index (which would build an invalid SDFG).
+            if any(
+                    getattr(b, "free_symbols", set()) and not ({str(x)
+                                                                for x in b.free_symbols} & set(spec.iter_vars))
+                    for (b, _e, _s) in oe.data.subset):
                 continue
             src_ndim = len(src_arr.shape)
             # Per-dim affine lane-index expression (tvar -> tvar + __l_p).
@@ -891,7 +915,20 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # loop-invariant broadcast operand.
                 is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
                              and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )))
-                return ("Scalar", src) if is_scalar else ("Tile", src)
+                if is_scalar:
+                    return "Scalar", src
+                # A Tile operand must be a (W, ...)-shaped tile (a reshaped
+                # transient, a widened boundary connector, or a gather/load
+                # result). A raw multi-dim source connector reaching here was
+                # neither widened (not a box) nor gathered (data-dependent /
+                # mixed index, e.g. ``zqx[jo-1, 0, i]``) — refuse cleanly rather
+                # than wire an invalid ``zqx[0:W]`` 1-D memlet onto a K-D array.
+                if tuple(src_desc.shape) != W:
+                    raise NotImplementedError(
+                        f"PromoteNSDFGBodyToTiles: binop {t.label!r} operand {token!r} is connector "
+                        f"{src.data!r} of shape {tuple(src_desc.shape)} != tile {W} — an unhandled "
+                        f"data-dependent / mixed gather, not a tile")
+                return "Tile", src
 
             kind_a, info_a = _operand(a_tok)
             kind_b, info_b = _operand(b_tok)
