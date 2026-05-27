@@ -1427,31 +1427,18 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # An array named in a code block (a guard / loop condition) needs its
-        # extent symbols too, but only the array name is recorded there. Add them
-        # for code-block-referenced arrays only -- memlet/access-node arrays get
-        # theirs from the contents analysis above; declaring an unused array must
-        # not leak its shape symbol into the signature (issue #2382).
+        # A used array needs its stride/shape/offset symbols in the free set, but a
+        # merely-declared one must not leak its shape symbol into the signature
+        # (issue #2382). ``read_and_write_sets`` already reports exactly the arrays
+        # that are used -- read or written, including those referenced only by a
+        # code-block guard/condition -- so expand the extent symbols of those alone.
         res_free, res_defined, res_before = result
         if with_contents:
-            for name in self._arrays_used_in_code_blocks(all_symbols):
+            read_set, write_set = self.read_and_write_sets()
+            for name in (read_set | write_set) & self.arrays.keys():
                 res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
             res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
-
-    def _arrays_used_in_code_blocks(self, all_symbols: bool) -> Set[str]:
-        """Names of data descriptors referenced inside this SDFG's code blocks
-        (guards / loop conditions), as opposed to merely declared. Nested SDFGs
-        are not traversed.
-
-        :param all_symbols: If False, consider only argument-relevant symbols.
-        :returns: Data-descriptor names referenced in code blocks.
-        """
-        array_names = self.arrays.keys()
-        used = set()
-        for cfr in self.all_control_flow_regions(recursive=False):
-            used |= cfr.used_symbols(all_symbols=all_symbols, with_contents=False) & array_names
-        return used
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
