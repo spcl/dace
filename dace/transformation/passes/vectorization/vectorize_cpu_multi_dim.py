@@ -90,6 +90,12 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
        (:class:`PromoteNSDFGBodyToTiles`).
     2. Collapses the now-adjacent perfectly-nested single-param maps into one
        multi-param map (``MapCollapse``).
+    3. Re-propagates memlets. Inlining merges the wrapper scope into its parent
+       and collapse fuses two map scopes into one, both of which leave the outer
+       memlets over-wide (the whole-array form the wrapper carried, not the fused
+       per-iteration slice). ``propagate_memlets_sdfg`` re-tightens every scope
+       edge to what the fused body actually accesses, so the tile boundary-widening
+       sees the correct per-iteration granularity.
 
     Net effect: fewer downstream body shapes — a flattened single-state body tiles
     via :class:`EmitTileOps`; a preserved inout / multi-state body tiles via the
@@ -97,10 +103,12 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
 
     :param sdfg: SDFG to normalise in place.
     """
+    from dace.sdfg.propagation import propagate_memlets_sdfg
     from dace.transformation.dataflow import MapCollapse
     from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
     sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False)
     sdfg.apply_transformations_repeated(MapCollapse, permissive=False, validate=False)
+    propagate_memlets_sdfg(sdfg)
 
 
 @properties.make_properties
