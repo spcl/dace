@@ -365,9 +365,30 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 tvar = self._tilevar_in(b, tile_var_set)
                 if tvar is not None:
                     w = tile_var_to_width[tvar]
-                    new_ranges.append((b, b + (w - 1), 1))
+                    # Access stride = coefficient of the tile var in ``b``: lane
+                    # ``l`` reads ``begin(tvar -> tvar + l) = b + c*l``. A
+                    # contiguous access (``src[i]``) has ``c == 1``; a strided
+                    # access (``src[2*i]``) has ``c == 2`` and the widened view
+                    # must step by ``c`` over a ``c*(w-1)+1`` source window
+                    # (``2*i .. 2*(i+w)``) — else it reads a too-narrow
+                    # contiguous block. Recover ``c`` as the per-unit-increment
+                    # difference of the affine begin; a non-affine begin
+                    # (``i//2`` structured / data gather) collapses to ``c == 1``
+                    # here and is handled by the gather path, not this box widen.
+                    tvar_sym = dace.symbolic.pystr_to_symbolic(tvar)
+                    c = dace.symbolic.simplify(b.subs(tvar_sym, tvar_sym + 1) - b)
+                    # ``c`` is the access stride; it may be a constant (``2``) or
+                    # a free symbol (``src[S*i]`` -> ``c = S``). A non-affine
+                    # begin (``i//2``) leaves a ``c`` that still depends on a tile
+                    # var — that is a structured/gather access, not a strided box,
+                    # so fall back to the contiguous widen (handled by the gather
+                    # path, not here).
+                    c_syms = {str(x) for x in getattr(c, "free_symbols", set())}
+                    if c_syms & tile_var_set:
+                        c = 1
+                    new_ranges.append((b, b + c * (w - 1), c))
                     tiled_widths.append(w)
-                    tiled_strides.append(src_arr.strides[d])
+                    tiled_strides.append(c * src_arr.strides[d])
                 else:
                     new_ranges.append((b, e, s))
             inner.remove_data(conn, validate=False)

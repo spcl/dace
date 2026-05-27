@@ -19,6 +19,7 @@ import numpy
 from dace import InterstateEdge
 
 from dace import Union
+from typing import Optional
 
 from dace.properties import CodeBlock
 
@@ -175,7 +176,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
                            num_cores: int = 8,
-                           vectorize_config: str = "tile_nodes"):
+                           vectorize_config: str = "tile_nodes",
+                           nest_map_bodies: Optional[bool] = None):
+    # ``nest_map_bodies`` selects the tile emit path (default hybrid EmitTileOps
+    # + descent vs the single descent path). ``None`` reads the
+    # ``TILE_NEST_BODIES=1`` env so the whole suite can be flipped to the
+    # descent-only path for a measurement run without editing every test.
+    if nest_map_bodies is None:
+        nest_map_bodies = os.environ.get("TILE_NEST_BODIES", "") == "1"
 
     # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
     # plan decision (the masked path emits merge tasklets / iter_mask blends
@@ -340,7 +348,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                  target_isa="SCALAR",
                                  remainder_strategy=tile_remainder,
                                  branch_mode=branch_mode,
-                                 loop_to_map_permissive=loop_to_map_permissive).apply_pass(copy_sdfg, {})
+                                 loop_to_map_permissive=loop_to_map_permissive,
+                                 nest_map_bodies=nest_map_bodies).apply_pass(copy_sdfg, {})
         except NotImplementedError as _e:
             _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
         copy_sdfg.validate()
