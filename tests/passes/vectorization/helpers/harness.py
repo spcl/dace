@@ -28,6 +28,12 @@ from dace.sdfg.state import ConditionalBlock
 
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
+#: Global override set by conftest from the ``--tile-nest-bodies`` CLI option.
+#: When True every tile-path test runs with ``nest_map_bodies=True`` (the single
+#: descent emit path), regardless of whether it takes the ``vectorize_config``
+#: fixture. Default False keeps the hybrid path.
+FORCE_NEST_MAP_BODIES = False
+
 N = dace.symbol('N')
 S1 = dace.symbol("S1")
 S2 = dace.symbol("S2")
@@ -297,7 +303,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # (every body nested into a NestedSDFG so the descent is the single emit
         # path); ``tile_nodes`` is the default hybrid (flat -> EmitTileOps,
         # already-NSDFG bodies -> descent). Both must match the scalar reference.
-        nest_map_bodies = (vectorize_config == "tile_nodes_nested")
+        nest_map_bodies = (vectorize_config == "tile_nodes_nested") or FORCE_NEST_MAP_BODIES
         # v2 tile-op path (VectorizeCPUMultiDim), unified for K=1 and K>=2: the
         # tile lib nodes (TileBinop / TileLoad / TileStore / TileMerge / ...)
         # are emitted for every K and then expanded to tasklets (the ``pure``

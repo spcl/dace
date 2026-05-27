@@ -58,6 +58,12 @@ def pytest_configure(config):
         "tile_nodes: legacy marker; the K-dim tile-op config "
         "(VectorizeCPUMultiDim) is now the sole vectorize_config arm.",
     )
+    # ``--tile-nest-bodies`` is a GLOBAL override: it flips every harness test
+    # (whether or not it takes the ``vectorize_config`` fixture) to the
+    # single-descent path, so the whole suite can be run under nest_map_bodies
+    # =True. Stored on the harness module so ``run_vectorization_test`` reads it.
+    from tests.passes.vectorization.helpers import harness as _harness
+    _harness.FORCE_NEST_MAP_BODIES = bool(config.getoption("--tile-nest-bodies"))
 
 
 def pytest_addoption(parser):
