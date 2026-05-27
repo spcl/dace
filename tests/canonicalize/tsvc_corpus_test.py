@@ -41,23 +41,15 @@ def _allclose(a, b) -> bool:
     return np.allclose(np.asarray(a), np.asarray(b), rtol=_TOL, atol=_TOL, equal_nan=True)
 
 
-@pytest.mark.parametrize("simplify", [False, True], ids=["nosimplify", "simplify"])
 @pytest.mark.parametrize("kernel", _CORPUS, ids=[k.name for k in _CORPUS])
-def test_canonicalize_corpus_valid(kernel, simplify, request):
-    """``canonicalize`` (peel=4, anti-dep) applies and leaves a valid SDFG."""
-    if kernel.name in _OOB_BY_CONSTRUCTION:
-        pytest.skip(_OOB_BY_CONSTRUCTION[kernel.name])
-    sdfg = tsvc.to_sdfg(kernel, request.node.name, simplify=simplify)
-    with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(sdfg, validate=True, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP)
-    sdfg.validate()
+def test_canonicalize_corpus_value_preserving(kernel, request):
+    """Canonicalized outputs match the numpy reference (151 kernels, one test each).
 
-
-@pytest.mark.long
-@pytest.mark.parametrize("simplify", [False, True], ids=["nosimplify", "simplify"])
-@pytest.mark.parametrize("kernel", _CORPUS, ids=[k.name for k in _CORPUS])
-def test_canonicalize_corpus_value_preserving(kernel, simplify, request):
-    """Canonicalized outputs match the numpy reference."""
+    ``canonicalize`` runs after ``simplify`` (its normal pipeline position), so the
+    candidate is the simplified SDFG. ``canonicalize`` is invoked with
+    ``validate=True``, so this also covers structural validity -- a single check
+    per kernel.
+    """
     if kernel.name in _OOB_BY_CONSTRUCTION:
         pytest.skip(_OOB_BY_CONSTRUCTION[kernel.name])
 
@@ -65,7 +57,7 @@ def test_canonicalize_corpus_value_preserving(kernel, simplify, request):
     ref = {n: a.copy() for n, a in arrays.items()}
     REFERENCES[kernel.name](**ref, **call_kwargs)
 
-    cand = tsvc.to_sdfg(kernel, request.node.name, simplify=simplify)
+    cand = tsvc.to_sdfg(kernel, request.node.name, simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(cand, validate=True, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP)
     got = {n: a.copy() for n, a in arrays.items()}
@@ -75,9 +67,10 @@ def test_canonicalize_corpus_value_preserving(kernel, simplify, request):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # gather indices are read-only
-        assert _allclose(ref[name], got[name]), (
-            f"{kernel.name}/{name} (simplify={simplify}): canonicalize diverges from numpy "
-            f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(
+            ref[name],
+            got[name]), (f"{kernel.name}/{name}: canonicalize diverges from numpy "
+                         f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
 
 
 if __name__ == "__main__":

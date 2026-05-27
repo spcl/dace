@@ -39,14 +39,15 @@ def _allclose(a, b) -> bool:
     return np.allclose(np.asarray(a), np.asarray(b), rtol=_TOL, atol=_TOL, equal_nan=True)
 
 
-@pytest.mark.long
-@pytest.mark.parametrize("simplify", [False, True], ids=["nosimplify", "simplify"])
 @pytest.mark.parametrize("kernel", _CORPUS, ids=[k.name for k in _CORPUS])
-def test_loop_to_map_corpus_value_preserving(kernel, simplify, request):
-    """``LoopToMap`` (applied to fixpoint) keeps the numpy-reference result.
+def test_loop_to_map_corpus_value_preserving(kernel, request):
+    """``LoopToMap`` (applied to fixpoint on the simplified SDFG) keeps the
+    numpy-reference result.
 
-    Whatever LoopToMap chooses to parallelize, the outputs must still match the
-    reference -- a carried dependence it parallelized unsafely diverges.
+    LoopToMap runs after ``simplify`` (its normal position in the pipeline), so the
+    candidate is the simplified SDFG. Whatever LoopToMap chooses to parallelize, the
+    outputs must still match the reference -- a carried dependence it parallelized
+    unsafely diverges.
     """
     if kernel.name in _OOB_BY_CONSTRUCTION:
         pytest.skip(_OOB_BY_CONSTRUCTION[kernel.name])
@@ -55,9 +56,8 @@ def test_loop_to_map_corpus_value_preserving(kernel, simplify, request):
     ref = {n: a.copy() for n, a in arrays.items()}
     REFERENCES[kernel.name](**ref, **call_kwargs)
 
-    cand = tsvc.to_sdfg(kernel, request.node.name, simplify=simplify)
+    cand = tsvc.to_sdfg(kernel, request.node.name, simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        cand.simplify()
         cand.apply_transformations_repeated(LoopToMap())
     got = {n: a.copy() for n, a in arrays.items()}
     with contextlib.redirect_stdout(io.StringIO()):
@@ -66,9 +66,10 @@ def test_loop_to_map_corpus_value_preserving(kernel, simplify, request):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # gather indices are read-only
-        assert _allclose(ref[name], got[name]), (
-            f"{kernel.name}/{name} (simplify={simplify}): LoopToMap diverges from numpy "
-            f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(
+            ref[name],
+            got[name]), (f"{kernel.name}/{name}: LoopToMap diverges from numpy "
+                         f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
 
 
 if __name__ == "__main__":
