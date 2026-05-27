@@ -53,6 +53,7 @@ from dace.transformation.passes.vectorization.emit_tile_ops import (
     _constant_store_value,
     _is_assign_tasklet,
     _is_numeric_literal,
+    _lane_index_expr,
     _mask_name_for_map,
     _tile_region_subset,
 )
@@ -469,6 +470,130 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if is_point and len(fs) == 1 and str(b) in fs:
                 out.append((d, next(iter(fs))))
         return out
+
+    def _collapse_affine_gathers(self, parent_state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG, spec: TileDimSpec,
+                                 mask_name: Optional[str]) -> None:
+        """Route a non-box affine/structured boundary read to a :class:`TileGather`.
+
+        A deterministic but non-box read — the diagonal ``A[i, i]`` (one tile var
+        in two dims), a correlated affine ``A[2*i, i]``, or a structured
+        ``c[i//2]`` (``int_floor``) — classifies as ``Gather`` / ``Structured``;
+        box-widening it would read the wrong cross-product (an 8x8 block for the
+        diagonal). Instead read the FULL source array through a ``TileGather``
+        whose per-dim index tile is the affine lane index
+        ``_gidx_k[l] = begin_k(tvar -> tvar + l)`` (the same affine substitution
+        the flat :class:`EmitTileOps` gather path uses, via ``_lane_index_expr``).
+        Runs before :meth:`_widen_boundary_connectors`, which then skips the
+        connector (its outer edge is the tile-var-free full-array subset).
+
+        :param parent_state: State holding the map + NSDFG.
+        :param nsdfg_node: The body NestedSDFG node.
+        :param spec: Tile spec.
+        :param mask_name: Map-scope mask name, or ``None`` for an unmasked region.
+        """
+        inner = nsdfg_node.sdfg
+        W = tuple(spec.widths)
+        out_subset = ", ".join(f"0:{w}" for w in W)
+        off = tile_offset(list(W))
+        for oe in list(parent_state.in_edges(nsdfg_node)):
+            conn = oe.dst_conn
+            if conn is None or conn not in inner.arrays or conn == _INNER_MASK:
+                continue
+            arr = inner.arrays[conn]
+            if arr.transient or oe.data is None or oe.data.subset is None or oe.data.data is None:
+                continue
+            src_name = oe.data.data
+            src_arr = parent_state.sdfg.arrays[src_name]
+            cls = classify_tile_access(oe.data.subset, tuple(src_arr.strides), spec.iter_vars)
+            if cls.kind not in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
+                continue
+            src_ndim = len(src_arr.shape)
+            # Per-dim affine lane-index expression (tvar -> tvar + __l_p).
+            idx_exprs = []
+            for k in range(src_ndim):
+                expr = _lane_index_expr(str(oe.data.subset.ranges[k][0]), spec.iter_vars)
+                if expr is None:
+                    raise NotImplementedError(
+                        f"PromoteNSDFGBodyToTiles: affine gather on {src_name!r} dim {k} "
+                        f"({oe.data.subset.ranges[k][0]!r}) is not affine in the tile vars")
+                idx_exprs.append(expr)
+            # Expand the connector to the FULL source array so the gather can
+            # index it; the outer edge becomes the tile-var-free full subset
+            # (so _widen_boundary_connectors skips it).
+            storage = arr.storage
+            inner.remove_data(conn, validate=False)
+            inner.add_array(conn, list(src_arr.shape), src_arr.dtype, strides=src_arr.strides, storage=storage,
+                            transient=False)
+            # The index-fill tasklets reference the tile vars (``i``), the source
+            # shape/stride symbols (``N``), and any symbol in the index expression
+            # itself (a symbolic divisor ``src[i // DV]``); EmitTileOps builds
+            # these in the map scope where they are defined, but the descent
+            # builds them inside the NSDFG body, so thread every such symbol into
+            # the NSDFG's symbol mapping (identity) and inner symbol table. The
+            # per-lane loop vars ``__l*`` are the only non-symbol tokens and are
+            # already in scope (the nested-loop counters).
+            shape_syms = set()
+            for sym_expr in list(src_arr.shape) + list(src_arr.strides):
+                shape_syms |= {str(x) for x in dace.symbolic.pystr_to_symbolic(str(sym_expr)).free_symbols}
+            idx_syms = set()
+            for expr in idx_exprs:
+                idx_syms |= {str(x) for x in dace.symbolic.pystr_to_symbolic(expr).free_symbols}
+            idx_syms = {s for s in idx_syms if not s.startswith("__l")}
+            for sname in shape_syms | idx_syms | set(spec.iter_vars):
+                if sname not in nsdfg_node.symbol_mapping:
+                    nsdfg_node.symbol_mapping[sname] = dace.symbolic.pystr_to_symbolic(sname)
+                if sname not in inner.symbols:
+                    inner.add_symbol(sname, parent_state.sdfg.symbols.get(sname, dace.int64))
+            oe.data = dace.Memlet(data=src_name, subset=subsets.Range([(0, s - 1, 1) for s in src_arr.shape]))
+            full = ", ".join(f"0:{s}" for s in src_arr.shape)
+            for istate in inner.states():
+                for cnode in [n for n in istate.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == conn]:
+                    consumers = list(istate.out_edges(cnode))
+                    if not consumers:
+                        continue
+                    mask_acc = istate.add_access(_INNER_MASK) if mask_name is not None else None
+                    idx_accs = []
+                    for k, expr in enumerate(idx_exprs):
+                        iname = f"_agidx_{conn}_{k}"
+                        suffix = 0
+                        while iname in inner.arrays:
+                            suffix += 1
+                            iname = f"_agidx_{conn}_{k}_{suffix}"
+                        inner.add_array(iname, list(W), dace.int64, storage=dace.dtypes.StorageType.Register,
+                                        transient=True)
+                        fill = istate.add_tasklet(name=f"agidx_{iname}",
+                                                  inputs=set(),
+                                                  outputs={"_out"},
+                                                  code=nested_loops(list(W), f"_out[{off}] = {expr};"),
+                                                  language=dace.dtypes.Language.CPP)
+                        iacc = istate.add_access(iname)
+                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        idx_accs.append(iacc)
+                    gather = TileGather(name=f"agather_{conn}",
+                                        widths=W,
+                                        source_ndim=src_ndim,
+                                        has_mask=mask_acc is not None)
+                    istate.add_node(gather)
+                    istate.add_edge(cnode, None, gather, TileConnectors.SRC,
+                                    dace.Memlet(data=conn, subset=subsets.Range.from_string(full)))
+                    for k, iacc in enumerate(idx_accs):
+                        istate.add_edge(iacc, None, gather, TileConnectors.idx(k),
+                                        dace.Memlet(f"{iacc.data}[{out_subset}]"))
+                    if mask_acc is not None:
+                        istate.add_edge(mask_acc, None, gather, TileConnectors.MASK,
+                                        dace.Memlet(f"{_INNER_MASK}[{out_subset}]"))
+                    gtile = f"{conn}_agather"
+                    suffix = 0
+                    while gtile in inner.arrays:
+                        suffix += 1
+                        gtile = f"{conn}_agather_{suffix}"
+                    inner.add_array(gtile, list(W), src_arr.dtype, storage=dace.dtypes.StorageType.Register,
+                                    transient=True)
+                    gtacc = istate.add_access(gtile)
+                    istate.add_edge(gather, TileConnectors.DST, gtacc, None, dace.Memlet(f"{gtile}[{out_subset}]"))
+                    for ce in consumers:
+                        istate.add_edge(gtacc, None, ce.dst, ce.dst_conn, dace.Memlet(f"{gtile}[{out_subset}]"))
+                        istate.remove_edge(ce)
 
     def _index_array_for_symbol(self, inner: dace.SDFG, sym: str) -> Optional[str]:
         """Return the widened index-tile array that a gather symbol reads.
@@ -1219,6 +1344,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         # cases land in a later slice).
         if len(W) == 1:
             fan_out_tile_gather_index_symbols(inner, nsdfg_node, parent_state, W[0], spec.iter_vars[0])
+        # Affine / structured non-box reads (diagonal A[i,i], correlated A[2*i,i],
+        # structured c[i//2]) -> TileGather over the full source with affine
+        # index tiles. Runs before the box widening, which then skips these
+        # connectors (their outer edge is the tile-var-free full-array subset).
+        self._collapse_affine_gathers(parent_state, nsdfg_node, spec, mask_name)
         # Boundary-connector widening is K-general: a length-1 connector whose
         # tile-var offset lives in the outer edge (``A[1, i, j]`` -> inner
         # ``[0]``) grows to a ``(W_0, ..., W_{K-1})`` tile, the outer edge to the
