@@ -373,36 +373,58 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     f"data-dependent / mixed gather (not pure affine); not supported in the descent yet")
             tiled_widths: List[int] = []
             tiled_strides: List = []
+            tile_w_per_dim: List[int] = []
             new_ranges = []
             for d, (b, e, s) in enumerate(oe.data.subset):
                 tvar = self._tilevar_in(b, tile_var_set)
                 if tvar is not None:
                     w = tile_var_to_width[tvar]
-                    # Access stride = coefficient of the tile var in ``b``: lane
-                    # ``l`` reads ``begin(tvar -> tvar + l) = b + c*l``. A
-                    # contiguous access (``src[i]``) has ``c == 1``; a strided
-                    # access (``src[2*i]``) has ``c == 2`` and the widened view
-                    # must step by ``c`` over a ``c*(w-1)+1`` source window
-                    # (``2*i .. 2*(i+w)``) — else it reads a too-narrow
-                    # contiguous block. Recover ``c`` as the per-unit-increment
-                    # difference of the affine begin; a non-affine begin
-                    # (``i//2`` structured / data gather) collapses to ``c == 1``
-                    # here and is handled by the gather path, not this box widen.
-                    tvar_sym = dace.symbolic.pystr_to_symbolic(tvar)
-                    c = dace.symbolic.simplify(b.subs(tvar_sym, tvar_sym + 1) - b)
-                    # ``c`` is the access stride; it may be a constant (``2``) or
-                    # a free symbol (``src[S*i]`` -> ``c = S``). A non-affine
-                    # begin (``i//2``) leaves a ``c`` that still depends on a tile
-                    # var — that is a structured/gather access, not a strided box,
-                    # so fall back to the contiguous widen (handled by the gather
-                    # path, not here).
-                    c_syms = {str(x) for x in getattr(c, "free_symbols", set())}
-                    if c_syms & tile_var_set:
-                        c = 1
-                    new_ranges.append((b, b + c * (w - 1), c))
-                    tiled_widths.append(w)
-                    tiled_strides.append(c * src_arr.strides[d])
+                    # A tiled dim is either a POINT read (``src[i]`` / ``src[2*i]``,
+                    # ``e == b``) or a per-iteration WINDOW (``A[i:i+3]`` stencil
+                    # neighbour fan, ``e > b``). Both widen to a register tile the
+                    # consumer reads as a (possibly shifted) W-subset:
+                    #   * POINT: lane ``l`` reads ``begin(tvar -> tvar+l) = b+c*l``,
+                    #     ``c`` = the access stride (per-unit-increment diff of the
+                    #     affine begin: 1 contiguous, 2 strided, ``S`` symbolic; a
+                    #     non-affine ``i//2`` keeps a tile var in ``c`` -> falls to
+                    #     ``c = 1``, the gather path handled it). Window
+                    #     ``[b : b+c*(w-1) : c]``, shape ``w``.
+                    #   * WINDOW of extent ``E+1`` (``E = e-b``): output lane ``l``
+                    #     reads ``[b+l : b+l+E]``, so the bounding window over all W
+                    #     lanes is ``[b : b+E+(w-1)]``, shape ``E+w``; each inner
+                    #     read at offset ``k`` becomes the W-subset ``[k : k+w-1]``
+                    #     (the offset-preserving rewrite below). Stencils are
+                    #     stride-1, so the window step is 1.
+                    e_minus_b = dace.symbolic.simplify(e - b)
+                    if e_minus_b != 0:
+                        new_ranges.append((b, b + e_minus_b + (w - 1), 1))
+                        tiled_widths.append(int(e_minus_b) + w)
+                        tiled_strides.append(src_arr.strides[d])
+                    else:
+                        tvar_sym = dace.symbolic.pystr_to_symbolic(tvar)
+                        c = dace.symbolic.simplify(b.subs(tvar_sym, tvar_sym + 1) - b)
+                        c_syms = {str(x) for x in getattr(c, "free_symbols", set())}
+                        if c_syms & tile_var_set:
+                            c = 1
+                        new_ranges.append((b, b + c * (w - 1), c))
+                        tiled_widths.append(w)
+                        tiled_strides.append(c * src_arr.strides[d])
+                    tile_w_per_dim.append(w)
                 else:
+                    # A non-tiled dim must be a fixed point (extent 1): the widened
+                    # connector keeps only the tiled dims in its shape, so a
+                    # non-tiled dim of extent > 1 (a multi-slice connector — two
+                    # fixed-prefix reads unioned, e.g. A[0,0,i] + A[1,0,i] -> dim0
+                    # 0:2) would mismatch the connector volume and silently read
+                    # wrong. Refuse cleanly; per-slice tile loads are a later slice.
+                    try:
+                        degenerate = bool(dace.symbolic.simplify(e - b) == 0)
+                    except Exception:
+                        degenerate = False
+                    if not degenerate:
+                        raise NotImplementedError(
+                            f"PromoteNSDFGBodyToTiles: boundary connector {conn!r} has a non-tiled dim {d} of "
+                            f"extent > 1 ({b}:{e}) — a multi-slice access; not supported in the descent yet")
                     new_ranges.append((b, e, s))
             inner.remove_data(conn, validate=False)
             inner.add_array(conn,
@@ -425,7 +447,20 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             full = subsets.Range([(0, w - 1, 1) for w in tiled_widths])
             for istate in inner.states():
                 for ed in istate.edges():
-                    if ed.data is not None and ed.data.data == conn:
+                    if ed.data is None or ed.data.data != conn:
+                        continue
+                    old = ed.data.subset
+                    # Offset-preserving rewrite: an inner read at point ``k`` in a
+                    # tiled dim becomes the W-subset ``[k : k+w-1]`` of the widened
+                    # window (so a stencil's ``A[0]``/``A[1]``/``A[2]`` reads become
+                    # the shifted tiles ``A_win[0:W]``/``[1:W+1]``/``[2:W+2]``). Only
+                    # when the inner subset already has exactly the tiled-dim count
+                    # (no squeezed non-tiled dim to realign) — otherwise fall back
+                    # to the full tile (the point-read shape, unchanged behaviour).
+                    if old is not None and len(old) == len(tile_w_per_dim):
+                        shifted = [(kb, kb + tile_w_per_dim[dp] - 1, 1) for dp, (kb, _ke, _ks) in enumerate(old)]
+                        ed.data = dace.Memlet(data=conn, subset=subsets.Range(shifted))
+                    else:
                         ed.data = dace.Memlet(data=conn, subset=subsets.Range(list(full.ranges)))
 
     def _box_classification(self, subset: subsets.Range, arr: dace.data.Data, iter_vars: Tuple[str, ...]):
@@ -904,7 +939,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
 
             def _operand(token):
                 if _is_numeric_literal(token):
-                    return "Symbol", token
+                    return "Symbol", token, None
                 ie = [e for e in istate.in_edges(t) if e.dst_conn == token]
                 if len(ie) != 1 or not isinstance(ie[0].src, dace.nodes.AccessNode):
                     raise NotImplementedError(
@@ -916,22 +951,25 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
                              and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )))
                 if is_scalar:
-                    return "Scalar", src
-                # A Tile operand must be a (W, ...)-shaped tile (a reshaped
-                # transient, a widened boundary connector, or a gather/load
-                # result). A raw multi-dim source connector reaching here was
-                # neither widened (not a box) nor gathered (data-dependent /
-                # mixed index, e.g. ``zqx[jo-1, 0, i]``) — refuse cleanly rather
-                # than wire an invalid ``zqx[0:W]`` 1-D memlet onto a K-D array.
-                if tuple(src_desc.shape) != W:
+                    return "Scalar", src, None
+                # A Tile operand is read as a (W, ...) tile — but the connector
+                # ARRAY may be larger: a stencil bounding window (``A_win`` of
+                # shape ``E+W``) read at a shifted W-subset ``A_win[k:k+W]``. So
+                # validate the READ SUBSET size, not the array shape, and pass the
+                # subset through to the wiring. A non-W subset (an unhandled
+                # multi-dim / gather residue, ``zqx[jo-1, 0, i]``) is refused.
+                isub = ie[0].data.subset
+                sizes = isub.size()
+                ok = (len(sizes) == len(W)
+                      and all(bool(dace.symbolic.simplify(sz - w) == 0) for sz, w in zip(sizes, W)))
+                if not ok:
                     raise NotImplementedError(
-                        f"PromoteNSDFGBodyToTiles: binop {t.label!r} operand {token!r} is connector "
-                        f"{src.data!r} of shape {tuple(src_desc.shape)} != tile {W} — an unhandled "
-                        f"data-dependent / mixed gather, not a tile")
-                return "Tile", src
+                        f"PromoteNSDFGBodyToTiles: binop {t.label!r} operand {token!r} reads {src.data!r} "
+                        f"subset size {tuple(sizes)} != tile {W} — an unhandled data-dependent / mixed gather")
+                return "Tile", src, isub
 
-            kind_a, info_a = _operand(a_tok)
-            kind_b, info_b = _operand(b_tok)
+            kind_a, info_a, sub_a = _operand(a_tok)
+            kind_b, info_b, sub_b = _operand(b_tok)
             if kind_a != "Tile" and kind_b != "Tile":
                 raise NotImplementedError(
                     f"PromoteNSDFGBodyToTiles: binop {t.label!r} has no tile operand ({kind_a}/{kind_b})")
@@ -948,15 +986,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             binop = TileBinop(**kwargs)
             istate.add_node(binop)
 
-            def _wire(kind, info, conn):
+            def _wire(kind, info, isub, conn):
                 if kind == "Tile":
-                    istate.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[{subset}]"))
+                    # Reuse the in-edge subset (a full ``[0:W]`` tile or a shifted
+                    # ``[k:k+W]`` window subset) so a stencil neighbour reads the
+                    # right shifted slice of the bounding-window tile.
+                    istate.add_edge(info, None, binop, conn, dace.Memlet(data=info.data, subset=isub))
                 elif kind == "Scalar":
                     istate.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[0]"))
                 # Symbol: nothing to wire (embedded inline).
 
-            _wire(kind_a, info_a, TileConnectors.A)
-            _wire(kind_b, info_b, TileConnectors.B)
+            _wire(kind_a, info_a, sub_a, TileConnectors.A)
+            _wire(kind_b, info_b, sub_b, TileConnectors.B)
             self._wire_mask(istate, mask_acc, binop, subset)
             write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
             istate.add_edge(binop, TileConnectors.C, write_access, write_conn,
