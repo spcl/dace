@@ -96,7 +96,7 @@ def reference_sdfg_file(tmp_path_factory):
     return path
 
 
-@pytest.mark.long
+@pytest.mark.integration
 @pytest.mark.parametrize('regime', list(_REGIMES))
 def test_cloudsc_transform_chain(reference_sdfg_file, regime):
     ieee_build, sequential, rtol, atol = _REGIMES[regime]
