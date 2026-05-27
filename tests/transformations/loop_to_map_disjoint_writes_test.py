@@ -18,6 +18,7 @@ from dace.sdfg import nodes
 from dace.transformation.interstate import LoopToMap
 
 N = dace.symbol('N')
+M = dace.symbol('M')
 
 
 def _has_map(sdfg: dace.SDFG) -> bool:
@@ -234,6 +235,54 @@ def test_rejects_nonlinear_mod_write():
     sdfg(A=a, N=n)
     ref_sdfg(A=a_ref, N=n)
     assert np.array_equal(a, a_ref)
+
+
+# ---------------------------------------------------------------------------
+# A dimension that both writes index by the same injective function of the loop
+# variable pins any collision to a single iteration, so the writes are disjoint
+# across iterations even when the *other* indices are opaque symbols the affine
+# model cannot certify. This is the CloudSC scatter pattern
+# ``zsolqa[0, imelt, i]`` / ``zsolqa[imelt, 0, i]`` (``i`` the parallel column).
+# ---------------------------------------------------------------------------
+
+
+@dace.program
+def shared_iteration_dim(A: dace.int64[8, 8, N]):
+    for i in range(N):
+        A[0, M, i] = 1
+        A[M, 0, i] = 2
+
+
+@dace.program
+def shared_constant_dim_shifted(A: dace.int64[8, N + 1]):
+    for i in range(N):
+        A[M, i] = 1
+        A[M, i + 1] = 2
+
+
+def test_accepts_shared_iteration_dimension():
+    """ ``A[0, M, i]`` and ``A[M, 0, i]`` share the loop variable ``i`` in their
+        last dimension, so each iteration owns column ``i`` and they never
+        collide across iterations -- parallelizable despite the opaque ``M``. """
+    sdfg = shared_iteration_dim.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
+    assert _has_map(sdfg)
+
+    n, m = 16, 3
+    a = np.full((8, 8, n), -1, dtype=np.int64)
+    sdfg(A=a, N=n, M=m)
+    ref = np.full((8, 8, n), -1, dtype=np.int64)
+    for i in range(n):
+        ref[0, m, i] = 1
+        ref[m, 0, i] = 2
+    assert np.array_equal(a, ref)
+
+
+def test_rejects_shared_constant_dimension_with_shift():
+    """ Guard: the shared dimension here is the *constant* ``M`` (no dependence
+        on ``i``), so it does not pin iterations together; ``A[M, i]`` and
+        ``A[M, i+1]`` still collide between consecutive iterations. """
+    assert _applies(shared_constant_dim_shifted) == 0
 
 
 def test_positive_control_disjoint_strides_becomes_map():

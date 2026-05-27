@@ -173,6 +173,13 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
     for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
         if b1 != e1 or b2 != e2:  # non-point range dimension: cannot decide here
             continue
+        # Both writes index this dimension by the same injective function of the
+        # iteration variable: a collision there forces the two iterations equal,
+        # so the writes can only coincide within one iteration (ordered by program
+        # order in the map body), never across distinct iterations.
+        coeffs = _affine_coeffs(b1, itersym)
+        if coeffs is not None and coeffs[0] != 0 and sp.simplify(b1 - b2) == 0:
+            return False
         if _dim_provably_disjoint(b1, b2, itersym):
             return False
     return True
