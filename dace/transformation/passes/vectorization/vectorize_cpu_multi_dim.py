@@ -92,7 +92,8 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  target_isa: Literal["AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR"] = "AUTO",
                  num_cores: int = 1,
                  remainder_strategy: Literal["full_mask", "masked_tail", "scalar_postamble"] = "full_mask",
-                 branch_mode: Literal["merge", "fp_factor"] = "merge"):
+                 branch_mode: Literal["merge", "fp_factor"] = "merge",
+                 loop_to_map_permissive: bool = False):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -254,6 +255,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._num_cores = num_cores
         self._remainder_strategy = remainder_strategy
         self._branch_mode = branch_mode
+        self._loop_to_map_permissive = loop_to_map_permissive
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -325,7 +327,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :param refine_nested_access: The ``RefineNestedAccess`` transformation class.
         """
         pre = {id(n) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
-        sdfg.apply_transformations_repeated(loop_to_map, permissive=False, validate=False)
+        # ``loop_to_map_permissive`` (set on scatter benchmarks) lets LoopToMap
+        # parallelise a scatter loop (``a[idx[i]] = ...`` — a write not uniquely
+        # indexed by the iteration var, which non-permissive LoopToMap refuses) so
+        # the tile path can vectorise it. Default off keeps the conservative form.
+        sdfg.apply_transformations_repeated(loop_to_map, permissive=self._loop_to_map_permissive, validate=False)
         for node, graph in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, dace.nodes.NestedSDFG):
                 continue

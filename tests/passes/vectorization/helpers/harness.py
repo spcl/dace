@@ -143,8 +143,9 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
         return "lower_to_intrinsics (v2 uses tile-op lib nodes, not legacy intrinsics)"
     if collapse_laneid_index_loads:
         return "collapse_laneid_index_loads (v2 has no laneid path)"
-    if loop_to_map_permissive:
-        return "loop_to_map_permissive (v2 expects map-only inputs)"
+    # ``loop_to_map_permissive`` IS supported on the tile path now (threaded into
+    # the orchestrator's LoopToMap call) — scatter benchmarks set it True so the
+    # scatter loop parallelises and the tile path can vectorise it. No skip.
     if filter_map is not None and filter_map != -1:
         return "filter_map (v2 orchestrator targets every innermost map)"
     if _innermost_map_K(sdfg) is None:
@@ -338,7 +339,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             VectorizeCPUMultiDim(widths=widths,
                                  target_isa="SCALAR",
                                  remainder_strategy=tile_remainder,
-                                 branch_mode=branch_mode).apply_pass(copy_sdfg, {})
+                                 branch_mode=branch_mode,
+                                 loop_to_map_permissive=loop_to_map_permissive).apply_pass(copy_sdfg, {})
         except NotImplementedError as _e:
             _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
         copy_sdfg.validate()
