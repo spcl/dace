@@ -337,6 +337,14 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         W = tuple(spec.widths)
         tile_var_set = set(spec.iter_vars)
         tile_var_to_width = dict(zip(spec.iter_vars, W))
+        # Per widened connector, the tile-lane -> connector-dim permutation. The
+        # connector is built in SUBSET (array) dim order, but the tile lanes
+        # iterate in iter_vars order; for a transposed map (Fortran ``A[i,j]``
+        # with iter_vars ``[j, i]``, the unit-stride dim ``i`` is the inner lane
+        # but subset dim 0) these disagree. The tile ops read it back via
+        # ``_box_classification`` (-> TileLoad/TileStore ``src_dims``/``dst_dims``)
+        # so lane ``p`` addresses the right connector dim (no transpose).
+        self._conn_match_dims: Dict[str, Tuple[int, ...]] = {}
         conn_edges = ([(e.dst_conn, e)
                        for e in parent_state.in_edges(nsdfg_node)] + [(e.src_conn, e)
                                                                       for e in parent_state.out_edges(nsdfg_node)])
@@ -374,11 +382,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             tiled_widths: List[int] = []
             tiled_strides: List = []
             tile_w_per_dim: List[int] = []
+            conn_itervar: List[str] = []
             new_ranges = []
             for d, (b, e, s) in enumerate(oe.data.subset):
                 tvar = self._tilevar_in(b, tile_var_set)
                 if tvar is not None:
                     w = tile_var_to_width[tvar]
+                    conn_itervar.append(tvar)
                     # A tiled dim is either a POINT read (``src[i]`` / ``src[2*i]``,
                     # ``e == b``) or a per-iteration WINDOW (``A[i:i+3]`` stencil
                     # neighbour fan, ``e > b``). Both widen to a register tile the
@@ -433,6 +443,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                             strides=tiled_strides,
                             storage=dace.dtypes.StorageType.Register,
                             transient=False)
+            # Record the tile-lane -> connector-dim permutation (only when the
+            # connector covers every tile dim, i.e. conn_itervar is exactly the
+            # iter-var set). ``match_dims[p]`` = the connector dim holding
+            # ``iter_vars[p]``; identity for a C-order map, ``[1, 0]`` for a
+            # transposed (Fortran) ``A[i, j]`` with iter_vars ``[j, i]``.
+            if len(conn_itervar) == len(spec.iter_vars) and set(conn_itervar) == tile_var_set:
+                self._conn_match_dims[conn] = tuple(conn_itervar.index(iv) for iv in spec.iter_vars)
             # A symbolic source stride (e.g. ``N``) the connector view now
             # references must be defined inside the NSDFG; thread it through the
             # symbol mapping (identity) and the inner symbol table.
@@ -463,7 +480,8 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     else:
                         ed.data = dace.Memlet(data=conn, subset=subsets.Range(list(full.ranges)))
 
-    def _box_classification(self, subset: subsets.Range, arr: dace.data.Data, iter_vars: Tuple[str, ...]):
+    def _box_classification(self, subset: subsets.Range, arr: dace.data.Data, iter_vars: Tuple[str, ...],
+                            conn_name: Optional[str] = None):
         """Classify a connector access and require a perfect box.
 
         A register-tile boundary connector (shape exactly the tile widths,
@@ -472,19 +490,24 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         the NSDFG's *outer* edge, so the inner access is the full tile and
         :func:`classify_tile_access` would see a tile-var-free subset
         (``BROADCAST_SYMBOL``). Treat it directly as a contiguous full-tile
-        load/store.
+        load/store — using the widen's recorded tile-lane -> connector-dim
+        permutation (``match_dims``) so a transposed (Fortran) map addresses the
+        right dim per lane instead of assuming connector-order == lane-order.
 
         :param subset: Per-iteration subset on the connector array.
         :param arr: The connector array descriptor.
         :param iter_vars: Tile iter-vars.
+        :param conn_name: Connector name, to look up the widen's recorded
+            ``match_dims`` permutation (identity when absent).
         :returns: The :class:`TileAccessClassification`.
         :raises NotImplementedError: For non-box (gather/structured) access.
         """
         if tuple(arr.shape) == tuple(self.widths):
             K = len(self.widths)
+            match = self._conn_match_dims.get(conn_name, tuple(range(K)))
             return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS,
                                             dim_strides=(1, ) * K,
-                                            match_dims=tuple(range(K)))
+                                            match_dims=match)
         cls = classify_tile_access(subset, tuple(arr.strides), iter_vars)
         if cls.kind not in _BOX_KINDS:
             raise NotImplementedError(
@@ -895,7 +918,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         ]
         for ed in load_edges:
             src_name = ed.src.data
-            cls = self._box_classification(ed.data.subset, inner.arrays[src_name], spec.iter_vars)
+            cls = self._box_classification(ed.data.subset, inner.arrays[src_name], spec.iter_vars, src_name)
             promoted = _tile_region_subset(ed.data.subset, spec.iter_vars, W)
             load = TileLoad(name=f"load_{src_name}",
                             widths=W,
@@ -1111,7 +1134,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 if tuple(desc.shape) != W:
                     continue
                 if cname not in materialized:
-                    cls = self._box_classification(e.data.subset, desc, spec.iter_vars)
+                    cls = self._box_classification(e.data.subset, desc, spec.iter_vars, cname)
                     tile_name = f"{cname}_ld"
                     k = 0
                     while tile_name in inner.arrays:
@@ -1326,7 +1349,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if isinstance(ed.src, dace.nodes.LibraryNode):
                 continue
             dst_name = ed.dst.data
-            cls = self._box_classification(ed.data.subset, inner.arrays[dst_name], spec.iter_vars)
+            cls = self._box_classification(ed.data.subset, inner.arrays[dst_name], spec.iter_vars, dst_name)
             promoted = _tile_region_subset(ed.data.subset, spec.iter_vars, W)
             if isinstance(ed.src, dace.nodes.Tasklet) and _is_assign_tasklet(ed.src):
                 assign = ed.src
