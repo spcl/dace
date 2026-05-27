@@ -257,7 +257,7 @@ class SplitTasklets(ppl.Pass):
                     dtypes = set()
                     # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names
                     # come from ``arrays`` (the old ``atoms(Function).name`` form no
-                    # longer reports the array head).
+                    # longer reports the array head after the subscript rework).
                     funcs = list(dace.symbolic.arrays(symexpr))
                     for token in funcs:
                         if str(token) in sdfg.arrays:

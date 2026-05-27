@@ -188,27 +188,37 @@ class UniqueLoopIterators(ppl.Pass):
     def _first_free_id(sdfg: dace.SDFG) -> int:
         """Lowest ``<N>`` that no existing ``_loop_it_<N>`` iterator uses.
 
-        Scans every ``LoopRegion`` in the whole SDFG tree (including nested
-        SDFGs) so a fresh rename never collides with an iterator a previous run
-        already produced.
+        Scans every ``LoopRegion`` loop variable AND every ``MapEntry`` parameter
+        in the whole SDFG tree (including nested SDFGs) so a fresh rename never
+        collides with an iterator a previous run already produced. The map
+        parameters matter because ``LoopToMap`` keeps the loop's ``_loop_it_<N>``
+        name as the map parameter: when this pass runs after a LoopToMap stage,
+        reusing that ``<N>`` for a different loop would alias the two iteration
+        variables and silently corrupt the result.
 
         :param sdfg: The root SDFG.
         :returns: ``max(existing <N>) + 1``, or ``0`` if there are none.
         """
         prefix = f"{_LOOP_ITER_NAME_PREFIX}_"
+
+        def _id_of(name: str) -> int:
+            suffix = name[len(prefix):]
+            return int(suffix) if name.startswith(prefix) and suffix.isdigit() else -1
+
         max_id = -1
         stack = [sdfg]
         while stack:
             graph = stack.pop()
             for cfg in graph.all_control_flow_regions():
-                if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(prefix):
-                    suffix = cfg.loop_variable[len(prefix):]
-                    if suffix.isdigit():
-                        max_id = max(max_id, int(suffix))
+                if isinstance(cfg, LoopRegion) and cfg.loop_variable:
+                    max_id = max(max_id, _id_of(cfg.loop_variable))
             for state in graph.all_states():
                 for node in state.nodes():
                     if isinstance(node, dace.nodes.NestedSDFG):
                         stack.append(node.sdfg)
+                    elif isinstance(node, dace.nodes.MapEntry):
+                        for param in node.map.params:
+                            max_id = max(max_id, _id_of(param))
         return max_id + 1
 
     def apply_pass(self, sdfg: dace.SDFG, _):

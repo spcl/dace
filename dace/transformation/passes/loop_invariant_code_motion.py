@@ -571,11 +571,21 @@ def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
     if inside_nodes is None:
         return 0
 
-    # Conservative alias seed: any data written anywhere in this scope.
+    # Conservative alias seed: any data written anywhere in this scope, PLUS the
+    # arrays the map itself writes. The map's outputs (e.g. ``a[i]``) flow out
+    # through the map exit to AccessNodes OUTSIDE ``[me, mx]``, so
+    # ``all_nodes_between`` does not see them; without this, a read of an array
+    # the map also writes (e.g. the invariant ``a[0]`` in ``a[i] = a[0] + b[i]``)
+    # would be wrongly treated as invariant and hoisted -- producing a malformed
+    # whole-array-to-scalar copy. Matches the loop-region criterion (a written
+    # container makes its reads variant).
     variant_data: Set[str] = set()
     for n in inside_nodes:
         if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0:
             variant_data.add(n.data)
+    for e in state.out_edges(mx):
+        if e.data is not None and e.data.data is not None:
+            variant_data.add(e.data.data)
 
     count = 0
     while True:

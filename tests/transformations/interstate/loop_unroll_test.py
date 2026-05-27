@@ -201,6 +201,43 @@ def test_replace_dict_inner_loop():
     assert "jn" not in {str(s) for s in sdfg.arglist()}
 
 
+def test_start_block_loop_with_successors():
+    """Unrolling a constant-trip loop that is its region's *start block* and is
+    followed by sibling blocks must keep the region connected (the unrolled chain
+    head replaces it; its successors stay attached). Regression for the start-block
+    fixup that previously promoted the loop's successor and severed the chain."""
+    sdfg = dace.SDFG("start_loop_with_succ")
+    sdfg.add_array("B", shape=(4, ), dtype=dace.float64)
+
+    loop = LoopRegion(label="counted",
+                      condition_expr=CodeBlock("i < 3"),
+                      loop_var="i",
+                      initialize_expr=CodeBlock("i = 0"),
+                      update_expr=CodeBlock("i = i + 1"),
+                      sdfg=sdfg)
+    # The loop is the region's start block and is followed by two sibling states.
+    sdfg.add_node(loop, is_start_block=True)
+    after1 = sdfg.add_state(label="after1")
+    after2 = sdfg.add_state(label="after2")
+    sdfg.add_edge(loop, after1, InterstateEdge())
+    sdfg.add_edge(after1, after2, InterstateEdge())
+
+    bstate = loop.add_state(label="b", is_start_block=True)
+    b_an = bstate.add_access("B")
+    t = bstate.add_tasklet(name="w", inputs={}, outputs={"_out"}, code="_out = i")
+    bstate.add_edge(t, "_out", b_an, None, Memlet(expr="B[i]"))
+
+    sdfg.validate()
+    sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
+
+    assert not [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+    src_nodes = {n for n in sdfg.nodes() if sdfg.in_degree(n) == 0}
+    dst_nodes = {n for n in sdfg.nodes() if sdfg.out_degree(n) == 0}
+    assert len(src_nodes) == 1 and len(dst_nodes) == 1
+    middle = set(sdfg.nodes()) - src_nodes - dst_nodes
+    assert all(sdfg.in_degree(n) == 1 and sdfg.out_degree(n) == 1 for n in middle)
+
+
 if __name__ == "__main__":
     test_if_block_inside_for()
     test_empty_loop()
@@ -209,3 +246,4 @@ if __name__ == "__main__":
     test_melt_kernel()
     test_triang_elim()
     test_replace_dict_inner_loop()
+    test_start_block_loop_with_successors()

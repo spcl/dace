@@ -687,8 +687,14 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         write = self._find_dominating_write(desc, state, read_node, access_nodes, idom_dict,
                                                             access_sets)
                         result[desc][write].add((state, read_node))
-                # Ensure accesses to interstate edges are also considered.
+                # Ensure accesses to interstate edges are also considered. ``access_sets`` spans every
+                # SDFG, but ``idom_dict`` is built only for the current one; a foreign block whose SDFG
+                # happens to declare an identically-named array (e.g. two cloned NestedSDFGs after loop
+                # fission) would otherwise walk up into a region absent from ``idom_dict``. Restrict to
+                # blocks this SDFG owns.
                 for block, accesses in access_sets.items():
+                    if block.sdfg is not sdfg:
+                        continue
                     if desc in accesses[0]:
                         out_edges = block.parent_graph.out_edges(block)
                         for oedge in out_edges:

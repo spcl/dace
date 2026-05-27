@@ -128,14 +128,19 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
 
 
 def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> Optional[subsets.Range]:
-    """Widen ``subset`` -- which uses ``loop_var`` linearly -- over the
-    iteration range ``[start, end]``."""
+    """Widen the dimensions of ``subset`` that use ``loop_var`` linearly over the
+    iteration range ``[start, end]``. Dimensions that do not involve ``loop_var``
+    -- e.g. the outer index ``jl`` in a per-row inner reduction ``arr[jl, jm]``
+    over ``jm`` -- are kept as-is; only the reduction axis is expanded."""
     if not isinstance(subset, subsets.Range):
         return None
     ranges = []
     for rb, re_, rs in subset.ndrange():
         if rb != re_ or rs != 1:
             return None
+        if loop_var not in symbolic.pystr_to_symbolic(str(rb)).free_symbols:
+            ranges.append((rb, re_, 1))  # dimension independent of the reduction axis
+            continue
         offset = symbolic.simplify(rb - loop_var)
         if offset.has(loop_var):
             return None
@@ -345,18 +350,39 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             else:
                 resolved.append((src.data, e.data.subset))
 
+        # An accumulator input must be loop-carried: the data it resolves to is
+        # written somewhere inside the loop, so its value flows from a previous
+        # iteration. This is what makes ``acc = acc op x`` a reduction and what
+        # distinguishes a genuine carried accumulator (possibly read via a
+        # scalar-equivalent staging copy) from a loop-invariant scalar that merely
+        # happens to be scalar-equivalent to the write target -- e.g. the scaled
+        # scatter ``out_slice = arr[jl, jk] * zq`` with ``zq = 1/ptsphy`` hoisted
+        # out of the loop, which is NOT a reduction.
+        carried = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
         accum_ok = False
         array, arr_subset = None, None
+        carried_accum, carried_sub = None, None
         for name, sub in resolved:
             if _uses(sub, loop_var_sym):
                 if array is not None:
                     return None
                 array, arr_subset = name, sub
-            elif _one_elem(sub) == 1 and ((name == accum and sub == write_subset) or
-                                          (name != accum and _scalar_equiv(sdfg, name, accum))):
+            elif (_one_elem(sub) == 1 and name in carried and ((name == accum and sub == write_subset) or
+                                                               (name != accum and _scalar_equiv(sdfg, name, accum)))):
                 accum_ok = True
+                carried_accum, carried_sub = name, sub
         if not accum_ok or array is None or array == accum:
             return None
+
+        # The loop's carried accumulator -- the scalar that survives across
+        # iterations and that downstream code reads -- may differ from the tasklet's
+        # write target when the frontend stages the update through a temp (``tmp =
+        # acc + a[i]; acc = tmp``). Reduce into that carried accumulator, not the
+        # loop-local temp: it already holds the pre-loop seed, so the seeded
+        # ``Reduce`` (identity=None) folds into it correctly, and dropping the temp
+        # is safe because it does not outlive the loop body.
+        if carried_accum is not None and carried_accum != accum:
+            accum, write_subset = carried_accum, carried_sub
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end)
         if expanded is None:

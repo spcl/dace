@@ -98,6 +98,48 @@ def test_frontend_augassign_array_slice_is_lifted():
     assert str(out_edge.data.subset) in {"3", "3:4", "3:3"}
 
 
+@dace.program
+def _frontend_per_row_inner_reduction(acc: dace.float64[N], B: dace.float64[N, M]):
+    for jl in range(N):
+        for jm in range(M):
+            acc[jl] += B[jl, jm]
+
+
+def test_per_row_inner_reduction_multidim_is_lifted():
+    """Per-row inner reduction ``acc[jl] += B[jl, jm]`` over ``jm`` (the CloudSC
+    ZQPRETOT shape: ``for jl: for jm: zqpretot[jl] += zpfplsx[jl, jm]``).
+
+    The reduced array ``B[jl, jm]`` is 2-D, so the lift must expand ONLY the
+    reduction axis ``jm`` -- ``B[jl, 0:M]`` -- and keep the outer ``jl`` index
+    as-is. Regression for ``_expand_over_loop`` previously rejecting any subset
+    with a dimension independent of the reduction axis (it computed
+    ``jl - jm`` for the ``jl`` dimension and bailed)."""
+    import numpy as np
+    sdfg = _frontend_per_row_inner_reduction.to_sdfg(simplify=True)
+    sdfg.validate()
+    assert _count_loops(sdfg) >= 2  # outer jl + inner jm
+
+    lifted = LoopToReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert lifted and lifted >= 1
+    _assert_single_sum_reduce_identity_none(sdfg)
+    # The inner jm loop is gone; the per-row outer jl loop survives around the Reduce.
+    assert _count_loops(sdfg) == 1
+
+    reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    (red, state) = reduces[0]
+    (out_edge, ) = state.out_edges(red)
+    assert out_edge.data.data == "acc"
+
+    # Value-preserving: acc[jl] = sum_jm B[jl, jm].
+    n, m = 6, 4
+    b = np.random.rand(n, m)
+    acc = np.zeros(n)
+    sdfg(acc=acc, B=b.copy(), N=n, M=m)
+    assert np.allclose(acc, b.sum(axis=1))
+
+
 def _build_interstate_reduction_sdfg(offset_expr: str):
     """Loop body = 2 empty states + interstate edge ``{accum: accum + B[<offset>]}``."""
     sdfg = dace.SDFG(f"interstate_sum_{offset_expr.replace(' ', '').replace('-', 'm')}")

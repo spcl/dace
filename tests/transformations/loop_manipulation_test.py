@@ -80,7 +80,53 @@ def test_peeling_end():
     assert np.allclose(B, reg)
 
 
+def test_peeling_end_no_loop_symbol_leak():
+    """Back-peeling must anchor each peeled iteration on the concrete loop end
+    (``end``, ``end - stride``, ...) rather than the loop variable. Otherwise the
+    loop-defined iteration symbol stays live in the peeled-after region, which
+    blocks downstream LoopToMap. Peel a symbolic-bound loop and assert the loop
+    variable does not appear in any peeled-after interstate edge or block."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def symbolic_loop(A: dace.float64[N], B: dace.float64[N]):
+        for i in range(N):
+            A[i] = B[i] * 2.0
+
+    sdfg: dace.SDFG = symbolic_loop.to_sdfg(simplify=True)
+    loop = next(n for n in sdfg.nodes() if isinstance(n, dace.sdfg.state.LoopRegion))
+    loop_var = loop.loop_variable
+    # Symbolic-bound loops are rejected by LoopUnroll's constant-size gate, so peel
+    # directly with ``verify=False`` (the same path BestEffortLoopPeeling uses), and
+    # keep the peeled iterations as distinct regions so the symbol-leak contract is
+    # inspectable.
+    LoopPeeling().apply_to(sdfg=sdfg,
+                           loop=loop,
+                           verify=False,
+                           options={'count': 2, 'begin': False, 'inline_iterations': False})
+
+    # The peeled iterations are the control-flow regions added after the remainder loop.
+    peeled = [n for n in sdfg.nodes() if isinstance(n, dace.sdfg.state.ControlFlowRegion) and n is not loop]
+    assert peeled, 'back-peel must produce peeled-after regions'
+    for region in peeled:
+        for edge in region.all_interstate_edges():
+            assert loop_var not in edge.data.free_symbols, \
+                f'peeled region {region.label} leaks loop symbol {loop_var}'
+        for state in region.all_states():
+            for e in state.edges():
+                if e.data.data is not None:
+                    assert loop_var not in set(map(str, e.data.subset.free_symbols)), \
+                        f'peeled subset in {region.label} leaks loop symbol {loop_var}'
+
+    A = np.random.rand(8)
+    B = np.random.rand(8)
+    ref = B * 2.0
+    sdfg(A=A, B=B, N=8)
+    assert np.allclose(A, ref)
+
+
 if __name__ == '__main__':
     test_unroll()
     test_peeling_start()
     test_peeling_end()
+    test_peeling_end_no_loop_symbol_leak()

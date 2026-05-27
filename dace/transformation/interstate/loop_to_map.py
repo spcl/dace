@@ -173,6 +173,13 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
     for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
         if b1 != e1 or b2 != e2:  # non-point range dimension: cannot decide here
             continue
+        # Both writes index this dimension by the same injective function of the
+        # iteration variable: a collision there forces the two iterations equal,
+        # so the writes can only coincide within one iteration (ordered by program
+        # order in the map body), never across distinct iterations.
+        coeffs = _affine_coeffs(b1, itersym)
+        if coeffs is not None and coeffs[0] != 0 and sp.simplify(b1 - b2) == 0:
+            return False
         if _dim_provably_disjoint(b1, b2, itersym):
             return False
     return True
@@ -193,15 +200,19 @@ class LoopToMap(xf.MultiStateTransformation):
         return [sdutil.node_path_graph(cls.loop)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+
+        def refuse(reason: str) -> bool:
+            """Log why this loop stays sequential (keyed by loop label) and refuse."""
+            print(f"LoopToMap refused [{self.loop.label}]: {reason}")
+            return False
+
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
-            print(
-                f"Cannot apply: Loop information incomplete - start={start}, end={end}, step={step}, itervar={itervar}")
-            return False
+            return refuse(f"loop information incomplete - start={start}, end={end}, step={step}, itervar={itervar}")
 
         sset = {}
         sset.update(sdfg.symbols)
@@ -210,21 +221,18 @@ class LoopToMap(xf.MultiStateTransformation):
         # We may only convert something to map if the bounds are all integer-derived types. Otherwise most map schedules
         # except for sequential would be invalid.
         if not t in dtypes.INTEGER_TYPES:
-            print(f"Cannot apply: Loop bounds are not integer types - result_type={t}")
-            return False
+            return refuse(f"loop bounds are not integer types - result_type={t}")
 
         # Loops containing break, continue, or returns may not be turned into a map.
         for blk in self.loop.all_control_flow_blocks():
             if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
                 if not permissive:
-                    print(f"Cannot apply: Loop contains {type(blk).__name__}")
-                    return False
+                    return refuse(f"loop body contains a {type(blk).__name__}")
 
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
-                print(f"Cannot apply: Expression contains sympy functions - expr={expr}")
-                return False
+                return refuse(f"bound expression reads a non-scalar data container - expr={expr}")
 
         # Refuse when the loop's range (start/end/step) references a symbol
         # that the loop body itself defines via an interstate-edge
@@ -243,7 +251,7 @@ class LoopToMap(xf.MultiStateTransformation):
         for e in self.loop.all_interstate_edges():
             body_assigned_syms.update(e.data.assignments.keys())
         if range_syms & body_assigned_syms:
-            return False
+            return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
         _, write_set = self.loop.read_and_write_sets()
         loop_states = set(self.loop.all_states())
@@ -252,8 +260,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # Cannot have StructView in loop body
         for loop_state in loop_states:
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
-                print(f"Cannot apply: Loop contains StructureView in state {loop_state}")
-                return False
+                return refuse(f"loop body contains a StructureView in state {loop_state}")
 
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(
@@ -277,10 +284,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     if not k in fsyms:
                         assigned_symbols.add(k)
                 if assigned_symbols & used_before_assignment:
-                    print(
-                        f"Cannot apply: Symbol read before assignment - symbols={assigned_symbols & used_before_assignment}"
-                    )
-                    return False
+                    return refuse("carried symbol dependency - "
+                                  f"{assigned_symbols & used_before_assignment} read before being assigned")
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
 
@@ -317,7 +322,8 @@ class LoopToMap(xf.MultiStateTransformation):
                             # cannot race with another iteration's write.
                             dst_subset = e.data.get_dst_subset(e, state)
                             if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
-                                return False
+                                return refuse(f"dynamic write to {dn.data} is not indexed by the iteration variable "
+                                              f"- dst_subset={dst_subset}")
                         if e.data is None:
                             continue
 
@@ -334,9 +340,8 @@ class LoopToMap(xf.MultiStateTransformation):
                             if not ok and isinstance(e.src, nodes.NestedSDFG):
                                 ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
                             if not ok and not permissive:
-                                print(
-                                    f"Cannot apply: Write pattern check failed for {dn.data} - dst_subset={dst_subset}")
-                                return False
+                                return refuse(f"write to {dn.data} is not uniquely indexed by the iteration variable "
+                                              f"(needs an a*i+b subset) - dst_subset={dst_subset}")
                         # End of check
 
                         write_memlets[dn.data].append(e.data)
@@ -356,9 +361,8 @@ class LoopToMap(xf.MultiStateTransformation):
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
                     if _writes_may_overlap(reps[x], reps[y], itersym) and not permissive:
-                        print(f"Cannot apply: writes {reps[x].subset} and {reps[y].subset} "
-                              f"to {data} may overlap across iterations")
-                        return False
+                        return refuse(f"writes {reps[x].subset} and {reps[y].subset} to {data} "
+                                      "may overlap across iterations")
 
         # After looping over relevant writes, consider reads that may overlap
         for state in loop_states:
@@ -376,10 +380,8 @@ class LoopToMap(xf.MultiStateTransformation):
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
                                                      e.data, src_subset):
-                            print(
-                                f"Cannot apply: Read-write conflict detected for {data} in state - src_subset={src_subset}"
-                            )
-                            return False
+                            return refuse(f"read-after-write conflict on {data} within the loop body "
+                                          f"- src_subset={src_subset}")
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
         isread_set: Set[memlet.Memlet] = set()
@@ -389,9 +391,8 @@ class LoopToMap(xf.MultiStateTransformation):
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
-                    print(
-                        f"Cannot apply: Read-write conflict in inter-state edge for {mmlt.data} - subset={mmlt.subset}")
-                    return False
+                    return refuse(f"read-after-write conflict on {mmlt.data} via an inter-state edge "
+                                  f"- subset={mmlt.subset}")
 
         # Check that the iteration variable and other symbols are not used on other edges or blocks before they are
         # reassigned.
@@ -401,10 +402,8 @@ class LoopToMap(xf.MultiStateTransformation):
         reassigned_symbols: Set[str] = None
         for oe in graph.out_edges(self.loop):
             if symbols_that_may_be_used & oe.data.read_symbols():
-                print(
-                    f"Cannot apply: Loop symbols used in outgoing edge - symbols={symbols_that_may_be_used & oe.data.read_symbols()}"
-                )
-                return False
+                return refuse("loop-defined symbol(s) used after the loop on its outgoing edge - "
+                              f"{symbols_that_may_be_used & oe.data.read_symbols()}")
             # Check for symbols that are set by all outgoing edges
             # TODO: Handle case of subset of out_edges
             if reassigned_symbols is None:
@@ -424,19 +423,15 @@ class LoopToMap(xf.MultiStateTransformation):
 
             # Check state contents
             if symbols_that_may_be_used & block.free_symbols:
-                print(
-                    f"Cannot apply: Loop symbols used in block {block} - symbols={symbols_that_may_be_used & block.free_symbols}"
-                )
-                return False
+                return refuse(f"loop-defined symbol(s) used after the loop in block {block} - "
+                              f"{symbols_that_may_be_used & block.free_symbols}")
 
             # Check inter-state edges
             reassigned_symbols = None
             for e in block.parent_graph.out_edges(block):
                 if symbols_that_may_be_used & e.data.read_symbols():
-                    print(
-                        f"Cannot apply: Loop symbols used in inter-state edge after loop - symbols={symbols_that_may_be_used & e.data.read_symbols()}"
-                    )
-                    return False
+                    return refuse("loop-defined symbol(s) used after the loop on an inter-state edge - "
+                                  f"{symbols_that_may_be_used & e.data.read_symbols()}")
 
                 # Check for symbols that are set by all outgoing edges
                 # TODO: Handle case of subset of out_edges
@@ -466,7 +461,17 @@ class LoopToMap(xf.MultiStateTransformation):
             # If pointers are involved, give up
             return False
         if not _check_range(src_subset, a, itersym, b, step):
-            return False
+            # ``_check_range`` only accepts reads that MOVE with the iteration
+            # (some dimension ``a*i + b``, ``|a| >= 1``). A read that uses the
+            # iteration symbol but does not match that affine form is
+            # conservatively a conflict. But a loop-INVARIANT read (no iteration
+            # symbol at all) is only a conflict if it actually overlaps a write:
+            # ``a[0]`` is safe when the loop writes ``a[1:N]`` (the post-peel
+            # ``a[i] = a[0] + b[i]`` remainder), and is a real read-after-write
+            # only when it overlaps the write (``a[0]`` vs ``a[0:N]``). Defer
+            # both to the propagated-overlap check below.
+            if itersym in src_subset.free_symbols:
+                return False
 
         # Always use the source data container for the memlet test
         if state is not None and edge is not None:

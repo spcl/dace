@@ -99,8 +99,13 @@ class LoopPeeling(LoopUnroll):
             # Create states for loop subgraph
             peeled_iterations: List[ControlFlowRegion] = []
             for i in reversed(range(self.count)):
-                # Instantiate loop contents as a new control flow region with iterate value.
-                current_index = pystr_to_symbolic(self.loop.loop_variable) + (i * stride)
+                # Instantiate loop contents as a new control flow region with a concrete iterate
+                # value anchored on the loop end (``end``, ``end - stride``, ...), never on the loop
+                # variable itself: the peeled iterations run after the loop, so referencing the loop
+                # variable there would leave a loop-defined symbol live past the loop and block
+                # downstream LoopToMap. ``i`` counts down, so ``end - (count - 1 - i) * stride``
+                # yields ascending values that pick up exactly where the shortened loop stops.
+                current_index = end - (self.count - 1 - i) * stride
                 is_symbolic |= symbolic.issymbolic(current_index)
                 iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                    str(i) if is_symbolic else None)

@@ -103,22 +103,19 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert oe.dst in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # If we remove start block we need to update the new start-block
+        # If we removed the region's start block, its replacement is the head of the
+        # unrolled chain (``unrolled_iterations[0]``), which carries the loop's former
+        # in-edges. Capture that head now: when the iteration regions are inlined below,
+        # the first one is spliced out and replaced by its own internal start block
+        # (added to ``graph`` as-is), which is then the chain head. (The previous logic
+        # promoted the loop's *successor* instead, severing the chain whenever the loop
+        # preceded sibling blocks.)
         was_start_block = graph.start_block == self.loop
-        oes = graph.out_edges(self.loop)
-        graph.remove_node(self.loop)
+        new_start_block = None
         if was_start_block:
-            if len(oes) > 0:
-                oe = oes[0]
-                oes2 = graph.out_edges(oe.dst)
-                graph.remove_node(oe.dst)
-                assert len(oes2) <= 1
-                if len(oes2) == 1:
-                    graph.add_node(oe.dst, is_start_block=True)
-                    for oe2 in oes2:
-                        graph.add_edge(oe.dst, oe2.dst, copy.deepcopy(oe2.data))
-                else:
-                    graph.add_node(oe.dst, is_start_block=True)
+            head = unrolled_iterations[0]
+            new_start_block = head.start_block if (self.inline_iterations and not isinstance(head, SDFGState)) else head
+        graph.remove_node(self.loop)
 
         if self.inline_iterations:
             for it in unrolled_iterations:
@@ -126,6 +123,12 @@ class LoopUnroll(xf.MultiStateTransformation):
                 if isinstance(it, SDFGState):
                     continue
                 it.inline()
+
+        # Re-designate the start block explicitly so the region's start stays
+        # unambiguous (inlining the former start region leaves the previous start-block
+        # index stale).
+        if was_start_block and new_start_block in graph.nodes():
+            graph.start_block = graph.node_id(new_start_block)
 
     def instantiate_loop_iteration(self,
                                    graph: ControlFlowRegion,

@@ -68,6 +68,11 @@ def _ncond_blocks(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
 
 
+def _nreduce(sdfg):
+    from dace.libraries.standard.nodes.reduce import Reduce
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
+
+
 # ----------------------------------------------------------------------
 # ICON solve_nonhydro: per-jb bound + invariant istep guard + sibling
 # inner loops. Distilled from mo_solve_nonhydro.f90:540-616.
@@ -369,26 +374,26 @@ def _cloudsc_iphase_oracle(args):
 
 
 def test_cloudsc_iphase_shape_structure():
-    """The outer ``JM`` loop must STAY a ``LoopRegion`` (the per-JM
-    guards ``iphase[jm] == 1`` and ``iphase[jm] == 2`` make it
-    sequential by data-dependence) and the 2 phase guards must SURVIVE
-    (correct refusal: cascade-up cannot lift a guard whose condition
-    reads a per-iteration array). The 4 sibling JL loops fuse to ≤3
-    Maps after MoveIfIntoLoop-style co-location.
-
-    Additionally: per-JM symbol assignments computed via tasklet
-    (``iphase_index = iphase[jm]``) are expected to appear inside the
-    JM loop body -- cascade-up correctly refuses to hoist them out
-    (rhs is a per-iteration array read).
+    """The outer ``JM`` loop stays sequential. ``tendency_t[jl] += c(jm) *
+    fluxq[jl, jm]`` accumulates over ``JM`` into a per-``JL`` location, but it is
+    only ONE statement of the multi-statement ``JM`` body (alongside the
+    ``fluxq`` write, the two phase guards, and the ``tendency_cld`` write).
+    ``loop_to_reduce`` recognises only single-statement accumulator loops, so it
+    cannot lift this reduction without loop fission first isolating it -- and the
+    front-loaded recipe runs ``loop_to_reduce`` before fission. So ``JM`` remains
+    a ``LoopRegion`` and the four inner ``JL`` statements become Maps. The two
+    per-``JM`` phase guards (``iphase[jm] == 1`` / ``== 2``) survive as
+    ``ConditionalBlock`` s (their condition reads a per-iteration array).
+    Correctness is pinned numerically by ``test_cloudsc_iphase_shape_e2e``.
     """
     sdfg = cloudsc_iphase_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) == 1, (f'outer JM must stay sequential (data-dependent phase guards); '
-                                f'got {_nloops(sdfg)} loops')
+    assert _nloops(sdfg) == 1, (f'outer JM stays sequential (multi-statement reduction, not isolated '
+                                f'pre-fission); got {_nloops(sdfg)} loops')
     assert _ncond_blocks(sdfg) == 2, (f'both IPHASE phase guards must survive (correct refusal); '
                                       f'got {_ncond_blocks(sdfg)} conditionals')
-    assert _nmaps(sdfg) <= 4, f'too many residual maps for 4 JL siblings: {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) <= 4, f'too many residual maps for the 4 JL statements: {_nmaps(sdfg)}'
 
 
 def test_cloudsc_iphase_shape_e2e():
@@ -568,21 +573,28 @@ def _zqpretot_oracle(args, zepsec):
 
 
 def test_cloudsc_zqpretot_data_guard_shape_structure():
-    """Refusal contract: the data-dependent guard ``IF (ZQPRETOT(JL) <
-    ZEPSEC)`` must stay where it is. After canonicalize:
+    """The accumulator + data-guarded reset both parallelize. After
+    canonicalize:
 
-    * The outer JL loop CAN become a Map (the body's reads/writes are
-      per-JL; the inner JM reduction is sequential).
-    * The inner JM accumulator stays a LoopRegion (sequential reduction
-      writing to a per-JL scalar).
-    * The data guard ConditionalBlock is preserved (correct refusal --
-      its condition reads ``zqpretot[jl]`` per JL).
+    * The outer JL loop becomes a Map (per-JL reads/writes).
+    * The inner JM reduction ``zqpretot[jl] += zpfplsx[jl, jm]`` is a clean
+      single-statement accumulator, so ``loop_to_reduce`` lifts it to a
+      ``Reduce`` library node (reducing ``zpfplsx[jl, 0:M]`` over the JM axis
+      into ``zqpretot[jl]``) -- one Map plus one Reduce, no residual loop.
+    * The data-dependent guard ``IF (ZQPRETOT(JL) < ZEPSEC)`` still SURVIVES
+      as a ``ConditionalBlock`` (correct refusal -- its condition reads
+      ``zqpretot[jl]`` per JL).
+
+    Correctness (including the guard branching both ways) is pinned
+    numerically by ``test_cloudsc_zqpretot_data_guard_shape_e2e``.
     """
     sdfg = cloudsc_zqpretot_data_guard_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'expected outer JL as a Map, got {_nmaps(sdfg)} maps'
-    assert _nloops(sdfg) >= 1, (f'inner JM reduction must stay as a LoopRegion, got {_nloops(sdfg)} loops')
+    assert _nmaps(sdfg) == 1, f'expected the JL nest as one Map, got {_nmaps(sdfg)} maps'
+    assert _nreduce(sdfg) == 1, f'inner JM accumulator must lift to a Reduce node, got {_nreduce(sdfg)}'
+    assert _nloops(sdfg) == 0, (f'both the JL nest and the JM reduction should parallelize, '
+                                f'got {_nloops(sdfg)} residual loops')
     assert _ncond_blocks(sdfg) == 1, (f'data-dependent guard must survive (correct refusal); '
                                       f'got {_ncond_blocks(sdfg)} conditionals')
 
@@ -659,12 +671,20 @@ def test_cloudsc_nssopt_config_chain_shape_e2e():
 
 def _run_canonicalize_pre_parallelize(kernel):
     """Drive the canonicalize pipeline up to (but not through) the
-    parallelize stage, so the loop body has the shape MLIU expects to
-    see (post fission / normalize / ssa / cascade-up)."""
+    post-fission ``parallelize`` stage, so the loop body has the shape MLIU
+    expects to see (post fission / normalize / ssa / cascade-up).
+
+    The front-loaded recipe has TWO ``parallelize`` stages -- an early
+    ``LoopToMap`` (right after the reduction recipe, before fission) and the
+    post-fission one. Stop before the LAST: the early ``LoopToMap`` has already
+    turned the fully-parallel inner nests into Maps, leaving the per-``jb`` loop
+    with its still-invariant ``istep`` guard for MLIU to hoist."""
     from dace.transformation.passes.canonicalize.pipeline import _build_stages
     sdfg = kernel.to_sdfg(simplify=True)
-    for label, unit in _build_stages():
-        if label == 'parallelize':
+    stages = _build_stages()
+    last_parallelize = max(i for i, (label, _) in enumerate(stages) if label == 'parallelize')
+    for i, (label, unit) in enumerate(stages):
+        if i == last_parallelize:
             break
         unit.apply_pass(sdfg, {})
     return sdfg

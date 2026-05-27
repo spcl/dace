@@ -1,55 +1,77 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-shot pipeline that turns sequential loops into parallel maps.
 
-The recipe is the set of pre-passes that lead up to ``LoopToMap`` (and
-``LoopToMap`` itself), applied once in order:
+It composes standalone passes in order, applied once:
 
-1. :class:`~dace.transformation.passes.scalar_fission.PrivatizeScalars` --
-   privatize loop-local (thread-local) scalars so a loop body no longer carries
-   a false scalar dependency across iterations.
-2. ``TrivialTaskletElimination`` -- drop the ``__out = __inp`` copy tasklets the
-   frontend emits, exposing the bare read-modify-write spine of accumulators.
-3. ``AugAssignToWCR`` -- rewrite ``arr[S] += x`` (including the frontend's
-   copy-wrapped form) into a write-conflict-resolution write, so the reduction
-   loop's write is no longer iteration-indexed and ``LoopToMap`` may map it.
-4. :class:`~dace.transformation.passes.loop_to_reduce.LoopToReduce` -- lift the
-   pure accumulator loops that remain to ``Reduce`` library nodes.
-5. ``LoopToMap`` -- parallelize every loop that is now free of loop-carried
-   dependencies.
+0a. :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll` --
+    fully unroll constant-trip loops with ``<= unroll_limit`` iterations, so small
+    recurrence / reduction loops become inline straight-line code rather than
+    atomically-parallelized maps.
+0b. :class:`~dace.transformation.passes.parallelization_prep.BestEffortLoopPeeling`
+    -- search front/back/both peels of 1..``peel_limit`` boundary iterations, keep
+    the one that unblocks the most maps, revert if none helps. Runs before scalar
+    fission so the freshly-introduced straight-line bodies' scalars get renamed.
+1.  ``PrivatizeScalars`` -- privatize loop-local scalars (drop false carried deps).
+2.  ``SymbolPropagation`` + ``ConstantPropagation`` -- peeling / unrolling fold
+    concrete iteration indices into the bodies; propagating them simplifies
+    bounds and conditions enough to expose more maps.
+3.  ``TrivialTaskletElimination`` -- drop the ``__out = __inp`` copy tasklets the
+    frontend emits, exposing the bare read-modify-write spine of accumulators.
+4.  ``AugAssignToWCR`` -- rewrite ``arr[S] += x`` (incl. the copy-wrapped form)
+    into a write-conflict-resolution write so the reduction loop maps.
+5.  ``LoopToReduce`` -- lift pure accumulator loops to ``Reduce`` library nodes.
+6.  ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
 
-The pipeline is meant to run **after** ``simplify`` and **once**: every stage is
-either idempotent or internally exhaustive (``PatternMatchAndApplyRepeated``),
-so there is nothing to re-apply. It is modelled on the canonicalization pipeline
-rather than :class:`~dace.transformation.pass_pipeline.Pipeline` because the
-latter forbids re-using a pass type (``PatternMatchAndApplyRepeated`` appears
-several times) and would re-run stages on its fixed-point logic.
+The pipeline runs once: every stage is idempotent or internally exhaustive, so
+there is nothing to re-apply. It is modelled on the canonicalization pipeline
+(a single-shot ``ppl.Pass``) rather than ``Pipeline``/``FixedPointPipeline``,
+which would forbid re-using a pass type and re-run on a fixed-point loop.
+
+Transformation classes are imported lazily inside ``apply_pass``: importing them
+at module load would cycle (this module is imported by
+``dace.transformation.passes`` whose subpackages those transformations import).
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll, DEFAULT_PEEL_LIMIT,
+                                                             DEFAULT_UNROLL_LIMIT)
 
 
 @properties.make_properties
 class ParallelizePipeline(ppl.Pass):
     """Parallelize an SDFG's loops, lifting reductions on the way.
 
-    Applies the parallelization recipe once, imperatively. The pipeline does not
-    re-run: each stage is internally exhaustive or idempotent.
+    Composes the parallelization passes once, imperatively. Does not re-run.
 
     :param validate: Validate the SDFG once at the end.
     :param validate_all: Validate the SDFG after each stage.
+    :param unroll_limit: Forwarded to :class:`ShortLoopUnroll` (0 disables).
+    :param peel_limit: Forwarded to :class:`BestEffortLoopPeeling` (0 disables).
     """
 
     CATEGORY: str = 'Optimization Preparation'
 
     validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Validate the SDFG after each stage.')
+    unroll_limit = properties.Property(dtype=int,
+                                       default=DEFAULT_UNROLL_LIMIT,
+                                       desc='See ShortLoopUnroll (0 disables).')
+    peel_limit = properties.Property(dtype=int,
+                                     default=DEFAULT_PEEL_LIMIT,
+                                     desc='See BestEffortLoopPeeling (0 disables).')
 
-    def __init__(self, validate: bool = False, validate_all: bool = False):
+    def __init__(self,
+                 validate: bool = False,
+                 validate_all: bool = False,
+                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+                 peel_limit: int = DEFAULT_PEEL_LIMIT):
         self.validate = validate
         self.validate_all = validate_all
+        self.unroll_limit = unroll_limit
+        self.peel_limit = peel_limit
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -60,29 +82,39 @@ class ParallelizePipeline(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Parallelize ``sdfg`` in place.
-
-        :param sdfg: The SDFG to parallelize.
-        :returns: The number of stages applied.
-        """
-        # Imported lazily: ``passes/__init__`` imports this module, so a
-        # module-level ``from dace.transformation.interstate import LoopToMap``
-        # would form an import cycle (``interstate`` -> ``passes`` -> here ->
-        # ``interstate``) that breaks a cold ``from interstate import LoopToMap``.
-        from dace.transformation.dataflow import AugAssignToWCR, TrivialTaskletElimination
-        from dace.transformation.interstate import LoopToMap
+    def _stages(self) -> List[ppl.Pass]:
+        from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+        from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.constant_propagation import ConstantPropagation
         from dace.transformation.passes.loop_to_reduce import LoopToReduce
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
-
-        stages = [
+        from dace.transformation.passes.symbol_propagation import SymbolPropagation
+        return [
+            # Loop-structure transforms first (unroll, peel; reversal lives inside
+            # peeling). Then symbol/constant propagation folds the constant
+            # iteration values and guard symbols those expose -- it must run after
+            # them, not before. The rest (privatize, trivial-tasklet, AugWCR,
+            # reduce, loop-to-map) is order-insensitive to propagation.
+            ShortLoopUnroll(self.unroll_limit),
+            BestEffortLoopPeeling(self.peel_limit),
+            SymbolPropagation(),
+            ConstantPropagation(),
             PrivatizeScalars(),
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
             PatternMatchAndApplyRepeated([AugAssignToWCR()]),
             LoopToReduce(),
             PatternMatchAndApplyRepeated([LoopToMap()]),
         ]
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Parallelize ``sdfg`` in place.
+
+        :param sdfg: The SDFG to parallelize.
+        :returns: The number of stages applied.
+        """
+        stages = self._stages()
         for stage in stages:
             stage.apply_pass(sdfg, {})
             if self.validate_all:
@@ -92,7 +124,11 @@ class ParallelizePipeline(ppl.Pass):
         return len(stages)
 
 
-def parallelize(sdfg: SDFG, validate: bool = True, validate_all: bool = False) -> SDFG:
+def parallelize(sdfg: SDFG,
+                validate: bool = True,
+                validate_all: bool = False,
+                unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+                peel_limit: int = DEFAULT_PEEL_LIMIT) -> SDFG:
     """Parallelize ``sdfg``'s loops in place and return it.
 
     One-call recipe meant to run after ``simplify``.
@@ -100,7 +136,10 @@ def parallelize(sdfg: SDFG, validate: bool = True, validate_all: bool = False) -
     :param sdfg: The SDFG to parallelize.
     :param validate: Validate the SDFG after parallelization.
     :param validate_all: Validate the SDFG after each stage.
+    :param unroll_limit: See :class:`ShortLoopUnroll`.
+    :param peel_limit: See :class:`BestEffortLoopPeeling`.
     :returns: The same ``sdfg`` instance, parallelized.
     """
-    ParallelizePipeline(validate=validate, validate_all=validate_all).apply_pass(sdfg, {})
+    ParallelizePipeline(validate=validate, validate_all=validate_all, unroll_limit=unroll_limit,
+                        peel_limit=peel_limit).apply_pass(sdfg, {})
     return sdfg
