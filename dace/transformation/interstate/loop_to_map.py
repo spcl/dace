@@ -268,6 +268,18 @@ class LoopToMap(xf.MultiStateTransformation):
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
         for block in in_order_loop_blocks:
+            # A symbol read in the block's own dataflow (a memlet subset such as
+            # ``b[im]``, or a tasklet) is read when the block executes -- before any
+            # symbol the block assigns on its out-edges. If the loop later reassigns
+            # such a symbol it is loop-carried (the read sees the previous
+            # iteration's value), so the loop is not independently parallelizable.
+            # The per-edge ``read_symbols()`` below only sees interstate-edge reads;
+            # this folds in the in-state reads it misses.
+            try:
+                block_reads = {str(s) for s in block.free_symbols}
+            except Exception:
+                block_reads = set()
+            used_before_assignment |= (block_reads - symbols_that_may_be_used)
             for e in block.parent_graph.out_edges(block):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
                 # see above call to `blockorder_topological_sort`)

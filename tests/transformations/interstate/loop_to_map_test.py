@@ -452,7 +452,15 @@ def test_symbol_array_mix_2(parallel):
     body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
 
     sdfg.apply_transformations_repeated([LoopLifting])
-    assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
+    # Both variants carry ``sym`` across iterations: the body reads ``sym``
+    # (``B[i] = sym``) before the loop-body edge reassigns it (``sym = A[i - 1]``),
+    # so each iteration observes the previous iteration's value. LoopToMap must
+    # refuse either way -- turning the loop into a Map pins ``sym`` to its
+    # loop-entry value (0.0) for every (now independent) iteration, silently
+    # computing ``B[i] = 0`` instead of ``B[i] = A[i - 2]``. The ``parallel``
+    # variant only adds an ``A[i]`` write; it does not remove the ``sym`` carry,
+    # so it is not actually parallelizable.
+    assert sdfg.apply_transformations(LoopToMap) == 0
 
 
 @pytest.mark.parametrize('overwrite', (False, True))

@@ -226,8 +226,8 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> Non
     loop.remove_node(child)
     if was_start and loop.nodes():
         # Pick any remaining node as the new start_block; if none remains,
-        # the caller will add an empty hull state.
-        loop.start_block = loop.nodes()[0]
+        # the caller will add an empty hull state. The setter takes a node ID.
+        loop.start_block = loop.node_id(loop.nodes()[0])
 
     parent.add_node(child)
     # Reroute parent's incoming edges into loop through child.

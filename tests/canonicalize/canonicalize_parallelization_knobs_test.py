@@ -390,8 +390,40 @@ def test_index_set_split_body_around_guard_knob_parallelizes():
     assert np.allclose(got, ref_A)
 
 
+@dace.program
+def _front_range_guard(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = B[i] * 2.0
+        if i < 2:
+            A[N - 1] = A[N - 1] + 1.0
+
+
+def test_loop_peeling_front_range_guard_knob_parallelizes():
+    """A *range* guard firing only on the first iterations (``if i < 2``) -- LLVM's
+    canonical 'peel to eliminate the comparison' case (distinct from the ``i == x``
+    equality split). With ``peel_limit>0`` the front iterations are peeled and the
+    now-dead ``i < 2`` guard pruned (a range contradiction over the remainder), so
+    the disjoint-write body maps. Value-preserving."""
+    off = _front_range_guard.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'range-guard loop must stay sequential without the knob'
+
+    on = _front_range_guard.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling must prune the i<2 guard and map the remainder'
+
+    A = np.arange(1, 9, dtype=np.float64)
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _front_range_guard.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=8)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref_A)
+
+
 if __name__ == '__main__':
     test_break_anti_dependence_knob_parallelizes()
+    test_loop_peeling_front_range_guard_knob_parallelizes()
     test_loop_peeling_front_conflict_knob_parallelizes()
     test_loop_peeling_back_conflict_knob_parallelizes()
     test_loop_peeling_multi_front_iter_knob_parallelizes()

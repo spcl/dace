@@ -384,6 +384,17 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         if carried_accum is not None and carried_accum != accum:
             accum, write_subset = carried_accum, carried_sub
 
+        # A pure reduction writes ONLY the accumulator (plus its loop-local
+        # staging temps). If the body also writes another, non-transient
+        # container -- e.g. the per-iteration scan output ``b[i] = sum`` in
+        # ``sum = sum + a[i]; b[i] = sum`` -- then the *running* accumulator
+        # value is observed every iteration; collapsing the loop to a single
+        # ``Reduce`` would drop that output and silently corrupt it. Refuse.
+        written = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
+        allowed = {accum, array} | ({carried_accum} if carried_accum is not None else set())
+        if any(w not in allowed and not sdfg.arrays[w].transient for w in written):
+            return None
+
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end)
         if expanded is None:
             return None
