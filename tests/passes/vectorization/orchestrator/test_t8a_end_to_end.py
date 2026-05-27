@@ -109,6 +109,25 @@ def test_k2_axpy_aligned_trip_matches_numpy():
     np.testing.assert_allclose(C, A + B, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("m,n", [(16, 32), (17, 20), (20, 17), (9, 9)])
+def test_k2_axpy_scalar_postamble_matches_numpy(m, n):
+    """K=2 axpy under ``remainder_strategy='scalar_postamble'`` matches numpy
+    across aligned + unaligned ``M x N`` trips. scalar_postamble is no longer
+    K=1-only: ``SplitMapForTileRemainder`` splits a per-dim divisible interior
+    (W-strided tiles) off from step-1 scalar boundary slabs, so a non-divisible
+    K>=2 trip vectorizes the interior and runs the boundary scalar."""
+    sdfg = _k2_axpy_sdfg(f"e2e_k2_axpy_scalar_{m}_{n}")
+    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR",
+                         remainder_strategy="scalar_postamble").apply_pass(sdfg, {})
+    sdfg.validate()
+    rng = np.random.default_rng(seed=m * 100 + n)
+    A = rng.random((m, n))
+    B = rng.random((m, n))
+    C = np.zeros((m, n))
+    sdfg(A=A, B=B, C=C, M=m, N=n)
+    np.testing.assert_allclose(C, A + B, rtol=0, atol=0)
+
+
 def test_k1_axpy_unaligned_trip_matches_numpy():
     """K=1 axpy on an unaligned trip — mask must zero the tail correctly.
 

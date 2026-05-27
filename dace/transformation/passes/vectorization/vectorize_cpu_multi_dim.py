@@ -188,17 +188,14 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                                       f"{{'merge', 'fp_factor'}}")
         # K-dependent knob support. K=1 covers every legacy knob variant (so the
         # 1D path can be dropped); K>=2 is the pure-lowered tile path and supports
-        # ONLY the merge branch with the full_mask / masked_tail remainder. A
-        # K=1-only knob (fp_factor / scalar_postamble) on a K>=2 tile raises
-        # loudly rather than silently degrading.
+        # the merge branch with any remainder strategy (full_mask / masked_tail /
+        # scalar_postamble — the scalar tail is split off per dim and stays a plain
+        # step-1 scalar loop). The fp_factor branch is still K=1-only (its float
+        # blend has no K-dim tile-op form yet).
         if len(widths) >= 2:
             if branch_mode != "merge":
                 raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} supports only "
                                           f"branch_mode='merge' (fp_factor is K=1-only); got {branch_mode!r}")
-            if remainder_strategy not in ("full_mask", "masked_tail"):
-                raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} supports only "
-                                          f"remainder full_mask/masked_tail (scalar_postamble is K=1-only); "
-                                          f"got {remainder_strategy!r}")
         elif branch_mode == "fp_factor" and remainder_strategy != "scalar_postamble":
             # K=1: fp_factor (c*x + (1-c)*y) can't combine with an iteration mask
             # cleanly (the legacy plan rule); it pairs with the scalar postamble.
