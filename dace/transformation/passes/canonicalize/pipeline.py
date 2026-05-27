@@ -127,10 +127,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     the end, then maps are fused. Returns ``(stage_label, pass)`` pairs with
     fresh instances each call.
 
-    ``SimplifyPass`` runs **only** at the very start, after the cleaning
-    passes (unique loop iterators, split tasklets, trivial-tasklet cleanup),
-    and once at the end -- never between transforming stages. Between-stage
-    structural cleanup is ``StateFusionExtended`` + ``InlineSDFG`` instead.
+    ``SimplifyPass`` runs at the very start, after the cleaning passes (unique
+    loop iterators, split tasklets, trivial-tasklet cleanup), once more right
+    after ``ShortLoopUnroll`` to collapse the redundant straight-line code an
+    unroll produces, and once at the end -- never otherwise between transforming
+    stages. Between-stage structural cleanup is ``StateFusionExtended`` +
+    ``InlineSDFG`` instead.
     ``LoopStridePermutation`` is an explicit no-op so the pipeline shape is
     honest and slottable.
     """
@@ -199,11 +201,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
           ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
     if unroll_limit > 0:
-        # UniqueLoopIterators must run AFTER unrolling: a fully-unrolled body is
-        # straight-line code, but the loops it *leaves* (and any the unroll cloned)
-        # must carry unique ``_loop_it_<N>`` names before ``loop_to_reduce`` reads
-        # them.
-        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+        # A fully-unrolled body is straight-line code riddled with redundant
+        # states, transients and copies; run ``SimplifyPass`` once right after the
+        # unroll to collapse those before the reduction recipe reads the body. The
+        # subsequent ``UniqueLoopIterators`` must then run AFTER both: the loops the
+        # unroll leaves (and any it cloned) must carry unique ``_loop_it_<N>`` names
+        # on the post-simplify structure before ``loop_to_reduce`` reads them.
+        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', SimplifyPass()), ('reduce', _uniq_unroll)]
     s += [('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation()),
           ('reduce', LoopToReduce())]
 
