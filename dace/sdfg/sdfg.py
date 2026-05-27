@@ -1427,20 +1427,17 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # Expand array-descriptor stride/shape/offset symbols into the free
-        # set. Without this, a ``ConditionalBlock`` guard or memlet subset
-        # referencing ``A[i, j]`` leaves the symbols used in ``A`` 's strides
-        # out of the computed free-symbol set, causing
-        # ``generate_nsdfg_header`` to emit a nested function signature
-        # missing those symbols, ceating an invalid SDFG.
+        # A used array needs its stride/shape/offset symbols in the free set, but a
+        # merely-declared one must not leak its shape symbol into the signature
+        # (issue #2382). ``read_and_write_sets`` already reports exactly the arrays
+        # that are used -- read or written, including those referenced only by a
+        # code-block guard/condition -- so expand the extent symbols of those alone.
         res_free, res_defined, res_before = result
         if with_contents:
-            for desc in self.arrays.values():
-                res_free |= {str(s) for s in desc.used_symbols(all_symbols)}
-            # Don't drag in symbols that are genuinely defined inside this
-            # SDFG (e.g., LoopRegion loop variables); keep only the ones
-            # outside ``defined_syms``.
-            res_free -= res_defined
+            read_set, write_set = self.read_and_write_sets()
+            for name in (read_set | write_set) & self.arrays.keys():
+                res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
