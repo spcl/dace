@@ -1119,8 +1119,9 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         """
         inner = istate.sdfg
         W = tuple(spec.widths)
-        subset = ", ".join(f"0:{w}" for w in W)
-        materialized: Dict[str, dace.nodes.AccessNode] = {}
+        K = len(W)
+        full_subset = ", ".join(f"0:{w}" for w in W)
+        materialized: Dict[object, dace.nodes.AccessNode] = {}
         for tasklet in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
             for e in list(istate.in_edges(tasklet)):
                 if not isinstance(e.src, dace.nodes.AccessNode):
@@ -1131,15 +1132,40 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     continue
                 if cname not in nsdfg_node.in_connectors and cname not in nsdfg_node.out_connectors:
                     continue
-                if tuple(desc.shape) != W:
+                isub = e.data.subset
+                # Only a W-sized read is a tile operand. A whole-tile connector
+                # (shape == W, read at ``[0:W]``) is materialized once per
+                # connector; a stencil bounding-window connector (shape ``E+W``
+                # per dim, read at a SHIFTED sub-block ``[k:k+W]``) is a strided
+                # sub-block (its row stride is the window width, not W) that the
+                # contiguous-offset binop cannot address directly, so materialize
+                # each distinct sub-block into a contiguous tile (keyed by the
+                # offset). 1-D windows are contiguous so this is a no-op copy; K>=2
+                # windows genuinely need the stride-aware load.
+                sizes = isub.size()
+                if not (len(sizes) == K and all(bool(dace.symbolic.simplify(sz - w) == 0) for sz, w in zip(sizes, W))):
                     continue
-                if cname not in materialized:
-                    cls = self._box_classification(e.data.subset, desc, spec.iter_vars, cname)
+                is_whole = (tuple(desc.shape) == W
+                            and all(bool(dace.symbolic.simplify(b) == 0) for (b, _e, _s) in isub))
+                if is_whole:
+                    cls = self._box_classification(isub, desc, spec.iter_vars, cname)
+                    dim_strides = tuple(cls.dim_strides)
+                    src_dims = tuple(cls.match_dims)
+                    src_memlet = dace.Memlet(f"{cname}[{full_subset}]")
+                    key: object = cname
+                else:
+                    # Window sub-block: the connector's own (window) strides + the
+                    # recorded tile-lane permutation address it; coeff is 1.
+                    dim_strides = (1, ) * K
+                    src_dims = self._conn_match_dims.get(cname, tuple(range(K)))
+                    src_memlet = dace.Memlet(data=cname, subset=subsets.Range(list(isub.ranges)))
+                    key = (cname, tuple(str(b) for (b, _e, _s) in isub))
+                if key not in materialized:
                     tile_name = f"{cname}_ld"
-                    k = 0
+                    suffix = 0
                     while tile_name in inner.arrays:
-                        k += 1
-                        tile_name = f"{cname}_ld_{k}"
+                        suffix += 1
+                        tile_name = f"{cname}_ld_{suffix}"
                     inner.add_array(tile_name,
                                     list(W),
                                     desc.dtype,
@@ -1147,19 +1173,19 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                                     transient=True)
                     load = TileLoad(name=f"load_{cname}",
                                     widths=W,
-                                    dim_strides=tuple(cls.dim_strides),
-                                    src_dims=tuple(cls.match_dims),
+                                    dim_strides=dim_strides,
+                                    src_dims=src_dims,
                                     has_mask=mask_acc is not None)
                     istate.add_node(load)
-                    istate.add_edge(istate.add_access(cname), None, load, TileConnectors.SRC,
-                                    dace.Memlet(f"{cname}[{subset}]"))
-                    self._wire_mask(istate, mask_acc, load, subset)
+                    istate.add_edge(istate.add_access(cname), None, load, TileConnectors.SRC, src_memlet)
+                    self._wire_mask(istate, mask_acc, load, full_subset)
                     tile_acc = istate.add_access(tile_name)
-                    istate.add_edge(load, TileConnectors.DST, tile_acc, None, dace.Memlet(f"{tile_name}[{subset}]"))
-                    materialized[cname] = tile_acc
-                tile_acc = materialized[cname]
+                    istate.add_edge(load, TileConnectors.DST, tile_acc, None,
+                                    dace.Memlet(f"{tile_name}[{full_subset}]"))
+                    materialized[key] = tile_acc
+                tile_acc = materialized[key]
                 istate.remove_edge(e)
-                istate.add_edge(tile_acc, None, tasklet, e.dst_conn, dace.Memlet(f"{tile_acc.data}[{subset}]"))
+                istate.add_edge(tile_acc, None, tasklet, e.dst_conn, dace.Memlet(f"{tile_acc.data}[{full_subset}]"))
 
     def _route_output(self, istate: SDFGState, out_access: dace.nodes.AccessNode, out_conn,
                       nsdfg_node: dace.nodes.NestedSDFG, spec: TileDimSpec):
