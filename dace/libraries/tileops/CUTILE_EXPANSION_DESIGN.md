@@ -1,7 +1,7 @@
 # cuTile (`cuda.tile`) Expansion Design for Tile-Op Library Nodes
 
 Design for lowering the DaCe `tileops` library nodes to NVIDIA cuTile
-(`import cuda.tile as ct`). This document assesses every existing `cute`
+(`import cuda.tile as ct`). This document assesses every existing `cutile`
 expansion against cuTile's actual capabilities, specifies the corrected
 emitted body shape per node (K=1 and K>=2), and states where each node's
 mask is applied. It is a design only — no code is changed by this file.
@@ -45,10 +45,10 @@ throughout by short name:
 ## Connector-name convention
 
 The orchestrator renames node connectors to the `__`-prefixed names the
-cute tasklet bodies use (the cute expansions never read the node's `_a`
+cutile tasklet bodies use (the cutile expansions never read the node's `_a`
 etc. directly). The established map, taken from the existing bodies, is:
 
-| node connector | cute body name |
+| node connector | cutile body name |
 | --- | --- |
 | `_src` (array)      | `__src` |
 | `_dst` (array out)  | `__output` |
@@ -69,7 +69,7 @@ a future cleanup may unify them, but that is out of scope here.
 
 ## Per-node assessment and design
 
-### 1. TileLoad — `ExpandTileLoadCute` EXISTS
+### 1. TileLoad — `ExpandTileLoadCutile` EXISTS
 
 **Correctness today**: structurally correct but has two issues against the
 limitations.
@@ -125,13 +125,13 @@ offers no `-inf` padding enum — see *cannot-faithfully-lower* note below),
 > a *fast path* for `+` (ZERO) and `min` (POSITIVE_INFINITY); all other
 > reductions rely on the mask reaching TileReduce.
 
-This means TileLoad's cute expansion is **safe to emit now** (it is just a
+This means TileLoad's cutile expansion is **safe to emit now** (it is just a
 contiguous block load); the only required fixes are dropping the dead
 `__mask` input and making `pad_mode` configurable.
 
 ---
 
-### 2. TileStore — `ExpandTileStoreCute` EXISTS, CORRECT
+### 2. TileStore — `ExpandTileStoreCutile` EXISTS, CORRECT
 
 **Correctness today**: correct against the limitations.
 
@@ -174,7 +174,7 @@ confirmed). Fallback if absent: see *Gather/Scatter mask fallback* below.
 
 ---
 
-### 3. TileBinop — `ExpandTileBinopCute` EXISTS, CORRECT
+### 3. TileBinop — `ExpandTileBinopCutile` EXISTS, CORRECT
 
 **Correctness today**: correct against **L-elt-nomask**. The body is the
 bare elementwise expression with no mask wrap; the mask flows to the store
@@ -205,11 +205,11 @@ the store. No change needed.
 
 ---
 
-### 4. TileUnop — `ExpandTileUnopCute` EXISTS, CORRECT
+### 4. TileUnop — `ExpandTileUnopCutile` EXISTS, CORRECT
 
 **Correctness today**: correct against **L-elt-nomask** — bare elementwise
-unary call, no mask. The doc statement "cute may be MISSING" is **stale**:
-`ExpandTileUnopCute` is present (tile_unop.py) and maps every op to its
+unary call, no mask. The doc statement "cutile may be MISSING" is **stale**:
+`ExpandTileUnopCutile` is present (tile_unop.py) and maps every op to its
 `ct.*` form. It does not declare a `__mask` input (the unop body has no
 mask handling), which is correct.
 
@@ -230,12 +230,12 @@ needed.
 **MUST VERIFY**: that `ct.exp/ct.log/ct.sqrt/ct.sin/ct.cos/ct.floor/
 ct.ceil/ct.tanh/ct.abs` all exist by those names in the installed package.
 If a transcendental is missing, that specific op must raise
-`NotImplementedError` in the cute expansion rather than emit a call to a
+`NotImplementedError` in the cutile expansion rather than emit a call to a
 nonexistent symbol (see *Raise policy*).
 
 ---
 
-### 5. TileMerge — `ExpandTileMergeCute` EXISTS, RISKY (depends on `ct.where`)
+### 5. TileMerge — `ExpandTileMergeCutile` EXISTS, RISKY (depends on `ct.where`)
 
 **Correctness today**: emits `__output = ct.where(__cond, __then,
 __else)`. This is the **single most fragile** expansion because
@@ -276,7 +276,7 @@ unselected branch may be non-finite, the fallback must instead use a
 gather/scatter-style masked select — but that requires materialised
 indices and is heavyweight; therefore:
 
-**Decision**: TileMerge's cute expansion chooses at expansion time:
+**Decision**: TileMerge's cutile expansion chooses at expansion time:
 
 1. Try `ct.where` (primary) — gated behind a `_CT_HAS_WHERE` capability
    flag resolved by probing the installed package once.
@@ -301,7 +301,7 @@ The merge only consumes `_cond`/`_t`/`_e`.
 
 ---
 
-### 6. TileMaskGen — `ExpandTileMaskGenCute` EXISTS, CORRECT
+### 6. TileMaskGen — `ExpandTileMaskGenCutile` EXISTS, CORRECT
 
 **Correctness today**: correct and self-contained — it builds a boolean
 tile from `ct.arange + __pid*W < ub` per dim, broadcasting and `&`-ing for
@@ -337,7 +337,7 @@ upper-bound expression yields a bool tile.
 
 ---
 
-### 7. TileGather — `ExpandTileGatherCute` EXISTS, MOSTLY CORRECT
+### 7. TileGather — `ExpandTileGatherCutile` EXISTS, MOSTLY CORRECT
 
 **Correctness today**: correct shape. 1D source → single index tile;
 multi-dim → tuple of index tiles. Masked → `mask=__mask, padding_value=0`.
@@ -380,13 +380,13 @@ reads `_idx[c*l]`). cuTile `ct.gather` indexes the index tile directly and
 has no per-lane stride concept. A non-unit `index_strides` therefore
 **cannot** be expressed by `ct.gather` over the index tile as-is; the
 strided index window must be pre-gathered/sliced into a contiguous index
-tile before this node, or the cute expansion must **raise
+tile before this node, or the cutile expansion must **raise
 `NotImplementedError`** when `any(s != 1 for s in index_strides)`. The
 safe-now behavior: emit `ct.gather` for unit strides; raise for non-unit.
 
 ---
 
-### 8. TileScatter — `ExpandTileScatterCute` EXISTS, CORRECT
+### 8. TileScatter — `ExpandTileScatterCutile` EXISTS, CORRECT
 
 **Correctness today**: correct — `ct.scatter(__output, idx, __src,
 mask=__mask)`, 1D single index / multi-dim tuple. Matches L-gs-mask.
@@ -415,7 +415,7 @@ store). This is correct per L-gs-mask.
 
 ---
 
-### 9. TileReduce — `ExpandTileReduceCute` EXISTS, INCORRECT for `has_mask`
+### 9. TileReduce — `ExpandTileReduceCutile` EXISTS, INCORRECT for `has_mask`
 
 **Correctness today**: the unmasked path is correct (`ct.sum/prod/min/max`
 with optional `axis`). The **masked path is broken**: when
@@ -490,7 +490,7 @@ __output = ct.sum(__masked_src, axis=1)
 
 **MUST VERIFY**: `ct.where`; the `axis`/`keep_dims` kwarg spellings; whether
 `ct.sum(x, axis=k)` drops the axis (the pure path produces a kept-dim
-tile, so the cute output shape must match — if cuTile keeps dims, pass
+tile, so the cutile output shape must match — if cuTile keeps dims, pass
 `keep_dims=False`).
 
 ---
@@ -566,12 +566,12 @@ a unit test (see below).
 
 ---
 
-## Test plan (consistent with `test_cute_expansions.py`)
+## Test plan (consistent with `test_cutile_expansions.py`)
 
 The existing file tests TileLoad, TileStore, TileBinop, TileMaskGen by
 calling `cls.expansion(node, state, sdfg)` and asserting substrings of
 `tasklet.code.as_string` plus `ast.parse(body)` validity, with
-`language == Python`. New/changed tests follow the same `_expand_cute`
+`language == Python`. New/changed tests follow the same `_expand_cutile`
 helper and post-round-trip assertions (trailing tuple commas dropped,
 binop rhs paren-wrapped). The cuTile runtime is never executed.
 
@@ -654,13 +654,13 @@ checked once a GPU/cuTile environment exists):
    member (forces max/prod identity to TileReduce, not load padding).
 5. **Reduction kwargs**: `ct.sum/prod/min/max(x, axis=..., keep_dims=...)`
    spelling and whether the reduced axis is dropped or kept (the pure path
-   keeps non-reduced dims; cute output shape must match — set `keep_dims`
+   keeps non-reduced dims; cutile output shape must match — set `keep_dims`
    accordingly).
 6. **`ct.arange(n, dtype=ct.int32)` and `ct.broadcast_to(tile, shape)`**
    signatures (TileMaskGen, TileStore masked indices).
 7. **Transcendental/unary names**: `ct.abs/exp/log/sqrt/sin/cos/floor/
    ceil/tanh` and `ct.minimum/ct.maximum` all exist by those names; any
-   missing one must raise in the corresponding cute expansion.
+   missing one must raise in the corresponding cutile expansion.
 8. **`ct.bid(k)` block-id** signature and that `index=` to `ct.load`/
    `ct.store` is a tuple of block ids (not element offsets).
 9. **`.astype(dtype)` on a tile** (used by the `ct.where`-free fallbacks).

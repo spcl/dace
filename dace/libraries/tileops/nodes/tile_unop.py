@@ -139,7 +139,7 @@ class ExpandTileUnopPure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileUnopCute(ExpandTransformation):
+class ExpandTileUnopCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileUnop`."""
 
     environments = []
@@ -166,7 +166,7 @@ class ExpandTileUnopCute(ExpandTransformation):
         elif node.kind_a == _SCALAR:
             inputs.add("__const1")
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -237,14 +237,14 @@ class TileUnop(nodes.LibraryNode):
     Connectors: ``_a`` (operand, omitted when ``kind_a == 'Symbol'``),
     ``_mask`` (optional), ``_c`` (output tile).
 
-    :cvar implementations: ``pure`` (portable lane loop), ``cute`` (cuTile),
+    :cvar implementations: ``pure`` (portable lane loop), ``cutile`` (cuTile),
         and the four K=1 ISA backends.
     :cvar default_implementation: ``"pure"``.
     """
 
     implementations = {
         "pure": ExpandTileUnopPure,
-        "cute": ExpandTileUnopCute,
+        "cutile": ExpandTileUnopCutile,
         "scalar": ExpandTileUnopScalar,
         "avx512": ExpandTileUnopAVX512,
         "avx2": ExpandTileUnopAVX2,

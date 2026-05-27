@@ -66,7 +66,7 @@ class ExpandTileScatterPure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileScatterCute(ExpandTransformation):
+class ExpandTileScatterCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileScatter`.
 
     Emits ``ct.scatter(__output, (__idx_0, ...), __src, mask=__mask)``
@@ -96,7 +96,7 @@ class ExpandTileScatterCute(ExpandTransformation):
         if node.has_mask:
             inputs.add("__mask")
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -184,7 +184,7 @@ class TileScatter(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandTileScatterPure,
-        "cute": ExpandTileScatterCute,
+        "cutile": ExpandTileScatterCutile,
         "scalar": ExpandTileScatterScalar,
         "avx512": ExpandTileScatterAVX512,
         "avx2": ExpandTileScatterAVX2,

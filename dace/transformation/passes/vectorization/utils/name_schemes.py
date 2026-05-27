@@ -221,10 +221,7 @@ class TileLaneScheme:
         :param name: Name to test.
         :returns: True iff ``name`` is a per-lane name in either scheme.
         """
-        return (
-            TileLaneScheme.parse(name) is not None
-            or LaneIdScheme.is_laneid(name)
-        )
+        return (TileLaneScheme.parse(name) is not None or LaneIdScheme.is_laneid(name))
 
 
 class TileNameScheme:
@@ -286,9 +283,9 @@ class TileNameScheme:
         if name == TileNameScheme.ITER_MASK:
             return True
         for suffix in (
-            TileNameScheme.TILE_SUFFIX,
-            TileNameScheme.IDX_SUFFIX,
-            TileNameScheme.COND_MASK_SUFFIX,
+                TileNameScheme.TILE_SUFFIX,
+                TileNameScheme.IDX_SUFFIX,
+                TileNameScheme.COND_MASK_SUFFIX,
         ):
             if name.endswith(suffix):
                 return True
@@ -301,7 +298,7 @@ class TileConnectors:
     Exposed globally so the emitter (``EmitTileOps`` /
     ``PromoteNSDFGBodyToTiles``) and every lib node agree on one set of
     port names rather than scattering string literals. These are the
-    lib-node connectors (the ``pure`` / ``cute`` expansions use their own
+    lib-node connectors (the ``pure`` / ``cutile`` expansions use their own
     internal tasklet variable names, e.g. ``__src``, which are not
     connectors).
 
@@ -401,7 +398,5 @@ def assert_no_laneid_in_tile_path(sdfg: SDFG) -> None:
     """
     leaks = sorted({n for n in _iter_all_symbol_strings(sdfg) if TileLaneScheme.is_tilelane(n)})
     if leaks:
-        raise AssertionError(
-            f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
-            f"Lib-node emission must carry lane offsets implicitly — check the prep passes."
-        )
+        raise AssertionError(f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
+                             f"Lib-node emission must carry lane offsets implicitly — check the prep passes.")

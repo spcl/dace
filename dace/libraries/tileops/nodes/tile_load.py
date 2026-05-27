@@ -83,14 +83,14 @@ class ExpandTileLoadPure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileLoadCute(ExpandTransformation):
+class ExpandTileLoadCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileLoad`.
 
     Emits ``ct.load(__src, index=(__pid0, ...), shape=(W_0, ...),
     padding_mode=...)`` — the contiguous block-tile read used by the
     reference cuTile kernels. ``ct.load`` has no ``mask=`` parameter
     (L-load-nomask), so mask gating is applied at the store side
-    (:class:`TileStore` cute via ``ct.scatter``) and ``has_mask`` does
+    (:class:`TileStore` cutile via ``ct.scatter``) and ``has_mask`` does
     **not** add a ``__mask`` input here (the load body never reads it).
     The padding mode is selectable via :attr:`TileLoad.pad_mode` so the
     OOB tail of the last tile reads as the right identity for the
@@ -127,7 +127,7 @@ class ExpandTileLoadCute(ExpandTransformation):
         # mask is consumed downstream at the store/scatter.
         inputs = {"__src"}
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -209,7 +209,7 @@ class TileLoad(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandTileLoadPure,
-        "cute": ExpandTileLoadCute,
+        "cutile": ExpandTileLoadCutile,
         "scalar": ExpandTileLoadScalar,
         "avx512": ExpandTileLoadAVX512,
         "avx2": ExpandTileLoadAVX2,
@@ -257,7 +257,7 @@ class TileLoad(nodes.LibraryNode):
         default="ZERO",
         desc="cuTile OOB padding mode for the partial last tile, one of "
         "``ZERO | NAN | POS_INF | NEG_ZERO | UNDETERMINED`` mapping to the "
-        "``ct.PaddingMode`` enum. Only the ``cute`` expansion reads it. The "
+        "``ct.PaddingMode`` enum. Only the ``cutile`` expansion reads it. The "
         "orchestrator fusing a load into a reduction sets the right identity "
         "(``+`` → ZERO, ``min`` → POS_INF); ``max`` / ``prod`` have no padding "
         "identity in cuTile and rely on the reduction's pre-select instead.",
@@ -281,7 +281,7 @@ class TileLoad(nodes.LibraryNode):
             last K dims in order).
         :param has_mask: When True, declare the ``_mask`` input.
         :param pad_mode: cuTile OOB padding mode (``ZERO | NAN | POS_INF
-            | NEG_ZERO | UNDETERMINED``); only the ``cute`` expansion uses
+            | NEG_ZERO | UNDETERMINED``); only the ``cutile`` expansion uses
             it.
         :param location: Optional DaCe node location override.
         :raises ValueError: If ``widths`` is empty / longer than 3 or

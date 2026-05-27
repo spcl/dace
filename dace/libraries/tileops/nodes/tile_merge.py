@@ -83,7 +83,7 @@ class ExpandTileMergePure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileMergeCute(ExpandTransformation):
+class ExpandTileMergeCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileMerge`.
 
     Primary (CI default): ``__output = ct.where(__cond, __then,
@@ -136,7 +136,7 @@ class ExpandTileMergeCute(ExpandTransformation):
             body = ("__m = __cond.astype(__then.dtype)\n"
                     "__output = __m * __then + (1.0 - __m) * __else")
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={
                 "__cond": None,
                 "__then": None,
@@ -219,14 +219,14 @@ class TileMerge(nodes.LibraryNode):
     lanes at the destination's zero-fill.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
-        flattened CPP-loop correctness fallback. ``"cute"`` emits the
+        flattened CPP-loop correctness fallback. ``"cutile"`` emits the
         :mod:`cuda.tile`-Python ``ct.where`` equivalent (opt-in).
     :cvar default_implementation: ``"pure"``.
     """
 
     implementations = {
         "pure": ExpandTileMergePure,
-        "cute": ExpandTileMergeCute,
+        "cutile": ExpandTileMergeCutile,
         "scalar": ExpandTileMergeScalar,
         "avx512": ExpandTileMergeAVX512,
         "avx2": ExpandTileMergeAVX2,

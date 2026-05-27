@@ -50,7 +50,7 @@ class ExpandTileMaskGenPure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileMaskGenCute(ExpandTransformation):
+class ExpandTileMaskGenCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileMaskGen`.
 
     Emits the per-dim ``ct.arange + __pid * W < ub`` shape used by the
@@ -90,7 +90,7 @@ class ExpandTileMaskGenCute(ExpandTransformation):
                 terms.append(f"ct.broadcast_to(__mask{k}{slc_str}, ({shape_tuple}))")
             lines.append("__output = " + " & ".join(terms))
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs=set(),
             outputs={"__output": None},
             code="\n".join(lines),
@@ -109,7 +109,7 @@ class TileMaskGen(nodes.LibraryNode):
     ``iter_var_k + l_k < global_ub_k`` holds.
     """
 
-    implementations = {"pure": ExpandTileMaskGenPure, "cute": ExpandTileMaskGenCute}
+    implementations = {"pure": ExpandTileMaskGenPure, "cutile": ExpandTileMaskGenCutile}
     default_implementation = "pure"
 
     target_isa = properties.Property(

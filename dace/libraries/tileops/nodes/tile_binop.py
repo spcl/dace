@@ -164,7 +164,7 @@ _CUTE_OP_EXPR = {
 
 
 @library.expansion
-class ExpandTileBinopCute(ExpandTransformation):
+class ExpandTileBinopCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileBinop`.
 
     Emits the bare element-wise expression (e.g. ``a_tile + b_tile``)
@@ -186,7 +186,7 @@ class ExpandTileBinopCute(ExpandTransformation):
         :returns: A Python-language tasklet with the element-wise body.
         """
 
-        def _cute_operand(kind, tile_conn, scalar_conn, expr):
+        def _cutile_operand(kind, tile_conn, scalar_conn, expr):
             """cuTile operand reference: inline expr for Symbol, the
             tile connector for Tile, the scalar connector (broadcasts
             NumPy-style) for Scalar."""
@@ -196,8 +196,8 @@ class ExpandTileBinopCute(ExpandTransformation):
                 return tile_conn
             return scalar_conn
 
-        lhs = _cute_operand(node.kind_a, "__rhs1", "__const1", node.expr_a)
-        rhs = _cute_operand(node.kind_b, "__rhs2", "__const2", node.expr_b)
+        lhs = _cutile_operand(node.kind_a, "__rhs1", "__const1", node.expr_a)
+        rhs = _cutile_operand(node.kind_b, "__rhs2", "__const2", node.expr_b)
         rhs_expr = _CUTE_OP_EXPR[node.op].format(lhs=lhs, rhs=rhs)
         body = f"__output = {rhs_expr}"
         inputs = set()
@@ -210,7 +210,7 @@ class ExpandTileBinopCute(ExpandTransformation):
         elif node.kind_b == _SCALAR:
             inputs.add("__const2")
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -295,7 +295,7 @@ class TileBinop(nodes.LibraryNode):
     per lane.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
-        flattened CPP-loop correctness fallback. ``"cute"`` emits the
+        flattened CPP-loop correctness fallback. ``"cutile"`` emits the
         :mod:`cuda.tile`-Python equivalent (opt-in; the orchestrator
         stays on ``"pure"`` for CPU).
     :cvar default_implementation: ``"pure"``.
@@ -303,7 +303,7 @@ class TileBinop(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandTileBinopPure,
-        "cute": ExpandTileBinopCute,
+        "cutile": ExpandTileBinopCutile,
         # K=1 ISA backends: a call into dace/tile_ops/<backend>.h (same call;
         # the backend's env pulls in the matching header).
         "scalar": ExpandTileBinopScalar,

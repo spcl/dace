@@ -2,7 +2,7 @@
 """Tile-op implementation-selection policy.
 
 The tile lib nodes follow the standard DaCe expansion model: explicit per-node
-``implementations`` (``'pure'`` scalar reference, ``'cute'`` cuTile, and — as
+``implementations`` (``'pure'`` scalar reference, ``'cutile'`` cuTile, and — as
 they land — ``'avx512'`` / ``'avx2'`` / ``'sve'`` / ``'neon'`` CPU intrinsic
 expansions). Selection is NOT an ``'Auto'`` re-dispatch (the
 ``CopyLibraryNode`` idiom for *expansion-time* context) — for tile nodes the
@@ -13,7 +13,7 @@ node)`` before ``expand_library_nodes()``.
 
 Locked scope (2026-05-26): **K >= 2 -> ``'pure'``** (the two remainder knobs
 ride on the scalar K-fold lowering); **K == 1 -> the per-ISA intrinsic** (or
-``'pure'`` / ``'cute'``). Until a node actually defines the real per-ISA
+``'pure'`` / ``'cutile'``). Until a node actually defines the real per-ISA
 expansion class, the selector falls back to ``'pure'`` (the ISA name is not yet
 in the node's ``implementations``), so wiring the orchestrator is safe before
 the intrinsic headers exist.
@@ -31,7 +31,7 @@ _ISA_TO_IMPL = {
     "AVX2": "avx2",
     "ARM_SVE": "sve",
     "ARM_NEON": "neon",
-    "CUTILE": "cute",
+    "CUTILE": "cutile",
     # The K=1 scalar backend (dace/tile_ops/scalar.h call). Nodes without it yet
     # fall back to ``pure`` via the membership check in select_tile_implementation.
     "SCALAR": "scalar",

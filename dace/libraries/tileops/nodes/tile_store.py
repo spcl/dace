@@ -66,7 +66,7 @@ class ExpandTileStorePure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileStoreCute(ExpandTransformation):
+class ExpandTileStoreCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileStore`.
 
     Two emission shapes, matching the reference cuTile kernels:
@@ -104,7 +104,7 @@ class ExpandTileStoreCute(ExpandTransformation):
             lines.append(f"ct.store(__output, index=({index_tuple},), tile=__src)")
         inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -185,7 +185,7 @@ class TileStore(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandTileStorePure,
-        "cute": ExpandTileStoreCute,
+        "cutile": ExpandTileStoreCutile,
         "scalar": ExpandTileStoreScalar,
         "avx512": ExpandTileStoreAVX512,
         "avx2": ExpandTileStoreAVX2,

@@ -161,7 +161,7 @@ class ExpandTileReducePure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileReduceCute(ExpandTransformation):
+class ExpandTileReduceCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileReduce`.
 
     Unmasked (``has_mask=False``): ``__output = ct.sum(__src, axis=...)``
@@ -200,7 +200,7 @@ class ExpandTileReduceCute(ExpandTransformation):
             body = f"__output = {fn}(__src{axis_kw})"
             inputs = {"__src"}
             return nodes.Tasklet(
-                label=f"{node.label}_cute",
+                label=f"{node.label}_cutile",
                 inputs={c: None
                         for c in inputs},
                 outputs={"__output": None},
@@ -241,7 +241,7 @@ class ExpandTileReduceCute(ExpandTransformation):
         body = "\n".join(lines)
         inputs = {"__src", "__mask"}
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -264,7 +264,7 @@ class TileReduce(nodes.LibraryNode):
       shape.
     """
 
-    implementations = {"pure": ExpandTileReducePure, "cute": ExpandTileReduceCute}
+    implementations = {"pure": ExpandTileReducePure, "cutile": ExpandTileReduceCutile}
     default_implementation = "pure"
 
     target_isa = properties.Property(

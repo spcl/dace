@@ -85,7 +85,7 @@ class ExpandTileGatherPure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileGatherCute(ExpandTransformation):
+class ExpandTileGatherCutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileGather`.
 
     Emits ``ct.gather(__src, (__idx_0, __idx_1, ...), mask=__mask,
@@ -119,7 +119,7 @@ class ExpandTileGatherCute(ExpandTransformation):
         # lowered to a single ct.gather over the index tile (the pure / ISA
         # paths read __idx[c*lane], which cuTile's gather does not express).
         if any(s != 1 for s in node.index_strides):
-            raise NotImplementedError(f"{node.label}: TileGather cute lowering cannot express non-unit "
+            raise NotImplementedError(f"{node.label}: TileGather cutile lowering cannot express non-unit "
                                       f"index_strides={tuple(node.index_strides)!r}; ct.gather indexes the "
                                       f"index tile directly (no per-lane stride). Pre-gather the strided "
                                       f"index window into a contiguous index tile before this node.")
@@ -135,7 +135,7 @@ class ExpandTileGatherCute(ExpandTransformation):
         if node.has_mask:
             inputs.add("__mask")
         return nodes.Tasklet(
-            label=f"{node.label}_cute",
+            label=f"{node.label}_cutile",
             inputs={c: None
                     for c in inputs},
             outputs={"__output": None},
@@ -226,7 +226,7 @@ class TileGather(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandTileGatherPure,
-        "cute": ExpandTileGatherCute,
+        "cutile": ExpandTileGatherCutile,
         "scalar": ExpandTileGatherScalar,
         "avx512": ExpandTileGatherAVX512,
         "avx2": ExpandTileGatherAVX2,
@@ -276,7 +276,7 @@ class TileGather(nodes.LibraryNode):
         allow_none=False,
         default=0,
         desc="cuTile ``ct.gather`` ``padding_value`` for OOB / masked-out "
-        "lanes; only the ``cute`` expansion reads it. Defaults to ``0`` (the "
+        "lanes; only the ``cutile`` expansion reads it. Defaults to ``0`` (the "
         "``+`` reduction identity); set ``1`` for ``prod`` (cuTile's gather "
         "padding is an arbitrary scalar, unlike load's fixed enum).",
     )
@@ -299,7 +299,7 @@ class TileGather(nodes.LibraryNode):
         :param index_strides: Per-source-dim lane stride into each index
             tile (defaults to all-1: contiguous index tiles).
         :param pad_value: cuTile ``ct.gather`` ``padding_value`` for OOB /
-            masked-out lanes (default ``0``); only the ``cute`` expansion
+            masked-out lanes (default ``0``); only the ``cutile`` expansion
             uses it.
         :param location: Optional DaCe node location override.
         :raises ValueError: If ``widths`` is empty or longer than 3, or
