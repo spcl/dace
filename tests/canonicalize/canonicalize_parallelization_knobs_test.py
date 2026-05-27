@@ -291,6 +291,43 @@ def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
 
 
 @dace.program
+def _mod_read_wrap_minus1(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = (B[i] + B[(i - 1) % N]) * 0.5
+
+
+@dace.program
+def _mod_read_wrap_plus1(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = (B[i] + B[(i + 1) % N]) * 0.5
+
+
+@pytest.mark.parametrize('prog,offset', [(_mod_read_wrap_minus1, -1), (_mod_read_wrap_plus1, 1)])
+def test_loop_peeling_modulo_read_wraparound_knob_is_correct(prog, offset):
+    """A wrap-around READ ``A[i] = (B[i] + B[(i + k) % N]) * 0.5`` (TSVC s291) already
+    maps as-is -- the modulo is a pure read, no parallelization blocker -- but the
+    surviving ``% N`` lowers to C's truncated ``%``, which reads the wrong element at
+    the wrapping boundary (``(0 - 1) % N`` is ``-1`` in C, ``N - 1`` in Python): the
+    no-knob result is WRONG. With ``peel_limit>0`` the wrapping boundary iteration is
+    peeled off (front for a negative offset, back for a positive one) and the modulo
+    folded to the plain affine index over both the remainder and the peeled iteration,
+    so no C ``%`` survives and the result is floor-correct -- without changing the
+    global modulo codegen. The correctness peel runs even though LoopToMap already
+    maps the loop."""
+    on = prog.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling + modulo fold must keep the wrap-around read mapped'
+
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref = np.zeros(8)
+    for i in range(8):
+        ref[i] = (B[i] + B[(i + offset) % 8]) * 0.5  # Python floor-mod oracle
+    got = np.zeros(8)
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref)  # the OFF (no-knob) result is pre-existing-WRONG; only the peeled form is correct
+
+
+@dace.program
 def _interior_guard(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
         A[i] = B[i] * 2.0
@@ -363,5 +400,7 @@ if __name__ == '__main__':
     test_loop_peeling_fixed_read_first_iter_knob_parallelizes()
     for _p, _o in [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)]:
         test_loop_peeling_modulo_wraparound_knob_parallelizes(_p, _o)
+    for _p, _o in [(_mod_read_wrap_minus1, -1), (_mod_read_wrap_plus1, 1)]:
+        test_loop_peeling_modulo_read_wraparound_knob_is_correct(_p, _o)
     test_index_set_split_interior_guard_knob_parallelizes()
     test_index_set_split_body_around_guard_knob_parallelizes()

@@ -522,6 +522,17 @@ class BestEffortLoopPeeling(ppl.Pass):
             return node.args[0], node.args[1]
         return None
 
+    @staticmethod
+    def _modulo_nodes(expr) -> set:
+        """Every modulo subexpression of ``expr``: both the ``%`` operator
+        (``sympy.Mod``) and the floor-mod helper-function spellings (see
+        :data:`_MODULO_FUNC_NAMES`), so a wrap-around index is found regardless of
+        which representation introduced it."""
+        import sympy
+        mods = set(expr.atoms(sympy.Mod))
+        mods |= {f for f in expr.atoms(sympy.Function) if getattr(f.func, '__name__', None) in _MODULO_FUNC_NAMES}
+        return mods
+
     def _modulo_to_affine(self, mod, ranges: Dict[Any, Any]):
         """If ``mod`` is a modulo ``arg % m`` (operator or helper function) with
         ``arg`` affine in the enclosing loop variables and provably confined to a
@@ -562,6 +573,92 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return arg - t * m
         return None
 
+    def _loop_own_ranges(self, loop: LoopRegion) -> Dict[Any, Any]:
+        """``{loop_variable: (start, end)}`` for ``loop`` itself (inclusive), the
+        single-entry range box :meth:`_modulo_to_affine` reduces a modulo argument
+        over; empty if the bounds are not recoverable."""
+        from dace.transformation.passes.analysis import loop_analysis
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        if start is None or end is None or not loop.loop_variable:
+            return {}
+        return {symbolic.pystr_to_symbolic(loop.loop_variable): (start, end)}
+
+    def _has_wrapping_modulo(self, loop: LoopRegion) -> bool:
+        """Whether ``loop``'s body holds a memlet-subset modulo ``Mod(arg, m)`` whose
+        ``arg`` is affine in the loop variable yet spans more than one band over the
+        loop's full range -- so it does *not* reduce to a single affine index there
+        (:meth:`_modulo_to_affine` returns ``None``). Such a wrap reads/writes the
+        wrong element under C's truncated ``%`` at the boundary iteration, and peeling
+        that boundary lets the band fold make both the remainder and the peeled
+        iteration affine and floor-correct. A non-affine (e.g. data-dependent) modulo
+        argument is ignored: no bounded peel could ever fold it."""
+        import sympy
+        from dace import subsets
+        ranges = self._loop_own_ranges(loop)
+        if not ranges:
+            return False
+        (ivar, _), = ranges.items()
+        for st in loop.all_states():
+            for e in st.edges():
+                if e.data is None:
+                    continue
+                for r in (e.data.subset, e.data.other_subset):
+                    if not isinstance(r, subsets.Range):
+                        continue
+                    for rng in r.ranges:
+                        for expr in rng:
+                            if not isinstance(expr, sympy.Basic):
+                                continue
+                            for mod in self._modulo_nodes(expr):
+                                operands = self._modulo_operands(mod)
+                                if operands is None:
+                                    continue
+                                arg = operands[0]
+                                if ivar not in arg.free_symbols:
+                                    continue
+                                a = arg.coeff(ivar, 1)
+                                if ivar in a.free_symbols or ivar in (arg - a * ivar).free_symbols:
+                                    continue  # arg not affine in the loop variable
+                                if self._modulo_to_affine(mod, ranges) is None:
+                                    return True  # affine but genuinely wrapping
+        return False
+
+    def _best_modulo_peel_for(self, loop: LoopRegion, sdfg: SDFG):
+        """The smallest ``(count, direction)`` peel that turns a genuinely-wrapping
+        body modulo into an affine, floor-correct index for ``loop``, probed on an
+        isolated copy; ``None`` if the loop has no such wrap or no bounded peel folds
+        it. Unlike :meth:`_best_peel_for`, this runs *even when* ``LoopToMap`` already
+        maps the loop: a wrap-around read maps as-is but then emits C's truncated
+        ``%``, computing the wrong boundary value, so the peel is for correctness, not
+        to unblock a map. A peel is accepted as soon as it removes every wrapping
+        modulo (so no C ``%`` survives) while staying valid -- folding the wrap to its
+        affine, floor-correct form is value-preserving whether or not it also maps."""
+        if not self._has_wrapping_modulo(loop):
+            return None
+        mini, _ = self._isolate_loop(loop, sdfg)
+        if mini is None:
+            return None
+        # Smallest peel first (count ascending, single-side before both) so the
+        # correctness fix touches as few iterations as possible.
+        for count in range(1, self.peel_limit + 1):
+            for direction in ('front', 'back', 'both'):
+                cand = copy.deepcopy(mini)
+                cloops = _loops(cand)
+                if not cloops:
+                    return None
+                if not self._peel_one_loop(cand, cloops[0], count, direction):
+                    continue
+                self._clean_peeled_remainder(cand)
+                try:
+                    cand.validate()
+                    if any(self._has_wrapping_modulo(l) for l in _loops(cand)):
+                        continue  # a wrapping modulo still survives -> C ``%`` remains
+                except Exception:
+                    continue
+                return (count, direction)
+        return None
+
     def _rewrite_modulo_over_range(self, sdfg: SDFG):
         """Rewrite every ``Mod(arg, m)`` memlet subset to an equivalent affine form
         when ``arg`` provably stays in one band over its enclosing loops' ranges (see
@@ -586,12 +683,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                         for expr in rng:
                             if not isinstance(expr, sympy.Basic):
                                 continue
-                            # Both the ``%`` operator (sympy.Mod) and the floor-mod
-                            # helper-function spellings count as modulo nodes.
-                            mods = set(expr.atoms(sympy.Mod))
-                            mods |= {f for f in expr.atoms(sympy.Function)
-                                     if getattr(f.func, '__name__', None) in _MODULO_FUNC_NAMES}
-                            for mod in mods:
+                            for mod in self._modulo_nodes(expr):
                                 if mod in repl:
                                     continue
                                 affine = self._modulo_to_affine(mod, ranges)
@@ -632,8 +724,10 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         Splitting is tried first: an interior equality guard (``if i == x`` with ``x``
         away from the boundary) is carved out as [start, x-1] + {x} + [x+1, end], which
-        no bounded boundary peel could reach; whatever stays stuck then goes through
-        the front/back/both peel search."""
+        no bounded boundary peel could reach. Next a wrapping-modulo peel fixes a
+        boundary that reads/writes the wrong element under C's truncated ``%`` (a
+        correctness fix that runs even when the loop already maps). Whatever stays
+        stuck then goes through the front/back/both peel search."""
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
         applied = 0
@@ -643,7 +737,15 @@ class BestEffortLoopPeeling(ppl.Pass):
             if x is not None and self._split_loop_at(sdfg, loop, x):
                 self._clean_peeled_remainder(sdfg)
                 applied += 1
-        # 2. Best-effort boundary peel for the loops splitting did not resolve.
+        # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
+        #    even for loops LoopToMap already maps (the wrap-around access otherwise
+        #    emits C's truncated ``%`` and computes the wrong boundary value).
+        for loop in list(_loops(sdfg)):
+            best = self._best_modulo_peel_for(loop, sdfg)
+            if best is not None and self._peel_one_loop(sdfg, loop, *best):
+                self._clean_peeled_remainder(sdfg)
+                applied += 1
+        # 3. Best-effort boundary peel for the loops splitting did not resolve.
         for loop in list(_loops(sdfg)):
             best = self._best_peel_for(loop, sdfg)
             if best is not None and self._peel_one_loop(sdfg, loop, *best):
