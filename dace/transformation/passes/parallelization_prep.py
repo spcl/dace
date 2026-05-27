@@ -29,6 +29,11 @@ DEFAULT_UNROLL_LIMIT = 8
 #: Default maximum number of iterations peeled (per side) when searching for a
 #: peel that unblocks parallelization.
 DEFAULT_PEEL_LIMIT = 8
+#: Names under which a (floor) modulo may be defined in a subset expression. The
+#: peel modulo-rewrite recognises all of these -- ``sympy.Mod`` (the ``%`` operator)
+#: and the equivalent helper-function spellings -- so it folds a wrap-around access
+#: regardless of which representation introduced it.
+_MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'Modulo', 'mod', 'floor_mod'})
 
 
 def _loops(sdfg: SDFG):
@@ -193,7 +198,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         the dead boundary guards a peel leaves behind."""
         peeled = sum(int(self._peel_one_loop(sdfg, loop, count, direction)) for loop in _loops(sdfg))
         if peeled:
-            self._prune_dead_loop_branches(sdfg)
+            self._clean_peeled_remainder(sdfg)
         return peeled
 
     def _isolate_loop(self, loop: LoopRegion, sdfg: SDFG):
@@ -260,7 +265,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                     break
                 if not self._peel_one_loop(cand, cloops[0], count, direction):
                     continue
-                self._prune_dead_loop_branches(cand)
+                self._clean_peeled_remainder(cand)
                 try:
                     cand.validate()  # only a peel that stays valid is a working parameter
                     n_mappable = self._mappable_loop_count(cand)
@@ -270,94 +275,331 @@ class BestEffortLoopPeeling(ppl.Pass):
                     best_count, best = n_mappable, (count, direction)
         return best
 
-    def _cond_dead_over_range(self, cond, ivar: str, start, end, sdfg: SDFG) -> bool:
-        """Whether the guard ``cond`` is provably false for every ``ivar`` in
-        ``[start, end]``. Handles ``ivar <cmp> C`` / ``C <cmp> ivar`` with a
-        loop-invariant ``C`` and ``cmp`` in ``==, <, <=, >, >=``."""
+    def _equality_guard_values(self, loop: LoopRegion):
+        """Loop-invariant values ``x`` for which the body has an ``if i == x`` guard
+        (or ``x == i``). These are index-set-split points: a special-case iteration
+        that blocks parallelization can be carved out as [start, x-1] + {x} + [x+1,
+        end] (a boundary ``x`` simply drops the empty side -- see
+        :meth:`_split_loop_at`). ``x`` must not depend on the loop variable."""
         import ast
-        try:
-            node = cond.code[0]
-        except (AttributeError, IndexError, TypeError):
-            return False
-        if isinstance(node, ast.Expr):
-            node = node.value
-        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
-            return False
-        left, op, right = node.left, node.ops[0], node.comparators[0]
-
-        def is_ivar(n):
-            return isinstance(n, ast.Name) and n.id == ivar
-
-        if is_ivar(left) and not is_ivar(right):
-            other, flip = right, False
-        elif is_ivar(right) and not is_ivar(left):
-            other, flip = left, True
-        else:
-            return False
-        try:
-            c = symbolic.pystr_to_symbolic(ast.unparse(other))
-        except Exception:
-            return False
-        if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
-            return False  # C must be loop-invariant
-
-        opname = type(op).__name__
-        if flip:
-            opname = {'Lt': 'Gt', 'LtE': 'GtE', 'Gt': 'Lt', 'GtE': 'LtE'}.get(opname, opname)
-
-        def is_pos(x):
-            s = symbolic.simplify(x)
-            return s.is_number and s > 0
-
-        def is_nonneg(x):
-            s = symbolic.simplify(x)
-            return s.is_number and s >= 0
-
-        # ``ivar`` ranges over [start, end].
-        if opname == 'Eq':  # i == C : false for all iff C < start or C > end
-            return is_pos(start - c) or is_pos(c - end)
-        if opname == 'Lt':  # i < C  : false for all iff start >= C
-            return is_nonneg(start - c)
-        if opname == 'LtE':  # i <= C : false for all iff start > C
-            return is_pos(start - c)
-        if opname == 'Gt':  # i > C  : false for all iff end <= C
-            return is_nonneg(c - end)
-        if opname == 'GtE':  # i >= C : false for all iff end < C
-            return is_pos(c - end)
-        return False
-
-    def _prune_dead_loop_branches(self, sdfg: SDFG) -> bool:
-        """Remove single-branch (no-else) conditionals in a loop body whose guard
-        is provably false over the loop's iteration range -- the boundary guard a
-        peel leaves behind (e.g. ``if i == N-1`` once the remainder is ``[0,N-2]``).
-        ``PruneEmptyConditionalBranches`` then drops the now-empty conditional,
-        leaving a clean affine body for LoopToMap."""
         from dace.sdfg.state import ConditionalBlock
-        from dace.transformation.passes.analysis import loop_analysis
-        from dace.transformation.passes.simplification.prune_empty_conditional_branches import \
-            PruneEmptyConditionalBranches
-        changed = False
-        for loop in _loops(sdfg):
-            start = loop_analysis.get_init_assignment(loop)
-            end = loop_analysis.get_loop_end(loop)
-            if start is None or end is None:
-                continue
-            ivar = loop.loop_variable
-            for cb in [b for b in loop.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]:
-                if len(cb.branches) != 1:
-                    continue  # only the simple boundary-guard shape
-                cond, region = cb.branches[0]
+        ivar_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+        values = []
+        for cb in [b for b in loop.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]:
+            for cond, _ in cb.branches:
                 if cond is None:
                     continue
-                if self._cond_dead_over_range(cond, ivar, start, end, sdfg):
-                    # Empty the dead branch's body (it is never taken in the
-                    # remainder); PruneEmptyConditionalBranches then drops the
-                    # now-empty branch and the conditional itself.
-                    region.remove_nodes_from(list(region.nodes()))
-                    changed = True
-        if changed:
-            PruneEmptyConditionalBranches().apply_pass(sdfg, {})
-        return changed
+                try:
+                    node = cond.code[0]
+                except (AttributeError, IndexError, TypeError):
+                    continue
+                if isinstance(node, ast.Expr):
+                    node = node.value
+                if not isinstance(node, ast.Compare) or len(node.ops) != 1 or not isinstance(node.ops[0], ast.Eq):
+                    continue
+                left, right = node.left, node.comparators[0]
+
+                def is_ivar(n):
+                    return isinstance(n, ast.Name) and n.id == loop.loop_variable
+
+                if is_ivar(left) and not is_ivar(right):
+                    other = right
+                elif is_ivar(right) and not is_ivar(left):
+                    other = left
+                else:
+                    continue
+                try:
+                    x = symbolic.pystr_to_symbolic(ast.unparse(other))
+                except Exception:
+                    continue
+                if ivar_sym not in x.free_symbols and x not in values:
+                    values.append(x)
+        return values
+
+    def _split_loop_at(self, sdfg: SDFG, loop: LoopRegion, x) -> bool:
+        """Index-set-split ``loop`` at iteration ``x`` into the range segments
+        [start, x-1], the single iteration {x}, and [x+1, end] -- each a clone of the
+        body, wired in sequence in place of the loop. A boundary ``x`` drops the side
+        that would be empty: ``x == start`` (e.g. ``i == 0``) has no preceding
+        iterations, so only {x} + [x+1, end] are emitted; ``x == end`` (the last
+        iteration) has no following iterations, so only [start, x-1] + {x}. The
+        enclosing-range-aware ``LiftTrivialIf`` (run by
+        :meth:`_clean_peeled_remainder` afterwards) then resolves the ``if i == x``
+        guard per segment: a contradiction in the range segments, a tautology in the
+        single middle iteration. Unit stride only. Returns whether it split."""
+        import copy
+        from dace.properties import CodeBlock
+        from dace.sdfg.sdfg import InterstateEdge
+        from dace.transformation.passes.analysis import loop_analysis
+        stride = loop_analysis.get_loop_stride(loop)
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        try:
+            if stride is None or int(symbolic.evaluate(stride, sdfg.constants)) != 1:
+                return False
+        except (TypeError, ValueError):
+            return False
+        if start is None or end is None:
+            return False
+        ivar = loop.loop_variable
+        parent = loop.parent_graph
+        # Drop a range segment that is provably empty at a boundary split point.
+        want_before = symbolic.simplify(x - start) != 0  # x != start -> [start, x-1] is non-empty
+        want_after = symbolic.simplify(x - end) != 0  # x != end   -> [x+1, end] is non-empty
+
+        def clone_segment() -> LoopRegion:
+            seg = copy.deepcopy(loop)
+            seg.label = _unique_block_label(sdfg, loop.label)
+            parent.add_node(seg)  # register so the next unique-label query sees it
+            return seg
+
+        chain = []
+        if want_before:
+            before = clone_segment()
+            before.loop_condition = CodeBlock(f'{ivar} < ({x})')  # [start, x-1]
+            chain.append(before)
+        at = clone_segment()  # {x}: a single iteration
+        at.init_statement = CodeBlock(f'{ivar} = ({x})')
+        at.loop_condition = CodeBlock(f'{ivar} < ({x}) + 1')
+        chain.append(at)
+        if want_after:
+            after = clone_segment()
+            after.init_statement = CodeBlock(f'{ivar} = ({x}) + 1')  # [x+1, end], original condition
+            chain.append(after)
+
+        in_edges = list(parent.in_edges(loop))
+        out_edges = list(parent.out_edges(loop))
+        is_start = parent.start_block is loop
+        for ie in in_edges:
+            parent.add_edge(ie.src, chain[0], ie.data)
+            parent.remove_edge(ie)
+        for prev, nxt in zip(chain, chain[1:]):
+            parent.add_edge(prev, nxt, InterstateEdge())
+        for oe in out_edges:
+            parent.add_edge(chain[-1], oe.dst, oe.data)
+            parent.remove_edge(oe)
+        parent.remove_node(loop)
+        if is_start:
+            parent.start_block = parent.node_id(chain[0])
+        parent.reset_cfg_list()
+        return True
+
+    def _best_split_for(self, loop: LoopRegion, sdfg: SDFG):
+        """The ``if i == x`` guard value whose index-set split unblocks the most maps
+        for ``loop`` (probed on an isolated copy), or ``None`` if splitting does not
+        help or the loop already maps."""
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        try:
+            if LoopToMap.can_be_applied_to(sdfg, loop=loop):
+                return None
+        except Exception:
+            pass
+        guards = self._equality_guard_values(loop)
+        if not guards:
+            return None
+        mini, _ = self._isolate_loop(loop, sdfg)
+        if mini is None:
+            return None
+        try:
+            baseline = self._mappable_loop_count(copy.deepcopy(mini))
+        except Exception:
+            return None
+        best_count, best = baseline, None
+        for x in guards:
+            cand = copy.deepcopy(mini)
+            cloops = _loops(cand)
+            if not cloops or not self._split_loop_at(cand, cloops[0], x):
+                continue
+            self._clean_peeled_remainder(cand)
+            try:
+                cand.validate()
+                n_mappable = self._mappable_loop_count(cand)
+            except Exception:
+                continue
+            if n_mappable > best_count:
+                best_count, best = n_mappable, x
+        return best
+
+    def _prune_dead_loop_branches(self, sdfg: SDFG):
+        """Collapse the boundary guards a peel leaves in the remainder loop body so
+        what is left is clean affine code LoopToMap can map.
+
+        Delegates to the iteration-range-aware :class:`LiftTrivialIf`: a guard that
+        is false over the whole remainder range (``if i == N-1`` once the remainder
+        is ``[0, N-2]``, the ``i == 0`` / ``i == 1`` arms of an if/elif chain peeled
+        off the front) is a contradiction whose branch is dropped, and the surviving
+        always-true guard (the if/elif's else body, lowered to ``if not(i==0): ...``)
+        is a tautology that gets lifted up. The frontend lowers an if/elif chain to
+        *nested* conditionals, and one ``LiftTrivialIf`` pass collapses one nesting
+        level (lifting the outer guard exposes the inner one), so it is run to a
+        fixpoint -- the conditional count strictly decreases, so this terminates --
+        and ``EmptyStateElimination`` then tidies the empty boundary states a lift
+        leaves behind."""
+        from dace.sdfg.state import ConditionalBlock
+        from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+        from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+
+        def num_conditionals() -> int:
+            return sum(1 for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
+
+        lift = LiftTrivialIf()
+        prev = num_conditionals()
+        while prev > 0:
+            lift.apply_pass(sdfg, {})
+            cur = num_conditionals()
+            if cur >= prev:
+                break  # no further trivial conditional to collapse
+            prev = cur
+        EmptyStateElimination().apply_pass(sdfg, {})
+
+    def _clean_peeled_remainder(self, sdfg: SDFG):
+        """Post-peel cleanup so the remainder body is affine and mappable: collapse
+        the now-dead boundary guards (:meth:`_prune_dead_loop_branches`) and rewrite
+        the modulo subsets the peel made affine over the shortened range
+        (:meth:`_rewrite_modulo_over_range`)."""
+        self._prune_dead_loop_branches(sdfg)
+        self._rewrite_modulo_over_range(sdfg)
+
+    @staticmethod
+    def _provably_nonneg(x) -> bool:
+        """Whether ``x`` is provably ``>= 0`` -- a concrete non-negative number once
+        simplified (the deciding differences of a range bound reduce to numbers)."""
+        s = symbolic.simplify(x)
+        return s.is_number and s >= 0
+
+    def _nonneg_assuming_large_modulus(self, x, m) -> bool:
+        """Whether ``x`` is provably ``>= 0`` given the modulus ``m`` is at least
+        ``peel_limit + 1``. Peeling a symbolic loop by ``k <= peel_limit`` iterations
+        already presupposes the loop runs at least ``k`` times (the peeled iterations
+        execute unconditionally), so when ``m`` is the trip count it is ``> peel_limit``.
+        Handles a concrete number, or an expression affine and non-decreasing in the
+        single modulus symbol ``m`` with no other free symbols (e.g. ``m - 1 >= 0``)."""
+        import sympy
+        s = symbolic.simplify(x)
+        if s.is_number:
+            return bool(s >= 0)
+        if not isinstance(m, sympy.Symbol):
+            return False
+        c1 = s.coeff(m, 1)
+        c0 = s - c1 * m
+        if (m in c1.free_symbols or m in c0.free_symbols or c0.free_symbols or c1.free_symbols
+                or not (c1.is_number and c0.is_number)):
+            return False  # not affine in m alone
+        if c1 < 0:
+            return False  # decreasing in m -> not bounded below by the m-minimum
+        return bool(c0 + c1 * (self.peel_limit + 1) >= 0)
+
+    def _enclosing_loop_ranges(self, block) -> Dict[Any, Any]:
+        """``{loop_variable: (start, end)}`` for every ``LoopRegion`` enclosing
+        ``block``, with inclusive bounds. Empty for a peeled iteration region (no
+        enclosing loop), whose body holds a fixed, already-substituted index."""
+        from dace.sdfg.state import LoopRegion
+        from dace.transformation.passes.analysis import loop_analysis
+        ranges: Dict[Any, Any] = {}
+        graph = block.parent_graph
+        seen = set()
+        while graph is not None and id(graph) not in seen:
+            seen.add(id(graph))
+            if isinstance(graph, LoopRegion) and graph.loop_variable:
+                start = loop_analysis.get_init_assignment(graph)
+                end = loop_analysis.get_loop_end(graph)
+                if start is not None and end is not None:
+                    ranges[symbolic.pystr_to_symbolic(graph.loop_variable)] = (start, end)
+            graph = getattr(graph, 'parent_graph', None)
+        return ranges
+
+    @staticmethod
+    def _modulo_operands(node):
+        """``(arg, m)`` if ``node`` is a modulo of two operands -- either
+        ``sympy.Mod`` (the ``%`` operator) or a recognised floor-mod helper-function
+        call (see :data:`_MODULO_FUNC_NAMES`) -- else ``None``. Lets the rewrite
+        accept whichever spelling defines the modulo."""
+        import sympy
+        if isinstance(node, sympy.Mod) and len(node.args) == 2:
+            return node.args[0], node.args[1]
+        name = getattr(getattr(node, 'func', None), '__name__', None)
+        if name in _MODULO_FUNC_NAMES and len(node.args) == 2:
+            return node.args[0], node.args[1]
+        return None
+
+    def _modulo_to_affine(self, mod, ranges: Dict[Any, Any]):
+        """If ``mod`` is a modulo ``arg % m`` (operator or helper function) with
+        ``arg`` affine in the enclosing loop variables and provably confined to a
+        single band ``[t*m, (t+1)*m - 1]`` over their ranges, return the equivalent
+        affine ``arg - t*m`` (so the result lands in ``[0, m-1]`` -- i.e. ``arg % m``);
+        else ``None``. This makes a peeled wrap-around access affine WITHOUT relying
+        on C's truncated ``%`` (which would mis-handle a negative or beyond-``m``
+        argument): the remainder of ``arr[(i + k) % N]`` rewrites to ``i + k`` (band
+        ``t = 0``), and a peeled wrapping iteration ``Mod(N, N)`` rewrites to ``0``
+        (band ``t = 1``), ``Mod(-1, N)`` to ``N - 1`` (band ``t = -1``). ``m`` may be
+        symbolic."""
+        operands = self._modulo_operands(mod)
+        if operands is None:
+            return None
+        arg, m = operands
+        # Reduce ``arg`` to its extremes over the enclosing loop box: affine in each
+        # ranged variable, so the min/max sit at the range ends (per slope sign). A
+        # peeled region has no enclosing loop, so ``arg`` is already a fixed point.
+        lo = hi = arg
+        for lv, (start, end) in ranges.items():
+            if lv not in arg.free_symbols:
+                continue
+            a = arg.coeff(lv, 1)
+            if lv in a.free_symbols or lv in (arg - a * lv).free_symbols:
+                return None  # not affine in this loop variable
+            if self._provably_nonneg(a):
+                lo, hi = lo.subs(lv, start), hi.subs(lv, end)
+            elif self._provably_nonneg(-a):
+                lo, hi = lo.subs(lv, end), hi.subs(lv, start)
+            else:
+                return None  # indeterminate slope sign
+        # Find the band ``t`` such that ``arg - t*m`` stays in ``[0, m-1]`` over the
+        # whole range. Peeling shifts the argument by a bounded number of strides, so
+        # the band index is within +/-(peel_limit + 1).
+        for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
+            if (self._nonneg_assuming_large_modulus(lo - t * m, m)
+                    and self._nonneg_assuming_large_modulus(m - 1 - (hi - t * m), m)):
+                return arg - t * m
+        return None
+
+    def _rewrite_modulo_over_range(self, sdfg: SDFG):
+        """Rewrite every ``Mod(arg, m)`` memlet subset to an equivalent affine form
+        when ``arg`` provably stays in one band over its enclosing loops' ranges (see
+        :meth:`_modulo_to_affine`). A peel that removes the wrapping boundary
+        iterations leaves a remainder whose wrap-around modulo is the identity, and
+        the peeled iterations themselves carry the wrapped constant index -- both are
+        folded here so the body is affine and C's truncated ``%`` is never emitted."""
+        import sympy
+        from dace import subsets
+        for st in sdfg.all_states():
+            ranges = self._enclosing_loop_ranges(st)
+            repl: Dict[Any, Any] = {}
+            ranges_seen = []
+            for e in st.edges():
+                if e.data is None:
+                    continue
+                for r in (e.data.subset, e.data.other_subset):
+                    if not isinstance(r, subsets.Range):
+                        continue
+                    ranges_seen.append(r)
+                    for rng in r.ranges:
+                        for expr in rng:
+                            if not isinstance(expr, sympy.Basic):
+                                continue
+                            # Both the ``%`` operator (sympy.Mod) and the floor-mod
+                            # helper-function spellings count as modulo nodes.
+                            mods = set(expr.atoms(sympy.Mod))
+                            mods |= {f for f in expr.atoms(sympy.Function)
+                                     if getattr(f.func, '__name__', None) in _MODULO_FUNC_NAMES}
+                            for mod in mods:
+                                if mod in repl:
+                                    continue
+                                affine = self._modulo_to_affine(mod, ranges)
+                                if affine is not None:
+                                    repl[mod] = affine
+            if repl:
+                for r in ranges_seen:
+                    r.replace(repl)
 
     def _mappable_loop_count(self, candidate: SDFG) -> int:
         """Cheap proxy for "does the peel unblock parallelization?": run scalar
@@ -383,16 +625,28 @@ class BestEffortLoopPeeling(ppl.Pass):
         return count
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """For each loop, find the best peel on an isolated copy of just that
-        loop-nest and apply it on the real SDFG; returns the number of loops
-        peeled or None. Experimenting on the isolated nest (not the whole SDFG)
-        keeps the search cheap and revertible."""
+        """Unblock stuck loops, choosing per loop (on an isolated copy of just that
+        nest, so the search is cheap and revertible) between an index-set split at an
+        interior ``if i == x`` guard and a best-effort boundary peel, applying the
+        winner to the real SDFG. Returns the number of loops rewritten or None.
+
+        Splitting is tried first: an interior equality guard (``if i == x`` with ``x``
+        away from the boundary) is carved out as [start, x-1] + {x} + [x+1, end], which
+        no bounded boundary peel could reach; whatever stays stuck then goes through
+        the front/back/both peel search."""
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
         applied = 0
+        # 1. Index-set splitting for interior equality guards.
+        for loop in list(_loops(sdfg)):
+            x = self._best_split_for(loop, sdfg)
+            if x is not None and self._split_loop_at(sdfg, loop, x):
+                self._clean_peeled_remainder(sdfg)
+                applied += 1
+        # 2. Best-effort boundary peel for the loops splitting did not resolve.
         for loop in list(_loops(sdfg)):
             best = self._best_peel_for(loop, sdfg)
             if best is not None and self._peel_one_loop(sdfg, loop, *best):
-                self._prune_dead_loop_branches(sdfg)
+                self._clean_peeled_remainder(sdfg)
                 applied += 1
         return applied or None

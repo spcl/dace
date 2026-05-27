@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
+import ast
 import re
 import dace
 from typing import Any, Dict, Optional, Set, Union
@@ -17,7 +18,15 @@ from sympy import pycode
 
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
-    """Remove ``ConditionalBlock`` nodes whose condition statically evaluates to a literal.
+    """Remove ``ConditionalBlock`` nodes whose condition is provably constant.
+
+    A condition is provably constant either statically (it evaluates to a literal,
+    e.g. ``1 < 2``) or *over the iteration range of an enclosing loop*: a guard
+    ``i == 0`` is a contradiction once the loop runs ``i`` in ``[2, N-1]``, and its
+    negation ``not(i == 0)`` is then a tautology. Detecting these iteration
+    tautologies/contradictions lets the pass collapse the boundary guards a loop
+    peel leaves behind (``if i == N-1`` in a ``[0, N-2]`` remainder, the
+    special-cased arms of an if/elif chain) so the remainder is clean affine code.
 
     Handles two shapes: a single-branch ``if`` (drop or replace with an empty
     branch depending on the truth value) and an ``if/else`` pair (drop the side
@@ -91,11 +100,137 @@ class LiftTrivialIf(ppl.Pass):
             pass
         return False
 
-    def _trivially_true(self, code: CodeBlock) -> bool:
-        return self._trivial_cond_check(code, True)
+    def _trivially_true(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
+        if self._trivial_cond_check(code, True):
+            return True
+        return cfb is not None and self._range_verdict(code, cfb) == 'true'
 
-    def _trivially_false(self, code: CodeBlock) -> bool:
-        return self._trivial_cond_check(code, False)
+    def _trivially_false(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
+        if self._trivial_cond_check(code, False):
+            return True
+        return cfb is not None and self._range_verdict(code, cfb) == 'false'
+
+    def _loop_iter_ranges(self, cfb: ConditionalBlock):
+        """The ``(loop_variable, start, end)`` iteration range of every
+        ``LoopRegion`` enclosing ``cfb``, innermost first. ``start`` / ``end`` are
+        the inclusive bounds under normal (no-break) termination."""
+        from dace.sdfg.state import LoopRegion
+        from dace.transformation.passes.analysis import loop_analysis
+        ranges = []
+        graph = cfb.parent_graph
+        seen = set()
+        while graph is not None and id(graph) not in seen:
+            seen.add(id(graph))
+            if isinstance(graph, LoopRegion) and graph.loop_variable:
+                start = loop_analysis.get_init_assignment(graph)
+                end = loop_analysis.get_loop_end(graph)
+                if start is not None and end is not None:
+                    ranges.append((graph.loop_variable, start, end))
+            graph = getattr(graph, 'parent_graph', None)
+        return ranges
+
+    @staticmethod
+    def _cmp_verdict(opname: str, c, start, end) -> str:
+        """Whether ``i <opname> c`` is ``'true'`` / ``'false'`` for every ``i`` in
+        ``[start, end]``, or ``'unknown'`` when the bounds are too symbolic to
+        decide. ``c``, ``start`` and ``end`` are symbolic; a verdict is only
+        returned when the deciding difference reduces to a concrete number."""
+
+        def num(x):
+            s = symbolic.simplify(x)
+            return s if s.is_number else None
+
+        def pos(x):  # provably x > 0
+            n = num(x)
+            return n is not None and n > 0
+
+        def nonneg(x):  # provably x >= 0
+            n = num(x)
+            return n is not None and n >= 0
+
+        def single_point(x_lo, x_hi, target):  # provably start == end == target
+            return nonneg(x_hi - x_lo) and not pos(x_hi - x_lo) and num(x_lo - target) == 0
+
+        if opname == 'Eq':  # i == c
+            if pos(start - c) or pos(c - end):
+                return 'false'
+            if single_point(start, end, c):
+                return 'true'
+        elif opname == 'NotEq':  # i != c
+            if pos(start - c) or pos(c - end):
+                return 'true'
+            if single_point(start, end, c):
+                return 'false'
+        elif opname == 'Lt':  # i < c
+            if pos(c - end):
+                return 'true'
+            if nonneg(start - c):
+                return 'false'
+        elif opname == 'LtE':  # i <= c
+            if nonneg(c - end):
+                return 'true'
+            if pos(start - c):
+                return 'false'
+        elif opname == 'Gt':  # i > c
+            if pos(start - c):
+                return 'true'
+            if nonneg(c - end):
+                return 'false'
+        elif opname == 'GtE':  # i >= c
+            if nonneg(start - c):
+                return 'true'
+            if pos(c - end):
+                return 'false'
+        return 'unknown'
+
+    def _range_verdict(self, code: CodeBlock, cfb: ConditionalBlock) -> str:
+        """Whether guard ``code`` is a tautology (``'true'``) or contradiction
+        (``'false'``) over an enclosing loop's iteration range, else ``'unknown'``.
+        Recognizes ``ivar <cmp> C`` / ``C <cmp> ivar`` (with a loop-invariant ``C``)
+        and ``not(<compare>)``, matching the compared variable to the enclosing
+        ``LoopRegion`` whose iterator it is."""
+        if code is None or code.language != dace.dtypes.Language.Python:
+            return 'unknown'
+        ranges = self._loop_iter_ranges(cfb)
+        if not ranges:
+            return 'unknown'
+        try:
+            node = code.code[0]
+        except (AttributeError, IndexError, TypeError):
+            return 'unknown'
+        if isinstance(node, ast.Expr):
+            node = node.value
+        negate = isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)
+        if negate:
+            node = node.operand
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+            return 'unknown'
+        left, op, right = node.left, node.ops[0], node.comparators[0]
+        opname = type(op).__name__
+
+        def name_of(n):
+            return n.id if isinstance(n, ast.Name) else None
+
+        ivar_to_range = {iv: (s, e) for iv, s, e in ranges}
+        lname, rname = name_of(left), name_of(right)
+        if lname in ivar_to_range and rname not in ivar_to_range:
+            ivar, other = lname, right
+        elif rname in ivar_to_range and lname not in ivar_to_range:
+            ivar, other = rname, left
+            opname = {'Lt': 'Gt', 'LtE': 'GtE', 'Gt': 'Lt', 'GtE': 'LtE'}.get(opname, opname)
+        else:
+            return 'unknown'
+        try:
+            c = symbolic.pystr_to_symbolic(ast.unparse(other))
+        except Exception:
+            return 'unknown'
+        if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
+            return 'unknown'  # C must be loop-invariant
+        start, end = ivar_to_range[ivar]
+        verdict = self._cmp_verdict(opname, c, start, end)
+        if negate and verdict != 'unknown':
+            verdict = 'false' if verdict == 'true' else 'true'
+        return verdict
 
     @staticmethod
     def _is_conjunction(expr) -> bool:
@@ -161,7 +296,7 @@ class LiftTrivialIf(ppl.Pass):
                     for cnd, cfg in list(cfb.branches):
                         if len(cfb.branches) <= 2:
                             break
-                        if cnd is not None and (self._trivially_false(cnd) or self._unsatisfiable(cnd)):
+                        if cnd is not None and (self._trivially_false(cnd, cfb) or self._unsatisfiable(cnd)):
                             cfb.remove_branch(cfg)
                             rmed_count += 1
 
@@ -173,9 +308,9 @@ class LiftTrivialIf(ppl.Pass):
                 conditions_and_cfgs = cfb.branches
                 if len(conditions_and_cfgs) == 1:
                     cond, cfg = conditions_and_cfgs[0]
-                    if self._trivially_true(cond):
+                    if self._trivially_true(cond, cfb):
                         cfb_to_rm_cfg_to_keep.add((cfb, cfg))
-                    elif self._trivially_false(cond):
+                    elif self._trivially_false(cond, cfb):
                         _cfg = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
                         _cfg.add_state(label="empty_placholder", is_start_block=True)
                         cfb.add_branch(condition=None, branch=_cfg)
@@ -190,9 +325,9 @@ class LiftTrivialIf(ppl.Pass):
                                                                              (cond2, cfg2)) if cond1 is not None else
                                                                             ((cond2, cfg2), (cond1, cfg1)))
 
-                    if self._trivially_true(not_none_cond):  # 2.1
+                    if self._trivially_true(not_none_cond, cfb):  # 2.1
                         cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
-                    elif self._trivially_false(not_none_cond):  # 2.2
+                    elif self._trivially_false(not_none_cond, cfb):  # 2.2
                         cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:

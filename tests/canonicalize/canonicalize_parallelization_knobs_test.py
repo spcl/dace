@@ -5,6 +5,7 @@ the pipeline: ``break_anti_dependence`` (snapshot-rename a read-ahead WAR) and
 loops that ``LoopToMap`` would otherwise refuse; each test checks that the knob
 flips the loop from sequential to a parallel Map AND stays value-preserving."""
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -83,6 +84,137 @@ def test_loop_peeling_front_conflict_knob_parallelizes():
 
 
 @dace.program
+def _back_conflict(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = B[i] * 2.0
+        if i == N - 1:
+            A[0] = A[0] + 1.0
+
+
+def test_loop_peeling_back_conflict_knob_parallelizes():
+    """A last-iteration guard writes a conflicting extra location
+    (``if i==N-1: A[0]+=1``): off by default the write-write conflict keeps the
+    loop sequential; with ``peel_limit>0`` the final iteration is peeled off
+    (anchored on the concrete loop end, not the loop variable) and the now-dead
+    guard pruned, leaving a disjoint-write remainder that maps, value-preserving.
+    Exercises the back-peel path, which must substitute ``end - k*stride`` so no
+    loop-defined symbol survives past the loop to block LoopToMap."""
+    off = _back_conflict.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'boundary-conflict loop must stay sequential without the knob'
+
+    on = _back_conflict.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling must unblock the boundary-conflict loop'
+
+    A = np.arange(1, 9, dtype=np.float64)
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _back_conflict.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=8)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref_A)
+
+
+@dace.program
+def _multi_front(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = B[i] * 2.0
+        if i == 0:
+            A[N - 1] = A[N - 1] + 1.0
+        elif i == 1:
+            A[N - 2] = A[N - 2] + 1.0
+
+
+def test_loop_peeling_multi_front_iter_knob_parallelizes():
+    """Two first-iteration guards each write a conflicting extra location
+    (``if i==0: A[N-1]+=1 elif i==1: A[N-2]+=1``): peeling must take off the first
+    *two* iterations and prune both now-dead boundary guards (the if/elif lowers to
+    nested conditionals) so the disjoint-write remainder maps. Exercises peeling at
+    count>1 plus the multi-branch dead-guard collapse."""
+    off = _multi_front.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'multi-iteration boundary conflict must stay sequential off'
+
+    on = _multi_front.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling two front iterations must unblock the loop'
+
+    A = np.arange(1, 9, dtype=np.float64)
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _multi_front.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=8)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref_A)
+
+
+@dace.program
+def _multi_front_else(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        if i == 0:
+            A[N - 1] = B[i] + 1.0
+        elif i == 1:
+            A[N - 2] = B[i] + 1.0
+        else:
+            A[i] = B[i] * 2.0
+
+
+def test_loop_peeling_multi_front_else_iter_knob_parallelizes():
+    """The if/elif/**else** form (``if i==0 ... elif i==1 ... else: A[i]=...``): after
+    peeling two front iterations the special-cased arms are dead contradictions and
+    the else body is a range tautology -- the guards collapse, leaving the bare
+    ``A[i]=B[i]*2`` remainder that maps. Exercises tautology unwrapping of the else
+    arm, not just dead-branch removal."""
+    off = _multi_front_else.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'if/elif/else boundary conflict must stay sequential off'
+
+    on = _multi_front_else.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling must collapse the if/elif/else and map the remainder'
+
+    A = np.arange(1, 9, dtype=np.float64)
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _multi_front_else.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=8)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref_A)
+
+
+@dace.program
+def _multi_back(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = B[i] * 2.0
+        if i == N - 1:
+            A[0] = A[0] + 1.0
+        elif i == N - 2:
+            A[1] = A[1] + 1.0
+
+
+def test_loop_peeling_multi_back_iter_knob_parallelizes():
+    """The final-iterations analogue (``if i==N-1 ... elif i==N-2 ...``): peeling must
+    take off the last *two* iterations (anchored on the loop end, no loop symbol
+    leaking) and prune both dead guards so the remainder maps."""
+    off = _multi_back.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'multi-iteration tail conflict must stay sequential off'
+
+    on = _multi_back.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling two tail iterations must unblock the loop'
+
+    A = np.arange(1, 9, dtype=np.float64)
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _multi_back.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=8)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref_A)
+
+
+@dace.program
 def _fixed_read(a: dace.float64[N], b: dace.float64[N]):
     for i in range(N):
         a[i] = a[0] + b[i]
@@ -114,7 +246,122 @@ def test_loop_peeling_fixed_read_first_iter_knob_parallelizes():
     assert np.allclose(got, ref_a)
 
 
+@dace.program
+def _mod_wrap_plus1(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[(i + 1) % N] = B[i] * 2.0
+
+
+@dace.program
+def _mod_wrap_minus1(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[(i - 1) % N] = B[i] * 2.0
+
+
+@dace.program
+def _mod_wrap_plus3(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[(i + 3) % N] = B[i] * 2.0
+
+
+@pytest.mark.parametrize('prog,offset', [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)])
+def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
+    """A wrap-around write ``A[(i + k) % N] = ...`` is non-affine (the ``% N`` wraps
+    at the boundary), so LoopToMap refuses it. With ``peel_limit>0`` the wrapping
+    iterations are peeled off (the back for a positive offset, the front for a
+    negative one) and the modulo over the remainder is folded to the plain affine
+    index ``i + k`` -- so the body maps. The fold (band reduction) makes both the
+    remainder and the peeled iterations affine, so the result never depends on C's
+    truncated ``%`` (correct for any sign of ``k`` and symbolic ``N``)."""
+    off = prog.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'wrap-around modulo write must stay sequential without the knob'
+
+    on = prog.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling + modulo fold must parallelize the wrap-around write'
+
+    B = np.arange(8, dtype=np.float64) + 0.5
+    ref = np.zeros(8)
+    for i in range(8):
+        ref[(i + offset) % 8] = B[i] * 2.0
+    got = np.zeros(8)
+    on(A=got, B=B.copy(), N=8)
+    assert np.allclose(got, ref)
+
+
+@dace.program
+def _interior_guard(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = B[i] * 2.0
+        if i == 4:
+            A[0] = A[0] + 1.0
+
+
+def test_index_set_split_interior_guard_knob_parallelizes():
+    """An interior special-case iteration (``if i == 4: A[0] += 1``) writes a
+    conflicting fixed location, so the loop is not parallel and -- being interior --
+    no bounded boundary peel reaches it. With ``peel_limit>0`` the loop is index-set
+    split into ``[0, 3] + {4} + [5, N-1]``; the guard is a contradiction in the two
+    range segments (which map) and a tautology in the single middle iteration.
+    Value-preserving."""
+    off = _interior_guard.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'interior-guard loop must stay sequential without the knob'
+
+    on = _interior_guard.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'index-set split must parallelize the range segments'
+
+    A = np.arange(1, 11, dtype=np.float64)
+    B = np.arange(10, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _interior_guard.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=10)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=10)
+    assert np.allclose(got, ref_A)
+
+
+@dace.program
+def _interior_guard_surrounded(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[i] = B[i] * 2.0          # body before the guard
+        if i == 3:
+            A[N - 1] = A[N - 1] + 5.0  # the special-iteration body
+        A[i] = A[i] + 1.0          # body after the guard
+
+
+def test_index_set_split_body_around_guard_knob_parallelizes():
+    """The ``body1; if i == x: body2; body3`` shape: unconditional work surrounds an
+    interior special-case guard. The index-set split puts ``body1; body3`` in the two
+    range segments (guard-free, mapping) and ``body1; body2; body3`` in the single
+    middle iteration. Value-preserving."""
+    off = _interior_guard_surrounded.to_sdfg(simplify=True)
+    canonicalize(off, validate=True)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'surrounded interior-guard loop must stay sequential off'
+
+    on = _interior_guard_surrounded.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'index-set split must parallelize the surrounding work'
+
+    A = np.arange(1, 11, dtype=np.float64)
+    B = np.arange(10, dtype=np.float64) + 0.5
+    ref_A = A.copy()
+    _interior_guard_surrounded.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=10)
+    got = A.copy()
+    on(A=got, B=B.copy(), N=10)
+    assert np.allclose(got, ref_A)
+
+
 if __name__ == '__main__':
     test_break_anti_dependence_knob_parallelizes()
     test_loop_peeling_front_conflict_knob_parallelizes()
+    test_loop_peeling_back_conflict_knob_parallelizes()
+    test_loop_peeling_multi_front_iter_knob_parallelizes()
+    test_loop_peeling_multi_front_else_iter_knob_parallelizes()
+    test_loop_peeling_multi_back_iter_knob_parallelizes()
     test_loop_peeling_fixed_read_first_iter_knob_parallelizes()
+    for _p, _o in [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)]:
+        test_loop_peeling_modulo_wraparound_knob_parallelizes(_p, _o)
+    test_index_set_split_interior_guard_knob_parallelizes()
+    test_index_set_split_body_around_guard_knob_parallelizes()

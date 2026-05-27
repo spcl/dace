@@ -195,8 +195,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     if unroll_limit > 0:
         # UniqueLoopIterators must run AFTER unrolling: a fully-unrolled body is
         # straight-line code, but the loops it *leaves* (and any the unroll cloned)
-        # must carry unique ``_loop_it_<N>`` names before the parallelism checks
-        # (loop_to_reduce / the early LoopToMap) read them.
+        # must carry unique ``_loop_it_<N>`` names before ``loop_to_reduce`` reads
+        # them.
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
     s += [('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation()),
           ('reduce', LoopToReduce())]

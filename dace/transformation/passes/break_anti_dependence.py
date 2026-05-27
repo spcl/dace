@@ -20,8 +20,8 @@ It trades an extra array + an O(N) copy for parallelism, so it is meant to run
 from typing import Any, Dict, List, Optional
 
 from dace import data, properties, symbolic, Memlet
-from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg import SDFG
+from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 
 
