@@ -89,10 +89,13 @@ class ExpandTileGatherCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileGather`.
 
     Emits ``ct.gather(__src, (__idx_0, __idx_1, ...), mask=__mask,
-    padding_value=0)`` — the per-source-dim index-tile tuple form used
-    by the reference cuTile kernels. For a 1D source the call becomes
-    ``ct.gather(__src, __idx_0, ...)`` (single index tile, not a tuple
-    — matches the ``manual_cutile_simple`` example).
+    padding_value=<pad_value>)`` — the per-source-dim index-tile tuple
+    form used by the reference cuTile kernels. For a 1D source the call
+    becomes ``ct.gather(__src, __idx_0, ...)`` (single index tile, not a
+    tuple — matches the ``manual_cutile_simple`` example). ``ct.gather``'s
+    ``padding_value`` is an arbitrary scalar (unlike ``ct.load``'s enum),
+    so :attr:`TileGather.pad_value` can install any reduction identity
+    (``0`` / ``1`` / ``±inf``) for the OOB / masked lanes.
     """
 
     environments = []
@@ -105,14 +108,28 @@ class ExpandTileGatherCute(ExpandTransformation):
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A Python-language tasklet with a ``ct.gather`` body.
+        :raises NotImplementedError: If any ``index_strides`` entry is
+            non-unit — ``ct.gather`` indexes the index tile directly and
+            has no per-lane stride concept, so a ``c``-strided index
+            window cannot be expressed (the strided window must be
+            pre-gathered into a contiguous index tile upstream).
         """
         src_ndim = node.source_ndim
+        # ct.gather has no per-lane stride: a non-unit index_strides cannot be
+        # lowered to a single ct.gather over the index tile (the pure / ISA
+        # paths read __idx[c*lane], which cuTile's gather does not express).
+        if any(s != 1 for s in node.index_strides):
+            raise NotImplementedError(f"{node.label}: TileGather cute lowering cannot express non-unit "
+                                      f"index_strides={tuple(node.index_strides)!r}; ct.gather indexes the "
+                                      f"index tile directly (no per-lane stride). Pre-gather the strided "
+                                      f"index window into a contiguous index tile before this node.")
         if src_ndim == 1:
             idx_arg = "__idx_0"
         else:
             idx_tuple = ", ".join(f"__idx_{k}" for k in range(src_ndim))
             idx_arg = f"({idx_tuple})"
-        mask_arg = ", mask=__mask, padding_value=0" if node.has_mask else ""
+        pad_arg = f"padding_value={node.pad_value}"
+        mask_arg = f", mask=__mask, {pad_arg}" if node.has_mask else f", {pad_arg}"
         body = f"__output = ct.gather(__src, {idx_arg}{mask_arg})"
         inputs = {"__src"} | {f"__idx_{k}" for k in range(src_ndim)}
         if node.has_mask:
@@ -254,6 +271,15 @@ class TileGather(nodes.LibraryNode):
         default=False,
         desc="When True, the ``_mask`` input connector is required.",
     )
+    pad_value = properties.Property(
+        dtype=int,
+        allow_none=False,
+        default=0,
+        desc="cuTile ``ct.gather`` ``padding_value`` for OOB / masked-out "
+        "lanes; only the ``cute`` expansion reads it. Defaults to ``0`` (the "
+        "``+`` reduction identity); set ``1`` for ``prod`` (cuTile's gather "
+        "padding is an arbitrary scalar, unlike load's fixed enum).",
+    )
 
     def __init__(self,
                  name: str,
@@ -261,6 +287,7 @@ class TileGather(nodes.LibraryNode):
                  source_ndim: int = 1,
                  has_mask: bool = False,
                  index_strides: Tuple[int, ...] = (),
+                 pad_value: int = 0,
                  location: Optional[str] = None):
         """Construct a ``TileGather`` node.
 
@@ -271,6 +298,9 @@ class TileGather(nodes.LibraryNode):
         :param has_mask: When True, declare the ``_mask`` input.
         :param index_strides: Per-source-dim lane stride into each index
             tile (defaults to all-1: contiguous index tiles).
+        :param pad_value: cuTile ``ct.gather`` ``padding_value`` for OOB /
+            masked-out lanes (default ``0``); only the ``cute`` expansion
+            uses it.
         :param location: Optional DaCe node location override.
         :raises ValueError: If ``widths`` is empty or longer than 3, or
             if ``source_ndim`` < 1, or if ``index_strides`` length mismatches
@@ -291,6 +321,7 @@ class TileGather(nodes.LibraryNode):
         self.source_ndim = int(source_ndim)
         self.has_mask = has_mask
         self.index_strides = list(index_strides) if index_strides else [1] * int(source_ndim)
+        self.pad_value = int(pad_value)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.

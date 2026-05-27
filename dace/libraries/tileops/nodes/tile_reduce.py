@@ -59,6 +59,30 @@ def _combine_expr(op: str, acc: str, val: str) -> str:
 _OP_CUTE = {"+": "ct.sum", "*": "ct.prod", "min": "ct.min", "max": "ct.max"}
 _VALID_OPS = ("+", "*", "min", "max")
 
+#: cuTile literal for each reduction op's identity, pre-selected into masked
+#: lanes before the (mask-less, L-reduce-nomask) reduction. ``min`` / ``max``
+#: need ``±inf`` which only ``ct.where`` can safely inject (the arithmetic
+#: blend hits the ``inf * 0 = NaN`` hazard — see the L-reduce-nomask note).
+_OP_IDENTITY_CUTE = {
+    "+": "0",
+    "*": "1",
+    "min": "float('inf')",
+    "max": "float('-inf')",
+}
+
+# Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
+# never installed on CI, so this resolves to ``None`` there (meaning "assume
+# present" — emit the richest ``ct.where`` form as the documented default).
+# A unit test can override it to exercise the no-``where`` fallback / raise
+# paths. L-where-unconfirmed: no ``cuda.tile.where`` page exists in the
+# online cuTile-Python API docs (only a Tile-IR ``select(cond, x, y)`` op),
+# so its presence in the installed package stays unverified.
+try:  # pragma: no cover - cuTile is not installed on CI
+    import cuda.tile as ct  # type: ignore  # noqa: F401
+    _CT_HAS_WHERE = hasattr(ct, "where")
+except Exception:  # pragma: no cover - the CI path (no cuTile install)
+    _CT_HAS_WHERE = None
+
 
 @library.expansion
 class ExpandTileReducePure(ExpandTransformation):
@@ -140,29 +164,82 @@ class ExpandTileReducePure(ExpandTransformation):
 class ExpandTileReduceCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileReduce`.
 
-    Emits ``__output = ct.sum(__src, axis=...)`` (or ``ct.prod`` /
-    ``ct.min`` / ``ct.max``). Mask gating is the caller's
-    responsibility — cuTile reductions do not take a ``mask=`` argument
-    so the upstream :class:`TileBinop` must pre-zero inactive lanes.
+    Unmasked (``has_mask=False``): ``__output = ct.sum(__src, axis=...)``
+    (or ``ct.prod`` / ``ct.min`` / ``ct.max``).
+
+    Masked (``has_mask=True``): cuTile reductions take no ``mask=`` /
+    valid-region argument (L-reduce-nomask), so the inactive lanes must
+    be pre-set to the op's identity (``+`` → 0, ``*`` → 1, ``min`` →
+    ``+inf``, ``max`` → ``-inf``) before reducing. Primary form uses
+    ``ct.where(__mask, __src, IDENT)``; the ``__mask`` input is genuinely
+    consumed (fixing the prior dead-connector bug). When ``ct.where`` is
+    known absent, ``+`` / ``*`` fall back to an arithmetic blend, while
+    masked ``min`` / ``max`` raise ``NotImplementedError`` (the
+    ``inf * 0 = NaN`` hazard makes the blend unsafe).
     """
 
     environments = []
 
     @staticmethod
     def expansion(node: "TileReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting ``ct.<op>(__src, axis=...)``.
+        """Return a Python tasklet emitting the masked / unmasked reduction.
 
         :param node: The lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A Python-language tasklet.
+        :raises NotImplementedError: If ``has_mask`` and ``op in {min,
+            max}`` while ``ct.where`` is known absent — injecting ``±inf``
+            into masked lanes without a select hits the ``inf * 0 = NaN``
+            hazard (L-reduce-nomask).
         """
         fn = _OP_CUTE[node.op]
-        if node.axis is None:
-            body = f"__output = {fn}(__src)"
+        axis_kw = "" if node.axis is None else f", axis={node.axis}"
+
+        if not node.has_mask:
+            body = f"__output = {fn}(__src{axis_kw})"
+            inputs = {"__src"}
+            return nodes.Tasklet(
+                label=f"{node.label}_cute",
+                inputs={c: None
+                        for c in inputs},
+                outputs={"__output": None},
+                code=body,
+                language=dace.dtypes.Language.Python,
+            )
+
+        # has_mask=True: pre-select the op identity into masked lanes.
+        ident = _OP_IDENTITY_CUTE[node.op]
+        # _CT_HAS_WHERE is None on CI (no cuTile install) -> assume present and
+        # emit the documented ct.where default; only an explicit False forces
+        # the arithmetic fallback / raise.
+        if _CT_HAS_WHERE is not False:
+            lines = [
+                f"__masked_src = ct.where(__mask, __src, {ident})",
+                f"__output = {fn}(__masked_src{axis_kw})",
+            ]
+        elif node.op == "+":
+            # 0 is the + identity, so zeroing inactive lanes is exact.
+            lines = [
+                "__m = __mask.astype(__src.dtype)",
+                f"__output = ct.sum(__m * __src{axis_kw})",
+            ]
+        elif node.op == "*":
+            # 1 is the * identity: blend src in active lanes, 1 in inactive.
+            lines = [
+                "__m = __mask.astype(__src.dtype)",
+                f"__output = ct.prod(__m * __src + (1.0 - __m){axis_kw})",
+            ]
         else:
-            body = f"__output = {fn}(__src, axis={node.axis})"
-        inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
+            # L-reduce-nomask: masked min/max needs ct.where to inject ±inf;
+            # the arithmetic blend __src*__m + IDENT*(1-__m) yields NaN when a
+            # masked lane already holds inf (inf * 0). No safe lowering.
+            raise NotImplementedError(f"{node.label}: masked {node.op!r} tile reduction needs ct.where to inject "
+                                      f"±inf into masked lanes; cuTile reductions take no mask (L-reduce-nomask) "
+                                      f"and the arithmetic blend is unsafe for non-finite data. Verify ct.where in "
+                                      f"the installed cuda-tile package.")
+        body = "\n".join(lines)
+        inputs = {"__src", "__mask"}
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={c: None

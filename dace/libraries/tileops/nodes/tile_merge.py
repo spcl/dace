@@ -29,6 +29,19 @@ from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
 from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
+# Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
+# never installed on CI, so this resolves to ``None`` there (meaning "assume
+# present" — emit the richest ``ct.where`` form as the documented default).
+# A unit test can override it to exercise the arithmetic-blend fallback / the
+# non-finite-float raise. L-where-unconfirmed: no ``cuda.tile.where`` page
+# exists in the online cuTile-Python API docs (only a Tile-IR ``select(cond,
+# x, y)`` op), so its presence in the installed package stays unverified.
+try:  # pragma: no cover - cuTile is not installed on CI
+    import cuda.tile as ct  # type: ignore  # noqa: F401
+    _CT_HAS_WHERE = hasattr(ct, "where")
+except Exception:  # pragma: no cover - the CI path (no cuTile install)
+    _CT_HAS_WHERE = None
+
 
 @library.expansion
 class ExpandTileMergePure(ExpandTransformation):
@@ -73,9 +86,19 @@ class ExpandTileMergePure(ExpandTransformation):
 class ExpandTileMergeCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileMerge`.
 
-    Emits ``ct.where(cond, t, e)`` — the cuTile select primitive. The
+    Primary (CI default): ``__output = ct.where(__cond, __then,
+    __else)`` — the cuTile select primitive. The surrounding iteration
     mask is applied at the downstream ``ct.scatter`` store, not at the
     select (matching the reference cuTile kernels).
+
+    Fallback (``ct.where`` known absent): an arithmetic blend
+    ``__m = __cond.astype(__then.dtype); __output = __m * __then +
+    (1.0 - __m) * __else``. This is exact for the ``0.0`` / ``1.0`` (or
+    ``bool``) condition encoding, but ``0.0 * inf = NaN`` would leak a
+    non-finite *unselected* lane into the result. So the fallback is
+    emitted only for an **integer** output dtype; a float output with
+    possibly-non-finite branches raises ``NotImplementedError`` because
+    cuTile offers no other confirmed safe select.
     """
 
     environments = []
@@ -87,9 +110,31 @@ class ExpandTileMergeCute(ExpandTransformation):
         :param node: The lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with the ``ct.where`` body.
+        :returns: A Python-language tasklet with the ``ct.where`` (or
+            arithmetic-blend) body.
+        :raises NotImplementedError: If ``ct.where`` is known absent and
+            the output dtype is floating point (the blend cannot safely
+            handle a possibly-non-finite unselected branch — ``0.0 * inf
+            = NaN``); verify ``ct.where`` in the installed cuda-tile
+            package.
         """
-        body = "__output = ct.where(__cond, __then, __else)"
+        # _CT_HAS_WHERE is None on CI (no cuTile install) -> assume present and
+        # emit the documented ct.where default; only an explicit False forces
+        # the arithmetic fallback / raise.
+        if _CT_HAS_WHERE is not False:
+            body = "__output = ct.where(__cond, __then, __else)"
+        else:
+            out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_o")
+            out_dtype = parent_sdfg.arrays[out_edge.data.data].dtype
+            is_float = out_dtype.as_numpy_dtype().kind == "f"
+            if is_float:
+                # Blending a possibly-non-finite unselected branch with 0.0
+                # leaks NaN (0.0 * inf); no confirmed cuTile select otherwise.
+                raise NotImplementedError(f"{node.label}: cuTile select without ct.where cannot safely blend "
+                                          f"possibly-non-finite branches (0.0 * inf = NaN) for float output "
+                                          f"{out_dtype}; verify ct.where in the installed cuda-tile package.")
+            body = ("__m = __cond.astype(__then.dtype)\n"
+                    "__output = __m * __then + (1.0 - __m) * __else")
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={

@@ -16,6 +16,20 @@ from .._pure_codegen import nested_loops, offset_via_strides, tile_offset
 from .. import _isa_codegen
 from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
+#: Map the :attr:`TileLoad.pad_mode` property values to the cuTile
+#: ``ct.PaddingMode`` enum members. cuTile's padding enum offers ``+inf``
+#: (good for a downstream ``min`` reduction) but has **no** ``-inf`` / ``1``
+#: member (so ``max`` / ``prod`` partial-tile identities cannot be installed
+#: by load padding alone — they are routed to the reduction's pre-select;
+#: see the L-pad-identity note in ``CUTILE_EXPANSION_DESIGN.md``).
+_PAD_MODE_CUTE = {
+    "ZERO": "ct.PaddingMode.ZERO",
+    "NAN": "ct.PaddingMode.NAN",
+    "POS_INF": "ct.PaddingMode.POSITIVE_INFINITY",
+    "NEG_ZERO": "ct.PaddingMode.NEGATIVE_ZERO",
+    "UNDETERMINED": "ct.PaddingMode.UNDETERMINED",
+}
+
 
 @library.expansion
 class ExpandTileLoadPure(ExpandTransformation):
@@ -73,12 +87,14 @@ class ExpandTileLoadCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileLoad`.
 
     Emits ``ct.load(__src, index=(__pid0, ...), shape=(W_0, ...),
-    padding_mode=ct.PaddingMode.ZERO)`` — the contiguous block-tile
-    read used by the reference cuTile kernels. Mask gating is applied
-    at the store side (:class:`TileStore` cute via ``ct.scatter``), so
-    ``has_mask`` does not change the load body; ``padding_mode=ZERO``
-    is always used so the OOB tail of the last tile reads as 0 and
-    downstream masking is correct.
+    padding_mode=...)`` — the contiguous block-tile read used by the
+    reference cuTile kernels. ``ct.load`` has no ``mask=`` parameter
+    (L-load-nomask), so mask gating is applied at the store side
+    (:class:`TileStore` cute via ``ct.scatter``) and ``has_mask`` does
+    **not** add a ``__mask`` input here (the load body never reads it).
+    The padding mode is selectable via :attr:`TileLoad.pad_mode` so the
+    OOB tail of the last tile reads as the right identity for the
+    downstream consumer (e.g. ``+inf`` ahead of a ``min`` reduction).
     """
 
     environments = []
@@ -91,16 +107,25 @@ class ExpandTileLoadCute(ExpandTransformation):
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A Python-language tasklet whose body calls
-            ``ct.load`` with ``padding_mode=ZERO``.
+            ``ct.load`` with the :attr:`TileLoad.pad_mode` padding mode.
+        :raises ValueError: If :attr:`TileLoad.pad_mode` is not a
+            recognised cuTile padding-mode name.
         """
         widths = list(node.widths)
         K = len(widths)
+        if node.pad_mode not in _PAD_MODE_CUTE:
+            raise ValueError(f"{node.label}: unknown pad_mode {node.pad_mode!r}; "
+                             f"allowed: {sorted(_PAD_MODE_CUTE)}")
+        pad_mode = _PAD_MODE_CUTE[node.pad_mode]
         shape_tuple = ", ".join(str(w) for w in widths)
         index_tuple = ", ".join(f"__pid{k}" for k in range(K))
         lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
         lines.append(f"__output = ct.load(__src, index=({index_tuple},), shape=({shape_tuple},),"
-                     f" padding_mode=ct.PaddingMode.ZERO)")
-        inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
+                     f" padding_mode={pad_mode})")
+        # L-load-nomask: the load never reads a per-lane mask, so even with
+        # has_mask=True we must NOT declare a dangling __mask input — the
+        # mask is consumed downstream at the store/scatter.
+        inputs = {"__src"}
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={c: None
@@ -226,6 +251,17 @@ class TileLoad(nodes.LibraryNode):
         default=False,
         desc="When True, the ``_mask`` input connector is required.",
     )
+    pad_mode = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="ZERO",
+        desc="cuTile OOB padding mode for the partial last tile, one of "
+        "``ZERO | NAN | POS_INF | NEG_ZERO | UNDETERMINED`` mapping to the "
+        "``ct.PaddingMode`` enum. Only the ``cute`` expansion reads it. The "
+        "orchestrator fusing a load into a reduction sets the right identity "
+        "(``+`` → ZERO, ``min`` → POS_INF); ``max`` / ``prod`` have no padding "
+        "identity in cuTile and rely on the reduction's pre-select instead.",
+    )
 
     def __init__(self,
                  name: str,
@@ -233,6 +269,7 @@ class TileLoad(nodes.LibraryNode):
                  dim_strides: Optional[Tuple[int, ...]] = None,
                  src_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
+                 pad_mode: str = "ZERO",
                  location: Optional[str] = None):
         """Construct a ``TileLoad`` node.
 
@@ -240,7 +277,12 @@ class TileLoad(nodes.LibraryNode):
         :param widths: Per-dim tile widths, innermost-last.
         :param dim_strides: Per-tile-dim stride coefficients; defaults
             to all 1s (contiguous).
+        :param src_dims: Per-tile-dim source-array dim mapping (empty ⇒
+            last K dims in order).
         :param has_mask: When True, declare the ``_mask`` input.
+        :param pad_mode: cuTile OOB padding mode (``ZERO | NAN | POS_INF
+            | NEG_ZERO | UNDETERMINED``); only the ``cute`` expansion uses
+            it.
         :param location: Optional DaCe node location override.
         :raises ValueError: If ``widths`` is empty / longer than 3 or
             if ``dim_strides`` length disagrees with ``widths``.
@@ -255,6 +297,7 @@ class TileLoad(nodes.LibraryNode):
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         self.src_dims = list(src_dims) if src_dims else []
         self.has_mask = has_mask
+        self.pad_mode = pad_mode
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.
