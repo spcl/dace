@@ -75,6 +75,34 @@ def _is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 
+def normalize_loop_nests(sdfg: dace.SDFG) -> None:
+    """Normalise loop-nest map bodies so a K-dim tile spans K genuine map dims.
+
+    ``LoopToMap`` wraps each parallelised loop body in an NSDFG, so a nested
+    ``for j: for i:`` becomes ``j-map -> NSDFG -> i-map`` — non-adjacent maps that
+    ``MapCollapse`` cannot fuse. This:
+
+    1. Inlines the loop-nesting wrapper NSDFGs (and any *single-state* leaf
+       compute body) via ``InlineSDFG`` / ``InlineMultistateSDFG`` so the maps
+       become adjacent. A leaf body ``InlineSDFG`` refuses — a *multi-state* body
+       or one with an **inout connector** (the cloudsc ``zqlhs`` RMW chain, the
+       ``vbor`` reused-scalar chain) — is left intact for the tile descent
+       (:class:`PromoteNSDFGBodyToTiles`).
+    2. Collapses the now-adjacent perfectly-nested single-param maps into one
+       multi-param map (``MapCollapse``).
+
+    Net effect: fewer downstream body shapes — a flattened single-state body tiles
+    via :class:`EmitTileOps`; a preserved inout / multi-state body tiles via the
+    descent.
+
+    :param sdfg: SDFG to normalise in place.
+    """
+    from dace.transformation.dataflow import MapCollapse
+    from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
+    sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False)
+    sdfg.apply_transformations_repeated(MapCollapse, permissive=False, validate=False)
+
+
 @properties.make_properties
 class VectorizeCPUMultiDim(ppl.Pipeline):
     """Drive the v2 K-dim masked tile-op pipeline.
@@ -277,7 +305,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :param pipeline_results: Carry-in from any enclosing pipeline.
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
-        from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
+        from dace.transformation.dataflow import WCRToAugAssign
         from dace.transformation.interstate import LoopToMap, RefineNestedAccess
         # The vectorization / tile path does NOT handle WCR: convert every
         # write-conflict-resolution memlet (a reduction ``s += a[i]``) into an
@@ -293,9 +321,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # what the body NSDFG actually accesses (``e[i]``; a gather ``b[idx[i]]``
         # stays the whole-array ``b(1)[0:N]``, matching the hand-map granularity).
         self._refine_loop_to_map_bodies(sdfg, LoopToMap, RefineNestedAccess)
-        # ``MapCollapse`` then collapses perfectly-nested single-param maps into
-        # one multi-param map so a K-dim tile genuinely spans K dims.
-        sdfg.apply_transformations_repeated(MapCollapse, permissive=False, validate=False)
+        # Normalise loop-nest map bodies just before MapCollapse needs them:
+        # inline the loop-nesting wrapper NSDFGs so nested ``for`` loops' maps
+        # become adjacent + collapse them into one multi-param map. An inout /
+        # multi-state leaf compute body (cloudsc RMW chain, vbor) resists inlining
+        # and stays an NSDFG for the tile descent. See ``normalize_loop_nests``.
+        normalize_loop_nests(sdfg)
         result = super().apply_pass(sdfg, pipeline_results)
         self._select_tile_implementations(sdfg)
         sdfg.expand_library_nodes()
