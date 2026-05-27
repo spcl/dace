@@ -60,18 +60,38 @@ def pytest_configure(config):
     )
 
 
+def pytest_addoption(parser):
+    """Add ``--tile-nest-bodies`` to select the descent-only emit arm.
+
+    :param parser: The pytest option parser.
+    """
+    parser.addoption(
+        "--tile-nest-bodies",
+        action="store_true",
+        default=False,
+        help="Run the 'tile_nodes_nested' vectorize_config arm "
+        "(VectorizeCPUMultiDim(nest_map_bodies=True): every map body nested "
+        "into a NestedSDFG so PromoteNSDFGBodyToTiles is the single emit path) "
+        "instead of the default hybrid 'tile_nodes' arm.",
+    )
+
+
 def pytest_generate_tests(metafunc):
-    """Parametrise ``vectorize_config`` over the tile-op path only.
+    """Parametrise ``vectorize_config`` over the tile-op path.
 
     The legacy 1D ``VectorizeCPU`` (``scalar_postamble``, K=1 / VLEN=8) arm
     has been dropped: the K-dim tile-op path (``VectorizeCPUMultiDim``) now
-    covers both K=1 and K>=2, so the full sweep runs through it alone.
+    covers both K=1 and K>=2, so the full sweep runs through it alone. The arm
+    is the default hybrid ``"tile_nodes"`` unless ``--tile-nest-bodies`` selects
+    the single-descent ``"tile_nodes_nested"`` arm (the in-progress emit path
+    being brought to parity); both must match the unvectorized scalar reference.
 
     :param metafunc: The pytest metafunc for the test being collected.
     """
     if "vectorize_config" not in metafunc.fixturenames:
         return
-    metafunc.parametrize("vectorize_config", ["tile_nodes"], indirect=True)
+    arm = "tile_nodes_nested" if metafunc.config.getoption("--tile-nest-bodies") else "tile_nodes"
+    metafunc.parametrize("vectorize_config", [arm], indirect=True)
 
 
 #: Test files that exercise ONLY the legacy 1D ``VectorizeCPU`` / ``VectorizeSVE``
@@ -175,10 +195,15 @@ def vectorize_config(request) -> str:
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
       (TileBinop / TileLoad / TileStore / TileMerge / TileGather /
       TileScatter), expanded to the per-ISA backend (scalar reference in
-      the harness). The sole arm now that the legacy ``scalar_postamble``
+      the harness). The default arm now that the legacy ``scalar_postamble``
       1D path has been dropped.
+    - ``"tile_nodes_nested"`` — the same path with
+      ``VectorizeCPUMultiDim(nest_map_bodies=True)``: every innermost map body
+      is nested into a NestedSDFG so the descent
+      (``PromoteNSDFGBodyToTiles``) is the single emit path and ``EmitTileOps``
+      is a no-op. Selected by ``--tile-nest-bodies``.
 
-    The tile arm must match the unvectorized scalar reference."""
+    Both arms must match the unvectorized scalar reference."""
     return request.param
 
 

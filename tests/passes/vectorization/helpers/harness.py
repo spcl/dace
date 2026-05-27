@@ -19,7 +19,6 @@ import numpy
 from dace import InterstateEdge
 
 from dace import Union
-from typing import Optional
 
 from dace.properties import CodeBlock
 
@@ -176,14 +175,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
                            num_cores: int = 8,
-                           vectorize_config: str = "tile_nodes",
-                           nest_map_bodies: Optional[bool] = None):
-    # ``nest_map_bodies`` selects the tile emit path (default hybrid EmitTileOps
-    # + descent vs the single descent path). ``None`` reads the
-    # ``TILE_NEST_BODIES=1`` env so the whole suite can be flipped to the
-    # descent-only path for a measurement run without editing every test.
-    if nest_map_bodies is None:
-        nest_map_bodies = os.environ.get("TILE_NEST_BODIES", "") == "1"
+                           vectorize_config: str = "tile_nodes"):
 
     # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
     # plan decision (the masked path emits merge tasklets / iter_mask blends
@@ -300,7 +292,12 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         filter_map = None
 
-    if vectorize_config == "tile_nodes":
+    if vectorize_config in ("tile_nodes", "tile_nodes_nested"):
+        # ``tile_nodes_nested`` is the same tile-op path with nest_map_bodies=True
+        # (every body nested into a NestedSDFG so the descent is the single emit
+        # path); ``tile_nodes`` is the default hybrid (flat -> EmitTileOps,
+        # already-NSDFG bodies -> descent). Both must match the scalar reference.
+        nest_map_bodies = (vectorize_config == "tile_nodes_nested")
         # v2 tile-op path (VectorizeCPUMultiDim), unified for K=1 and K>=2: the
         # tile lib nodes (TileBinop / TileLoad / TileStore / TileMerge / ...)
         # are emitted for every K and then expanded to tasklets (the ``pure``
