@@ -33,6 +33,8 @@ from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+from dace.transformation.passes.vectorization.nest_innermost_map_body import (
+    NestInnermostMapBodyIntoNSDFG, )
 from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
     PromoteNSDFGBodyToTiles, )
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
@@ -129,7 +131,8 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  num_cores: int = 1,
                  remainder_strategy: Literal["full_mask", "masked_tail", "scalar_postamble"] = "full_mask",
                  branch_mode: Literal["merge", "fp_factor"] = "merge",
-                 loop_to_map_permissive: bool = False):
+                 loop_to_map_permissive: bool = False,
+                 nest_map_bodies: bool = False):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -153,6 +156,16 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             same-write-set if/else to a per-lane :class:`TileMerge` select;
             ``"fp_factor"`` (K=1 only, requires ``scalar_postamble``) lowers it
             to ``c*x + (1-c)*y`` tile-binop arithmetic.
+        :param nest_map_bodies: Emit-path selector. ``False`` (default) keeps
+            the hybrid path — a flat (bare-tasklet) map body tiles via
+            :class:`EmitTileOps`, and only a body that is *already* a NestedSDFG
+            (a non-inlinable reused-scalar / multi-state chain) descends via
+            :class:`PromoteNSDFGBodyToTiles`. ``True`` nests *every* innermost
+            map body into a NestedSDFG first
+            (:class:`NestInnermostMapBodyIntoNSDFG`), so the descent is the
+            single emit path. Both values must produce identical numerics; the
+            descent path is what a strided / gather / structured access inside a
+            non-inlinable body needs regardless of this knob.
         :raises NotImplementedError: On any disallowed combination (e.g. a
             K=1-only knob at K>=2, or fp_factor with a masked remainder).
         """
@@ -275,6 +288,17 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                 SplitMapForTileRemainder, )
             tail_mode = "scalar" if remainder_strategy == "scalar_postamble" else "masked"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
+        if nest_map_bodies:
+            # Single-emit-path mode: nest EVERY innermost map body into one
+            # NestedSDFG so the descent (PromoteNSDFGBodyToTiles) tiles all
+            # bodies — a flat axpy-style body and a reused-scalar (vbor) body
+            # then look identical to the tiler, and EmitTileOps is a no-op. This
+            # nests unconditionally and is K-dim-agnostic: it wraps the body of
+            # whatever innermost map exists, including the collapsed multi-param
+            # ``(i, j[, k])`` map. ``nest_provably_divisible=True`` disables the
+            # (single-dim, ``range[-1]``-only) divisibility skip — we always
+            # nest, so ``vector_width`` is unused and deliberately left default.
+            passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
         passes += [
             MarkTileDims(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
@@ -291,6 +315,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._num_cores = num_cores
         self._remainder_strategy = remainder_strategy
         self._branch_mode = branch_mode
+        self._nest_map_bodies = nest_map_bodies
         self._loop_to_map_permissive = loop_to_map_permissive
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
