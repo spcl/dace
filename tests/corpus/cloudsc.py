@@ -329,7 +329,8 @@ def cloudsc_py(
     zvqx[ncldqi - 1] = yrecldp_rvice
     zvqx[ncldqr - 1] = yrecldp_rvrain
     zvqx[ncldqs - 1] = yrecldp_rvsnow
-    llfall[:] = False
+    for jm in range(1, nclv + 1):
+        llfall[jm - 1] = False
     for jm in range(1, nclv + 1):
         if zvqx[jm - 1] > 0.0:
             llfall[jm - 1] = True
@@ -357,7 +358,8 @@ def cloudsc_py(
                 zlneg[jm - 1, jk - 1, jl - 1] = 0.0
     for jl in range(kidia, kfdia + 1):
         prainfrac_toprfz[jl - 1] = 0.0
-    llrainliq[:] = True
+    for jl in range(1, klon + 1):
+        llrainliq[jl - 1] = True
     for jk in range(1, klev + 1):
         for jl in range(kidia, kfdia + 1):
             if zqx[ncldql - 1, jk - 1, jl - 1] + zqx[ncldqi - 1, jk - 1, jl - 1] < yrecldp_rlmin or za[jk - 1, jl - 1] < yrecldp_ramin:
@@ -1026,7 +1028,8 @@ def cloudsc_py(
             for jl in range(kidia, kfdia + 1):
                 zsinksum[jm - 1, jl - 1] = 0.0
         for jm in range(1, nclv + 1):
-            psum_solqa[:] = 0.0
+            for jl in range(1, klon + 1):
+                psum_solqa[jl - 1] = 0.0
             for jn in range(1, nclv + 1):
                 for jl in range(kidia, kfdia + 1):
                     psum_solqa[jl - 1] = psum_solqa[jl - 1] + zsolqa[jn - 1, jm - 1, jl - 1]
