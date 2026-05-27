@@ -922,15 +922,25 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
                 # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # NOTE: We have to follow the memlet path "with the flow" because the data could
+                #   potentially go to multiple destinations (one outgoing edge per destination).
+                #   We must resolve the destination from the terminal AccessNode of the path rather
+                #   than from ``oedge.data.data``, because the Memlet can be source-relative (i.e.,
+                #   its ``data`` names the inner transient, not the external array being written).
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    if oedge.data.is_empty():
+                        continue
+                    terminal_dst = self.graph.memlet_path(oedge)[-1].dst
+                    if isinstance(terminal_dst, nd.AccessNode):
+                        dst_name = terminal_dst.data
+                    else:
+                        # Fall back to the Memlet's data when the path does not terminate at an
+                        #  AccessNode (i.e., the Memlet is destination-relative).
+                        dst_name = oedge.data.data
+                    if dst_name not in descs and dst_name not in additional_descs:
+                        additional_descs[dst_name] = sdfg.arrays[dst_name]
 
             else:
                 # Case is ignored.
