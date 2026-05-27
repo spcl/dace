@@ -83,6 +83,26 @@ def _in_ctype(node, parent_state, parent_sdfg, in_conn: str) -> str:
     return parent_sdfg.arrays[e.data.data].dtype.ctype
 
 
+def _scalar_ref(conn: str, desc, subset) -> str:
+    """C++ reference for a Scalar/broadcast operand connector.
+
+    DaCe passes a tasklet input connector by value (``T conn``) for a true
+    :class:`dace.data.Scalar` and for a single-element access into a larger array
+    (``a[j]`` -> ``double conn = a[j]``); only a genuine length-1 *array*
+    connector is passed as a pointer (``T* conn``) and must be dereferenced
+    ``conn[0]``. The earlier code dereferenced every non-Scalar source, which
+    faulted on the ``a[j]`` loop-invariant broadcast (``conn[0]`` on a scalar).
+
+    :param conn: Connector name.
+    :param desc: Source array/scalar descriptor.
+    :param subset: The connector edge's subset (the access into ``desc``).
+    :returns: ``conn`` (by value) or ``conn[0]`` (length-1 array pointer).
+    """
+    is_len1_array = (isinstance(desc, dace.data.Array)
+                     and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
+    return f"{conn}[0]" if is_len1_array else conn
+
+
 def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_binop`` for ``node``.
 
@@ -113,8 +133,7 @@ def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
             val = f"({out_dtype})({expr})"
         else:
             desc = parent_sdfg.arrays[in_e[conn].data.data]
-            ref = conn if isinstance(desc, dace.data.Scalar) else f"{conn}[0]"
-            val = f"({out_dtype})({ref})"
+            val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
         buf = f"_bc{conn}"
         pre.append(f"{out_dtype} {buf}[1] = {{ {val} }};")
         return "true", buf
@@ -173,8 +192,7 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
             val = f"({out_dtype})({node.expr_a})"
         else:
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
-            ref = "_a" if isinstance(desc, dace.data.Scalar) else "_a[0]"
-            val = f"({out_dtype})({ref})"
+            val = f"({out_dtype})({_scalar_ref('_a', desc, in_e['_a'].data.subset)})"
         a_ptr = "_bc_a"
         pre.append(f"{out_dtype} {a_ptr}[1] = {{ {val} }};")
         a_bcast = "true"
