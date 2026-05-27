@@ -49,6 +49,8 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 )
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.remove_redundant_assignment_tasklets import RemoveRedundantAssignmentTasklets
+from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
+    StageGlobalArrayThroughScalars, )
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.vectorization.utils.name_schemes import (
@@ -206,6 +208,16 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             PowerOperatorExpansion(),
             SplitTasklets(),
             RemoveMathCall(),
+            # Stage every ``Tasklet -> global-array -> Tasklet`` hop through
+            # transient scalars (the cloudsc zsolqa / zqlhs reuse). A global
+            # array routed between two tasklets forces a memory round-trip the
+            # tile descent cannot register-promote; staging it (disjoint -> two
+            # scalars + preserved store; RMW -> one scalar carrying the value +
+            # an assign store) decouples the producer/consumer dataflow from the
+            # global node while keeping the store. Runs after SplitTasklets (so
+            # the hops are single-op) and before MarkTileDims (so the staged
+            # transients are what gets tiled).
+            StageGlobalArrayThroughScalars(),
             # Clean up empty states left by the branch lowering + body rewrites
             # above, so the tiling passes see a tidy CFG. (A ``ppl.Pipeline``
             # forbids duplicate pass types, so this single end-of-prep cleanup
