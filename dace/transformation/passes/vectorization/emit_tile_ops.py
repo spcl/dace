@@ -236,6 +236,20 @@ def _classify_unop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[s
     return None
 
 
+def _normalize_operand_kind(kind: str) -> str:
+    """Collapse a resolved operand kind to a :class:`TileBinop` / :class:`TileUnop`
+    ``kind_*`` property value.
+
+    A gathered or already-materialised intermediate tile is just a ``Tile``
+    operand to the lib node; ``Scalar`` / ``Symbol`` pass through unchanged.
+
+    :param kind: Resolver kind (``Tile`` / ``Tile-existing`` / ``Gather`` /
+        ``Scalar`` / ``Symbol``).
+    :returns: ``Tile`` for tile-shaped operands, else ``kind`` unchanged.
+    """
+    return "Tile" if kind in ("Tile-existing", "Gather") else kind
+
+
 def _tile_region_subset(orig_subset: subsets.Range, iter_vars: Tuple[str, ...], widths: Tuple[int,
                                                                                               ...]) -> subsets.Range:
     """Promote a per-iteration scalar subset to its tile-region slice.
@@ -856,15 +870,95 @@ class EmitTileOps(ppl.Pass):
                 raise NotImplementedError("EmitTileOps: cyclic / unresolvable binop dependency in map body")
         return ordered
 
+    def _resolve_operand(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, token: str,
+                         tile_map: Dict[str, Tuple[str,
+                                                   dace.nodes.AccessNode]], spec: TileDimSpec) -> Tuple[str, object]:
+        """Classify one operand token of a body tasklet.
+
+        :param state: Parent state.
+        :param tasklet: The compute tasklet owning the operand.
+        :param token: The in-connector name (or numeric literal) of the operand.
+        :param tile_map: Intermediate-data-name -> ``(tile_name, tile_access)``.
+        :param spec: Per-dim tile specification.
+        :returns: ``(kind, info)`` where kind is ``Symbol`` (numeric literal,
+            info is the literal), ``Tile-existing`` (info is the intermediate
+            tile's access node), or whatever :meth:`_operand_kind` returns
+            (``Tile`` / ``Gather`` / ``Scalar`` with their info tuples).
+        :raises NotImplementedError: If the operand does not have exactly one
+            in-edge.
+        """
+        if _is_numeric_literal(token):
+            return "Symbol", token
+        in_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == token]
+        if len(in_edges) != 1:
+            raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} operand {token!r} has "
+                                      f"{len(in_edges)} in-edges")
+        edge = in_edges[0]
+        src_data = edge.data.data
+        if isinstance(edge.src, dace.nodes.AccessNode) and src_data in tile_map:
+            return "Tile-existing", tile_map[src_data][1]
+        return self._operand_kind(state, tasklet, token, spec)
+
+    def _wire_operand(self, state: dace.SDFGState, node: dace.nodes.Node, conn: str, kind: str, info: object,
+                      tasklet: dace.nodes.Tasklet, spec: TileDimSpec, mask_name: Optional[str], subset: str) -> None:
+        """Wire a resolved operand into tile-node connector ``conn``.
+
+        A ``Symbol`` operand is embedded inline by the lib node, so nothing is
+        wired for it.
+
+        :param state: Parent state.
+        :param node: The :class:`TileBinop` / :class:`TileUnop` consuming the operand.
+        :param conn: Destination connector on ``node`` (e.g. ``TileConnectors.A``).
+        :param kind: Resolver kind from :meth:`_resolve_operand`.
+        :param info: Resolver payload from :meth:`_resolve_operand`.
+        :param tasklet: The originating body tasklet (for load emission context).
+        :param spec: Per-dim tile specification.
+        :param mask_name: Iteration-mask transient name, or ``None``.
+        :param subset: ``"0:W0, 0:W1, ..."`` full-tile subset string.
+        """
+        if kind == "Tile-existing":
+            state.add_edge(info, None, node, conn, dace.Memlet(f"{info.data}[{subset}]"))
+        elif kind == "Tile":
+            tname, tacc = self._emit_tile_load(state, tasklet, conn[-1], info[0], info[1], info[2], info[3], info[4],
+                                               spec, mask_name)
+            state.add_edge(tacc, None, node, conn, dace.Memlet(f"{tname}[{subset}]"))
+        elif kind == "Gather":
+            tname, tacc = self._emit_gather_load(state, tasklet, conn[-1], info[0], info[1], info[2], spec, mask_name)
+            state.add_edge(tacc, None, node, conn, dace.Memlet(f"{tname}[{subset}]"))
+        elif kind == "Scalar":
+            self._wire_scalar_operand(state, node, conn, info[0], info[1])
+        # Symbol: nothing to wire (embedded inline).
+
+    def _finish_tile_op(self, state: dace.SDFGState, node: dace.nodes.Node, tasklet: dace.nodes.Tasklet,
+                        mask_name: Optional[str], spec: TileDimSpec, subset: str) -> Tuple[str, dace.nodes.AccessNode]:
+        """Wire the iteration mask (if any) and a fresh output tile for a tile op.
+
+        :param state: Parent state.
+        :param node: The :class:`TileBinop` / :class:`TileUnop` to finish.
+        :param tasklet: The originating body tasklet (for output dtype + data name).
+        :param mask_name: Iteration-mask transient name, or ``None``.
+        :param spec: Per-dim tile specification.
+        :param subset: ``"0:W0, 0:W1, ..."`` full-tile subset string.
+        :returns: ``(out_data_name, out_tile_access)``.
+        """
+        out_dtype = state.sdfg.arrays[self._binop_output_data(state, tasklet)].dtype
+        out_tile_name = self._add_tile_transient(state.sdfg, "_tile_t", out_dtype, spec.widths)
+        mask_access = self._mask_access_or_none(state, mask_name)
+        if mask_access is not None:
+            state.add_edge(mask_access, None, node, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
+        out_access = state.add_access(out_tile_name)
+        state.add_edge(node, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
+        return self._binop_output_data(state, tasklet), out_access
+
     def _emit_one_binop(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
                         tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
                         mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
         """Emit a single :class:`TileBinop` for one body tasklet.
 
-        Resolves each operand to a Tile (existing intermediate tile from
-        ``tile_map`` or a fresh :class:`TileLoad`), a Scalar (wired
-        through), or a Symbol (numeric literal embedded inline), then
-        writes the result to a fresh tile transient.
+        Resolves each operand (:meth:`_resolve_operand`) to a Tile (existing
+        intermediate from ``tile_map`` or a fresh load), a Scalar, or a Symbol
+        (numeric literal embedded inline), wires them in, and writes the result
+        to a fresh tile transient.
 
         :param state: Parent state.
         :param tasklet: The binop tasklet.
@@ -878,32 +972,13 @@ class EmitTileOps(ppl.Pass):
         """
         out_conn, a_tok, op, b_tok = self._classify_binop_tasklet(tasklet)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
-
-        def _resolve(token, conn_label):
-            """Return ``(kind, payload)`` for one operand token."""
-            if _is_numeric_literal(token):
-                return "Symbol", token
-            in_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == token]
-            if len(in_edges) != 1:
-                raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} operand {token!r} has "
-                                          f"{len(in_edges)} in-edges")
-            edge = in_edges[0]
-            src_data = edge.data.data
-            if isinstance(edge.src, dace.nodes.AccessNode) and src_data in tile_map:
-                return "Tile-existing", tile_map[src_data][1]
-            kind, info = self._operand_kind(state, tasklet, token, spec)
-            return kind, info
-
-        kind_a, info_a = _resolve(a_tok, TileConnectors.A)
-        kind_b, info_b = _resolve(b_tok, TileConnectors.B)
-        norm_a = "Tile" if kind_a in ("Tile-existing", "Gather") else kind_a
-        norm_b = "Tile" if kind_b in ("Tile-existing", "Gather") else kind_b
+        kind_a, info_a = self._resolve_operand(state, tasklet, a_tok, tile_map, spec)
+        kind_b, info_b = self._resolve_operand(state, tasklet, b_tok, tile_map, spec)
+        norm_a = _normalize_operand_kind(kind_a)
+        norm_b = _normalize_operand_kind(kind_b)
         if norm_a != "Tile" and norm_b != "Tile":
             raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} has no Tile operand "
                                       f"({norm_a}/{norm_b})")
-
-        out_dtype = state.sdfg.arrays[self._binop_output_data(state, tasklet)].dtype
-        out_tile_name = self._add_tile_transient(state.sdfg, "_tile_t", out_dtype, spec.widths)
         kwargs = dict(name=f"{tasklet.label}_binop",
                       widths=spec.widths,
                       op=op,
@@ -916,40 +991,18 @@ class EmitTileOps(ppl.Pass):
             kwargs["expr_b"] = info_b
         binop = TileBinop(**kwargs)
         state.add_node(binop)
-
-        def _wire(kind, info, conn):
-            if kind == "Tile-existing":
-                state.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[{subset}]"))
-            elif kind == "Tile":
-                tname, tacc = self._emit_tile_load(state, tasklet, conn[-1], info[0], info[1], info[2], info[3],
-                                                   info[4], spec, mask_name)
-                state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
-            elif kind == "Gather":
-                tname, tacc = self._emit_gather_load(state, tasklet, conn[-1], info[0], info[1], info[2], spec,
-                                                     mask_name)
-                state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
-            elif kind == "Scalar":
-                self._wire_scalar_operand(state, binop, conn, info[0], info[1])
-            # Symbol: nothing to wire (embedded inline).
-
-        _wire(kind_a, info_a, TileConnectors.A)
-        _wire(kind_b, info_b, TileConnectors.B)
-        mask_access = self._mask_access_or_none(state, mask_name)
-        if mask_access is not None:
-            state.add_edge(mask_access, None, binop, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
-        out_access = state.add_access(out_tile_name)
-        state.add_edge(binop, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
-        return self._binop_output_data(state, tasklet), out_access
+        self._wire_operand(state, binop, TileConnectors.A, kind_a, info_a, tasklet, spec, mask_name, subset)
+        self._wire_operand(state, binop, TileConnectors.B, kind_b, info_b, tasklet, spec, mask_name, subset)
+        return self._finish_tile_op(state, binop, tasklet, mask_name, spec, subset)
 
     def _emit_one_unop(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
                        tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
                        mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
         """Emit a single :class:`TileUnop` for one unary body tasklet.
 
-        Resolves the operand to a Tile (existing intermediate from
-        ``tile_map`` or a fresh :class:`TileLoad` / :class:`TileGather`), a
-        Scalar (broadcast), or a Symbol (inline), then writes the result to a
-        fresh tile transient. Mirrors :meth:`_emit_one_binop` with one operand.
+        Mirrors :meth:`_emit_one_binop` with a single operand (resolved and
+        wired through the same :meth:`_resolve_operand` / :meth:`_wire_operand`
+        / :meth:`_finish_tile_op` helpers).
 
         :param state: Parent state.
         :param tasklet: The unary tasklet.
@@ -961,23 +1014,8 @@ class EmitTileOps(ppl.Pass):
         """
         out_conn, op, a_tok = _classify_unop_tasklet_body(tasklet)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
-
-        if _is_numeric_literal(a_tok):
-            kind_a, info_a = "Symbol", a_tok
-        else:
-            in_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == a_tok]
-            if len(in_edges) != 1:
-                raise NotImplementedError(f"EmitTileOps: unop {tasklet.label!r} operand {a_tok!r} has "
-                                          f"{len(in_edges)} in-edges")
-            src_data = in_edges[0].data.data
-            if isinstance(in_edges[0].src, dace.nodes.AccessNode) and src_data in tile_map:
-                kind_a, info_a = "Tile-existing", tile_map[src_data][1]
-            else:
-                kind_a, info_a = self._operand_kind(state, tasklet, a_tok, spec)
-        norm_a = "Tile" if kind_a in ("Tile-existing", "Gather") else kind_a
-
-        out_dtype = state.sdfg.arrays[self._binop_output_data(state, tasklet)].dtype
-        out_tile_name = self._add_tile_transient(state.sdfg, "_tile_t", out_dtype, spec.widths)
+        kind_a, info_a = self._resolve_operand(state, tasklet, a_tok, tile_map, spec)
+        norm_a = _normalize_operand_kind(kind_a)
         kwargs = dict(name=f"{tasklet.label}_unop",
                       widths=spec.widths,
                       op=op,
@@ -987,27 +1025,8 @@ class EmitTileOps(ppl.Pass):
             kwargs["expr_a"] = info_a
         unop = TileUnop(**kwargs)
         state.add_node(unop)
-
-        if kind_a == "Tile-existing":
-            state.add_edge(info_a, None, unop, TileConnectors.A, dace.Memlet(f"{info_a.data}[{subset}]"))
-        elif kind_a == "Tile":
-            tname, tacc = self._emit_tile_load(state, tasklet, TileConnectors.A[-1], info_a[0], info_a[1], info_a[2],
-                                               info_a[3], info_a[4], spec, mask_name)
-            state.add_edge(tacc, None, unop, TileConnectors.A, dace.Memlet(f"{tname}[{subset}]"))
-        elif kind_a == "Gather":
-            tname, tacc = self._emit_gather_load(state, tasklet, TileConnectors.A[-1], info_a[0], info_a[1], info_a[2],
-                                                 spec, mask_name)
-            state.add_edge(tacc, None, unop, TileConnectors.A, dace.Memlet(f"{tname}[{subset}]"))
-        elif kind_a == "Scalar":
-            self._wire_scalar_operand(state, unop, TileConnectors.A, info_a[0], info_a[1])
-        # Symbol: nothing to wire (embedded inline).
-
-        mask_access = self._mask_access_or_none(state, mask_name)
-        if mask_access is not None:
-            state.add_edge(mask_access, None, unop, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
-        out_access = state.add_access(out_tile_name)
-        state.add_edge(unop, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
-        return self._binop_output_data(state, tasklet), out_access
+        self._wire_operand(state, unop, TileConnectors.A, kind_a, info_a, tasklet, spec, mask_name, subset)
+        return self._finish_tile_op(state, unop, tasklet, mask_name, spec, subset)
 
     def _rewrite_one_map(self, state: dace.SDFGState, map_entry: MapEntry, spec: TileDimSpec) -> None:
         """Replace the body of ``map_entry`` with a tile-op chain.
