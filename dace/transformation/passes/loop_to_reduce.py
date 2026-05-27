@@ -361,6 +361,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         carried = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
         accum_ok = False
         array, arr_subset = None, None
+        carried_accum, carried_sub = None, None
         for name, sub in resolved:
             if _uses(sub, loop_var_sym):
                 if array is not None:
@@ -369,8 +370,19 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             elif (_one_elem(sub) == 1 and name in carried and ((name == accum and sub == write_subset) or
                                                                (name != accum and _scalar_equiv(sdfg, name, accum)))):
                 accum_ok = True
+                carried_accum, carried_sub = name, sub
         if not accum_ok or array is None or array == accum:
             return None
+
+        # The loop's carried accumulator -- the scalar that survives across
+        # iterations and that downstream code reads -- may differ from the tasklet's
+        # write target when the frontend stages the update through a temp (``tmp =
+        # acc + a[i]; acc = tmp``). Reduce into that carried accumulator, not the
+        # loop-local temp: it already holds the pre-loop seed, so the seeded
+        # ``Reduce`` (identity=None) folds into it correctly, and dropping the temp
+        # is safe because it does not outlive the loop body.
+        if carried_accum is not None and carried_accum != accum:
+            accum, write_subset = carried_accum, carried_sub
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end)
         if expanded is None:
