@@ -209,6 +209,113 @@ def test_polybench_memory(stem, optimize):
     _assert_matches(write, EXPECTED[stem][2])
 
 
+# Non-circular validation of the memory volume. The functions below independently re-enumerate the
+# distinct global-memory elements each kernel touches -- mirroring the kernel source under the cost
+# model (a map's distinct accessed region counts once per map nest, a non-map tasklet counts per
+# enclosing loop iteration, all multiplied by the enclosing sequential-loop trip counts) -- WITHOUT
+# using the analysis or the pinned EXPECTED values. The test asserts the analysis equals this ground
+# truth, so it checks the model is correct, not merely unchanged. It covers the two regimes of the
+# bounding-box-vs-per-connector Min: triangular row+column / row+row accesses (cholesky/lu/trisolv,
+# where the per-connector slices win) and an overlapping stencil neighbourhood (jacobi-1d, where the
+# bounding box wins). Elements are counted in array slots; bytes = 8 * elements (float64).
+
+
+def _cholesky_traffic(n):
+    reads = writes = 0
+    for i in range(n):
+        for j in range(i):
+            reads += len({(i, k) for k in range(j)} | {(j, k) for k in range(j)})  # k_loop1: A[i,k], A[j,k]
+            writes += 1  # k_loop1 WCR -> A[i,j]
+            reads += 2  # div: A[i,j], A[j,j]
+            writes += 1  # div -> A[i,j]
+        reads += len({(i, k) for k in range(i)})  # k_loop2: A[i,k]
+        writes += 1  # k_loop2 WCR -> A[i,i]
+        reads += 1  # sqrt: A[i,i]
+        writes += 1  # sqrt -> A[i,i]
+    return 8 * reads, 8 * writes
+
+
+def _lu_traffic(n):
+    reads = writes = 0
+    for i in range(n):
+        for j in range(i):
+            reads += len({('r', i, k) for k in range(j)} | {('c', k, j) for k in range(j)})  # k_loop1: A[i,k], A[k,j]
+            writes += 1  # k_loop1 WCR -> A[i,j]
+            reads += 2  # div: A[i,j], A[j,j]
+            writes += 1  # div -> A[i,j]
+        for j in range(i, n):
+            reads += len({('r', i, k) for k in range(i)} | {('c', k, j) for k in range(i)})  # k_loop2: A[i,k], A[k,j]
+            writes += 1  # k_loop2 WCR -> A[i,j]
+    return 8 * reads, 8 * writes
+
+
+def _trisolv_traffic(n):
+    reads = writes = 0
+    for i in range(n):
+        reads += 1  # init_x: b[i]
+        writes += 1  # init_x -> x[i]
+        reads += len({('L', i, j) for j in range(i)} | {('x', j) for j in range(i)})  # set_x: L[i,j], x[j]
+        writes += 1  # set_x WCR -> x[i]
+        reads += 2  # div: x[i], L[i,i]
+        writes += 1  # div -> x[i]
+    return 8 * reads, 8 * writes
+
+
+def _jacobi_1d_traffic(n, tsteps):
+    reads = writes = 0
+    for _ in range(tsteps):
+        reads += len({i + d for i in range(1, n - 1) for d in (-1, 0, 1)})  # map a: A[i-1], A[i], A[i+1]
+        writes += n - 2  # -> B[i]
+        reads += len({i + d for i in range(1, n - 1) for d in (-1, 0, 1)})  # map b: B[i-1], B[i], B[i+1]
+        writes += n - 2  # -> A[i]
+    return 8 * reads, 8 * writes
+
+
+def _volume_at(stem, sizes):
+    """Read/write bytes from the analysis at the given concrete sizes (un-optimized)."""
+    read, write = total_volume.analyze_sdfg(_load_kernel(stem).to_sdfg(simplify=True), optimize=False)
+
+    def evaluate(expr):
+        expr = pystr_to_symbolic(expr)
+        return int(simplify(expr.subs({s: sizes[s.name] for s in expr.free_symbols})))
+
+    return evaluate(read), evaluate(write)
+
+
+@pytest.mark.parametrize('stem, sizes, ground_truth', [
+    ('cholesky', {
+        'N': 13
+    }, _cholesky_traffic(13)),
+    ('cholesky', {
+        'N': 20
+    }, _cholesky_traffic(20)),
+    ('lu', {
+        'N': 13
+    }, _lu_traffic(13)),
+    ('lu', {
+        'N': 20
+    }, _lu_traffic(20)),
+    ('trisolv', {
+        'N': 13
+    }, _trisolv_traffic(13)),
+    ('trisolv', {
+        'N': 20
+    }, _trisolv_traffic(20)),
+    ('jacobi-1d', {
+        'N': 13,
+        'tsteps': 4
+    }, _jacobi_1d_traffic(13, 4)),
+    ('jacobi-1d', {
+        'N': 20,
+        'tsteps': 3
+    }, _jacobi_1d_traffic(20, 3)),
+])
+def test_volume_matches_enumerated_ground_truth(stem, sizes, ground_truth):
+    """The analyzed read/write bytes equal an independent element-by-element enumeration of the
+    kernel's access pattern (the true working-set traffic under the cost model)."""
+    assert _volume_at(stem, sizes) == ground_truth
+
+
 # Library-node counters (exercised directly on the linalg solver nodes).
 
 N = dace.symbol('N')
