@@ -114,17 +114,25 @@ def test_multiple_omp_reducible_targets_fall_back_to_atomic():
     sdfg.add_array("out2", [1], dace.float64)
 
     init = sdfg.add_state("init", is_start_block=True)
-    init.add_edge(init.add_tasklet("z1", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc1"), None, dace.Memlet("acc1[0]"))
-    init.add_edge(init.add_tasklet("z2", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc2"), None, dace.Memlet("acc2[0]"))
+    init.add_edge(init.add_tasklet("z1", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc1"), None,
+                  dace.Memlet("acc1[0]"))
+    init.add_edge(init.add_tasklet("z2", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc2"), None,
+                  dace.Memlet("acc2[0]"))
 
     ms = sdfg.add_state("ms")
     sdfg.add_edge(init, ms, dace.InterstateEdge())
     me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
     t = ms.add_tasklet("two", {"v"}, {"r1", "r2"}, "r1 = v; r2 = 2.0 * v")
     ms.add_memlet_path(ms.add_read("src"), me, t, dst_conn="v", memlet=dace.Memlet("src[i]"))
-    ms.add_memlet_path(t, mx, ms.add_write("acc1"), src_conn="r1",
+    ms.add_memlet_path(t,
+                       mx,
+                       ms.add_write("acc1"),
+                       src_conn="r1",
                        memlet=dace.Memlet("acc1[0]", wcr="lambda a, b: a + b"))
-    ms.add_memlet_path(t, mx, ms.add_write("acc2"), src_conn="r2",
+    ms.add_memlet_path(t,
+                       mx,
+                       ms.add_write("acc2"),
+                       src_conn="r2",
                        memlet=dace.Memlet("acc2[0]", wcr="lambda a, b: a + b"))
 
     post = sdfg.add_state("post")
