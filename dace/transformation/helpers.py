@@ -535,7 +535,25 @@ def nest_state_subgraph(sdfg: SDFG,
             data = copy.deepcopy(edge.data)
             data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         data.wcr = edge.data.wcr
-        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
+        # WCR placement: when the destination is a MapExit (i.e. the original WCR
+        # edge crossed the surrounding scope), insert a *private transient scalar*
+        # AccessNode between the new NSDFG and the MapExit and put the WCR on the
+        # AN -> MapExit edge. This matches the canonical ``AugAssignToWCR`` shape
+        # the codegen's reduction analysis expects; without it the WCR sits on the
+        # NSDFG-out edge and the codegen silently drops the reduction (cf.
+        # ``tests/codegen/wcr_through_nested_sdfg_test.py``). The private scalar
+        # must be a *new* transient -- reusing the outer array's name would alias
+        # the per-iteration partials with the shared accumulator and race-corrupt it.
+        if data.wcr is not None and isinstance(edge.dst, nodes.MapExit):
+            elem_dtype = sdfg.arrays[edge.data.data].dtype
+            priv_name = sdfg.add_scalar(f'__wcr_priv_{edge.data.data}', elem_dtype,
+                                        transient=True, find_new_name=True)[0]
+            an = state.add_access(priv_name)
+            plain = Memlet(data=priv_name)
+            state.add_edge(nested_sdfg, name, an, None, plain)
+            state.add_edge(an, None, edge.dst, edge.dst_conn, data)
+        else:
+            state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out.add(name)
 
     # Connect access nodes to internal input/output data as necessary
@@ -548,9 +566,25 @@ def nest_state_subgraph(sdfg: SDFG,
         state.add_edge(node, None, nested_sdfg, name, Memlet.from_array(name, sdfg.arrays[name]))
     for name, wcr in output_arrays.items():
         node = state.add_write(name)
+        # WCR placement: when the subgraph is wrapped inside a Map scope, the WCR must
+        # sit on the AccessNode -> MapExit edge, not on the NSDFG -> AccessNode edge,
+        # so the codegen's reduction analysis recognises it. The codegen reads the
+        # WCR from the source side of edges incident to an AccessNode (the canonical
+        # ``acc += val`` shape ``AugAssignToWCR`` produces); when the WCR lives on a
+        # NSDFG-out edge instead, it is silently dropped and the parallel sum becomes
+        # approximately the last iteration's value. See the regression test pair at
+        # ``tests/codegen/wcr_through_nested_sdfg_test.py``. When ``exit is None``
+        # (top-level subgraph wrap, no scope), there is no scope exit to attach the
+        # WCR to and we fall back to the legacy placement on the NSDFG-out edge.
         if exit is not None:
-            state.add_nedge(node, exit, Memlet())
-        state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr))
+            # NSDFG -> AN: plain memlet (the NSDFG's output connector ``name`` carries
+            # this iteration's scalar value into the private AccessNode).
+            state.add_edge(nested_sdfg, name, node, None, Memlet(data=name))
+            # AN -> MapExit: carries the WCR so the codegen sees the canonical
+            # ``AccessNode -[wcr]-> MapExit`` reduction shape.
+            state.add_nedge(node, exit, Memlet(data=name, wcr=wcr))
+        else:
+            state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr))
 
     # Graph was not reconnected, but needs to be
     if state.in_degree(nested_sdfg) == 0 and empty_input is not None:
