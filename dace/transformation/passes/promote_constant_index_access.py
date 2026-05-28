@@ -65,17 +65,26 @@ class _Promotion:
     :param scalar_name: The new transient scalar's name.
     :param prologue: The state inserted in front of the loop body to load ``arr[c]``.
     :param edits: The memlet edits as ``(memlet, data_before, subset_before)`` triples.
-    :param node_edits: The access-node renames as ``(access_node, data_before)`` pairs.
+    :param node_edits: The access-node ``(node, data_before)`` pairs for wholesale rename
+                       cases (single-slot path). Multi-slot path leaves this empty and uses
+                       ``introduced_scalar_nodes`` + ``state_for_introduced`` instead.
+    :param introduced_scalar_nodes: AccessNodes for the new scalar inserted during the
+                                    multi-slot path. Tuples of ``(node, state)``.
     """
 
     def __init__(self, sdfg: SDFG, arr_name: str, scalar_name: str, prologue: SDFGState,
-                 edits: List[Tuple[Memlet, Optional[str], Any]], node_edits: List[Tuple[nodes.AccessNode, str]]):
+                 edits: List[Tuple[Memlet, Optional[str], Any]],
+                 node_edits: List[Tuple[nodes.AccessNode, str]],
+                 introduced_scalar_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
+                 removed_arr_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None):
         self.sdfg = sdfg
         self.arr_name = arr_name
         self.scalar_name = scalar_name
         self.prologue = prologue
         self._edits = edits
         self._node_edits = node_edits
+        self._introduced_scalar_nodes = introduced_scalar_nodes or []
+        self._removed_arr_nodes = removed_arr_nodes or []
 
     def undo(self):
         """Restore every rewritten access node and memlet, drop the prologue, drop the scalar."""
@@ -84,6 +93,32 @@ class _Promotion:
             memlet.subset = subset_before
         for node, data_before in self._node_edits:
             node.data = data_before
+        # Re-add ``arr`` AccessNodes we removed (slot-precise orphan cleanup) so the
+        # endpoint-swap reversal below has somewhere to reattach.
+        for arr_node, state in self._removed_arr_nodes:
+            if arr_node not in state.nodes():
+                state.add_node(arr_node)
+        # Drop the new scalar AccessNodes inserted by the multi-slot path. Each was
+        # connected to the arr AccessNode via swapped edges; the memlet-edit undo above
+        # restored the memlet contents, but the scalar AccessNodes themselves are still
+        # in the state and reference the descriptor we are about to drop. Detach them.
+        for scalar_node, state in self._introduced_scalar_nodes:
+            if scalar_node in state.nodes():
+                # Re-attach any still-connected edges to the original arr AccessNode.
+                # By the time undo runs, the matching memlets have data=arr_name again
+                # (via the memlet-edit revert above), so the swap target is unambiguous.
+                arr_node = next((n for n in state.nodes()
+                                 if isinstance(n, nodes.AccessNode) and n.data == self.arr_name),
+                                None)
+                if arr_node is None:
+                    arr_node = state.add_access(self.arr_name)
+                for e in list(state.in_edges(scalar_node)) + list(state.out_edges(scalar_node)):
+                    is_in = (e.dst is scalar_node)
+                    new_src = arr_node if not is_in else e.src
+                    new_dst = arr_node if is_in else e.dst
+                    state.remove_edge(e)
+                    state.add_edge(new_src, e.src_conn, new_dst, e.dst_conn, e.data)
+                state.remove_node(scalar_node)
         # Detach the prologue from the loop body. Its single out-edge re-enters the body's
         # original start block (or a stand-in), which becomes the start block again.
         region = self.prologue.parent_graph
@@ -261,20 +296,24 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 continue
             if per_arr_has_wcr.get(name):
                 continue
-            # All constant-index accesses must agree on the same single point.
-            first = subs[0]
-            if not all(self._point_subsets_equal(first, s) for s in subs[1:]):
-                continue
-            # Slot-precise live-out gate. The in-body scalar holds only an iteration-local
-            # value, so a post-loop read of *this specific slot* would observe the original
-            # (pre-loop) value instead of the loop's writes. By passing ``slot=first`` we
-            # treat reads of *other* slots of the same array as harmless -- the cloudsc
-            # pattern where one species writes ``zvqx[1]`` and a downstream consumer reads
-            # ``zvqx[2..4]`` doesn't observe the loop's writes to slot 1, so promotion is
-            # safe (and unblocks ``LoopToMap``).
-            if not self._not_live_out(loop, name, slot=first):
-                continue
-            results.append((name, first))
+            # Deduplicate the observed constant points: one entry per *distinct* slot.
+            # The loop body may touch several constant indices of the same array (cloudsc
+            # ``zvqx[0]`` AND ``zvqx[1]`` in the 5-species fall-speed setup); each slot is
+            # independent and gets its own private scalar in the rewrite. The per-array
+            # ``mixed`` gate above already refused promotion if any *symbolic-index*
+            # access to the same array exists, so the slots cannot alias a wildcard read.
+            unique_points: List[subsets.Range] = []
+            for s in subs:
+                if not any(self._point_subsets_equal(s, p) for p in unique_points):
+                    unique_points.append(s)
+            for point in unique_points:
+                # Slot-precise live-out gate per point. The in-body scalar holds only an
+                # iteration-local value, so a post-loop read of *this specific slot* would
+                # observe the original (pre-loop) value instead of the loop's writes.
+                # Other slots of the same array are independent.
+                if not self._not_live_out(loop, name, slot=point):
+                    continue
+                results.append((name, point))
         return results
 
     @staticmethod
@@ -412,6 +451,25 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
     # -- rewrite ------------------------------------------------------------------------
 
+    def _arr_accesses_only_at_slot(self, loop: LoopRegion, arr_name: str,
+                                    c_subset: subsets.Range) -> bool:
+        """True if every ``arr`` access inside ``loop`` matches ``c_subset``.
+
+        Used to decide between the cheap wholesale-rename path (every access agrees
+        on one slot) and the slot-precise rewrite (a sibling slot also lives in the
+        same loop body, so a wholesale rename would corrupt the other slot).
+        """
+        for state in loop.all_states():
+            for edge in state.edges():
+                memlet = edge.data
+                if memlet is None or memlet.data != arr_name or memlet.subset is None:
+                    continue
+                if not self._is_constant_point_subset(memlet.subset):
+                    continue
+                if not self._point_subsets_equal(memlet.subset, c_subset):
+                    return False
+        return True
+
     def _promote(self, sdfg: SDFG, loop: LoopRegion, arr_name: str, c_subset: subsets.Range) -> _Promotion:
         """Privatize ``arr[c]`` to a per-iteration scalar.
 
@@ -420,6 +478,18 @@ class PromoteConstantIndexAccess(ppl.Pass):
         scalar can be Scope-lifetime (per-thread under ``LoopToMap``, dying with
         the loop) and no writeback is needed -- the in-loop writes are
         unobservable outside the loop by construction.
+
+        Two paths:
+
+        * **Wholesale rename** (``arr`` accessed at *only* ``c_subset`` inside the
+          loop) -- rename the AccessNode in place to the new scalar; rewrite every
+          incident memlet's subset to ``[0]``. Cheaper, fewer SDFG mutations.
+        * **Slot-precise rewrite** (``arr`` accessed at *multiple* distinct constant
+          points -- cloudsc's ``zvqx[0]`` + ``zvqx[1]`` in the same loop) -- leave
+          the original ``arr`` AccessNode alone; introduce a fresh per-state
+          scalar AccessNode and reroute only the matching edges to it. Sibling
+          slots get their own promotions in separate calls; each touches only its
+          own subset of edges.
         """
         desc = sdfg.arrays[arr_name]
         c_str = str(symbolic.pystr_to_symbolic(c_subset.ranges[0][0]))
@@ -440,24 +510,59 @@ class PromoteConstantIndexAccess(ppl.Pass):
         prologue.add_nedge(
             src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=subsets.Range([(0, 0, 1)])))
 
-        # Rewrite every ``arr`` access node + incident ``arr[c]`` memlet inside the loop
-        # body. The safety check has already guaranteed that every ``arr`` access in this
-        # loop is at the constant point ``c``, so a wholesale rename is sound.
         edits: List[Tuple[Memlet, Optional[str], Any]] = []
         node_edits: List[Tuple[nodes.AccessNode, str]] = []
+        introduced_scalar_nodes: List[Tuple[nodes.AccessNode, Any]] = []
+        removed_arr_nodes: List[Tuple[nodes.AccessNode, Any]] = []
         scalar_subset = subsets.Range([(0, 0, 1)])
+
+        single_slot = self._arr_accesses_only_at_slot(loop, arr_name, c_subset)
+
         for state in loop.all_states():
             if state is prologue:
                 continue
+            # Per-state introduced scalar AccessNode (slot-precise path only).
+            per_state_scalar: Optional[nodes.AccessNode] = None
             for edge in list(state.edges()):
                 memlet = edge.data
                 if memlet is None or memlet.data != arr_name:
                     continue
+                if not single_slot and not self._point_subsets_equal(memlet.subset, c_subset):
+                    # Sibling slot; left for its own _promote call.
+                    continue
                 edits.append((memlet, memlet.data, memlet.subset))
                 memlet.data = scalar_name
                 memlet.subset = copy.deepcopy(scalar_subset)
-            for node in list(state.nodes()):
-                if isinstance(node, nodes.AccessNode) and node.data == arr_name:
-                    node_edits.append((node, node.data))
-                    node.data = scalar_name
-        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits)
+                if not single_slot:
+                    # Slot-precise: swap the arr-AccessNode endpoint to a fresh per-state
+                    # scalar AccessNode (one per state; reused across this slot's edges).
+                    for endpoint in ('src', 'dst'):
+                        end_node = getattr(edge, endpoint)
+                        if isinstance(end_node, nodes.AccessNode) and end_node.data == arr_name:
+                            if per_state_scalar is None:
+                                per_state_scalar = state.add_access(scalar_name)
+                                introduced_scalar_nodes.append((per_state_scalar, state))
+                            new_src = per_state_scalar if endpoint == 'src' else edge.src
+                            new_dst = per_state_scalar if endpoint == 'dst' else edge.dst
+                            state.remove_edge(edge)
+                            edge = state.add_edge(new_src, edge.src_conn, new_dst, edge.dst_conn, edge.data)
+            if single_slot:
+                # Wholesale rename the arr AccessNode itself; safe because every
+                # memlet was rewritten.
+                for node in list(state.nodes()):
+                    if isinstance(node, nodes.AccessNode) and node.data == arr_name:
+                        node_edits.append((node, node.data))
+                        node.data = scalar_name
+            else:
+                # Slot-precise path: the original ``arr`` AccessNode may now be
+                # orphaned (all its incident edges were rerouted to a per-slot
+                # scalar AccessNode in this state). Remove orphaned arr nodes here
+                # so the SDFG validates; tracked separately from node_edits so undo
+                # can distinguish rename-restore from re-add.
+                for node in list(state.nodes()):
+                    if (isinstance(node, nodes.AccessNode) and node.data == arr_name
+                            and state.degree(node) == 0):
+                        removed_arr_nodes.append((node, state))
+                        state.remove_node(node)
+        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits,
+                          introduced_scalar_nodes, removed_arr_nodes)

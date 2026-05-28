@@ -267,16 +267,6 @@ def test_promotes_and_lifts_when_other_slot_lives_out():
     assert np.allclose(sink_run, sink_ref)
 
 
-@pytest.mark.xfail(
-    reason='Multi-slot promotion not yet supported. The current pass refuses two distinct '
-    'constant points of the same array (the "all points must agree" gate). A per-slot '
-    'relaxation is sound -- writes to arr[0] do not alias reads from arr[1] -- and the '
-    'slot-precise live-out check already supports per-point queries. Implementation is '
-    'WIP: the speculative-undo path needs to handle per-state per-slot AccessNode '
-    'introduction and cleanup. Tracking this test as the unit-level reproducer for the '
-    'cloudsc 5x for_767 species fall-speed loops; flip to PASS when implemented.',
-    strict=True,
-)
 def test_promotes_multiple_distinct_constant_slots_of_same_array():
     """Cloudsc ``zvqx[0]``/``zvqx[1]`` pattern (minimal). The loop body uses two distinct
     constant indices of the same (5,)-shape array, with no symbolic-index access to
@@ -329,13 +319,6 @@ def test_promotes_multiple_distinct_constant_slots_of_same_array():
         f'Multi-slot promotion changed the numeric result. got={out_run[:4]}, expected={out_ref[:4]}')
 
 
-@pytest.mark.xfail(
-    reason='Same root cause as ``test_promotes_multiple_distinct_constant_slots_of_same_array``: '
-    'multi-slot per-array promotion not yet implemented. This 5-slot variant is the faithful '
-    'cloudsc for_767 species fall-speed reproducer; flip to PASS once PCIA supports per-slot '
-    'independent promotion.',
-    strict=True,
-)
 def test_promotes_cloudsc_for767_species_pattern():
     """The 5-species cloudsc ``for_767`` pattern, faithful to the actual SDFG shape: a
     loop over horizontal index touches all 5 constant species slots of a (5,)-shape
