@@ -41,6 +41,7 @@ from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
+from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -299,6 +300,25 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
+    # TODO: scatter -- ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort +
+    # adjacent-equal`` guard on each scatter ``idx`` array and permissively lifts
+    # the loops. Wiring it here parallelizes the TSVC scatter family (s491, vas,
+    # s4113) AND yields +27 maps from the permissive-mode lift catching other
+    # cases L2M refused conservatively (89L/82M/3R -> 52L/109M/3R on the 151
+    # corpus). NOT yet enabled: the scatter pass emits a ``compare_ip`` sink
+    # tasklet ``if (__cur == __nxt) { __builtin_trap(); }`` with no
+    # ``out_connectors`` but with data input edges -- this violates the SDFG
+    # convention "only initialization / symbol-only tasklets may have no src
+    # connectors", and the convention-checking downstream pass
+    # ``dead_dataflow_elimination`` then raises ``NotImplementedError`` when
+    # ``SimplifyPass`` reaches it. Fix needed in the SCATTER PASS (route the
+    # trap through a state-level ``ConditionalBlock`` or add a dummy output
+    # connector + empty memlet that carries a name) -- NOT in the downstream
+    # pass, since the SDFG convention is correct. Once the scatter pass is
+    # fixed, uncomment:
+    #
+    # s += [('scatter', ScatterToGuardedMaps())]
 
     # post_l2m: insert assign tasklets at map boundary, then structural
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.

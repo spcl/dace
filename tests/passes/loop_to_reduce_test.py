@@ -491,9 +491,12 @@ def _array_slot_dot_product(a: dace.float64[N], b: dace.float64[N], dot: dace.fl
         dot[0] = dot[0] + a[i] * b[i]
 
 
-@pytest.mark.xfail(reason="TSVC s313/vdotr: body has two tasklets (compute multiply then accumulate-add); "
-                   "_extract refuses multi-tasklet bodies. Needs either a multi-tasklet form or "
-                   "AugAssignToWCR to fire on the copy-wrapped RMW. See parallelization_report.md group B.",
+@pytest.mark.xfail(reason="TSVC s313/vdotr: body has two tasklets (compute multiply then accumulate-add). "
+                   "DECIDED design (user direction): this pattern is NOT a LoopToReduce target -- the "
+                   "intended path is AugAssignToWCR + LoopToMap, producing a parallel WCR-map with a "
+                   "scalar accumulator. The performance fix lives in WCR codegen "
+                   "(``#pragma omp parallel for reduction(+:s)``), not in extending the Reduce libnode "
+                   "to wrap arbitrary expressions. LoopToReduce remains intentionally narrow.",
                    strict=True)
 def test_array_slot_dot_product_is_lifted():
     """TSVC s313/vdotr: ``dot: float64[N]; for i: dot[0] += a[i] * b[i]``."""
@@ -583,12 +586,11 @@ def _gather_sum_reduction(a: dace.float64[N], b: dace.float64[N], ip: dace.int32
     sum_out[0] = s
 
 
-@pytest.mark.xfail(reason="TSVC s4115: compute-then-accumulate body (multiply by gathered b[ip[i]] then add to s) "
-                   "is the same multi-tasklet shape as s313 -- ``_extract`` refuses. Note that even with "
-                   "multi-tasklet handling, there is no ``Reduce``-with-gather libnode -- the practical "
-                   "path is ``AugAssignToWCR + LoopToMap`` (atomic WCR write on the scalar), with "
-                   "per-thread privatization as a separate optimization. See parallelization_report.md "
-                   "group B and the ``PrivatizeReductionAccumulator`` TODO.",
+@pytest.mark.xfail(reason="TSVC s4115: same DECIDED design as s313 -- gather + sum is NOT a "
+                   "LoopToReduce target. There is no ``Reduce``-with-gather libnode and we are not "
+                   "adding one. Intended path: AugAssignToWCR + LoopToMap (scalar accumulator) + "
+                   "WCR codegen with ``#pragma omp parallel for reduction(+:s)``. The gather is a "
+                   "plain read-only indirection inside the map body; no special handling needed.",
                    strict=True)
 def test_gather_sum_reduction_is_lifted():
     """TSVC s4115."""
