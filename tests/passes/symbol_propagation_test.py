@@ -235,9 +235,19 @@ def test_deeply_nested_sdfg():
     SymbolPropagation().apply_pass(sdfg1, {})
     sdfg1.validate()
 
-    # No assignment should have been changed
-    assert edge1.data.assignments["v"] == "a"
-    assert edge4.data.assignments["c"] == "v+1"
+    # The outer iedge ``v = a`` was the only binding of ``v``; with propagation reaching
+    # the NSDFG ``symbol_mapping`` (``{"v": "v"}`` -> ``{"v": "a"}``) the binding is
+    # dead and gets swept, taking the now-unused ``v`` declaration with it so the
+    # nested chain remains self-consistent. Same fate for the inner ``c = v+1``: its
+    # destination state has no readers of ``c``, so the binding + the ``c`` declaration
+    # both drop.
+    assert "v" not in edge1.data.assignments, (
+        f"propagation should have substituted v->a everywhere and dropped the dead binding; "
+        f"got {dict(edge1.data.assignments)}")
+    assert "v" not in sdfg1.symbols, "declaration of v should be removed with its binding"
+    assert "c" not in edge4.data.assignments, (
+        f"unused c=v+1 binding should be swept; got {dict(edge4.data.assignments)}")
+    assert "c" not in sdfg4.symbols, "declaration of c should be removed with its binding"
 
 
 def test_scalars():
@@ -440,13 +450,16 @@ def test_dead_iedge_chain_unravels_to_fixed_point():
     assert surviving == [], f'every link of the dead chain must be eliminated; got {surviving}'
 
 
-def test_dead_iedge_preserved_when_lhs_still_used():
-    """An iedge assignment whose LHS is still referenced -- by an array shape, by a
-    loop bound, or by any block's free symbols -- must NOT be eliminated."""
-    sdfg = dace.SDFG('keep_live_repro')
+def test_dead_iedge_with_array_shape_substituted_into_descriptor():
+    """A symbol referenced *only* by an array descriptor's shape (cloudsc's
+    ``[0:kfdia_plus_1, 0:klon]`` pattern) used to keep the defining iedge alive
+    because the IR-level ``replace_dict`` does not reach into descriptors. The
+    fix substitutes the symbol into descriptors as a final step before
+    elimination, so the array shape becomes ``kfdia + 1`` directly and the
+    iedge drops."""
+    sdfg = dace.SDFG('array_shape_repro')
     sdfg.add_symbol('klev', dace.int32)
     sdfg.add_symbol('k_plus_1', dace.int32)
-    # An array sized by ``k_plus_1`` -> the shape free-symbol set pins the iedge live.
     sdfg.add_array('out', ['k_plus_1'], dace.float64)
     s1 = sdfg.add_state('s1', is_start_block=True)
     s2 = sdfg.add_state('s2')
@@ -462,8 +475,12 @@ def test_dead_iedge_preserved_when_lhs_still_used():
     surviving = [(lhs, rhs)
                  for e in sdfg.all_interstate_edges()
                  for lhs, rhs in e.data.assignments.items()]
-    assert surviving == [('k_plus_1', '(klev + 1)')], (
-        f'k_plus_1 is referenced by the array shape; the assignment must stay live. got {surviving}')
+    assert surviving == [], (f'k_plus_1 should have been substituted into the array shape and the '
+                             f'binding dropped; got {surviving}')
+    shape_str = ', '.join(str(s) for s in sdfg.arrays['out'].shape)
+    assert 'klev' in shape_str and 'k_plus_1' not in shape_str, (
+        f'array shape must read klev + 1 directly; got {shape_str}')
+    assert 'k_plus_1' not in sdfg.symbols, 'declaration of k_plus_1 should be removed with its binding'
 
 
 if __name__ == "__main__":
