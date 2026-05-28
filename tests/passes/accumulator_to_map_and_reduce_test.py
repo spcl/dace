@@ -165,6 +165,75 @@ def test_refuses_non_associative_op():
     assert rewritten is None
 
 
+def test_map_wcr_scalar_sum_rewritten_to_buffer_and_reduce():
+    """A ``dace.map`` whose body writes the accumulator via a ``wcr=+`` edge --
+    the shape produced by :class:`AugAssignToWCR` plus a permissive lift -- is
+    rewritten into a buffer-writing Map (WCR removed) plus a ``Reduce`` libnode.
+
+    Verifies: the WCR edge is gone, an IntegerSort-free Reduce libnode appears
+    in the SDFG, and the numeric result matches the un-rewritten reference.
+    """
+    import dace.libraries.standard as stdlib
+
+    @dace.program
+    def map_wcr(acc: dace.float64[1], src: dace.float64[16]):
+        for i in dace.map[0:16]:
+            acc[0] += src[i]
+
+    sdfg = map_wcr.to_sdfg(simplify=True)
+    reduce_before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, stdlib.Reduce))
+
+    rewritten = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert rewritten
+    assert _has_buf_transient(sdfg)
+    reduce_after = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, stdlib.Reduce))
+    assert reduce_after == reduce_before + 1, 'Expected exactly one new Reduce libnode.'
+
+    # No WCR-carrying edge remains in the SDFG.
+    wcr_edges = [
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        if e.data is not None and e.data.wcr is not None
+    ]
+    assert not wcr_edges, f'Expected no WCR edges after rewrite; got {len(wcr_edges)}.'
+
+    src = np.random.default_rng(42).random(16)
+    acc = np.array([0.7])
+    ref = np.array([0.7 + src.sum()])
+    sdfg(acc=acc, src=src)
+    assert np.allclose(acc, ref)
+
+
+def test_map_wcr_via_aug_assign_pipeline():
+    """End-to-end: parallel ``+=`` loop runs ``AugAssignToWCR`` then this pass.
+
+    The frontend lifts ``for i in dace.map[...]: acc[0] += src[i]`` directly to a
+    Map with a WCR edge, but in the more general pipeline ``AugAssignToWCR`` is
+    what creates the WCR shape from an explicit RMW. Run the two-step pipeline
+    here to confirm composition with the existing transform.
+    """
+    import dace.libraries.standard as stdlib
+    from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+
+    @dace.program
+    def map_rmw(acc: dace.float64[1], src: dace.float64[20]):
+        for i in dace.map[0:20]:
+            acc[0] += src[i]  # frontend lifts ``+=`` directly to a WCR edge
+
+    sdfg = map_rmw.to_sdfg(simplify=True)
+    PatternMatchAndApplyRepeated([AugAssignToWCR()]).apply_pass(sdfg, {})
+    rewritten = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert rewritten
+
+    src = np.random.default_rng(11).random(20)
+    acc = np.array([2.5])
+    ref = np.array([2.5 + src.sum()])
+    sdfg(acc=acc, src=src)
+    assert np.allclose(acc, ref)
+
+
 def test_idempotent_on_already_rewritten():
     """Re-running the pass on its own output is a no-op (the matcher skips loops
     whose accumulator is a ``_accum_buf_`` transient, but more fundamentally the

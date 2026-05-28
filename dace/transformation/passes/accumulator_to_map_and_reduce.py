@@ -120,12 +120,24 @@ class AccumulatorToMapAndReduce(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        """Rewrite every matching accumulator loop in ``sdfg`` (and nested SDFGs).
+        """Rewrite every matching accumulator pattern in ``sdfg`` (and nested SDFGs).
+
+        Two patterns are recognised:
+
+        - **Sequential loop** -- a ``LoopRegion`` whose body has a scalar
+          accumulator RMW (``acc[c] = acc[c] OP delta(...)``); rewritten into a
+          buffer-writing Map plus a ``Reduce`` libnode.
+        - **Parallel Map with WCR** -- a Map whose body writes to a scalar
+          accumulator via a ``wcr=`` edge (typically what
+          :class:`~dace.transformation.dataflow.wcr_conversion.AugAssignToWCR`
+          plus a permissive lift produces). The same buffer-and-reduce shape
+          replaces the WCR edge, which lets the existing Map run without an
+          atomic write and downstream consumers see a clean ``Reduce`` libnode.
 
         :param sdfg: The SDFG to transform in place.
         :param _pipeline_results: Unused; kept for the Pass interface.
-        :returns: ``{loop_label: accumulator_name}`` for each loop rewritten, or
-                  ``None`` if no loop matched.
+        :returns: ``{location_label: accumulator_name}`` for each pattern rewritten,
+                  or ``None`` if nothing matched.
         """
         # Eliminate the frontend's ``__out = __inp`` copy tasklets first so the matcher
         # sees the bare RMW shape. ``TrivialTaskletElimination`` is value-preserving.
@@ -134,6 +146,8 @@ class AccumulatorToMapAndReduce(ppl.Pass):
         PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
         rewritten: Dict[str, str] = {}
+
+        # Pattern 1: sequential accumulator loops.
         loops: List[Tuple[LoopRegion, ControlFlowRegion]] = []
         for sd in sdfg.all_sdfgs_recursive():
             for region in sd.all_control_flow_regions():
@@ -145,12 +159,24 @@ class AccumulatorToMapAndReduce(ppl.Pass):
                 continue
             _rewrite(parent, loop, match)
             rewritten[loop.label] = match.accum
+
+        # Pattern 2: WCR write chains into scalar accumulators (one or more enclosing maps).
+        map_matches: List[Tuple[SDFGState, _MapWCRMatch]] = []
+        for sd in sdfg.all_sdfgs_recursive():
+            for state in sd.all_states():
+                for mmatch in _match_map_wcr(state, sd):
+                    map_matches.append((state, mmatch))
+        for state, mmatch in map_matches:
+            _rewrite_map_wcr(state, mmatch)
+            innermost_label = mmatch.map_entries[0].label if mmatch.map_entries else state.label
+            rewritten[innermost_label] = mmatch.accum
+
         return rewritten or None
 
     def report(self, pass_retval: Any) -> Optional[str]:
         if not pass_retval:
             return None
-        return f'AccumulatorToMapAndReduce: rewrote {len(pass_retval)} accumulator loop(s): {pass_retval}'
+        return f'AccumulatorToMapAndReduce: rewrote {len(pass_retval)} accumulator pattern(s): {pass_retval}'
 
 
 def _root_sdfg(region: ControlFlowRegion) -> SDFG:
@@ -564,3 +590,288 @@ def _splice_reduce_state(parent: ControlFlowRegion, loop: LoopRegion, match: _Ma
     red_state.add_edge(buf_an, None, red, None,
                        mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
     red_state.add_edge(red, None, acc_an, None, mm.Memlet(data=match.accum, subset=match.accum_subset))
+
+
+# ----------------------------------------------------------------------------
+# Pattern 2: Map with a scalar WCR write.
+# ----------------------------------------------------------------------------
+
+
+class _MapWCRMatch(NamedTuple):
+    """A successfully matched WCR write chain into a scalar accumulator.
+
+    Two input shapes are accepted:
+
+    - ``tasklet --[wcr]--> MapExit (+ outer MapExits) --> AccessNode``
+    - ``tasklet --> intermediate_AN --[wcr]--> MapExit (+ outer MapExits) --> AccessNode``
+
+    The chain may pass through one or more nested ``MapExit`` nodes (one per
+    enclosing map); the buffer's shape is the product of all enclosing map
+    iteration ranges, indexed by all their parameters.
+
+    :param map_entries: The enclosing ``MapEntry`` nodes, innermost-first (paired with
+        ``map_exits``). The innermost map's body holds the tasklet (and the optional
+        intermediate AccessNode).
+    :param map_exits: The matching ``MapExit`` nodes, innermost-first.
+    :param wcr_edge: The single edge carrying ``wcr=`` (either tasklet→MapExit or
+        intermediate-AN→MapExit; never internal to the body otherwise).
+    :param chain_edges: All edges along the chain from the WCR edge to ``accum_an``,
+        in walk order (the WCR edge is ``chain_edges[0]``). Each gets re-pointed at
+        the buffer during rewrite.
+    :param accum_an: The destination AccessNode (after walking out all MapExits).
+    :param accum: The accumulator descriptor name (``accum_an.data``).
+    :param accum_subset: The accumulator's loop-invariant single-element subset.
+    :param wcr: Normalised reduction lambda string (one of :data:`_BINOP_TO_WCR` /
+        :data:`_CALL_TO_WCR` values).
+    """
+    map_entries: List[nodes.MapEntry]
+    map_exits: List[nodes.MapExit]
+    wcr_edge: Any
+    chain_edges: List[Any]
+    accum_an: nodes.AccessNode
+    accum: str
+    accum_subset: subsets.Range
+    wcr: str
+
+
+#: Map of WCR lambda body to a (recognised, normalised) reduction lambda. Only
+#: associative ops are taken; anything else returns ``None`` and the matcher refuses.
+def _normalise_wcr(wcr_str: str) -> Optional[str]:
+    """Parse a WCR lambda and return one of :data:`_BINOP_TO_WCR` / :data:`_CALL_TO_WCR`'s
+    canonical strings if its body is one of the supported associative ops. Else ``None``."""
+    if not wcr_str:
+        return None
+    try:
+        tree = ast.parse(wcr_str, mode='eval').body
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(tree, ast.Lambda):
+        return None
+    body = tree.body
+    if isinstance(body, ast.BinOp):
+        return _BINOP_TO_WCR.get(type(body.op))
+    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and len(body.args) == 2:
+        return _CALL_TO_WCR.get(body.func.id)
+    return None
+
+
+def _match_map_wcr(state: SDFGState, sdfg: SDFG) -> List[_MapWCRMatch]:
+    """Find every WCR write chain into a scalar-like accumulator in ``state``.
+
+    Supports two input shapes (and any composition through one or more
+    enclosing MapExits):
+
+    - ``tasklet --[wcr]--> MapExit --> ... --> AccessNode``
+    - ``tasklet --> intermediate_AN --[wcr]--> MapExit --> ... --> AccessNode``
+
+    Each match represents one chain: the unique WCR edge plus the MapExits
+    walked forward to a single-element-subset write to a non-transient
+    scalar-like AccessNode. The reduction op must be associative.
+
+    Returns a list because a single state can contain several independent
+    WCR-write chains; the caller rewrites each in order.
+    """
+    matches: List[_MapWCRMatch] = []
+    seen_wcr_ids: Set[int] = set()
+    for edge in state.edges():
+        if edge.data is None or edge.data.wcr is None:
+            continue
+        if id(edge) in seen_wcr_ids:
+            continue
+        seen_wcr_ids.add(id(edge))
+        wcr_norm = _normalise_wcr(edge.data.wcr)
+        if wcr_norm is None:
+            continue
+        chain = _trace_wcr_chain(state, edge, sdfg)
+        if chain is None:
+            continue
+        accum_an, accum_subset, map_exits, chain_edges = chain
+        # Identify the matching MapEntry nodes (innermost-first) so the rewrite knows
+        # which iteration parameters drive the per-iteration buffer index.
+        map_entries = [state.entry_node(mx) for mx in map_exits]
+        if any(me is None for me in map_entries):
+            continue
+        matches.append(_MapWCRMatch(
+            map_entries=map_entries,
+            map_exits=map_exits,
+            wcr_edge=edge,
+            chain_edges=chain_edges,
+            accum_an=accum_an,
+            accum=accum_an.data,
+            accum_subset=accum_subset,
+            wcr=wcr_norm,
+        ))
+    return matches
+
+
+def _trace_wcr_chain(
+    state: SDFGState, wcr_edge, sdfg: SDFG
+) -> Optional[Tuple[nodes.AccessNode, subsets.Range, List[nodes.MapExit], List[Any]]]:
+    """Walk forward from ``wcr_edge`` through MapExits to a final AccessNode.
+
+    The walker allows the WCR edge to land on a MapExit directly, or on an
+    intermediate transient AccessNode that itself feeds a MapExit (one extra
+    hop, the ``tasklet → AN → wcr → MapExit`` shape). After the chain exits
+    its enclosing maps, the final destination must be a non-transient
+    scalar-like AccessNode at a single-element subset that doesn't reference
+    any of the enclosing map parameters.
+
+    :returns: ``(accum_an, accum_subset, map_exits_innermost_first, chain_edges)``
+              on success; ``None`` if the chain is malformed or violates any of
+              the constraints above.
+    """
+    chain_edges: List[Any] = [wcr_edge]
+    map_exits: List[nodes.MapExit] = []
+
+    cur_node = wcr_edge.dst
+    cur_conn = wcr_edge.dst_conn
+
+    # Allow one ``intermediate transient AN`` hop *if* the WCR edge points at a
+    # transient AccessNode whose single non-WCR outgoing edge already targets a
+    # MapExit. That's the ``tasklet → AN → wcr-on-AN-out → MapExit`` shape.
+    # If instead the WCR lands directly on a MapExit, no hop is needed.
+    if isinstance(cur_node, nodes.AccessNode):
+        desc = sdfg.arrays.get(cur_node.data)
+        if desc is None or not getattr(desc, 'transient', False):
+            return None
+        if state.in_degree(cur_node) != 1 or state.out_degree(cur_node) != 1:
+            return None
+        nxt_edge = state.out_edges(cur_node)[0]
+        if not isinstance(nxt_edge.dst, nodes.MapExit):
+            return None
+        chain_edges.append(nxt_edge)
+        cur_node = nxt_edge.dst
+        cur_conn = nxt_edge.dst_conn
+
+    # Now walk MapExit → MapExit → ... → AccessNode. At each step the MapExit
+    # has matching ``IN_x``/``OUT_x`` connectors; follow the unique out-edge.
+    while isinstance(cur_node, nodes.MapExit):
+        map_exits.append(cur_node)
+        if not cur_conn or not cur_conn.startswith('IN_'):
+            return None
+        out_conn = 'OUT_' + cur_conn[3:]
+        outer = [e for e in state.out_edges(cur_node) if e.src_conn == out_conn]
+        if len(outer) != 1:
+            return None
+        nxt_edge = outer[0]
+        chain_edges.append(nxt_edge)
+        cur_node = nxt_edge.dst
+        cur_conn = nxt_edge.dst_conn
+
+    if not isinstance(cur_node, nodes.AccessNode):
+        return None
+    accum = cur_node.data
+    desc = sdfg.arrays.get(accum)
+    if desc is None or getattr(desc, 'transient', False) or accum.startswith(_BUF_PREFIX):
+        return None
+    if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(s == 1 for s in desc.shape))):
+        return None
+
+    # Final destination subset must be loop-invariant single-element wrt all enclosing map params.
+    final_subset = chain_edges[-1].data.subset
+    if final_subset is None or _one_elem(final_subset) != 1:
+        return None
+    map_params = []
+    for mx in map_exits:
+        me = state.entry_node(mx)
+        if me is None:
+            return None
+        map_params.extend(me.map.params)
+    map_param_syms = {symbolic.pystr_to_symbolic(p) for p in map_params}
+    final_free = {symbolic.pystr_to_symbolic(str(s)) for s in final_subset.free_symbols}
+    if final_free & map_param_syms:
+        return None
+
+    return cur_node, final_subset, map_exits, chain_edges
+
+
+def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):
+    """Replace a WCR write chain into a scalar with a per-iteration buffer write +
+    a post-state ``Reduce`` libnode folding the buffer back into the accumulator.
+
+    Buffer shape = product of all enclosing map iteration extents (innermost-first
+    order matches ``match.map_entries``). Each map-exit's outgoing chain edge has
+    its subset re-projected onto the corresponding buffer axis(es); the WCR flag
+    is cleared everywhere along the chain. The original accumulator AccessNode is
+    replaced by a fresh buffer write; if it ends up isolated, removed.
+    """
+    import dace
+    sdfg = state.sdfg
+
+    # Compute per-axis (start, end, trip) for each enclosing map, innermost-first.
+    axis_specs: List[Tuple[Any, Any, Any]] = []
+    for me in match.map_entries:
+        rng = me.map.range.ranges
+        # Refuse multi-dim Maps for v1 -- one axis per enclosing Map keeps the buffer
+        # 1:1 with surrounding iteration domains; a multi-dim Map can be handled later.
+        if len(rng) != 1 or rng[0][2] != 1:
+            return
+        rb, re_, _ = rng[0]
+        axis_specs.append((rb, re_, symbolic.simplify(re_ - rb + 1)))
+
+    buf_shape = [trip for _, _, trip in axis_specs]
+    buf_name, _ = sdfg.add_transient(_BUF_PREFIX + match.accum, buf_shape,
+                                     sdfg.arrays[match.accum].dtype, find_new_name=True)
+    buf_desc = sdfg.arrays[buf_name]
+
+    # The per-iteration write index uses each enclosing map's parameter offset to
+    # its own start: ``buf[i - i_start, j - j_start, ...]``. For the outer/MapExit
+    # edges, the corresponding axis collapses to the full extent of that axis.
+    point_subset = subsets.Range([
+        ((symbolic.pystr_to_symbolic(me.map.params[0]) - axis_specs[idx][0], ) * 2 + (1, ))
+        for idx, me in enumerate(match.map_entries)
+    ])
+
+    # Rewrite the chain edges (innermost-first walk order: wcr_edge, then each
+    # MapExit-out edge). After ``axis_idx`` MapExits the corresponding axis collapses
+    # from a point to its full ``0:trip`` range.
+    chain = match.chain_edges
+    # 0..len(map_exits) chain edges; ``chain[0]`` is the WCR edge, then one out-edge
+    # per MapExit walked. Subsets at index ``k`` cover the first ``k`` innermost axes
+    # as full ranges and the remaining axes as point.
+    for k, edge in enumerate(chain):
+        new_sub = []
+        for axis_idx in range(len(axis_specs)):
+            _start, _end, trip = axis_specs[axis_idx]
+            if axis_idx < k:
+                new_sub.append((0, trip - 1, 1))
+            else:
+                p_start = (symbolic.pystr_to_symbolic(match.map_entries[axis_idx].map.params[0]) -
+                           axis_specs[axis_idx][0])
+                new_sub.append((p_start, p_start, 1))
+        new_memlet = mm.Memlet(data=buf_name, subset=subsets.Range(new_sub))
+        new_memlet.wcr = None
+        state.remove_edge(edge)
+        state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+
+    # The chain's final edge now targets the original accum AccessNode but writes
+    # ``buf`` data; swap that to a fresh ``buf`` AccessNode. The original accum AN,
+    # if isolated, is removed.
+    final_edge = chain[-1]
+    # Re-find the just-added final edge (the one we appended in the previous loop).
+    refreshed_final = next(e for e in state.in_edges(match.accum_an)
+                           if e.src is final_edge.src and e.src_conn == final_edge.src_conn and e.data.data == buf_name)
+    buf_write = state.add_write(buf_name)
+    state.remove_edge(refreshed_final)
+    state.add_edge(refreshed_final.src, refreshed_final.src_conn, buf_write, None, refreshed_final.data)
+    if state.degree(match.accum_an) == 0:
+        state.remove_node(match.accum_an)
+
+    # Append a state with the Reduce libnode that folds buf into acc (identity=None
+    # so the existing acc value seeds the fold, matching the original WCR semantics).
+    parent = state.parent_graph
+    out_edges = list(parent.out_edges(state))
+    red_state = parent.add_state(state.label + '_reduce')
+    parent.add_edge(state, red_state, dace.InterstateEdge())
+    for e in out_edges:
+        parent.remove_edge(e)
+        parent.add_edge(red_state, e.dst, e.data)
+
+    buf_read = red_state.add_read(buf_name)
+    acc_write = red_state.add_write(match.accum)
+    red = red_state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=None)
+    red_state.add_edge(buf_read, None, red, None,
+                       mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
+    red_state.add_edge(red, None, acc_write, None, mm.Memlet(data=match.accum, subset=match.accum_subset))
+
+    sdfg.reset_cfg_list()
