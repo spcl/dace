@@ -207,6 +207,18 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     if emission_style == "sve_style" and branch_mode != "merge":
         _pytest.skip("sve_style forces merge branch lowering; skipping fp_factor parametrisation")
 
+    # Legacy ``VectorizeCPU`` rejects two knob combos that the tile orchestrator
+    # accepts: ``use_fp_factor=True`` (a.k.a. ``branch_mode='fp_factor'``)
+    # cannot ride a masked remainder, and ``sve_style='fixed'`` has no
+    # remainder loop (the global ``_iter_mask`` covers the tail). Skip these on
+    # the legacy_cpu arm rather than propagate the ``ValueError`` the
+    # ``VectorizeCPU`` constructor raises.
+    if vectorize_config == "legacy_cpu":
+        if branch_mode == "fp_factor" and remainder_strategy == "masked":
+            _pytest.skip("legacy_cpu: use_fp_factor=True is incompatible with remainder_strategy='masked'")
+        if emission_style == "sve_style" and remainder_strategy != "scalar":
+            _pytest.skip("legacy_cpu: sve_style has no remainder loop; skipping non-scalar remainder")
+
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}

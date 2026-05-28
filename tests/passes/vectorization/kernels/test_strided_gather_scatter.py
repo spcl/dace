@@ -966,6 +966,7 @@ def test_gather_load_collapse_laneid_structural():
         vector_width=8,
         sdfg_name="gather_load_collapse_laneid",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -999,6 +1000,7 @@ def test_gather_collapse_laneid_noncontig_values():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_noncontig",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1022,6 +1024,7 @@ def test_gather_collapse_laneid_int32_idx():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_i32",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
     conv = [
@@ -1054,6 +1057,7 @@ def test_gather_load_collapse_laneid_nondiv(remainder_strategy):
         remainder_strategy=remainder_strategy,
         lower_to_intrinsics=(remainder_strategy == "masked"),
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1087,6 +1091,7 @@ def test_scatter_store_collapse_laneid_structural():
         vector_width=8,
         sdfg_name="scatter_store_collapse_laneid",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1113,6 +1118,7 @@ def test_scatter_store_collapse_laneid_nondiv(remainder_strategy):
         remainder_strategy=remainder_strategy,
         lower_to_intrinsics=(remainder_strategy == "masked"),
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1134,6 +1140,7 @@ def test_scatter_loop_stencil_collapse_laneid():
         vector_width=8,
         sdfg_name="scatter_loop_stencil_collapse_laneid",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
         loop_to_map_permissive=True,
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
@@ -1210,6 +1217,7 @@ def test_gather_collapse_laneid_vw4():
         vector_width=4,
         sdfg_name="gather_collapse_laneid_vw4",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1231,6 +1239,7 @@ def test_gather_collapse_laneid_fp32_data():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_fp32data",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1256,6 +1265,7 @@ def test_collapse_laneid_two_independent_gathers():
         vector_width=8,
         sdfg_name="collapse_laneid_two_gathers",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1278,6 +1288,7 @@ def test_collapse_laneid_noop_without_indirection():
         vector_width=8,
         sdfg_name="collapse_laneid_noop",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     fan = [
         n for n, _ in vec_sdfg.all_nodes_recursive()
@@ -1306,6 +1317,7 @@ def test_gather_collapse_laneid_small_n():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_smalln",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
 
 
@@ -1344,6 +1356,7 @@ def test_gather_collapse_laneid_strided_index_2():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_stridedidx2",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
@@ -1364,6 +1377,7 @@ def test_gather_collapse_laneid_strided_index_3():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_stridedidx3",
         collapse_laneid_index_loads=True,
+        vectorize_config="legacy_cpu",
     )
     _assert_laneid_fan_collapsed(vec_sdfg)
 
