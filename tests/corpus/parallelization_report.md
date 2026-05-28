@@ -17,11 +17,23 @@ python -m tests.corpus.measure_parallelization > /tmp/l2m_report.txt
 |-----------------|------:|-----:|--------:|
 | baseline (simplify only) | 178 | 2 | 0 |
 | LoopToMap only  |   105 |   71 |       0 |
-| canonicalize    |    83 |   88 |       3 |
+| canonicalize    |    82 |   89 |       3 |
 
 Δ from the report's first numbers (before this session's canonicalize work):
-canon loops `92→83` (-9), maps `81→88` (+7), reduces `2→3` (+1). Final-
-iteration parallelism rate **47.4% → 52.3%** (+4.9 pts).
+canon loops `92→82` (-10), maps `81→89` (+8), reduces `2→3` (+1). Final-
+iteration parallelism rate **47.4% → 52.9%** (+5.5 pts).
+
+In addition to the structural gains, the **WCR codegen extension** (commit
+`4c3996080`) and **`PrivatizeReductionAccumulator` wired into canon**
+(commit `7cac53956`) together mean every scalar-reduction-loop kernel now
+emits a clean `#pragma omp parallel for reduction(op:_priv_*)` clause with
+the per-iter atomic skipped. s313 corpus example, post-canon: the OMP
+pragma is `reduction(+:_priv_dot)` and the generated `.cpp` has zero
+`reduce_atomic` calls. This is the perf-critical missing piece -- replaces
+synchronous atomic-add contention with the OMP runtime's per-thread
+privatization + tree-reduce for scalar reductions across the corpus
+(s313 / vdotr / and any future kernel that reaches the `reduction_to_wcr_map`
+stage).
 
 ### Session changes that produced the above (chronological)
 
