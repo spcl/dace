@@ -42,8 +42,10 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
@@ -59,7 +61,10 @@ _REGIMES = {
 }
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
-_RELAXED_STEPS = {'loop_to_reduce', 'accumulator_to_map_and_reduce', 'loop_to_map'}
+#: ``loop_to_scan`` reassociates the carry; ``loop_to_map_post_pcia`` is a second
+#: parallelization sweep over loops PCIA newly unblocked.
+_RELAXED_STEPS = {'loop_to_reduce', 'accumulator_to_map_and_reduce', 'loop_to_map', 'loop_to_scan',
+                  'loop_to_map_post_pcia'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -180,7 +185,23 @@ def _chain():
         # Scalar accumulators with computed deltas (or extra body side-effects) that
         # ``LoopToReduce`` refuses become a buffer-writing Map + ``Reduce`` libnode here.
         ('accumulator_to_map_and_reduce', lambda sdfg: AccumulatorToMapAndReduce().apply_pass(sdfg, {})),
+        # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
+        # The pfsqrf vertical-flux prefix-sum (``pfcqlng[i] = pfcqlng[i-1] + delta[i]``)
+        # is the cloudsc target. The v1 matcher refuses if the loop body has more than
+        # one SDFGState or carries more than one array; today this is a no-op on cloudsc
+        # (the pfsqrf body is multi-state with 8 parallel scans) but wiring it as a
+        # stage means the e2e numerical check guards any future matcher relaxation.
+        ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
         ('loop_to_map', _pmar(LoopToMap)),
+        # ``PromoteConstantIndexAccess`` introduces a per-iteration scalar for slots
+        # that blocked ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
+        # an ``if yrecldp_laericesed`` guard). Run after the first L2M sweep so PCIA
+        # sees only the loops L2M refused; the post-PCIA L2M re-run picks up the
+        # newly-eligible ones. Today PCIA fires on the single-slot for_767 (1 loop);
+        # the 5x multi-slot species fall-speed setup needs a per-slot matcher
+        # relaxation (tracked as an xfail unit test).
+        ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
+        ('loop_to_map_post_pcia', _pmar(LoopToMap)),
     ]
 
 
@@ -245,7 +266,11 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
         if label == 'symbol_propagation':
             assert not bad_assigns, (f'{regime}/{label}: bound symbol assignments survived symbol propagation: '
                                      f'{bad_assigns}')
-        if label == 'loop_to_map':
+        # Pin the map/loop counts at the final parallelization step (after PCIA's
+        # second L2M sweep). PCIA was wired to unblock the ICE ``for_767`` slot; with
+        # that promotion in place the loop count drops by 1 from the previous 5 to 4.
+        # LoopToScan is currently a no-op on cloudsc (multi-state pfsqrf body).
+        if label == 'loop_to_map_post_pcia':
             n_maps, n_loops = len(_map_entries(candidate)), len(_loop_regions(candidate))
             print(f'{regime}/{label}: maps={n_maps} sequential_loops={n_loops}')
             assert n_maps == _EXPECTED_MAPS, f'{regime}/{label}: {n_maps} maps, expected {_EXPECTED_MAPS}'

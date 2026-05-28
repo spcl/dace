@@ -176,10 +176,20 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     if start is None or end is None or stride is None or stride != 1:
         return None
 
+    # Accept either a single-state body (v1) or a multi-state body whose only
+    # *content* state is a single SDFGState (the cloudsc shape: a trivial pre-
+    # state with an iedge assignment + the actual body state + a trivial post-
+    # state with an iedge advancing the loop iterator). Empty wrapper states
+    # are fine because they contribute no dataflow; their iedge assignments stay
+    # in place (they bind loop-iteration-symbol shorthands like
+    # ``kfdia_plus_1 = kfdia + 1``, not the carry).
     blocks = loop.nodes()
-    if len(blocks) != 1 or not isinstance(blocks[0], SDFGState):
+    if not all(isinstance(b, SDFGState) for b in blocks):
         return None
-    state = blocks[0]
+    content_states = [b for b in blocks if len(b.nodes()) > 0]
+    if len(content_states) != 1:
+        return None
+    state = content_states[0]
 
     # Body must contain only tasklets and AccessNodes (no Map scopes / nested SDFGs).
     for n in state.nodes():

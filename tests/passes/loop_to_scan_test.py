@@ -290,6 +290,94 @@ def test_refuses_when_delta_is_same_array():
     assert res is None
 
 
+def test_multi_state_body_with_empty_wrappers():
+    """The cloudsc ``pfsqrf`` shape: the LoopRegion body has *three* SDFGStates --
+    an empty pre-state (carrying an iedge assignment like ``kfdia_plus_1 = kfdia + 1``),
+    the actual scan body, and an empty post-state (advancing the iterator symbol).
+    The v1 matcher used to refuse this on the ``len(blocks) != 1`` check; with the
+    relaxation, empty wrapper states are ignored and the single content state drives
+    the scan match.
+    """
+    sdfg = dace.SDFG('scan_multi_state')
+    sdfg.add_array('out', [N + 1], dace.float64)
+    sdfg.add_array('delta', [N], dace.float64)
+    init = sdfg.add_state('init', is_start_block=True)
+
+    loop = LoopRegion('scan_loop', initialize_expr='i = 0', condition_expr='i < N',
+                      update_expr='i = i + 1', loop_var='i')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    # Three body states: empty pre, content body, empty post -- exactly the cloudsc
+    # for_1133 shape (with an iedge assignment on the pre->body edge).
+    pre = loop.add_state('pre', is_start_block=True)
+    body = loop.add_state('body')
+    post = loop.add_state('post')
+    loop.add_edge(pre, body, dace.InterstateEdge(assignments={'np1': '(N + 1)'}))
+    loop.add_edge(body, post, dace.InterstateEdge())
+
+    rd = body.add_read('out')
+    wt = body.add_write('out')
+    dd = body.add_read('delta')
+    t = body.add_tasklet('add', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
+    body.add_edge(rd, None, t, '_a', dace.Memlet(data='out', subset='i'))
+    body.add_edge(dd, None, t, '_d', dace.Memlet(data='delta', subset='i'))
+    body.add_edge(t, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+
+    sdfg.validate()
+    assert _num_loops(sdfg) == 1
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, 'Multi-state body with empty wrappers should match the v1 scan template.'
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 16
+    rng = np.random.default_rng(11)
+    delta = rng.uniform(-1.0, 1.0, size=n)
+    out = np.zeros(n + 1)
+    out[0] = 0.25
+    expected = out.copy()
+    for i in range(n):
+        expected[i + 1] = expected[i] + delta[i]
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected), f'multi-state scan returned {out[:5]}, expected {expected[:5]}'
+
+
+def test_refuses_multi_state_body_with_two_content_states():
+    """If the body has *two or more* content states (genuinely multi-state computation),
+    the matcher still refuses -- a real fusion or NestedSDFG-inlining preprocess is
+    needed first. This protects against accidentally treating a multi-step body as a
+    single-state scan."""
+    sdfg = dace.SDFG('scan_two_content_states')
+    sdfg.add_array('out', [N + 1], dace.float64)
+    sdfg.add_array('delta', [N], dace.float64)
+    sdfg.add_scalar('_tmp', dace.float64, transient=True)
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('loop', initialize_expr='i = 0', condition_expr='i < N',
+                      update_expr='i = i + 1', loop_var='i')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+    s1 = loop.add_state('s1', is_start_block=True)
+    s2 = loop.add_state('s2')
+    loop.add_edge(s1, s2, dace.InterstateEdge())
+    # s1 has nodes; s2 also has nodes -- two content states.
+    dd = s1.add_read('delta')
+    tw = s1.add_write('_tmp')
+    s1.add_nedge(dd, tw, dace.Memlet(data='delta', subset='i', other_subset='0'))
+    rd = s2.add_read('out')
+    rt = s2.add_read('_tmp')
+    wt = s2.add_write('out')
+    t = s2.add_tasklet('add', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
+    s2.add_edge(rd, None, t, '_a', dace.Memlet(data='out', subset='i'))
+    s2.add_edge(rt, None, t, '_d', dace.Memlet(data='_tmp', subset='0'))
+    s2.add_edge(t, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    sdfg.validate()
+
+    res = LoopToScan().apply_pass(sdfg, {})
+    assert res is None, ('Two-content-state body should be refused -- needs state-fusion '
+                         'or NestedSDFG-inlining preprocess to flatten into one state.')
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
