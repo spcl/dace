@@ -20,7 +20,11 @@ It composes standalone passes in order, applied once:
 4.  ``AugAssignToWCR`` -- rewrite ``arr[S] += x`` (incl. the copy-wrapped form)
     into a write-conflict-resolution write so the reduction loop maps.
 5.  ``LoopToReduce`` -- lift pure accumulator loops to ``Reduce`` library nodes.
-6.  ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
+6.  :class:`~dace.transformation.passes.accumulator_to_map_and_reduce.AccumulatorToMapAndReduce`
+    -- rewrite scalar accumulators with computed deltas or extra body side-effects
+    into a per-iteration buffer-writing Map + ``Reduce`` libnode; what ``LoopToReduce``
+    refuses still parallelizes via the Map.
+7.  ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
 
 The pipeline runs once: every stage is idempotent or internally exhaustive, so
 there is nothing to re-apply. It is modelled on the canonicalization pipeline
@@ -86,6 +90,7 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
         from dace.transformation.passes.constant_propagation import ConstantPropagation
         from dace.transformation.passes.loop_to_reduce import LoopToReduce
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -116,6 +121,12 @@ class ParallelizePipeline(ppl.Pass):
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
             PatternMatchAndApplyRepeated([AugAssignToWCR()]),
             LoopToReduce(),
+            # Scalar-accumulator loops whose body has extra side-effects (or whose
+            # delta is a computed expression rather than a clean array slice) escape
+            # ``LoopToReduce``. ``AccumulatorToMapAndReduce`` rewrites them into a
+            # buffer-writing Map + ``Reduce`` libnode, exposing the per-iteration
+            # part for ``LoopToMap`` below.
+            AccumulatorToMapAndReduce(),
             PatternMatchAndApplyRepeated([LoopToMap()]),
         ]
 

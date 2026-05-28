@@ -38,6 +38,7 @@ from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
@@ -57,7 +58,7 @@ _REGIMES = {
 }
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
-_RELAXED_STEPS = {'loop_to_reduce', 'loop_to_map'}
+_RELAXED_STEPS = {'loop_to_reduce', 'accumulator_to_map_and_reduce', 'loop_to_map'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -168,6 +169,9 @@ def _chain():
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
         ('constant_propagation', lambda sdfg: ConstantPropagation().apply_pass(sdfg, {})),
         ('loop_to_reduce', lambda sdfg: LoopToReduce().apply_pass(sdfg, {})),
+        # Scalar accumulators with computed deltas (or extra body side-effects) that
+        # ``LoopToReduce`` refuses become a buffer-writing Map + ``Reduce`` libnode here.
+        ('accumulator_to_map_and_reduce', lambda sdfg: AccumulatorToMapAndReduce().apply_pass(sdfg, {})),
         ('loop_to_map', _pmar(LoopToMap)),
     ]
 
