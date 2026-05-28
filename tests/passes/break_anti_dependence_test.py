@@ -140,32 +140,21 @@ def test_break_anti_dependence_symbolic_positive_offset():
     assert np.allclose(a_run, ref_a)
 
 
-@pytest.mark.xfail(
-    reason="DATA-INDIRECTED carried offset ``a[i + idx[i]]`` -- the SDFG splits the index "
-    "computation into a separate state that binds a free symbol (e.g. "
-    "``__sym_i_plus_idx_slice := i + idx[i]``), and the read subset of ``a`` is that "
-    "symbol. The carried offset is then ``__sym - i`` which syntactically contains ``i`` "
-    "and is currently rejected as 'complex'. The fix is to (1) walk back through the "
-    "loop body to the symbol's definition, (2) detect that the definition has the shape "
-    "``i + idx[i]`` for some array ``idx`` indexed by the iteration variable, and (3) "
-    "emit a per-element runtime guard ``for j in 0:N: assert(idx[j] > 0);`` in the "
-    "pre-state -- conceptually identical to ScatterToGuardedMaps' IntegerSort + "
-    "adjacent-equal-pair check, just on a different predicate. Then renaming is sound "
-    "because every read goes to a strictly higher index than its write. xfail until the "
-    "definition-walk-back + array-guard emission lands.",
-    strict=True)
 def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
-    """``a[i + idx[i]] -> a[i]`` is sound to parallelize when ``forall i: idx[i] > 0``.
-
-    Design (per user direction): mirror the ScatterToGuardedMaps approach -- plant
-    a per-element runtime guard over the index array. The check is O(N) and runs
-    ONCE before the loop; failure traps via ``__builtin_trap``.
-    """
+    """``a[i + idx[i]] -> a[i]`` -- the SDFG splits the index computation into a
+    separate state binding a free symbol (e.g. ``__sym_i_plus_idx_slice := i +
+    idx[i]``); the read subset of ``a`` is that symbol. The carried offset
+    ``__sym - i`` is resolved by walking back through interstate-edge
+    assignments + the producing tasklet to the array read ``idx[i]``. Renaming
+    is sound iff every element of ``idx`` is positive, so the pass plants a
+    per-element ``__builtin_trap`` guard tasklet (one input edge reading
+    ``idx`` whole, CPP body with a tight ``for`` loop checking each slot)."""
     idx_dtype = dace.int32
 
     @dace.program
     def indirect(a: dace.float64[N], b: dace.float64[N], idx: idx_dtype[N]):
-        for i in range(N):
+        # Bound at N-1 so a[i + idx[i]] with idx[i] == 1 stays in range.
+        for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
 
     sdfg = indirect.to_sdfg(simplify=True)
@@ -174,10 +163,22 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     _l2m(sdfg)
     assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
 
+    # The pass must have planted an ARRAY guard tasklet over ``idx`` (CPP,
+    # one input connector for ``idx``, no outputs, body asserts each slot > 0).
+    array_guards = [
+        n for st in sdfg.all_states() for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_array_guard_')
+    ]
+    assert len(array_guards) == 1, [g.label for g in array_guards]
+    g = array_guards[0]
+    assert g.code.language == dace.dtypes.Language.CPP
+    assert len(g.in_connectors) == 1 and not g.out_connectors
+    assert 'idx' in g.code.as_string and '__builtin_trap' in g.code.as_string
+
     # Numerical correctness with a permutation that satisfies idx[i] > 0
     # for the in-range positions.
-    rng = np.random.default_rng(0)
     n = 16
+    rng = np.random.default_rng(0)
     a = rng.random(n)
     b = rng.random(n)
     idx = np.array([1] * n, dtype=np.int32)
