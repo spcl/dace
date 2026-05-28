@@ -41,17 +41,19 @@ The pass only mutates a loop that ``LoopToMap`` currently refuses *and* would ac
 the privatization (verified by re-running the match); a promotion that doesn't help is
 reverted so the SDFG does not grow needlessly.
 
-:note: Unsupported today (the matcher refuses these and the loop stays sequential):
+:note: Scope today:
 
-    - Multi-dimensional constant slots (``arr2d[i, 3]``): the constant-point check only
-      accepts 1-D single-element subsets. Mixed constant/symbolic axes are out of scope.
-    - Accesses to ``arr`` through a :class:`~dace.sdfg.nodes.NestedSDFG` connector: a
-      cross-array memlet (``memlet.data != node.data``) raises the mixed-access gate and
-      the whole array is refused; a wholesale rename would mismatch the connector's
-      declared shape.
-    - Live-out at the same slot: a writeback buffer / ``lastprivate`` would be needed,
-      and the SDFG cost of that machinery outweighs the parallelism gain in the cases
-      we've seen.
+    - **1-D constant slots only.** The constant-point check accepts only ``arr[c]``
+      where ``arr`` is rank-1 and ``c`` is a literal integer. Multi-dimensional
+      arrays (``arr2d[i, 3]``) are out of scope for v1.
+    - **Live-out at the same slot triggers a refusal.** Preserving the last-iteration
+      value would require a ``lastprivate``-style writeback buffer; DaCe does not
+      have that machinery yet, and adding it would change the SDFG more than the
+      parallelism gain justifies. The slot-precise live-out check only allows
+      promotion when no post-loop read targets *this* specific slot.
+
+The pass assumes the loop body is flat dataflow: tasklets + AccessNodes connected by
+plain memlets. NestedSDFG-mediated accesses to the same array are not considered.
 """
 import contextlib
 import copy
