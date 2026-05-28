@@ -42,13 +42,15 @@ partial reductions does not change the result.
 from typing import Tuple
 
 import dace
-from dace import library, nodes
+from dace import library, nodes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.properties import Property, EnumProperty
 from dace.transformation.transformation import ExpandTransformation
 import enum
 
-from dace.libraries.sort.environments.cub import CUB
+# CUB env is imported lazily inside ``ExpandCUDA.expansion`` to break the
+# ``dace.libraries.standard.nodes.scan`` ↔ ``dace.libraries.sort.environments.cub``
+# circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
 
 
@@ -153,7 +155,28 @@ class ExpandPure(ExpandTransformation):
         in_desc, _out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         n_expr = _resolve_length(node, state, sdfg)
         op_cpp = _OP_TO_STD_CPP[node.op]
-        if node.exclusive:
+        stride_expr = sym2cpp(node.stride)
+        is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
+
+        if not is_stride_one:
+            if node.exclusive:
+                raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
+            # Outer loop over residue classes ``_k in [0, s)``; inner sequential scan.
+            # Initialise the accumulator from the first valid input in each class so we
+            # don't need a per-op identity literal (matches the residue-class oracle).
+            body = (f"{{ long _s = (long)({stride_expr}); long _n = (long)({n_expr});\n"
+                    f"  if (_s <= 0) std::abort();\n"
+                    f"  for (long _k = 0; _k < _s; ++_k) {{\n"
+                    f"      if (_k >= _n) continue;\n"
+                    f"      auto _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
+                    f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
+                    f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
+                    f"          _acc = ({op_cpp})(_acc, {INPUT_CONNECTOR_NAME}[_j]);\n"
+                    f"          {OUTPUT_CONNECTOR_NAME}[_j] = _acc;\n"
+                    f"      }}\n"
+                    f"  }}\n"
+                    f"}}")
+        elif node.exclusive:
             seed = _identity_expr(node, in_desc)
             body = (f"{{ auto _acc = {seed};\n"
                     f"  for (decltype({n_expr}) _i = 0; _i < ({n_expr}); ++_i) {{\n"
@@ -199,7 +222,15 @@ class ExpandCPU(ExpandTransformation):
         in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         n_expr = _resolve_length(node, state, sdfg)
         suffix = _OP_TO_OMP_SUFFIX[node.op]
-        if node.exclusive:
+        stride_expr = sym2cpp(node.stride)
+        is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
+
+        if not is_stride_one:
+            if node.exclusive:
+                raise NotImplementedError("Scan: ``exclusive=True`` with ``stride > 1`` is not yet supported.")
+            call = (f"::dace::scan::strided_inclusive_{suffix}("
+                    f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));")
+        elif node.exclusive:
             seed = _identity_expr(node, in_desc)
             call = (f"::dace::scan::exclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
@@ -221,10 +252,14 @@ class ExpandCPU(ExpandTransformation):
 class ExpandCUDA(ExpandTransformation):
     """``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory."""
 
-    environments = [CUB]
+    # Populated lazily in :meth:`expansion` (and below) to dodge the sort↔standard cycle.
+    environments = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        if not ExpandCUDA.environments:
+            from dace.libraries.sort.environments.cub import CUB
+            ExpandCUDA.environments = [CUB]
         in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         n_expr = _resolve_length(node, state, sdfg)
         op_cub = _OP_TO_CUB[node.op]
@@ -289,6 +324,15 @@ class Scan(nodes.LibraryNode):
                          desc="If True, output an exclusive scan (out[0] = identity).")
     identity = Property(dtype=object, default=None, allow_none=True,
                         desc="Exclusive-scan identity element. Required for MIN/MAX exclusive scans.")
+    stride = Property(dtype=object, default=1, allow_none=False,
+                      desc="Per-element stride for the scan recurrence. Default ``1`` is the "
+                      "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
+                      "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
+                      "independent scans (CPU expansion runs them in parallel via OpenMP). "
+                      "The expansion emits a runtime ``s > 0`` ``std::abort()`` check; passing a "
+                      "non-positive stride at runtime terminates the program before the scan "
+                      "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
+                      "are not yet supported.")
 
     implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
     default_implementation = 'CPU'

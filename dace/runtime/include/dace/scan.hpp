@@ -132,4 +132,77 @@ inline void exclusive_max(It first, It last, OutIt out_first, T seed) {
     }
 }
 
+// --- STRIDED INCLUSIVE -------------------------------------------------------
+// ``out[i + s] = out[i] OP in[i]`` for stride s > 0 (caller assertion). Each
+// residue class k in [0, s) is an independent inclusive scan over the strided
+// slice; the s classes run in parallel, the within-class scan stays sequential.
+// For s == 1 these are equivalent to the contiguous routines above; callers
+// should dispatch on stride to pick the right form.
+//
+// Contract: ``out`` and ``in`` are 1-D arrays of length ``n``. For each residue
+// class k, the scan accumulator starts at the op's identity (0 / 1 / inputs[0]
+// / inputs[0] respectively for sum / product / min / max), so the *first*
+// scanned value in each class becomes ``out[k]`` directly. Seeds external to
+// the scan (if needed) are folded in by the caller via a separate map.
+
+template <typename It, typename OutIt>
+inline void strided_inclusive_sum(It first, OutIt out, long n, long s) {
+    using T = typename std::iterator_traits<It>::value_type;
+    if (s <= 0) std::abort();
+    #pragma omp parallel for
+    for (long k = 0; k < s; ++k) {
+        T acc = T(0);
+        for (long j = k; j < n; j += s) {
+            acc = acc + first[j];
+            out[j] = acc;
+        }
+    }
+}
+
+template <typename It, typename OutIt>
+inline void strided_inclusive_product(It first, OutIt out, long n, long s) {
+    using T = typename std::iterator_traits<It>::value_type;
+    if (s <= 0) std::abort();
+    #pragma omp parallel for
+    for (long k = 0; k < s; ++k) {
+        T acc = T(1);
+        for (long j = k; j < n; j += s) {
+            acc = acc * first[j];
+            out[j] = acc;
+        }
+    }
+}
+
+template <typename It, typename OutIt>
+inline void strided_inclusive_min(It first, OutIt out, long n, long s) {
+    using T = typename std::iterator_traits<It>::value_type;
+    if (s <= 0) std::abort();
+    #pragma omp parallel for
+    for (long k = 0; k < s; ++k) {
+        if (k >= n) continue;
+        T acc = first[k];
+        out[k] = acc;
+        for (long j = k + s; j < n; j += s) {
+            acc = std::min<T>(acc, first[j]);
+            out[j] = acc;
+        }
+    }
+}
+
+template <typename It, typename OutIt>
+inline void strided_inclusive_max(It first, OutIt out, long n, long s) {
+    using T = typename std::iterator_traits<It>::value_type;
+    if (s <= 0) std::abort();
+    #pragma omp parallel for
+    for (long k = 0; k < s; ++k) {
+        if (k >= n) continue;
+        T acc = first[k];
+        out[k] = acc;
+        for (long j = k + s; j < n; j += s) {
+            acc = std::max<T>(acc, first[j]);
+            out[j] = acc;
+        }
+    }
+}
+
 }}  // namespace dace::scan
