@@ -140,6 +140,55 @@ def test_break_anti_dependence_symbolic_positive_offset():
     assert np.allclose(a_run, ref_a)
 
 
+@pytest.mark.xfail(
+    reason="DATA-INDIRECTED carried offset ``a[i + idx[i]]`` -- the SDFG splits the index "
+    "computation into a separate state that binds a free symbol (e.g. "
+    "``__sym_i_plus_idx_slice := i + idx[i]``), and the read subset of ``a`` is that "
+    "symbol. The carried offset is then ``__sym - i`` which syntactically contains ``i`` "
+    "and is currently rejected as 'complex'. The fix is to (1) walk back through the "
+    "loop body to the symbol's definition, (2) detect that the definition has the shape "
+    "``i + idx[i]`` for some array ``idx`` indexed by the iteration variable, and (3) "
+    "emit a per-element runtime guard ``for j in 0:N: assert(idx[j] > 0);`` in the "
+    "pre-state -- conceptually identical to ScatterToGuardedMaps' IntegerSort + "
+    "adjacent-equal-pair check, just on a different predicate. Then renaming is sound "
+    "because every read goes to a strictly higher index than its write. xfail until the "
+    "definition-walk-back + array-guard emission lands.",
+    strict=True)
+def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
+    """``a[i + idx[i]] -> a[i]`` is sound to parallelize when ``forall i: idx[i] > 0``.
+
+    Design (per user direction): mirror the ScatterToGuardedMaps approach -- plant
+    a per-element runtime guard over the index array. The check is O(N) and runs
+    ONCE before the loop; failure traps via ``__builtin_trap``.
+    """
+    idx_dtype = dace.int32
+
+    @dace.program
+    def indirect(a: dace.float64[N], b: dace.float64[N], idx: idx_dtype[N]):
+        for i in range(N):
+            a[i] = a[i + idx[i]] + b[i]
+
+    sdfg = indirect.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    _l2m(sdfg)
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+
+    # Numerical correctness with a permutation that satisfies idx[i] > 0
+    # for the in-range positions.
+    rng = np.random.default_rng(0)
+    n = 16
+    a = rng.random(n)
+    b = rng.random(n)
+    idx = np.array([1] * n, dtype=np.int32)
+    ref = a.copy()
+    for i in range(n - 1):
+        ref[i] = a[i + idx[i]] + b[i]
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), idx=idx.copy(), N=n)
+    assert np.allclose(out, ref)
+
+
 def test_break_anti_dependence_symbolic_offset_uses_iter_var_refused():
     """A carried offset that DEPENDS on the iteration variable (``a[2*i+1]``) is
     not a simple positive constant; the pass must refuse it."""
