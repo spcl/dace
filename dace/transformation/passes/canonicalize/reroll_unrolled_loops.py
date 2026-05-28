@@ -184,6 +184,37 @@ class RerollUnrolledLoops(ppl.Pass):
             return sym_offset[next(iter(lane_syms))], True
         return None, True
 
+    #: Sympy class names of associative binary operations recognised as the
+    #: merge tasklet's reduction op. Indexed via ``type(expr).__name__`` so we
+    #: stay on the :mod:`dace.symbolic` interface (no direct ``import sympy``).
+    _ASSOC_SYMPY_KIND = {'Add': '+', 'Mul': '*', 'Min': 'min', 'Max': 'max'}
+
+    def _associative_op_kind(self, node) -> Optional[str]:
+        """If ``node`` is a binary associative-op tasklet over ``__in1, __in2``,
+        return its op kind (``'+'``, ``'*'``, ``'min'``, ``'max'``); else ``None``.
+
+        Lifts the tasklet RHS to a :mod:`dace.symbolic` expression -- sympy's
+        ``Add`` / ``Mul`` / ``Min`` / ``Max`` are associative by construction,
+        so we don't need to enumerate parenthesisation or whitespace variants.
+        """
+        if not isinstance(node, nodes.Tasklet):
+            return None
+        code = node.code.as_string.strip()
+        if '=' not in code:
+            return None
+        lhs, rhs = code.split('=', 1)
+        if lhs.strip() != '__out':
+            return None
+        try:
+            expr = symbolic.pystr_to_symbolic(rhs.strip())
+        except Exception:
+            return None
+        if {str(s) for s in expr.free_symbols} != {'__in1', '__in2'}:
+            return None
+        if len(expr.args) != 2:
+            return None
+        return self._ASSOC_SYMPY_KIND.get(type(expr).__name__)
+
     def _shared_nodes(self, state: SDFGState) -> Set:
         """Boundary access nodes of a state (external arrays + read-only sources).
 
@@ -284,32 +315,63 @@ class RerollUnrolledLoops(ppl.Pass):
         if step < m * g and self._has_read_modify_write(states, edge_offsets):
             return False
 
-        # Per state, the lane components (internal nodes reachable from offset-k
-        # edges) must be disjoint across lanes; the lanes must be structurally
-        # identical (same tasklet-code multiset over all states).
+        # Per state, walk each lane's component. Two patterns are accepted:
+        #
+        # 1. **Disjoint lanes** (the classic ``s351``/``s353`` shape): every node
+        #    reached from lane ``k``'s boundary edges is reachable from *only*
+        #    lane ``k``. Lanes are structurally identical (same tasklet-code
+        #    multiset).
+        # 2. **Lanes merged through an associative reduction tree** (the
+        #    ``s352`` single-expression shape): the lane components overlap only
+        #    at binary associative-op tasklets (``+``, ``*``, ``min``, ``max``)
+        #    that form a tree combining the ``m`` lane outputs into a single
+        #    value. The classifier verifies the shared nodes are uniformly one
+        #    associative op; the rewrite then collapses the tree to lane 0.
         shared = {st: self._shared_nodes(st) for st in states}
         lane_nodes: Dict[SDFGState, Dict[int, Set]] = {st: {} for st in states}
+        merge_nodes: Dict[SDFGState, Set] = {st: set() for st in states}
         codes: Dict[int, List[str]] = {d: [] for d in distinct}
         for st in states:
             per_lane_edges: Dict[int, List] = {d: [] for d in distinct}
             for edge, off in edge_offsets[st].items():
                 per_lane_edges[off].append(edge)
-            seen: Set = set()
+            # Walk each lane independently, recording which lanes reach each node.
+            visited_by: Dict = {}
             for d in distinct:
-                nodes_d = self._lane_nodes(st, per_lane_edges[d], shared[st])
-                if seen & nodes_d:
-                    return False
-                seen |= nodes_d
-                lane_nodes[st][d] = nodes_d
-                codes[d].extend(n.code.as_string for n in nodes_d if isinstance(n, nodes.Tasklet))
+                for n in self._lane_nodes(st, per_lane_edges[d], shared[st]):
+                    visited_by.setdefault(n, set()).add(d)
+            # Classify: a node reached by exactly one lane is part of that lane's
+            # unique component; a node reached by >=2 lanes is a merge candidate
+            # and must be an associative binary-op tasklet.
+            per_lane_unique: Dict[int, Set] = {d: set() for d in distinct}
+            merges: Set = set()
+            merge_op: Optional[str] = None
+            for n, lanes_visiting in visited_by.items():
+                if len(lanes_visiting) == 1:
+                    per_lane_unique[next(iter(lanes_visiting))].add(n)
+                else:
+                    op = self._associative_op_kind(n)
+                    if op is None:
+                        return False
+                    if merge_op is None:
+                        merge_op = op
+                    elif merge_op != op:
+                        return False  # mixed ops in the merge tree
+                    merges.add(n)
+            lane_nodes[st] = per_lane_unique
+            merge_nodes[st] = merges
+            for d in distinct:
+                codes[d].extend(n.code.as_string for n in per_lane_unique[d] if isinstance(n, nodes.Tasklet))
         codes = {d: sorted(c) for d, c in codes.items()}
         if not codes[0] or any(codes[d] != codes[0] for d in distinct[1:]):
             return False
 
-        # Re-roll: drop every lane but offset 0 -- its nodes in each state, the
-        # per-lane interstate symbol assignments, then rewrite the loop to step
-        # ``g``. Lane 0 keeps its ``loop_var + 0`` accesses, now sweeping every
-        # position.
+        # Re-roll: drop every lane but offset 0 -- its unique nodes in each state,
+        # the per-lane interstate symbol assignments. Then collapse the merge
+        # tree: each merge tasklet has its dropped-lane input gone, so it now
+        # has only one live input; splice it (consumers of its output read from
+        # that one input directly), and delete the merge tasklet + its output
+        # AccessNode. Finally, rewrite the loop to step ``g``.
         drop_offsets = set(distinct[1:])
         drop_syms = {s for s, o in sym_offset.items() if o in drop_offsets}
         for st in states:
@@ -320,6 +382,7 @@ class RerollUnrolledLoops(ppl.Pass):
                 for n in lane_nodes[st][d]:
                     if n in st.nodes():
                         st.remove_node(n)
+            self._collapse_merge_tree(st, merge_nodes[st])
             # Per-lane AccessNode copies the frontend split out are now isolated.
             for n in list(st.nodes()):
                 if isinstance(n, nodes.AccessNode) and st.degree(n) == 0:
@@ -330,6 +393,59 @@ class RerollUnrolledLoops(ppl.Pass):
 
         self._rewrite_step(loop, loop_var, g, m)
         return True
+
+    def _collapse_merge_tree(self, state: SDFGState, merges: Set) -> None:
+        """Splice each surviving merge tasklet to passthrough its one live input.
+
+        After the dropped-lane nodes are removed, each merge tasklet in the
+        original reduction tree has lost one of its two input sources (the
+        edge from a now-removed dropped-lane producer). The surviving input
+        (lane 0's product, or another merge that has already been collapsed)
+        flows through. We rewrite consumers of the merge tasklet's output
+        AccessNode to read directly from the live input's source, then delete
+        the merge tasklet and its output AccessNode.
+
+        :param state: The body state being collapsed.
+        :param merges: The set of merge tasklets identified by the classifier;
+                       safe to pass merges already deleted by an upstream pass
+                       (membership is re-checked).
+        """
+        # Process merges in topological order (closer to the leaves first) so a
+        # later merge sees its already-collapsed predecessors as direct edges.
+        try:
+            from dace.sdfg.utils import dfs_topological_sort
+            order = [n for n in dfs_topological_sort(state) if n in merges]
+        except Exception:
+            order = list(merges)
+        for m in order:
+            if m not in state.nodes():
+                continue
+            in_edges = list(state.in_edges(m))
+            out_edges = list(state.out_edges(m))
+            # A live merge has exactly one of its 2 inputs still wired (the
+            # other lane's chain was just removed). Anything else is unsafe to
+            # touch heuristically -- leave it (the caller's structural check
+            # already vetted the pattern).
+            if len(in_edges) != 1 or len(out_edges) != 1:
+                continue
+            live_in = in_edges[0]
+            out_acc = out_edges[0].dst
+            if not isinstance(out_acc, nodes.AccessNode):
+                continue
+            # Redirect every consumer of ``out_acc`` to read from ``live_in.src``
+            # with that source's port. Preserve the original consumer-side
+            # connector and memlet (rebased onto the surviving source's data
+            # name when needed).
+            for ce in list(state.out_edges(out_acc)):
+                new_memlet = ce.data
+                if (new_memlet is not None and isinstance(live_in.src, nodes.AccessNode)
+                        and new_memlet.data == out_acc.data):
+                    new_memlet = dace.Memlet(data=live_in.src.data, subset=new_memlet.subset, wcr=new_memlet.wcr)
+                state.remove_edge(ce)
+                state.add_edge(live_in.src, live_in.src_conn, ce.dst, ce.dst_conn, new_memlet)
+            state.remove_node(m)
+            if state.degree(out_acc) == 0:
+                state.remove_node(out_acc)
 
     def _has_read_modify_write(self, states: List[SDFGState], edge_offsets: Dict) -> bool:
         """Whether any array is both read and written by the lanes.

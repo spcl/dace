@@ -128,20 +128,22 @@ def test_vas_permutation_runs_cleanly():
 
 
 def test_guard_states_inserted_before_scatter():
-    """The guard's sort + compare states are reachable from the SDFG start and
-    precede every state that reads ``ip`` in the original kernel."""
+    """The guard's four states (init flag, sort, compare-with-race-write, trap)
+    are reachable from the SDFG start and precede every state that reads ``ip``."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     states_before = set(sdfg.states())
     insert_scatter_guard(sdfg, 'ip')
     new_states = set(sdfg.states()) - states_before
 
-    assert len(new_states) == 2, f"Expected exactly 2 new states (sort + compare); got {len(new_states)}."
+    assert len(new_states) == 4, (f"Expected exactly 4 new states (init+sort+compare+trap); got {len(new_states)}.")
     # Each new state's label carries the guard tag.
     new_labels = sorted(s.label for s in new_states)
+    assert any('_scatter_guard_init_' in l for l in new_labels), new_labels
     assert any('_scatter_guard_sort_' in l for l in new_labels), new_labels
     assert any('_scatter_guard_compare_' in l for l in new_labels), new_labels
+    assert any('_scatter_guard_trap_' in l for l in new_labels), new_labels
 
-    # The start block (or the first non-guard state along the chain) is one of the new states.
+    # All four guard states sit at the head of the CFG.
     reachable_before_original = set()
     cur = sdfg.start_block
     while cur in new_states:
@@ -151,7 +153,7 @@ def test_guard_states_inserted_before_scatter():
             break
         cur = out[0].dst
     assert reachable_before_original == new_states, (
-        f"Both guard states should sit at the head of the CFG; reached {reachable_before_original}")
+        f"All four guard states should sit at the head of the CFG; reached {reachable_before_original}")
 
 
 def test_guard_pass_emits_for_each_named_idx():

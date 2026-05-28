@@ -39,6 +39,7 @@ from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeli
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
@@ -218,8 +219,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
           ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
     if unroll_limit > 0:
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
-    s += [('reduce', InductionVariableSubstitution()), ('reduce', LoopInvariantCodeMotion()),
-          ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
+    # HoistInductionVariableUpdates runs BEFORE InductionVariableSubstitution: it
+    # fissions IV-eligible updates out of compound bodies into sibling single-statement
+    # loops so the IVSub matcher (which requires a single tasklet in the body) catches
+    # them. Together they turn O(N) recurrences with surrounding loop work into O(1)
+    # straight-line plus the surviving body.
+    s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
+          ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -321,24 +327,17 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += _structural_cleanup('reduction_to_wcr_map')
     s += [('reduction_to_wcr_map', PrivatizeReductionAccumulator())]
 
-    # TODO: scatter -- ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort +
-    # adjacent-equal`` guard on each scatter ``idx`` array and permissively lifts
-    # the loops. Wiring it here parallelizes the TSVC scatter family (s491, vas,
-    # s4113) AND yields +27 maps from the permissive-mode lift catching other
-    # cases L2M refused conservatively (89L/82M/3R -> 52L/109M/3R on the 151
-    # corpus). NOT yet enabled: the scatter pass emits a ``compare_ip`` sink
-    # tasklet ``if (__cur == __nxt) { __builtin_trap(); }`` with no
-    # ``out_connectors`` but with data input edges -- this violates the SDFG
-    # convention "only initialization / symbol-only tasklets may have no src
-    # connectors", and the convention-checking downstream pass
-    # ``dead_dataflow_elimination`` then raises ``NotImplementedError`` when
-    # ``SimplifyPass`` reaches it. Fix needed in the SCATTER PASS (route the
-    # trap through a state-level ``ConditionalBlock`` or add a dummy output
-    # connector + empty memlet that carries a name) -- NOT in the downstream
-    # pass, since the SDFG convention is correct. Once the scatter pass is
-    # fixed, uncomment:
-    #
-    # s += [('scatter', ScatterToGuardedMaps())]
+    # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
+    # adjacent-equal collision count + post-region trap`` guard on each scatter
+    # ``idx`` array, then permissively lifts the now-safe loops. Parallelizes the TSVC
+    # scatter family (s491, vas, s4113) and additionally catches the cases LoopToMap
+    # refused conservatively in the preceding ``parallelize`` stage (+27 maps on the
+    # 151-kernel corpus: 89L/82M/3R -> 52L/109M/3R). The sink-tasklet shape that
+    # previously blocked wiring is gone: the comparison map writes via WCR ``+``
+    # into a ``int64`` counter, and a separate sequential ``trap_state`` reads the
+    # counter as an interstate-edge-bound symbol and traps if positive -- the trap
+    # tasklet has no connectors (the symbol-only convention is satisfied).
+    s += [('scatter', ScatterToGuardedMaps())]
 
     # post_l2m: insert assign tasklets at map boundary, then structural
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
