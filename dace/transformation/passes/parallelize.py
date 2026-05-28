@@ -90,6 +90,7 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.passes.loop_to_reduce import LoopToReduce
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
+        from dace.transformation.passes.simplify import SimplifyPass
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
         return [
             # Loop-structure transforms first (unroll, peel; reversal lives inside
@@ -99,6 +100,16 @@ class ParallelizePipeline(ppl.Pass):
             # reduce, loop-to-map) is order-insensitive to propagation.
             ShortLoopUnroll(self.unroll_limit),
             BestEffortLoopPeeling(self.peel_limit),
+            # Re-simplify once, after unrolling. The caller simplifies before this
+            # pipeline, but a loop body that guards on the iteration variable (e.g.
+            # ``if jm == ncldqi``) only exposes a constant condition once unrolling pins
+            # ``jm`` to a literal -- so the caller's simplify, run while the guard was
+            # still symbolic, could not fold it. Unrolling (with the species constants
+            # specialised) then leaves dead branches like ``if 1 == 2`` whose never-taken
+            # bodies still hold constant-index writes (e.g. ``zvqx[1] = ...``) that read
+            # as a loop-carried conflict and block LoopToMap. Folding the conditions here
+            # drops those dead branches and their phantom writes.
+            SimplifyPass(),
             SymbolPropagation(),
             ConstantPropagation(),
             PrivatizeScalars(),
