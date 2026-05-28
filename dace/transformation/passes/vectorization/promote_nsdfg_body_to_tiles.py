@@ -541,6 +541,99 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 out.append((d, next(iter(fs))))
         return out
 
+    def _unrefine_minmax_connectors(self, parent_state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                                    spec: TileDimSpec) -> None:
+        """Undo ``RefineNestedAccess``'s union-bound on a multi-read connector.
+
+        A connector read at multiple distinct indices (s115's ``a`` read at
+        ``[i]`` and ``[j]``) gets its outer subset refined to the minimum
+        bounding range ``[Min(i, j) : Max(i, j) + 1]`` and the inner subsets
+        offset by the same ``Min``. The descent's classify sees ``Min/Max`` as
+        ``Gather`` and refuses; the body itself is fine — the refinement is a
+        tight-allocation artifact. Restore the full source view: outer subset
+        becomes ``[0 : src.shape[d] - 1]`` per dim, inner array reshapes to the
+        full source shape, and each inner edge's subset has the original outer
+        begin added back so a refined ``a[i - Min(i, j)]`` becomes the absolute
+        ``a[i]`` (a per-lane tile read) and ``a[j - Min(i, j)]`` becomes
+        ``a[j]`` (a loop-invariant scalar broadcast). The downstream widen +
+        operand classification then handle both naturally.
+
+        :param parent_state: State holding the map + NSDFG.
+        :param nsdfg_node: The body NestedSDFG node.
+        """
+        inner = nsdfg_node.sdfg
+
+        def _has_minmax(expr) -> bool:
+            s = str(expr)
+            return ("Min(" in s) or ("Max(" in s) or ("min(" in s) or ("max(" in s)
+
+        conn_edges = ([(e.dst_conn, e) for e in parent_state.in_edges(nsdfg_node)] +
+                      [(e.src_conn, e) for e in parent_state.out_edges(nsdfg_node)])
+        seen: Set[str] = set()
+        for conn, oe in conn_edges:
+            if conn is None or conn in seen or conn == _INNER_MASK:
+                continue
+            if conn not in inner.arrays:
+                continue
+            if oe.data is None or oe.data.subset is None or oe.data.data is None:
+                continue
+            if not any(_has_minmax(b) or _has_minmax(e_) for (b, e_, _s) in oe.data.subset):
+                continue
+            src_arr = parent_state.sdfg.arrays[oe.data.data]
+            # Capture the per-dim offset (the Min(...) value to add back).
+            offsets = [b for (b, _e, _s) in oe.data.subset]
+            old_desc = inner.arrays[conn]
+            inner.remove_data(conn, validate=False)
+            inner.add_array(conn,
+                            list(src_arr.shape),
+                            src_arr.dtype,
+                            strides=src_arr.strides,
+                            storage=old_desc.storage,
+                            transient=False)
+            for sym_expr in list(src_arr.shape) + list(src_arr.strides):
+                for fs in dace.symbolic.pystr_to_symbolic(str(sym_expr)).free_symbols:
+                    sname = str(fs)
+                    if sname not in nsdfg_node.symbol_mapping:
+                        nsdfg_node.symbol_mapping[sname] = dace.symbolic.pystr_to_symbolic(sname)
+                    if sname not in inner.symbols:
+                        inner.add_symbol(sname, parent_state.sdfg.symbols.get(sname, dace.int64))
+            # Rebuild both in / out outer edges for this connector.
+            for _conn, _oe in conn_edges:
+                if _conn == conn and _oe.data is not None and _oe.data.data is not None:
+                    _oe.data = dace.Memlet(data=_oe.data.data,
+                                           subset=subsets.Range([(0, s - 1, 1) for s in src_arr.shape]))
+            # Add the offset back to every inner edge subset for this connector
+            # (cancel the refinement: ``[expr - Min(...)]`` -> ``[expr]``); for
+            # a per-dim subset that is a single-element TILE-VAR-bearing point
+            # (e.g. ``a[i]`` for the i-tile) ALSO expand to a per-tile W-window
+            # ``[i : i + W - 1]`` so downstream materialisation lowers it as a
+            # tile read; a tile-var-FREE single-element point (``a[j]``) stays a
+            # point and lowers as a Scalar broadcast.
+            tile_w = dict(zip(spec.iter_vars, spec.widths))
+            for istate in inner.states():
+                for ed in istate.edges():
+                    if ed.data is None or ed.data.data != conn or ed.data.subset is None:
+                        continue
+                    new_sub = []
+                    for d, (b, e_, s) in enumerate(ed.data.subset):
+                        off = offsets[d]
+                        nb, ne = b + off, e_ + off
+                        # Per-dim W-window expansion: only when this dim is a
+                        # single-element point (nb == ne) AND its begin has a
+                        # tile var (non-tile-var points stay as broadcasts).
+                        is_point = bool(dace.symbolic.simplify(ne - nb) == 0)
+                        if is_point:
+                            fs = {str(x) for x in getattr(nb, "free_symbols", set())}
+                            tvars_in = fs & set(spec.iter_vars)
+                            if len(tvars_in) == 1:
+                                tv = next(iter(tvars_in))
+                                w = tile_w[tv]
+                                ne = nb + (w - 1)
+                                s = 1
+                        new_sub.append((nb, ne, s))
+                    ed.data = dace.Memlet(data=conn, subset=subsets.Range(new_sub))
+            seen.add(conn)
+
     def _collapse_affine_gathers(self, parent_state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG, spec: TileDimSpec,
                                  mask_name: Optional[str]) -> None:
         """Route a non-box affine/structured boundary read to a :class:`TileGather`.
@@ -746,14 +839,23 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # ``idx[c*l]`` per lane (a ``c``-strided index pick DaCe's
                 # base-pointer NSDFG args cannot carry in the memlet itself).
                 idx_info = []  # (k, sym, idx_arr, window_size, lane_stride)
+                unresolved = False
                 for k, (_dim, sym) in enumerate(gather_syms):
                     idx_arr = self._index_array_for_symbol(inner, sym)
                     if idx_arr is None:
-                        raise NotImplementedError(
-                            f"PromoteNSDFGBodyToTiles: gather index {sym!r} on {src_name!r} did not resolve "
-                            f"to a widened index tile; run fan_out_tile_gather_index_symbols first")
+                        # ``sym`` is not a fanned-out data-dependent gather index
+                        # (no widened index tile bound via an interstate-edge
+                        # assignment) — it is a loop-invariant outer symbol
+                        # (s115's ``a[j]`` where ``j`` is the outer-loop var).
+                        # Skip this edge; the downstream operand classifier
+                        # (``is_single_invariant``) lowers it as a Scalar
+                        # broadcast instead.
+                        unresolved = True
+                        break
                     window = inner.arrays[idx_arr].shape[0]
                     idx_info.append((k, sym, idx_arr, window, _index_lane_stride(window, W[0])))
+                if unresolved:
+                    continue
                 gather = TileGather(name=f"gather_{src_name}",
                                     widths=W,
                                     source_ndim=src_ndim,
@@ -971,17 +1073,21 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 src_desc = inner.arrays[src.data]
                 isub = ie[0].data.subset
                 # A broadcast (Scalar) operand: a true ``dace.data.Scalar``, a
-                # length-1 ``(1,)`` array, OR a single-element read of a larger
-                # in-connector array (``a[j]`` where ``j`` is non-tiled for the
-                # inner tile — loop-invariant for the tile). The 3rd case (s115
-                # ``a[i] = a[i] - aa[j,i]*a[j]`` on the nested arm) was
-                # mis-classified as Tile and the operand-shape guard refused it;
-                # now it lowers as a Scalar broadcast wired with the actual
-                # ``[j]`` subset so DaCe reads the right single element.
-                is_single = (isub is not None and bool(dace.symbolic.simplify(isub.num_elements() - 1) == 0))
+                # length-1 ``(1,)`` array, OR a single-element TILE-VAR-FREE read
+                # of a larger in-connector array (``a[j]`` where ``j`` is
+                # non-tiled — every lane reads the same element, a loop-invariant
+                # scalar). A single-element read WITH a tile-var in the begin
+                # (``a[i]`` for tiled ``i``) is per-lane SHIFTED (lane ``l`` reads
+                # ``a[i+l]``) — that is a Tile read, not a broadcast.
+                is_single_invariant = False
+                if isub is not None and bool(dace.symbolic.simplify(isub.num_elements() - 1) == 0):
+                    fs_begin = set()
+                    for (b, _e, _s) in isub:
+                        fs_begin |= {str(x) for x in getattr(b, "free_symbols", set())}
+                    is_single_invariant = not (fs_begin & set(spec.iter_vars))
                 is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
                              and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )
-                                  or is_single))
+                                  or is_single_invariant))
                 if is_scalar:
                     return "Scalar", src, isub
                 # A Tile operand is read as a (W, ...) tile — but the connector
@@ -1091,11 +1197,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 src = ie[0].src
                 src_desc = inner.arrays[src.data]
                 isub_a = ie[0].data.subset
-                is_single = (isub_a is not None
-                             and bool(dace.symbolic.simplify(isub_a.num_elements() - 1) == 0))
+                # See _promote_binops._operand: single-element read counts as a
+                # broadcast only when the begin is tile-var-FREE (else lane ``l``
+                # reads a different element per lane -- a Tile read, not a broadcast).
+                is_single_invariant = False
+                if isub_a is not None and bool(dace.symbolic.simplify(isub_a.num_elements() - 1) == 0):
+                    fs_begin = set()
+                    for (b, _e, _s) in isub_a:
+                        fs_begin |= {str(x) for x in getattr(b, "free_symbols", set())}
+                    is_single_invariant = not (fs_begin & set(spec.iter_vars))
                 is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
                              and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )
-                                  or is_single))
+                                  or is_single_invariant))
                 kind_a, info_a = ("Scalar", src) if is_scalar else ("Tile", src)
             kwargs = dict(name=f"{t.label}_unop",
                           widths=W,
@@ -1514,6 +1627,19 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         # cases land in a later slice).
         if len(W) == 1:
             fan_out_tile_gather_index_symbols(inner, nsdfg_node, parent_state, W[0], spec.iter_vars[0])
+        # Un-refine ``RefineNestedAccess`` Min/Max union-bounded body connectors
+        # (s115 ``a[Min(i,j):Max(i,j)+1]`` from a triangular forward-substitution
+        # with two distinct reads ``a[i]`` + ``a[j]``). Restore the full source
+        # view and add the original outer begin back to each inner subset so the
+        # downstream widen / classify / broadcast paths see clean absolute
+        # indices instead of Min/Max in the connector subset. Also expand any
+        # tile-var-bearing single-element inner subset (``a[i]`` for the i-tile)
+        # to the per-tile W-window ``a[i : i+W-1]`` so
+        # :meth:`_materialize_connector_reads` materialises it into a contiguous
+        # ``(W,)`` tile; a tile-var-free single-element subset (``a[j]``) stays a
+        # point and lowers as a Scalar broadcast through
+        # :meth:`_promote_binops._operand`.
+        self._unrefine_minmax_connectors(parent_state, nsdfg_node, spec)
         # Affine / structured non-box reads (diagonal A[i,i], correlated A[2*i,i],
         # structured c[i//2]) -> TileGather over the full source with affine
         # index tiles. Runs before the box widening, which then skips these
