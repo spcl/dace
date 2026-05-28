@@ -143,6 +143,7 @@ def test_break_anti_dependence_symbolic_positive_offset():
 def test_break_anti_dependence_symbolic_offset_uses_iter_var_refused():
     """A carried offset that DEPENDS on the iteration variable (``a[2*i+1]``) is
     not a simple positive constant; the pass must refuse it."""
+
     @dace.program
     def bad(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N // 2):
