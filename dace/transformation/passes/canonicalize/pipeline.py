@@ -211,8 +211,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
     # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
-          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])),
-          ('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
+          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
+          ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
     if unroll_limit > 0:
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
     s += [('reduce', InductionVariableSubstitution()), ('reduce', LoopInvariantCodeMotion()),
