@@ -107,22 +107,34 @@ class ExpandTileBinopPure(ExpandTransformation):
         off = tile_offset(widths)
         in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
 
+        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
+                                            if e.src_conn == "_c").data.data].dtype.ctype
+
         def _operand_ref(kind, conn, expr):
-            """Return the per-lane C++ reference for one operand."""
+            """Return the per-lane C++ reference for one operand.
+
+            A ``_SYMBOL`` / ``_SCALAR`` operand is cast to ``out_dtype`` so
+            ``std::min`` / ``std::max`` (and any other type-strict overload) sees
+            both operands at the same type — without this cast a ``min`` between
+            an int literal ``(1)`` and a ``double _b[off]`` fails to resolve
+            (``no matching function for call to 'min(int, double&)'``). The
+            ``_TILE`` operand's dtype already matches ``out_dtype`` (validate()
+            enforces it).
+            """
             if kind == _SYMBOL:
-                return f"({expr})"
+                return f"({out_dtype})({expr})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
             # Scalar: a length-1 Array reads as ``_x[0]``, a true
-            # dace.data.Scalar is passed by value as ``_x``.
+            # dace.data.Scalar is passed by value as ``_x``; cast either to
+            # the output dtype before the op.
             desc = parent_sdfg.arrays[in_e[conn].data.data]
-            return conn if isinstance(desc, dace.data.Scalar) else f"{conn}[0]"
+            ref = conn if isinstance(desc, dace.data.Scalar) else f"{conn}[0]"
+            return f"({out_dtype})({ref})"
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b)
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
-        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
-                                            if e.src_conn == "_c").data.data].dtype.ctype
         if node.has_mask:
             body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
         else:

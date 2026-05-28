@@ -106,18 +106,21 @@ class ExpandTileUnopPure(ExpandTransformation):
         off = tile_offset(widths)
         in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
 
+        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
+                                            if e.src_conn == "_c").data.data].dtype.ctype
         if node.kind_a == _SYMBOL:
-            operand = f"({node.expr_a})"
+            # Cast to out_dtype so a literal / symbolic int operand resolves
+            # cleanly against a typed unop call (mirrors the binop fix).
+            operand = f"({out_dtype})({node.expr_a})"
         elif node.kind_a == _TILE:
             operand = f"_a[{off}]"
         else:  # Scalar: length-1 Array reads ``_a[0]``, a dace.data.Scalar is ``_a``.
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
-            operand = "_a" if isinstance(desc, dace.data.Scalar) else "_a[0]"
+            ref = "_a" if isinstance(desc, dace.data.Scalar) else "_a[0]"
+            operand = f"({out_dtype})({ref})"
 
         pre, post = _UNOP_CPP[node.op]
         rhs_expr = f"{pre}{operand}{post}"
-        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
-                                            if e.src_conn == "_c").data.data].dtype.ctype
         if node.has_mask:
             body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
         else:
