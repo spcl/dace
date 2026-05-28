@@ -40,6 +40,7 @@ from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeli
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
+from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -336,6 +337,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
+
+    # TODO: privatize_reduction -- PrivatizeReductionAccumulator rewrites
+    # WCR-on-array-element reductions to WCR-on-scalar + init + writeback so
+    # the eventual WCR codegen can emit a clean ``#pragma omp parallel for
+    # reduction(op:scalar)`` clause. Standalone-tested correct on s313, but
+    # interacts badly with the trailing _structural_cleanup in the full
+    # pipeline (StateFusion/InlineSDFG re-fuse the new init/writeback states
+    # with the map state in a way that drops the map). Needs further work --
+    # likely a smarter cleanup-skip mechanism for the privatize-introduced
+    # states, or a different ordering w.r.t. the cleanup. Once stable:
+    #
+    # s += [('privatize_reduction', PrivatizeReductionAccumulator())]
+    # s += _structural_cleanup('privatize_reduction')
 
     # reorder: permute the now-parallel map nests for unit stride (the loops
     # that were LoopToMap-eligible). Symbolic-safe: undeducible strides ->
