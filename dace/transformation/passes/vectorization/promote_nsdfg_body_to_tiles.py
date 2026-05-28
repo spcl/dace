@@ -969,19 +969,27 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         f"PromoteNSDFGBodyToTiles: binop {t.label!r} operand {token!r} not a single tile read")
                 src = ie[0].src
                 src_desc = inner.arrays[src.data]
-                # A length-1 / Scalar connector (not a reshaped tile) is a
-                # loop-invariant broadcast operand.
+                isub = ie[0].data.subset
+                # A broadcast (Scalar) operand: a true ``dace.data.Scalar``, a
+                # length-1 ``(1,)`` array, OR a single-element read of a larger
+                # in-connector array (``a[j]`` where ``j`` is non-tiled for the
+                # inner tile — loop-invariant for the tile). The 3rd case (s115
+                # ``a[i] = a[i] - aa[j,i]*a[j]`` on the nested arm) was
+                # mis-classified as Tile and the operand-shape guard refused it;
+                # now it lowers as a Scalar broadcast wired with the actual
+                # ``[j]`` subset so DaCe reads the right single element.
+                is_single = (isub is not None and bool(dace.symbolic.simplify(isub.num_elements() - 1) == 0))
                 is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
-                             and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )))
+                             and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )
+                                  or is_single))
                 if is_scalar:
-                    return "Scalar", src, None
+                    return "Scalar", src, isub
                 # A Tile operand is read as a (W, ...) tile — but the connector
                 # ARRAY may be larger: a stencil bounding window (``A_win`` of
                 # shape ``E+W``) read at a shifted W-subset ``A_win[k:k+W]``. So
                 # validate the READ SUBSET size, not the array shape, and pass the
                 # subset through to the wiring. A non-W subset (an unhandled
                 # multi-dim / gather residue, ``zqx[jo-1, 0, i]``) is refused.
-                isub = ie[0].data.subset
                 sizes = isub.size()
                 ok = (len(sizes) == len(W)
                       and all(bool(dace.symbolic.simplify(sz - w) == 0) for sz, w in zip(sizes, W)))
@@ -1020,7 +1028,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     istate.add_edge(info, None, binop, conn,
                                     dace.Memlet(data=info.data, subset=subsets.Range(list(isub.ranges))))
                 elif kind == "Scalar":
-                    istate.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[0]"))
+                    # Use the in-edge subset (``[0]`` for a length-1 array, the
+                    # actual point ``[j]`` for a single-element read of a bigger
+                    # array) so DaCe reads the right element. Fresh Range.
+                    sub = subsets.Range(list(isub.ranges)) if isub is not None else None
+                    sub_memlet = dace.Memlet(data=info.data, subset=sub) if sub is not None else dace.Memlet(
+                        f"{info.data}[0]")
+                    istate.add_edge(info, None, binop, conn, sub_memlet)
                 # Symbol: nothing to wire (embedded inline).
 
             _wire(kind_a, info_a, sub_a, TileConnectors.A)

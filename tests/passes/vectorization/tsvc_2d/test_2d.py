@@ -330,7 +330,8 @@ _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (16, 17))
 def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_val, vectorize_config):
 
     # The tile path is locked to merge + scalar; skip the off-combo arms.
-    if vectorize_config == "tile_nodes" and (branch_mode != "merge" or remainder_strategy != "scalar"):
+    if vectorize_config in ("tile_nodes", "tile_nodes_nested") and (branch_mode != "merge"
+                                                                    or remainder_strategy != "scalar"):
         pytest.skip("tile_nodes is locked to branch_mode=merge + remainder=scalar")
 
     arrays_ref = {name: _allocate(shape_class, len_2d_val) for name, shape_class in params_spec}
@@ -351,12 +352,18 @@ def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_va
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = sdfg_name + "_vec"
 
-    if vectorize_config == "tile_nodes":
+    if vectorize_config in ("tile_nodes", "tile_nodes_nested"):
         # K-dim tile path: K=2 for a collapsible 2D kernel, K=1 otherwise.
+        # ``tile_nodes_nested`` (or the global ``--tile-nest-bodies`` override)
+        # routes every body through the descent (PromoteNSDFGBodyToTiles) so
+        # the single-emit-path arm is exercised here too.
         # Carried-dep / unsupported shapes raise NotImplementedError -> skip.
+        from tests.passes.vectorization.helpers import harness as _harness
+        nest = (vectorize_config == "tile_nodes_nested") or _harness.FORCE_NEST_MAP_BODIES
         widths = _auto_tile_widths(vsdfg, 8)
         try:
-            VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(vsdfg, {})
+            VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR",
+                                 nest_map_bodies=nest).apply_pass(vsdfg, {})
         except NotImplementedError as ex:
             pytest.skip(f"tile_nodes NotImplementedError on {kernel.name}: {ex}")
     else:

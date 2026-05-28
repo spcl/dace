@@ -125,11 +125,16 @@ class ExpandTileBinopPure(ExpandTransformation):
                 return f"({out_dtype})({expr})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
-            # Scalar: a length-1 Array reads as ``_x[0]``, a true
-            # dace.data.Scalar is passed by value as ``_x``; cast either to
-            # the output dtype before the op.
+            # Scalar broadcast operand. DaCe passes a tasklet connector by
+            # value (``T conn``) for a true ``dace.data.Scalar`` and for a
+            # single-element access into a larger array (``a[j]`` ->
+            # ``double conn = a[j]``); only a genuine length-1 *array*
+            # connector is a pointer (``T* conn``) needing ``conn[0]``. Cast
+            # to ``out_dtype`` so a typed binop (``std::min`` etc.) resolves.
             desc = parent_sdfg.arrays[in_e[conn].data.data]
-            ref = conn if isinstance(desc, dace.data.Scalar) else f"{conn}[0]"
+            is_len1_array = (isinstance(desc, dace.data.Array)
+                             and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
+            ref = f"{conn}[0]" if is_len1_array else conn
             return f"({out_dtype})({ref})"
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
