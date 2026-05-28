@@ -210,6 +210,89 @@ def _subset_with_iedge_subs(subset: subsets.Range, bindings: Dict[str, str]) -> 
     return subsets.Range(new_ranges)
 
 
+def _joint_disjoint_2d(read: subsets.Subset, write: subsets.Subset, itersym, start, stride) -> bool:
+    """Joint cross-iteration disjointness for multi-dimensional affine accesses.
+
+    A per-dimension check (:func:`_cross_iter_disjoint`) returns True when
+    *some* dimension is disjoint by itself; that misses cases where every
+    dimension can individually collide for some ``(p1, p2)`` but the two
+    constraints cannot hold *simultaneously*. The canonical case is the
+    wavefront ``arr[t-p, p]`` write vs ``arr[t-p, p-1]`` read after skewing:
+    dim 0 requires ``p1 = p2`` and dim 1 requires ``p1 = p2 - 1``, both
+    satisfiable separately but jointly inconsistent.
+
+    Forms the per-dimension alias equation ``a1*p1 - a2*p2 = b2 - b1`` and
+    looks for a pair of dimensions whose 2x2 system has no solution -- either
+    determinant ``!= 0`` with non-integer / out-of-range solution, or
+    determinant ``== 0`` with the augmented system inconsistent.
+    """
+    try:
+        s_sym = symbolic.simplify(stride)
+    except Exception:
+        return False
+    if not getattr(s_sym, 'is_Integer', False) or int(s_sym) <= 0:
+        return False
+    rndr = list(read.ndrange())
+    wndr = list(write.ndrange())
+    if len(rndr) != len(wndr):
+        return False
+    coeffs = []
+    for (rb, re_, _), (wb, we_, _) in zip(rndr, wndr):
+        if rb != re_ or wb != we_:
+            return False
+        f_r = _affine_coeffs(rb, itersym)
+        f_w = _affine_coeffs(wb, itersym)
+        if f_r is None or f_w is None:
+            return False
+        a_r, b_r = f_r
+        a_w, b_w = f_w
+        if not (getattr(a_r, 'is_Integer', False) and getattr(a_w, 'is_Integer', False)):
+            return False
+        coeffs.append((int(a_w), int(a_r), symbolic.simplify(b_r - b_w)))
+
+    for i in range(len(coeffs)):
+        for j in range(i + 1, len(coeffs)):
+            a1_w, a1_r, c1 = coeffs[i]
+            a2_w, a2_r, c2 = coeffs[j]
+            # System: a1_w * p1 - a1_r * p2 = c1
+            #         a2_w * p1 - a2_r * p2 = c2
+            det = a1_w * (-a2_r) - (-a1_r) * a2_w
+            if det != 0:
+                # Unique solution -- need both c-values to be numeric to check.
+                if not (getattr(c1, 'is_number', False) and getattr(c2, 'is_number', False)):
+                    continue
+                # Solve via Cramer's: p1 = ((-a2_r)*c1 - (-a1_r)*c2) / det
+                num_p1 = (-a2_r) * c1 - (-a1_r) * c2
+                num_p2 = a1_w * c2 - a2_w * c1
+                if num_p1 % det != 0 or num_p2 % det != 0:
+                    return True  # non-integer solution -> disjoint
+                p1_val = num_p1 // det
+                p2_val = num_p2 // det
+                # We don't have bounds at hand, so accept only the strict
+                # non-integer case here; that's still enough to catch the
+                # wavefront ``det == 0`` family below.
+                if p1_val == p2_val:
+                    # Same iteration -> not cross-iter alias.
+                    return True
+            else:
+                # Singular system -- consistent iff (a1_w, -a1_r, c1) and
+                # (a2_w, -a2_r, c2) are linearly dependent including the c
+                # column. Otherwise inconsistent -> no joint solution.
+                if not (getattr(c1, 'is_number', False) and getattr(c2, 'is_number', False)):
+                    continue
+                # Find a non-zero entry in row 1 to compute the ratio.
+                if a1_w != 0:
+                    if a2_w * c1 != a1_w * c2:
+                        return True
+                elif a1_r != 0:
+                    if (-a2_r) * c1 != (-a1_r) * c2:
+                        return True
+                # Both rows are (0, 0, c) -- consistent iff c == 0.
+                elif c1 != 0 or c2 != 0:
+                    return True
+    return False
+
+
 def _cross_iter_disjoint(idx1, idx2, itersym, start, stride) -> bool:
     """True iff a write at ``idx1(i)`` cannot collide with a read at ``idx2(j)``
     for any pair of *distinct* iterations ``i``, ``j`` both in the strided
@@ -731,6 +814,12 @@ class LoopToMap(xf.MultiStateTransformation):
                     cross_disjoint = True
                     break
             if cross_disjoint:
+                continue
+            # Joint multi-dim Diophantine: when no single dimension is
+            # disjoint by itself but the system across two or more dimensions
+            # is inconsistent, the multi-dim alias has no solution -- the
+            # wavefront pattern after skewing is the canonical case.
+            if _joint_disjoint_2d(src_subset, candidate.dst_subset, itersym_sym, start, step):
                 continue
             return False
 
