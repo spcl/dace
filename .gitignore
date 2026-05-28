@@ -179,6 +179,10 @@ _build/
 
 /*.sdfg
 
+# Ignore serialized SDFG dumps everywhere except the committed test fixtures
+*.sdfgz
+!tests/**/*.sdfgz
+
 
 .DS_STORE
 .DS_Store

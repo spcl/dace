@@ -338,6 +338,44 @@ def test_cloudsc_kidia_kfdia_promote_then_propagate():
     assert np.allclose(out2, pt * 2.0 + 3.0)
 
 
+_SP_N = dace.symbol("_SP_N")
+
+
+@dace.program
+def _carried_index_kernel(a: dace.float64[_SP_N], b: dace.float64[_SP_N], c: dace.float64[_SP_N],
+                          d: dace.float64[_SP_N]):
+    j = -1
+    for i in range(_SP_N // 2):
+        k = j + 1
+        a[i] = b[k] - d[i]
+        j = k + 1
+        b[k] = a[i] + c[k]
+
+
+def test_carried_index_symbol_not_propagated_stale():
+    """Reproducer (TSVC s128): a loop-carried index ``k = j + 1`` must not be
+    propagated into a downstream block as ``j + 1`` once the loop has reassigned
+    ``j = k + 1``. There the live ``j`` is two ahead, so the stale expression is an
+    off-by-two on ``b[k]`` / ``c[k]``. SymbolPropagation must keep ``k`` live; this
+    checks the propagated SDFG still matches the un-propagated reference."""
+    import copy
+    n = 64
+    rng = np.random.default_rng(0)
+    base = {name: rng.random(n) for name in "abcd"}
+
+    ref = _carried_index_kernel.to_sdfg(simplify=True)
+    cand = copy.deepcopy(ref)
+    SymbolPropagation().apply_pass(cand, {})
+    cand.validate()
+
+    ra = {name: arr.copy() for name, arr in base.items()}
+    ref(**ra, _SP_N=n)
+    ca = {name: arr.copy() for name, arr in base.items()}
+    cand(**ca, _SP_N=n)
+    for name in "abcd":
+        assert np.allclose(ra[name], ca[name]), f"{name}: SymbolPropagation changed the result"
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()

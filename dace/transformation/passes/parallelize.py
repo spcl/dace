@@ -20,7 +20,11 @@ It composes standalone passes in order, applied once:
 4.  ``AugAssignToWCR`` -- rewrite ``arr[S] += x`` (incl. the copy-wrapped form)
     into a write-conflict-resolution write so the reduction loop maps.
 5.  ``LoopToReduce`` -- lift pure accumulator loops to ``Reduce`` library nodes.
-6.  ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
+6.  :class:`~dace.transformation.passes.accumulator_to_map_and_reduce.AccumulatorToMapAndReduce`
+    -- rewrite scalar accumulators with computed deltas or extra body side-effects
+    into a per-iteration buffer-writing Map + ``Reduce`` libnode; what ``LoopToReduce``
+    refuses still parallelizes via the Map.
+7.  ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
 
 The pipeline runs once: every stage is idempotent or internally exhaustive, so
 there is nothing to re-apply. It is modelled on the canonicalization pipeline
@@ -86,11 +90,32 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
         from dace.transformation.passes.constant_propagation import ConstantPropagation
         from dace.transformation.passes.loop_to_reduce import LoopToReduce
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
+        from dace.transformation.passes.simplify import SimplifyPass
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
+        from dace.sdfg.propagation import propagate_memlets_sdfg
+
+        # Wrapper so memlet propagation slots into the Pass list. Memlet propagation
+        # is value-preserving and computes scope-summary memlets that ``LoopToMap``'s
+        # uniqueness analysis later relies on; re-running after unroll+simplify rebuilds
+        # those summaries with the now-correct ``symbols_defined_at`` (which folds in
+        # enclosing-LoopRegion loop variables -- the fix that kept ``tendency_loc_cld``
+        # from being widened to its full array extent in cloudsc).
+        class _PropagateMemlets(ppl.Pass):
+            def modifies(self_):
+                return ppl.Modifies.Memlets
+            def should_reapply(self_, _modified):
+                return False
+            def depends_on(self_):
+                return set()
+            def apply_pass(self_, sdfg, _pipeline_results):
+                propagate_memlets_sdfg(sdfg)
+                return 1
+
         return [
             # Loop-structure transforms first (unroll, peel; reversal lives inside
             # peeling). Then symbol/constant propagation folds the constant
@@ -99,12 +124,35 @@ class ParallelizePipeline(ppl.Pass):
             # reduce, loop-to-map) is order-insensitive to propagation.
             ShortLoopUnroll(self.unroll_limit),
             BestEffortLoopPeeling(self.peel_limit),
+            # Re-simplify once, after unrolling. The caller simplifies before this
+            # pipeline, but a loop body that guards on the iteration variable (e.g.
+            # ``if jm == ncldqi``) only exposes a constant condition once unrolling pins
+            # ``jm`` to a literal -- so the caller's simplify, run while the guard was
+            # still symbolic, could not fold it. Unrolling (with the species constants
+            # specialised) then leaves dead branches like ``if 1 == 2`` whose never-taken
+            # bodies still hold constant-index writes (e.g. ``zvqx[1] = ...``) that read
+            # as a loop-carried conflict and block LoopToMap. Folding the conditions here
+            # drops those dead branches and their phantom writes.
+            SimplifyPass(),
+            # Re-propagate memlets so propagation re-runs with the unrolled / specialised
+            # body and the corrected ``symbols_defined_at`` (enclosing-LoopRegion loop
+            # variables now folded in). Without this, NSDFG-out connector memlets that
+            # propagation had previously widened to the full array extent stay stale and
+            # cause ``LoopToMap`` to refuse with "dynamic write not indexed by the
+            # iteration variable" -- the cloudsc ``tendency_loc_cld`` shape.
+            _PropagateMemlets(),
             SymbolPropagation(),
             ConstantPropagation(),
             PrivatizeScalars(),
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
             PatternMatchAndApplyRepeated([AugAssignToWCR()]),
             LoopToReduce(),
+            # Scalar-accumulator loops whose body has extra side-effects (or whose
+            # delta is a computed expression rather than a clean array slice) escape
+            # ``LoopToReduce``. ``AccumulatorToMapAndReduce`` rewrites them into a
+            # buffer-writing Map + ``Reduce`` libnode, exposing the per-iteration
+            # part for ``LoopToMap`` below.
+            AccumulatorToMapAndReduce(),
             PatternMatchAndApplyRepeated([LoopToMap()]),
         ]
 

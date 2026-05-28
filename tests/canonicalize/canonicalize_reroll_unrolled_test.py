@@ -144,5 +144,48 @@ def test_unrolled_strided_value_and_map():
     assert _nmaps(sdfg) >= 1, 'step-2 / offset-spacing-2 unroll should re-roll to a step-2 map'
 
 
+@dace.program
+def unrolled_dot_product(a: dace.float64[N], b: dace.float64[N], c: dace.float64[2]):
+    """TSVC ``s352``: a single-expression ``m``-term dot product with manual unroll.
+
+    The body's ``m=5`` lanes share a left-folded ``_Add_`` reduction tree -- the
+    associative-merge generalization of :class:`RerollUnrolledLoops` allows that
+    overlap and collapses the tree to lane 0, leaving a step-1 dot product that
+    ``LoopToReduce`` / ``LoopToMap`` can parallelize."""
+    dot = 0.0
+    for i in range(0, N - 4, 5):
+        dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
+                     a[i + 4] * b[i + 4])
+    c[0] = dot
+
+
+def test_unrolled_dot_product_value_preserving():
+    n = 25
+    rng = np.random.default_rng(7)
+    a, b = rng.standard_normal(n), rng.standard_normal(n)
+    sdfg = unrolled_dot_product.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    c = np.zeros(2)
+    sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
+    # The rerolled loop computes ``sum(a[0:n] * b[0:n])`` -- the same value as
+    # the original lane-summed form, even though the access pattern changed.
+    assert np.isclose(c[0], float(np.dot(a, b)))
+
+
+def test_unrolled_dot_product_becomes_map_or_reduce():
+    """After re-roll, the body is a single-lane dot accumulator; canonicalize
+    should turn the loop into either a parallel reduction map or a ``Reduce``."""
+    from dace.sdfg.state import LoopRegion
+    sdfg = unrolled_dot_product.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    n_maps = _nmaps(sdfg)
+    n_reduces = sum(1 for n, _ in sdfg.all_nodes_recursive()
+                    if isinstance(n, nodes.LibraryNode) and 'Reduce' in type(n).__name__)
+    n_loops = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
+    assert (n_maps + n_reduces) >= 1 and n_loops == 0, (
+        f'expected a map or reduce, got maps={n_maps}, reduces={n_reduces}, loops={n_loops}')
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

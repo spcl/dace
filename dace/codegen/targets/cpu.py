@@ -49,6 +49,22 @@ def replace_float_literals(expr: str) -> str:
     return float_literal.sub(convert, expr)
 
 
+#: ReductionType -> OpenMP ``reduction(op:var)`` clause operator. Only the
+#: ops OpenMP's reduction clause natively supports are listed. ``Custom`` and
+#: ``Sub`` / ``Div`` fall through to the atomic emission path.
+_REDUCTION_TO_OMP_OP = {
+    dtypes.ReductionType.Sum: "+",
+    dtypes.ReductionType.Product: "*",
+    dtypes.ReductionType.Min: "min",
+    dtypes.ReductionType.Max: "max",
+    dtypes.ReductionType.Logical_And: "&&",
+    dtypes.ReductionType.Logical_Or: "||",
+    dtypes.ReductionType.Bitwise_And: "&",
+    dtypes.ReductionType.Bitwise_Or: "|",
+    dtypes.ReductionType.Bitwise_Xor: "^",
+}
+
+
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
     """ SDFG CPU code generator. """
@@ -117,6 +133,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of traversed nodes
         self._generated_nodes = set()
+
+        # Stack of {memlet_data_name -> op_str} -- one frame per enclosing
+        # OpenMP-reducible map. ``write_and_resolve_expr`` checks the union
+        # of frames before emitting a WCR atomic: if the target is already
+        # covered by an ``reduction(op:var)`` clause on an enclosing
+        # ``#pragma omp parallel for``, the OMP runtime privatizes + tree-
+        # reduces it, and an extra atomic add on the per-thread copy is
+        # strictly wasted work (and would be incorrect in the rare case
+        # the OMP runtime privatizes-by-value rather than by-pointer).
+        self._omp_reduction_scope_stack = []
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
@@ -957,7 +983,12 @@ class CPUCodeGen(TargetCodeGenerator):
         """
 
         redtype = operations.detect_reduction_type(memlet.wcr)
-        atomic = "_atomic" if not nc else ""
+        # Skip the atomic call entirely when an enclosing OMP map has put this
+        # target in a ``reduction(...)`` clause -- the OMP runtime privatizes
+        # the variable per thread and tree-reduces at the end, so adding an
+        # atomic on top is strictly wasted work.
+        _omp_covered = any(memlet.data in frame for frame in self._omp_reduction_scope_stack)
+        atomic = "" if (nc or _omp_covered) else "_atomic"
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
@@ -1806,6 +1837,81 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
+    def _collect_omp_reductions(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
+        """Walk the map's WCR-write edges that target a single-element accumulator outside
+        the scope, and return ``(op_str, var_name)`` pairs suitable for ``reduction(op:var)``
+        clauses on the OpenMP ``parallel for`` pragma.
+
+        Detection is intentionally narrow: the WCR target must be (a) an ``AccessNode``
+        outside the map scope, (b) a true ``Scalar`` descriptor (length-1 / single-element
+        ``Array`` slots need ``PrivatizeReductionAccumulator`` to rewrite into a transient
+        ``Scalar`` first; OpenMP's ``reduction(...)`` clause needs a scalar VARIABLE, not a
+        pointer-passed array slot), and (c) one of the WCR operators OpenMP natively
+        supports (see ``_REDUCTION_TO_OMP_OP``). Anything else falls through to the existing
+        atomic emission path -- correct but contended.
+
+        Limit: at most ONE OMP-reducible target per map. If two or more WCR edges qualify,
+        we refuse all of them and let the atomic path handle the lot -- multi-target
+        ``reduction(...)`` clauses are valid OpenMP but compose poorly with downstream
+        codegen (per-target scope tracking, per-thread storage cost) and the cases that
+        need them are rare. The single-target limit keeps the emit deterministic and the
+        scope stack simple.
+
+        The clause runs the OpenMP runtime's per-thread privatization + final tree-reduce,
+        which is fastest for scalar reductions in parallel maps; the atomic-add fallback is
+        a synchronization-heavy alternative kept for cases the clause does not cover.
+        """
+        out = []
+        seen = set()
+        try:
+            map_exit = state.exit_node(map_entry)
+        except (KeyError, StopIteration):
+            return out
+        # The reduction targets reachable from the map scope.
+        for iedge in state.in_edges(map_exit):
+            if iedge.data is None or iedge.data.wcr is None:
+                continue
+            in_conn = iedge.dst_conn
+            if not in_conn or not in_conn.startswith("IN_"):
+                continue
+            out_conn = "OUT_" + in_conn[3:]
+            out_edges = [e for e in state.out_edges(map_exit) if e.src_conn == out_conn]
+            if len(out_edges) != 1:
+                continue
+            oedge = out_edges[0]
+            if not isinstance(oedge.dst, nodes.AccessNode):
+                continue
+            desc = sdfg.arrays.get(oedge.dst.data)
+            if desc is None:
+                continue
+            # OpenMP's reduction(...) clause needs a true scalar VARIABLE -- not a
+            # pointer-passed array slot. DaCe emits arrays (even length-1 ones) as
+            # ``T*`` and scalars as ``T``, so the clause only compiles when the
+            # accumulator is a ``Scalar`` descriptor. Larger array elements (e.g.
+            # ``arr[0]`` with shape (N,)) need ``PrivatizeReductionAccumulator``
+            # to rewrite into a transient ``Scalar`` first.
+            if not isinstance(desc, data.Scalar):
+                continue
+            # Loop-invariant subset (independent of the map's iter variables).
+            if iedge.data.subset is not None:
+                map_param_set = set(map_entry.map.params)
+                if any(s in map_param_set for s in (str(x) for x in iedge.data.subset.free_symbols)):
+                    continue
+            redtype = operations.detect_reduction_type(iedge.data.wcr)
+            op_str = _REDUCTION_TO_OMP_OP.get(redtype)
+            if op_str is None:
+                continue
+            var_name = self.ptr(oedge.dst.data, desc, sdfg)
+            key = (op_str, var_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((op_str, var_name))
+        # Single-target limit: refuse if we found 2+ candidates (see docstring).
+        if len(out) > 1:
+            return []
+        return out
+
     def _generate_MapEntry(
         self,
         sdfg: SDFG,
@@ -1881,6 +1987,22 @@ class CPUCodeGen(TargetCodeGenerator):
             # OpenMP nested loop properties
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
+
+            # OpenMP reduction clauses for WCR writes to scalar accumulators outside
+            # the map. Atomic-add via wcr_fixed::reduce_atomic is correct but
+            # contended -- replacing the (implicit) per-iter atomic with the OMP
+            # runtime's per-thread privatization + final tree-reduce is what makes
+            # scalar reductions in parallel maps fast. The covered ``(var, op)``
+            # pairs are pushed onto ``_omp_reduction_scope_stack`` so the
+            # downstream ``write_and_resolve_expr`` skips the now-redundant
+            # ``reduce_atomic`` for them.
+            omp_reductions = []
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
+                for op_str, var_name in omp_reductions:
+                    map_header += f' reduction({op_str}:{var_name})'
+            # Push scope frame even if empty -- ``_generate_MapExit`` always pops.
+            self._omp_reduction_scope_stack.append({v: op for op, v in omp_reductions})
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
@@ -1976,6 +2098,10 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(outer_stream.getvalue())
 
         callsite_stream.write('}', cfg, state_id, node)
+
+        # Pop the OMP-reduction scope frame pushed by the matching MapEntry.
+        if self._omp_reduction_scope_stack:
+            self._omp_reduction_scope_stack.pop()
 
     def _generate_ConsumeEntry(
         self,

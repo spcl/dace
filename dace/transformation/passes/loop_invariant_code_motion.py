@@ -226,8 +226,8 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> Non
     loop.remove_node(child)
     if was_start and loop.nodes():
         # Pick any remaining node as the new start_block; if none remains,
-        # the caller will add an empty hull state.
-        loop.start_block = loop.nodes()[0]
+        # the caller will add an empty hull state. The setter takes a node ID.
+        loop.start_block = loop.node_id(loop.nodes()[0])
 
     parent.add_node(child)
     # Reroute parent's incoming edges into loop through child.
@@ -743,15 +743,21 @@ def _hoist_tasklet_out_of_map(
     for ie in in_edges:
         outer_conn = _matching_outer_conn(ie.src_conn)
         outer_edge = list(state.in_edges_by_connector(me, outer_conn))[0]
-        src_access = outer_edges_src = outer_edge.src
-        # Use the outer edge's memlet (which describes the subset into the
-        # source array) — the inner memlet is already a scalar read.
+        src_access = outer_edge.src
+        # Use the inner edge's memlet -- the exact element the tasklet reads
+        # (e.g. ``c[j]``). It is the right subset because the tasklet is
+        # map-invariant: the subset carries no map parameter, so reading that
+        # same element directly from the outer AccessNode (outside the scope)
+        # is valid. The outer edge's memlet is MapEntry's over-approximated bulk
+        # movement into the whole map (e.g. ``c[0:LEN_1D]``); feeding that
+        # whole-array subset to the scalar-copy tasklet produced a malformed
+        # pointer-to-scalar assignment (``_out = _in`` with ``_in`` a pointer).
         state.add_edge(
             outer_reads[src_access.data],
             None,
             new_tasklet,
             ie.dst_conn,
-            copy.deepcopy(outer_edge.data),
+            copy.deepcopy(ie.data),
         )
 
     # Output: write to an outer AccessNode of the same transient, then feed

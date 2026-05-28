@@ -214,6 +214,13 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     # the rhs would now reference is a violation.
     if isinstance(child, LoopRegion) and child.loop_variable and str(child.loop_variable) in rhs_syms:
         return False
+    # A self-referential assignment (``key`` appears in its own rhs, e.g.
+    # ``j = j + 2``) is loop-carried: its value changes every iteration, so it
+    # is not invariant and must not be hoisted out of an enclosing loop. Hoisting
+    # it would both change semantics and (once it leaves) unblock hoisting the
+    # assignments that read ``key``, landing them on a shared edge -> a race.
+    if isinstance(child, LoopRegion) and key in rhs_syms:
+        return False
     inner_asyms, inner_wdata = _region_writes(child)
     inner_asyms.discard(key)  # discount the assignment we're moving
     if rhs_syms & inner_asyms:

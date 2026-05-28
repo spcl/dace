@@ -127,6 +127,48 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
     return scalar_like(da) and scalar_like(db)
 
 
+def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset):
+    """Walk a copy chain forward from ``start_node`` to its eventual non-transient destination.
+
+    A hop is permitted only across a transient access node with exactly one
+    in-edge and one out-edge whose memlet preserves the single-element write
+    scope. Halts when the next node is non-transient, the chain branches, or
+    the scope no longer holds. Returns ``(name, subset)`` of the final node.
+
+    Lets the tasklet pattern in ``_extract`` recognise the frontend's
+    ``compute -> tmp -> assign-copy -> accumulator`` staging shape, where the
+    tasklet writes a transient and a chain of plain copies forwards that value
+    to the real (often array-slot) accumulator. Without this, ``_scalar_equiv``
+    rejects an accumulator like ``sum_out: float64[N]`` written at index 0
+    because the descriptor is not scalar-like even though the access is.
+
+    :param state: The dataflow state hosting ``start_node``.
+    :param sdfg: SDFG owning the array descriptors.
+    :param start_node: The first AccessNode along the chain (usually a tasklet's
+                       immediate write target).
+    :param start_subset: Memlet subset on the edge into ``start_node``.
+    :returns: ``(name, subset)`` of the final AccessNode reached.
+    """
+    cur, cur_sub = start_node, start_subset
+    visited = set()
+    while True:
+        if id(cur) in visited:
+            return cur.data, cur_sub
+        visited.add(id(cur))
+        desc = sdfg.arrays.get(cur.data)
+        if desc is None or not desc.transient:
+            return cur.data, cur_sub
+        out_edges = state.out_edges(cur)
+        in_edges = state.in_edges(cur)
+        if len(out_edges) != 1 or len(in_edges) != 1:
+            return cur.data, cur_sub
+        oe = out_edges[0]
+        if (not isinstance(oe.dst, nodes.AccessNode) or oe.data is None or oe.data.subset is None
+                or _one_elem(oe.data.subset) != _one_elem(cur_sub)):
+            return cur.data, cur_sub
+        cur, cur_sub = oe.dst, oe.data.subset
+
+
 def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> Optional[subsets.Range]:
     """Widen the dimensions of ``subset`` that use ``loop_var`` linearly over the
     iteration range ``[start, end]``. Dimensions that do not involve ``loop_var``
@@ -331,6 +373,11 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         write_subset = write_edge.data.subset
         if _one_elem(write_subset) != 1 or _uses(write_subset, loop_var_sym):
             return None
+        # Chase forward through any copy chain (``compute -> tmp -> assign-copy ->
+        # accumulator``) so the carry-input check below can match an accumulator
+        # whose descriptor is not scalar-like (e.g. ``sum_out: float64[N]`` written
+        # at ``[0]``) but whose access is.
+        final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
 
         # Resolve each tasklet input.
         resolved = []
@@ -367,8 +414,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 if array is not None:
                     return None
                 array, arr_subset = name, sub
-            elif (_one_elem(sub) == 1 and name in carried and ((name == accum and sub == write_subset) or
-                                                               (name != accum and _scalar_equiv(sdfg, name, accum)))):
+            elif (_one_elem(sub) == 1 and name in carried
+                  and ((name == accum and sub == write_subset) or (name == final_accum and sub == final_subset) or
+                       (name != accum and _scalar_equiv(sdfg, name, accum)))):
                 accum_ok = True
                 carried_accum, carried_sub = name, sub
         if not accum_ok or array is None or array == accum:
@@ -383,6 +431,17 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         # is safe because it does not outlive the loop body.
         if carried_accum is not None and carried_accum != accum:
             accum, write_subset = carried_accum, carried_sub
+
+        # A pure reduction writes ONLY the accumulator (plus its loop-local
+        # staging temps). If the body also writes another, non-transient
+        # container -- e.g. the per-iteration scan output ``b[i] = sum`` in
+        # ``sum = sum + a[i]; b[i] = sum`` -- then the *running* accumulator
+        # value is observed every iteration; collapsing the loop to a single
+        # ``Reduce`` would drop that output and silently corrupt it. Refuse.
+        written = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
+        allowed = {accum, array} | ({carried_accum} if carried_accum is not None else set())
+        if any(w not in allowed and not sdfg.arrays[w].transient for w in written):
+            return None
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end)
         if expanded is None:

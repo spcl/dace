@@ -13,7 +13,6 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
@@ -34,13 +33,18 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
+from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
+from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
+from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -50,26 +54,32 @@ from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvar
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+from dace.transformation.interstate.state_fusion import StateFusion
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
 def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
-    """Between-pass structural cleanup (never ``SimplifyPass`` mid-pipeline):
-    ``StateFusionExtended``, then both inliners to a fixpoint.
+    """Between-phase structural cleanup (never ``SimplifyPass`` mid-pipeline):
+    fuse adjacent states, flatten nested SDFGs, then drop empty states, so each
+    phase starts from a tidy state machine.
 
-    ``InlineSDFG`` only flattens a single-``SDFGState`` NestedSDFG;
-    ``InlineMultistateSDFG`` flattens the control-flow-bearing NestedSDFGs
-    that map->loop lowering produces (a NestedSDFG wrapping a ``LoopRegion``
-    / ``ConditionalBlock``). Without the latter those NestedSDFGs are
-    permanent, burying loops so ``MoveIfIntoLoop`` and cross-nest fusion
-    cannot see them. Both run so single- and multi-state nestings collapse.
+    Order: ``StateFusion`` then ``StateFusionExtended`` (the latter also fuses
+    across happens-before dependencies) collapse adjacent states; both inliners
+    flatten nestings -- ``InlineSDFG`` a single-``SDFGState`` NestedSDFG,
+    ``InlineMultistateSDFG`` the control-flow-bearing NestedSDFGs that map->loop
+    lowering produces (a NestedSDFG wrapping a ``LoopRegion``/``ConditionalBlock``);
+    without the latter those nestings are permanent, burying loops so
+    ``MoveIfIntoLoop`` and cross-nest fusion cannot see them. ``EmptyStateElimination``
+    then removes the empty states fusion/inlining leave behind. None of these
+    changes the computation; they only normalize structure.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
-    return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
+    return [(label, PatternMatchAndApplyRepeated([StateFusion()])),
+            (label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
-            (label, PatternMatchAndApplyRepeated([InlineSDFG()]))]
+            (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, EmptyStateElimination())]
 
 
 @properties.make_properties
@@ -121,10 +131,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     the end, then maps are fused. Returns ``(stage_label, pass)`` pairs with
     fresh instances each call.
 
-    ``SimplifyPass`` runs **only** at the very start, after the cleaning
-    passes (unique loop iterators, split tasklets, trivial-tasklet cleanup),
-    and once at the end -- never between transforming stages. Between-stage
-    structural cleanup is ``StateFusionExtended`` + ``InlineSDFG`` instead.
+    ``SimplifyPass`` runs at the very start, after the cleaning passes (unique
+    loop iterators, split tasklets, trivial-tasklet cleanup), once more right
+    after ``ShortLoopUnroll`` to collapse the redundant straight-line code an
+    unroll produces, and once at the end -- never otherwise between transforming
+    stages. Between-stage structural cleanup is ``StateFusionExtended`` +
+    ``InlineSDFG`` instead.
     ``LoopStridePermutation`` is an explicit no-op so the pipeline shape is
     honest and slottable.
     """
@@ -171,35 +183,49 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # normalize rescales it).
     s += [('reroll', RerollUnrolledLoops())]
 
-    # reduce: the front-loaded reduction + parallelization-prep recipe, run right
-    # after lowering (before loop fission / perfect nesting), in this exact order:
-    #   trivial_tasklet_elimination  -- drop the frontend's ``__out = __inp`` copy
-    #     tasklets, exposing the bare read-modify-write spine of accumulators;
-    #   WCRToAugAssign               -- normalise any write-conflict-resolution
-    #     write back into an explicit ``a = a + b`` augmented assignment, so every
-    #     reduction (WCR-form or frontend copy-wrapped) reaches ``loop_to_reduce``
-    #     in the one shape it recognises;
-    #   short_loop_unroll            -- fully unroll tiny constant-trip loops to
-    #     straight-line code;
-    #   scalar_fission (PrivatizeScalars) -- privatize loop-local scalars (drop
-    #     false carried deps);
-    #   symbol_propagation + constant_propagation -- fold the concrete iteration
-    #     indices unrolling exposes, simplifying bounds and guards;
-    #   loop_to_reduce               -- lift the augmented-assignment accumulator
-    #     loops to ``Reduce`` library nodes.
+    # reduce: front-loaded reduction + parallelization-prep recipe, applied right
+    # after lowering. Order follows the classical recipe:
+    #
+    #   trivial_tasklet_elim  -- drop ``__out = __inp`` copies, exposing the bare RMW
+    #     spine of accumulators (so downstream passes see the canonical shape);
+    #   WCRToAugAssign        -- normalise WCR writes back into explicit ``a = a + b``
+    #     augmented assignments, so every reduction reaches loop_to_reduce in one shape;
+    #
+    #   --- "specialize -> unroll -> IV -> LICM -> simplify" block ---
+    #   PrivatizeScalars + SymbolProp + ConstProp -- specialize the symbols and fold
+    #     constants into bounds/guards (visible accumulator initializers, concrete
+    #     trip counts for unroll);
+    #   ShortLoopUnroll       -- fully unroll tiny constant-trip loops to straight-
+    #     line code (now that ConstProp has revealed the constant trip counts);
+    #   _uniq_unroll          -- give the loops that survive (and any the unroll
+    #     cloned) unique ``_loop_it_<N>`` names before reduction passes read them;
+    #   InductionVariableSubstitution -- collapse single-tasklet 'acc = acc OP const'
+    #     loops to their O(1) closed form (the classical IV / scalar-evolution shape;
+    #     red-dragon-book Ch. 9.6). Runs BEFORE LICM so IV-eliminated loops don't
+    #     hold up LICM-eligible expressions in their bodies;
+    #   LoopInvariantCodeMotion -- hoist loop-invariant tasklets out of loop bodies
+    #     and map scopes to the preheader (red-dragon-book Ch. 9.5);
+    #   SimplifyPass          -- clean up the staged hoists, fused states, and the
+    #     IV-eliminated-loop placeholders before loop_to_reduce reads the body;
+    #
+    #   loop_to_reduce        -- lift the augmented-assignment accumulator loops
+    #     to ``Reduce`` library nodes.
+    #
     # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
-    # via ``loop_to_reduce`` -> ``Reduce`` nodes, not a WCR-on-Map. ``PrivatizeScalars``
-    # is adapted (``_PrivatizeScalarsStage``) so its analysis dependencies resolve.
+    # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
+    # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
-          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
+          ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
     if unroll_limit > 0:
-        # UniqueLoopIterators must run AFTER unrolling: a fully-unrolled body is
-        # straight-line code, but the loops it *leaves* (and any the unroll cloned)
-        # must carry unique ``_loop_it_<N>`` names before ``loop_to_reduce`` reads
-        # them.
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
-    s += [('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation()),
-          ('reduce', LoopToReduce())]
+    # HoistInductionVariableUpdates runs BEFORE InductionVariableSubstitution: it
+    # fissions IV-eligible updates out of compound bodies into sibling single-statement
+    # loops so the IVSub matcher (which requires a single tasklet in the body) catches
+    # them. Together they turn O(N) recurrences with surrounding loop work into O(1)
+    # straight-line plus the surviving body.
+    s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
+          ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -247,8 +273,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # not blocked by a sibling appearing to read the shared iterator.
     s += [('fission', LoopFission()), ('fission', _uniq_fis)]
 
-    # normalize: every loop range -> 0:trip:1.
-    s += [('normalize', NormalizeLoopsAndMaps())]
+    # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
+    # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
+    # ``i -> b+s*j``. In a corpus-wide measurement (TSVC, 151 kernels) this
+    # rewrite blocks ``LoopToMap`` on every stride loop it touches -- L2M no
+    # longer recognises ``a[b+s*j]`` as uniquely indexed by ``j`` (it expected
+    # the original ``a[i]`` with stride encoded in the range), and 0 kernels
+    # gained anything from running it. Net: -1 parallel map (s172). Kept the
+    # standalone ``NormalizeLoopsAndMaps`` for callers that want it; just not
+    # wired into the canonicalize pipeline.
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
@@ -276,10 +309,53 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
+    # reduction_to_wcr_map: full "scalar accumulator loop -> parallel WCR-map
+    # with a true scalar accumulator" pipeline. Loops that survived parallelize
+    # as multi-tasklet 'compute then accumulate' shapes (LoopToReduce keeps
+    # narrow on these -- e.g. ``s += a[i] * b[i]`` for s313/vdotr, ``s += a[i]
+    # * b[ip[i]]`` for the gather-sum s4115 family) become parallel WCR-maps
+    # via ``AugAssignToWCR`` (frontend copy-wrapped RMW -> WCR write) +
+    # ``LoopToMap``. Then the post-L2M NestedSDFG body is inlined and adjacent
+    # states fused so the WCR edge is visible at the top-level MapExit, and
+    # ``PrivatizeReductionAccumulator`` swaps the array-element WCR target for
+    # a transient ``Scalar`` (with init + writeback states) -- the shape the
+    # downstream WCR codegen can lower to a clean OMP ``reduction(op:scalar)``
+    # clause. Folded into one stage because the four steps (AugWCR, L2M,
+    # inline+fuse, privatize) form an atomic logical transformation.
+    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([AugAssignToWCR()])),
+          ('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += _structural_cleanup('reduction_to_wcr_map')
+    s += [('reduction_to_wcr_map', PrivatizeReductionAccumulator())]
+
+    # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
+    # adjacent-equal collision count + post-region trap`` guard on each scatter
+    # ``idx`` array, then permissively lifts the now-safe loops. Parallelizes the TSVC
+    # scatter family (s491, vas, s4113) and additionally catches the cases LoopToMap
+    # refused conservatively in the preceding ``parallelize`` stage (+27 maps on the
+    # 151-kernel corpus: 89L/82M/3R -> 52L/109M/3R). The sink-tasklet shape that
+    # previously blocked wiring is gone: the comparison map writes via WCR ``+``
+    # into a ``int64`` counter, and a separate sequential ``trap_state`` reads the
+    # counter as an interstate-edge-bound symbol and traps if positive -- the trap
+    # tasklet has no connectors (the symbol-only convention is satisfied).
+    s += [('scatter', ScatterToGuardedMaps())]
+
     # post_l2m: insert assign tasklets at map boundary, then structural
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
+
+    # TODO: privatize_reduction -- PrivatizeReductionAccumulator rewrites
+    # WCR-on-array-element reductions to WCR-on-scalar + init + writeback so
+    # the eventual WCR codegen can emit a clean ``#pragma omp parallel for
+    # reduction(op:scalar)`` clause. Standalone-tested correct on s313, but
+    # interacts badly with the trailing _structural_cleanup in the full
+    # pipeline (StateFusion/InlineSDFG re-fuse the new init/writeback states
+    # with the map state in a way that drops the map). Needs further work --
+    # likely a smarter cleanup-skip mechanism for the privatize-introduced
+    # states, or a different ordering w.r.t. the cleanup. Once stable:
+    #
+    # s += [('privatize_reduction', PrivatizeReductionAccumulator())]
+    # s += _structural_cleanup('privatize_reduction')
 
     # reorder: permute the now-parallel map nests for unit stride (the loops
     # that were LoopToMap-eligible). Symbolic-safe: undeducible strides ->
@@ -332,6 +408,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # branch (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else
     # { map[i, j]: B }``), so each branch is a clean unconditional parallel map.
     s += [('hoist_guards', MoveMapInvariantIfUp())]
+
+    # normalize_wcr: WCR edges sourced from a Tasklet/NestedSDFG get an intermediate
+    # private AccessNode inserted, so every WCR edge sources from an AccessNode (the
+    # canonical reduction shape the downstream codegen recognises). Necessary because
+    # the codegen's WCR if-branch only fires for scalar-typed CodeNode outputs:
+    # vectorization-style map-body NSDFGs (pointer-typed output) would otherwise lose
+    # the reduction and produce a parallel race.
+    s += [('normalize_wcr', NormalizeWCRSource())]
 
     # end: the final SimplifyPass.
     s += [('end', SimplifyPass())]

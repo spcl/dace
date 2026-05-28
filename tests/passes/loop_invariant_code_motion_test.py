@@ -1027,5 +1027,42 @@ def test_llvm_gep_reassociate_map_scope_invariant_load():
     _run_and_check(sdfg, py_ref, base=np.array([10.0]), b=np.arange(6, dtype=np.float64), outp=np.zeros(6), N=6)
 
 
+_LICM_N = dace.symbol("_LICM_N")
+
+
+@dace.program
+def _map_invariant_scalar_kernel(a: dace.float64[_LICM_N], b: dace.float64[_LICM_N], c: dace.float64[_LICM_N]):
+    m = _LICM_N // 2
+    for j in range(_LICM_N // 2):
+        for i in range(m):
+            a[i] = a[i] + b[i + m - j - 1] * c[j]
+
+
+def test_map_invariant_scalar_read_hoist_uses_inner_memlet():
+    """Reproducer (TSVC s176): hoisting a map-invariant scalar read (``c[j]``) out
+    of a map must use the inner edge's single-element memlet, not the MapEntry's
+    whole-array memlet -- the latter fed the scalar-copy tasklet a pointer and
+    produced a malformed ``_out = _in`` that failed to compile."""
+    from dace.transformation.interstate import LoopToMap
+    n = 64
+    rng = np.random.default_rng(0)
+    base = {name: rng.random(n) for name in "abc"}
+
+    sdfg = _map_invariant_scalar_kernel.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(LoopToMap)  # inner i-loop -> map, enabling the map-scope hoist
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    a_ref = base["a"].copy()
+    b, c, m = base["b"], base["c"], n // 2
+    for j in range(n // 2):
+        for i in range(m):
+            a_ref[i] = a_ref[i] + b[i + m - j - 1] * c[j]
+
+    got = {name: arr.copy() for name, arr in base.items()}
+    sdfg(**got, _LICM_N=n)  # must compile (the bug was a compile failure) and match
+    assert np.allclose(got["a"], a_ref)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

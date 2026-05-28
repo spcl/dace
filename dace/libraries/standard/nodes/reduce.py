@@ -390,10 +390,29 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
 @dace.library.expansion
 class ExpandReduceCUDADevice(pm.ExpandTransformation):
+    """GPU implementation of the reduce node running as a device-wide kernel (CUB).
+
+    Temporary storage is obtained from the per-libnode-class, per-stream CUB scratch
+    pool tagged ``ReduceTag`` (see :file:`dace/runtime/include/dace/cub_scratch.cuh`
+    and :class:`~dace.libraries.sort.environments.cub.ReduceScratch`): the
+    default-stream entry is pre-allocated to 128 MB at SDFG init; additional streams
+    allocate lazily on first use. Each per-stream entry is reused across every
+    ``Reduce`` call on that stream, grown in place if a request exceeds the current
+    allocation, and released at SDFG exit. The reduction function threads
+    ``__dace_current_stream`` to both the scratch lookup and the underlying CUB
+    call, so concurrent launches on different streams cannot race on the pool.
     """
-        GPU implementation of the reduce node running as a device-wide kernel
-        (uses CUB).
-    """
+
+    @classmethod
+    def _resolve_environments(cls):
+        # Lazy import to dodge ``standard`` ↔ ``sort`` package-import races; the
+        # ``ReduceScratch`` env lives in ``dace.libraries.sort.environments.cub``
+        # and that package's ``__init__`` pulls in ``standard.environments.cuda``.
+        if cls.environments is None or len(cls.environments) < 2:
+            from dace.libraries.sort.environments.cub import ReduceScratch
+            cls.environments = [CUDA, ReduceScratch]
+        return cls.environments
+
     environments = [CUDA]
 
     _SPECIAL_RTYPES = {
@@ -423,10 +442,11 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         if not sqaxes:  # Degenerate reduction
             return ExpandReducePure.expansion(node, state, sdfg)
 
-        # Setup all locations in which code will be written
+        # Setup all locations in which code will be written. Per-libnode init/exit
+        # code is no longer needed: the per-stream ``ReduceTag`` pool (see
+        # :class:`~dace.libraries.sort.environments.cub.ReduceScratch`) owns the
+        # scratch lifecycle for every CUB reduce call in the SDFG.
         cuda_globalcode = CodeIOStream()
-        cuda_initcode = CodeIOStream()
-        cuda_exitcode = CodeIOStream()
         host_globalcode = CodeIOStream()
         host_localcode = CodeIOStream()
         output_memlet = output_edge.data
@@ -510,12 +530,9 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         kname = (ExpandReduceCUDADevice._SPECIAL_RTYPES[redtype]
                  if redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES else 'Reduce')
 
-        # Create temp memory for this GPU
-        cuda_globalcode.write(
-            """
-            void *__cub_storage_{sdfg}_{state}_{node} = NULL;
-            size_t __cub_ssize_{sdfg}_{state}_{node} = 0;
-        """.format(sdfg=sdfg.name, state=state_id, node=node_id), state.parent_graph, state_id, node)
+        # Pull in the per-stream CUB scratch pool environment; see ``ReduceScratch``
+        # in :mod:`dace.libraries.sort.environments.cub` and ``cub_scratch.cuh``.
+        ExpandReduceCUDADevice._resolve_environments()
 
         if reduce_all_axes:
             reduce_type = 'DeviceReduce'
@@ -543,33 +560,19 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_range_use = 'num_segments, {it}, {it} + 1'.format(it=iterator_use)
             reduce_range_call = '%s, %s' % (num_segments, segment_size)
 
-        # Call CUB to get the storage size, allocate and free it
-        cuda_initcode.write(
-            """
-            cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
-                                        ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop});
-            cudaMalloc(&__cub_storage_{sdfg}_{state}_{node}, __cub_ssize_{sdfg}_{state}_{node});
-""".format(sdfg=sdfg.name,
-           state=state_id,
-           node=node_id,
-           reduce_type=reduce_type,
-           reduce_range=reduce_range,
-           redop=reduce_op,
-           intype=input_data.dtype.ctype,
-           outtype=output_data.dtype.ctype,
-           kname=kname), state.parent_graph, state_id, node)
-
-        cuda_exitcode.write(
-            'cudaFree(__cub_storage_{sdfg}_{state}_{node});'.format(sdfg=sdfg.name, state=state_id, node=node_id),
-            state.parent_graph, state_id, node)
-
-        # Write reduction function definition
+        # Reduction function: query the temp-storage size, fetch from the per-stream
+        # ``ReduceTag`` pool (allocates lazily for new streams, grows in place if
+        # this call wants more than the pool currently holds), then run CUB.
         cuda_globalcode.write("""
 DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
 void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
 {{
-cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
-                            input, output, {reduce_range_use}{redop}, stream);
+    size_t _cub_needed = 0;
+    cub::{reduce_type}::{kname}(nullptr, _cub_needed,
+                                input, output, {reduce_range_use}{redop}, stream);
+    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_cub_needed, stream);
+    cub::{reduce_type}::{kname}(_cub_scratch, _cub_needed,
+                                input, output, {reduce_range_use}{redop}, stream);
 }}
         """.format(id=idstr,
                    intype=input_data.dtype.ctype,
@@ -599,11 +602,9 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                                    host_localcode.getvalue(),
                                    language=dace.Language.CPP)
 
-        # Add the rest of the code
+        # Add the rest of the code (scratch init/exit lives in the env).
         sdfg.append_global_code(host_globalcode.getvalue())
         sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
-        sdfg.append_init_code(cuda_initcode.getvalue(), 'cuda')
-        sdfg.append_exit_code(cuda_exitcode.getvalue(), 'cuda')
 
         # Rename outer connectors and add to node
         input_edge._dst_conn = '_in'

@@ -921,16 +921,20 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # Same case as above, but for outgoing Memlets. The Memlet leaving the
+                # scope may be source-relative (naming the inner transient rather than
+                # the external array), so resolve the written array from the memlet
+                # tree's root -- the outermost-scope node, i.e. the destination the
+                # data fans out to (fall back to the Memlet's data otherwise).
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    if oedge.data.is_empty():
+                        continue
+                    root_dst = self.graph.memlet_tree(oedge).root().edge.dst
+                    dst_name = root_dst.data if isinstance(root_dst, nd.AccessNode) else oedge.data.data
+                    if dst_name not in descs and dst_name not in additional_descs:
+                        additional_descs[dst_name] = sdfg.arrays[dst_name]
 
             else:
                 # Case is ignored.
@@ -1642,6 +1646,20 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # do not yet exist)
             for e in sdfg.edges():
                 symbols.update(e.data.new_symbols(sdfg, symbols))
+
+        # Add the loop variables of the control-flow loops enclosing this state,
+        # outermost first. Without this only global, inter-state-edge and dataflow-scope
+        # (map) symbols are seen; a node inside a LoopRegion must also see the loop
+        # variable as defined -- e.g. so memlet propagation keeps a ``jk``-indexed
+        # nested-SDFG access parametric instead of widening it to the whole array.
+        enclosing_loops = []
+        cfg = self.parent_graph
+        while cfg is not None:
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable:
+                enclosing_loops.append(cfg)
+            cfg = cfg.parent_graph
+        for loop in reversed(enclosing_loops):
+            symbols.update(loop.new_symbols(symbols))
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -2871,7 +2889,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             :param u: Source node.
             :param v: Destination node.
             :param edge: The edge to add.
-            :param check_nods_are_resident: ensures that the both nodes are in the graph first
         """
         if not isinstance(src, ControlFlowBlock):
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(src)))
@@ -2879,7 +2896,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
-
         if dst is self._cached_start_block:
             self._cached_start_block = None
         return super().add_edge(src, dst, data)

@@ -38,6 +38,8 @@ from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
@@ -57,22 +59,28 @@ _REGIMES = {
 }
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
-_RELAXED_STEPS = {'loop_to_reduce', 'loop_to_map'}
+_RELAXED_STEPS = {'loop_to_reduce', 'accumulator_to_map_and_reduce', 'loop_to_map'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
 _INDEX_SYMS = ('klev', 'kfdia', 'kidia')
 
 #: Expected end-state after ``loop_to_map`` (pinned; label-independent so it
-#: survives loop-numbering churn across commits). Every parallelizable loop
-#: becomes a Map; the only loops that stay sequential are the genuine
-#: data dependences -- LU triangular solve (``zqxn``, 2 loops), the vertical
-#: flux prefix-sum (``pfsqrf``) and cloud-tendency whole-array write over klev
-#: (2 loops), and the loop-invariant ``zvqx`` fall-speed setup (5 unrolled
-#: copies). A change here means loop2map coverage shifted -- review before
-#: bumping the numbers.
-_EXPECTED_MAPS = 376
-_EXPECTED_SEQUENTIAL_LOOPS = 9
+#: survives loop-numbering churn across commits). The remaining sequential
+#: loops are: LU triangular back-substitution on ``zqxn`` (2 loops, mathematically
+#: sequential), the vertical flux prefix-sum on ``pfcqlng`` / ``pfsqrf`` (1 loop,
+#: genuine scan; a separate optional scan->elementwise+reduce transform addresses
+#: it), the level loop blocked by a ``tendency_loc_cld`` propagation
+#: over-approximation (1 loop; the inner write IS ``jk``-indexed but
+#: ``propagate_memlets_nested_sdfg`` widens it -- a 2nd-order propagation fix is
+#: a follow-up to the ``symbols_defined_at`` enclosing-LoopRegion fix), and the
+#: ICE ``for_767`` (1 loop, jm=ncldqi=2 so the guard is the runtime
+#: ``yrecldp_laericesed`` rather than a dead ``1==2``, leaving a constant-index
+#: ``zvqx[1]`` write whose privatization requires a separate
+#: ``PromoteConstantIndexAccess`` transform). A change here means loop2map
+#: coverage shifted -- review before bumping the numbers.
+_EXPECTED_MAPS = 355
+_EXPECTED_SEQUENTIAL_LOOPS = 5
 
 
 def _wcr_edges(sdfg: dace.SDFG):
@@ -147,6 +155,21 @@ def _chain():
         ('specialize', _specialize),
         ('simplify', lambda sdfg: sdfg.simplify()),
         ('short_loop_unroll', _unroll_fixpoint),
+        # Re-simplify after unrolling. A body that guards on the iteration variable
+        # (e.g. ``if jm == ncldqi``) only exposes a constant condition once unrolling
+        # pins ``jm``; the first ``simplify`` ran while the guard was still symbolic, so
+        # it could not fold it. Unrolling (with species constants specialised) then
+        # leaves dead branches like ``if 1 == 2`` whose never-taken bodies still hold
+        # constant-index writes (e.g. ``zvqx[1] = ...``) that read as a loop-carried
+        # conflict and block LoopToMap; this second simplify folds them away.
+        ('simplify_after_unroll', lambda sdfg: sdfg.simplify()),
+        # Re-propagate memlets now that unroll+simplify changed the structure and the
+        # ``symbols_defined_at`` fix lets enclosing-LoopRegion loop variables count as
+        # defined. Without this, NSDFG out-connector memlets that propagation had
+        # previously widened (the ``tendency_loc_cld[0:5, 0:klev, 0:klon]`` shape)
+        # stay stale and block ``LoopToMap``; running propagation again narrows them
+        # back to the per-level access (``[0:5, 0:_loop_it_14, 0:klon]``).
+        ('propagate_memlets', lambda sdfg: propagate_memlets_sdfg(sdfg)),
         ('unique_loop_iterators', lambda sdfg: UniqueLoopIterators().apply_pass(sdfg, {})),
         ('trivial_tasklet_elimination', _pmar(TrivialTaskletElimination)),
         ('wcr_to_augassign', _pmar(WCRToAugAssign)),
@@ -154,6 +177,9 @@ def _chain():
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
         ('constant_propagation', lambda sdfg: ConstantPropagation().apply_pass(sdfg, {})),
         ('loop_to_reduce', lambda sdfg: LoopToReduce().apply_pass(sdfg, {})),
+        # Scalar accumulators with computed deltas (or extra body side-effects) that
+        # ``LoopToReduce`` refuses become a buffer-writing Map + ``Reduce`` libnode here.
+        ('accumulator_to_map_and_reduce', lambda sdfg: AccumulatorToMapAndReduce().apply_pass(sdfg, {})),
         ('loop_to_map', _pmar(LoopToMap)),
     ]
 
@@ -188,7 +214,7 @@ def reference_sdfg_file(tmp_path_factory):
     return path
 
 
-@pytest.mark.long
+@pytest.mark.integration
 @pytest.mark.parametrize('regime', list(_REGIMES))
 def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
     ieee_build, sequential, strict_tol, relaxed_tol = _REGIMES[regime]

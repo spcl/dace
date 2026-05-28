@@ -284,6 +284,34 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if isinstance(node, nodes.AccessNode) and node not in second_input
             }
 
+            # Write-after-read into a sink: a second-state write to an element the
+            # first state reads, landing on a pure sink (no outgoing edges), cannot be
+            # ordered after that read by a dependency edge (the edge would have to
+            # target the read), so it is refused for now -- per write edge, and
+            # exempting writes whose value flows from data the first state produced (a
+            # ``read -> ... -> write`` path orders them safely).
+            first_out_data = {n.data for n in first_output}
+            first_read_subsets: Dict[str, List] = {}
+            for rn in first_state.data_nodes():
+                for re in first_state.out_edges(rn):
+                    ss = re.data.get_src_subset(re, first_state)
+                    if ss is not None:
+                        first_read_subsets.setdefault(rn.data, []).append(ss)
+            for wnode in second_output:
+                if second_state.out_degree(wnode) != 0 or wnode.data not in first_read_subsets:
+                    continue
+                for we in second_state.in_edges(wnode):
+                    wsub = we.data.get_dst_subset(we, second_state)
+                    if wsub is None:
+                        continue
+                    flows_from_first = any(
+                        isinstance(a, nodes.AccessNode) and a.data in first_out_data
+                        for a in (nx.ancestors(second_state._nx, we.src) | {we.src}))
+                    if flows_from_first:
+                        continue
+                    if any(subsets.intersects(wsub, rs) is not False for rs in first_read_subsets[wnode.data]):
+                        return False
+
             # Find source/sink (data) nodes by connected component
             first_cc_input = [cc.intersection(first_input) for cc in first_cc]
             first_cc_output = [cc.intersection(first_output) for cc in first_cc]

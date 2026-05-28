@@ -129,6 +129,98 @@ def test_nested_sdfg_free_symbols():
     assert 'k' not in inner_sdfg.free_symbols
 
 
+def _build_with_optional_unused_array(create_unused_transient: bool) -> dace.SDFG:
+    """The issue #2382 reproducer: two used arrays + an optional unused transient
+    ``x`` whose shape uses ``x_shape``.
+
+    :param create_unused_transient: If True, declare the unused ``x`` array.
+    :returns: The constructed SDFG.
+    """
+    sdfg = dace.SDFG('unused_transient')
+    state = sdfg.add_state()
+    sdfg.add_array('a', (10, ), dace.float64, transient=False)
+    sdfg.add_array('b', (10, ), dace.float64, transient=False)
+    sdfg.add_symbol('x_shape', dace.int32)
+    if create_unused_transient:
+        sdfg.add_array('x', ('x_shape', ), dace.float32, transient=True)
+    state.add_mapped_tasklet('map', {'__i': '0:10'}, {'__in': dace.Memlet('a[__i]')},
+                             '__out = __in + 1.90', {'__out': dace.Memlet('b[__i]')},
+                             external_edges=True)
+    return sdfg
+
+
+def test_unused_array_does_not_leak_shape_symbol():
+    """Issue #2382: declaring an unused array must not leak its shape symbol into
+    the signature -- it must not change the arguments needed to invoke the SDFG."""
+    without = _build_with_optional_unused_array(False)
+    with_unused = _build_with_optional_unused_array(True)
+
+    # The unused array's shape symbol must not be treated as a used argument.
+    assert 'x_shape' not in without.used_symbols(all_symbols=False)
+    assert 'x_shape' not in with_unused.used_symbols(all_symbols=False)
+
+    # Declaring the unused array must not perturb the signature at all.
+    assert 'x_shape' not in with_unused.arglist()
+    assert list(without.arglist().keys()) == list(with_unused.arglist().keys())
+    assert without.signature_arglist() == with_unused.signature_arglist()
+    assert without.init_signature() == with_unused.init_signature()
+    assert 'x_shape' not in with_unused.init_signature()
+
+
+def test_used_codeblock_array_keeps_shape_symbol():
+    """A used array's stride symbol must survive even when its only reference is a
+    code block: a guard indexes a 2D array with stride ``S``, so ``S`` must be kept."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+
+    sdfg = dace.SDFG('used_codeblock_array')
+    sdfg.add_symbol('S', dace.int32)
+    sdfg.add_array('A', (10, 10), dace.int32, strides=(1, dace.symbol('S')))
+    sdfg.add_scalar('acc', dace.int32, transient=True)
+
+    loop = LoopRegion('loop', condition_expr='k < 5', loop_var='k', initialize_expr='k = 0', update_expr='k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+
+    cb = ConditionalBlock('cb')
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion('branch', sdfg=sdfg)
+    cb.add_branch(CodeBlock('A[0, k] == 1'), branch)
+
+    set_one = branch.add_state('set_one', is_start_block=True)
+    t1 = set_one.add_tasklet('t_set', {}, {'o'}, 'o = 1')
+    set_one.add_edge(t1, 'o', set_one.add_write('acc'), None, dace.Memlet('acc[0]'))
+
+    sdfg.validate()
+
+    # ``A`` is referenced only in the conditional guard, but it is genuinely
+    # used; its stride symbol ``S`` must therefore be kept.
+    assert 'S' in sdfg.used_symbols(all_symbols=False)
+    assert 'S' in sdfg.init_signature()
+
+
+def test_used_array_keeps_symbolic_extent():
+    """Guards against the #2382 fix being too aggressive: an array used only through
+    a map memlet (no access node, no code-block ref) must still keep its shape/stride
+    symbols in the signature."""
+    n = dace.symbol('n')
+    s = dace.symbol('s')
+
+    sdfg = dace.SDFG('used_via_map')
+    sdfg.add_array('a', (n, ), dace.float64, strides=(s, ), transient=False)
+    sdfg.add_array('b', (n, ), dace.float64, transient=False)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet('m', {'__i': '0:n'}, {'__in': dace.Memlet('a[__i]')},
+                             '__out = __in + 1.0', {'__out': dace.Memlet('b[__i]')},
+                             external_edges=True)
+    sdfg.validate()
+
+    used = sdfg.used_symbols(all_symbols=False)
+    assert 'n' in used
+    assert 's' in used
+    assert 'n' in sdfg.arglist()
+    assert 's' in sdfg.arglist()
+
+
 if __name__ == '__main__':
     test_single_state()
     test_state_subgraph()
@@ -136,3 +228,6 @@ if __name__ == '__main__':
     test_constants()
     test_interstate_edge_symbols()
     test_nested_sdfg_free_symbols()
+    test_unused_array_does_not_leak_shape_symbol()
+    test_used_codeblock_array_keeps_shape_symbol()
+    test_used_array_keeps_symbolic_extent()
