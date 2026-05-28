@@ -13,7 +13,6 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
@@ -257,8 +256,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # not blocked by a sibling appearing to read the shared iterator.
     s += [('fission', LoopFission()), ('fission', _uniq_fis)]
 
-    # normalize: every loop range -> 0:trip:1.
-    s += [('normalize', NormalizeLoopsAndMaps())]
+    # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
+    # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
+    # ``i -> b+s*j``. In a corpus-wide measurement (TSVC, 151 kernels) this
+    # rewrite blocks ``LoopToMap`` on every stride loop it touches -- L2M no
+    # longer recognises ``a[b+s*j]`` as uniquely indexed by ``j`` (it expected
+    # the original ``a[i]`` with stride encoded in the range), and 0 kernels
+    # gained anything from running it. Net: -1 parallel map (s172). Kept the
+    # standalone ``NormalizeLoopsAndMaps`` for callers that want it; just not
+    # wired into the canonicalize pipeline.
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
