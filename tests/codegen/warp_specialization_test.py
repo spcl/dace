@@ -47,6 +47,7 @@ def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
     a = np.random.rand(128, 64, 32)
     expected = np.copy(a)
     expected[:, :32, :16] = 5.0
+    expected[:, 33:60, 0] += 6.0
     expected[:, 33:60, 16:32] += 6.0
 
     sdfg.validate()
@@ -62,9 +63,9 @@ def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
 
     if block_size is not None:
         with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
-            sdfg(a)
+            sdfg(a, c=3.0)
     else:
-        sdfg(a)
+        sdfg(a, c=3.0)
 
     assert np.allclose(a, expected)
 
