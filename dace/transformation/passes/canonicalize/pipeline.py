@@ -39,6 +39,7 @@ from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeli
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
@@ -207,8 +208,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # unroll leaves (and any it cloned) must carry unique ``_loop_it_<N>`` names
         # on the post-simplify structure before ``loop_to_reduce`` reads them.
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', SimplifyPass()), ('reduce', _uniq_unroll)]
+    # InductionVariableSubstitution runs after constant-propagation (so the
+    # accumulator initializer is visible) but before LoopToReduce -- an
+    # IV-eligible loop should collapse to its O(1) closed form, not become an
+    # O(N) Reduce. Catches the geometric/arithmetic scalar recurrences canon
+    # leaves behind after simplify+unroll, e.g. ``q[0] *= 0.99`` (TSVC s317).
     s += [('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation()),
-          ('reduce', LoopToReduce())]
+          ('reduce', InductionVariableSubstitution()), ('reduce', LoopToReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing

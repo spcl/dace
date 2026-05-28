@@ -513,13 +513,12 @@ def _array_slot_const_product(q: dace.float64[N]):
         q[0] = q[0] * 0.99
 
 
-@pytest.mark.xfail(reason="TSVC s317: ``q[0] *= 0.99`` is a multiplicative induction variable. Two valid "
-                   "answers exist: (a) IV detection / scalar evolution recognises the closed form "
-                   "``q[0] = q[0]_init * 0.99**(N//2)`` -- O(1), the preferred path; or (b) lift to a "
-                   "``Reduce(*)`` over a virtual constant array of ``N//2`` copies of ``0.99``. Today "
-                   "neither works: ``_extract`` rejects the single-input-tasklet shape (it requires 2 "
-                   "data inputs), and canonicalize has no IV-detection pass. Left here as the canonical "
-                   "marker for whichever path lands first. See parallelization_report.md group B.",
+@pytest.mark.xfail(reason="TSVC s317: ``q[0] *= 0.99`` is a multiplicative induction variable. The preferred "
+                   "path -- ``InductionVariableSubstitution`` (canonicalize/induction_variable_substitution.py) -- "
+                   "now collapses it to the O(1) closed form ``q[0] *= 0.99**N`` and is wired into the "
+                   "canonicalize pipeline. This test still xfails because it exercises ``LoopToReduce`` "
+                   "in isolation, which intentionally does NOT recognise the IV shape (no array to fold). "
+                   "See tests/passes/induction_variable_substitution_test.py for the passing IV-pass tests.",
                    strict=True)
 def test_array_slot_const_product_is_lifted():
     """TSVC s317."""
