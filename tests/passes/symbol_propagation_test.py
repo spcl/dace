@@ -376,6 +376,96 @@ def test_carried_index_symbol_not_propagated_stale():
         assert np.allclose(ra[name], ca[name]), f"{name}: SymbolPropagation changed the result"
 
 
+def test_dead_iedge_assignment_eliminated_after_substitution():
+    """A bound-symbol shorthand iedge assignment (``k_plus_1 = klev + 1``) survived
+    symbol_propagation: its uses got substituted to ``klev + 1`` but the defining
+    assignment was left in place. The fix sweeps such dead assignments to a fixed
+    point at the end of the pass; nothing references ``k_plus_1`` after the
+    substitution, so the iedge ends with an empty ``assignments`` dict.
+    """
+    sdfg = dace.SDFG('dead_iedge_repro')
+    sdfg.add_array('out', [16], dace.float64)
+    sdfg.add_symbol('klev', dace.int32)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'k_plus_1': '(klev + 1)'}))
+
+    t = s2.add_tasklet('t', {}, {'_o'}, '_o = 1.0')
+    w = s2.add_write('out')
+    s2.add_edge(t, '_o', w, None, dace.Memlet(data='out', subset='k_plus_1'))
+    sdfg.validate()
+
+    res = SymbolPropagation().apply_pass(sdfg, {})
+    assert res == {'k_plus_1'}, f'expected k_plus_1 to be reported propagated; got {res}'
+
+    surviving = [(lhs, rhs)
+                 for e in sdfg.all_interstate_edges()
+                 for lhs, rhs in e.data.assignments.items()]
+    assert surviving == [], f'dead k_plus_1 assignment must be eliminated; got {surviving}'
+
+    # The substitution must reach the memlet: the write to s2's ``out`` now indexes
+    # ``klev + 1`` directly, not via the shorthand symbol.
+    seen = []
+    for st in sdfg.states():
+        for e in st.edges():
+            if e.data is not None and e.data.data == 'out':
+                seen.append(str(e.data.subset))
+    assert 'klev + 1' in seen, f'expected memlet subset to be substituted to klev+1; got {seen}'
+
+
+def test_dead_iedge_chain_unravels_to_fixed_point():
+    """Chained shorthands (``a = klev + 1; b = a; c = b``) must all be eliminated
+    once their uses are substituted -- the cleanup sweep iterates to a fixed point."""
+    sdfg = dace.SDFG('chain_repro')
+    sdfg.add_array('out', [16], dace.float64)
+    sdfg.add_symbol('klev', dace.int32)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    s3 = sdfg.add_state('s3')
+    s4 = sdfg.add_state('s4')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'a': '(klev + 1)'}))
+    sdfg.add_edge(s2, s3, dace.InterstateEdge(assignments={'b': 'a'}))
+    sdfg.add_edge(s3, s4, dace.InterstateEdge(assignments={'c': 'b'}))
+
+    t = s4.add_tasklet('t', {}, {'_o'}, '_o = 2.0')
+    w = s4.add_write('out')
+    s4.add_edge(t, '_o', w, None, dace.Memlet(data='out', subset='c'))
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    surviving = [(lhs, rhs)
+                 for e in sdfg.all_interstate_edges()
+                 for lhs, rhs in e.data.assignments.items()]
+    assert surviving == [], f'every link of the dead chain must be eliminated; got {surviving}'
+
+
+def test_dead_iedge_preserved_when_lhs_still_used():
+    """An iedge assignment whose LHS is still referenced -- by an array shape, by a
+    loop bound, or by any block's free symbols -- must NOT be eliminated."""
+    sdfg = dace.SDFG('keep_live_repro')
+    sdfg.add_symbol('klev', dace.int32)
+    sdfg.add_symbol('k_plus_1', dace.int32)
+    # An array sized by ``k_plus_1`` -> the shape free-symbol set pins the iedge live.
+    sdfg.add_array('out', ['k_plus_1'], dace.float64)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'k_plus_1': '(klev + 1)'}))
+
+    t = s2.add_tasklet('t', {}, {'_o'}, '_o = 3.0')
+    w = s2.add_write('out')
+    s2.add_edge(t, '_o', w, None, dace.Memlet(data='out', subset='0'))
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    surviving = [(lhs, rhs)
+                 for e in sdfg.all_interstate_edges()
+                 for lhs, rhs in e.data.assignments.items()]
+    assert surviving == [('k_plus_1', '(klev + 1)')], (
+        f'k_plus_1 is referenced by the array shape; the assignment must stay live. got {surviving}')
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
@@ -385,4 +475,7 @@ if __name__ == "__main__":
     test_deeply_nested_sdfg()
     test_scalars()
     test_cloudsc_kidia_kfdia_promote_then_propagate()
-    test_scalars()
+    test_carried_index_symbol_not_propagated_stale()
+    test_dead_iedge_assignment_eliminated_after_substitution()
+    test_dead_iedge_chain_unravels_to_fixed_point()
+    test_dead_iedge_preserved_when_lhs_still_used()

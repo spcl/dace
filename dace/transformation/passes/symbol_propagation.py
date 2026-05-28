@@ -127,7 +127,55 @@ class SymbolPropagation(ppl.Pass):
         propagated: Set[str] = set()
         for cfg_blk, parent in all_cfg_blks.items():
             propagated |= self._update_syms(cfg_blk, parent, in_syms, out_syms)
+        # Substitution leaves the *defining* iedge assignment (``k_plus_1 = klev + 1``)
+        # in place even after every consumer has been rewritten to use the resolved
+        # value. Sweep those dead assignments to a fixed point so the pass output
+        # is canonical (e.g. cloudsc's 346 bound-symbol ``+1`` assignments disappear
+        # once their downstream uses are gone).
+        eliminated = self._eliminate_dead_iedge_assignments(sdfg)
+        if eliminated:
+            propagated |= eliminated
         return propagated if propagated else None
+
+    def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> Set[str]:
+        """Drop interstate-edge assignments whose LHS is no longer referenced anywhere.
+
+        After :meth:`_update_syms` rewrites every use site, an assignment ``X = expr``
+        is dead if ``X`` does not appear as a free symbol in any block (which transitively
+        covers NestedSDFG ``symbol_mapping`` uses), any other iedge's RHS or condition,
+        or any array descriptor. Sweeps to a fixed point so chained assignments
+        (``a = klev + 1; b = a + 1``) unravel from the leaves inward.
+
+        :param sdfg: The SDFG to clean up.
+        :returns: The set of LHS names that were removed (empty if no change).
+        """
+        removed: Set[str] = set()
+        while True:
+            used: Set[str] = set()
+            for blk, _ in sdfg.all_nodes_recursive():
+                if isinstance(blk, ControlFlowBlock):
+                    used |= {str(s) for s in blk.free_symbols}
+            iedges = list(sdfg.all_interstate_edges())
+            for e in iedges:
+                for rhs in e.data.assignments.values():
+                    used |= _free_symbols(rhs)
+                if e.data.condition is not None:
+                    try:
+                        used |= {str(s) for s in e.data.condition.get_free_symbols()}
+                    except Exception:
+                        pass
+            for desc in sdfg.arrays.values():
+                used |= {str(s) for s in getattr(desc, 'free_symbols', set())}
+            this_round: Set[str] = set()
+            for e in iedges:
+                for lhs in list(e.data.assignments.keys()):
+                    if lhs not in used:
+                        del e.data.assignments[lhs]
+                        this_round.add(lhs)
+            if not this_round:
+                break
+            removed |= this_round
+        return removed
 
     # Given a cfg_blk, builds the incoming set of symbols
     def _get_in_syms(
