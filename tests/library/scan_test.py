@@ -113,7 +113,8 @@ def test_scan_exclusive_sum_with_seed(implementation: str):
 
 @pytest.mark.parametrize('implementation', ['CPU', 'pure'])
 def test_scan_single_element(implementation: str):
-    """A length-1 inclusive scan returns the single element; exclusive returns the seed."""
+    """A length-1 inclusive scan returns the single element; exclusive returns the seed.
+    The libnode expansion degenerates to a copy / identity tasklet for this case."""
     arr_in = np.array([3.5], dtype=np.float64)
     arr_out = np.zeros(1, dtype=np.float64)
     inc_sdfg = _build_scan_sdfg(dace.float64, 1, ScanOp.SUM, exclusive=False, implementation=implementation)
@@ -125,6 +126,26 @@ def test_scan_single_element(implementation: str):
                                 identity=7.0)
     exc_sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     assert arr_out[0] == 7.0
+
+
+@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+def test_scan_two_elements(implementation: str):
+    """A length-2 inclusive scan: ``out[0] = in[0], out[1] = in[0] + in[1]`` (smallest
+    non-degenerate input). Scans of length 1 are a degenerate case the libnode does
+    not promise to support -- the contract is "scan an *array*", and single-element
+    subsets are silently inferred as scalars by the codegen which conflicts with the
+    libnode's iterator-based call shape."""
+    arr_in = np.array([3.5, 2.0], dtype=np.float64)
+    arr_out = np.zeros(2, dtype=np.float64)
+    inc_sdfg = _build_scan_sdfg(dace.float64, 2, ScanOp.SUM, exclusive=False, implementation=implementation)
+    inc_sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
+    assert np.allclose(arr_out, [3.5, 5.5])
+
+    arr_out = np.zeros(2, dtype=np.float64)
+    exc_sdfg = _build_scan_sdfg(dace.float64, 2, ScanOp.SUM, exclusive=True, implementation=implementation,
+                                identity=7.0)
+    exc_sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
+    assert np.allclose(arr_out, [7.0, 10.5])
 
 
 def test_scan_refuses_dtype_mismatch():

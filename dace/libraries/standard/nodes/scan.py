@@ -127,6 +127,38 @@ def _resolve_length(node: "Scan", state: dace.SDFGState, _sdfg: dace.SDFG) -> st
     return sym2cpp(in_edges[0].data.subset.num_elements())
 
 
+def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
+    """``True`` if the input subset is statically a single element. Single-element scans
+    degenerate to a trivial copy (inclusive) or identity write (exclusive) -- no array
+    iteration, no iterator-based template instantiation that would conflict with the
+    codegen's scalar-typing of single-element subsets."""
+    in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
+    n = symbolic.simplify(in_edges[0].data.subset.num_elements())
+    return getattr(n, 'is_Integer', False) and int(n) == 1
+
+
+def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
+    """Return the single-element degenerate scan tasklet.
+
+    For an inclusive single-element scan the result is just the input itself; for an
+    exclusive single-element scan the result is the user-supplied identity. Both are
+    expressed as Python tasklets so the codegen handles scalar connector typing
+    naturally (no array indexing, no iterator templates).
+    """
+    if node.exclusive:
+        # Treat the identity as a Python literal; the codegen casts via the connector
+        # type (a scalar of ``in_desc.dtype``).
+        seed_py = node.identity if node.identity is not None else (0 if node.op is ScanOp.SUM
+                                                                    else (1 if node.op is ScanOp.PRODUCT else None))
+        if seed_py is None:
+            raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
+        code = f"{OUTPUT_CONNECTOR_NAME} = {seed_py}"
+    else:
+        code = f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}"
+    return nodes.Tasklet(node.name, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, code=code,
+                         language=dace.Language.Python)
+
+
 def _identity_expr(node: "Scan", in_desc) -> str:
     """C++ expression for the exclusive-scan identity element.
 
@@ -153,6 +185,8 @@ class ExpandPure(ExpandTransformation):
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if _is_length_one(node, state):
+            return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         op_cpp = _OP_TO_STD_CPP[node.op]
         stride_expr = sym2cpp(node.stride)
@@ -195,8 +229,8 @@ class ExpandPure(ExpandTransformation):
                     f"}}")
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
-            outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
+            inputs={INPUT_CONNECTOR_NAME},
+            outputs={OUTPUT_CONNECTOR_NAME},
             code=body,
             language=dace.Language.CPP,
         )
@@ -220,6 +254,8 @@ class ExpandCPU(ExpandTransformation):
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if _is_length_one(node, state):
+            return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         suffix = _OP_TO_OMP_SUFFIX[node.op]
         stride_expr = sym2cpp(node.stride)
@@ -241,8 +277,8 @@ class ExpandCPU(ExpandTransformation):
                     f"{OUTPUT_CONNECTOR_NAME});")
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
-            outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
+            inputs={INPUT_CONNECTOR_NAME},
+            outputs={OUTPUT_CONNECTOR_NAME},
             code=call,
             language=dace.Language.CPP,
         )
@@ -250,7 +286,17 @@ class ExpandCPU(ExpandTransformation):
 
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
-    """``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory."""
+    """``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory.
+
+    Temporary storage is obtained from the per-libnode-class, per-stream CUB scratch pool
+    tagged ``ScanTag`` (see :file:`dace/runtime/include/dace/cub_scratch.cuh` and the
+    :class:`ScanScratch` environment): the default-stream entry is pre-allocated to 128 MB
+    at SDFG init; additional streams allocate lazily on first use. Each per-stream entry is
+    reused across every ``Scan`` call on that stream, grown in place if a request exceeds
+    the current allocation, and released at SDFG exit. The libnode threads
+    ``__dace_current_stream`` to both the scratch lookup and the underlying ``cub::DeviceScan``
+    call, so concurrent launches on different streams cannot race on the pool.
+    """
 
     # Populated lazily in :meth:`expansion` (and below) to dodge the sort↔standard cycle.
     environments = []
@@ -258,32 +304,38 @@ class ExpandCUDA(ExpandTransformation):
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         if not ExpandCUDA.environments:
-            from dace.libraries.sort.environments.cub import CUB
-            ExpandCUDA.environments = [CUB]
+            from dace.libraries.sort.environments.cub import ScanScratch
+            ExpandCUDA.environments = [ScanScratch]
         in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if _is_length_one(node, state):
+            return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         op_cub = _OP_TO_CUB[node.op]
+
         if node.exclusive:
             seed = _identity_expr(node, in_desc)
-            scan_call = (f"::cub::DeviceScan::ExclusiveScan(_sc_temp, _sc_temp_bytes, "
-                         f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, {seed}, ({n_expr}));")
-            query_call = (f"::cub::DeviceScan::ExclusiveScan(nullptr, _sc_temp_bytes, "
-                          f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, {seed}, ({n_expr}));")
+            scan_call = (f"::cub::DeviceScan::ExclusiveScan(_sc_scratch, _sc_needed, "
+                         f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, {seed}, "
+                         f"({n_expr}), __dace_current_stream);")
+            query_call = (f"::cub::DeviceScan::ExclusiveScan(nullptr, _sc_needed, "
+                          f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, {seed}, "
+                          f"({n_expr}), __dace_current_stream);")
         else:
-            scan_call = (f"::cub::DeviceScan::InclusiveScan(_sc_temp, _sc_temp_bytes, "
-                         f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, ({n_expr}));")
-            query_call = (f"::cub::DeviceScan::InclusiveScan(nullptr, _sc_temp_bytes, "
-                          f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, ({n_expr}));")
-        code = (f"size_t _sc_temp_bytes = 0;\n"
+            scan_call = (f"::cub::DeviceScan::InclusiveScan(_sc_scratch, _sc_needed, "
+                         f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, "
+                         f"({n_expr}), __dace_current_stream);")
+            query_call = (f"::cub::DeviceScan::InclusiveScan(nullptr, _sc_needed, "
+                          f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, "
+                          f"({n_expr}), __dace_current_stream);")
+        code = (f"size_t _sc_needed = 0;\n"
                 f"{query_call}\n"
-                f"void* _sc_temp = nullptr;\n"
-                f"cudaMalloc(&_sc_temp, _sc_temp_bytes);\n"
-                f"{scan_call}\n"
-                f"cudaFree(_sc_temp);")
+                f"void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>("
+                f"_sc_needed, __dace_current_stream);\n"
+                f"{scan_call}")
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
-            outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
+            inputs={INPUT_CONNECTOR_NAME},
+            outputs={OUTPUT_CONNECTOR_NAME},
             code=code,
             language=dace.Language.CPP,
         )
