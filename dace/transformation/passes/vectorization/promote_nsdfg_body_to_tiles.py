@@ -1080,6 +1080,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         for t, (out_conn, op, a_tok) in unops:
             out_edge = istate.out_edges(t)[0]
             out_access = out_edge.dst
+            isub_a = None
             if _is_numeric_literal(a_tok):
                 kind_a, info_a = "Symbol", a_tok
             else:
@@ -1089,8 +1090,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         f"PromoteNSDFGBodyToTiles: unop {t.label!r} operand {a_tok!r} not a single tile read")
                 src = ie[0].src
                 src_desc = inner.arrays[src.data]
+                isub_a = ie[0].data.subset
+                is_single = (isub_a is not None
+                             and bool(dace.symbolic.simplify(isub_a.num_elements() - 1) == 0))
                 is_scalar = (src.data in nsdfg_node.in_connectors and not src_desc.transient
-                             and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )))
+                             and (isinstance(src_desc, dace.data.Scalar) or tuple(src_desc.shape) == (1, )
+                                  or is_single))
                 kind_a, info_a = ("Scalar", src) if is_scalar else ("Tile", src)
             kwargs = dict(name=f"{t.label}_unop",
                           widths=W,
@@ -1102,9 +1107,20 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             unop = TileUnop(**kwargs)
             istate.add_node(unop)
             if kind_a == "Tile":
-                istate.add_edge(info_a, None, unop, TileConnectors.A, dace.Memlet(f"{info_a.data}[{subset}]"))
+                # Use the in-edge subset (full [0:W] or a shifted [k:k+W] window
+                # sub-block) — same subset-preservation as _promote_binops so a
+                # stencil neighbour through a unop reads the right shifted slice.
+                tile_sub = subsets.Range(list(isub_a.ranges)) if isub_a is not None else None
+                tile_memlet = dace.Memlet(data=info_a.data, subset=tile_sub) if tile_sub is not None else dace.Memlet(
+                    f"{info_a.data}[{subset}]")
+                istate.add_edge(info_a, None, unop, TileConnectors.A, tile_memlet)
             elif kind_a == "Scalar":
-                istate.add_edge(info_a, None, unop, TileConnectors.A, dace.Memlet(f"{info_a.data}[0]"))
+                # In-edge subset ([0] for length-1 array, [j] for single-element
+                # read of bigger array). Fresh Range to avoid duplicate-reference.
+                scl_sub = subsets.Range(list(isub_a.ranges)) if isub_a is not None else None
+                scl_memlet = dace.Memlet(data=info_a.data, subset=scl_sub) if scl_sub is not None else dace.Memlet(
+                    f"{info_a.data}[0]")
+                istate.add_edge(info_a, None, unop, TileConnectors.A, scl_memlet)
             # Symbol: nothing to wire (embedded inline).
             self._wire_mask(istate, mask_acc, unop, subset)
             write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
@@ -1347,16 +1363,25 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 if len(ie) != 1 or not isinstance(ie[0].src, dace.nodes.AccessNode):
                     raise NotImplementedError(
                         f"PromoteNSDFGBodyToTiles: merge {t.label!r} operand {conn!r} not a single tile read")
-                return ie[0].src
+                return ie[0].src, ie[0].data.subset
 
-            cond_src = _src_of(m.group("c"))
-            then_src = _src_of(m.group("t"))
-            else_src = _src_of(m.group("e"))
+            cond_src, cond_sub = _src_of(m.group("c"))
+            then_src, then_sub = _src_of(m.group("t"))
+            else_src, else_sub = _src_of(m.group("e"))
             merge = TileMerge(name=f"{t.label}_merge", widths=W, has_mask=mask_acc is not None)
             istate.add_node(merge)
-            istate.add_edge(cond_src, None, merge, "_cond", dace.Memlet(f"{cond_src.data}[{subset}]"))
-            istate.add_edge(then_src, None, merge, "_t", dace.Memlet(f"{then_src.data}[{subset}]"))
-            istate.add_edge(else_src, None, merge, "_e", dace.Memlet(f"{else_src.data}[{subset}]"))
+
+            def _op_memlet(src, sub):
+                """In-edge subset (full ``[0:W]`` or a shifted ``[k:k+W]`` window
+                sub-block, fresh Range so two operands of the same tile don't
+                share a memlet object)."""
+                if sub is None:
+                    return dace.Memlet(f"{src.data}[{subset}]")
+                return dace.Memlet(data=src.data, subset=subsets.Range(list(sub.ranges)))
+
+            istate.add_edge(cond_src, None, merge, "_cond", _op_memlet(cond_src, cond_sub))
+            istate.add_edge(then_src, None, merge, "_t", _op_memlet(then_src, then_sub))
+            istate.add_edge(else_src, None, merge, "_e", _op_memlet(else_src, else_sub))
             self._wire_mask(istate, mask_acc, merge, subset)
             write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
             istate.add_edge(merge, "_o", write_access, write_conn, dace.Memlet(f"{write_access.data}[{subset}]"))
