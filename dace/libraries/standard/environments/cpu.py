@@ -24,7 +24,7 @@ class CPU:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ['cstring', 'numeric', 'functional', 'algorithm']}
+    headers = {'frame': ['cstring', 'numeric', 'functional', 'algorithm', 'dace/scan.hpp']}
     state_fields = []
     init_code = ""
     finalize_code = ""

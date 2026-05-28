@@ -65,14 +65,22 @@ class ScanOp(enum.Enum):
     MAX = 'max'
 
 
-#: Map op enum to the C++ binary-op functor for ``std::inclusive_scan`` / ``std::exclusive_scan``.
-#: These are functor *values* (constructed via ``Op{}``) usable as a callable expression --
-#: stripping the parens avoids being mis-parsed as a function-style cast in C++.
+#: Map op enum to the C++ binary-op functor for ``std::inclusive_scan`` / ``std::exclusive_scan``
+#: (used by the ``pure`` expansion). These are functor *values* (constructed via ``Op{}``).
 _OP_TO_STD_CPP = {
     ScanOp.SUM: 'std::plus<>{}',
     ScanOp.PRODUCT: 'std::multiplies<>{}',
     ScanOp.MIN: '[](auto a, auto b){ return std::min(a, b); }',
     ScanOp.MAX: '[](auto a, auto b){ return std::max(a, b); }',
+}
+
+#: Map op enum to the suffix of the OpenMP-scan function in ``dace/scan.hpp``.
+#: The ``CPU`` expansion emits ``dace::scan::inclusive_<suffix>`` / ``exclusive_<suffix>``.
+_OP_TO_OMP_SUFFIX = {
+    ScanOp.SUM: 'sum',
+    ScanOp.PRODUCT: 'product',
+    ScanOp.MIN: 'min',
+    ScanOp.MAX: 'max',
 }
 
 #: Map op enum to the CUB-side binary functor for ``cub::DeviceScan::InclusiveScan``.
@@ -173,7 +181,16 @@ class ExpandPure(ExpandTransformation):
 
 @library.expansion
 class ExpandCPU(ExpandTransformation):
-    """C++17 ``std::inclusive_scan`` / ``std::exclusive_scan`` (sequential, vectorisable)."""
+    """OpenMP 5.0 parallel scan via the vendored ``dace::scan`` runtime header.
+
+    Emits a single call into ``dace::scan::{inclusive,exclusive}_{sum,product,min,max}``
+    -- templated header-only routines that wrap ``#pragma omp parallel for simd
+    reduction(inscan, op:acc)`` + ``#pragma omp scan {inclusive,exclusive}(acc)``.
+    GCC 10+ / Clang 11+ / ICX 2021+ implement OpenMP 5.0's ``scan`` directive as a
+    two-level chunked scan: phase-1 per-thread sequential scans, phase-2 small
+    parallel-prefix over per-chunk totals, phase-3 parallel offset adjustment.
+    Work O(2N), depth O(N/P + log P) -- the canonical multi-core CPU prefix scan.
+    """
 
     environments = [CPUEnv]
 
@@ -181,14 +198,16 @@ class ExpandCPU(ExpandTransformation):
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         n_expr = _resolve_length(node, state, sdfg)
-        op_cpp = _OP_TO_STD_CPP[node.op]
+        suffix = _OP_TO_OMP_SUFFIX[node.op]
         if node.exclusive:
             seed = _identity_expr(node, in_desc)
-            call = (f"std::exclusive_scan({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
-                    f"{OUTPUT_CONNECTOR_NAME}, {seed}, {op_cpp});")
+            call = (f"::dace::scan::exclusive_{suffix}("
+                    f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
+                    f"{OUTPUT_CONNECTOR_NAME}, {seed});")
         else:
-            call = (f"std::inclusive_scan({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
-                    f"{OUTPUT_CONNECTOR_NAME}, {op_cpp});")
+            call = (f"::dace::scan::inclusive_{suffix}("
+                    f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
+                    f"{OUTPUT_CONNECTOR_NAME});")
         return nodes.Tasklet(
             node.name,
             inputs={INPUT_CONNECTOR_NAME: dace.dtypes.pointer(in_desc.dtype)},
