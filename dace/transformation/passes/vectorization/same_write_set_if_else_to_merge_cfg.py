@@ -128,37 +128,59 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return rewritten or None
 
     def _matches(self, cb: ConditionalBlock) -> bool:
-        """Whether ``cb`` is a rewritable two-arm same-write-set block.
+        """Whether ``cb`` is a rewritable conditional block.
+
+        Two variants match:
+
+        - **Two-arm** ``if/else``: at least one shared element write across
+          both single-state arms (the canonical same-write-set case).
+        - **Single-arm** ``if`` (no ``else``): the lone arm IS the
+          shared-write set (the absent else reads the pre-cb value of the
+          target via the merge tasklet's ``else_op = arr``), so any
+          element-write arm matches.
 
         :param cb: candidate conditional block.
-        :returns: ``True`` if it has an ``if``+``else`` with single-state
-            tasklet/access-node arms sharing at least one element write.
+        :returns: ``True`` if the block matches one of the variants above.
         """
-        if len(cb.branches) != 2:
-            return False
-        (cond0, body0), (cond1, body1) = cb.branches
-        if cond0 is None or cond1 is not None:
-            return False
-        if not (isinstance(body0, ControlFlowRegion) and isinstance(body1, ControlFlowRegion)):
-            return False
-        # Each branch must hold exactly one SDFGState.
-        if len(body0.nodes()) != 1 or len(body1.nodes()) != 1:
-            return False
-        s0, s1 = body0.nodes()[0], body1.nodes()[0]
-        if not (isinstance(s0, dace.SDFGState) and isinstance(s1, dace.SDFGState)):
-            return False
-        # No maps / nested SDFGs / non-tasklet compute in the arms.
-        for s in (s0, s1):
-            for n in s.nodes():
+        if len(cb.branches) == 2:
+            (cond0, body0), (cond1, body1) = cb.branches
+            if cond0 is None or cond1 is not None:
+                return False
+            if not (isinstance(body0, ControlFlowRegion) and isinstance(body1, ControlFlowRegion)):
+                return False
+            if len(body0.nodes()) != 1 or len(body1.nodes()) != 1:
+                return False
+            s0, s1 = body0.nodes()[0], body1.nodes()[0]
+            if not (isinstance(s0, dace.SDFGState) and isinstance(s1, dace.SDFGState)):
+                return False
+            for s in (s0, s1):
+                for n in s.nodes():
+                    if isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
+                        continue
+                    return False
+            shared = self._shared_writes(s0, s1)
+            return bool(shared)
+        if len(cb.branches) == 1:
+            (cond0, body0), = cb.branches
+            if cond0 is None:
+                return False
+            if not isinstance(body0, ControlFlowRegion):
+                return False
+            if len(body0.nodes()) != 1:
+                return False
+            s0 = body0.nodes()[0]
+            if not isinstance(s0, dace.SDFGState):
+                return False
+            for n in s0.nodes():
                 if isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
                     continue
                 return False
-        # The arms must share at least one write target with matching subsets.
-        # Each arm may write additional arm-local intermediates (typical
-        # frontend shape: per-binop temp plus the shared output), those stay
-        # in the arm after the 3-CFG rewrite.
-        shared = self._shared_writes(s0, s1)
-        return bool(shared)
+            try:
+                w0 = self._collect_write_subsets(s0)
+            except NotImplementedError:
+                return False
+            return bool(w0)
+        return False
 
     def _collect_write_subsets(self, state: dace.SDFGState):
         """Element-wise writes of a state.
@@ -201,15 +223,23 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
 
         Clones each arm (redirecting escaping writes to ``_then_<arr>`` /
         ``_else_<arr>`` transients) and emits one ``merge`` tasklet per
-        escaping target; arm-local writes stay inline.
+        escaping target; arm-local writes stay inline. The single-arm case
+        (``if c: ...`` with no ``else``) lowers the same way — the merge
+        tasklet's ``else_op`` reads the pre-cb value of the target (``arr``
+        itself), so an absent else arm reduces to a per-lane RMW select.
 
         :param sdfg: SDFG used for name resolution.
         :param cb: the conditional block to rewrite (removed in place).
         """
         parent = cb.parent_graph
-        (cond_block, then_body), (_, else_body) = cb.branches
+        single_arm = (len(cb.branches) == 1)
+        if single_arm:
+            (cond_block, then_body), = cb.branches
+            else_body = None
+        else:
+            (cond_block, then_body), (_, else_body) = cb.branches
         then_state: dace.SDFGState = then_body.nodes()[0]
-        else_state: dace.SDFGState = else_body.nodes()[0]
+        else_state: Optional[dace.SDFGState] = else_body.nodes()[0] if else_body is not None else None
         # ``cb`` may live inside a NestedSDFG; arrays referenced from its arms
         # live on the immediate enclosing SDFG, not the outermost ``sdfg``.
         local_sdfg: dace.SDFG = cb.sdfg
@@ -227,7 +257,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # only allocate ``_<arm>_<arr>`` for arms that actually write ``arr``;
         # the other arm's merge operand is the pre-cb value of ``arr``.
         then_writes = self._collect_write_subsets(then_state)
-        else_writes = self._collect_write_subsets(else_state)
+        else_writes = self._collect_write_subsets(else_state) if else_state is not None else {}
 
         def _alloc(prefix: str, arr_name: str) -> str:
             base = local_sdfg.arrays[arr_name]
@@ -252,14 +282,18 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                     f"SameWriteSetIfElseToMergeCFG: arms write {arr!r} with different subsets ({t} vs {e})")
             write_subsets[arr] = t if t is not None else e
 
-        # New 3-CFG states in the parent graph.
+        # New 3-CFG states in the parent graph. The compute-else state is
+        # emitted as an empty pass-through for single-arm conditionals (no
+        # else body to clone); the apply-merge state then reads the pre-cb
+        # value of every target via the ``else_op = arr`` fallback.
         ct_state = parent.add_state(f"compute_then_{cb.label}")
         ce_state = parent.add_state(f"compute_else_{cb.label}")
         am_state = parent.add_state(f"apply_merge_{cb.label}")
 
         # Clone bodies redirecting only the per-arm escape writes.
         self._clone_with_redirect(then_state, ct_state, temp_then)
-        self._clone_with_redirect(else_state, ce_state, temp_else)
+        if else_state is not None:
+            self._clone_with_redirect(else_state, ce_state, temp_else)
 
         # Merge tasklets. A non-writing arm contributes the pre-cb value
         # (read the original ``arr``, which is intact because the writing
