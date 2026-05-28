@@ -52,7 +52,8 @@ from dace.transformation.passes.analysis import loop_analysis
 # Re-export the supported associative ops via :class:`ScanOp`; the matcher recognises
 # the same four ops the libnode expansions cover.
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME as _SCAN_IN,
-                                                OUTPUT_CONNECTOR_NAME as _SCAN_OUT)
+                                                OUTPUT_CONNECTOR_NAME as _SCAN_OUT,
+                                                INIT_CONNECTOR_NAME as _SCAN_INIT)
 
 
 #: Map AST BinOp class -> ScanOp.
@@ -70,6 +71,7 @@ _CALL_TO_SCAN_OP = {
 #: Prefix for the per-iteration transient buffers the rewrite allocates.
 _DELTA_BUF_PREFIX = '_scan_in_'
 _SCAN_BUF_PREFIX = '_scan_out_'
+_SEED_SCALAR_PREFIX = '_scan_seed_'
 
 
 class _Scan(NamedTuple):
@@ -463,48 +465,101 @@ def _same_other_indices(a, b) -> bool:
 
 
 def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDFG):
-    """Rewrite ``loop`` into a 3-part chain via in-place body mutation.
+    """Rewrite ``loop`` into a chain via in-place body mutation.
 
-    1. **Modified loop**: the scan-update tasklet's carry input is severed and its
-       output is re-routed to write the per-iteration *delta* into a transient
-       ``_scan_in[loop_var - start]``. The tasklet's body collapses to
-       ``__o = __delta``, so the rest of the body's delta-computation subgraph
-       (whatever produces the delta input -- a direct array slice in v1, an
-       arbitrary upstream subgraph in v2) is kept intact and continues to run
-       per iteration. After this mutation the body's only write is uniquely
-       indexed by ``loop_var``, so a subsequent ``LoopToMap`` lifts it cleanly.
-    2. **Scan state**: a single ``Scan`` libnode reads ``_scan_in`` and writes
-       ``_scan_out`` (same shape ``[trip]``, same dtype, op matches the matched
-       tasklet's combiner).
-    3. **Seed-add Map**: writes ``out[start + k_w + _i, ...] = seed OP _scan_out[_i]``
-       in parallel, where ``seed = out[start + k_r, ...]`` is the pre-loop value
-       read by the original loop's first carry-read.
+    The body is always mutated to write the per-iteration delta to a 1-D transient
+    (``_scan_in[loop_var - start]``); the post-loop chain follows one of two shapes:
+
+    * **1-D direct-write** (``out`` is 1-D and the matched write has no other-axis
+      indices). One state runs the ``Scan`` libnode with the optional ``_scan_init``
+      connector wired to ``out[start + k_r]``; the libnode's inclusive-with-init
+      semantics fold the seed in, so the scan output is written directly to
+      ``out[start + k_w : start + k_w + trip]`` and no seed-add Map is emitted.
+    * **General path** (multi-dim ``out`` or non-empty other-axis indices). Two
+      states: a Scan into a 1-D transient ``_scan_out``, then a seed-add Map that
+      writes ``out[start + k_w + _i, ...] = seed OP _scan_out[_i]``.
+
+    :param parent: CFG owning ``loop``.
+    :param loop: The matched scan loop.
+    :param info: Matcher output describing the scan-update tasklet, axes, and offsets.
+    :param sdfg: SDFG owning ``loop``.
     """
     import dace
     out_desc = sdfg.arrays[info.out_name]
     trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
     delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True,
                                   find_new_name=True)
-    scan_buf, _ = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True,
-                                 find_new_name=True)
 
-    # Mutate the loop body: scan-update tasklet becomes a passthrough writing to
-    # ``_scan_in[loop_var - start]``; the carry-input chain is stripped.
     _mutate_body_to_delta_buffer(info, delta_buf)
 
-    # Splice the post-loop chain into the parent CFG: loop -> scan_state -> apply_state -> [original successors].
     out_edges = list(parent.out_edges(loop))
     s_scan = parent.add_state(loop.label + '_scan')
-    s_apply = parent.add_state(loop.label + '_scan_apply')
     parent.add_edge(loop, s_scan, dace.InterstateEdge())
-    parent.add_edge(s_scan, s_apply, dace.InterstateEdge())
-    for e in out_edges:
-        parent.remove_edge(e)
-        parent.add_edge(s_apply, e.dst, e.data)
 
-    _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
-    _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
+    if _can_emit_direct_write(info, out_desc):
+        for e in out_edges:
+            parent.remove_edge(e)
+            parent.add_edge(s_scan, e.dst, e.data)
+        _emit_scan_with_init_direct(s_scan, sdfg, info, delta_buf, trip)
+    else:
+        scan_buf, _ = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True,
+                                     find_new_name=True)
+        s_apply = parent.add_state(loop.label + '_scan_apply')
+        parent.add_edge(s_scan, s_apply, dace.InterstateEdge())
+        for e in out_edges:
+            parent.remove_edge(e)
+            parent.add_edge(s_apply, e.dst, e.data)
+        _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
+        _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
     sdfg.reset_cfg_list()
+
+
+def _can_emit_direct_write(info: _Scan, out_desc) -> bool:
+    """Whether the scan output can be written straight into ``out`` -- skipping
+    the seed-add Map -- via :func:`_emit_scan_with_init_direct`. Requires a 1-D
+    output array and no other-axis indices, so the write subset
+    ``out[start + k_w : start + k_w + trip]`` is a contiguous range on the single
+    axis the scan covers. The matcher already ensures ``k_w - k_r == 1``, so the
+    seed read at ``start + k_r`` does not overlap the write range.
+    """
+    return len(out_desc.shape) == 1 and not info.other_indices
+
+
+def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, trip: Any):
+    """1-D direct-write path: Scan reads ``delta_buf``, takes ``out[start + k_r]``
+    as its ``_scan_init`` seed, and writes the inclusive result directly into
+    ``out[start + k_w : start + k_w + trip]`` -- no seed-add Map.
+
+    The seed is materialised through a per-instance scalar transient so the
+    state has a clean ``out`` read -> seed scalar -> scan-init connector path;
+    a direct ``out``-to-init edge would force DaCe to view the same array as
+    both read and write source within one state which the read/write subset
+    pair satisfies but is harder to reason about for downstream cleanup.
+    """
+    out_desc = sdfg.arrays[info.out_name]
+    seed_name, _ = sdfg.add_scalar(f'{_SEED_SCALAR_PREFIX}{info.out_name}', out_desc.dtype, transient=True,
+                                   find_new_name=True)
+    seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
+    write_start = symbolic.simplify(info.iter_start + info.k_w)
+    write_end = symbolic.simplify(write_start + trip - 1)
+
+    out_seed_read = state.add_read(info.out_name)
+    seed_an = state.add_access(seed_name)
+    delta_read = state.add_read(delta_buf)
+    out_write = state.add_write(info.out_name)
+    node = Scan(name=f'{state.label}_op', op=info.op, exclusive=False)
+    node.add_in_connector(_SCAN_INIT)
+    state.add_node(node)
+
+    state.add_edge(out_seed_read, None, seed_an, None,
+                   mm.Memlet(data=info.out_name, subset=subsets.Range([(seed_axis_expr, seed_axis_expr, 1)]),
+                             other_subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(seed_an, None, node, _SCAN_INIT,
+                   mm.Memlet(data=seed_name, subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(delta_read, None, node, _SCAN_IN,
+                   mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(node, _SCAN_OUT, out_write, None,
+                   mm.Memlet(data=info.out_name, subset=subsets.Range([(write_start, write_end, 1)])))
 
 
 def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):

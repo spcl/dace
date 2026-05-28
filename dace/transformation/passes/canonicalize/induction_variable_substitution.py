@@ -58,6 +58,26 @@ _CLOSED_FORM = {
 }
 
 
+class _UnwrapTypecasts(ast.NodeTransformer):
+    """Strip ``dace.<typeclass>(x)`` calls -- the frontend's defensive type casts
+    around symbolic operands (e.g. ``__in1 + dace.float64(step)``) -- by
+    replacing each such call with its single argument. Identity semantics for IV
+    pattern matching; the codegen still emits the cast from the original tasklet
+    body, only this pass's analysis treats it as a no-op.
+    """
+    from dace import dtypes as _dtypes
+    _TYPECAST_NAMES = set(_dtypes.TYPECLASS_STRINGS)
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        # Match ``dace.<typeclass>(x)``: ``func`` is Attribute(value=Name('dace'), attr=typeclass)
+        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'dace' and node.func.attr in self._TYPECAST_NAMES
+                and len(node.args) == 1 and not node.keywords):
+            return node.args[0]
+        return node
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class InductionVariableSubstitution(ppl.Pass):
@@ -95,16 +115,41 @@ def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> 
     return True
 
 
+def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Whether ``name`` refers to an SDFG symbol/constant that the loop does not
+    redefine in its body (so its value is stable across iterations).
+
+    Accepts: SDFG symbols and constants, with the loop variable explicitly excluded,
+    and with the symbol not appearing as the LHS of any interstate-edge assignment
+    inside the loop's body.
+    """
+    if name == loop.loop_variable:
+        return False
+    if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg.free_symbols:
+        return False
+    # The loop must not assign to ``name`` on any of its body interstate edges --
+    # otherwise it would not be loop-invariant.
+    for e in loop.edges():
+        if e.data.assignments and name in e.data.assignments:
+            return False
+    return True
+
+
 def _extract_iv(loop: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, str, type, object, object]]:
     """Pattern-match the loop body. Returns ``(accum_name, accum_subset_str, ast.BinOp_type, const_val, trip_count)``
     or ``None``.
+
+    ``const_val`` may be a Python ``int`` / ``float`` (numeric literal) OR a string
+    naming a loop-invariant SDFG symbol -- in the symbolic case the closed form
+    ``init + c*N`` / ``init * c**N`` keeps ``c`` as a name and is materialised in
+    the post-loop tasklet by the codegen's symbol-binding path.
     """
     if not loop.loop_variable:
         return None
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None or stride != 1:
+    if start is None or end is None or stride is None:
         return None
 
     blocks = loop.nodes()
@@ -129,19 +174,54 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, str, type, 
         return None
     if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
         return None
-    rhs = tree.body[0].value
+    # Strip the frontend's defensive ``dace.<typeclass>(...)`` casts before pattern
+    # matching, so ``__in1 + dace.float64(step)`` matches identically to ``__in1 + step``.
+    rhs = _UnwrapTypecasts().visit(tree.body[0].value)
     if not isinstance(rhs, ast.BinOp) or type(rhs.op) not in _CLOSED_FORM:
         return None
 
-    # One side must be a Name (the carried accum), the other a numeric constant.
-    if isinstance(rhs.left, ast.Name) and isinstance(rhs.right, ast.Constant):
-        var_conn, const_val = rhs.left.id, rhs.right.value
-    elif isinstance(rhs.right, ast.Name) and isinstance(rhs.left, ast.Constant):
-        var_conn, const_val = rhs.right.id, rhs.left.value
+    # Identify the carrier side (a bare ``ast.Name`` whose id is one of the
+    # tasklet's INPUT CONNECTORS) and the increment side (anything else, as long
+    # as it is loop-invariant). The classic shape is ``__in1 + 2.5`` (Constant on
+    # the other side); the symbolic-frontend shape is ``__in1 + step`` with
+    # ``step`` a SDFG symbol, which lifts the same way.
+    in_connector_names = set(tasklet.in_connectors.keys())
+
+    def _is_carrier(node):
+        return isinstance(node, ast.Name) and node.id in in_connector_names
+
+    if _is_carrier(rhs.left) and not _is_carrier(rhs.right):
+        var_conn, other = rhs.left.id, rhs.right
+    elif _is_carrier(rhs.right) and not _is_carrier(rhs.left):
+        var_conn, other = rhs.right.id, rhs.left
     else:
         return None
-    if not isinstance(const_val, (int, float)):
-        return None
+
+    # The increment expression must not reference the loop variable; every
+    # ``ast.Name`` in it must be a loop-invariant SDFG symbol / constant or a
+    # built-in DaCe binding (``dace.float64`` etc.). Constants are inherently OK.
+    if isinstance(other, ast.Constant):
+        if not isinstance(other.value, (int, float)):
+            return None
+        const_val = other.value
+    else:
+        for sub in ast.walk(other):
+            if isinstance(sub, ast.Name):
+                if sub.id == loop.loop_variable:
+                    return None
+                # Allow SDFG symbols / constants / known dtype-cast roots; reject
+                # any other name (which would imply a connector or loop-local var).
+                if (sub.id not in sdfg.symbols and sub.id not in sdfg.constants
+                        and sub.id not in sdfg.free_symbols and sub.id != 'dace'
+                        and not hasattr(__import__('builtins'), sub.id)):
+                    return None
+                if (sub.id in sdfg.symbols or sub.id in sdfg.constants
+                        or sub.id in sdfg.free_symbols) and not _is_loop_invariant_symbol(sub.id, loop, sdfg):
+                    return None
+        # Render the expression back to a source string for the closed form. The
+        # later tasklet body splices it directly, so ``dace.float64(step)`` stays
+        # ``dace.float64(step)`` and codegen resolves ``step`` via the symbol-binding path.
+        const_val = ast.unparse(other)
 
     in_edges = [e for e in state.in_edges(tasklet) if e.data is not None and not e.data.is_empty()]
     out_edges = [e for e in state.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]

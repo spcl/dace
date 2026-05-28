@@ -143,6 +143,57 @@ def test_non_const_operand_is_not_lifted():
     assert _n_loops(sdfg) == 1
 
 
+# ---------------------------------------------------------------------------
+# Symbolic loop-invariant operand: ``s[0] += step`` with ``step`` a SDFG symbol.
+# Closed form ``s[0] = s[0] + step * N`` is computable; the pass should lift it.
+# ---------------------------------------------------------------------------
+
+step = dace.symbol("step")
+
+
+@dace.program
+def _sum_iv_scalar_slot_symbolic(s: dace.float64[1]):
+    for i in range(N):
+        s[0] = s[0] + step
+
+
+def test_arithmetic_iv_symbolic_operand_collapses_to_closed_form():
+    """``s[0] += step`` (``step`` a SDFG int symbol; frontend wraps it in
+    ``dace.float64(step)`` for type-consistency, which the matcher unwraps).
+    Closed form: ``s[0] = s[0] + step * N``."""
+    sdfg = _prep_and_run(_sum_iv_scalar_slot_symbolic)
+    assert _n_loops(sdfg) == 0
+    s = np.array([3.0])
+    sdfg(s=s, N=8, step=2)
+    assert np.isclose(s[0], 3.0 + 2 * 8)
+
+
+# ---------------------------------------------------------------------------
+# Symbolic stride: ``for i in range(0, N, stride): s[0] += c`` over a symbolic
+# step. Trip count uses ``stride`` -- ``s[0] = s[0] + c * trip``. The closed
+# form is identical to the unit-stride case; only the trip count differs.
+# ---------------------------------------------------------------------------
+
+stride_sym = dace.symbol("stride_sym", positive=True)
+
+
+@dace.program
+def _sum_iv_scalar_slot_symbolic_stride(s: dace.float64[1]):
+    for i in range(0, N, stride_sym):
+        s[0] = s[0] + 1.5
+
+
+def test_arithmetic_iv_symbolic_stride_collapses_to_closed_form():
+    """``for i in range(0, N, stride): s[0] += 1.5`` -> ``s[0] = s[0] + 1.5 * trip``."""
+    sdfg = _prep_and_run(_sum_iv_scalar_slot_symbolic_stride)
+    assert _n_loops(sdfg) == 0
+    s = np.array([0.0])
+    N_v, stride_v = 20, 4
+    sdfg(s=s, N=N_v, stride_sym=stride_v)
+    trip = (N_v + stride_v - 1) // stride_v  # ceil division for range(0, N, stride)
+    assert np.isclose(s[0], 1.5 * trip)
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()
@@ -150,3 +201,5 @@ if __name__ == "__main__":
     test_array_indexed_input_is_not_lifted()
     test_loop_indexed_write_is_not_lifted()
     test_non_const_operand_is_not_lifted()
+    test_arithmetic_iv_symbolic_operand_collapses_to_closed_form()
+    test_arithmetic_iv_symbolic_stride_collapses_to_closed_form()

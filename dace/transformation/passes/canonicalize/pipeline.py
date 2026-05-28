@@ -17,6 +17,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -41,6 +42,7 @@ from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
+from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
@@ -223,9 +225,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # fissions IV-eligible updates out of compound bodies into sibling single-statement
     # loops so the IVSub matcher (which requires a single tasklet in the body) catches
     # them. Together they turn O(N) recurrences with surrounding loop work into O(1)
-    # straight-line plus the surviving body.
+    # straight-line plus the surviving body. MaterializeLoopExitSymbols then handles
+    # the surviving body-defined IV symbols (``k = k + step`` on an interstate edge)
+    # whose final value is read after the loop: it materialises the closed-form exit
+    # under a fresh ``_loop_exit_<sym>_<N>`` symbol and rewrites every downstream
+    # reader so the "loop-defined symbol used after the loop" refusal disappears.
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
-          ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
+          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()),
+          ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -305,6 +312,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the earlier ``MoveIfIntoLoop`` stage, so hoisting guards back out here would
     # undo that work and ping-pong. The terminal ``hoist_guards`` stage runs it
     # once, AFTER fuse, where the fusion it would otherwise undo has happened.
+
+    # loop_to_scan (pre-parallelize): lift prefix-scan loops -- ``out[i+1] = out[i] OP
+    # delta[i + d]`` -- to a ``Scan`` libnode call. The shape requires the carried
+    # dependence on ``out`` that ``LoopToReduce`` and ``LoopToMap`` both refuse; the
+    # libnode replaces the loop with a parallel ``cub::DeviceScan`` (GPU) /
+    # ``std::inclusive_scan`` (CPU) and unblocks the recurrence kernels (TSVC ``s111``,
+    # ``s125``, ``s241``, ``s242`` and the cloudsc vertical-flux family).
+    s += [('loop_to_scan', LoopToScan())]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
