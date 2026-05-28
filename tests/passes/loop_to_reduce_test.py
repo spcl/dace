@@ -429,6 +429,176 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar():
         raise AssertionError("no interstate edge assigning tmp_call_13 from the bridge")
 
 
+# ---------------------------------------------------------------------------
+# Reduction patterns surfaced by the TSVC corpus (see
+# ``tests/corpus/parallelization_report.md`` group B).
+#
+# Each test mirrors a real TSVC kernel body, builds the simplified SDFG and
+# applies the same prelude canonicalize runs before ``LoopToReduce``
+# (``TrivialTaskletElimination``) so the entry shape matches what the pass
+# sees in the pipeline. Patterns the pass cannot detect yet are ``xfail``
+# with a TODO reference -- when the pass is extended they should flip to
+# passing without test edits.
+# ---------------------------------------------------------------------------
+
+import pytest
+
+from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+
+
+def _prep_and_lift(sdfg: dace.SDFG) -> int:
+    """Run the canonicalize prelude (``TrivialTaskletElimination``) then
+    ``LoopToReduce``, returning the lifted count."""
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    return LoopToReduce().apply_pass(sdfg, {}) or 0
+
+
+# ---- s311 family: array-slot accumulator (sum) ---------------------------
+
+
+@dace.program
+def _array_slot_sum(a: dace.float64[N], sum_out: dace.float64[N]):
+    sum_out[0] = 0.0
+    for i in range(N):
+        sum_out[0] = sum_out[0] + a[i]
+
+
+def test_array_slot_sum_reduction_is_lifted():
+    """TSVC s311: ``sum_out: float64[N]; for i: sum_out[0] += a[i]``.
+
+    Accumulator descriptor is a multi-element array; only slot ``[0]`` is
+    touched. Lifts after the chase-forward extension to ``_extract``.
+    """
+    sdfg = _array_slot_sum.to_sdfg(simplify=True)
+    sdfg.validate()
+    assert _count_loops(sdfg) >= 1
+
+    lifted = _prep_and_lift(sdfg)
+    sdfg.validate()
+
+    assert lifted >= 1
+    _assert_single_sum_reduce_identity_none(sdfg)
+
+
+# ---- s313 / vdotr: array-slot dot-product (compute-then-accumulate) ------
+
+
+@dace.program
+def _array_slot_dot_product(a: dace.float64[N], b: dace.float64[N], dot: dace.float64[N]):
+    dot[0] = 0.0
+    for i in range(N):
+        dot[0] = dot[0] + a[i] * b[i]
+
+
+@pytest.mark.xfail(reason="TSVC s313/vdotr: body has two tasklets (compute multiply then accumulate-add); "
+                   "_extract refuses multi-tasklet bodies. Needs either a multi-tasklet form or "
+                   "AugAssignToWCR to fire on the copy-wrapped RMW. See parallelization_report.md group B.",
+                   strict=True)
+def test_array_slot_dot_product_is_lifted():
+    """TSVC s313/vdotr: ``dot: float64[N]; for i: dot[0] += a[i] * b[i]``."""
+    sdfg = _array_slot_dot_product.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted >= 1
+
+
+# ---- s317: array-slot scalar product (no array fold) ---------------------
+
+
+@dace.program
+def _array_slot_const_product(q: dace.float64[N]):
+    q[0] = 1.0
+    for i in range(N // 2):
+        q[0] = q[0] * 0.99
+
+
+@pytest.mark.xfail(reason="TSVC s317: ``q[0] *= 0.99`` is a multiplicative induction variable. Two valid "
+                   "answers exist: (a) IV detection / scalar evolution recognises the closed form "
+                   "``q[0] = q[0]_init * 0.99**(N//2)`` -- O(1), the preferred path; or (b) lift to a "
+                   "``Reduce(*)`` over a virtual constant array of ``N//2`` copies of ``0.99``. Today "
+                   "neither works: ``_extract`` rejects the single-input-tasklet shape (it requires 2 "
+                   "data inputs), and canonicalize has no IV-detection pass. Left here as the canonical "
+                   "marker for whichever path lands first. See parallelization_report.md group B.",
+                   strict=True)
+def test_array_slot_const_product_is_lifted():
+    """TSVC s317."""
+    sdfg = _array_slot_const_product.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted >= 1
+
+
+# ---- s314 / s316: branched min / max -------------------------------------
+
+
+@dace.program
+def _branched_max(a: dace.float64[N], result: dace.float64[N]):
+    x = a[0]
+    for i in range(1, N):
+        if a[i] > x:
+            x = a[i]
+    result[0] = x
+
+
+@pytest.mark.xfail(reason="TSVC s314: frontend lowers ``if a[i] > x: x = a[i]`` to a loop body of "
+                   "``[ConditionalBlock, SDFGState, SDFGState]`` at loop level (not the "
+                   "in-conditional 2-empty-states form the conditional-interstate pattern in "
+                   "``_extract`` expects). Needs the loop-level branched-min/max shape. "
+                   "See parallelization_report.md group B.",
+                   strict=True)
+def test_branched_max_is_lifted():
+    """TSVC s314."""
+    sdfg = _branched_max.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted >= 1
+
+
+@dace.program
+def _branched_min(a: dace.float64[N], result: dace.float64[N]):
+    x = a[0]
+    for i in range(1, N):
+        if a[i] < x:
+            x = a[i]
+    result[0] = x
+
+
+@pytest.mark.xfail(reason="TSVC s316: same shape as s314 (branched min). See test_branched_max_is_lifted.", strict=True)
+def test_branched_min_is_lifted():
+    """TSVC s316."""
+    sdfg = _branched_min.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted >= 1
+
+
+# ---- s4115: gather + sum reduction ---------------------------------------
+
+
+@dace.program
+def _gather_sum_reduction(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N], sum_out: dace.float64[N]):
+    s = 0.0
+    for i in range(N):
+        s = s + a[i] * b[ip[i]]
+    sum_out[0] = s
+
+
+@pytest.mark.xfail(reason="TSVC s4115: compute-then-accumulate body (multiply by gathered b[ip[i]] then add to s) "
+                   "is the same multi-tasklet shape as s313 -- ``_extract`` refuses. Note that even with "
+                   "multi-tasklet handling, there is no ``Reduce``-with-gather libnode -- the practical "
+                   "path is ``AugAssignToWCR + LoopToMap`` (atomic WCR write on the scalar), with "
+                   "per-thread privatization as a separate optimization. See parallelization_report.md "
+                   "group B and the ``PrivatizeReductionAccumulator`` TODO.",
+                   strict=True)
+def test_gather_sum_reduction_is_lifted():
+    """TSVC s4115."""
+    sdfg = _gather_sum_reduction.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted >= 1
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -446,3 +616,4 @@ if __name__ == "__main__":
     test_any_pattern_lifts_to_or_in_permissive()
     test_all_pattern_lifts_to_and_in_permissive()
     test_any_pattern_symbol_bridge_via_tmp_scalar()
+    test_array_slot_sum_reduction_is_lifted()

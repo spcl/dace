@@ -17,7 +17,11 @@ python -m tests.corpus.measure_parallelization > /tmp/l2m_report.txt
 |-----------------|------:|-----:|--------:|
 | baseline (simplify only) | 178 | 2 | 0 |
 | LoopToMap only  |   105 |   71 |       0 |
-| canonicalize    |    92 |   81 |       2 |
+| canonicalize    |    90 |   82 |       3 |
+
+Δ vs the report's first numbers (before dropping `NormalizeLoopsAndMaps` and
+adding `LoopToReduce` chase-forward): canon loops `92→90`, maps `81→82`,
+reduces `2→3`. Final-parallelism rate **47.4% → 48.6%**.
 
 | Outcome | Kernels | % of 151 |
 |---|---:|---:|
@@ -48,13 +52,19 @@ Canonicalize parallelizes **45.5%** of baseline loops (vs L2M-only **38.8%**) an
 `UniqueLoopIterators` — see s172), then triangular 2D nests, then runtime-
 guarded scatter.
 
-## ⚠ Regressions (1)
+## ⚠ Regressions (0)
 
-| Kernel | Pattern | L2M | Canon | Root cause | Fix |
-|---|---|---|---|---|---|
-| **s172** | `for i in range(n1-1, LEN, n3): a[i] += b[i]` | ✓ map `range=n1-1:LEN:n3` | ✗ loop `_loop_it_0` ranging `0:(LEN-n1+1-1)//n3+1` | `UniqueLoopIterators` rewrites the stride loop into a normalised `_loop_it_0` form whose body uses `n1-1 + n3*_loop_it_0` to index `a`; L2M does not recognise this as a unique-write-per-iter pattern | Either (a) teach L2M's `_is_uniquely_indexed` to follow the symbolic substitution introduced by `UniqueLoopIterators`, or (b) gate `UniqueLoopIterators` to skip stride loops where the original iterator is itself the unique-index symbol |
+**Previously**: s172 (`for i in range(n1-1, LEN, n3): a[i] += b[i]`) regressed
+because `NormalizeLoopsAndMaps` rewrote `for i in b:e:s` into
+`for j in 0:trip:1` with body `i -> b+s*j`, which L2M then refused.
 
-The same root cause likely blocks **s175** (in C below) and possibly the s171/s174 family.
+**Fix**: `NormalizeLoopsAndMaps` dropped from the canonicalize pipeline
+(commit `664ef7d1e`). Corpus-wide measurement confirmed: +1 parallel map
+(s172), 0 kernels regressed, all 151 corpus value-tests still green. The
+pass remains importable for direct callers; just not wired in. Note the root
+diagnosis here was originally pinned on `UniqueLoopIterators` (which is the
+pass that renames the iterator without changing the step); `Normalize…` was
+the actual culprit that rewrote the step too.
 
 ## ✓F Map fusion / collapse (2, verified not a regression)
 
@@ -67,24 +77,60 @@ Both express the same parallel work; canon's form is preferable for downstream l
 
 ## ☐B Missed reductions (LoopToReduce extension) — priority 1
 
-`LoopToReduce` today catches `s = 0.0; for i: s += a[i]; out[0] = s` (Python scalar accumulator written out at the end). It misses several common variants:
+`LoopToReduce` today catches `s = 0.0; for i: s += a[i]; out[0] = s` (Python
+scalar accumulator written out at the end), plus (now) the array-slot
+variant `arr[0] += a[i]`. Unit tests in
+`tests/passes/loop_to_reduce_test.py::test_array_slot_*`, the
+multi-tasklet / branched / closed-form patterns are committed as
+`@pytest.mark.xfail(strict=True)` — when each is fixed, the xfail will flip
+and force the test author to remove the marker.
 
-| Kernel | Pattern | Variant | Notes |
+| Kernel | Pattern | Status | Notes |
 |---|---|---|---|
-| s311  | `sum_out[0] = 0; for i: sum_out[0] += a[i]`                  | array-slot accumulator | trivial extension: detect when accumulator is a 1-element array slot, not a Python scalar |
-| s313  | `dot[0] = 0; for i: dot[0] += a[i]*b[i]`                     | array-slot dot product | same fix as s311 |
-| vdotr | `dot_out[0] = 0; for i: dot_out[0] += a[i]*b[i]`             | array-slot dot product | same fix as s311 |
-| s317  | `q[0] = 1.0; for i in range(LEN/2): q[0] *= 0.99`            | constant-operand product reduction | same fix; check WCR identity is `*` |
-| s314  | `x = a[0]; for i: if a[i] > x: x = a[i]; result[0] = x`      | max with branch         | branch-form max/min; emit `Reduce(max)` |
-| s316  | `x = a[0]; for i: if a[i] < x: x = a[i]; result[0] = x`      | min with branch         | same as s314 |
-| s319  | `s = 0; for i: a[i]=c+d; s += a[i]; b[i]=c+e; s += b[i]; b[0]=s` | reduction + per-element side writes | requires fission: split the parallel writes from the reduction |
-| s352  | `dot = 0; for i in range(0, LEN-4, 5): dot += a[i]*b[i] + … + a[i+4]*b[i+4]` | manually-unrolled dot product | `RerollUnrolledLoops` must run *before* `LoopToReduce` for this; both passes exist but the ordering doesn't recognise this case |
-| s4115 | `s = 0; for i: s += a[i] * b[ip[i]]; sum_out[0] = s`         | gather + sum reduction  | gather is fine inside a `Reduce` body (read-only indirection); extend to handle gather-in-reduce |
-| s4116 | `s = 0; for i: s += a[off] * aa[j-1, ip[i]]; sum_out[0] = s` | gather + sum reduction (2D) | same as s4115 |
-| s318  | `index=0; maxv=|a[0]|; for i: if |a[k]|>maxv: index=i; maxv=|a[k]|; k+=inc` | max-with-index + stride | complex: a max-tracking + argmax. Lower priority than s314/s316 |
-| s332  | `for i: if a[i]>threshold: index=i; value=a[i]; break`       | conditional + break     | break makes this genuinely sequential; leave as ✗ |
+| **s311**  | `sum_out[0] = 0; for i: sum_out[0] += a[i]`                  | ✓R (fixed `9bb…`) | `_extract` now chases forward through copy-only transient chains to the eventual non-transient accumulator, so an array-slot accumulator with shape `(N,)` (not scalar-like by descriptor) is accepted on the access. |
+| s313  | `dot[0] = 0; for i: dot[0] += a[i]*b[i]`                     | ☐ multi-tasklet body | After `TrivialTaskletElim` the body has 2 tasklets (`_Mult_` then `_Add_`). `_extract` refuses ≥2 tasklets. Fix: recognise "compute tasklet(s) feeding one accumulator-update tasklet" as a single virtual fold; the array-side operand becomes a per-iter computed expression which the `Reduce` would either materialise to a temp or run as a tasklet-body WCR. |
+| vdotr | `dot_out[0] = 0; for i: dot_out[0] += a[i]*b[i]`             | ☐ same as s313 | Same shape, same fix. |
+| **s317**  | `q[0] = 1.0; for i in range(LEN/2): q[0] *= 0.99`            | ☐ IV detection preferred | Two valid answers. The clean one is **IV detection / scalar evolution** (closed-form `q[0] = q[0]_init * 0.99**(N//2)`, O(1) — see ☐IV-detection section). LoopToReduce could also lift this as `Reduce(*)` over a virtual constant `[0.99]*N//2` array, but that's O(N) and materialises a useless temp. Keep the xfail until IV detection lands; if IV detection misses the geometric-product case, fall back to the virtual-array `Reduce` path. |
+| s314  | `x = a[0]; for i: if a[i] > x: x = a[i]; result[0] = x`      | ☐ frontend shape | Frontend lowers `if a[i] > x` to a body of `[ConditionalBlock, SDFGState, SDFGState]` at loop level (not the in-conditional 2-empty-states form the conditional-interstate pattern expects). Either teach `_extract` the loop-level shape, or add a small `CollapseConditionalCompare` prep that rewrites `cond_prep + cond_block + post` to the existing in-conditional shape. |
+| s316  | `x = a[0]; for i: if a[i] < x: x = a[i]; result[0] = x`      | ☐ same as s314 | Same shape, same fix. |
+| s319  | `s = 0; for i: a[i]=c+d; s += a[i]; b[i]=c+e; s += b[i]; b[0]=s` | ☐ needs fission | Reduction + per-element side writes. Requires fissioning the parallel writes from the reduction first; today `_extract` refuses any non-accumulator write. Apply MapFission(?) before LoopToReduce. |
+| s352  | `dot = 0; for i in range(0, LEN-4, 5): dot += a[i]*b[i] + … + a[i+4]*b[i+4]` | ☐ needs reroll first | Manually-unrolled dot product. `RerollUnrolledLoops` exists in canon but doesn't catch this 5-wide block shape; once it does, the result is a clean dot product handled by the same fix as s313. |
+| s4115 | `s = 0; for i: s += a[i] * b[ip[i]]; sum_out[0] = s`         | ☐ gather + sum (use WCR) | **No `Reduce`-with-gather libnode exists.** The clean path is `AugAssignToWCR + LoopToMap` → parallel map with WCR-write on the scalar. Codegen lowers WCR on scalars to atomic add. Per-thread privatisation with a `NUM_THREADS×stride-padded` accumulator + final tree-reduce is a strictly better lowering but is a **separate optimisation** (see `PrivatizeReductionAccumulator` TODO below) — not free. |
+| s4116 | `s = 0; for i: s += a[off] * aa[j-1, ip[i]]; sum_out[0] = s` | ☐ same as s4115 | Same shape, 2D gather. |
+| s318  | `index=0; maxv=|a[0]|; for i: if |a[k]|>maxv: index=i; maxv=|a[k]|; k+=inc` | ☐ complex (lower priority) | Argmax with stride; tracks both the value AND the index, so it's a fused `Reduce(max)` plus index propagation. Lower priority than the simple s314/s316. |
+| s332  | `for i: if a[i]>threshold: index=i; value=a[i]; break`       | ✗ break makes this sequential | Listed for completeness. |
 
-**Expected impact:** ~10 kernels move from `(1,0,0)` to `(0,0,1)`. Final-parallelism rate would climb from 47.4% → ~54%.
+**Expected impact** when the above land: ~9 kernels move from `(1,0,0)` to
+`(0,0,1)` or `(0,1,0)`. Final-parallelism rate would climb from **48.6% → ~54%**.
+
+### ☐IV detection (induction-variable / scalar-evolution analysis)
+
+Loops where a scalar's update is a simple recurrence in the loop variable
+(`x = x * c`, `x = x + c`, `x = a*i + b`) have closed-form post-loop
+values. A scalar-evolution pass would recognise this and replace the loop
+with the closed form, eliminating the loop entirely (O(1) for s317-style
+geometric products; useful for many cleanup-after-prep cases too). Track
+as a follow-on to the LoopToReduce extensions above. Reference: LLVM's
+`ScalarEvolution`, GCC's `tree-ssa-loop-niter`, MLIR's affine-scalrep.
+
+### ☐PrivatizeReductionAccumulator (for WCR reductions)
+
+When `LoopToMap` lifts an `acc += expr(i)` loop to a parallel map with WCR
+write, today's codegen lowers the WCR on a scalar to an atomic add. A
+faster lowering is the classic per-thread-slot pattern:
+
+* Allocate a temp `acc_local: T[NUM_THREADS]` with stride padding to 64
+  bytes (avoid false sharing across cache lines).
+* Each parallel iteration writes to its `acc_local[thread_id]`.
+* A final tree-reduction over `acc_local` produces the global `acc`.
+
+This is what `#pragma omp parallel for reduction(+:acc)` does
+automatically; in DaCe it needs an explicit pass. The pass would identify
+WCR-on-scalar in a parallel map, fission a per-thread accumulator out, and
+splice in the final tree-reduce. (The user's intuition: DaCe might be too
+high-level for the stride-padding bit — but the SDFG-level expression of
+"shape `(NUM_THREADS,)` with `strides=(64,)`" IS expressible; codegen would
+respect it.)
 
 ## ☐C Missed forward-read parallel patterns — priority 2
 
