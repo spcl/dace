@@ -1043,9 +1043,14 @@ class KernelSpec:
                 f"There can not be more than one GPU stream assigned to a kernel, but {len(gpustream_input)} were assigned."
             )
 
+        # If no stream edge was wired to this kernel (e.g. the kernel sits inside a
+        # libnode-expanded NestedSDFG whose stream chain hasn't been propagated past
+        # expansion), launch on the default stream (CUDA stream 0 / ``nullptr``).
+        stream_arg = str(gpustream_input[0].dst_conn) if gpustream_input else "nullptr"
+
         self.kernel_wrapper_args_as_input: List[str] = (
             ['__state'] + [ptr(name, data, sdfg, cudaCodeGen._frame)
-                           for name, data in self.arglist.items()] + [str(gpustream_input[0].dst_conn)])
+                           for name, data in self.arglist.items()] + [stream_arg])
 
         self.kernel_wrapper_args_typed: List[str] = (
             [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] + args_typed +
