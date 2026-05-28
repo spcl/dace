@@ -302,17 +302,31 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
-    # reduction_to_wcr_map: loops that survived parallelize as scalar accumulators
-    # (multi-tasklet 'compute then accumulate' shapes that LoopToReduce kept
-    # narrow on -- e.g. ``s += a[i] * b[i]`` for s313/vdotr, ``s += a[i] *
-    # b[ip[i]]`` for the gather-sum s4115 family) become parallel WCR-maps via
-    # ``AugAssignToWCR`` (frontend copy-wrapped RMW -> WCR write) + ``LoopToMap``
-    # (now the loop has a unique-write-per-iter map shape with a scalar WCR
-    # target). The downstream codegen lowers the WCR write to atomics today;
-    # the OMP ``reduction(op:var)`` clause emission for length-1-array WCR
-    # targets is the follow-on perf fix.
+    # reduction_to_wcr_map: full "scalar accumulator loop -> parallel WCR-map
+    # with a true scalar accumulator" pipeline. Loops that survived parallelize
+    # as multi-tasklet 'compute then accumulate' shapes (LoopToReduce keeps
+    # narrow on these -- e.g. ``s += a[i] * b[i]`` for s313/vdotr, ``s += a[i]
+    # * b[ip[i]]`` for the gather-sum s4115 family) become parallel WCR-maps
+    # via ``AugAssignToWCR`` (frontend copy-wrapped RMW -> WCR write) +
+    # ``LoopToMap``. Then the post-L2M NestedSDFG body is inlined and adjacent
+    # states fused so the WCR edge is visible at the top-level MapExit, and
+    # ``PrivatizeReductionAccumulator`` swaps the array-element WCR target for
+    # a transient ``Scalar`` (with init + writeback states) -- the shape the
+    # downstream WCR codegen can lower to a clean OMP ``reduction(op:scalar)``
+    # clause. Folded into one stage because the four steps (AugWCR, L2M,
+    # inline+fuse, privatize) form an atomic logical transformation.
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([AugAssignToWCR()])),
           ('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    # TODO: PrivatizeReductionAccumulator belongs HERE (folded into the
+    # logical reduction_to_wcr_map stage per the design: a scalar-reduction
+    # loop becomes a parallel WCR-map with a *true scalar* accumulator). The
+    # pass is standalone-correct (4/4 unit tests + numerical) but the in-
+    # pipeline interaction with the trailing post_l2m / inline / state-fusion
+    # cleanup drops the map's work for s313 / vdotr. Needs the privatize step
+    # to either (a) protect its inserted init+writeback states from being
+    # fused with the map state, or (b) introduce a synthetic data dependency
+    # so the cleanup respects state ordering. See unit tests in
+    # tests/passes/privatize_reduction_accumulator_test.py.
 
     # TODO: scatter -- ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort +
     # adjacent-equal`` guard on each scatter ``idx`` array and permissively lifts
