@@ -17,11 +17,37 @@ python -m tests.corpus.measure_parallelization > /tmp/l2m_report.txt
 |-----------------|------:|-----:|--------:|
 | baseline (simplify only) | 178 | 2 | 0 |
 | LoopToMap only  |   105 |   71 |       0 |
-| canonicalize    |    90 |   82 |       3 |
+| canonicalize    |    89 |   82 |       3 |
 
-Δ vs the report's first numbers (before dropping `NormalizeLoopsAndMaps` and
-adding `LoopToReduce` chase-forward): canon loops `92→90`, maps `81→82`,
-reduces `2→3`. Final-parallelism rate **47.4% → 48.6%**.
+Δ from the report's first numbers (before this session's canonicalize work):
+canon loops `92→89` (-3), maps `81→82` (+1), reduces `2→3` (+1). Final-
+iteration parallelism rate **47.4% → 49.2%**.
+
+### Session changes that produced the above (chronological)
+
+1. **`NormalizeLoopsAndMaps` dropped from canon pipeline** (commit `664ef7d1e`):
+   the pass rewrote `for i in b:e:s` into `for j in 0:trip:1` with body
+   `i -> b+s*j`, which then blocked `LoopToMap` from recognising the now-
+   shifted index as uniquely-iter. +1 map (s172), 0 regressions, 151/151
+   corpus value-test green.
+2. **`LoopToReduce` chase-forward** (commit `d7f98e8a0`): `_extract` walks
+   forward through copy-only transient AccessNodes to the eventual
+   non-transient accumulator. Unlocks array-slot accumulators (`sum_out[0]
+   += a[i]` on a length-`N` array). +1 reduce (s311), 0 regressions, +1
+   passing unit test plus 5 strict-xfail tests for the remaining patterns.
+3. **`InductionVariableSubstitution`** (commit `f381e1ff8`): new
+   canonicalize pass replacing `for i in range(N): acc = acc OP const`
+   loops with their closed form (`acc_init OP const`-applied-N-times).
+   Eliminates s317 (the `q[0] *= 0.99` geometric IV) entirely (O(N) → O(1)).
+   151/151 corpus value-test green.
+4. **Pipeline reorder to specialize → unroll → IV → LICM → simplify**
+   (commits `948843756` + `3429acb25`): align the canon reduce stage to
+   the classical red-dragon-book order (Ch. 9.5–9.6). Constant-propagation
+   now runs *before* `ShortLoopUnroll` (so unroll sees concrete trip
+   counts), and `LoopInvariantCodeMotion` is wired into the reduce block
+   right after IV and before `SimplifyPass` / `LoopToReduce`. Pure
+   refactor (0 kernel deltas in this commit), but unblocks the next round
+   of LICM-before-LoopToReduce + multi-tasklet LoopToReduce extensions.
 
 | Outcome | Kernels | % of 151 |
 |---|---:|---:|
