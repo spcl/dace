@@ -1,17 +1,44 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Replace simple-induction-variable loops with a single closed-form assignment.
+"""Closed-form substitution for simple induction-variable loops.
 
 A loop body of the shape ``for i in range(start, end, stride): accum = accum OP const``
-(where ``OP`` is ``+`` or ``*`` and ``const`` is loop-invariant) is a scalar
-recurrence with a closed form:
+(where ``OP`` is ``+`` or ``*`` and ``const`` is a numeric literal) is a scalar
+recurrence with a closed form. Following Aho/Lam/Sethi/Ullman (the "red dragon
+book", Ch. 9.6 -- induction variables and scalar evolution):
 
-* ``accum = accum + c`` over ``N`` iters  ->  ``accum = accum_init + c*N``
-* ``accum = accum * c`` over ``N`` iters  ->  ``accum = accum_init * c**N``
+* ``accum = accum + c`` over ``N`` iters  ->  ``accum_N = accum_init + c*N``
+* ``accum = accum * c`` over ``N`` iters  ->  ``accum_N = accum_init * c**N``
 
 Eliminating the loop turns an ``O(N)`` recurrence into ``O(1)`` straight-line
-code. The TSVC kernel ``s317`` (``q[0] *= 0.99`` for ``LEN_1D//2`` iters) is
-the canonical hit. Running this pass before ``LoopToReduce`` and ``LoopToMap``
-means the closed-form replacement gets the work, not a fold or a parallel map.
+code. Cross-reference: LLVM's ``IndVarSimplify`` pass, especially the
+``llvm/test/Transforms/IndVarSimplify/closed-form-*.ll`` family of tests.
+
+Scope today (kept narrow on purpose so the pass is provably correct):
+
+* single-state body with a single tasklet,
+* tasklet code = ``__out = __in1 OP const`` (or symmetric),
+* read input traces back (through one optional slice-transient) to the same
+  accumulator slot the tasklet's output eventually reaches,
+* both the read and write subsets are loop-invariant (``a[i] = a[i] * 0.5`` is
+  a per-element map, NOT an IV; rejected),
+* stride ``== 1`` (extending to symbolic strides is a follow-up; the closed
+  form is the same except trip count is ``(end-start)/stride+1``).
+
+Out of scope for this implementation (potential follow-ups):
+
+* derived IVs (``j = a*i + b`` from a basic IV ``i``) -- needs the IV graph
+  from Ch. 9.6, then strength-reduction or closed-form substitution;
+* loop-invariant non-literal operand (``s = s * k[0]`` with ``k[0]`` invariant)
+  -- straightforward extension to the constant-detection branch;
+* multi-statement bodies where the IV is one of several updates -- needs the
+  "hoist IV out, leave the rest in the loop" split (TODO);
+* non-commutative WCR ops -- our substitution assumes commutativity, which
+  holds for ``+`` and ``*`` but would not for general WCR.
+
+Eliminating the loop turns an O(N) recurrence into O(1) straight-line code,
+and runs BEFORE LoopToReduce / LoopToMap so the IV-eligible loop never gets
+mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
+(``q[0] *= 0.99`` for ``LEN_1D//2`` iters) is the canonical hit.
 """
 import ast
 from typing import Optional, Tuple

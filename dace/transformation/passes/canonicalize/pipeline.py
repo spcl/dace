@@ -179,42 +179,44 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # normalize rescales it).
     s += [('reroll', RerollUnrolledLoops())]
 
-    # reduce: the front-loaded reduction + parallelization-prep recipe, run right
-    # after lowering (before loop fission / perfect nesting), in this exact order:
-    #   trivial_tasklet_elimination  -- drop the frontend's ``__out = __inp`` copy
-    #     tasklets, exposing the bare read-modify-write spine of accumulators;
-    #   WCRToAugAssign               -- normalise any write-conflict-resolution
-    #     write back into an explicit ``a = a + b`` augmented assignment, so every
-    #     reduction (WCR-form or frontend copy-wrapped) reaches ``loop_to_reduce``
-    #     in the one shape it recognises;
-    #   short_loop_unroll            -- fully unroll tiny constant-trip loops to
-    #     straight-line code;
-    #   scalar_fission (PrivatizeScalars) -- privatize loop-local scalars (drop
-    #     false carried deps);
-    #   symbol_propagation + constant_propagation -- fold the concrete iteration
-    #     indices unrolling exposes, simplifying bounds and guards;
-    #   loop_to_reduce               -- lift the augmented-assignment accumulator
-    #     loops to ``Reduce`` library nodes.
+    # reduce: front-loaded reduction + parallelization-prep recipe, applied right
+    # after lowering. Order follows the classical recipe:
+    #
+    #   trivial_tasklet_elim  -- drop ``__out = __inp`` copies, exposing the bare RMW
+    #     spine of accumulators (so downstream passes see the canonical shape);
+    #   WCRToAugAssign        -- normalise WCR writes back into explicit ``a = a + b``
+    #     augmented assignments, so every reduction reaches loop_to_reduce in one shape;
+    #
+    #   --- "specialize -> unroll -> IV -> LICM -> simplify" block ---
+    #   PrivatizeScalars + SymbolProp + ConstProp -- specialize the symbols and fold
+    #     constants into bounds/guards (visible accumulator initializers, concrete
+    #     trip counts for unroll);
+    #   ShortLoopUnroll       -- fully unroll tiny constant-trip loops to straight-
+    #     line code (now that ConstProp has revealed the constant trip counts);
+    #   _uniq_unroll          -- give the loops that survive (and any the unroll
+    #     cloned) unique ``_loop_it_<N>`` names before reduction passes read them;
+    #   InductionVariableSubstitution -- collapse single-tasklet 'acc = acc OP const'
+    #     loops to their O(1) closed form (the classical IV / scalar-evolution shape;
+    #     red-dragon-book Ch. 9.6). Runs BEFORE LICM so IV-eliminated loops don't
+    #     hold up LICM-eligible expressions in their bodies;
+    #   LoopInvariantCodeMotion -- hoist loop-invariant tasklets out of loop bodies
+    #     and map scopes to the preheader (red-dragon-book Ch. 9.5);
+    #   SimplifyPass          -- clean up the staged hoists, fused states, and the
+    #     IV-eliminated-loop placeholders before loop_to_reduce reads the body;
+    #
+    #   loop_to_reduce        -- lift the augmented-assignment accumulator loops
+    #     to ``Reduce`` library nodes.
+    #
     # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
-    # via ``loop_to_reduce`` -> ``Reduce`` nodes, not a WCR-on-Map. ``PrivatizeScalars``
-    # is adapted (``_PrivatizeScalarsStage``) so its analysis dependencies resolve.
+    # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
+    # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
-          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])),
+          ('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
     if unroll_limit > 0:
-        # A fully-unrolled body is straight-line code riddled with redundant
-        # states, transients and copies; run ``SimplifyPass`` once right after the
-        # unroll to collapse those before the reduction recipe reads the body. The
-        # subsequent ``UniqueLoopIterators`` must then run AFTER both: the loops the
-        # unroll leaves (and any it cloned) must carry unique ``_loop_it_<N>`` names
-        # on the post-simplify structure before ``loop_to_reduce`` reads them.
-        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', SimplifyPass()), ('reduce', _uniq_unroll)]
-    # InductionVariableSubstitution runs after constant-propagation (so the
-    # accumulator initializer is visible) but before LoopToReduce -- an
-    # IV-eligible loop should collapse to its O(1) closed form, not become an
-    # O(N) Reduce. Catches the geometric/arithmetic scalar recurrences canon
-    # leaves behind after simplify+unroll, e.g. ``q[0] *= 0.99`` (TSVC s317).
-    s += [('reduce', _PrivatizeScalarsStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation()),
-          ('reduce', InductionVariableSubstitution()), ('reduce', LoopToReduce())]
+        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+    s += [('reduce', InductionVariableSubstitution()), ('reduce', LoopInvariantCodeMotion()),
+          ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
