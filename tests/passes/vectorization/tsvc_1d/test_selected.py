@@ -316,80 +316,44 @@ def dace_s441_v2(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float
 
 
 def test_s441(remainder_strategy):
-    LEN_1D_val = 64  # example length
-
-    # Allocate random inputs
+    # s441 routes through the SHARED tile-path harness (not the file-local
+    # ``run_vectorization_test``) so the fp_factor branch lowering runs
+    # through ``VectorizeCPUMultiDim``, which supports fp_factor + masked
+    # remainder (the legacy ``VectorizeCPU`` does not). The orchestrator
+    # applies its own ``EliminateBranches`` for fp_factor, so we just hand it
+    # the raw kernel.
+    from tests.passes.vectorization.helpers.harness import run_vectorization_test as shared_run
+    LEN_1D_val = 64
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
     c = np.random.rand(LEN_1D_val).astype(np.float64)
-    d = np.random.randn(LEN_1D_val).astype(np.float64)  # includes negative, zero, positive
-
-    sdfg = dace_s441.to_sdfg()
-    eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
-    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    assert len(branches) == 0, f"EliminateBranches left {len(branches)} ConditionalBlock(s) in dace_s441"
-
-    # s441 has EliminateBranches applied manually → use_fp_factor=True is
-    # the matching branch-lowering knob in VectorizeCPU. masked-remainder is
-    # not compatible with fp_factor (locked plan decision), so pin to
-    # branch_mode='fp_factor' and skip the masked variant.
-    if remainder_strategy == "masked":
-        pytest.skip(
-            "s441 uses EliminateBranches → fp_factor; masked-remainder requires branch_normalization (locked plan rule)"
-        )
-    run_vectorization_test(
+    d = np.random.randn(LEN_1D_val).astype(np.float64)
+    shared_run(
         dace_func=dace_s441,
-        arrays={
-            "a": a,
-            "b": b,
-            "c": c,
-            "d": d
-        },
-        params={
-            "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 1
-        },
+        arrays={"a": a, "b": b, "c": c, "d": d},
+        params={"LEN_1D": LEN_1D_val, "ITERATIONS": 1},
         sdfg_name="dace_s441",
-        apply_loop_to_map=True,
         remainder_strategy=remainder_strategy,
         branch_mode="fp_factor",
     )
-
-    return a
 
 
 def test_s441_v2(remainder_strategy):
-    LEN_1D_val = 64  # example length
-
-    # Allocate random inputs
+    # Same migration rationale as ``test_s441`` above.
+    from tests.passes.vectorization.helpers.harness import run_vectorization_test as shared_run
+    LEN_1D_val = 64
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
     c = np.random.rand(LEN_1D_val).astype(np.float64)
-    d = np.random.randn(LEN_1D_val).astype(np.float64)  # includes negative, zero, positive
-
-    sdfg = dace_s441_v2.to_sdfg()
-    eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
-    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    assert len(branches) == 0, f"EliminateBranches left {len(branches)} ConditionalBlock(s) in dace_s441_v2"
-
-    if remainder_strategy == "masked":
-        pytest.skip("s441_v2 uses EliminateBranches → fp_factor; masked-remainder requires branch_normalization")
-    run_vectorization_test(
+    d = np.random.randn(LEN_1D_val).astype(np.float64)
+    shared_run(
         dace_func=dace_s441_v2,
-        arrays={
-            "a": a,
-            "b": b,
-            "c": c,
-            "d": d
-        },
+        arrays={"a": a, "b": b, "c": c, "d": d},
         params={"LEN_1D": LEN_1D_val},
         sdfg_name="dace_s441_v2",
-        apply_loop_to_map=True,
         remainder_strategy=remainder_strategy,
         branch_mode="fp_factor",
     )
-
-    return a
 
 
 # ============================================================

@@ -43,11 +43,15 @@ def build_tsvc_matrix(kernels, lens):
     Generates only the *meaningful* combos so redundant ones are never
     collected (instead of being collected then ``pytest.skip``-ped):
 
-    - locked rule: ``fp_factor`` + ``masked`` is rejected by VectorizeCPU.
     - Lever 1: a branchless kernel's ``fp_factor`` SDFG == its ``merge``
       SDFG (no ``if`` to lower) — emit ``merge`` only.
     - Lever 2: ``LEN %% W == 0`` ⇒ P2 emits no remainder ⇒ ``masked``
       SDFG == ``scalar`` SDFG — emit ``scalar`` only.
+
+    Note: ``fp_factor`` + ``masked`` is now allowed on the tile path (the
+    iter_mask gates stores; the ``c*x + (1-c)*y`` arithmetic runs on every
+    lane unchanged). The legacy ``VectorizeCPU`` 1D path still rejects it,
+    so the harness skips that combo for the legacy arm only.
 
     :param kernels: list of tuples whose ``[0]`` is the ``@dace.program``
         (remaining elements, e.g. argnames/argspec/params, are passed
@@ -62,8 +66,6 @@ def build_tsvc_matrix(kernels, lens):
         for L in lens:
             for rem in ("scalar", "masked"):
                 for br in ("merge", "fp_factor"):
-                    if br == "fp_factor" and rem == "masked":
-                        continue
                     if br == "fp_factor" and not has_branch:
                         continue
                     if rem == "masked" and L % 8 == 0:

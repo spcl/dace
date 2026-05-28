@@ -186,22 +186,13 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         if branch_mode not in ("merge", "fp_factor"):
             raise NotImplementedError(f"VectorizeCPUMultiDim: branch_mode {branch_mode!r} not in "
                                       f"{{'merge', 'fp_factor'}}")
-        # K-dependent knob support. K=1 covers every legacy knob variant (so the
-        # 1D path can be dropped); K>=2 is the pure-lowered tile path and supports
-        # the merge branch with any remainder strategy (full_mask / masked_tail /
-        # scalar_postamble — the scalar tail is split off per dim and stays a plain
-        # step-1 scalar loop). The fp_factor branch is still K=1-only (its float
-        # blend has no K-dim tile-op form yet).
-        if len(widths) >= 2:
-            if branch_mode != "merge":
-                raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} supports only "
-                                          f"branch_mode='merge' (fp_factor is K=1-only); got {branch_mode!r}")
-        elif branch_mode == "fp_factor" and remainder_strategy != "scalar_postamble":
-            # K=1: fp_factor (c*x + (1-c)*y) can't combine with an iteration mask
-            # cleanly (the legacy plan rule); it pairs with the scalar postamble.
-            raise NotImplementedError("VectorizeCPUMultiDim: branch_mode='fp_factor' requires "
-                                      "remainder_strategy='scalar_postamble' (fp-factor is incompatible "
-                                      "with a masked remainder)")
+        # K-dependent knob support. K=1 supports every (branch, remainder) combo
+        # since the iter_mask only gates stores (the fp_factor arithmetic itself
+        # runs on every lane unchanged). K>=2 requires the merge branch — the
+        # tile path has no K-dim ``c*x + (1-c)*y`` lowering yet.
+        if len(widths) >= 2 and branch_mode != "merge":
+            raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} supports only "
+                                      f"branch_mode='merge' (fp_factor is K=1-only); got {branch_mode!r}")
 
         widths_t = tuple(widths)
         # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read the

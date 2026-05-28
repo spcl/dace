@@ -128,19 +128,14 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     :returns: A short string explaining the skip, or ``""`` when the
         knobs are compatible with the v2 path.
     """
-    # fp_factor lowers branches to ``c*x + (1-c)*y`` (single-op tile binops); it
-    # pairs only with the scalar postamble (incompatible with a masked remainder,
-    # the locked plan rule), so skip the masked / sve_style fp_factor combos.
-    if branch_mode == "fp_factor" and (remainder_strategy != "scalar" or emission_style != "default"):
-        return f"branch_mode=fp_factor requires scalar remainder + default emission (got "\
-               f"{remainder_strategy}/{emission_style})"
-    # ``scalar`` -> the single masked W-strided map (full_mask); ``masked`` ->
-    # the masked-tail split (mask-free divisible interior + masked boundary).
+    # ``sve_style`` (always-masked, no remainder split) is incompatible with
+    # ``fp_factor`` since the SVE chain's ``_iter_mask`` cannot ride through
+    # ``c*x + (1-c)*y`` float arithmetic. Every other (branch, remainder,
+    # emission) combo is supported on the tile path.
+    if emission_style == "sve_style" and branch_mode != "merge":
+        return f"sve_style requires branch_mode='merge' (got {branch_mode!r})"
     if remainder_strategy not in ("scalar", "masked"):
         return f"remainder_strategy={remainder_strategy!r} (tile path supports scalar/masked)"
-    # ``sve_style`` (legacy: always-masked, no remainder split, merge branch) maps
-    # to the tile path's ``full_mask`` (single W-strided masked map, iter_mask on
-    # every tile) — its faithful K-dim analogue. ``default`` is also supported.
     if emission_style not in ("default", "sve_style"):
         return f"emission_style={emission_style!r} (tile path supports default/sve_style)"
     if fuse_overlapping_loads:
@@ -183,22 +178,15 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            num_cores: int = 8,
                            vectorize_config: str = "tile_nodes"):
 
-    # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
-    # plan decision (the masked path emits merge tasklets / iter_mask blends
-    # that fp-factor lowering can't combine cleanly). Skip rather than
-    # propagate a hard error through every (fp_factor, masked, *) parametrize.
     import pytest as _pytest
-    if branch_mode == "fp_factor" and remainder_strategy == "masked":
-        _pytest.skip("fp_factor is incompatible with masked remainder (locked plan rule)")
-    # sve_style='fixed' forces the merge branch front and has no remainder
-    # loop (the global _iter_mask covers the tail). Skip parametrizations
-    # that contradict these forced knobs rather than propagating the
-    # ValueError VectorizeCPU would raise.
+    # ``sve_style`` (legacy: always-masked, no remainder split) is incompatible
+    # with ``fp_factor`` since the SVE chain's ``_iter_mask`` predicate cannot
+    # ride through ``c*x + (1-c)*y`` arithmetic. Every other
+    # (branch_mode, remainder_strategy) combo is now allowed and handled either
+    # by the tile path (above) or by the legacy ``VectorizeCPU`` (below).
     if emission_style == "sve_style":
         if branch_mode != "merge":
             _pytest.skip("sve_style forces merge branch lowering; skipping fp_factor parametrisation")
-        if remainder_strategy != "scalar":
-            _pytest.skip("sve_style has no remainder loop; skipping non-default remainder_strategy")
         if fuse_overlapping_loads:
             # The fuse-overlapping-loads pass is incompatible with the masked
             # path the SVE chain runs (the pass itself raises here). Skip

@@ -145,27 +145,27 @@ def _knob_combo_supported(params: dict) -> bool:
 
     Only the knobs present in ``params`` constrain the result (a test that
     declares just ``remainder_strategy`` is never deselected on the others).
-    The locked rules:
+    The remaining rule:
 
     - ``emission_style='sve_style'`` (always-masked, no remainder split) forces
-      ``branch_mode='merge'`` and ``remainder_strategy='scalar'``.
-    - ``branch_mode='fp_factor'`` (``c*x + (1-c)*y`` arithmetic) requires
-      ``remainder_strategy='scalar'`` and ``emission_style='default'`` (it
-      cannot combine with a masked remainder — the locked plan rule).
+      ``branch_mode='merge'`` — ``fp_factor``'s ``c*x + (1-c)*y`` arithmetic
+      cannot share the ``_iter_mask`` predicate the SVE chain emits everywhere.
+      The remainder knob is now free (``remainder='masked'`` simply re-uses
+      ``full_mask`` since the SVE chain is itself always-masked).
+
+    ``fp_factor`` + ``remainder='masked'`` is allowed on the tile path: the
+    orchestrator combines the per-lane bool mask with the float arithmetic by
+    a single bool->float cast on the merge result. Previously deselected as a
+    locked-plan rule; now exercised end-to-end by the harness.
 
     :param params: The item's parametrization (callspec ``params``).
     :returns: ``False`` for a globally-invalid combo (deselected at collection
         so it is never reported as a skip), ``True`` otherwise.
     """
     branch = params.get("branch_mode")
-    remainder = params.get("remainder_strategy")
     emission = params.get("emission_style")
-    if emission == "sve_style":
-        if branch not in (None, "merge") or remainder not in (None, "scalar"):
-            return False
-    if branch == "fp_factor":
-        if remainder not in (None, "scalar") or emission not in (None, "default"):
-            return False
+    if emission == "sve_style" and branch not in (None, "merge"):
+        return False
     return True
 
 
