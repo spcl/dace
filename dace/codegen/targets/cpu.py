@@ -1283,6 +1283,13 @@ class CPUCodeGen(TargetCodeGenerator):
                         # constexpr arrays
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        elif var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer):
+                            # Scalar source feeding a pointer-typed connector
+                            # (e.g. CopyLibraryNode -> cudaMemcpyAsync from a host
+                            # scalar argument). The connector's pointer type wins
+                            # over the source's scalar ctypedef, and we have to
+                            # take the address of the host variable.
+                            result += "{} {} = &{};".format(conntype.ctype, local_name, expr)
                         else:
                             # Pointer reference
                             result += "{} {} = {};".format(ctypedef, local_name, expr)

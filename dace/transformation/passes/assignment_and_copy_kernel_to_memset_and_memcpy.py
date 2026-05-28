@@ -4,10 +4,11 @@ import warnings
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import dace
-from dace import properties
+from dace import dtypes, properties
 from dace.memlet import Memlet
 from dace.sdfg import graph, utils as sdutils
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 from dace.libraries.standard.nodes import copy_node, memset_node
 
 
@@ -540,12 +541,33 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                                dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=src_access_node.data))
                 state.add_edge(libnode, libnode_cls.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
                                dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
+            self._transfer_stream_wiring(state, node, libnode)
             self.rmid += 1
             rmed_count += 1
             joined_edges.update(path)
 
         self.rm_edges(state, joined_edges)
         return rmed_count
+
+    def _transfer_stream_wiring(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+                                libnode: dace.nodes.LibraryNode):
+        """Move the GPU-stream in-wiring from ``map_entry`` onto ``libnode``.
+
+        The pre-lift map carries a ``__dace_current_stream`` in-connector that the
+        stream scheduler wired to a ``gpu_streams[i]`` AccessNode. The expanded
+        cudaMemcpy*Async tasklet derived from ``libnode`` needs the same stream
+        binding, so we re-source the edge onto the libnode. Without this transfer
+        the post-expansion scheduler re-entry is gated by ``is_gpu_lowering_applied``
+        and the new tasklet never gets a stream.
+        """
+        if CURRENT_STREAM_NAME not in map_entry.in_connectors:
+            return
+        stream_in_edges = [e for e in state.in_edges(map_entry) if e.dst_conn == CURRENT_STREAM_NAME]
+        if not stream_in_edges:
+            return
+        libnode.add_in_connector(CURRENT_STREAM_NAME, dtypes.gpuStream_t)
+        for e in stream_in_edges:
+            state.add_edge(e.src, e.src_conn, libnode, CURRENT_STREAM_NAME, dace.memlet.Memlet.from_memlet(e.data))
 
     def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
         """Whether ``n`` carries scope-passthrough connectors.
