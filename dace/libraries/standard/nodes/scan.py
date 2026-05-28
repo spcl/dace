@@ -50,7 +50,6 @@ import enum
 
 from dace.libraries.sort.environments.cub import CUB
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
-from dace.libraries.standard.environments.scan import ScanCPU
 
 
 # Connector names exposed for library-node builders.
@@ -139,7 +138,7 @@ def _identity_expr(node: "Scan", in_desc) -> str:
 class ExpandPure(ExpandTransformation):
     """Portable fallback: a hand-written single-loop scan."""
 
-    environments = [ScanCPU]
+    environments = [CPUEnv]
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -176,7 +175,7 @@ class ExpandPure(ExpandTransformation):
 class ExpandCPU(ExpandTransformation):
     """C++17 ``std::inclusive_scan`` / ``std::exclusive_scan`` (sequential, vectorisable)."""
 
-    environments = [CPUEnv, ScanCPU]
+    environments = [CPUEnv]
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
