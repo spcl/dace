@@ -6,14 +6,17 @@ Run::
 
     python -m tests.corpus.measure_parallelization
 
-Prints aggregate counts of ``LoopRegion`` / ``MapEntry`` / ``Reduce`` nodes
-before and after each strategy, the per-strategy conversion deltas, and a
-per-kernel table of kernels where the two strategies disagree in map count.
+For every kernel: build the simplified baseline SDFG, then count LoopRegions /
+MapEntries / Reduce libnodes after (a) ``LoopToMap`` repeated and (b) full
+``canonicalize``. Prints an aggregate table, a per-kernel table, and an
+"inspection" section that dumps the actual map ranges + remaining loops for a
+configurable set of kernels (default: those where canon and L2M produce
+different map counts or where canon leaves more loops sequential).
 """
 import copy
 import time
 import traceback
-from typing import Tuple
+from typing import List, Tuple
 
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes as nd
@@ -27,38 +30,76 @@ from tests.corpus import tsvc
 _PEEL_LIMIT = 4
 _BREAK_ANTI_DEP = True
 
+#: Kernels to dump in detail at the end (in addition to auto-detected anomalies).
+_FORCE_INSPECT = {'s1115_d_single', 's152_d_single', 's172_d_single'}
+
 
 def _count(sdfg) -> Tuple[int, int, int]:
-    """:returns: ``(loops, maps, reduces)`` -- LoopRegions, MapEntries, Reduce libnodes."""
+    """:returns: ``(loops, maps, reduces)``."""
     loops = sum(1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion))
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     reduces = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
     return loops, maps, reduces
 
 
-def _measure(kernel) -> Tuple[Tuple[int, int, int], Tuple[int, int, int], Tuple[int, int, int]]:
-    """Build the kernel's SDFG (simplified), then measure ``(L, M, R)`` for:
+def _structure(sdfg) -> Tuple[List[str], List[str], List[str]]:
+    """Per-kernel structural summary: list of loop / map / reduce descriptions."""
+    loops = [
+        f"loop {cfr.label} var={cfr.loop_variable!s} cond={cfr.loop_condition.as_string!s}"
+        for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion)
+    ]
+    maps = [f"map {n.map.label} dims={len(n.map.range)} range={n.map.range}"
+            for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
+    reduces = [f"reduce axes={n.axes} wcr={n.wcr}"
+               for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    return loops, maps, reduces
 
-    * baseline (simplified only),
-    * after ``LoopToMap`` repeated,
-    * after ``canonicalize(peel_limit=4, break_anti_dependence=True)``.
-    """
+
+def _build(kernel):
+    """Build the kernel's simplified baseline SDFG and apply each strategy on a deep copy."""
     base = kernel.program.to_sdfg(simplify=True)
-    base_counts = _count(base)
-
     l2m = copy.deepcopy(base)
     l2m.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False)
-    l2m_counts = _count(l2m)
-
     canon = copy.deepcopy(base)
     canonicalize(canon, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP)
-    canon_counts = _count(canon)
-
-    return base_counts, l2m_counts, canon_counts
+    return base, l2m, canon
 
 
 def _pct(num: int, den: int) -> str:
     return f"{(100.0 * num / den):5.1f}%" if den else "  n/a"
+
+
+def _status(b, l, c) -> str:
+    """One-line status marker for a kernel: parallel-construct delta + sequential-regression flag."""
+    l2m_par = l[1] + l[2]
+    canon_par = c[1] + c[2]
+    seq_delta = c[0] - l[0]
+    parts = []
+    if canon_par > l2m_par:
+        parts.append(f"+{canon_par - l2m_par}")
+    elif canon_par < l2m_par:
+        parts.append(f"-{l2m_par - canon_par}")
+    else:
+        parts.append("=")
+    if (c[2] - b[2]) > 0:
+        parts.append(f"R+{c[2] - b[2]}")
+    if seq_delta > 0:
+        parts.append(f"!seq+{seq_delta}")
+    return " ".join(parts)
+
+
+def _print_inspection(name, base, l2m, canon) -> None:
+    print(f"Inspection: {name}")
+    for label, s in (("baseline", base), ("LoopToMap", l2m), ("canon", canon)):
+        loops, maps, reduces = _structure(s)
+        print(f"  {label}: loops={len(loops)}  maps={len(maps)}  reduces={len(reduces)}")
+        for x in loops:
+            print(f"    {x}")
+        for x in maps:
+            print(f"    {x}")
+        for x in reduces:
+            print(f"    {x}")
+    print()
 
 
 def main() -> None:
@@ -67,15 +108,22 @@ def main() -> None:
     print(f"  peel_limit={_PEEL_LIMIT}  break_anti_dependence={_BREAK_ANTI_DEP}")
     print()
 
-    results = {}  # name -> (base, l2m, canon)
-    errors = {}   # name -> str
+    results = {}   # name -> (base_counts, l2m_counts, canon_counts)
+    inspect = {}   # name -> (base_sdfg, l2m_sdfg, canon_sdfg) for kernels we want to dump
+    errors = {}
     t0 = time.perf_counter()
     for i, k in enumerate(kernels, 1):
         try:
-            results[k.name] = _measure(k)
+            base, l2m, canon = _build(k)
+            results[k.name] = (_count(base), _count(l2m), _count(canon))
+            l2m_par = results[k.name][1][1] + results[k.name][1][2]
+            canon_par = results[k.name][2][1] + results[k.name][2][2]
+            seq_delta = results[k.name][2][0] - results[k.name][1][0]
+            if k.name in _FORCE_INSPECT or canon_par < l2m_par or seq_delta > 0:
+                inspect[k.name] = (base, l2m, canon)
         except Exception:
             errors[k.name] = traceback.format_exc(limit=2)
-        if i % 10 == 0 or i == len(kernels):
+        if i % 20 == 0 or i == len(kernels):
             print(f"  [{i:3d}/{len(kernels)}] {time.perf_counter()-t0:6.1f}s elapsed", flush=True)
     print()
 
@@ -83,49 +131,39 @@ def main() -> None:
     agg_b = [sum(r[0][k] for r in results.values()) for k in range(3)]
     agg_l = [sum(r[1][k] for r in results.values()) for k in range(3)]
     agg_c = [sum(r[2][k] for r in results.values()) for k in range(3)]
-
     print("Aggregate (sum across kernels):")
     print(f"  {'strategy':16s} {'loops':>7s} {'maps':>7s} {'reduces':>8s}")
     print(f"  {'baseline':16s} {agg_b[0]:7d} {agg_b[1]:7d} {agg_b[2]:8d}")
     print(f"  {'LoopToMap-only':16s} {agg_l[0]:7d} {agg_l[1]:7d} {agg_l[2]:8d}")
     print(f"  {'canonicalize':16s} {agg_c[0]:7d} {agg_c[1]:7d} {agg_c[2]:8d}")
     print()
-
-    init_iter = agg_b[0] + agg_b[1]  # initial loops+maps (iteration constructs)
-    l2m_eliminated = agg_b[0] - agg_l[0]
-    canon_eliminated = agg_b[0] - agg_c[0]
-    l2m_to_map = agg_l[1] - agg_b[1]
-    canon_to_map = agg_c[1] - agg_b[1]
-    canon_to_reduce = agg_c[2] - agg_b[2]
-
-    print("Conversion (vs. baseline):")
-    print(f"  {'loops -> maps':32s} L2M={l2m_to_map:4d}   canon={canon_to_map:4d}")
-    print(f"  {'loops -> reduce':32s} L2M={0:4d}   canon={canon_to_reduce:4d}")
-    print(f"  {'loops eliminated (any cause)':32s} L2M={l2m_eliminated:4d}   canon={canon_eliminated:4d}")
-    print(f"  {'baseline loops parallelized':32s} L2M={_pct(l2m_to_map, agg_b[0])}  "
-          f"canon={_pct(canon_to_map, agg_b[0])}")
-    print(f"  {'baseline loops eliminated':32s} L2M={_pct(l2m_eliminated, agg_b[0])}  "
-          f"canon={_pct(canon_eliminated, agg_b[0])}")
-    print(f"  {'final iteration is parallel':32s} L2M={_pct(agg_l[1], agg_l[0]+agg_l[1])}  "
-          f"canon={_pct(agg_c[1], agg_c[0]+agg_c[1])}")
+    print("Conversion vs baseline:")
+    print(f"  loops -> maps                    L2M={agg_l[1]-agg_b[1]:4d}   canon={agg_c[1]-agg_b[1]:4d}")
+    print(f"  loops -> reduce                  L2M={0:4d}   canon={agg_c[2]-agg_b[2]:4d}")
+    print(f"  loops eliminated (any cause)     L2M={agg_b[0]-agg_l[0]:4d}   canon={agg_b[0]-agg_c[0]:4d}")
+    print(f"  baseline loops parallelized      L2M={_pct(agg_l[1]-agg_b[1], agg_b[0])}  "
+          f"canon={_pct((agg_c[1]-agg_b[1])+(agg_c[2]-agg_b[2]), agg_b[0])}")
+    print(f"  final iteration is parallel      L2M={_pct(agg_l[1]+agg_l[2], agg_l[0]+agg_l[1]+agg_l[2])}  "
+          f"canon={_pct(agg_c[1]+agg_c[2], agg_c[0]+agg_c[1]+agg_c[2])}")
     print()
 
-    # Per-kernel: where canon parallelizes more than L2M (most interesting deltas)
-    diffs = []
-    for name, (b, l, c) in results.items():
-        extra_maps = (c[1] - b[1]) - (l[1] - b[1])
-        if extra_maps != 0 or (c[0] != l[0]):
-            diffs.append((extra_maps, name, b, l, c))
-    diffs.sort(key=lambda r: (-r[0], r[1]))
+    # Per-kernel table (all 151)
+    print("Per-kernel (status: '=' same parallel-construct count; '+N' canon has N more parallel "
+          "constructs; '-N' canon has N fewer; 'R+N' canon emits N reduces; '!seq+N' canon left N "
+          "more loops sequential than L2M -- the regression marker):")
+    print(f"  {'kernel':22s}  {'base':>10s}  {'l2m':>10s}  {'canon':>10s}  status")
+    for name in sorted(results.keys()):
+        b, l, c = results[name]
+        print(f"  {name:22s}  {str(b):>10s}  {str(l):>10s}  {str(c):>10s}  {_status(b, l, c)}")
+    print()
 
-    if diffs:
-        print(f"Kernels where canonicalize differs from L2M ({len(diffs)} of {len(results)}):")
-        print(f"  {'kernel':22s}  base(L,M,R)   l2m(L,M,R)    canon(L,M,R)  extra_maps")
-        for extra, name, b, l, c in diffs[:40]:
-            print(f"  {name:22s}  {str(b):12s}  {str(l):12s}  {str(c):14s} {extra:+d}")
-        if len(diffs) > 40:
-            print(f"  ... and {len(diffs) - 40} more")
-        print()
+    if inspect:
+        print("=" * 78)
+        print(f"Detailed inspection of {len(inspect)} kernels (auto-anomalies + forced):")
+        print("=" * 78)
+        for name in sorted(inspect.keys()):
+            base, l2m, canon = inspect[name]
+            _print_inspection(name, base, l2m, canon)
 
     if errors:
         print(f"Errors ({len(errors)} kernels failed measurement):")
