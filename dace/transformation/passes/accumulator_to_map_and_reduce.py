@@ -44,7 +44,7 @@ tracing back to the carried-accumulator read AN. Other (delta-computation)
 tasklets are allowed in the body and are left untouched by the rewrite.
 """
 import ast
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from dace import SDFG, data, dtypes, memlet as mm, properties, subsets, symbolic
 from dace.sdfg import nodes
