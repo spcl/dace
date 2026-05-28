@@ -38,6 +38,7 @@ from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -162,6 +163,13 @@ def _chain():
         # constant-index writes (e.g. ``zvqx[1] = ...``) that read as a loop-carried
         # conflict and block LoopToMap; this second simplify folds them away.
         ('simplify_after_unroll', lambda sdfg: sdfg.simplify()),
+        # Re-propagate memlets now that unroll+simplify changed the structure and the
+        # ``symbols_defined_at`` fix lets enclosing-LoopRegion loop variables count as
+        # defined. Without this, NSDFG out-connector memlets that propagation had
+        # previously widened (the ``tendency_loc_cld[0:5, 0:klev, 0:klon]`` shape)
+        # stay stale and block ``LoopToMap``; running propagation again narrows them
+        # back to the per-level access (``[0:5, 0:_loop_it_14, 0:klon]``).
+        ('propagate_memlets', lambda sdfg: propagate_memlets_sdfg(sdfg)),
         ('unique_loop_iterators', lambda sdfg: UniqueLoopIterators().apply_pass(sdfg, {})),
         ('trivial_tasklet_elimination', _pmar(TrivialTaskletElimination)),
         ('wcr_to_augassign', _pmar(WCRToAugAssign)),
