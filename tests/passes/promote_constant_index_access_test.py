@@ -207,5 +207,88 @@ def test_numeric_correctness_then_loop_to_map_maps():
     assert np.allclose(out, expected)
 
 
+def test_refuses_live_out_by_default():
+    """An array read after the loop body is refused under the default settings; the
+    writeback would silently change observed semantics, so the pass stays conservative."""
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
+        for jl in range(N):
+            arr[1] = 0.002 * scale[jl]
+            out[jl] = arr[1] * scale[jl] + 1.5
+        # ``arr`` is also read *after* the loop -- the value an external consumer sees
+        # would have been the loop's last iteration value sequentially.
+        sink[0] = arr[1]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, 'Default settings must refuse live-out promotion.'
+
+
+def test_live_out_promotion_inserts_writeback_state():
+    """With ``allow_live_out=True``, the same kernel privatizes the slot AND splices a
+    writeback state after the loop that restores ``arr[1]`` to its final scalar value.
+    The numeric result is identical to the un-promoted reference."""
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
+        for jl in range(N):
+            arr[1] = 0.002 * scale[jl]
+            out[jl] = arr[1] * scale[jl] + 1.5
+        sink[0] = arr[1]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess(allow_live_out=True).apply_pass(sdfg, {})
+    assert res is not None, 'allow_live_out must accept the live-out case.'
+    sdfg.validate()
+    # Writeback state's label tag uniquely identifies the epilogue we just inserted.
+    writeback_states = [s for sd in sdfg.all_sdfgs_recursive() for s in sd.all_states() if 'writeback' in s.label]
+    assert len(writeback_states) == 1, f'Expected exactly one writeback state, got {len(writeback_states)}'
+
+    n = 12
+    rng = np.random.default_rng(11)
+    arr_in = rng.random(5)
+    scale = rng.random(n)
+
+    # Reference: pure Python with sequential last-iteration semantics.
+    arr_ref = arr_in.copy()
+    out_ref = np.zeros(n)
+    sink_ref = np.zeros(1)
+    for jl in range(n):
+        arr_ref[1] = 0.002 * scale[jl]
+        out_ref[jl] = arr_ref[1] * scale[jl] + 1.5
+    sink_ref[0] = arr_ref[1]
+
+    # SDFG run.
+    arr_run = arr_in.copy()
+    out_run = np.zeros(n)
+    sink_run = np.zeros(1)
+    sdfg(arr=arr_run, out=out_run, scale=scale, sink=sink_run, N=n)
+
+    assert np.allclose(out_run, out_ref)
+    assert np.allclose(arr_run, arr_ref), 'Writeback must restore arr[1] to last-iteration value.'
+    assert np.allclose(sink_run, sink_ref)
+
+
+def test_live_out_promotion_unblocks_loop_to_map():
+    """With ``allow_live_out=True``, the privatized loop becomes a Map under ``LoopToMap``.
+    Numerical equivalence under permissive last-writer-wins semantics.
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
+        for jl in range(N):
+            arr[1] = 0.002 * scale[jl]
+            out[jl] = arr[1] * scale[jl] + 1.5
+        sink[0] = arr[1]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    PromoteConstantIndexAccess(allow_live_out=True).apply_pass(sdfg, {})
+    n_maps = _apply_loop_to_map(sdfg)
+    sdfg.validate()
+    assert n_maps >= 1, 'Live-out promotion should unblock LoopToMap on the body loop.'
+    assert _num_loops(sdfg) == 0, 'Original LoopRegion must be gone (now a Map).'
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__]))
