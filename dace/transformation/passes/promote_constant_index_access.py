@@ -24,8 +24,18 @@ Safety. The pass refuses unless ``arr[c]``:
 - is the **only** subset of ``arr`` read or written inside the loop body (no mixed
   ``arr[c]`` / ``arr[i]`` accesses),
 - has no WCR / reduction edge,
-- is **not live-out** of the loop -- conservatively, no state in any forward successor of
-  the loop's parent CFG accesses ``arr``.
+- is **not live-out at that slot** -- the loop's writes to ``arr[c]`` are unobservable
+  outside the loop. The check is *slot-precise*: a post-loop read of a different element
+  of ``arr`` (``arr[k]`` for some ``k != c``) does not block promotion, because the
+  in-loop writes to ``arr[c]`` don't affect that other element. The cloudsc pattern
+  where a species loop writes ``zvqx[1]`` and a downstream consumer reads ``zvqx[2..4]``
+  fits naturally under this gate.
+
+The pass is intentionally narrow: when the loop's writes to ``arr[c]`` *are* observed
+outside the loop (live-out at slot ``c``), we refuse rather than try to preserve the
+last-iteration value via a writeback buffer -- that would require a ``lastprivate``-style
+mechanism DaCe doesn't have yet, and the heavy buffer-plus-writeback form changes the
+SDFG more than the value it adds back justifies in the cases we've seen.
 
 The pass only mutates a loop that ``LoopToMap`` currently refuses *and* would accept after
 the privatization (verified by re-running the match); a promotion that doesn't help is
@@ -56,24 +66,19 @@ class _Promotion:
     :param prologue: The state inserted in front of the loop body to load ``arr[c]``.
     :param edits: The memlet edits as ``(memlet, data_before, subset_before)`` triples.
     :param node_edits: The access-node renames as ``(access_node, data_before)`` pairs.
-    :param epilogue: The state inserted after the loop to write ``scalar -> arr[c]``,
-                     present iff the array was live-out and ``allow_live_out`` was set.
-                     ``None`` for the in-loop-only privatization case.
     """
 
     def __init__(self, sdfg: SDFG, arr_name: str, scalar_name: str, prologue: SDFGState,
-                 edits: List[Tuple[Memlet, Optional[str], Any]], node_edits: List[Tuple[nodes.AccessNode, str]],
-                 epilogue: Optional[SDFGState] = None):
+                 edits: List[Tuple[Memlet, Optional[str], Any]], node_edits: List[Tuple[nodes.AccessNode, str]]):
         self.sdfg = sdfg
         self.arr_name = arr_name
         self.scalar_name = scalar_name
         self.prologue = prologue
-        self.epilogue = epilogue
         self._edits = edits
         self._node_edits = node_edits
 
     def undo(self):
-        """Restore every rewritten access node and memlet, drop the prologue+epilogue, drop the scalar."""
+        """Restore every rewritten access node and memlet, drop the prologue, drop the scalar."""
         for memlet, data_before, subset_before in self._edits:
             memlet.data = data_before
             memlet.subset = subset_before
@@ -95,23 +100,6 @@ class _Promotion:
             # Drop the stale start-block cache; the next ``start_block`` access recomputes.
             region._cached_start_block = None
             region._start_block = None
-        # Detach the epilogue (if any) from the parent CFG. Predecessors flow straight to the
-        # epilogue's successor again, restoring the original linear out-edge chain.
-        if self.epilogue is not None:
-            ep_parent = self.epilogue.parent_graph
-            if ep_parent is not None:
-                ep_out = list(ep_parent.out_edges(self.epilogue))
-                ep_in = list(ep_parent.in_edges(self.epilogue))
-                for ie in ep_in:
-                    ep_parent.remove_edge(ie)
-                for oe in ep_out:
-                    ep_parent.remove_edge(oe)
-                # Re-link predecessors to the epilogue's original successor(s) verbatim.
-                for ie in ep_in:
-                    for oe in ep_out:
-                        ep_parent.add_edge(ie.src, oe.dst, ie.data)
-                ep_parent.remove_node(self.epilogue)
-                ep_parent._cached_start_block = None
         # The scalar is no longer referenced anywhere; drop the descriptor.
         self.sdfg.remove_data(self.scalar_name, validate=False)
 
@@ -129,25 +117,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
     """
 
     CATEGORY: str = 'Optimization Preparation'
-
-    allow_live_out = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Permit privatizing an ``arr[c]`` slot when ``arr`` is read or written outside "
-        "the loop, by allocating a per-iteration buffer and writing the last-iteration slot "
-        "back to ``arr[c]`` in an epilogue state. Sequential execution is bit-equivalent to "
-        "the un-promoted loop (writeback restores the last iteration's value); parallel "
-        "execution under ``LoopToMap``-permissive semantics observes ``some`` iteration's "
-        "value -- which is exactly the contract that triggered the permissive lift. Off-the-shelf "
-        "non-live-out arrays use the cheaper scalar form; the buffer form only fires when "
-        "the live-out check actually triggers, so there is no overhead for the common case. "
-        "Default ``True`` so the pass operationalises the parallelization it was added for; set "
-        "``False`` to keep the strict pre-existing behavior (refuse live-out arrays outright).",
-    )
-
-    def __init__(self, allow_live_out: bool = True):
-        super().__init__()
-        self.allow_live_out = allow_live_out
 
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.CFG | ppl.Modifies.AccessNodes)
@@ -296,13 +265,14 @@ class PromoteConstantIndexAccess(ppl.Pass):
             first = subs[0]
             if not all(self._point_subsets_equal(first, s) for s in subs[1:]):
                 continue
-            # Live-out gate. By default refuse, since the in-body scalar holds only an
-            # iteration-local value -- a state after the loop that reads ``arr`` would
-            # observe the original (pre-loop) value instead of the iteration's update.
-            # With ``allow_live_out`` the epilogue writes the scalar back, so the
-            # external read sees an iteration's value (the *last* sequentially, or
-            # *some* under L2M-permissive lifting).
-            if not self.allow_live_out and not self._not_live_out(loop, name):
+            # Slot-precise live-out gate. The in-body scalar holds only an iteration-local
+            # value, so a post-loop read of *this specific slot* would observe the original
+            # (pre-loop) value instead of the loop's writes. By passing ``slot=first`` we
+            # treat reads of *other* slots of the same array as harmless -- the cloudsc
+            # pattern where one species writes ``zvqx[1]`` and a downstream consumer reads
+            # ``zvqx[2..4]`` doesn't observe the loop's writes to slot 1, so promotion is
+            # safe (and unblocks ``LoopToMap``).
+            if not self._not_live_out(loop, name, slot=first):
                 continue
             results.append((name, first))
         return results
@@ -330,9 +300,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         """Equality on two single-point Ranges by lower bound."""
         return (symbolic.pystr_to_symbolic(a.ranges[0][0]) == symbolic.pystr_to_symbolic(b.ranges[0][0]))
 
-    def _not_live_out(self, loop: LoopRegion, name: str) -> bool:
-        """Conservative live-out check: no state forward-reachable from ``loop`` (in any
-        enclosing CFG level) accesses ``name``.
+    def _not_live_out(self, loop: LoopRegion, name: str, slot: Optional[subsets.Range] = None) -> bool:
+        """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
 
         Walks the parent CFG forward from ``loop``; if the loop is nested inside another
         region (e.g. a conditional branch), walks the enclosing region forward from the
@@ -340,6 +309,14 @@ class PromoteConstantIndexAccess(ppl.Pass):
         observe an iteration's value. Any access *inside* ``loop`` itself is permitted
         (those are what we're privatizing). Any access in a predecessor of the loop
         (live-in) is also permitted -- the prologue load handles it.
+
+        :param slot: When given, the check is *slot-precise*: a post-loop access to a
+            *different* element of ``arr`` does not count as a live-out conflict, because
+            the in-loop writes to ``arr[slot]`` don't affect those other elements. This
+            lets the cheap scalar-form promotion fire for cases where the user reads
+            ``arr[k != slot]`` after the loop -- the common cloudsc-style pattern where
+            ``zvqx[1]`` is written by the species loop and ``zvqx[2..4]`` are read later.
+            When ``None``, the legacy whole-array check applies.
         """
         loop_states = set(loop.all_states())
         cur = loop
@@ -360,10 +337,68 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 for state in self._states_of(block):
                     if state in loop_states:
                         continue
-                    if any(isinstance(n, nodes.AccessNode) and n.data == name for n in state.nodes()):
+                    if self._state_touches_slot(state, name, slot):
                         return False
             # Walk up to the next enclosing CFG and check its forward-reachable region.
             cur = parent
+
+    @staticmethod
+    def _state_touches_slot(state: SDFGState, name: str, slot: Optional[subsets.Range]) -> bool:
+        """``True`` if ``state`` has any incident memlet on ``name`` that might overlap ``slot``.
+
+        With ``slot=None``, any access-node of ``name`` qualifies (the legacy whole-array
+        check). With a concrete ``slot``, only memlets whose subset *might* contain the
+        slot count -- a non-overlap is recognised when the slot's constant lower bound
+        lies strictly outside the memlet's static-bounded range (one-dimensional integer
+        case; the multi-dimensional case falls back to the conservative "overlap" answer).
+        """
+        if slot is None:
+            return any(isinstance(n, nodes.AccessNode) and n.data == name for n in state.nodes())
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and node.data == name):
+                continue
+            for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
+                memlet = edge.data
+                if memlet is None or memlet.data != name or memlet.subset is None:
+                    continue
+                if PromoteConstantIndexAccess._subsets_overlap(memlet.subset, slot):
+                    return True
+        return False
+
+    @staticmethod
+    def _subsets_overlap(memlet_subset, slot: subsets.Range) -> bool:
+        """Cheap symbolic overlap test for a 1-D constant ``slot`` against ``memlet_subset``.
+
+        Returns ``True`` if the memlet *might* touch the slot's constant index, ``False``
+        only when the dimensionality matches and we can statically prove the slot's
+        constant lies strictly outside the memlet's bounds. The conservative default
+        (``True``) preserves correctness; the precise ``False`` answer is what unlocks
+        the cheap scalar promotion for cases like ``zvqx[1]`` written / ``zvqx[2]`` read.
+        """
+        if not isinstance(memlet_subset, subsets.Range) or not isinstance(slot, subsets.Range):
+            return True
+        if len(memlet_subset.ranges) != len(slot.ranges):
+            return True
+        slot_lo = symbolic.pystr_to_symbolic(slot.ranges[0][0])
+        if not slot_lo.is_Integer:
+            return True
+        for axis_idx, (m_lo, m_hi, m_st) in enumerate(memlet_subset.ranges):
+            s_lo = symbolic.pystr_to_symbolic(slot.ranges[axis_idx][0])
+            try:
+                lo_sym = symbolic.pystr_to_symbolic(m_lo)
+                hi_sym = symbolic.pystr_to_symbolic(m_hi)
+            except Exception:
+                return True
+            # Conservative: if the memlet's bounds are non-integer (symbolic), assume overlap.
+            if not (lo_sym.is_Integer and hi_sym.is_Integer):
+                return True
+            if axis_idx == 0:
+                # The slot's first-axis index against the memlet's first-axis range. If the
+                # slot lies strictly outside, no overlap on this access (regardless of
+                # other axes -- a single-element constant slot maps to one specific cell).
+                if s_lo < lo_sym or s_lo > hi_sym:
+                    return False
+        return True
 
     @staticmethod
     def _states_of(block) -> List[SDFGState]:
@@ -378,103 +413,39 @@ class PromoteConstantIndexAccess(ppl.Pass):
     # -- rewrite ------------------------------------------------------------------------
 
     def _promote(self, sdfg: SDFG, loop: LoopRegion, arr_name: str, c_subset: subsets.Range) -> _Promotion:
-        """Insert a per-iteration privatized buffer for ``arr[c]`` and rewire every access in ``loop``.
+        """Privatize ``arr[c]`` to a per-iteration scalar.
 
-        Two flavours:
-
-        - **Non-live-out** (default): privatize to a per-iteration scalar (Scope lifetime).
-          Each iteration sees its own copy; the slot is gone after the loop. No epilogue.
-        - **Live-out** (``allow_live_out=True``): privatize to a 1-D buffer indexed by the
-          loop variable (SDFG lifetime so the buffer survives past the loop's exit). Each
-          iteration writes its own slot, so the writes are uniquely indexed -- ``LoopToMap``
-          accepts the loop. An epilogue state in the parent CFG copies the last slot
-          (``buf[end - start]``) back to ``arr[c]``, preserving last-iteration semantics
-          exactly under sequential execution; under L2M-permissive parallel execution the
-          last slot still holds whichever value the ``loop_var == end`` thread wrote, so
-          the writeback observes the iteration's value the caller asserts as authoritative.
+        The slot-precise live-out gate in :meth:`_privatizable_slots` has already
+        established that no post-loop state reads this specific element, so the
+        scalar can be Scope-lifetime (per-thread under ``LoopToMap``, dying with
+        the loop) and no writeback is needed -- the in-loop writes are
+        unobservable outside the loop by construction.
         """
-        from dace.transformation.passes.analysis import loop_analysis
-
         desc = sdfg.arrays[arr_name]
         c_str = str(symbolic.pystr_to_symbolic(c_subset.ranges[0][0]))
         base = f'{arr_name}_at_{c_str}_promoted'
-        live_out = self.allow_live_out and not self._not_live_out(loop, arr_name)
-
-        if live_out:
-            return self._promote_buffer(sdfg, loop, arr_name, desc, c_subset, c_str, base, loop_analysis)
-        return self._promote_scalar(sdfg, loop, arr_name, desc, c_subset, c_str, base)
-
-    @staticmethod
-    def _promote_scalar(sdfg: SDFG, loop: LoopRegion, arr_name: str, desc: data.Array,
-                        c_subset: subsets.Range, c_str: str, base: str) -> _Promotion:
-        """Original scalar privatization (Scope lifetime; no epilogue)."""
         scalar_name, _ = sdfg.add_scalar(base,
                                          desc.dtype,
                                          transient=True,
                                          lifetime=dtypes.AllocationLifetime.Scope,
                                          find_new_name=True)
+
+        # Prologue: insert a state at the head of the loop body that copies arr[c] -> t.
+        # This load gives the unconditional read the external "live-in" value even when
+        # the in-loop write is conditional and doesn't fire on this iteration.
         old_start = loop.start_block
         prologue = loop.add_state_before(old_start, label=f'{arr_name}_at_{c_str}_load', is_start_block=True)
         src = prologue.add_access(arr_name)
         dst = prologue.add_access(scalar_name)
         prologue.add_nedge(
             src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=subsets.Range([(0, 0, 1)])))
-        edits, node_edits = PromoteConstantIndexAccess._rewrite_body_to(loop, prologue, arr_name, scalar_name,
-                                                                       subsets.Range([(0, 0, 1)]))
-        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits, epilogue=None)
 
-    @staticmethod
-    def _promote_buffer(sdfg: SDFG, loop: LoopRegion, arr_name: str, desc: data.Array, c_subset: subsets.Range,
-                        c_str: str, base: str, loop_analysis) -> _Promotion:
-        """Per-iteration buffer privatization (SDFG lifetime; with writeback epilogue)."""
-        start = loop_analysis.get_init_assignment(loop)
-        end = loop_analysis.get_loop_end(loop)
-        if start is None or end is None:
-            # Can't size the buffer -- fall back to the scalar form (which will be refused
-            # by ``_privatizable_slots`` next time round because the live-out check fires).
-            return PromoteConstantIndexAccess._promote_scalar(sdfg, loop, arr_name, desc, c_subset, c_str, base)
-
-        trip = symbolic.simplify(end - start + 1)
-        loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
-        # Per-iteration index into the buffer; ``loop_var - start`` keeps it 0-based even
-        # when the loop starts at a non-zero offset, so the buffer's slot count is exactly ``trip``.
-        idx_expr = symbolic.simplify(loop_var - start)
-        body_subset = subsets.Range([(idx_expr, idx_expr, 1)])
-
-        buf_name, _ = sdfg.add_array(base, [trip], desc.dtype, transient=True,
-                                     lifetime=dtypes.AllocationLifetime.SDFG, find_new_name=True)
-
-        old_start = loop.start_block
-        prologue = loop.add_state_before(old_start, label=f'{arr_name}_at_{c_str}_load', is_start_block=True)
-        src = prologue.add_access(arr_name)
-        dst = prologue.add_access(buf_name)
-        # The per-iteration load gives this iteration's slot the external live-in value, so
-        # a conditional in-body write that doesn't fire still leaves a sensible value in the
-        # slot (matching the un-promoted body's read-through-from-arr behavior).
-        #
-        # Memlet ``data`` MUST be the destination buffer here -- ``LoopToMap`` reads the
-        # write-side subset from the memlet's primary ``subset`` field to check write
-        # uniqueness across iterations. If we left ``data=arr`` the analysis would see
-        # the constant ``arr[1]`` source subset as the buf-side write and refuse the lift.
-        prologue.add_nedge(
-            src, dst, Memlet(data=buf_name, subset=copy.deepcopy(body_subset), other_subset=copy.deepcopy(c_subset)))
-
-        edits, node_edits = PromoteConstantIndexAccess._rewrite_body_to(loop, prologue, arr_name, buf_name, body_subset)
-
-        epilogue = PromoteConstantIndexAccess._add_buffer_epilogue(loop, arr_name, c_subset, buf_name, c_str,
-                                                                   end_offset=symbolic.simplify(end - start))
-        return _Promotion(sdfg, arr_name, buf_name, prologue, edits, node_edits, epilogue=epilogue)
-
-    @staticmethod
-    def _rewrite_body_to(loop: LoopRegion, prologue: SDFGState, arr_name: str, new_name: str,
-                         body_subset: subsets.Range
-                         ) -> Tuple[List[Tuple[Memlet, Optional[str], Any]], List[Tuple[nodes.AccessNode, str]]]:
-        """Retarget every ``arr`` memlet and access node in the loop body to ``new_name``
-        with subset ``body_subset``. Skips the prologue state (its memlet already references
-        the new descriptor correctly via ``other_subset``).
-        """
+        # Rewrite every ``arr`` access node + incident ``arr[c]`` memlet inside the loop
+        # body. The safety check has already guaranteed that every ``arr`` access in this
+        # loop is at the constant point ``c``, so a wholesale rename is sound.
         edits: List[Tuple[Memlet, Optional[str], Any]] = []
         node_edits: List[Tuple[nodes.AccessNode, str]] = []
+        scalar_subset = subsets.Range([(0, 0, 1)])
         for state in loop.all_states():
             if state is prologue:
                 continue
@@ -483,36 +454,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 if memlet is None or memlet.data != arr_name:
                     continue
                 edits.append((memlet, memlet.data, memlet.subset))
-                memlet.data = new_name
-                memlet.subset = copy.deepcopy(body_subset)
+                memlet.data = scalar_name
+                memlet.subset = copy.deepcopy(scalar_subset)
             for node in list(state.nodes()):
                 if isinstance(node, nodes.AccessNode) and node.data == arr_name:
                     node_edits.append((node, node.data))
-                    node.data = new_name
-        return edits, node_edits
-
-    @staticmethod
-    def _add_buffer_epilogue(loop: LoopRegion, arr_name: str, c_subset: subsets.Range, buf_name: str, c_str: str,
-                             end_offset: Any) -> SDFGState:
-        """Splice a writeback state after ``loop`` that copies ``buf[end_offset] -> arr[c]``.
-
-        Inserted in the loop's parent CFG. Every existing out-edge of ``loop`` is re-routed
-        to leave the epilogue instead, so the new state sits exactly between ``loop`` and
-        whatever previously followed it (loop -> epilogue -> [original successors]).
-        """
-        import dace
-        parent = loop.parent_graph
-        epilogue = parent.add_state(f'{arr_name}_at_{c_str}_writeback')
-        out_edges = list(parent.out_edges(loop))
-        for e in out_edges:
-            parent.remove_edge(e)
-            parent.add_edge(epilogue, e.dst, e.data)
-        parent.add_edge(loop, epilogue, dace.InterstateEdge())
-        src = epilogue.add_access(buf_name)
-        dst = epilogue.add_access(arr_name)
-        last_subset = subsets.Range([(end_offset, end_offset, 1)])
-        # ``data=arr`` because the write target is ``arr``; the buf-side ``other_subset``
-        # picks the last iteration's slot. (Mirror of the prologue's data-side convention.)
-        epilogue.add_nedge(
-            src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=last_subset))
-        return epilogue
+                    node.data = scalar_name
+        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits)

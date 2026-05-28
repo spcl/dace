@@ -100,22 +100,40 @@ def test_conditional_write_with_external_live_in():
     assert np.allclose(out, expected_on)
 
 
-def test_refuses_when_live_out_and_opted_out():
-    """``allow_live_out=False`` preserves the original strict behavior: a live-out
-    ``arr[c]`` read after the loop blocks promotion, so the loop stays untouched."""
+def test_refuses_when_same_slot_is_live_out():
+    """A post-loop read of the *same* slot ``arr[c]`` makes the loop's writes observable
+    externally; the scalar-form promotion would silently drop them, so the pass refuses."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
-        post[0] = arr[1]  # live-out read
+        post[0] = arr[1]  # live-out read at the *same* slot ``arr[1]``
 
     sdfg = kern.to_sdfg(simplify=True)
     loops_before = _num_loops(sdfg)
-    res = PromoteConstantIndexAccess(allow_live_out=False).apply_pass(sdfg, {})
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None
-    assert _num_loops(sdfg) == loops_before  # loop stays sequential
+    assert _num_loops(sdfg) == loops_before
+
+
+def test_promotes_when_only_other_slots_are_live_out():
+    """The slot-precise live-out check allows promotion when a post-loop read targets a
+    *different* slot of the same array -- the loop's writes to ``arr[1]`` are dead
+    externally even though ``arr`` (at other slots) is live."""
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]):
+        for jl in range(N):
+            arr[1] = 0.002 * scale[jl]
+            out[jl] = arr[1] * scale[jl]
+        post[0] = arr[2]  # different slot -- arr[1] is dead post-loop
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, 'Slot-precise live-out check should let promotion fire when arr[1] is dead.'
+    sdfg.validate()
 
 
 def test_refuses_when_array_indexed_by_loop_var_elsewhere():
@@ -207,88 +225,46 @@ def test_numeric_correctness_then_loop_to_map_maps():
     assert np.allclose(out, expected)
 
 
-def test_live_out_refused_when_opt_out():
-    """``allow_live_out=False`` recovers the strict pre-existing behavior (refuse the
-    live-out case outright) -- this remains available for callers who don't want the
-    permissive writeback semantics."""
+def test_promotes_and_lifts_when_other_slot_lives_out():
+    """End-to-end: the slot-precise live-out gate accepts a kernel that reads a *different*
+    slot post-loop, the resulting privatized loop maps under ``LoopToMap``, and the
+    numeric result matches the un-promoted Python reference."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl] + 1.5
-        # ``arr`` is also read *after* the loop -- the value an external consumer sees
-        # would have been the loop's last iteration value sequentially.
-        sink[0] = arr[1]
-
-    sdfg = kern.to_sdfg(simplify=True)
-    res = PromoteConstantIndexAccess(allow_live_out=False).apply_pass(sdfg, {})
-    assert res is None, '``allow_live_out=False`` must refuse the live-out case.'
-
-
-def test_live_out_promotion_inserts_writeback_state():
-    """With ``allow_live_out=True``, the same kernel privatizes the slot AND splices a
-    writeback state after the loop that restores ``arr[1]`` to its final scalar value.
-    The numeric result is identical to the un-promoted reference."""
-
-    @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
-        for jl in range(N):
-            arr[1] = 0.002 * scale[jl]
-            out[jl] = arr[1] * scale[jl] + 1.5
-        sink[0] = arr[1]
+        sink[0] = arr[2]  # different slot -- arr[1] is dead
 
     sdfg = kern.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, 'Default settings (allow_live_out=True) must accept the live-out case.'
+    assert res is not None, 'Slot-precise live-out check should let promotion fire.'
+    n_maps = _apply_loop_to_map(sdfg)
     sdfg.validate()
-    # Writeback state's label tag uniquely identifies the epilogue we just inserted.
-    writeback_states = [s for sd in sdfg.all_sdfgs_recursive() for s in sd.all_states() if 'writeback' in s.label]
-    assert len(writeback_states) == 1, f'Expected exactly one writeback state, got {len(writeback_states)}'
+    assert n_maps >= 1
+    assert _num_loops(sdfg) == 0
 
     n = 12
     rng = np.random.default_rng(11)
     arr_in = rng.random(5)
     scale = rng.random(n)
 
-    # Reference: pure Python with sequential last-iteration semantics.
+    # Reference: pure Python.
     arr_ref = arr_in.copy()
     out_ref = np.zeros(n)
     sink_ref = np.zeros(1)
     for jl in range(n):
         arr_ref[1] = 0.002 * scale[jl]
         out_ref[jl] = arr_ref[1] * scale[jl] + 1.5
-    sink_ref[0] = arr_ref[1]
+    sink_ref[0] = arr_ref[2]
 
-    # SDFG run.
     arr_run = arr_in.copy()
     out_run = np.zeros(n)
     sink_run = np.zeros(1)
     sdfg(arr=arr_run, out=out_run, scale=scale, sink=sink_run, N=n)
-
     assert np.allclose(out_run, out_ref)
-    assert np.allclose(arr_run, arr_ref), 'Writeback must restore arr[1] to last-iteration value.'
     assert np.allclose(sink_run, sink_ref)
-
-
-def test_live_out_promotion_unblocks_loop_to_map():
-    """With ``allow_live_out=True``, the privatized loop becomes a Map under ``LoopToMap``.
-    Numerical equivalence under permissive last-writer-wins semantics.
-    """
-
-    @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
-        for jl in range(N):
-            arr[1] = 0.002 * scale[jl]
-            out[jl] = arr[1] * scale[jl] + 1.5
-        sink[0] = arr[1]
-
-    sdfg = kern.to_sdfg(simplify=True)
-    PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    n_maps = _apply_loop_to_map(sdfg)
-    sdfg.validate()
-    assert n_maps >= 1, 'Live-out promotion should unblock LoopToMap on the body loop.'
-    assert _num_loops(sdfg) == 0, 'Original LoopRegion must be gone (now a Map).'
 
 
 if __name__ == '__main__':
