@@ -80,16 +80,23 @@ class _Scan(NamedTuple):
     :param scan_axis: Index of the dimension carrying the scan recurrence.
     :param k_w: Write-side scan-axis offset (``out[i + k_w, ...]``).
     :param k_r: Read-side scan-axis offset (``out[i + k_r, ...]``). Always
-        equal to ``k_w - 1`` in v1.
+        equal to ``k_w - 1``.
     :param other_indices: List of ``(axis, sympy_expr)`` for non-scan axes of
         ``out`` (must be loop-invariant). The same indices are used to slice
         the seed and the seed-add output.
-    :param delta_name: The per-iteration delta source array's name.
-    :param d: The scan-axis offset on the delta read (``delta[i + d, ...]``).
-    :param delta_other_indices: ``(axis, sympy_expr)`` for non-scan axes of
-        ``delta`` (must be loop-invariant).
     :param iter_start: The loop's start expression (symbolic or constant).
     :param iter_end: The loop's inclusive end expression.
+    :param body_state: The unique state inside the loop body (single-state
+        constraint from the matcher).
+    :param scan_update_tasklet: The tasklet that performs the scan recurrence
+        (``out[i+1] = out[i] OP delta`` -- one carry input, one delta input).
+    :param carry_in_conn: The scan-update tasklet's carry-input connector
+        (the one reading ``out[i]`` through the slice chain).
+    :param delta_in_conn: The scan-update tasklet's delta-input connector.
+    :param out_conn: The scan-update tasklet's output connector.
+    :param carry_anchor: The AccessNode the carry-in edge enters in the body
+        (the slice-copy intermediate, or the direct source AN). Used during
+        orphan cleanup.
     """
     op: ScanOp
     out_name: str
@@ -97,11 +104,14 @@ class _Scan(NamedTuple):
     k_w: Any
     k_r: Any
     other_indices: List[Any]
-    delta_name: str
-    d: Any
-    delta_other_indices: List[Any]
     iter_start: Any
     iter_end: Any
+    body_state: SDFGState
+    scan_update_tasklet: nodes.Tasklet
+    carry_in_conn: str
+    delta_in_conn: str
+    out_conn: str
+    carry_anchor: nodes.AccessNode
 
 
 @properties.make_properties
@@ -191,84 +201,25 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     if write_axis is None:
         return None
 
-    # Walk back from the write AccessNode through any chain of single-edge intermediate
-    # transients (the frontend's slice-copy form ``tmp -> ... -> out``) to the producing
-    # tasklet that actually does the OP. ``TrivialTaskletElimination`` ran in
-    # ``apply_pass`` already, so the chain only contains transient AccessNodes.
-    tasklet = _trace_back_to_tasklet(state, write_edge.src)
-    if tasklet is None or tasklet.code.language != dtypes.Language.Python:
+    # Find the scan-update tasklet: among all tasklets in the body, the one whose
+    # single output (eventually) reaches the ``out`` write AND one of whose inputs
+    # resolves to ``out`` at offset ``k_w - 1`` on the scan axis. For v1 that's the
+    # only tasklet in the body; for v2 there may be downstream tasklets (extending
+    # the delta computation) and the matcher has to find the right one.
+    candidate = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable, write_axis, write_others, k_w)
+    if candidate is None:
         return None
+    tasklet, carry_edge, delta_edge, op, carry_anchor = candidate
 
-    # Classify the tasklet body as a single ``out = a OP b`` assignment.
-    try:
-        tree = ast.parse((tasklet.code.as_string or '').strip())
-    except SyntaxError:
+    out_edges_t = [e for e in state.out_edges(tasklet)
+                   if e.data is not None and not e.data.is_empty()]
+    if len(out_edges_t) != 1:
         return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    rhs = tree.body[0].value
-    if isinstance(rhs, ast.BinOp):
-        op = _BINOP_TO_SCAN_OP.get(type(rhs.op))
-    elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
-        op = _CALL_TO_SCAN_OP.get(rhs.func.id)
-    else:
-        op = None
-    if op is None:
-        return None
+    k_r = symbolic.simplify(k_w - 1)
 
-    # Two data inputs.
-    def _has_data(e):
-        return e.data is not None and not e.data.is_empty()
-
-    in_edges = [e for e in state.in_edges(tasklet) if _has_data(e)]
-    out_edges_t = [e for e in state.out_edges(tasklet) if _has_data(e)]
-    if len(in_edges) != 2 or len(out_edges_t) != 1:
-        return None
-
-    # Resolve each tasklet input through any one-hop slice transient to the source
-    # AccessNode + the source-side subset (memlet.data is the source array; the
-    # subset on the in-edge is the source slice copied into the tasklet's connector).
-    carry_edge = None
-    carry_subset = None
-    delta_src = None
-    delta_subset = None
-    for e in in_edges:
-        src_name, src_subset = _resolve_input(state, e)
-        if src_name is None:
-            return None
-        if src_name == out_name:
-            if carry_edge is not None:
-                return None  # ambiguous carry
-            carry_edge = e
-            carry_subset = src_subset
-        else:
-            if delta_src is not None:
-                return None
-            delta_src = src_name
-            delta_subset = src_subset
-
-    if carry_edge is None or delta_src is None:
-        return None
-
-    # Carry-side subset must agree with the write on every non-scan axis and offset
-    # by exactly +1 on the scan axis.
-    r_axis, k_r, r_others = _classify_subset(carry_subset, loop.loop_variable)
-    if r_axis is None or r_axis != write_axis:
-        return None
-    if not _same_other_indices(r_others, write_others):
-        return None
-    if symbolic.simplify(k_w - k_r) != 1:
-        return None
-
-    # Delta-side subset: single scan-axis dependence, non-scan dims loop-invariant.
-    delta_axis, d, delta_others = _classify_subset(delta_subset, loop.loop_variable)
-    if delta_axis is None:
-        return None
-    if delta_src == out_name:
-        # ``out[i+1] = out[i] + out[i]`` -- delta aliases the carry; refused.
-        return None
-
-    # Refuse any second non-transient write anywhere in the loop body.
+    # Refuse any second non-transient write anywhere in the loop body. The body may
+    # contain arbitrarily many upstream *transient* nodes feeding the delta (v2), but
+    # the only externally observable write must be the carry write to ``out``.
     for st in loop.all_states():
         for node in st.data_nodes():
             if st.in_degree(node) == 0:
@@ -286,11 +237,14 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
         k_w=k_w,
         k_r=k_r,
         other_indices=write_others,
-        delta_name=delta_src,
-        d=d,
-        delta_other_indices=delta_others,
         iter_start=start,
         iter_end=end,
+        body_state=state,
+        scan_update_tasklet=tasklet,
+        carry_in_conn=carry_edge.dst_conn,
+        delta_in_conn=delta_edge.dst_conn,
+        out_conn=out_edges_t[0].src_conn,
+        carry_anchor=carry_anchor,
     )
 
 
@@ -332,6 +286,70 @@ def _find_unique_write_edge(state: SDFGState, name: str):
             return None
         found = ins[0]
     return found
+
+
+def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_var: str,
+                              scan_axis: int, write_others, k_w):
+    """Search the body for the scan-update tasklet -- the unique tasklet whose body is
+    ``__out = a OP b`` for an associative OP and whose two inputs are (a) the carry
+    (resolves to ``out`` at offset ``k_w - 1`` on the scan axis, matching non-scan
+    indices) and (b) the delta (anything else). Returns
+    ``(tasklet, carry_edge, delta_edge, op, carry_anchor)`` or ``None``.
+
+    The body may contain additional downstream tasklets (v2: extending the per-iteration
+    delta computation after the scan-update). The scan-update tasklet is the *first one*
+    along the carry-write path whose carry-side input resolves to ``out`` directly;
+    anything past that is the delta-extension chain and stays in place after the rewrite.
+    """
+    for node in state.nodes():
+        if not isinstance(node, nodes.Tasklet) or node.code.language != dtypes.Language.Python:
+            continue
+        try:
+            tree = ast.parse((node.code.as_string or '').strip())
+        except SyntaxError:
+            continue
+        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+            continue
+        rhs = tree.body[0].value
+        if isinstance(rhs, ast.BinOp):
+            op = _BINOP_TO_SCAN_OP.get(type(rhs.op))
+        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
+            op = _CALL_TO_SCAN_OP.get(rhs.func.id)
+        else:
+            op = None
+        if op is None:
+            continue
+        in_edges = [e for e in state.in_edges(node)
+                    if e.data is not None and not e.data.is_empty()]
+        out_edges = [e for e in state.out_edges(node)
+                     if e.data is not None and not e.data.is_empty()]
+        if len(in_edges) != 2 or len(out_edges) != 1:
+            continue
+        carry_edge = None
+        delta_edge = None
+        carry_anchor = None
+        ambiguous = False
+        for e in in_edges:
+            src_name, src_subset = _resolve_input(state, e)
+            if src_name == out_name and src_subset is not None:
+                r_axis, k_r_cand, r_others = _classify_subset(src_subset, loop_var)
+                if (r_axis == scan_axis and _same_other_indices(r_others, write_others)
+                        and symbolic.simplify(k_w - k_r_cand) == 1):
+                    if carry_edge is not None:
+                        ambiguous = True
+                        break
+                    carry_edge = e
+                    carry_anchor = e.src
+                    continue
+            if delta_edge is not None:
+                # Two non-carry inputs -- this isn't the scan-update tasklet.
+                delta_edge = None
+                break
+            delta_edge = e
+        if ambiguous or carry_edge is None or delta_edge is None:
+            continue
+        return node, carry_edge, delta_edge, op, carry_anchor
+    return None
 
 
 def _trace_back_to_tasklet(state: SDFGState, node) -> Optional[nodes.Tasklet]:
@@ -435,7 +453,23 @@ def _same_other_indices(a, b) -> bool:
 
 
 def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDFG):
-    """Replace ``loop`` with three sibling states: delta-build, scan, seed-add."""
+    """Rewrite ``loop`` into a 3-part chain via in-place body mutation.
+
+    1. **Modified loop**: the scan-update tasklet's carry input is severed and its
+       output is re-routed to write the per-iteration *delta* into a transient
+       ``_scan_in[loop_var - start]``. The tasklet's body collapses to
+       ``__o = __delta``, so the rest of the body's delta-computation subgraph
+       (whatever produces the delta input -- a direct array slice in v1, an
+       arbitrary upstream subgraph in v2) is kept intact and continues to run
+       per iteration. After this mutation the body's only write is uniquely
+       indexed by ``loop_var``, so a subsequent ``LoopToMap`` lifts it cleanly.
+    2. **Scan state**: a single ``Scan`` libnode reads ``_scan_in`` and writes
+       ``_scan_out`` (same shape ``[trip]``, same dtype, op matches the matched
+       tasklet's combiner).
+    3. **Seed-add Map**: writes ``out[start + k_w + _i, ...] = seed OP _scan_out[_i]``
+       in parallel, where ``seed = out[start + k_r, ...]`` is the pre-loop value
+       read by the original loop's first carry-read.
+    """
     import dace
     out_desc = sdfg.arrays[info.out_name]
     trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
@@ -444,39 +478,135 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
     scan_buf, _ = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True,
                                  find_new_name=True)
 
-    was_start = (parent.start_block is loop)
-    in_edges = list(parent.in_edges(loop))
-    out_edges = list(parent.out_edges(loop))
+    # Mutate the loop body: scan-update tasklet becomes a passthrough writing to
+    # ``_scan_in[loop_var - start]``; the carry-input chain is stripped.
+    _mutate_body_to_delta_buffer(info, delta_buf)
 
-    s_build = parent.add_state(loop.label + '_scan_build', is_start_block=was_start)
+    # Splice the post-loop chain into the parent CFG: loop -> scan_state -> apply_state -> [original successors].
+    out_edges = list(parent.out_edges(loop))
     s_scan = parent.add_state(loop.label + '_scan')
     s_apply = parent.add_state(loop.label + '_scan_apply')
-    parent.add_edge(s_build, s_scan, dace.InterstateEdge())
+    parent.add_edge(loop, s_scan, dace.InterstateEdge())
     parent.add_edge(s_scan, s_apply, dace.InterstateEdge())
-    for e in in_edges:
-        parent.add_edge(e.src, s_build, e.data)
     for e in out_edges:
+        parent.remove_edge(e)
         parent.add_edge(s_apply, e.dst, e.data)
-    parent.remove_node(loop)
 
-    _emit_delta_build(s_build, sdfg, info, delta_buf, trip)
     _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
     _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
+    sdfg.reset_cfg_list()
 
 
-def _emit_delta_build(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, trip: Any):
-    """Map over ``_i in [0, trip-1]`` writing ``delta[iter_start + d + _i, ...]`` to ``delta_buf[_i]``."""
-    delta_desc = sdfg.arrays[info.delta_name]
-    delta_axis_expr = symbolic.simplify(info.iter_start + info.d) + symbolic.pystr_to_symbolic('_i')
-    delta_subset = _build_subset(delta_desc, info.scan_axis, delta_axis_expr, info.delta_other_indices)
-    state.add_mapped_tasklet(
-        f'{state.label}_tasklet',
-        {'_i': f'0:{trip}'},
-        {'__d': mm.Memlet(data=info.delta_name, subset=delta_subset)},
-        '__o = __d',
-        {'__o': mm.Memlet(data=delta_buf, subset=subsets.Range([('_i', '_i', 1)]))},
-        external_edges=True,
-    )
+def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):
+    """In-place: sever the scan-update tasklet's carry input, collapse the tasklet's
+    body to a passthrough of its delta input, and re-route the body's *final* write
+    to ``out`` so it lands in ``delta_buf[loop_var - iter_start]`` instead. Anything
+    between the scan-update tasklet and that final write -- additional tasklets that
+    extend the per-iteration delta computation (the v2 case) -- is kept verbatim.
+    """
+    state = info.body_state
+    tasklet = info.scan_update_tasklet
+
+    # 1. Sever the carry input chain (orphan transients pruned).
+    _disconnect_carry_chain(state, tasklet, info.carry_in_conn, info.carry_anchor)
+
+    # 2. The scan-update tasklet becomes a passthrough of its delta input. The downstream
+    #    chain (whatever tasklets continue the delta computation in v2) now propagates the
+    #    delta value verbatim instead of the carry+delta sum.
+    tasklet.code.as_string = f'{info.out_conn} = {info.delta_in_conn}'
+
+    # 3. Locate the body's final write edge to ``out`` (the unique in-edge to its write
+    #    AccessNode in the state) and re-route it to ``delta_buf[loop_var - iter_start]``.
+    write_an = _find_carried_write_an(state, info.out_name)
+    if write_an is None:
+        return  # Nothing to re-route (defensive; matcher already established the write).
+    final_write_edges = list(state.in_edges(write_an))
+    if len(final_write_edges) != 1:
+        return
+    final_edge = final_write_edges[0]
+    state.remove_edge(final_edge)
+    loop_var = info.body_state.parent_graph.loop_variable
+    idx_expr = symbolic.simplify(symbolic.pystr_to_symbolic(loop_var) - info.iter_start)
+    buf_an = state.add_write(delta_buf)
+    state.add_edge(final_edge.src, final_edge.src_conn, buf_an, None,
+                   mm.Memlet(data=delta_buf, subset=subsets.Range([(idx_expr, idx_expr, 1)])))
+    if state.degree(write_an) == 0:
+        state.remove_node(write_an)
+
+
+def _find_carried_write_an(state: SDFGState, name: str) -> Optional[nodes.AccessNode]:
+    """Return the unique AccessNode of ``name`` with at least one in-edge (the body's
+    write target). ``None`` on ambiguity or absence.
+    """
+    found = None
+    for n in state.data_nodes():
+        if n.data != name or state.in_degree(n) == 0:
+            continue
+        if found is not None:
+            return None
+        found = n
+    return found
+
+
+def _disconnect_carry_chain(state: SDFGState, tasklet: nodes.Tasklet, conn: str,
+                            anchor: nodes.AccessNode):
+    """Remove the tasklet's carry-input edge and the slice-copy intermediate chain
+    that fed it. Transient intermediates that become isolated are dropped. The
+    original carry-source ``out`` AccessNode in the body state is ALSO dropped if
+    it ends up isolated -- the post-loop seed-add reads from ``out`` in its own
+    state, so the body-state read AN is no longer needed.
+    """
+    if conn in tasklet.in_connectors:
+        for e in list(state.in_edges(tasklet)):
+            if e.dst_conn == conn:
+                state.remove_edge(e)
+        tasklet.remove_in_connector(conn)
+    # Walk backward from ``anchor`` (the AN the carry edge entered), pruning every
+    # ancestor that becomes isolated (in+out degree == 0). The walk stops once it
+    # finds a node with remaining incident edges (still in use elsewhere).
+    cur = anchor
+    while isinstance(cur, nodes.AccessNode) and cur in state.nodes():
+        if state.in_degree(cur) + state.out_degree(cur) != 0:
+            # Still in use (e.g. some other in-loop reader of ``out``); stop here.
+            break
+        upstream = None
+        ins = list(state.in_edges(cur))
+        if len(ins) == 1 and isinstance(ins[0].src, nodes.AccessNode):
+            upstream = ins[0].src
+        for ie in ins:
+            state.remove_edge(ie)
+        state.remove_node(cur)
+        if upstream is None:
+            break
+        cur = upstream
+
+
+def _collect_output_chain(state: SDFGState, tasklet: nodes.Tasklet, out_conn: str
+                          ) -> List[nodes.AccessNode]:
+    """Walk forward from ``tasklet[out_conn]`` collecting any slice-copy intermediate
+    transient AccessNodes (in=1, out=1) until the final write AN of the carried array.
+    The final AN is INCLUDED in the returned list (it gets pruned along with the
+    intermediates -- the rewrite re-routes the tasklet's output to ``delta_buf``).
+    """
+    chain: List[nodes.AccessNode] = []
+    cur = tasklet
+    cur_conn = out_conn
+    while True:
+        out_edges = [e for e in state.out_edges(cur) if e.src_conn == cur_conn]
+        if len(out_edges) != 1:
+            break
+        e = out_edges[0]
+        nxt = e.dst
+        if not isinstance(nxt, nodes.AccessNode):
+            break
+        chain.append(nxt)
+        desc = state.sdfg.arrays.get(nxt.data)
+        if desc is not None and not getattr(desc, 'transient', False):
+            break  # non-transient = the original ``out`` write target; stop after appending
+        # Continue through transient intermediates.
+        cur = nxt
+        cur_conn = None
+    return chain
 
 
 def _emit_scan(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, scan_buf: str, trip: Any):
