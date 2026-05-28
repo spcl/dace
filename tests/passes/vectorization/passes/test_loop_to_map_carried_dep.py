@@ -12,8 +12,8 @@ results.
 This is a lightweight structural guard: it runs ``LoopToMap`` without any
 vectorization options and asserts only the loop / map shape, with no
 compile or numeric run. It is the regression net for the rule "every loop
-that must stay a loop stays a loop". The kernels are reused from
-:mod:`tests.passes.vectorization.tsvc_2d.test_2d` rather than redefined.
+that must stay a loop stays a loop". The kernels are pulled from the
+shared :mod:`tests.corpus.tsvc` registry rather than redefined.
 """
 import copy
 
@@ -22,10 +22,9 @@ import pytest
 
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
-from tests.passes.vectorization.tsvc_1d.test_misc import s481_d_single, s482_d_single
-from tests.passes.vectorization.tsvc_2d.test_2d import (s1119_d_single, s2101_d_single, s2111_d_single, s231_d_single,
-                                                        s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
-                                                        s257_d_single)
+from tests.corpus.tsvc import (s481_d_single, s482_d_single, s1119_d_single, s2101_d_single, s2111_d_single,
+                                s231_d_single, s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
+                                s257_d_single)
 
 # (kernel, loop variables carrying a real dependency that MUST stay sequential).
 _CARRIED_DEP = [

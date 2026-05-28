@@ -134,10 +134,6 @@ _LEGACY_ONLY_FILES = frozenset({
     "sve/test_sve_style.py",
     "sve/test_sve_style_parity.py",
     "sve/test_sve_variable_probe.py",
-    "tsvc_1d/test_bulk.py",
-    "tsvc_1d/test_misc.py",
-    "tsvc_1d/test_vector_ops.py",
-    "tsvc_2d/test_misc_2d.py",
 })
 
 

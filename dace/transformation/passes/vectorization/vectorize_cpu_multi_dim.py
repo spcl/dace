@@ -214,7 +214,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # -[wcr]-> sink``) and emits a ``TileReduce`` per matching edge so the
         # tile collapses to a scalar before the outer OpenMP reduction fires.
         # Idempotent — re-runs are no-ops.
-        from dace.transformation.passes.vectorization.normalize_wcr_source import (NormalizeWCRSource)
+        from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
         # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read the
         # original tile-dependent array access directly, not a length-1 scalar
         # slice (which ``EmitTileOps`` would mis-classify as a Scalar broadcast).
@@ -358,7 +358,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # case) stays converted via the augassign fallback on a follow-up
         # pass below — first lower the recognised reductions, then convert
         # anything left over.
-        from dace.transformation.passes.vectorization.normalize_wcr_source import (NormalizeWCRSource)
+        from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
         NormalizeWCRSource().apply_pass(sdfg, {})
         sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
         # ``LoopToMap`` parallelises every data-parallel ``for`` loop into a map

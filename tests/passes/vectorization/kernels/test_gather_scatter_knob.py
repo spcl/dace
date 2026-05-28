@@ -36,15 +36,14 @@ from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 LEN_1D = dace.symbol("LEN_1D")
 
 # vag / vas / s4113 / s491 / s4115 are TSVC kernels — import the canonical defs
-# from the corpus rather than re-declaring identical bodies (dedup; prefer tsvc).
-from tests.passes.vectorization.tsvc_1d.test_misc import (  # noqa: E402
+# from the shared :mod:`tests.corpus.tsvc` corpus rather than re-declaring them
+# (dedup; prefer the single source of TSVC).
+from tests.corpus.tsvc import (  # noqa: E402
     vag_d_single as vag,
     vas_d_single as vas,
     s4113_d_single as s4113,
-)
-from tests.passes.vectorization.tsvc_1d.test_selected import (  # noqa: E402
-    dace_s491 as s491,
-    dace_s4115_inner as s4115,
+    s491_d_single as s491,
+    s4115_d_single as s4115,
 )
 
 

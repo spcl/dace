@@ -116,6 +116,6 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             # tasklet now flows from the new NSDFG. DaCe cpu codegen only emits
             # WCR for AccessNode sources, so interpose a private scalar via
             # :class:`NormalizeWCRSource` to keep the reduction visible.
-            from dace.transformation.passes.vectorization.normalize_wcr_source import (NormalizeWCRSource)
+            from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
             NormalizeWCRSource().apply_pass(sdfg, {})
         return nested or None
