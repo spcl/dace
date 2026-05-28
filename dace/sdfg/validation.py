@@ -911,9 +911,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # elements. The check only applies when BOTH endpoints are ``AccessNode``s
         # backed by arrays (so ``.data`` and ``.veclen`` are meaningful); if either
         # side is a ``Stream`` access node the volumes legitimately differ.
-        if (not e.data.allow_oob and e.data.other_subset is not None
-                and isinstance(src_node, nd.AccessNode) and isinstance(dst_node, nd.AccessNode)
-                and not isinstance(sdfg.arrays[src_node.data], dt.Stream)
+        if (not e.data.allow_oob and e.data.other_subset is not None and isinstance(src_node, nd.AccessNode)
+                and isinstance(dst_node, nd.AccessNode) and not isinstance(sdfg.arrays[src_node.data], dt.Stream)
                 and not isinstance(sdfg.arrays[dst_node.data], dt.Stream)):
             src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)

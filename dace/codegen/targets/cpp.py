@@ -876,8 +876,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         gpu_stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t),
                                None)
         body_str = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-        if (host_node_on_gpu_memory and gpu_stream_conn is not None
-                and '__dace_current_stream' in str(body_str)):
+        if (host_node_on_gpu_memory and gpu_stream_conn is not None and '__dace_current_stream' in str(body_str)):
             if gpu_stream_conn == '__dace_current_stream':
                 # The connector already exposes the symbol; skip the self-referential
                 # rebind that would redeclare it.

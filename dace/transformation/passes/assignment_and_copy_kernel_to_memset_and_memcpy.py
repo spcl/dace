@@ -344,7 +344,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             desc = sdfg.arrays[e.src.data]
             # A Scalar is passed by value (referenced bare, like the frontend's own
             # range-bound assignments); an Array is indexed by the edge's subset.
-            assignments[e.dst_conn] = e.src.data if isinstance(desc, dace.data.Scalar) else f"{e.src.data}[{e.data.subset}]"
+            assignments[e.dst_conn] = e.src.data if isinstance(desc,
+                                                               dace.data.Scalar) else f"{e.src.data}[{e.data.subset}]"
             if e.dst_conn not in sdfg.symbols:
                 sdfg.add_symbol(e.dst_conn, desc.dtype)
         state.parent_graph.add_state_before(state, assignments=assignments)
@@ -421,8 +422,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     f"{clashes} which would clash with the new library node's connectors.", UserWarning)
             return False
 
-        if not self._hoist_dynamic_inputs_to_symbols(state, map_entry,
-                                                     self._subset_symbols(begin_subset, exit_subset)):
+        if not self._hoist_dynamic_inputs_to_symbols(state, map_entry, self._subset_symbols(begin_subset, exit_subset)):
             if verbose:
                 warnings.warn(
                     f"Skipping {kind} lift in map {map_entry.map.label}: a dynamic-range source scalar is "
@@ -524,9 +524,15 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             passthrough_conns = [(path[-2].dst_conn, map_exit)]
             if not is_memset:
                 passthrough_conns.append((path[0].dst_conn, node))
-            if not self._lift_preconditions_ok(state, node, kind=kind, passthrough_conns=passthrough_conns,
-                                               libnode_conn_names=libnode_conn_names, begin_subset=begin_subset,
-                                               exit_subset=exit_subset, copy_length=copy_length, verbose=verbose):
+            if not self._lift_preconditions_ok(state,
+                                               node,
+                                               kind=kind,
+                                               passthrough_conns=passthrough_conns,
+                                               libnode_conn_names=libnode_conn_names,
+                                               begin_subset=begin_subset,
+                                               exit_subset=exit_subset,
+                                               copy_length=copy_length,
+                                               verbose=verbose):
                 continue
 
             if is_memset:
@@ -678,9 +684,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # symbol directly; nest the map in its own SDFG (whole arrays passed
             # in, the scalar arriving as a read-only input) and lift inside,
             # where the safe-hoist applies.
-            if self._needs_nesting_for_dynamic_inputs(state, node) and (
-                    self._detect_contiguous_memcpy_paths(state, node)
-                    or self._detect_contiguous_memset_paths(state, node)):
+            if self._needs_nesting_for_dynamic_inputs(state, node) and (self._detect_contiguous_memcpy_paths(
+                    state, node) or self._detect_contiguous_memset_paths(state, node)):
                 subgraph = state.scope_subgraph(node, include_entry=True, include_exit=True)
                 nsdfg_node = helpers.nest_state_subgraph(state.sdfg, state, subgraph, full_data=True)
                 rmed_memcpies[node] = self.apply_pass(nsdfg_node.sdfg, {})
