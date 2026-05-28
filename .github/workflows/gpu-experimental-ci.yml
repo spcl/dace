@@ -56,7 +56,7 @@ jobs:
         # ``cutensor/{include,lib}`` directories; expose them to the compiler
         # (CPATH/LIBRARY_PATH) and the dynamic loader (LD_LIBRARY_PATH), and
         # alias libcutensor.so.2 to libcutensor.so so ``-lcutensor`` resolves.
-        CUTENSOR_DIR=$(python -c "import cutensor, os; print(os.path.dirname(cutensor.__file__))")
+        CUTENSOR_DIR=$(python -c "import cutensor; print(cutensor.__path__[0])")
         ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
         export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
         export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
@@ -70,7 +70,7 @@ jobs:
     - name: Run extra GPU tests (experimental codegen)
       run: |
         source ~/.venv/bin/activate # activate venv
-        CUTENSOR_DIR=$(python -c "import cutensor, os; print(os.path.dirname(cutensor.__file__))")
+        CUTENSOR_DIR=$(python -c "import cutensor; print(cutensor.__path__[0])")
         ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
         export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
         export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
