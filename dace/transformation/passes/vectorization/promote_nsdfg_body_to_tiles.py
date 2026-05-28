@@ -828,34 +828,84 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     continue
                 src_arr = inner.arrays[src_name]
                 src_ndim = len(src_arr.shape)
-                if len(gather_syms) != src_ndim:
+                # K>=2 mixed gather requires K-aware ``index_strides`` math that
+                # the current pure-expansion lowering does not provide (it would
+                # mis-compute per-lane offsets for the data-gather widened
+                # window). Refuse cleanly at K>=2 until the expansion grows
+                # K-aware index stride handling; the mixed shape is unlocked
+                # for K=1, the common case.
+                if len(gather_syms) != src_ndim and len(W) > 1:
                     raise NotImplementedError(
                         f"PromoteNSDFGBodyToTiles: gather on {src_name!r} indexes {len(gather_syms)} of "
-                        f"{src_ndim} source dims; mixed affine + data-gather source dims not yet supported")
-                # Resolve each gather index tile + its per-lane stride. The
-                # fan-out widened the index connector to a contiguous bounding
-                # window of ``c*(W-1)+1`` elements (``idx[c*i:c*i+c*(W-1)]``);
-                # recover ``c`` from that window size so the gather reads
-                # ``idx[c*l]`` per lane (a ``c``-strided index pick DaCe's
-                # base-pointer NSDFG args cannot carry in the memlet itself).
-                idx_info = []  # (k, sym, idx_arr, window_size, lane_stride)
+                        f"{src_ndim} source dims at K={len(W)}; mixed affine + data-gather is K=1-only "
+                        f"in this slice (K>=2 needs K-aware index_strides lowering)")
+                # K=1 mixed: resolve every source dim — data-gather dims via the
+                # fanned-out widened index tile, affine dims (tile-var-only) via
+                # a fresh affine ``_agidx`` tile built per-tile. The common
+                # CloudSC pattern ``zsolqb[i, k, idx[j]]`` (two affine + one
+                # data-gather) lands here at K=1 after collapse.
+                sym_by_dim = {d: sym for (d, sym) in gather_syms}
+                idx_info = []  # (k, sym_or_None, idx_arr, window_size, lane_stride)
                 unresolved = False
-                for k, (_dim, sym) in enumerate(gather_syms):
-                    idx_arr = self._index_array_for_symbol(inner, sym)
-                    if idx_arr is None:
-                        # ``sym`` is not a fanned-out data-dependent gather index
-                        # (no widened index tile bound via an interstate-edge
-                        # assignment) — it is a loop-invariant outer symbol
-                        # (s115's ``a[j]`` where ``j`` is the outer-loop var).
-                        # Skip this edge; the downstream operand classifier
-                        # (``is_single_invariant``) lowers it as a Scalar
-                        # broadcast instead.
-                        unresolved = True
-                        break
-                    window = inner.arrays[idx_arr].shape[0]
-                    idx_info.append((k, sym, idx_arr, window, _index_lane_stride(window, W[0])))
+                affine_dims = []  # (k, begin_expr) for the fresh ``_agidx`` fills
+                for k in range(src_ndim):
+                    if k in sym_by_dim:
+                        sym = sym_by_dim[k]
+                        idx_arr = self._index_array_for_symbol(inner, sym)
+                        if idx_arr is None:
+                            # ``sym`` is not a fanned-out data-dependent gather
+                            # index (no widened index tile bound via interstate
+                            # assignment) — it is a loop-invariant outer symbol
+                            # (s115's ``a[j]``). Skip this edge; the downstream
+                            # operand classifier handles it as Scalar broadcast.
+                            unresolved = True
+                            break
+                        window = inner.arrays[idx_arr].shape[0]
+                        idx_info.append((k, sym, idx_arr, window, _index_lane_stride(window, W[0])))
+                    else:
+                        b, _e, _s = e.data.subset.ranges[k]
+                        expr = _lane_index_expr(str(b), spec.iter_vars)
+                        if expr is None:
+                            unresolved = True
+                            break
+                        affine_dims.append((k, expr))
+                        # placeholder; filled below once the fresh tile lands in
+                        # the inner SDFG (contiguous stride=1).
+                        idx_info.append((k, None, None, W[0], 1))
                 if unresolved:
                     continue
+                if affine_dims:
+                    off = tile_offset(list(W))
+                    # Thread every symbol the affine expression references into
+                    # the NSDFG (the lane fill tasklets reference the tile vars
+                    # plus any shape / divisor symbols).
+                    needed_syms = set(spec.iter_vars)
+                    for (_k, expr) in affine_dims:
+                        needed_syms |= {s for s in (str(x) for x in
+                                                    dace.symbolic.pystr_to_symbolic(expr).free_symbols)
+                                        if not s.startswith("__l")}
+                    for sname in needed_syms:
+                        if sname not in nsdfg_node.symbol_mapping:
+                            nsdfg_node.symbol_mapping[sname] = dace.symbolic.pystr_to_symbolic(sname)
+                        if sname not in inner.symbols:
+                            inner.add_symbol(sname,
+                                             nsdfg_node.sdfg.parent_sdfg.symbols.get(sname, dace.int64)
+                                             if nsdfg_node.sdfg.parent_sdfg is not None else dace.int64)
+                    for (k, expr) in affine_dims:
+                        iname = f"_agidx_{src_name}_{k}"
+                        suffix = 0
+                        while iname in inner.arrays:
+                            suffix += 1
+                            iname = f"_agidx_{src_name}_{k}_{suffix}"
+                        inner.add_array(iname, list(W), dace.int64,
+                                        storage=dace.dtypes.StorageType.Register, transient=True)
+                        fill = istate.add_tasklet(name=f"agidx_{iname}", inputs=set(), outputs={"_out"},
+                                                  code=nested_loops(list(W), f"_out[{off}] = {expr};"),
+                                                  language=dace.dtypes.Language.CPP)
+                        iacc = istate.add_access(iname)
+                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        # Replace the placeholder with the fresh tile.
+                        idx_info[k] = (k, None, iname, W[0], 1)
                 gather = TileGather(name=f"gather_{src_name}",
                                     widths=W,
                                     source_ndim=src_ndim,
@@ -864,9 +914,16 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 istate.add_node(gather)
                 istate.add_edge(e.src, None, gather, TileConnectors.SRC, dace.Memlet.from_array(src_name, src_arr))
                 for k, sym, idx_arr, window, _stride in idx_info:
+                    # Data-gather index tiles are widened 1D (``_idx[0:c*(W-1)+1]``);
+                    # affine-fill index tiles are K-dim (one element per lane in the
+                    # K-shape register tile) — pick the matching memlet subset from
+                    # the descriptor's actual rank.
+                    idx_subset = (out_subset
+                                  if len(inner.arrays[idx_arr].shape) == len(W) else f"0:{window}")
                     istate.add_edge(istate.add_access(idx_arr), None, gather, TileConnectors.idx(k),
-                                    dace.Memlet(f"{idx_arr}[0:{window}]"))
-                    consumed.add(sym)
+                                    dace.Memlet(f"{idx_arr}[{idx_subset}]"))
+                    if sym is not None:
+                        consumed.add(sym)
                 self._wire_mask(istate, mask_acc, gather, out_subset)
                 tile_name = f"{src_name}_gather"
                 suffix = 0
