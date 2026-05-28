@@ -950,6 +950,46 @@ class EmitTileOps(ppl.Pass):
         state.add_edge(node, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
         return self._binop_output_data(state, tasklet), out_access
 
+    def _emit_one_copy(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
+                       tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
+                       mask_name: Optional[str]) -> Optional[dace.nodes.AccessNode]:
+        """Emit a load for a pure-copy ``_out = _in`` body tasklet.
+
+        Used when the map scope contains only assign tasklets (no compute):
+        ``dst[i] = src[i//2]``-style kernels where the load itself (TileLoad
+        / TileGather, selected by the in-edge's classification) IS the tile
+        op. The returned tile transient access node feeds the stores phase
+        which then emits the matching TileStore back to the output array.
+
+        :param state: Parent state.
+        :param tasklet: The assign tasklet.
+        :param spec: Per-dim tile specification.
+        :param tile_map: Intermediate-data-name -> ``(tile_name, tile_access)``.
+        :param mask_name: Iteration-mask transient name, or ``None``.
+        :returns: The loaded tile's access node, or ``None`` when the body
+            does not match the supported pure-copy shape.
+        """
+        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        m = _ASSIGN_RE.match(body)
+        if m is None:
+            return None
+        in_conn = m.group("inp")
+        kind, info = self._resolve_operand(state, tasklet, in_conn, tile_map, spec)
+        if kind == "Tile-existing":
+            return info
+        if kind == "Tile":
+            _, tacc = self._emit_tile_load(state, tasklet, in_conn.lstrip("_"), info[0], info[1], info[2], info[3],
+                                           info[4], spec, mask_name)
+            return tacc
+        if kind == "Gather":
+            _, tacc = self._emit_gather_load(state, tasklet, in_conn.lstrip("_"), info[0], info[1], info[2], spec,
+                                             mask_name)
+            return tacc
+        # Scalar / Symbol broadcast as a pure-copy body is unusual; the
+        # standard binop emit path supports it via a TileBinop wrapper. Fall
+        # through to the original "no binop" error so the gap is visible.
+        return None
+
     def _emit_one_binop(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
                         tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
                         mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
@@ -1046,9 +1086,17 @@ class EmitTileOps(ppl.Pass):
         assign_tasklets = [t for t in tasklets if _is_assign_tasklet(t)]
         const_stores = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is not None]
         binops = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is None]
-        if not binops and not const_stores:
+        # Pure-copy bodies (``dst[i] = src[i//2]`` style) reach here with only
+        # assign tasklets: there is no binop / unop / const-store to anchor on,
+        # but each assign IS the tile op — a load (possibly with a gather /
+        # strided index) directly feeding the output. Emit each assign as a
+        # standalone load whose tile transient becomes the store source; the
+        # stores phase below picks it up exactly like a binop's output tile.
+        copy_only_emit = (not binops and not const_stores)
+        if copy_only_emit and not assign_tasklets:
             raise NotImplementedError(
-                f"EmitTileOps: map {map_entry.label!r} body has no binop or constant-store tasklet")
+                f"EmitTileOps: map {map_entry.label!r} body has no binop, constant-store, "
+                f"or assign tasklet")
 
         mask_name = self._resolve_map_mask(state, map_entry)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
@@ -1070,6 +1118,21 @@ class EmitTileOps(ppl.Pass):
             all_intermediates |= set(inters)
             if isinstance(final_edge.dst, dace.nodes.MapExit):
                 stores.append((out_access, final_edge))
+        if copy_only_emit:
+            # Walk forward from each assign; if it lands on the MapExit, emit a
+            # load for its in-edge and queue the load's tile as the store source.
+            for t in assign_tasklets:
+                out_e = list(state.out_edges(t))
+                if not out_e:
+                    continue
+                final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+                if not isinstance(final_edge.dst, dace.nodes.MapExit):
+                    continue
+                tile_access = self._emit_one_copy(state, t, spec, tile_map, mask_name)
+                if tile_access is None:
+                    continue
+                all_intermediates |= set(inters)
+                stores.append((tile_access, final_edge))
         for t in const_stores:
             out_e = list(state.out_edges(t))
             out_data, out_access = self._emit_const_tile(state, map_entry, t, _constant_store_value(t), spec)

@@ -132,7 +132,9 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  remainder_strategy: Literal["full_mask", "masked_tail", "scalar_postamble"] = "full_mask",
                  branch_mode: Literal["merge", "fp_factor"] = "merge",
                  loop_to_map_permissive: bool = False,
-                 nest_map_bodies: bool = False):
+                 nest_map_bodies: bool = False,
+                 insert_copies: bool = False,
+                 fuse_overlapping_loads: bool = False):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -156,6 +158,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             same-write-set if/else to a per-lane :class:`TileMerge` select;
             ``"fp_factor"`` (K=1 only, requires ``scalar_postamble``) lowers it
             to ``c*x + (1-c)*y`` tile-binop arithmetic.
+        :param insert_copies: Accepted for harness parity with the legacy
+            ``VectorizeCPU``. The tile path does not need explicit boundary
+            copy nodes — its ``TileLoad``/``TileStore`` lib nodes already make
+            the NSDFG-boundary memlets explicit at expansion time — so this
+            knob is a no-op here. Keeping it on the constructor lets the
+            shared harness forward the same knob to either pipeline without a
+            branching wrapper.
+        :param fuse_overlapping_loads: Accepted for harness parity with the
+            legacy ``VectorizeCPU``. The tile path does not yet fuse
+            overlapping loads (every ``TileLoad`` emits its own window); this
+            knob is a no-op here, kept on the constructor for the same
+            harness-parity reason as ``insert_copies``.
         :param nest_map_bodies: Emit-path selector. ``False`` (default) keeps
             the hybrid path — a flat (bare-tasklet) map body tiles via
             :class:`EmitTileOps`, and only a body that is *already* a NestedSDFG
@@ -186,13 +200,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         if branch_mode not in ("merge", "fp_factor"):
             raise NotImplementedError(f"VectorizeCPUMultiDim: branch_mode {branch_mode!r} not in "
                                       f"{{'merge', 'fp_factor'}}")
-        # K-dependent knob support. K=1 supports every (branch, remainder) combo
-        # since the iter_mask only gates stores (the fp_factor arithmetic itself
-        # runs on every lane unchanged). K>=2 requires the merge branch — the
-        # tile path has no K-dim ``c*x + (1-c)*y`` lowering yet.
-        if len(widths) >= 2 and branch_mode != "merge":
-            raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} supports only "
-                                      f"branch_mode='merge' (fp_factor is K=1-only); got {branch_mode!r}")
+        # K-dependent knob support. K=1 and K>=2 both support every (branch,
+        # remainder) combo: the iter_mask only gates stores (the fp_factor
+        # arithmetic itself runs on every lane unchanged), and the fp_factor
+        # branch lowering reduces to a chain of single-op tile binops after
+        # ``SplitTasklets``, which the K-dim tile emitter classifies the same
+        # way regardless of K.
 
         widths_t = tuple(widths)
         # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read the
