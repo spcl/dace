@@ -208,11 +208,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # way regardless of K.
 
         widths_t = tuple(widths)
+        # ``NormalizeWCRSource`` runs first so every WCR sink is sourced by an
+        # AccessNode (private scalar) — the post-vectorise reduction lowering
+        # in ``EmitTileOps`` keys on this shape (``tile -> _wcr_src (Scalar)
+        # -[wcr]-> sink``) and emits a ``TileReduce`` per matching edge so the
+        # tile collapses to a scalar before the outer OpenMP reduction fires.
+        # Idempotent — re-runs are no-ops.
+        from dace.transformation.passes.vectorization.normalize_wcr_source import (NormalizeWCRSource)
         # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read the
         # original tile-dependent array access directly, not a length-1 scalar
         # slice (which ``EmitTileOps`` would mis-classify as a Scalar broadcast).
         # Mirrors the run-at-front placement on the 1D path.
-        passes = [CleanAccessNodeToScalarSliceToTaskletPattern()]
+        passes = [NormalizeWCRSource(), CleanAccessNodeToScalarSliceToTaskletPattern()]
         if branch_mode == "fp_factor":
             # FP-factor branch lowering (the legacy front): collapse a
             # same-write-set if/else to ``a = c*x + (1-c)*y`` arithmetic,
@@ -341,10 +348,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         """
         from dace.transformation.dataflow import WCRToAugAssign
         from dace.transformation.interstate import LoopToMap, RefineNestedAccess
-        # The vectorization / tile path does NOT handle WCR: convert every
-        # write-conflict-resolution memlet (a reduction ``s += a[i]``) into an
-        # explicit augmented-assignment RMW tasklet (``s = s + a[i]``) so no WCR
-        # is left for the tile passes (matches the SVE path's pass-0 convention).
+        # WCR sinks that the tile path CAN handle (the post-:class:`NormalizeWCRSource`
+        # ``tile -> _wcr_src (Scalar) -[wcr]-> sink`` shape, lowered to a
+        # ``TileReduce``) are left alone — running ``WCRToAugAssign`` on them
+        # would convert each ``s += a[i]`` reduction into an RMW tasklet
+        # ``s = s + a[i]`` whose operands are both Scalar (acc + per-iteration
+        # scalar), losing the reduction semantics the tile reduce expansion
+        # needs. Every OTHER WCR (the historical "we can't handle this"
+        # case) stays converted via the augassign fallback on a follow-up
+        # pass below — first lower the recognised reductions, then convert
+        # anything left over.
+        from dace.transformation.passes.vectorization.normalize_wcr_source import (NormalizeWCRSource)
+        NormalizeWCRSource().apply_pass(sdfg, {})
         sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
         # ``LoopToMap`` parallelises every data-parallel ``for`` loop into a map
         # so the tile path can tile it. On its own it propagates WHOLE-array body

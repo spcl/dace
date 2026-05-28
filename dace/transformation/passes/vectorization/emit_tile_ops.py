@@ -24,7 +24,7 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileScatter, TileStore, TileUnop
+from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileReduce, TileScatter, TileStore, TileUnop
 from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
@@ -133,6 +133,34 @@ _PY_TO_TILEBINOP_OP = {
     "or": "||",
 }
 _ASSIGN_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*(?P<inp>\w+)\s*;?\s*$")
+
+#: Map a WCR lambda body (the ``cpp.unparse_cr_split`` output) to one of the
+#: reduction operators :class:`TileReduce` understands. Lambdas come in
+#: well-known shapes from the DaCe frontend: ``lambda x, y: (x + y)`` /
+#: ``lambda x, y: max(x, y)`` etc. We pattern-match the operator token in
+#: the body so identity / per-arch lowering is consistent across reductions.
+_WCR_OP_PATTERNS = (
+    ("max(", "max"),
+    ("min(", "min"),
+    (" + ", "+"),
+    (" * ", "*"),
+    (" and ", "&&"),
+    (" or ", "||"),
+)
+
+
+def _wcr_op(wcr_code: Optional[str]) -> Optional[str]:
+    """Extract the reduction operator from a WCR lambda body string.
+
+    :param wcr_code: The WCR lambda's source (e.g. ``lambda x, y: (x + y)``).
+    :returns: One of ``+ * min max && ||``, or ``None`` if not recognised.
+    """
+    if not wcr_code:
+        return None
+    for token, op in _WCR_OP_PATTERNS:
+        if token in wcr_code:
+            return op
+    return None
 
 
 def _is_assign_tasklet(tasklet: dace.nodes.Tasklet) -> bool:
@@ -763,6 +791,14 @@ class EmitTileOps(ppl.Pass):
                 nxt = list(state.out_edges(dst))
                 if len(nxt) != 1:
                     return edge, intermediates
+                # An AccessNode whose only outgoing edge carries a WCR is the
+                # post-:class:`NormalizeWCRSource` private-scalar reduction
+                # target — DO NOT walk past it. The caller routes such an
+                # edge into ``reductions`` and emits a ``TileReduce`` that
+                # writes ``dst``; walking past would re-target the WCR onto
+                # the outer scalar (acc) and drop the reduction.
+                if nxt[0].data is not None and nxt[0].data.wcr is not None:
+                    return edge, intermediates
                 intermediates.append(dst)
                 edge = nxt[0]
                 continue
@@ -950,6 +986,73 @@ class EmitTileOps(ppl.Pass):
         state.add_edge(node, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
         return self._binop_output_data(state, tasklet), out_access
 
+    def _wcr_scalar_target(self, state: dace.SDFGState,
+                           candidate) -> Optional[Tuple[dace.nodes.AccessNode, str]]:
+        """Detect the post-:class:`NormalizeWCRSource` reduction shape.
+
+        After ``NormalizeWCRSource`` interposes a private scalar between a
+        CodeNode and its WCR sink, an inner tasklet's downstream chain looks
+        like ``tasklet -> _wcr_src (Scalar) -[wcr]-> sink``. The candidate
+        passed in is the tasklet's final-edge destination (after walking past
+        any plain assign tasklets).
+
+        :param state: Parent state.
+        :param candidate: The downstream node of the tasklet's final edge.
+        :returns: ``(scalar_access, op)`` when ``candidate`` is a Scalar
+            AccessNode with exactly one outgoing WCR edge whose operator is
+            recognised by :func:`_wcr_op`; ``None`` otherwise.
+        """
+        if not isinstance(candidate, dace.nodes.AccessNode):
+            return None
+        desc = state.sdfg.arrays.get(candidate.data)
+        if desc is None:
+            return None
+        if not (isinstance(desc, dace.data.Scalar)
+                or (isinstance(desc, dace.data.Array) and tuple(desc.shape) == (1, ))):
+            return None
+        wcr_edges = [e for e in state.out_edges(candidate) if e.data is not None and e.data.wcr is not None]
+        if len(wcr_edges) != 1:
+            return None
+        op = _wcr_op(wcr_edges[0].data.wcr)
+        if op is None or op not in ("+", "*", "min", "max"):
+            return None
+        return candidate, op
+
+    def _emit_tile_reduce(self, state: dace.SDFGState, tile_access: dace.nodes.AccessNode,
+                          scalar_access: dace.nodes.AccessNode, op: str,
+                          spec: TileDimSpec, mask_name: Optional[str]) -> None:
+        """Emit a :class:`TileReduce` writing the tile to the scalar.
+
+        The original tasklet that fed ``scalar_access`` is removed by the
+        downstream cleanup; this helper re-wires the source side so the WCR
+        edge from ``scalar_access`` to its sink keeps its semantics — the
+        tile is reduced to a single value, written into ``scalar_access``,
+        and the outer WCR aggregates across worker chunks.
+
+        :param state: Parent state.
+        :param tile_access: The tile transient produced by the binop / copy
+            (``widths``-shaped).
+        :param scalar_access: The destination Scalar AccessNode created by
+            :class:`NormalizeWCRSource`.
+        :param op: Reduction operator (``+ * min max``).
+        :param spec: Per-dim tile specification.
+        :param mask_name: Iteration-mask transient name, or ``None``.
+        """
+        subset = ", ".join(f"0:{w}" for w in spec.widths)
+        mask_access = self._mask_access_or_none(state, mask_name)
+        reduce_node = TileReduce(
+            name=f"{tile_access.data}_reduce_{op}".replace("+", "add").replace("*", "mul"),
+            widths=spec.widths,
+            op=op,
+            axis=None,
+            has_mask=mask_access is not None,
+        )
+        state.add_node(reduce_node)
+        state.add_edge(tile_access, None, reduce_node, "_src", dace.Memlet(f"{tile_access.data}[{subset}]"))
+        if mask_access is not None:
+            state.add_edge(mask_access, None, reduce_node, "_mask", dace.Memlet(f"{mask_name}[{subset}]"))
+        state.add_edge(reduce_node, "_dst", scalar_access, None, dace.Memlet(f"{scalar_access.data}[0]"))
+
     def _emit_one_copy(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
                        tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
                        mask_name: Optional[str]) -> Optional[dace.nodes.AccessNode]:
@@ -1106,6 +1209,12 @@ class EmitTileOps(ppl.Pass):
 
         tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]] = {}
         stores: List[Tuple[dace.nodes.AccessNode, object]] = []
+        # ``reductions`` carries the post-:class:`NormalizeWCRSource` pattern
+        # ``tile -> _wcr_src (Scalar) -[wcr]-> sink``: each entry is the source
+        # tile AccessNode, the (un-wired) tasklet-to-scalar edge, and the WCR
+        # target tuple ``(scalar_access, wcr_op_str)``. Lowered to a TileReduce
+        # in the post-walk emission below.
+        reductions: List[Tuple[dace.nodes.AccessNode, object, Tuple[dace.nodes.AccessNode, str]]] = []
         all_intermediates: set = set()
         for t in ordered:
             out_e = list(state.out_edges(t))
@@ -1118,21 +1227,32 @@ class EmitTileOps(ppl.Pass):
             all_intermediates |= set(inters)
             if isinstance(final_edge.dst, dace.nodes.MapExit):
                 stores.append((out_access, final_edge))
+            else:
+                wcr_target = self._wcr_scalar_target(state, final_edge.dst)
+                if wcr_target is not None:
+                    reductions.append((out_access, final_edge, wcr_target))
         if copy_only_emit:
             # Walk forward from each assign; if it lands on the MapExit, emit a
             # load for its in-edge and queue the load's tile as the store source.
+            # An assign whose final dst is a Scalar AccessNode with a downstream
+            # WCR (the post-:class:`NormalizeWCRSource` shape ``tasklet ->
+            # _wcr_src (Scalar) -[wcr]-> sink``) lowers to a TileReduce instead.
             for t in assign_tasklets:
                 out_e = list(state.out_edges(t))
                 if not out_e:
                     continue
                 final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
-                if not isinstance(final_edge.dst, dace.nodes.MapExit):
+                wcr_target = self._wcr_scalar_target(state, final_edge.dst)
+                if not (isinstance(final_edge.dst, dace.nodes.MapExit) or wcr_target is not None):
                     continue
                 tile_access = self._emit_one_copy(state, t, spec, tile_map, mask_name)
                 if tile_access is None:
                     continue
                 all_intermediates |= set(inters)
-                stores.append((tile_access, final_edge))
+                if wcr_target is not None:
+                    reductions.append((tile_access, final_edge, wcr_target))
+                else:
+                    stores.append((tile_access, final_edge))
         for t in const_stores:
             out_e = list(state.out_edges(t))
             out_data, out_access = self._emit_const_tile(state, map_entry, t, _constant_store_value(t), spec)
@@ -1167,6 +1287,9 @@ class EmitTileOps(ppl.Pass):
                 state.add_edge(mask_access, None, store, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
             state.add_edge(store, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
                            dace.Memlet(data=out_dst_name, subset=promoted))
+
+        for tile_acc, _orig_edge, (scalar_acc, op) in reductions:
+            self._emit_tile_reduce(state, tile_acc, scalar_acc, op, spec, mask_name)
 
         # Remove the original body tasklets + the intermediate transients
         # that only connected them — scoped, so no isolated node remains.
