@@ -104,10 +104,7 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
     parent_graph: ControlFlowRegion = state.parent_graph
 
     # Allocate a transient scalar to hold the accumulator.
-    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}",
-                                     dtype=desc.dtype,
-                                     transient=True,
-                                     find_new_name=True)
+    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
 
     # --- Init state: arr[c] -> scalar (preserves the seed value of the reduction).
     init_state = parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")
