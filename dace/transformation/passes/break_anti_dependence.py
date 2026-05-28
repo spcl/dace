@@ -107,6 +107,28 @@ class BreakAntiDependence(ppl.Pass):
             return ('complex', None)
         return ('WAR_symbolic', carried_offset)
 
+    @staticmethod
+    def _loop_internal_symbols(loop: LoopRegion) -> Set[str]:
+        """Symbols defined *within* ``loop`` -- the loop variable plus every nested
+        map parameter and every nested loop variable. A symbolic carried offset
+        whose free symbols intersect this set is NOT loop-invariant and the
+        rename would be unsound (the read position varies inside the loop body
+        in a way that may overlap the write).
+        """
+        from dace.sdfg.state import LoopRegion as _LR
+        internal: Set[str] = set()
+        if loop.loop_variable:
+            internal.add(loop.loop_variable)
+        for st in loop.all_states():
+            for n in st.nodes():
+                from dace.sdfg import nodes as _nd
+                if isinstance(n, _nd.MapEntry):
+                    internal.update(str(p) for p in n.map.params)
+        for cfr in loop.all_control_flow_regions():
+            if isinstance(cfr, _LR) and cfr is not loop and cfr.loop_variable:
+                internal.add(cfr.loop_variable)
+        return internal
+
     def _renamable_arrays(self, loop: LoopRegion, sdfg: SDFG):
         """Arrays in ``loop`` whose read/write pattern is a pure WAR (read-ahead)
         anti-dependence -- renamable -- and not a RAW recurrence.
@@ -129,6 +151,8 @@ class BreakAntiDependence(ppl.Pass):
                     if e.data is not None and not e.data.is_empty():
                         writes.setdefault(n.data, []).append(e.data.get_dst_subset(e, st) or e.data.subset)
 
+        internal_syms = self._loop_internal_symbols(loop)
+
         renamable = []
         for name in reads:
             if name not in writes:
@@ -137,12 +161,24 @@ class BreakAntiDependence(ppl.Pass):
             verdicts = {c[0] for c in classes}
             if 'RAW' in verdicts or 'complex' in verdicts:
                 continue  # true dependence (or unanalyzable) -> not sound to rename
-            if 'WAR' not in verdicts and 'WAR_symbolic' not in verdicts:
-                continue
+            # WAR_symbolic offsets must be LOOP-INVARIANT -- free symbols may not
+            # intersect any iteration variable of this loop OR of any nested
+            # map / loop. Otherwise the read position varies inside the body in
+            # a way that may overlap the write (e.g. offset ``-j-1`` for a
+            # nested map over ``j`` is NOT a safe forward-only read).
+            ok = True
             guards: Set = set()
             for kind, payload in classes:
-                if kind == 'WAR_symbolic' and payload is not None:
+                if kind == 'WAR_symbolic':
+                    free = {str(s) for s in payload.free_symbols}
+                    if free & internal_syms:
+                        ok = False
+                        break
                     guards.add(payload)
+            if not ok:
+                continue
+            if 'WAR' not in verdicts and 'WAR_symbolic' not in verdicts:
+                continue
             renamable.append((name, guards))
         return renamable
 

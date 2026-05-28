@@ -106,12 +106,26 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
     # Allocate a transient scalar to hold the accumulator.
     scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
 
-    # --- Init state: arr[c] -> scalar (preserves the seed value of the reduction).
-    init_state = parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")
-    init_r = init_state.add_read(arr_node.data)
-    init_w = init_state.add_write(scalar_name)
-    init_state.add_edge(init_r, None, init_w, None,
-                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+    # Is the seed value WRITTEN INSIDE THIS STATE (kernel's own ``acc[c] = init``
+    # tasklet, fused with the map)? If so the seed source is that write's
+    # AccessNode -- NOT a fresh read of the caller-passed buffer (which could
+    # hold arbitrary input data). When the in-state init exists, do an
+    # *in-state* privatization (no priv_init/priv_wb states); otherwise fall
+    # back to the cross-state init + writeback.
+    in_state_init_an = None
+    for n in state.nodes():
+        if not isinstance(n, nodes.AccessNode):
+            continue
+        if n is arr_node or n.data != arr_node.data:
+            continue
+        if state.in_degree(n) == 0:
+            continue
+        # Reject the AN if any inbound edge is itself a WCR write (then it's a
+        # different reduction target, not an init).
+        if any(e.data is not None and e.data.wcr is not None for e in state.in_edges(n)):
+            continue
+        in_state_init_an = n
+        break
 
     # --- Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
     # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
@@ -119,6 +133,33 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
     iedge.data.data = scalar_name
     iedge.data.subset = subsets.Range([(0, 0, 1)])
     iedge.data.wcr = wcr  # keep
+
+    if in_state_init_an is not None:
+        # In-state pattern: seed _priv_dot from the in-state init AN; emit the
+        # writeback in the same state, going BACK into the original ``arr_node``.
+        # No priv_init/priv_wb states needed.
+        seed_an = state.add_access(scalar_name)
+        state.add_edge(in_state_init_an, None, seed_an, None,
+                       mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+        # The map's WCR output now goes to a fresh _priv_dot AN ...
+        new_scalar_an = state.add_write(scalar_name)
+        state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,
+                       mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)])))
+        state.remove_edge(oedge)
+        # ... then copy back to the post-map ``arr_node`` (writeback).
+        state.add_edge(new_scalar_an, None, arr_node, None,
+                       mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+        return True
+
+    # --- Cross-state pattern (no in-state init): init state BEFORE the
+    # current state seeds ``_priv_dot`` from the surviving ``arr_node``;
+    # writeback state AFTER copies back.
+    init_state = parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")
+    init_r = init_state.add_read(arr_node.data)
+    init_w = init_state.add_write(scalar_name)
+    init_state.add_edge(init_r, None, init_w, None,
+                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+
     new_scalar_an = state.add_write(scalar_name)
     state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,
                    mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)])))
@@ -126,7 +167,6 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
     if state.degree(arr_node) == 0:
         state.remove_node(arr_node)
 
-    # --- Writeback state: scalar -> arr[c].
     wb_state = parent_graph.add_state_after(state, label=f"priv_wb_{scalar_name}")
     wb_r = wb_state.add_read(scalar_name)
     wb_w = wb_state.add_write(arr_node.data)

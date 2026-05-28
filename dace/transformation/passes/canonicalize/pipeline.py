@@ -317,16 +317,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # inline+fuse, privatize) form an atomic logical transformation.
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([AugAssignToWCR()])),
           ('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
-    # TODO: PrivatizeReductionAccumulator belongs HERE (folded into the
-    # logical reduction_to_wcr_map stage per the design: a scalar-reduction
-    # loop becomes a parallel WCR-map with a *true scalar* accumulator). The
-    # pass is standalone-correct (4/4 unit tests + numerical) but the in-
-    # pipeline interaction with the trailing post_l2m / inline / state-fusion
-    # cleanup drops the map's work for s313 / vdotr. Needs the privatize step
-    # to either (a) protect its inserted init+writeback states from being
-    # fused with the map state, or (b) introduce a synthetic data dependency
-    # so the cleanup respects state ordering. See unit tests in
-    # tests/passes/privatize_reduction_accumulator_test.py.
+    s += _structural_cleanup('reduction_to_wcr_map')
+    s += [('reduction_to_wcr_map', PrivatizeReductionAccumulator())]
 
     # TODO: scatter -- ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort +
     # adjacent-equal`` guard on each scatter ``idx`` array and permissively lifts
