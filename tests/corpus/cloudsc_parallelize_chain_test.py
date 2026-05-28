@@ -64,15 +64,21 @@ _RELAXED_STEPS = {'loop_to_reduce', 'loop_to_map'}
 _INDEX_SYMS = ('klev', 'kfdia', 'kidia')
 
 #: Expected end-state after ``loop_to_map`` (pinned; label-independent so it
-#: survives loop-numbering churn across commits). Every parallelizable loop
-#: becomes a Map; the only loops that stay sequential are the genuine
-#: data dependences -- LU triangular solve (``zqxn``, 2 loops), the vertical
-#: flux prefix-sum (``pfsqrf``) and cloud-tendency whole-array write over klev
-#: (2 loops), and the loop-invariant ``zvqx`` fall-speed setup (5 unrolled
-#: copies). A change here means loop2map coverage shifted -- review before
-#: bumping the numbers.
-_EXPECTED_MAPS = 376
-_EXPECTED_SEQUENTIAL_LOOPS = 9
+#: survives loop-numbering churn across commits). The remaining sequential
+#: loops are: LU triangular back-substitution on ``zqxn`` (2 loops, mathematically
+#: sequential), the vertical flux prefix-sum on ``pfcqlng`` / ``pfsqrf`` (1 loop,
+#: genuine scan; a separate optional scan->elementwise+reduce transform addresses
+#: it), the level loop blocked by a ``tendency_loc_cld`` propagation
+#: over-approximation (1 loop; the inner write IS ``jk``-indexed but
+#: ``propagate_memlets_nested_sdfg`` widens it -- a 2nd-order propagation fix is
+#: a follow-up to the ``symbols_defined_at`` enclosing-LoopRegion fix), and the
+#: ICE ``for_767`` (1 loop, jm=ncldqi=2 so the guard is the runtime
+#: ``yrecldp_laericesed`` rather than a dead ``1==2``, leaving a constant-index
+#: ``zvqx[1]`` write whose privatization requires a separate
+#: ``PromoteConstantIndexAccess`` transform). A change here means loop2map
+#: coverage shifted -- review before bumping the numbers.
+_EXPECTED_MAPS = 355
+_EXPECTED_SEQUENTIAL_LOOPS = 5
 
 
 def _wcr_edges(sdfg: dace.SDFG):
@@ -147,6 +153,14 @@ def _chain():
         ('specialize', _specialize),
         ('simplify', lambda sdfg: sdfg.simplify()),
         ('short_loop_unroll', _unroll_fixpoint),
+        # Re-simplify after unrolling. A body that guards on the iteration variable
+        # (e.g. ``if jm == ncldqi``) only exposes a constant condition once unrolling
+        # pins ``jm``; the first ``simplify`` ran while the guard was still symbolic, so
+        # it could not fold it. Unrolling (with species constants specialised) then
+        # leaves dead branches like ``if 1 == 2`` whose never-taken bodies still hold
+        # constant-index writes (e.g. ``zvqx[1] = ...``) that read as a loop-carried
+        # conflict and block LoopToMap; this second simplify folds them away.
+        ('simplify_after_unroll', lambda sdfg: sdfg.simplify()),
         ('unique_loop_iterators', lambda sdfg: UniqueLoopIterators().apply_pass(sdfg, {})),
         ('trivial_tasklet_elimination', _pmar(TrivialTaskletElimination)),
         ('wcr_to_augassign', _pmar(WCRToAugAssign)),
