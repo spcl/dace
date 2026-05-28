@@ -15,9 +15,25 @@ to ``run_vectorization_test``. Tests with no branches do not need it.
 Both modes must produce numerically identical results against the
 unvectorized scalar reference, otherwise the two lowerings have drifted.
 """
+import inspect
 import os
+import re
 
 import pytest
+
+#: Substrings that, if found in a test function's source, mark the test as
+#: legacy-only. Each names a knob the tile path does not implement (and is
+#: out-of-scope for the v2 path): ``lower_to_intrinsics=True`` (legacy
+#: per-arch C++ intrinsic emission), ``collapse_laneid_index_loads=True``
+#: (lane-id index collapse path), ``filter_map=`` (per-map filter). These
+#: tests previously ran through the harness and skipped at runtime; now
+#: they are deselected at collection so the skip count reflects genuine
+#: feature gaps only.
+_LEGACY_KNOB_PATTERNS = (
+    re.compile(r"\blower_to_intrinsics\s*=\s*True\b"),
+    re.compile(r"\bcollapse_laneid_index_loads\s*=\s*True\b"),
+    re.compile(r"\bfilter_map\s*="),
+)
 
 
 @pytest.fixture(params=["fp_factor", "merge"])
@@ -126,17 +142,29 @@ _LEGACY_ONLY_FILES = frozenset({
 
 
 def _is_legacy_only(item) -> bool:
-    """Whether ``item`` belongs to a legacy-only (non-tile-path) test file.
+    """Whether ``item`` belongs to a legacy-only (non-tile-path) test file
+    OR exercises a legacy-only knob (one of :data:`_LEGACY_KNOB_PATTERNS`)
+    in its body.
 
     :param item: A collected pytest item.
-    :returns: ``True`` if the item's file is in :data:`_LEGACY_ONLY_FILES`.
+    :returns: ``True`` when ``item`` is legacy-only and should be
+        deselected at collection time.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     try:
         rel = os.path.relpath(os.fspath(item.path), here)
     except (AttributeError, ValueError):
+        rel = ""
+    if rel and rel.replace(os.sep, "/") in _LEGACY_ONLY_FILES:
+        return True
+    fn = getattr(item, "function", None)
+    if fn is None:
         return False
-    return rel.replace(os.sep, "/") in _LEGACY_ONLY_FILES
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):
+        return False
+    return any(pat.search(src) for pat in _LEGACY_KNOB_PATTERNS)
 
 
 def _knob_combo_supported(params: dict) -> bool:

@@ -111,4 +111,11 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             subgraph = SubgraphView(g, body_nodes)
             nest_state_subgraph(g.sdfg, g, subgraph, name=f"{n.label}_body")
             nested += 1
+        if nested:
+            # After nesting bodies, any WCR sink that previously flowed from a
+            # tasklet now flows from the new NSDFG. DaCe cpu codegen only emits
+            # WCR for AccessNode sources, so interpose a private scalar via
+            # :class:`NormalizeWCRSource` to keep the reduction visible.
+            from dace.transformation.passes.vectorization.normalize_wcr_source import (NormalizeWCRSource)
+            NormalizeWCRSource().apply_pass(sdfg, {})
         return nested or None
