@@ -102,6 +102,33 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return found
 
 
+def _constant_dim_disjoint(read: subsets.Subset, write: subsets.Subset, dep_indices: Set[int]) -> bool:
+    """``True`` iff some iteration-independent dimension carries different
+    constants on the read vs the write. Such a dimension makes the two
+    accesses pointwise disjoint regardless of what the iteration-dependent
+    dimensions look like, so no cross-iteration alias is possible.
+
+    ``aa[0, i]`` (write) vs ``aa[1, i - 1]`` (read) is the canonical case --
+    TSVC s132. The two accesses live on disjoint rows.
+    """
+    rndr = list(read.ndrange())
+    wndr = list(write.ndrange())
+    if len(rndr) != len(wndr):
+        return False
+    for i, ((rb, re_, _), (wb, we_, _)) in enumerate(zip(rndr, wndr)):
+        if i in dep_indices:
+            continue
+        if rb != re_ or wb != we_:
+            continue
+        try:
+            diff = symbolic.simplify(rb - wb)
+        except Exception:
+            continue
+        if getattr(diff, 'is_number', False) and diff != 0:
+            return True
+    return False
+
+
 def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     """ Finds the indices or ranges of a subset that depend on the iteration
         variable. Returns their index in the subset's indices/ranges list.
@@ -664,6 +691,13 @@ class LoopToMap(xf.MultiStateTransformation):
             indices = set(ridx) | set(widx)
             if not indices:
                 indices = set(range(len(read)))
+            # If some iteration-independent dimension carries a different
+            # constant on the read vs the write (e.g. ``aa[0, i]`` written,
+            # ``aa[1, i-1]`` read), the two accesses are pointwise disjoint
+            # there and the rest of the dependence analysis would lose that
+            # by sanitising the dimension away.
+            if _constant_dim_disjoint(read, write, indices):
+                continue
             read = _sanitize_by_index(indices, read)
             write = _sanitize_by_index(indices, write)
             if read == write:

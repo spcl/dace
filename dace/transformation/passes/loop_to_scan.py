@@ -81,8 +81,12 @@ class _Scan(NamedTuple):
     :param out_name: The scan-output (and carried-input) array's name.
     :param scan_axis: Index of the dimension carrying the scan recurrence.
     :param k_w: Write-side scan-axis offset (``out[i + k_w, ...]``).
-    :param k_r: Read-side scan-axis offset (``out[i + k_r, ...]``). Always
-        equal to ``k_w - 1``.
+    :param k_r: Read-side scan-axis offset (``out[i + k_r, ...]``). Differs
+        from ``k_w`` by a positive ``scan_stride`` (``= 1`` for the contiguous
+        scan; ``> 1`` for stride-S residue-class scans like TSVC s1221).
+    :param scan_stride: ``k_w - k_r`` -- the recurrence's stride. Passed to
+        the ``Scan`` libnode's ``stride`` property; values ``> 1`` run the
+        ``S`` independent residue-class scans in parallel.
     :param other_indices: List of ``(axis, sympy_expr)`` for non-scan axes of
         ``out`` (must be loop-invariant). The same indices are used to slice
         the seed and the seed-add output.
@@ -105,6 +109,7 @@ class _Scan(NamedTuple):
     scan_axis: int
     k_w: Any
     k_r: Any
+    scan_stride: Any
     other_indices: List[Any]
     iter_start: Any
     iter_end: Any
@@ -221,13 +226,13 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     candidate = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable, write_axis, write_others, k_w)
     if candidate is None:
         return None
-    tasklet, carry_edge, delta_edge, op, carry_anchor = candidate
+    tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride = candidate
 
     out_edges_t = [e for e in state.out_edges(tasklet)
                    if e.data is not None and not e.data.is_empty()]
     if len(out_edges_t) != 1:
         return None
-    k_r = symbolic.simplify(k_w - 1)
+    k_r = symbolic.simplify(k_w - scan_stride)
 
     # Refuse any second non-transient write anywhere in the loop body. The body may
     # contain arbitrarily many upstream *transient* nodes feeding the delta (v2), but
@@ -248,6 +253,7 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
         scan_axis=write_axis,
         k_w=k_w,
         k_r=k_r,
+        scan_stride=scan_stride,
         other_indices=write_others,
         iter_start=start,
         iter_end=end,
@@ -340,27 +346,44 @@ def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_
         carry_edge = None
         delta_edge = None
         carry_anchor = None
+        scan_stride = None
         ambiguous = False
         for e in in_edges:
             src_name, src_subset = _resolve_input(state, e)
             if src_name == out_name and src_subset is not None:
                 r_axis, k_r_cand, r_others = _classify_subset(src_subset, loop_var)
-                if (r_axis == scan_axis and _same_other_indices(r_others, write_others)
-                        and symbolic.simplify(k_w - k_r_cand) == 1):
-                    if carry_edge is not None:
-                        ambiguous = True
-                        break
-                    carry_edge = e
-                    carry_anchor = e.src
-                    continue
+                # Accept any *positive* offset k_w - k_r_cand: ``1`` is the
+                # contiguous scan; ``S > 1`` is the residue-class scan that the
+                # ``Scan`` libnode's ``stride`` property handles natively (TSVC
+                # s1221 ``b[i] = b[i-4] + a[i]``).
+                # The matcher accepts contiguous-axis recurrences only
+                # (``k_w - k_r == 1``). Residue-class scans (``> 1`` stride)
+                # are detected but currently fall out below: the per-class
+                # seed-add isn't yet wired, so a wrongly seeded scan would
+                # corrupt the output. ``scan_stride`` is captured so the
+                # rewrite gets the info once that's available.
+                if r_axis == scan_axis and _same_other_indices(r_others, write_others):
+                    try:
+                        diff = symbolic.simplify(k_w - k_r_cand)
+                    except Exception:
+                        diff = None
+                    if (diff is not None and getattr(diff, 'is_number', False)
+                            and getattr(diff, 'is_Integer', False) and int(diff) == 1):
+                        if carry_edge is not None:
+                            ambiguous = True
+                            break
+                        carry_edge = e
+                        carry_anchor = e.src
+                        scan_stride = int(diff)
+                        continue
             if delta_edge is not None:
                 # Two non-carry inputs -- this isn't the scan-update tasklet.
                 delta_edge = None
                 break
             delta_edge = e
-        if ambiguous or carry_edge is None or delta_edge is None:
+        if ambiguous or carry_edge is None or delta_edge is None or scan_stride is None:
             continue
-        return node, carry_edge, delta_edge, op, carry_anchor
+        return node, carry_edge, delta_edge, op, carry_anchor, scan_stride
     return None
 
 
@@ -517,12 +540,12 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
 def _can_emit_direct_write(info: _Scan, out_desc) -> bool:
     """Whether the scan output can be written straight into ``out`` -- skipping
     the seed-add Map -- via :func:`_emit_scan_with_init_direct`. Requires a 1-D
-    output array and no other-axis indices, so the write subset
-    ``out[start + k_w : start + k_w + trip]`` is a contiguous range on the single
-    axis the scan covers. The matcher already ensures ``k_w - k_r == 1``, so the
-    seed read at ``start + k_r`` does not overlap the write range.
+    output array, no other-axis indices, and ``scan_stride == 1`` so the write
+    subset ``out[start + k_w : start + k_w + trip]`` is a contiguous range on
+    the single axis the scan covers. Stride > 1 residue-class scans fall
+    through to the general 3-stage path.
     """
-    return len(out_desc.shape) == 1 and not info.other_indices
+    return len(out_desc.shape) == 1 and not info.other_indices and info.scan_stride == 1
 
 
 def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, trip: Any):
@@ -675,10 +698,13 @@ def _collect_output_chain(state: SDFGState, tasklet: nodes.Tasklet, out_conn: st
 
 
 def _emit_scan(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, scan_buf: str, trip: Any):
-    """Scan(delta_buf) -> scan_buf via the libnode."""
+    """Scan(delta_buf) -> scan_buf via the libnode. The libnode's ``stride``
+    property carries ``info.scan_stride`` so residue-class scans (TSVC s1221,
+    where the recurrence skips ``S`` positions) lift to the same libnode call."""
     r = state.add_read(delta_buf)
     w = state.add_write(scan_buf)
     node = Scan(name=f'{state.label}_op', op=info.op, exclusive=False)
+    node.stride = info.scan_stride
     state.add_node(node)
     state.add_edge(r, None, node, _SCAN_IN, mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
     state.add_edge(node, _SCAN_OUT, w, None, mm.Memlet(data=scan_buf, subset=subsets.Range([(0, trip - 1, 1)])))

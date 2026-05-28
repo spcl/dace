@@ -104,7 +104,10 @@ def test_inclusive_max_1d():
 
 
 def test_refuses_non_unit_offset():
-    """``out[i+2] = out[i] + delta[i]`` -- the carry's offset isn't 1; refused."""
+    """``out[i+2] = out[i] + delta[i]`` -- the carry's offset is ``2`` (residue-
+    class scan). The matcher captures the stride but the rewrite refuses
+    until the per-residue-class seed-add is wired (broadcast seed is wrong
+    when each residue class has its own initial value)."""
 
     @dace.program
     def stride2(out: dace.float64[N + 2], delta: dace.float64[N]):
