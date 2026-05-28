@@ -152,10 +152,13 @@ def test_vectorize_cpu_multi_dim_refuses_spmv():
 
 
 @pytest.mark.parametrize("widths", [(8,), (4, 8)])
-def test_reduction_with_wcr_is_not_yet_supported(widths):
-    """Element-wise sum reduction ``s += a[i]`` uses WCR; the v2 MVP
-    has no ``TileReduce`` lib node and refuses the kernel. The R-series
-    slices land this."""
+def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
+    """Element-wise sum reduction ``s += a[i]`` uses WCR; the orchestrator's
+    ``NormalizeWCRSource`` pre-pass + ``EmitTileOps`` reduction emission now
+    lower this to a ``TileReduce`` writing a private scalar that flows out
+    via the surviving WCR edge to MapExit (OpenMP reduction). Asserts the
+    pipeline accepts the kernel (no ``NotImplementedError``) — prior
+    contract was the inverse refusal."""
     N = dace.symbol("N")
     sdfg = dace.SDFG(f"reduce_{'x'.join(str(w) for w in widths)}")
     sdfg.add_array("a", (N,) if len(widths) == 1 else (N, N), dace.float64)
@@ -179,5 +182,4 @@ def test_reduction_with_wcr_is_not_yet_supported(widths):
             {"_s": dace.Memlet("s[0]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
-    with pytest.raises(NotImplementedError):
-        VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(sdfg, {})

@@ -148,12 +148,21 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     # tile path grows an overlap-fusion expansion, keep the harness skip so
     # the assertion-based tests stay green; the knob itself is forwarded for
     # callers that just want a perf hint.
+    # ``lower_to_intrinsics`` and ``collapse_laneid_index_loads`` are
+    # implicit-always-on on the tile path: the K-dim lib nodes (TileGather /
+    # TileScatter / TileLoad strided) ARE the K-dim equivalent of the legacy
+    # per-arch C++ intrinsics, and the descent never fans out per-lane index
+    # symbols — so both knobs are accepted as no-ops here (already implied
+    # by the tile lowering). ``fuse_overlapping_loads`` IS accepted by the
+    # orchestrator (also no-op), but several legacy-arm structural tests
+    # assert the *presence* of a fused union-window buffer in the post-vec
+    # SDFG — the tile path does not yet emit such a buffer (overlap fusion
+    # is a future TileLoad optimisation), so those assertions fire. Until
+    # the tile path grows an overlap-fusion expansion, keep the harness skip
+    # so the assertion-based tests stay green; the knob itself is forwarded
+    # for callers that just want a perf hint.
     if fuse_overlapping_loads:
         return "fuse_overlapping_loads (tile path accepts the knob but doesn't yet emit a fused window buffer)"
-    if lower_to_intrinsics:
-        return "lower_to_intrinsics (v2 uses tile-op lib nodes, not legacy intrinsics)"
-    if collapse_laneid_index_loads:
-        return "collapse_laneid_index_loads (v2 has no laneid path)"
     # ``loop_to_map_permissive`` IS supported on the tile path now (threaded into
     # the orchestrator's LoopToMap call) — scatter benchmarks set it True so the
     # scatter loop parallelises and the tile path can vectorise it. No skip.

@@ -15,25 +15,17 @@ to ``run_vectorization_test``. Tests with no branches do not need it.
 Both modes must produce numerically identical results against the
 unvectorized scalar reference, otherwise the two lowerings have drifted.
 """
-import inspect
 import os
-import re
 
 import pytest
 
-#: Substrings that, if found in a test function's source, mark the test as
-#: legacy-only. Each names a knob the tile path does not implement (and is
-#: out-of-scope for the v2 path): ``lower_to_intrinsics=True`` (legacy
-#: per-arch C++ intrinsic emission), ``collapse_laneid_index_loads=True``
-#: (lane-id index collapse path), ``filter_map=`` (per-map filter). These
-#: tests previously ran through the harness and skipped at runtime; now
-#: they are deselected at collection so the skip count reflects genuine
-#: feature gaps only.
-_LEGACY_KNOB_PATTERNS = (
-    re.compile(r"\blower_to_intrinsics\s*=\s*True\b"),
-    re.compile(r"\bcollapse_laneid_index_loads\s*=\s*True\b"),
-    re.compile(r"\bfilter_map\s*="),
-)
+# Note: tests that pass legacy knobs (``lower_to_intrinsics=True``,
+# ``collapse_laneid_index_loads=True``, ``filter_map=``) are NOT deselected
+# at collection time — the legacy non-NSDFG ``VectorizeCPU`` path is a
+# permanent first-class knob, exercised end-to-end. The harness routes such
+# tests to the legacy path automatically (see ``run_vectorization_test``'s
+# legacy-knob detection); the tile path's per-knob skips only fire when a
+# test forces the tile arm explicitly via ``vectorize_config``.
 
 
 @pytest.fixture(params=["fp_factor", "merge"])
@@ -99,21 +91,30 @@ def pytest_addoption(parser):
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrise ``vectorize_config`` over the tile-op path.
+    """Parametrise ``vectorize_config`` over the tile-op + legacy paths.
 
-    The legacy 1D ``VectorizeCPU`` (``scalar_postamble``, K=1 / VLEN=8) arm
-    has been dropped: the K-dim tile-op path (``VectorizeCPUMultiDim``) now
-    covers both K=1 and K>=2, so the full sweep runs through it alone. The arm
-    is the default hybrid ``"tile_nodes"`` unless ``--tile-nest-bodies`` selects
-    the single-descent ``"tile_nodes_nested"`` arm (the in-progress emit path
-    being brought to parity); both must match the unvectorized scalar reference.
+    Three first-class arms — each is a permanent optimisation knob and every
+    harness test runs through all three (subject to per-arm skip predicates
+    in :func:`_tile_nodes_skip_reason` / the legacy gate):
+
+    - ``"tile_nodes"`` — the K-dim tile-op path (``VectorizeCPUMultiDim``)
+      in hybrid mode (flat -> ``EmitTileOps``; already-NSDFG bodies ->
+      descent ``PromoteNSDFGBodyToTiles``). The default tile arm.
+    - ``"tile_nodes_nested"`` — the same path with ``nest_map_bodies=True``
+      so the descent is the single emit path. Selected by
+      ``--tile-nest-bodies``; replaces the ``"tile_nodes"`` arm when active.
+    - ``"legacy_cpu"`` — the legacy non-NSDFG ``VectorizeCPU`` path
+      (``scalar_postamble``, K=1 / VLEN=8). A permanent first-class knob;
+      tests that pass legacy-only knobs (``lower_to_intrinsics=True`` etc.)
+      route here automatically, and EVERY harness test also runs once on
+      this arm so regressions on the legacy path surface early.
 
     :param metafunc: The pytest metafunc for the test being collected.
     """
     if "vectorize_config" not in metafunc.fixturenames:
         return
-    arm = "tile_nodes_nested" if metafunc.config.getoption("--tile-nest-bodies") else "tile_nodes"
-    metafunc.parametrize("vectorize_config", [arm], indirect=True)
+    tile_arm = "tile_nodes_nested" if metafunc.config.getoption("--tile-nest-bodies") else "tile_nodes"
+    metafunc.parametrize("vectorize_config", [tile_arm, "legacy_cpu"], indirect=True)
 
 
 #: Test files that exercise ONLY the legacy 1D ``VectorizeCPU`` / ``VectorizeSVE``
@@ -138,29 +139,23 @@ _LEGACY_ONLY_FILES = frozenset({
 
 
 def _is_legacy_only(item) -> bool:
-    """Whether ``item`` belongs to a legacy-only (non-tile-path) test file
-    OR exercises a legacy-only knob (one of :data:`_LEGACY_KNOB_PATTERNS`)
-    in its body.
+    """Whether ``item`` belongs to a legacy-only (non-tile-path) test file.
+
+    Tests in :data:`_LEGACY_ONLY_FILES` are deselected at collection time —
+    they exercise dataflow / orchestrator paths the tile arm does not own.
+    A test that merely passes a legacy *knob* (``lower_to_intrinsics=True``
+    etc.) is NOT legacy-only — the harness routes it to the legacy
+    ``VectorizeCPU`` arm automatically, so it stays collected and runs.
 
     :param item: A collected pytest item.
-    :returns: ``True`` when ``item`` is legacy-only and should be
-        deselected at collection time.
+    :returns: ``True`` when ``item``'s file is in :data:`_LEGACY_ONLY_FILES`.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     try:
         rel = os.path.relpath(os.fspath(item.path), here)
     except (AttributeError, ValueError):
-        rel = ""
-    if rel and rel.replace(os.sep, "/") in _LEGACY_ONLY_FILES:
-        return True
-    fn = getattr(item, "function", None)
-    if fn is None:
         return False
-    try:
-        src = inspect.getsource(fn)
-    except (OSError, TypeError):
-        return False
-    return any(pat.search(src) for pat in _LEGACY_KNOB_PATTERNS)
+    return rel.replace(os.sep, "/") in _LEGACY_ONLY_FILES
 
 
 def _knob_combo_supported(params: dict) -> bool:
