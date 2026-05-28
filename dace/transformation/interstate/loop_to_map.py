@@ -131,6 +131,58 @@ def _affine_coeffs(expr, itersym):
     return a, b
 
 
+def _collect_iedge_bindings(loop: LoopRegion) -> Dict[str, str]:
+    """Symbol -> RHS for every assignment carried by an interstate edge inside
+    ``loop``'s body. The frontend often binds the per-iteration index of a
+    compound write (e.g. ``a[i + M] = ...``) to a fresh symbol on an interstate
+    edge -- ``a_slice = i + M`` -- and then writes ``a[a_slice]`` in the next
+    state. The subset on the final write thus reads ``a_slice``, not a clean
+    ``a*i + b`` form, and the affine matcher gives up. Substituting these
+    bindings back lets the matcher see the original linear access.
+    """
+    out: Dict[str, str] = {}
+    for e in loop.all_interstate_edges():
+        if not e.data.assignments:
+            continue
+        for sym, rhs in e.data.assignments.items():
+            # Single source of truth: if the same symbol is assigned in
+            # multiple places, give up rather than picking one arbitrarily.
+            if sym in out and out[sym] != str(rhs):
+                out[sym] = None  # ambiguous
+            elif sym not in out:
+                out[sym] = str(rhs)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _subset_with_iedge_subs(subset: subsets.Range, bindings: Dict[str, str]) -> subsets.Range:
+    """Return ``subset`` with every reference to a bound symbol replaced by its
+    interstate-edge RHS. Bindings whose RHS still references another bound
+    symbol are resolved transitively (fixed-point) so chained stagings flatten.
+
+    The returned :class:`subsets.Range` shares no state with ``subset``; safe
+    to pass through downstream affine checks.
+    """
+    if not bindings:
+        return subset
+    sym_map = {sp.Symbol(k): symbolic.pystr_to_symbolic(v) for k, v in bindings.items()}
+    # Transitively resolve: substitute the map into its own RHS until stable.
+    for _ in range(8):
+        changed = False
+        for k, v in list(sym_map.items()):
+            nv = v.subs(sym_map)
+            if nv != v:
+                sym_map[k] = nv
+                changed = True
+        if not changed:
+            break
+    new_ranges = []
+    for rb, re_, rs in subset.ndrange():
+        new_ranges.append((symbolic.simplify(symbolic.pystr_to_symbolic(str(rb)).subs(sym_map)),
+                           symbolic.simplify(symbolic.pystr_to_symbolic(str(re_)).subs(sym_map)),
+                           symbolic.simplify(symbolic.pystr_to_symbolic(str(rs)).subs(sym_map))))
+    return subsets.Range(new_ranges)
+
+
 def _cross_iter_disjoint(idx1, idx2, itersym, start, stride) -> bool:
     """True iff a write at ``idx1(i)`` cannot collide with a read at ``idx2(j)``
     for any pair of *distinct* iterations ``i``, ``j`` both in the strided
@@ -353,6 +405,11 @@ class LoopToMap(xf.MultiStateTransformation):
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return refuse(f"loop body contains a StructureView in state {loop_state}")
 
+        # Build a substitution map from interstate-edge symbol bindings inside the
+        # loop body; used to resolve staged write/read subsets like ``a[a_slice]``
+        # where ``a_slice := i + M`` on an interstate edge.
+        iedge_bindings = _collect_iedge_bindings(self.loop)
+
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(
             cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
@@ -440,6 +497,22 @@ class LoopToMap(xf.MultiStateTransformation):
                             # per-iteration write; look past the connector.
                             if not ok and isinstance(e.src, nodes.NestedSDFG):
                                 ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
+                            # If the subset references a symbol bound by a loop
+                            # interstate edge (the frontend's compound-index
+                            # staging shape), substitute and re-check. The
+                            # mutation is intentional and persistent: this is
+                            # ``can_be_applied`` but rewriting the staged
+                            # subset is needed for both downstream affine
+                            # disjoint checks (this method) and the final
+                            # apply (which reads the same memlet); the iedge
+                            # bindings are loop-invariant so the substitution
+                            # never changes semantics.
+                            if not ok and dst_subset is not None and iedge_bindings:
+                                resolved = _subset_with_iedge_subs(dst_subset, iedge_bindings)
+                                if _check_range(resolved, a, itersym, b, step):
+                                    e.data.subset = resolved
+                                    dst_subset = resolved
+                                    ok = True
                             if not ok and not permissive:
                                 return refuse(f"write to {dn.data} is not uniquely indexed by the iteration variable "
                                               f"(needs an a*i+b subset) - dst_subset={dst_subset}")

@@ -48,13 +48,34 @@ class BreakAntiDependence(ppl.Pass):
     def _loops(sdfg: SDFG):
         return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
-    def _unit_stride(self, loop: LoopRegion, sdfg: SDFG) -> bool:
+    def _safe_stride(self, loop: LoopRegion, sdfg: SDFG) -> bool:
+        """``True`` for loops whose stride is forward (numeric > 0 or symbolic).
+
+        The per-iteration WAR analysis in :meth:`_dep_class` is direction-aware
+        only by the sign of the carried offset, so reverse-iteration loops
+        would misclassify (a forward-read pattern under stride < 0 is RAW, not
+        WAR). Reverse loops are normalised away by
+        :class:`~dace.transformation.passes.canonicalize.normalize_negative_stride.NormalizeNegativeStride`
+        before this pass runs; here we only require the stride to be forward.
+
+        For symbolic strides the actual positivity is deferred to the
+        ``WAR_symbolic`` runtime guard the caller emits -- when the carried
+        offset equals the stride (the canonical ``a[i] = a[i + inc] + b[i]``
+        shape of TSVC s175), the existing ``inc > 0`` guard already implies
+        ``stride > 0``; when they differ the guard collected via
+        :meth:`_renamable_arrays` already conjoins all per-array offset
+        constraints, which subsumes the stride-positivity ask.
+        """
         from dace.transformation.passes.analysis import loop_analysis
         stride = loop_analysis.get_loop_stride(loop)
-        try:
-            return stride is not None and int(symbolic.evaluate(stride, sdfg.constants)) == 1
-        except (TypeError, ValueError):
+        if stride is None:
             return False
+        try:
+            v = int(symbolic.evaluate(stride, sdfg.constants))
+            return v > 0
+        except (TypeError, ValueError):
+            # Symbolic stride: defer the positivity check to the runtime guard.
+            return True
 
     def _dep_class(self, read, write, ivar, loop=None, sdfg=None):
         """Classify the dependence between a read and a write subset (both affine
@@ -424,7 +445,7 @@ class BreakAntiDependence(ppl.Pass):
         number of arrays renamed, or ``None``."""
         renamed = 0
         for loop in self._loops(sdfg):
-            if not self._unit_stride(loop, sdfg):
+            if not self._safe_stride(loop, sdfg):
                 continue
             for name, sym_guards, array_guards in self._renamable_arrays(loop, sdfg):
                 self._snapshot_and_redirect(loop, name, sdfg, guards=sym_guards, array_guards=array_guards)
