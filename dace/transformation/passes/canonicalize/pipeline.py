@@ -43,6 +43,7 @@ from dace.transformation.passes.canonicalize.empty_state_elimination import Empt
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
+from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
@@ -160,7 +161,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # clean: unique loop iterators -> split tasklets -> the single SimplifyPass
     # (only here and at the end). Trivial-tasklet elimination now opens the
     # 'reduce' recipe (after simplify), not here.
-    s += [('clean', _uniq), ('clean', SplitTasklets()), ('clean', SimplifyPass())]
+    # NormalizeNegativeStride runs first so every downstream matcher
+    # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
+    # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
+    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq),
+          ('clean', SplitTasklets()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.

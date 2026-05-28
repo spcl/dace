@@ -131,6 +131,97 @@ def _affine_coeffs(expr, itersym):
     return a, b
 
 
+def _cross_iter_disjoint(idx1, idx2, itersym, start, stride) -> bool:
+    """True iff a write at ``idx1(i)`` cannot collide with a read at ``idx2(j)``
+    for any pair of *distinct* iterations ``i``, ``j`` both in the strided
+    iteration set ``{start, start+stride, start+2*stride, ...}``.
+
+    For affine accesses ``idx1 = a1*itersym + b1`` and ``idx2 = a2*itersym + b2``,
+    the alias condition ``idx1(i) = idx2(j)`` substituted by ``i = start + s*ki``,
+    ``j = start + s*kj`` reduces to ``s * (a1*ki - a2*kj) = (a2-a1)*start + (b2-b1)``.
+    The RHS must be divisible by ``s``; if it is not, no integer solution exists
+    and the accesses are provably cross-iteration-disjoint. If it is divisible,
+    the reduced equation ``a1*ki - a2*kj = rhs/s`` has solutions iff
+    ``gcd(a1, a2)`` divides ``rhs/s`` (standard linear Diophantine).
+
+    Plugs the gap when ``propagate_subset`` collapses a strided iteration into
+    a stride-1 box on the propagated range -- e.g. ``a[i]`` (writes ``{1,3,...}``)
+    vs ``a[i-1]`` (reads ``{0,2,...}``) for ``range(1, N, 2)`` would otherwise
+    look like overlapping ``[0..N-1]`` boxes after propagation. (TSVC ``s111``.)
+    """
+    f1 = _affine_coeffs(idx1, itersym)
+    f2 = _affine_coeffs(idx2, itersym)
+    if f1 is None or f2 is None:
+        return False
+    a1, b1 = f1
+    a2, b2 = f2
+    if not (getattr(a1, 'is_Integer', False) and getattr(a2, 'is_Integer', False)):
+        return False
+    try:
+        s_sym = symbolic.simplify(stride)
+    except Exception:
+        return False
+    if not getattr(s_sym, 'is_Integer', False) or int(s_sym) <= 1:
+        return False
+    s = int(s_sym)
+    try:
+        rhs = symbolic.simplify((a2 - a1) * start + (b2 - b1))
+    except Exception:
+        return False
+    if not getattr(rhs, 'is_number', False) or not getattr(rhs, 'is_Integer', False):
+        return False
+    rhs_i = int(rhs)
+    if rhs_i % s != 0:
+        return True
+    reduced = rhs_i // s
+    g = sp.igcd(int(a1), int(a2))
+    if g <= 0:
+        return False
+    return reduced % g != 0
+
+
+def _ranges_disjoint_by_stride(r1: subsets.Range, r2: subsets.Range) -> bool:
+    """Two propagated ranges are disjoint when, on some dimension, their strides
+    and starts put them in different residue classes mod ``gcd(stride1, stride2)``.
+
+    The general linear-Diophantine criterion: ``s1 + p1 * k1 == s2 + p2 * k2`` has
+    an integer solution iff ``gcd(p1, p2)`` divides ``s2 - s1``. If it does NOT, no
+    iteration of either range can hit the same element on that dimension, so the
+    multidimensional ranges themselves cannot intersect.
+
+    Plugs the gap in :func:`dace.subsets.Range.intersects`, whose docstring notes
+    it does not consider strides. Covers the canonical odd-write / even-read case
+    (``a[1:N:2]`` vs ``a[0:N-1:2]`` -- TSVC ``s111`` after frontend lowering).
+    """
+    if len(r1) != len(r2):
+        return False
+    for (s1, _e1, p1), (s2, _e2, p2) in zip(r1, r2):
+        try:
+            p1s = symbolic.simplify(p1)
+            p2s = symbolic.simplify(p2)
+        except Exception:
+            continue
+        if not (getattr(p1s, 'is_Integer', False) and getattr(p2s, 'is_Integer', False)):
+            continue
+        p1i, p2i = int(p1s), int(p2s)
+        if p1i <= 0 or p2i <= 0:
+            continue
+        if p1i == 1 and p2i == 1:
+            continue  # stride-1 ranges -- nothing to gain over the existing box check
+        g = sp.igcd(p1i, p2i)
+        if g <= 1:
+            continue
+        try:
+            diff = symbolic.simplify(s2 - s1)
+        except Exception:
+            continue
+        if not getattr(diff, 'is_number', False) or not getattr(diff, 'is_Integer', False):
+            continue
+        if int(diff) % g != 0:
+            return True
+    return False
+
+
 def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
     """ True iff ``idx1`` at any iteration can never equal ``idx2`` at any
         iteration, for any integer iterations and any loop bounds.
@@ -510,8 +601,29 @@ class LoopToMap(xf.MultiStateTransformation):
                                       subsets.Range([(start, end, step)]),
                                       use_dst=True)
             t_pread = _sanitize_by_index(indices, pread.src_subset)
-            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
-            if subsets.intersects(t_pread, pwrite) is False:
+            pwrite_san = _sanitize_by_index(indices, pwrite.dst_subset)
+            if subsets.intersects(t_pread, pwrite_san) is False:
+                continue
+            # ``subsets.intersects`` is stride-blind (its own TODO); when
+            # propagation collapses a strided iteration set into a stride-1
+            # box, two cross-iteration accesses in different residue classes
+            # look like overlapping boxes. Defer to a per-iteration
+            # stride-aware Diophantine on each dimension: if *some* dimension
+            # is provably cross-iteration-disjoint, no pair (i, j) of distinct
+            # iterations aliases.
+            if _ranges_disjoint_by_stride(t_pread, pwrite_san):
+                continue
+            itersym_sym = symbolic.pystr_to_symbolic(itervar)
+            cross_disjoint = False
+            for ridx_d, widx_d in zip(src_subset.ndrange(), candidate.dst_subset.ndrange()):
+                rb, re_, _ = ridx_d
+                wb, we_, _ = widx_d
+                if rb != re_ or wb != we_:
+                    continue
+                if _cross_iter_disjoint(wb, rb, itersym_sym, start, step):
+                    cross_disjoint = True
+                    break
+            if cross_disjoint:
                 continue
             return False
 
