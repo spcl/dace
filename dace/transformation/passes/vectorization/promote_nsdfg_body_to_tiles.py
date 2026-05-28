@@ -192,8 +192,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         """Return the body NSDFG iff this is the flat-body case.
 
         Eligible when the map scope holds exactly one :class:`NestedSDFG`,
-        no compute tasklets, and the inner SDFG is flat (only
-        :class:`SDFGState` CFG nodes).
+        no compute tasklets, and the inner SDFG's top-level CFG either:
+
+        - is fully flat (only :class:`SDFGState` nodes — the canonical
+          NSDFG-body shape), OR
+        - contains :class:`LoopRegion` nodes whose own bodies are
+          themselves flat (only states). The outer map's tile vars stay
+          in scope across the sequential inner loop, so the descent runs
+          on the inner LoopRegion's body states transparently (each
+          ``inner.states()`` walk is already recursive into LoopRegions).
+          This is the TSVC carried-dep shape ``for i: for j: aa[j,i] =
+          aa[j-1,i] + bb[j,i]`` after :class:`LoopToMap` (outer ``i``
+          becomes a map, inner ``j`` stays a LoopRegion).
 
         :param state: Parent state.
         :param map_entry: Inner map entry.
@@ -205,7 +215,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         if len(nsdfgs) != 1 or tasklets:
             return None
         nsdfg = nsdfgs[0]
-        if any(not isinstance(cfg, SDFGState) for cfg in nsdfg.sdfg.nodes()):
+        from dace.sdfg.state import LoopRegion
+        for cfg in nsdfg.sdfg.nodes():
+            if isinstance(cfg, SDFGState):
+                continue
+            if isinstance(cfg, LoopRegion) and all(isinstance(inner_cfg, SDFGState) for inner_cfg in cfg.nodes()):
+                continue
             return None
         return nsdfg
 
