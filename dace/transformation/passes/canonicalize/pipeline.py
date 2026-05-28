@@ -42,6 +42,7 @@ from dace.transformation.passes.canonicalize.empty_state_elimination import Empt
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
+from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
@@ -408,6 +409,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # branch (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else
     # { map[i, j]: B }``), so each branch is a clean unconditional parallel map.
     s += [('hoist_guards', MoveMapInvariantIfUp())]
+
+    # normalize_wcr: WCR edges sourced from a Tasklet/NestedSDFG get an intermediate
+    # private AccessNode inserted, so every WCR edge sources from an AccessNode (the
+    # canonical reduction shape the downstream codegen recognises). Necessary because
+    # the codegen's WCR if-branch only fires for scalar-typed CodeNode outputs:
+    # vectorization-style map-body NSDFGs (pointer-typed output) would otherwise lose
+    # the reduction and produce a parallel race.
+    s += [('normalize_wcr', NormalizeWCRSource())]
 
     # end: the final SimplifyPass.
     s += [('end', SimplifyPass())]
