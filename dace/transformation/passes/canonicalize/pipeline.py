@@ -33,7 +33,7 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
@@ -300,6 +300,18 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
+    # reduction_to_wcr_map: loops that survived parallelize as scalar accumulators
+    # (multi-tasklet 'compute then accumulate' shapes that LoopToReduce kept
+    # narrow on -- e.g. ``s += a[i] * b[i]`` for s313/vdotr, ``s += a[i] *
+    # b[ip[i]]`` for the gather-sum s4115 family) become parallel WCR-maps via
+    # ``AugAssignToWCR`` (frontend copy-wrapped RMW -> WCR write) + ``LoopToMap``
+    # (now the loop has a unique-write-per-iter map shape with a scalar WCR
+    # target). The downstream codegen lowers the WCR write to atomics today;
+    # the OMP ``reduction(op:var)`` clause emission for length-1-array WCR
+    # targets is the follow-on perf fix.
+    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([AugAssignToWCR()])),
+          ('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
     # TODO: scatter -- ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort +
     # adjacent-equal`` guard on each scatter ``idx`` array and permissively lifts
