@@ -1144,6 +1144,33 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 src = ie[0].src
                 src_desc = inner.arrays[src.data]
                 isub = ie[0].data.subset
+                # A length-1 transient intermediate (the frontend's
+                # ``aa[j-1, i] -> aa_index (1,) -> tasklet[0]`` pattern) hides
+                # an N-D-source per-lane tile read behind a scalar-shaped
+                # operand. Walk one hop upstream: if the source is a length-1
+                # transient with exactly ONE in-edge from a non-transient
+                # in-connector whose subset carries a tile-var, treat the
+                # tasklet read as a Tile reading from the ORIGINAL upstream
+                # source at its tile-var-carrying subset.
+                if src_desc.transient and tuple(src_desc.shape) == (1, ):
+                    up_edges = list(istate.in_edges(src))
+                    if len(up_edges) == 1 and isinstance(up_edges[0].src, dace.nodes.AccessNode):
+                        up = up_edges[0].src
+                        up_desc = inner.arrays[up.data]
+                        up_sub = up_edges[0].data.subset
+                        if (up.data in nsdfg_node.in_connectors and not up_desc.transient
+                                and up_sub is not None):
+                            fs_begin = set()
+                            for (b, _e, _s) in up_sub:
+                                fs_begin |= {str(x) for x in getattr(b, "free_symbols", set())}
+                            tile_dims_in_sub = sorted(d for d, (b, _e, _s) in enumerate(up_sub)
+                                                       if {str(x) for x in getattr(b, "free_symbols", set())} & set(spec.iter_vars))
+                            # ONE tile-var dim in the source subset matches a
+                            # K=1 tile cleanly. The descent currently only emits
+                            # 1-D ``src_dims`` for K=1 via the same wiring path,
+                            # so refuse multi-tile-dim shapes here loudly.
+                            if len(tile_dims_in_sub) == len(W) == 1:
+                                return "NDTile", (up, up_sub, tile_dims_in_sub[0]), None
                 # A broadcast (Scalar) operand: a true ``dace.data.Scalar``, a
                 # length-1 ``(1,)`` array, OR a single-element TILE-VAR-FREE read
                 # of a larger in-connector array (``a[j]`` where ``j`` is
@@ -1179,18 +1206,33 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
 
             kind_a, info_a, sub_a = _operand(a_tok)
             kind_b, info_b, sub_b = _operand(b_tok)
-            if kind_a != "Tile" and kind_b != "Tile":
+            # ``NDTile`` (from the ``Array[tile_var_subset] -> length-1
+            # transient -> tasklet[0]`` walk-back in :func:`_operand`) counts as
+            # a Tile operand for the "must have one tile" check — the wiring
+            # below emits a TileLoad and then routes the resulting tile
+            # transient into the binop connector, identical to the plain Tile
+            # case from the lib node's perspective.
+            def _is_tile_kind(k):
+                return k in ("Tile", "NDTile")
+
+            if not _is_tile_kind(kind_a) and not _is_tile_kind(kind_b):
                 raise NotImplementedError(
                     f"PromoteNSDFGBodyToTiles: binop {t.label!r} has no tile operand ({kind_a}/{kind_b})")
+            # The TileBinop ``kind_X`` property only accepts ``"Tile" | "Scalar"
+            # | "Symbol"`` (lib-node validation); NDTile is wired as Tile via
+            # an inserted TileLoad in :func:`_wire`. Stamp the property as
+            # ``"Tile"`` here so the lib node validates.
+            binop_kind_a = "Tile" if kind_a == "NDTile" else kind_a
+            binop_kind_b = "Tile" if kind_b == "NDTile" else kind_b
             kwargs = dict(name=f"{t.label}_binop",
                           widths=W,
                           op=op,
                           has_mask=mask_acc is not None,
-                          kind_a=kind_a,
-                          kind_b=kind_b)
-            if kind_a == "Symbol":
+                          kind_a=binop_kind_a,
+                          kind_b=binop_kind_b)
+            if binop_kind_a == "Symbol":
                 kwargs["expr_a"] = info_a
-            if kind_b == "Symbol":
+            if binop_kind_b == "Symbol":
                 kwargs["expr_b"] = info_b
             binop = TileBinop(**kwargs)
             istate.add_node(binop)
@@ -1205,6 +1247,42 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     # (DaCe rejects a duplicate memlet reference).
                     istate.add_edge(info, None, binop, conn,
                                     dace.Memlet(data=info.data, subset=subsets.Range(list(isub.ranges))))
+                elif kind == "NDTile":
+                    # ``info = (up_access, up_sub, tile_dim)`` from the
+                    # ``Array[tile_var_subset] -> length-1 transient ->
+                    # tasklet[0]`` walk-back. Emit a TileLoad reading the
+                    # upstream N-D source at the per-lane subset (the tile-var
+                    # dim widened from 1 to W), producing a (W,)-shape tile
+                    # transient, and wire that tile into the binop connector.
+                    up_acc, up_sub, tile_dim = info
+                    up_arr = inner.arrays[up_acc.data]
+                    promoted_ranges = []
+                    for d, (b, e_, s) in enumerate(up_sub):
+                        if d == tile_dim:
+                            promoted_ranges.append((b, b + (W[0] - 1), 1))
+                        else:
+                            promoted_ranges.append((b, e_, s))
+                    promoted_sub = subsets.Range(promoted_ranges)
+                    tile_name = f"{up_acc.data}_ndtile"
+                    suffix = 0
+                    while tile_name in inner.arrays:
+                        suffix += 1
+                        tile_name = f"{up_acc.data}_ndtile_{suffix}"
+                    inner.add_array(tile_name, list(W), up_arr.dtype,
+                                    storage=dace.dtypes.StorageType.Register, transient=True)
+                    tile_acc = istate.add_access(tile_name)
+                    load = TileLoad(name=f"load_{up_acc.data}_ndtile",
+                                    widths=W,
+                                    dim_strides=(1, ),
+                                    src_dims=(tile_dim, ),
+                                    has_mask=mask_acc is not None)
+                    istate.add_node(load)
+                    istate.add_edge(up_acc, None, load, TileConnectors.SRC,
+                                    dace.Memlet(data=up_acc.data, subset=promoted_sub))
+                    self._wire_mask(istate, mask_acc, load, subset)
+                    istate.add_edge(load, TileConnectors.DST, tile_acc, None,
+                                    dace.Memlet(f"{tile_name}[{subset}]"))
+                    istate.add_edge(tile_acc, None, binop, conn, dace.Memlet(f"{tile_name}[{subset}]"))
                 elif kind == "Scalar":
                     # Use the in-edge subset (``[0]`` for a length-1 array, the
                     # actual point ``[j]`` for a single-element read of a bigger

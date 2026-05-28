@@ -93,8 +93,16 @@ def test_tsvc_vectorization(program, kernel, remainder_strategy, branch_mode, le
     for name, code in kernel.args.items():
         if code in tsvc.INDEX_CODES:
             continue  # gather indices are read-only, never mutated
-        diff = np.max(np.abs(arrays_ref[name] - arrays_vec[name]))
-        assert diff < 1e-10, f"{kernel.name}/{name}: max abs diff = {diff}"
+        # Some TSVC recurrences (s232's ``aa[j, i] = aa[j, i - 1]**2 +
+        # bb[j, i]`` squares on every step and diverges to +inf on random
+        # [0, 1) data); the reference and the vectorized output both
+        # produce the same inf / nan pattern. ``np.allclose(equal_nan=
+        # True)`` treats matching nans / infs as equal so the carried-dep
+        # divergence is not a false positive — a genuine numerical
+        # mismatch still trips the rtol/atol threshold.
+        assert np.allclose(arrays_ref[name], arrays_vec[name], rtol=1e-10, atol=1e-10, equal_nan=True), (
+            f"{kernel.name}/{name}: max abs diff = "
+            f"{np.nanmax(np.abs(arrays_ref[name] - arrays_vec[name]))}")
 
 
 if __name__ == "__main__":
