@@ -17,11 +17,11 @@ python -m tests.corpus.measure_parallelization > /tmp/l2m_report.txt
 |-----------------|------:|-----:|--------:|
 | baseline (simplify only) | 178 | 2 | 0 |
 | LoopToMap only  |   105 |   71 |       0 |
-| canonicalize    |    89 |   82 |       3 |
+| canonicalize    |    83 |   88 |       3 |
 
 Δ from the report's first numbers (before this session's canonicalize work):
-canon loops `92→89` (-3), maps `81→82` (+1), reduces `2→3` (+1). Final-
-iteration parallelism rate **47.4% → 49.2%**.
+canon loops `92→83` (-9), maps `81→88` (+7), reduces `2→3` (+1). Final-
+iteration parallelism rate **47.4% → 52.3%** (+4.9 pts).
 
 ### Session changes that produced the above (chronological)
 
@@ -48,6 +48,16 @@ iteration parallelism rate **47.4% → 49.2%**.
    right after IV and before `SimplifyPass` / `LoopToReduce`. Pure
    refactor (0 kernel deltas in this commit), but unblocks the next round
    of LICM-before-LoopToReduce + multi-tasklet LoopToReduce extensions.
+5. **Reduction-to-WCR-map late stage** (commit `101d861fe`): wires
+   `AugAssignToWCR + LoopToMap` after the standalone `LoopToMap`. Catches
+   multi-tasklet compute-then-accumulate reductions that `LoopToReduce`
+   intentionally rejects (it stays narrow). New parallel maps: **s313**
+   (`dot[0] += a[i]*b[i]`), **vdotr** (same shape), **s171** (stride
+   accumulator), **s118** (triangular inner), **s141** (triangular pack).
+   Also fixes a latent NameError in
+   `dace/transformation/dataflow/wcr_conversion.py:444` (the
+   `AugAssignToWCR.isolate_tasklet` helper referenced an out-of-scope
+   `sdfg`; now uses `state.sdfg`). 151/151 corpus value-test green.
 
 | Outcome | Kernels | % of 151 |
 |---|---:|---:|
