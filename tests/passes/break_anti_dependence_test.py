@@ -96,7 +96,66 @@ def test_break_anti_dependence_out_of_place_noop():
     sdfg.validate()
 
 
+def test_break_anti_dependence_symbolic_positive_offset():
+    """``a[i] = a[i + inc] + b[i]`` with ``inc`` a free symbol -- carried offset is
+    ``+inc`` which is non-numeric. The pass renames under the assumption ``inc > 0``
+    AND inserts a runtime ``__builtin_trap`` guard on ``inc <= 0``. This mirrors
+    TSVC s175 (forward-read parallel with symbolic stride)."""
+    inc = dace.symbol('inc')
+
+    @dace.program
+    def s175_like(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - inc):
+            a[i] = a[i + inc] + b[i]
+
+    sdfg = s175_like.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    _l2m(sdfg)
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+
+    # The pass must have planted a guard tasklet whose code asserts ``inc > 0``
+    # (CPP language, no connectors -- pure side effect on a free symbol).
+    guards = []
+    for st in sdfg.all_states():
+        for n in st.nodes():
+            if (isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_guard')):
+                guards.append(n)
+    assert len(guards) == 1, [g.label for g in guards]
+    g = guards[0]
+    assert g.code.language == dace.dtypes.Language.CPP
+    assert not g.in_connectors and not g.out_connectors
+    # The guard's expression should contain the offset symbol.
+    assert 'inc' in g.code.as_string and '__builtin_trap' in g.code.as_string
+
+    # Numerical correctness (with inc=1, equivalent to the constant-offset case s121).
+    rng = np.random.default_rng(0)
+    a = rng.random(50)
+    b = rng.random(50)
+    ref_a = a.copy()
+    for i in range(50 - 1):
+        ref_a[i] = ref_a[i + 1] + b[i]  # numpy serial reference (inc=1 case)
+    a_run = a.copy()
+    sdfg(a=a_run, b=b, N=50, inc=1)
+    assert np.allclose(a_run, ref_a)
+
+
+def test_break_anti_dependence_symbolic_offset_uses_iter_var_refused():
+    """A carried offset that DEPENDS on the iteration variable (``a[2*i+1]``) is
+    not a simple positive constant; the pass must refuse it."""
+    @dace.program
+    def bad(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N // 2):
+            a[i] = a[2 * i + 1] + b[i]
+
+    sdfg = bad.to_sdfg(simplify=True)
+    # Either refused outright OR classified as complex -- in both cases nothing is renamed.
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None
+
+
 if __name__ == '__main__':
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
     test_break_anti_dependence_out_of_place_noop()
+    test_break_anti_dependence_symbolic_positive_offset()
+    test_break_anti_dependence_symbolic_offset_uses_iter_var_refused()

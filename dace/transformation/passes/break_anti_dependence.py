@@ -17,7 +17,7 @@ and at least one is WAR.
 It trades an extra array + an O(N) copy for parallelism, so it is meant to run
 **optionally** (a tuning knob), not as part of the default pipeline.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from dace import data, properties, symbolic, Memlet
 from dace.sdfg import SDFG
@@ -56,46 +56,66 @@ class BreakAntiDependence(ppl.Pass):
         except (TypeError, ValueError):
             return False
 
-    def _dep_class(self, read, write, ivar) -> str:
+    def _dep_class(self, read, write, ivar):
         """Classify the dependence between a read and a write subset (both affine
-        point accesses) of one array under unit-stride iteration of ``ivar``:
-        ``'WAR'`` (read-ahead anti-dep), ``'RAW'`` (read-behind true dep),
-        ``'none'`` (never alias / same element), or ``'complex'`` (give up)."""
+        point accesses) of one array under unit-stride iteration of ``ivar``.
+
+        :returns: One of:
+
+            * ``('WAR', None)``           -- read-ahead anti-dep with constant +offset
+            * ``('WAR_symbolic', expr)``  -- carried offset is a non-numeric symbolic
+              expression ``expr`` independent of the iteration variable; only sound
+              to rename if ``expr > 0`` at runtime (the caller emits the guard).
+            * ``('RAW', None)``           -- read-behind true dep (sequential)
+            * ``('none', None)``          -- never alias or same element
+            * ``('complex', None)``       -- give up
+        """
         isym = symbolic.pystr_to_symbolic(ivar)
         rr, wr = list(read.ndrange()), list(write.ndrange())
         if len(rr) != len(wr):
-            return 'complex'
+            return ('complex', None)
         carried_offset = None
         for (rb, re_, _), (wb, we_, _) in zip(rr, wr):
             if rb != re_ or wb != we_:
-                return 'complex'  # not a single-element (point) access
+                return ('complex', None)  # not a single-element (point) access
             rb = symbolic.pystr_to_symbolic(str(rb))
             wb = symbolic.pystr_to_symbolic(str(wb))
             r_has = isym in rb.free_symbols
             w_has = isym in wb.free_symbols
             if not r_has and not w_has:
                 if symbolic.simplify(rb - wb) != 0:
-                    return 'none'  # different fixed index -> never alias
+                    return ('none', None)  # different fixed index -> never alias
                 continue
             # carried dimension: require coefficient 1 on the iteration variable
             if symbolic.simplify(rb - isym).free_symbols & {isym} or symbolic.simplify(wb - isym).free_symbols & {isym}:
-                return 'complex'
+                return ('complex', None)
             if carried_offset is not None:
-                return 'complex'  # more than one carried dimension
+                return ('complex', None)  # more than one carried dimension
             carried_offset = symbolic.simplify(rb - wb)
         if carried_offset is None:
-            return 'none'  # loop-invariant read of the array, not our case
-        if not carried_offset.is_number:
-            return 'complex'
-        if carried_offset > 0:
-            return 'WAR'
-        if carried_offset < 0:
-            return 'RAW'
-        return 'none'
+            return ('none', None)  # loop-invariant read of the array, not our case
+        if carried_offset.is_number:
+            if carried_offset > 0:
+                return ('WAR', None)
+            if carried_offset < 0:
+                return ('RAW', None)
+            return ('none', None)
+        # Symbolic offset: independent of the iteration variable (already checked
+        # above) and not a numeric constant. We can rename UNDER the assumption
+        # the offset is positive; the caller plants a runtime guard.
+        if isym in carried_offset.free_symbols:
+            return ('complex', None)
+        return ('WAR_symbolic', carried_offset)
 
-    def _renamable_arrays(self, loop: LoopRegion, sdfg: SDFG) -> List[str]:
+    def _renamable_arrays(self, loop: LoopRegion, sdfg: SDFG):
         """Arrays in ``loop`` whose read/write pattern is a pure WAR (read-ahead)
-        anti-dependence -- renamable -- and not a RAW recurrence."""
+        anti-dependence -- renamable -- and not a RAW recurrence.
+
+        :returns: A list of ``(name, guard_exprs)`` pairs. ``guard_exprs`` is the
+            set of non-numeric symbolic carried-offset expressions that must be
+            asserted ``> 0`` at runtime for the rename to be sound; empty when
+            the offset is a numeric positive constant.
+        """
         reads: Dict[str, list] = {}
         writes: Dict[str, list] = {}
         for st in loop.all_states():
@@ -113,16 +133,51 @@ class BreakAntiDependence(ppl.Pass):
         for name in reads:
             if name not in writes:
                 continue  # read-only in loop -> no anti-dependence to break
-            verdicts = {self._dep_class(r, w, loop.loop_variable) for r in reads[name] for w in writes[name]}
+            classes = [self._dep_class(r, w, loop.loop_variable) for r in reads[name] for w in writes[name]]
+            verdicts = {c[0] for c in classes}
             if 'RAW' in verdicts or 'complex' in verdicts:
                 continue  # true dependence (or unanalyzable) -> not sound to rename
-            if 'WAR' in verdicts:
-                renamable.append(name)
+            if 'WAR' not in verdicts and 'WAR_symbolic' not in verdicts:
+                continue
+            guards: Set = set()
+            for kind, payload in classes:
+                if kind == 'WAR_symbolic' and payload is not None:
+                    guards.add(payload)
+            renamable.append((name, guards))
         return renamable
 
-    def _snapshot_and_redirect(self, loop: LoopRegion, name: str, sdfg: SDFG):
+    def _emit_positive_guard(self, pre, expr) -> None:
+        """Add a side-effect-only tasklet to ``pre`` that traps when ``expr <= 0``.
+
+        The tasklet has zero connectors and is allowed to read free SDFG
+        symbols by name (per the SDFG convention "init / symbol-only tasklets
+        may have no src connectors"). Trips ``__builtin_trap`` on violation so
+        the failure is loud at runtime and does not corrupt downstream output.
+        """
+        from dace import dtypes as _dt
+        expr_str = symbolic.symstr(expr)
+        # `assert(...)` is also valid but `__builtin_trap()` gives a hard fault
+        # at any optimization level and matches the convention used elsewhere
+        # in the pipeline (scatter guard).
+        code = f'if (!(({expr_str}) > 0)) {{ __builtin_trap(); }}'
+        # Tasklet with no input/output connectors. The CPU codegen still emits
+        # its body; the symbols referenced in the code are resolved against
+        # the enclosing scope.
+        guard = pre.add_tasklet(
+            name=f'_break_antidep_guard_{abs(hash(expr_str)) & 0xfffffff:x}',
+            inputs={},
+            outputs={},
+            code=code,
+            language=_dt.Language.CPP,
+        )
+        # Carry no edges -- the tasklet is purely a side-effect node.
+        return guard
+
+    def _snapshot_and_redirect(self, loop: LoopRegion, name: str, sdfg: SDFG, guards=None):
         """Insert ``snap = name`` before ``loop`` and point the loop's reads of
-        ``name`` at ``snap``."""
+        ``name`` at ``snap``. If ``guards`` is non-empty, also emit a runtime
+        positive-check tasklet (per expression) into the same pre-state -- the
+        rename is only sound when each guarded expression is ``> 0``."""
         desc = sdfg.arrays[name]
         snap, _ = sdfg.add_transient(f'{name}_antidep_snap',
                                      desc.shape,
@@ -133,6 +188,10 @@ class BreakAntiDependence(ppl.Pass):
         # Snapshot copy `name -> snap` in a fresh state right before the loop.
         pre = loop.parent_graph.add_state_before(loop, label=f'{name}_snapshot')
         pre.add_nedge(pre.add_read(name), pre.add_write(snap), Memlet.from_array(name, desc))
+
+        # Emit runtime positive-check tasklets for any symbolic guards.
+        for expr in (guards or ()):
+            self._emit_positive_guard(pre, expr)
 
         # Redirect every pure read of `name` inside the loop body to `snap`.
         for st in loop.all_states():
@@ -151,7 +210,7 @@ class BreakAntiDependence(ppl.Pass):
         for loop in self._loops(sdfg):
             if not self._unit_stride(loop, sdfg):
                 continue
-            for name in self._renamable_arrays(loop, sdfg):
-                self._snapshot_and_redirect(loop, name, sdfg)
+            for name, guards in self._renamable_arrays(loop, sdfg):
+                self._snapshot_and_redirect(loop, name, sdfg, guards=guards)
                 renamed += 1
         return renamed or None
