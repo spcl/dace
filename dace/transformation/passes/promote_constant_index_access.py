@@ -132,18 +132,20 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
     allow_live_out = properties.Property(
         dtype=bool,
-        default=False,
-        desc="Allow privatizing an ``arr[c]`` slot even when ``arr`` is read or written outside "
-        "the loop. When enabled, an epilogue state is inserted after the loop that writes the "
-        "scalar's final value back to ``arr[c]``. For sequential loops this preserves "
-        "last-iteration semantics exactly. For loops that subsequently lift to a parallel Map "
-        "(the intended use), the scalar becomes a shared race-write target inside the Map and "
-        "the epilogue reads ``some`` iteration's value -- correct under L2M-permissive semantics "
-        "where the caller asserts the writes are conflict-free / idempotent / order-insensitive. "
-        "Off by default; opt in explicitly per the same risk model as ``LoopToMap(permissive=True)``.",
+        default=True,
+        desc="Permit privatizing an ``arr[c]`` slot when ``arr`` is read or written outside "
+        "the loop, by allocating a per-iteration buffer and writing the last-iteration slot "
+        "back to ``arr[c]`` in an epilogue state. Sequential execution is bit-equivalent to "
+        "the un-promoted loop (writeback restores the last iteration's value); parallel "
+        "execution under ``LoopToMap``-permissive semantics observes ``some`` iteration's "
+        "value -- which is exactly the contract that triggered the permissive lift. Off-the-shelf "
+        "non-live-out arrays use the cheaper scalar form; the buffer form only fires when "
+        "the live-out check actually triggers, so there is no overhead for the common case. "
+        "Default ``True`` so the pass operationalises the parallelization it was added for; set "
+        "``False`` to keep the strict pre-existing behavior (refuse live-out arrays outright).",
     )
 
-    def __init__(self, allow_live_out: bool = False):
+    def __init__(self, allow_live_out: bool = True):
         super().__init__()
         self.allow_live_out = allow_live_out
 

@@ -100,9 +100,9 @@ def test_conditional_write_with_external_live_in():
     assert np.allclose(out, expected_on)
 
 
-def test_refuses_when_live_out():
-    """When ``arr[c]`` is also read after the loop, the slot is live-out and the pass
-    must refuse: silently changing the post-loop read's value would be unsound."""
+def test_refuses_when_live_out_and_opted_out():
+    """``allow_live_out=False`` preserves the original strict behavior: a live-out
+    ``arr[c]`` read after the loop blocks promotion, so the loop stays untouched."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]):
@@ -113,7 +113,7 @@ def test_refuses_when_live_out():
 
     sdfg = kern.to_sdfg(simplify=True)
     loops_before = _num_loops(sdfg)
-    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    res = PromoteConstantIndexAccess(allow_live_out=False).apply_pass(sdfg, {})
     assert res is None
     assert _num_loops(sdfg) == loops_before  # loop stays sequential
 
@@ -207,9 +207,10 @@ def test_numeric_correctness_then_loop_to_map_maps():
     assert np.allclose(out, expected)
 
 
-def test_refuses_live_out_by_default():
-    """An array read after the loop body is refused under the default settings; the
-    writeback would silently change observed semantics, so the pass stays conservative."""
+def test_live_out_refused_when_opt_out():
+    """``allow_live_out=False`` recovers the strict pre-existing behavior (refuse the
+    live-out case outright) -- this remains available for callers who don't want the
+    permissive writeback semantics."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
@@ -221,8 +222,8 @@ def test_refuses_live_out_by_default():
         sink[0] = arr[1]
 
     sdfg = kern.to_sdfg(simplify=True)
-    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is None, 'Default settings must refuse live-out promotion.'
+    res = PromoteConstantIndexAccess(allow_live_out=False).apply_pass(sdfg, {})
+    assert res is None, '``allow_live_out=False`` must refuse the live-out case.'
 
 
 def test_live_out_promotion_inserts_writeback_state():
@@ -238,8 +239,8 @@ def test_live_out_promotion_inserts_writeback_state():
         sink[0] = arr[1]
 
     sdfg = kern.to_sdfg(simplify=True)
-    res = PromoteConstantIndexAccess(allow_live_out=True).apply_pass(sdfg, {})
-    assert res is not None, 'allow_live_out must accept the live-out case.'
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, 'Default settings (allow_live_out=True) must accept the live-out case.'
     sdfg.validate()
     # Writeback state's label tag uniquely identifies the epilogue we just inserted.
     writeback_states = [s for sd in sdfg.all_sdfgs_recursive() for s in sd.all_states() if 'writeback' in s.label]
@@ -283,7 +284,7 @@ def test_live_out_promotion_unblocks_loop_to_map():
         sink[0] = arr[1]
 
     sdfg = kern.to_sdfg(simplify=True)
-    PromoteConstantIndexAccess(allow_live_out=True).apply_pass(sdfg, {})
+    PromoteConstantIndexAccess().apply_pass(sdfg, {})
     n_maps = _apply_loop_to_map(sdfg)
     sdfg.validate()
     assert n_maps >= 1, 'Live-out promotion should unblock LoopToMap on the body loop.'
