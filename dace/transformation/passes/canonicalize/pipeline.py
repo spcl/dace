@@ -53,6 +53,7 @@ from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
+from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -264,7 +265,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
           ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()),
           ('reduce', SimplifyPass()), ('reduce', LoopToReduce()), ('reduce', LoopToScan()),
-          ('reduce', ArgMaxLift())]
+          ('reduce', ArgMaxLift()), ('reduce', EarlyExitToFindIndex())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
