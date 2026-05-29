@@ -39,9 +39,6 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
-from dace.transformation.passes.constant_propagation import ConstantPropagation
-from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -61,10 +58,8 @@ _REGIMES = {
 }
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
-#: ``loop_to_scan`` reassociates the carry; ``loop_to_map_post_pcia`` is a second
-#: parallelization sweep over loops PCIA newly unblocked.
-_RELAXED_STEPS = {'loop_to_reduce', 'accumulator_to_map_and_reduce', 'loop_to_map', 'loop_to_scan',
-                  'loop_to_map_post_pcia'}
+#: ``loop_to_scan`` reassociates the carry; ``loop_to_map`` may reorder fold operations.
+_RELAXED_STEPS = {'loop_to_map', 'loop_to_scan'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -75,17 +70,17 @@ _INDEX_SYMS = ('klev', 'kfdia', 'kidia')
 #: loops are: LU triangular back-substitution on ``zqxn`` (2 loops, mathematically
 #: sequential), the vertical flux prefix-sum on ``pfcqlng`` / ``pfsqrf`` (1 loop,
 #: genuine scan; a separate optional scan->elementwise+reduce transform addresses
-#: it), the level loop blocked by a ``tendency_loc_cld`` propagation
+#: it), and the level loop blocked by a ``tendency_loc_cld`` propagation
 #: over-approximation (1 loop; the inner write IS ``jk``-indexed but
 #: ``propagate_memlets_nested_sdfg`` widens it -- a 2nd-order propagation fix is
-#: a follow-up to the ``symbols_defined_at`` enclosing-LoopRegion fix), and the
-#: ICE ``for_767`` (1 loop, jm=ncldqi=2 so the guard is the runtime
-#: ``yrecldp_laericesed`` rather than a dead ``1==2``, leaving a constant-index
-#: ``zvqx[1]`` write whose privatization requires a separate
-#: ``PromoteConstantIndexAccess`` transform). A change here means loop2map
-#: coverage shifted -- review before bumping the numbers.
-_EXPECTED_MAPS = 355
-_EXPECTED_SEQUENTIAL_LOOPS = 5
+#: a follow-up to the ``symbols_defined_at`` enclosing-LoopRegion fix). The ICE
+#: ``for_767`` ``zvqx[1]`` slot is now privatized by
+#: ``PromoteConstantIndexAccess`` (per-loop atomic check-promote-verify-commit
+#: lands the rewrite that the previous batched flow lost), so the species loops
+#: parallelize. A change here means loop2map coverage shifted -- review before
+#: bumping the numbers.
+_EXPECTED_MAPS = 356
+_EXPECTED_SEQUENTIAL_LOOPS = 4
 
 
 def _wcr_edges(sdfg: dace.SDFG):
@@ -155,7 +150,22 @@ def _pmar(xform):
 
 
 def _chain():
-    """The ordered ``(label, apply_fn)`` chain applied to the candidate."""
+    """The ordered ``(label, apply_fn)`` chain applied to the candidate.
+
+    Trimmed to the passes that actually fire on cloudsc. Dropped:
+
+    * ``constant_propagation`` -- ``SimplifyPass`` already invokes it (see
+      ``dace/transformation/passes/simplify.py``), and the two ``simplify`` /
+      ``simplify_after_unroll`` stages above cover the same ground. Nothing
+      between them and this stage introduces fresh scalar-write-once patterns.
+    * ``loop_to_reduce`` / ``accumulator_to_map_and_reduce`` -- cloudsc has no
+      scalar-accumulator reduction loops left after the earlier WCR rewrites
+      and unrolling; both passes were no-ops here.
+    * The trailing ``loop_to_map_post_pcia`` -- ``PromoteConstantIndexAccess``
+      checks ``LoopToMap`` eligibility internally (via its own
+      ``_mappable_loops`` probe), so running L2M *before* PCIA is wasted. One
+      L2M after PCIA catches everything.
+    """
     return [
         ('specialize', _specialize),
         ('simplify', lambda sdfg: sdfg.simplify()),
@@ -180,28 +190,18 @@ def _chain():
         ('wcr_to_augassign', _pmar(WCRToAugAssign)),
         ('scalar_fission', lambda sdfg: PrivatizeScalars().apply_pass(sdfg, {})),
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
-        ('constant_propagation', lambda sdfg: ConstantPropagation().apply_pass(sdfg, {})),
-        ('loop_to_reduce', lambda sdfg: LoopToReduce().apply_pass(sdfg, {})),
-        # Scalar accumulators with computed deltas (or extra body side-effects) that
-        # ``LoopToReduce`` refuses become a buffer-writing Map + ``Reduce`` libnode here.
-        ('accumulator_to_map_and_reduce', lambda sdfg: AccumulatorToMapAndReduce().apply_pass(sdfg, {})),
         # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
         # The pfsqrf vertical-flux prefix-sum (``pfcqlng[i] = pfcqlng[i-1] + delta[i]``)
-        # is the cloudsc target. The v1 matcher refuses if the loop body has more than
-        # one SDFGState or carries more than one array; today this is a no-op on cloudsc
-        # (the pfsqrf body is multi-state with 8 parallel scans) but wiring it as a
-        # stage means the e2e numerical check guards any future matcher relaxation.
+        # is the cloudsc target; the multi-state-wrapper matcher relaxation now accepts
+        # the cloudsc shape directly.
         ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
-        ('loop_to_map', _pmar(LoopToMap)),
         # ``PromoteConstantIndexAccess`` introduces a per-iteration scalar for slots
-        # that blocked ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
-        # an ``if yrecldp_laericesed`` guard). Run after the first L2M sweep so PCIA
-        # sees only the loops L2M refused; the post-PCIA L2M re-run picks up the
-        # newly-eligible ones. Today PCIA fires on the single-slot for_767 (1 loop);
-        # the 5x multi-slot species fall-speed setup needs a per-slot matcher
-        # relaxation (tracked as an xfail unit test).
+        # that block ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
+        # an ``if yrecldp_laericesed`` guard). Runs BEFORE the only L2M sweep: PCIA's
+        # internal ``_mappable_loops`` probe already knows what L2M accepts, so a
+        # prior L2M is unnecessary.
         ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
-        ('loop_to_map_post_pcia', _pmar(LoopToMap)),
+        ('loop_to_map', _pmar(LoopToMap)),
     ]
 
 
@@ -266,11 +266,11 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
         if label == 'symbol_propagation':
             assert not bad_assigns, (f'{regime}/{label}: bound symbol assignments survived symbol propagation: '
                                      f'{bad_assigns}')
-        # Pin the map/loop counts at the final parallelization step (after PCIA's
-        # second L2M sweep). PCIA was wired to unblock the ICE ``for_767`` slot; with
-        # that promotion in place the loop count drops by 1 from the previous 5 to 4.
-        # LoopToScan is currently a no-op on cloudsc (multi-state pfsqrf body).
-        if label == 'loop_to_map_post_pcia':
+        # Pin the map/loop counts at the final parallelization step (the single L2M
+        # sweep that follows PCIA). PCIA unblocks the ICE ``for_767`` slot, dropping
+        # the loop count by 1; LoopToScan handles ``pfsqrf`` once the multi-state
+        # matcher relaxation catches its 3-block shape.
+        if label == 'loop_to_map':
             n_maps, n_loops = len(_map_entries(candidate)), len(_loop_regions(candidate))
             print(f'{regime}/{label}: maps={n_maps} sequential_loops={n_loops}')
             assert n_maps == _EXPECTED_MAPS, f'{regime}/{label}: {n_maps} maps, expected {_EXPECTED_MAPS}'

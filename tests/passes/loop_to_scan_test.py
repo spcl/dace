@@ -724,6 +724,39 @@ def test_v6_negative_write_offset_scan_with_outer_axis():
     assert _num_scan_nodes(sdfg) == 1
 
 
+@pytest.mark.xfail(
+    reason='Cloudsc-actual ``for_1133`` (5 parallel prefix sums on pfsqif/pfsqrf/pfsqlf/'
+    "pfsqsf/pfcqlng over klev) is the next gap. Synthetic frontend versions of the "
+    'same shape match correctly; the dump-extracted body has intermediate slice '
+    'transients between the carry read and the scan-update tasklet that the v2 '
+    'matcher does not walk through. Tracking as the next LoopToScan extension.',
+    strict=True,
+)
+def test_cloudsc_for_1133_isolated_scan():
+    """Loads the exact ``for_1133`` LoopRegion extracted from the cloudsc fixture
+    (the prefix-sum on ``pfsqif`` / ``pfsqrf`` / ``pfsqlf`` / ``pfsqsf`` / ``pfcqlng``
+    over klev). Confirms LoopToScan picks up the cloudsc-actual body shape.
+
+    The synthetic-frontend tests above (``test_v4_five_array_pfsqrf_pattern``,
+    ``test_v6_negative_write_offset_scan_with_outer_axis``,
+    ``test_accepts_two_content_state_body_via_v5_fuser``) cover the same pattern
+    individually; this test runs all of them together on the actual cloudsc body --
+    intermediate slice transients, nested LoopRegion (``for_1134``), and all.
+    """
+    import os
+    here = os.path.dirname(__file__)
+    fixture = os.path.join(here, 'fixtures', 'cloudsc_for_1133.sdfgz')
+    sdfg = dace.SDFG.from_file(fixture)
+    assert _num_loops(sdfg) >= 1, 'fixture should contain at least the for_1133 loop'
+
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        'LoopToScan should lift the cloudsc for_1133 prefix-sum body; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
