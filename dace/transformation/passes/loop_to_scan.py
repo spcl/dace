@@ -156,21 +156,26 @@ class LoopToScan(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
-        # Strip the frontend's identity ``__out = __inp`` copy tasklets so the matcher
-        # sees the bare ``out[i+1] = out[i] + delta[i]`` shape. Without this, the carry
-        # is hidden behind an ``assign_NN`` copy node on the write side. Same idea as
-        # ``AccumulatorToMapAndReduce``'s TTE preprocess.
+        # Whole-SDFG preprocess: strip frontend ``__out = __inp`` copy tasklets so the
+        # matcher sees the bare ``out[i+1] = out[i] + delta[i]`` shape. Without this the
+        # carry hides behind an ``assign_NN`` copy node on the write side.
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
+        # Per-loop preprocess: fold adjacent content SDFGStates inside the body when the
+        # iedge between them is trivial (v5 -- the cloudsc ``pfsqrf`` shape). Whole-SDFG
+        # ``StateFusion`` doesn't reach into LoopRegion bodies via ``MatchPatterns``, so
+        # do a targeted body-local merge.
+        for loop, _ in _collect_loops(sdfg):
+            _fuse_body_states(loop)
+
         count = 0
         for loop, parent in _collect_loops(sdfg):
-            info = _match(loop, sdfg)
-            if info is None:
-                continue
-            _rewrite(parent, loop, info, sdfg)
-            count += 1
+            infos = _match_all(loop, sdfg)
+            for info in infos:
+                _rewrite(parent, loop, info, sdfg)
+                count += 1
         return count or None
 
 
@@ -183,67 +188,195 @@ def _collect_loops(sdfg: SDFG):
     return out
 
 
-def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
+def _fuse_body_states(loop: LoopRegion) -> int:
+    """Body-local state fusion: merge adjacent SDFGStates inside ``loop`` when the
+    iedge between them is trivial (no assignments, ``condition`` unconditional).
+
+    Whole-SDFG ``StateFusion`` doesn't reach into LoopRegion bodies via
+    ``match_patterns`` (it's a top-level ``MultiStateTransformation``); this
+    helper does the same merge directly on the body. Required for the v5 case --
+    the cloudsc ``pfsqrf`` inner loop's body has two content states joined by a
+    no-op iedge that the single-content-state matcher otherwise refuses.
+
+    Per-iteration semantics: the iedge orders state 1's writes before state 2's
+    reads. After fusion the two states become one, and the merging step glues
+    each pair of access nodes with the same ``data`` (state 1's write node ->
+    state 2's read node, etc.) so the dataflow read-after-write order is
+    preserved by an explicit edge.
+
+    Conservatively refuses when:
+
+    * any iedge in the body carries an assignment or a condition,
+    * any of the body's blocks is not an SDFGState (refuse on nested LoopRegion /
+      ConditionalBlock).
+
+    :param loop: The LoopRegion to mutate in place.
+    :returns: The number of fusions performed.
+    """
+    n_fused = 0
+    while True:
+        blocks = loop.nodes()
+        if not all(isinstance(b, SDFGState) for b in blocks):
+            return n_fused
+        # Find a fusion candidate: a pair (s1, s2) with one s1->s2 edge, both states
+        # non-empty (we already pass-through empty wrappers in the matcher), and a
+        # trivial iedge between them.
+        cand = None
+        for s1 in blocks:
+            outs = loop.out_edges(s1)
+            if len(outs) != 1:
+                continue
+            e = outs[0]
+            if e.data is None or e.data.assignments or not e.data.is_unconditional():
+                continue
+            s2 = e.dst
+            if not isinstance(s2, SDFGState):
+                continue
+            if len(loop.in_edges(s2)) != 1:
+                continue
+            if s1.is_empty() or s2.is_empty():
+                continue
+            cand = (s1, s2, e)
+            break
+        if cand is None:
+            return n_fused
+        s1, s2, iedge = cand
+        _merge_state_into(s1, s2)
+        # Reroute s2's out-edges to s1, then drop s2.
+        for oe in list(loop.out_edges(s2)):
+            loop.add_edge(s1, oe.dst, oe.data)
+            loop.remove_edge(oe)
+        loop.remove_edge(iedge)
+        loop.remove_node(s2)
+        n_fused += 1
+
+
+def _merge_state_into(s1: SDFGState, s2: SDFGState):
+    """Move all of ``s2``'s nodes/edges into ``s1``, gluing same-``data`` AccessNodes
+    so dataflow read-after-write order is preserved.
+
+    For each AccessNode in ``s2`` that names data written in ``s1``, the s2 node is
+    aliased to the s1 write node (so s2's read sees s1's write). All other s2 nodes
+    move to s1 unchanged. Edges are then re-added on s1 using the alias-mapped
+    endpoints, and ``s2`` is left empty (the caller removes it from the parent CFG).
+    """
+    # data -> s1's write-side AccessNode (the one with incoming edges).
+    s1_writes = {n.data: n for n in s1.data_nodes() if s1.in_degree(n) > 0}
+    # Snapshot before mutating: s2's nodes and edges, plus the per-node classification.
+    s2_nodes = list(s2.nodes())
+    s2_edges = list(s2.edges())
+    relocate = {}
+    for n in s2_nodes:
+        if (isinstance(n, nodes.AccessNode) and n.data in s1_writes
+                and s2.out_degree(n) > 0 and s2.in_degree(n) == 0):
+            relocate[n] = s1_writes[n.data]
+    # Drop s2's edges first (so the upcoming node moves don't leave stale incidences).
+    for e in s2_edges:
+        s2.remove_edge(e)
+    # Move every non-aliased s2 node to s1.
+    for n in s2_nodes:
+        if n in relocate:
+            s2.remove_node(n)
+            continue
+        s2.remove_node(n)
+        s1.add_node(n)
+    # Re-add the edges on s1, mapping endpoints through ``relocate``.
+    for e in s2_edges:
+        src = relocate.get(e.src, e.src)
+        dst = relocate.get(e.dst, e.dst)
+        s1.add_edge(src, e.src_conn, dst, e.dst_conn, e.data)
+
+
+def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
+    """Match every independent scan recurrence in ``loop``.
+
+    v4 -- multi-array bodies: a single loop may carry several independent prefix
+    scans (cloudsc ``pfsqrf`` carries five: ``pfsqif`` / ``pfsqrf`` / ``pfsqlf`` /
+    ``pfsqsf`` / ``pfcqlng``). Each carry has its own scan-update tasklet, its own
+    delta input, and its own seed; the rewrite emits one delta-build Map + Scan
+    libnode + seed-add Map *per carry*, all in front of (resp. behind) the
+    surviving loop. The single-array (v1/v2) case is the special case of
+    returning a one-element list.
+
+    A loop is fully accepted only when **every** non-transient array with a
+    loop-variable-dependent read+write matches as a scan -- partial scanning is
+    not safe (a refused carrier would still iterate sequentially, and the other
+    carriers would no longer be in the loop's body to schedule around it).
+
+    :param loop: The LoopRegion to inspect.
+    :param sdfg: The owning SDFG.
+    :returns: Per-carrier ``_Scan`` infos in deterministic order, or an empty
+              list if the loop fails any pre-condition or any single carrier
+              fails to match.
+    """
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None or stride != 1:
-        return None
+        return []
 
-    # Accept either a single-state body (v1) or a multi-state body whose only
-    # *content* state is a single SDFGState (the cloudsc shape: a trivial pre-
-    # state with an iedge assignment + the actual body state + a trivial post-
-    # state with an iedge advancing the loop iterator). Empty wrapper states
-    # are fine because they contribute no dataflow; their iedge assignments stay
-    # in place (they bind loop-iteration-symbol shorthands like
-    # ``kfdia_plus_1 = kfdia + 1``, not the carry).
+    # Body shape: single content state (after the StateFusion preprocess), only
+    # tasklets and AccessNodes. Empty wrapper states (iedge-assignment carriers)
+    # are tolerated -- see ``apply_pass``.
     blocks = loop.nodes()
     if not all(isinstance(b, SDFGState) for b in blocks):
-        return None
+        return []
     content_states = [b for b in blocks if len(b.nodes()) > 0]
     if len(content_states) != 1:
-        return None
+        return []
     state = content_states[0]
-
-    # Body must contain only tasklets and AccessNodes (no Map scopes / nested SDFGs).
     for n in state.nodes():
         if not isinstance(n, (nodes.Tasklet, nodes.AccessNode)):
-            return None
+            return []
 
-    # Identify the carried-array write target. The carried array is the unique
-    # non-transient Array with both a read and a write incident in this state.
-    out_name = _find_carried_array(state, sdfg, loop.loop_variable)
-    if out_name is None:
-        return None
-    out_desc = sdfg.arrays[out_name]
+    # Discover every candidate carrier: a non-transient Array that has both a
+    # read and a write incident in the body with subsets that depend on the
+    # loop variable. (v4: was the unique such array; now zero-or-more.)
+    carriers = _find_carried_arrays(state, sdfg, loop.loop_variable)
+    if not carriers:
+        return []
 
-    # The unique write edge into ``out`` (incident on the unique write AccessNode).
-    write_edge = _find_unique_write_edge(state, out_name)
-    if write_edge is None:
-        return None
-    write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
-    if write_axis is None:
-        return None
+    # Match each carrier independently. If ANY fails, refuse the whole loop.
+    matched: List[_Scan] = []
+    for out_name in carriers:
+        write_edge = _find_unique_write_edge(state, out_name)
+        if write_edge is None:
+            return []
+        write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
+        if write_axis is None:
+            return []
+        candidate = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable,
+                                              write_axis, write_others, k_w)
+        if candidate is None:
+            return []
+        tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = candidate
+        out_edges_t = [e for e in state.out_edges(tasklet)
+                       if e.data is not None and not e.data.is_empty()]
+        if len(out_edges_t) != 1:
+            return []
+        k_r = symbolic.simplify(k_w - scan_stride)
+        matched.append(_Scan(
+            op=op,
+            out_name=out_name,
+            scan_axis=write_axis,
+            k_w=k_w,
+            k_r=k_r,
+            scan_stride=scan_stride,
+            other_indices=write_others,
+            iter_start=start,
+            iter_end=end,
+            body_state=state,
+            scan_update_tasklet=tasklet,
+            carry_in_conn=carry_edge.dst_conn,
+            delta_in_conn=delta_edge.dst_conn if delta_edge is not None else None,
+            out_conn=out_edges_t[0].src_conn,
+            carry_anchor=carry_anchor,
+            literal_delta=literal_delta,
+        ))
 
-    # Find the scan-update tasklet: among all tasklets in the body, the one whose
-    # single output (eventually) reaches the ``out`` write AND one of whose inputs
-    # resolves to ``out`` at offset ``k_w - 1`` on the scan axis. For v1 that's the
-    # only tasklet in the body; for v2 there may be downstream tasklets (extending
-    # the delta computation) and the matcher has to find the right one.
-    candidate = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable, write_axis, write_others, k_w)
-    if candidate is None:
-        return None
-    tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = candidate
-
-    out_edges_t = [e for e in state.out_edges(tasklet)
-                   if e.data is not None and not e.data.is_empty()]
-    if len(out_edges_t) != 1:
-        return None
-    k_r = symbolic.simplify(k_w - scan_stride)
-
-    # Refuse any second non-transient write anywhere in the loop body. The body may
-    # contain arbitrarily many upstream *transient* nodes feeding the delta (v2), but
-    # the only externally observable write must be the carry write to ``out``.
+    # Body may write only the carriers we matched. Any other non-transient write
+    # would need ``lastprivate``-style preservation that the rewrite doesn't model.
+    carrier_set = {s.out_name for s in matched}
     for st in loop.all_states():
         for node in st.data_nodes():
             if st.in_degree(node) == 0:
@@ -251,32 +384,26 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
             desc = sdfg.arrays.get(node.data)
             if desc is None or getattr(desc, 'transient', False):
                 continue
-            if node.data != out_name:
-                return None
-
-    return _Scan(
-        op=op,
-        out_name=out_name,
-        scan_axis=write_axis,
-        k_w=k_w,
-        k_r=k_r,
-        scan_stride=scan_stride,
-        other_indices=write_others,
-        iter_start=start,
-        iter_end=end,
-        body_state=state,
-        scan_update_tasklet=tasklet,
-        carry_in_conn=carry_edge.dst_conn,
-        delta_in_conn=delta_edge.dst_conn if delta_edge is not None else None,
-        out_conn=out_edges_t[0].src_conn,
-        carry_anchor=carry_anchor,
-        literal_delta=literal_delta,
-    )
+            if node.data not in carrier_set:
+                return []
+    return matched
 
 
-def _find_carried_array(state: SDFGState, sdfg: SDFG, loop_var: str) -> Optional[str]:
-    """Locate the unique non-transient array that has both a write *and* a read incident
-    in ``state`` with subsets that depend on ``loop_var``. Returns its name, or ``None``."""
+def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
+    """Single-carrier match (kept for callers that handled one carry at a time)."""
+    infos = _match_all(loop, sdfg)
+    if len(infos) != 1:
+        return None
+    return infos[0]
+
+
+def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[str]:
+    """All non-transient arrays read AND written in ``state`` with subsets that depend
+    on ``loop_var`` -- the candidate scan carriers. Sorted by name for determinism.
+
+    Multi-carrier loops (cloudsc ``pfsqrf``: 5 parallel prefix sums in one body)
+    return a multi-element list; v1/v2 single-carrier loops return a one-element list.
+    """
     reads: set = set()
     writes: set = set()
     for n in state.data_nodes():
@@ -291,10 +418,15 @@ def _find_carried_array(state: SDFGState, sdfg: SDFG, loop_var: str) -> Optional
             if e.data is not None and e.data.data == n.data and e.data.subset is not None:
                 if _subset_uses(e.data.subset, loop_var):
                     reads.add(n.data)
-    intersect = reads & writes
-    if len(intersect) != 1:
+    return sorted(reads & writes)
+
+
+def _find_carried_array(state: SDFGState, sdfg: SDFG, loop_var: str) -> Optional[str]:
+    """Single-carrier convenience wrapper (kept for callers that demand exactly one)."""
+    carriers = _find_carried_arrays(state, sdfg, loop_var)
+    if len(carriers) != 1:
         return None
-    return next(iter(intersect))
+    return carriers[0]
 
 
 def _find_unique_write_edge(state: SDFGState, name: str):

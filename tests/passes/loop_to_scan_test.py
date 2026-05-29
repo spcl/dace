@@ -452,11 +452,13 @@ def test_multi_state_body_with_empty_wrappers():
     assert np.allclose(out, expected), f'multi-state scan returned {out[:5]}, expected {expected[:5]}'
 
 
-def test_refuses_multi_state_body_with_two_content_states():
-    """If the body has *two or more* content states (genuinely multi-state computation),
-    the matcher still refuses -- a real fusion or NestedSDFG-inlining preprocess is
-    needed first. This protects against accidentally treating a multi-step body as a
-    single-state scan."""
+def test_accepts_two_content_state_body_via_v5_fuser():
+    """Two content states inside the body, joined by a trivial iedge. v5's body-local
+    state fuser merges them into one state (aliasing same-data AccessNodes so
+    read-after-write order is preserved), then the matcher proceeds normally.
+
+    Before v5 this loop stayed sequential -- regression target for the body-local
+    fusion path used by the cloudsc ``pfsqrf`` shape."""
     sdfg = dace.SDFG('scan_two_content_states')
     sdfg.add_array('out', [N + 1], dace.float64)
     sdfg.add_array('delta', [N], dace.float64)
@@ -483,8 +485,145 @@ def test_refuses_multi_state_body_with_two_content_states():
     sdfg.validate()
 
     res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None, ('Two-content-state body should be refused -- needs state-fusion '
-                         'or NestedSDFG-inlining preprocess to flatten into one state.')
+    sdfg.validate()
+    assert res == 1, f'two-content-state body should fuse + match; got {res}'
+    assert _num_scan_nodes(sdfg) == 1
+
+
+def test_v4_multi_array_independent_scans():
+    """Two independent scan recurrences in the same loop body:
+
+    * ``a[i+1] = a[i] + delta_a[i]`` -- a SUM scan on ``a``
+    * ``b[i+1] = b[i] * delta_b[i]`` -- a PRODUCT scan on ``b``
+
+    Each has its own carry, its own delta, its own associative op. The v4
+    matcher returns ``len(matches) == 2``; the rewrite emits two Scan libnodes
+    side-by-side. Cloudsc ``pfsqrf`` is the production occurrence of this
+    pattern (five parallel sums in one body)."""
+
+    @dace.program
+    def two_scans(a: dace.float64[N + 1], b: dace.float64[N + 1],
+                  da: dace.float64[N], db: dace.float64[N]):
+        for i in range(N):
+            a[i + 1] = a[i] + da[i]
+            b[i + 1] = b[i] * db[i]
+
+    sdfg = two_scans.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 2, f'expected two Scan rewrites; got {res}'
+    assert _num_scan_nodes(sdfg) == 2
+
+    n = 16
+    rng = np.random.default_rng(404)
+    da = rng.uniform(-1.0, 1.0, size=n)
+    db = rng.uniform(0.95, 1.05, size=n)
+    a = np.zeros(n + 1); a[0] = 0.5
+    b = np.zeros(n + 1); b[0] = 1.0
+    ea, eb = a.copy(), b.copy()
+    for i in range(n):
+        ea[i + 1] = ea[i] + da[i]
+        eb[i + 1] = eb[i] * db[i]
+    sdfg(a=a, b=b, da=da, db=db, N=n)
+    assert np.allclose(a, ea) and np.allclose(b, eb), \
+        f'multi-array scan diverged: a={a}, ea={ea}; b={b}, eb={eb}'
+
+
+def test_v4_five_array_pfsqrf_pattern():
+    """Cloudsc-faithful five-carry prefix sum: matches the structure of the
+    surviving ``pfsqrf`` inner loop (``pfsqif``/``pfsqrf``/``pfsqlf``/
+    ``pfsqsf``/``pfcqlng`` all carried side-by-side, all with op = SUM).
+
+    The matcher returns 5 ``_Scan`` infos; the rewrite emits 5 Scan libnodes."""
+
+    @dace.program
+    def five_scans(s1: dace.float64[N + 1], s2: dace.float64[N + 1],
+                   s3: dace.float64[N + 1], s4: dace.float64[N + 1],
+                   s5: dace.float64[N + 1],
+                   d1: dace.float64[N], d2: dace.float64[N], d3: dace.float64[N],
+                   d4: dace.float64[N], d5: dace.float64[N]):
+        for i in range(N):
+            s1[i + 1] = s1[i] + d1[i]
+            s2[i + 1] = s2[i] + d2[i]
+            s3[i + 1] = s3[i] + d3[i]
+            s4[i + 1] = s4[i] + d4[i]
+            s5[i + 1] = s5[i] + d5[i]
+
+    sdfg = five_scans.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 5, f'expected five Scan rewrites for the pfsqrf pattern; got {res}'
+    assert _num_scan_nodes(sdfg) == 5
+
+    n = 12
+    rng = np.random.default_rng(5050)
+    d = [rng.uniform(-1.0, 1.0, size=n) for _ in range(5)]
+    s = [np.zeros(n + 1) for _ in range(5)]
+    for k, sv in enumerate(s):
+        sv[0] = 0.1 * (k + 1)
+    es = [sv.copy() for sv in s]
+    for k in range(5):
+        for i in range(n):
+            es[k][i + 1] = es[k][i] + d[k][i]
+    sdfg(s1=s[0], s2=s[1], s3=s[2], s4=s[3], s5=s[4],
+         d1=d[0], d2=d[1], d3=d[2], d4=d[3], d5=d[4], N=n)
+    for k in range(5):
+        assert np.allclose(s[k], es[k]), f's{k+1} diverged: {s[k]} vs {es[k]}'
+
+
+def test_v5_state_fusion_preprocess_unblocks_multi_state_body():
+    """A scan whose body is split across two SDFGStates joined by a trivial
+    interstate edge (no assignments, condition = 1). The v5 ``StateFusion``
+    preprocess inside ``LoopToScan.apply_pass`` fuses the two states; the
+    matcher then sees a single-content-state body and proceeds.
+
+    The cloudsc ``pfsqrf`` inner loop (``for_1134``) has this shape: ``UnaryOp_1135``
+    and ``assign_1143_12`` joined by an iedge with no assignments and condition 1.
+    """
+    sdfg = dace.SDFG('scan_two_state_body')
+    sdfg.add_array('out', [N + 1], dace.float64)
+    sdfg.add_array('delta', [N], dace.float64)
+    sdfg.add_scalar('_tmp', dace.float64, transient=True)
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('loop', initialize_expr='i = 0', condition_expr='i < N',
+                      update_expr='i = i + 1', loop_var='i')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    # State 1: copy delta[i] into a transient scalar -- StateFusion can fuse this
+    # with state 2 because the iedge is trivial and the transient is per-iteration.
+    s1 = loop.add_state('compute_tmp', is_start_block=True)
+    s2 = loop.add_state('apply')
+    loop.add_edge(s1, s2, dace.InterstateEdge())
+
+    dd = s1.add_read('delta')
+    tw = s1.add_write('_tmp')
+    s1.add_nedge(dd, tw, dace.Memlet(data='delta', subset='i', other_subset='0'))
+
+    rd = s2.add_read('out')
+    rt = s2.add_read('_tmp')
+    wt = s2.add_write('out')
+    t = s2.add_tasklet('scan_step', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
+    s2.add_edge(rd, None, t, '_a', dace.Memlet(data='out', subset='i'))
+    s2.add_edge(rt, None, t, '_d', dace.Memlet(data='_tmp', subset='0'))
+    s2.add_edge(t, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    sdfg.validate()
+
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, ('v5: StateFusion preprocess should fuse the two-state body, then '
+                      f'the scan matcher accepts; got {res}')
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 14
+    rng = np.random.default_rng(50)
+    delta = rng.uniform(-1.0, 1.0, size=n)
+    out = np.zeros(n + 1); out[0] = 0.3
+    expected = out.copy()
+    for i in range(n):
+        expected[i + 1] = expected[i] + delta[i]
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected), f'two-state-body scan diverged: {out} vs {expected}'
 
 
 if __name__ == '__main__':
