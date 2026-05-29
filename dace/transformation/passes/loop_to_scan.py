@@ -531,6 +531,15 @@ def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_
                 # Two non-carry inputs -- this isn't the scan-update tasklet.
                 delta_edge = None
                 break
+            # An edge that reads the carry array ``out`` but did NOT match the
+            # carry shape is an extra read of the carry at a different position
+            # (e.g. TSVC s2111: ``aa[j, i] = (aa[j, i-1] + aa[j-1, i]) / 1.9``
+            # -- ``aa[j-1, i]`` reads ``aa`` at a different ROW). The body's
+            # recurrence is then *not* a pure scan ``out[i] = out[i-1] OP
+            # delta(non-out arrays)``; lifting it as one corrupts the result.
+            if src_name == out_name:
+                ambiguous = True
+                break
             delta_edge = e
         if ambiguous or carry_edge is None or scan_stride is None:
             continue

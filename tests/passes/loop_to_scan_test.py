@@ -176,6 +176,27 @@ def test_refuses_non_associative_op():
     assert res is None
 
 
+def test_refuses_delta_reads_carry_array():
+    """TSVC s2111 shape: ``aa[j, i] = (aa[j, i-1] + aa[j-1, i]) / 1.9``. The
+    inner i-loop's scan-update tasklet has two reads of ``aa``: one matches
+    the carry slice (``aa[j, i-1]`` -- same j, previous i), the other is at a
+    *different* row (``aa[j-1, i]``). The second is NOT a non-out delta; it's
+    an extra read of the carry array that makes the recurrence a 2-D coupled
+    one, not a 1-D scan. Lifting it as a scan corrupts the result. The
+    matcher must refuse."""
+
+    @dace.program
+    def s2111(aa: dace.float64[N, N]):
+        for j in range(1, N):
+            for i in range(1, N):
+                aa[j, i] = (aa[j, i - 1] + aa[j - 1, i]) / 1.9
+
+    sdfg = s2111.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    assert res is None, ('LoopToScan must refuse the s2111 shape because the '
+                         "'delta' aa[j-1, i] is another read of the carry array.")
+
+
 def test_refuses_extra_non_transient_write():
     """The body writes a *second* non-transient array (``aux[i]``); that's per-iteration
     output we'd need to preserve outside the rewrite. The matcher refuses."""
