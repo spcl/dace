@@ -698,6 +698,32 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
     assert _num_scan_nodes(sdfg) == 1
 
 
+def test_v6_negative_write_offset_scan_with_outer_axis():
+    """Cloudsc ``for_1134`` shape: a 2-D scan ``arr[outer, inner - 1] = arr[outer,
+    inner - 2] + delta[outer, inner]``. The write offset on the scan axis is
+    NEGATIVE (k_w = -1), and the carry-read offset is -2. The other (outer) axis
+    is loop-invariant.
+
+    Documents that the synthetic frontend version of this shape DOES match
+    correctly today; cloudsc-specific blocker (which still refuses) is elsewhere
+    (likely a delta-chain peculiarity in the actual cloudsc body) and tracked
+    separately.
+    """
+
+    @dace.program
+    def neg_offset_scan(arr: dace.float64[5, N + 2], delta: dace.float64[5, N + 2]):
+        for j in range(5):
+            for i in range(2, N + 2):
+                arr[j, i - 1] = arr[j, i - 2] + delta[j, i]
+
+    sdfg = neg_offset_scan.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, (
+        f'k_w = -1 scan with outer axis should match; got {res}')
+    assert _num_scan_nodes(sdfg) == 1
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
