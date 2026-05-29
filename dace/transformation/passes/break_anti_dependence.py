@@ -98,27 +98,52 @@ class BreakAntiDependence(ppl.Pass):
         rr, wr = list(read.ndrange()), list(write.ndrange())
         if len(rr) != len(wr):
             return ('complex', None)
+        # Inline iedge symbol bindings (``i := LEN_1D - _loop_pos_0 - 2`` is
+        # what :class:`NormalizeNegativeStride` plants for a reversed loop) so
+        # the matcher sees memlet subsets in terms of the actual loop
+        # iterator ``isym`` rather than indirect frontend-bound symbols.
+        # Single ``.subs(...)`` + ``simplify(...)`` is sufficient for the
+        # patterns we target (the bindings we admit reference the iterator
+        # directly; see :meth:`_collect_iedge_substitutions` for the gate).
+        iedge_subs = self._collect_iedge_substitutions(loop, isym, sdfg) if loop is not None else {}
         carried_offset = None
         for (rb, re_, _), (wb, we_, _) in zip(rr, wr):
             if rb != re_ or wb != we_:
                 return ('complex', None)  # not a single-element (point) access
             rb = symbolic.pystr_to_symbolic(str(rb))
             wb = symbolic.pystr_to_symbolic(str(wb))
+            if iedge_subs:
+                rb = symbolic.simplify(rb.subs(iedge_subs))
+                wb = symbolic.simplify(wb.subs(iedge_subs))
             r_has = isym in rb.free_symbols
             w_has = isym in wb.free_symbols
             if not r_has and not w_has:
                 if symbolic.simplify(rb - wb) != 0:
                     return ('none', None)  # different fixed index -> never alias
                 continue
-            # carried dimension: require coefficient 1 on the iteration variable
-            # in the WRITE (the read may contain a data-indirected term we resolve
-            # below). The write's free symbols outside of ``isym`` (after
-            # subtracting ``isym``) must be empty.
-            if symbolic.simplify(wb - isym).free_symbols & {isym}:
+            # carried dimension: decompose ``wb`` as ``alpha * isym + beta`` with
+            # ``alpha in {+1, -1}`` and ``beta`` loop-invariant. ``alpha = +1`` is
+            # the standard forward-stride case; ``alpha = -1`` arises after
+            # :class:`NormalizeNegativeStride` rewrites a ``range(hi, lo, -1)``
+            # loop -- the body's memlets are then in the form ``a[c - k]`` for
+            # the new positive-stride iterator ``k``. Both cases are sound for
+            # the snapshot-and-redirect rewrite; only the iteration-direction
+            # interpretation of ``carried_offset`` differs.
+            if isym not in symbolic.simplify(wb - isym).free_symbols:
+                alpha = 1
+            elif isym not in symbolic.simplify(wb + isym).free_symbols:
+                alpha = -1
+            else:
                 return ('complex', None)
             if carried_offset is not None:
                 return ('complex', None)  # more than one carried dimension
             carried_offset = symbolic.simplify(rb - wb)
+            # Effective offset in iteration-time space: solving ``rb(i1) = wb(i2)``
+            # under ``rb = alpha*i + gamma``, ``wb = alpha*i + beta`` gives
+            # ``i2 - i1 = (gamma - beta) / alpha = carried_offset / alpha``.
+            # For alpha = -1 the iteration-time direction flips; multiply by
+            # alpha so the downstream sign tests stay uniform.
+            carried_offset = symbolic.simplify(alpha * carried_offset)
         if carried_offset is None:
             return ('none', None)  # loop-invariant read of the array, not our case
         if carried_offset.is_number:
@@ -155,6 +180,101 @@ class BreakAntiDependence(ppl.Pass):
                 if e.data is not None and sym_name in (e.data.assignments or {}):
                     return e.data.assignments[sym_name]
         return None
+
+    def _collect_iedge_substitutions(self, loop: LoopRegion,
+                                     isym=None, sdfg: Optional[SDFG] = None):
+        """Build ``{sym: rhs_expr}`` for every iedge assignment in the loop
+        body whose RHS is a *pure* symbolic expression (loop iterator +
+        loop-invariant symbols, no array reads anywhere in the dependency
+        chain). Lets the WAR matcher see memlet subsets in terms of the
+        actual iterator after :class:`NormalizeNegativeStride`-style iedge
+        rebindings (the post-NNS body indexes via a bound symbol
+        ``i := c - k``, not the new iterator ``k`` directly).
+
+        Crucially we EXCLUDE any binding that transitively touches a
+        data-array read: the indirected-gather chain
+        ``__sym := i + idx_slice ; idx_slice := idx[i]`` must NOT be
+        substituted into the memlet, because :meth:`_try_recognize_indirected`
+        relies on walking that chain to recognise the ``a[i + idx[i]]`` shape
+        and emit the per-element array guard. Substituting would erase the
+        chain by collapsing ``__sym`` to ``i + idx_slice`` (with
+        ``idx_slice`` an opaque symbol), and the downstream code couldn't
+        distinguish it from a benign ``WAR_symbolic`` case.
+
+        Scope safety: we also refuse to substitute a binding whose RHS
+        introduces a free symbol that is not already defined at the loop's
+        SDFG scope (``sdfg.symbols`` ∪ ``sdfg.arrays`` ∪ ``{isym}``). A
+        binding referencing an unknown name would produce an unbound symbol
+        in the matcher's algebra, leading to spurious 'complex' verdicts at
+        best and silent misclassification at worst.
+
+        Returns a dict suitable for ``sympy_expr.subs(...)``.
+        """
+        # Symbols in scope at this loop: the iteration variable + everything
+        # in sdfg.symbols + every data-array name (for array-references on
+        # the RHS we keep them but mark the binding tainted further down).
+        in_scope: set = set()
+        if sdfg is not None:
+            in_scope.update(sdfg.symbols.keys())
+            in_scope.update(sdfg.arrays.keys())
+        if isym is not None:
+            in_scope.add(str(isym))
+        # First pass: collect every iedge binding as a candidate, and note
+        # which ones have an array gather (``[`` in the RHS) -- those are
+        # tainted, and any binding whose RHS transitively references a tainted
+        # symbol is also tainted.
+        candidates = {}
+        tainted_syms = set()
+        for e in loop.all_interstate_edges():
+            for lhs, rhs in (e.data.assignments or {}).items():
+                rhs_str = str(rhs)
+                if '[' in rhs_str:
+                    tainted_syms.add(lhs)
+                    continue
+                try:
+                    expr = symbolic.pystr_to_symbolic(rhs_str)
+                except Exception:
+                    continue
+                candidates[lhs] = expr
+        # Transitive taint propagation: if any candidate's RHS references a
+        # tainted symbol, the candidate becomes tainted too.
+        changed = True
+        while changed:
+            changed = False
+            for lhs, expr in list(candidates.items()):
+                if lhs in tainted_syms:
+                    continue
+                if any(str(s) in tainted_syms for s in expr.free_symbols):
+                    tainted_syms.add(lhs)
+                    changed = True
+        # Final substitution map: untainted, non-self-referential bindings
+        # whose RHS only references in-scope symbols AND mentions the loop
+        # iterator. The iterator-mention requirement is what distinguishes
+        # the case we want to handle (``i := N-1-k`` -- a re-expression of
+        # the iterator we want inlined) from opaque renames
+        # (``__sym := tasklet_output_sym`` -- the indirected-gather chain
+        # ``_try_recognize_indirected`` needs to walk symbolically). Inlining
+        # the latter would erase the chain and lose the WAR_indirected
+        # recognition.
+        subs = {}
+        all_binding_names = set(candidates.keys())
+        isym_str = str(isym) if isym is not None else None
+        for lhs, expr in candidates.items():
+            if lhs in tainted_syms:
+                continue
+            if symbolic.pystr_to_symbolic(lhs) in expr.free_symbols:
+                continue
+            unknown = [s for s in expr.free_symbols
+                       if str(s) not in in_scope and str(s) not in all_binding_names]
+            if unknown:
+                continue
+            # Only inline when the RHS references the loop iterator; otherwise
+            # the binding is an opaque rename whose substitution would lose
+            # information the downstream matcher needs.
+            if isym_str is not None and isym_str not in (str(s) for s in expr.free_symbols):
+                continue
+            subs[symbolic.pystr_to_symbolic(lhs)] = expr
+        return subs
 
     def _try_recognize_indirected(self, offset_expr, isym, loop: LoopRegion, sdfg: SDFG) -> Optional[str]:
         """Recognise ``offset_expr == arr[isym]`` after walking back through
