@@ -103,6 +103,12 @@ class _Scan(NamedTuple):
     :param carry_anchor: The AccessNode the carry-in edge enters in the body
         (the slice-copy intermediate, or the direct source AN). Used during
         orphan cleanup.
+    :param literal_delta: For the v3 literal-augmented-carry shape (TSVC
+        s242: ``a[i] = a[i-1] + 0.5 + ...``), the numeric literal on the
+        non-carry side of the scan-update tasklet's binop. ``None`` for the
+        v1/v2 shape where the delta arrives via a data edge. When set, the
+        scan-update tasklet's rewritten code emits the literal directly;
+        the carry connector is severed and the tasklet has zero in-edges.
     """
     op: ScanOp
     out_name: str
@@ -116,9 +122,10 @@ class _Scan(NamedTuple):
     body_state: SDFGState
     scan_update_tasklet: nodes.Tasklet
     carry_in_conn: str
-    delta_in_conn: str
+    delta_in_conn: Optional[str]
     out_conn: str
     carry_anchor: nodes.AccessNode
+    literal_delta: Optional[str] = None
 
 
 @properties.make_properties
@@ -226,7 +233,7 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     candidate = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable, write_axis, write_others, k_w)
     if candidate is None:
         return None
-    tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride = candidate
+    tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = candidate
 
     out_edges_t = [e for e in state.out_edges(tasklet)
                    if e.data is not None and not e.data.is_empty()]
@@ -260,9 +267,10 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
         body_state=state,
         scan_update_tasklet=tasklet,
         carry_in_conn=carry_edge.dst_conn,
-        delta_in_conn=delta_edge.dst_conn,
+        delta_in_conn=delta_edge.dst_conn if delta_edge is not None else None,
         out_conn=out_edges_t[0].src_conn,
         carry_anchor=carry_anchor,
+        literal_delta=literal_delta,
     )
 
 
@@ -341,8 +349,23 @@ def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_
                     if e.data is not None and not e.data.is_empty()]
         out_edges = [e for e in state.out_edges(node)
                      if e.data is not None and not e.data.is_empty()]
-        if len(in_edges) != 2 or len(out_edges) != 1:
+        if len(out_edges) != 1:
             continue
+        # v1/v2: ``carry + delta`` (two data inputs). v3: ``carry + literal``
+        # (one data input + a numeric constant on the other side of the binop;
+        # e.g. TSVC s242 ``a[i] = a[i-1] + 0.5 + ...``). The Call (``max``/``min``)
+        # form keeps the two-data-input requirement -- literal arms to ``max``
+        # would degenerate to ``out[i] = max(out[start], literal)`` which is
+        # better lifted as a plain reduction, not a scan.
+        if len(in_edges) not in (1, 2):
+            continue
+        literal_delta = None
+        if len(in_edges) == 1:
+            if not isinstance(rhs, ast.BinOp):
+                continue
+            literal_delta = _binop_literal_operand(rhs)
+            if literal_delta is None:
+                continue
         carry_edge = None
         delta_edge = None
         carry_anchor = None
@@ -377,9 +400,40 @@ def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_
                 delta_edge = None
                 break
             delta_edge = e
-        if ambiguous or carry_edge is None or delta_edge is None or scan_stride is None:
+        if ambiguous or carry_edge is None or scan_stride is None:
             continue
-        return node, carry_edge, delta_edge, op, carry_anchor, scan_stride
+        # v1/v2 must have a data delta edge; v3 has a literal delta instead.
+        if delta_edge is None and literal_delta is None:
+            continue
+        return node, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta
+    return None
+
+
+def _binop_literal_operand(rhs: ast.BinOp) -> Optional[str]:
+    """If exactly one operand of ``rhs`` is a numeric literal (``ast.Constant``
+    of int/float, optionally negated via ``ast.UnaryOp(USub, Constant)``),
+    return its source-text form. Otherwise return ``None``.
+
+    Symmetric: ``carry + 0.5`` and ``0.5 + carry`` both match. The associative
+    ops we support (``+``, ``*``, ``min``, ``max``) all commute, so operand
+    order is irrelevant for the scan semantics.
+    """
+    def _as_literal_str(n) -> Optional[str]:
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
+            return repr(n.value)
+        if (isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub)
+                and isinstance(n.operand, ast.Constant)
+                and isinstance(n.operand.value, (int, float))
+                and not isinstance(n.operand.value, bool)):
+            return f'-{n.operand.value!r}'
+        return None
+
+    left_lit = _as_literal_str(rhs.left)
+    right_lit = _as_literal_str(rhs.right)
+    if left_lit is not None and right_lit is None:
+        return left_lit
+    if right_lit is not None and left_lit is None:
+        return right_lit
     return None
 
 
@@ -594,10 +648,16 @@ def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):
     # 1. Sever the carry input chain (orphan transients pruned).
     _disconnect_carry_chain(state, tasklet, info.carry_in_conn, info.carry_anchor)
 
-    # 2. The scan-update tasklet becomes a passthrough of its delta input. The downstream
-    #    chain (whatever tasklets continue the delta computation in v2) now propagates the
-    #    delta value verbatim instead of the carry+delta sum.
-    tasklet.code.as_string = f'{info.out_conn} = {info.delta_in_conn}'
+    # 2. The scan-update tasklet becomes a passthrough emitting the delta.
+    #    v1/v2 (data delta): propagate ``delta_in_conn`` verbatim. v3 (literal
+    #    delta, e.g. TSVC s242 ``a[i-1] + 0.5``): emit the literal directly;
+    #    the carry connector is already severed and the tasklet now has zero
+    #    in-edges, so the previous ``__in1 + literal`` body must NOT reference
+    #    ``__in1`` (it was just removed).
+    if info.literal_delta is not None:
+        tasklet.code.as_string = f'{info.out_conn} = {info.literal_delta}'
+    else:
+        tasklet.code.as_string = f'{info.out_conn} = {info.delta_in_conn}'
 
     # 3. Locate the body's final write edge to ``out`` (the unique in-edge to its write
     #    AccessNode in the state) and re-route it to ``delta_buf[loop_var - iter_start]``.

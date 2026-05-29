@@ -259,12 +259,13 @@ def test_tsvc_s221_v2_computed_delta_two_arrays():
     assert np.allclose(b, expected), f'max diff {np.max(np.abs(b - expected))}'
 
 
-def test_tsvc_s242_literal_augmented_carry_not_yet_supported():
-    """TSVC s242: ``a[i] = a[i-1] + 0.5 + 1.0 + b[i] + c[i] + d[i]``. The first ``+`` lowers
-    to a tasklet ``__out = __in1 + 0.5`` -- ONE data input (the carry) plus a literal.
-    Today the matcher requires two data inputs on the scan-update tasklet; a future
-    extension would replace the carry input's variable with the op's identity (0 for
-    SUM, 1 for PRODUCT) to support the literal-augmented case. **TODO**."""
+def test_tsvc_s242_literal_augmented_carry():
+    """TSVC s242: ``a[i] = a[i-1] + 0.5 + 1.0 + b[i] + c[i] + d[i]``. The first ``+``
+    lowers to a tasklet ``__out = __in1 + 0.5`` -- ONE data input (the carry) +
+    a literal. v3 of the matcher accepts this shape: the carry input is severed
+    as in v1/v2 and the tasklet's passthrough emits the literal directly; the
+    downstream chain extends that literal with ``+ 1.0 + b[i] + c[i] + d[i]``
+    to build the per-iteration delta. Scan then folds in the seed ``a[0]``."""
 
     @dace.program
     def s242(a: dace.float64[N + 1], b: dace.float64[N + 1], c: dace.float64[N + 1],
@@ -274,8 +275,70 @@ def test_tsvc_s242_literal_augmented_carry_not_yet_supported():
 
     sdfg = s242.to_sdfg(simplify=True)
     res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None, ('s242 should be refused until literal-augmented carry support '
-                         'lands; see the TODO in the body of this test.')
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 12
+    rng = np.random.default_rng(242)
+    a = rng.standard_normal(n + 1)
+    b = rng.standard_normal(n + 1)
+    c = rng.standard_normal(n + 1)
+    d = rng.standard_normal(n + 1)
+    expected = a.copy()
+    for i in range(1, n + 1):
+        expected[i] = expected[i - 1] + 0.5 + 1.0 + b[i] + c[i] + d[i]
+    sdfg(a=a, b=b, c=c, d=d, N=n)
+    assert np.allclose(a, expected)
+
+
+def test_literal_only_delta_constant_increment():
+    """Pure literal delta: ``out[i+1] = out[i] + 0.25``. No downstream chain;
+    the matcher accepts the carry tasklet's single-data-input + literal shape
+    and the rewrite makes the tasklet emit ``__out = 0.25``."""
+
+    @dace.program
+    def lit(out: dace.float64[N + 1]):
+        for i in range(N):
+            out[i + 1] = out[i] + 0.25
+
+    sdfg = lit.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+
+    n = 16
+    out = np.zeros(n + 1)
+    out[0] = 0.5
+    expected = out.copy()
+    for i in range(n):
+        expected[i + 1] = expected[i] + 0.25
+    sdfg(out=out, N=n)
+    assert np.allclose(out, expected)
+
+
+def test_literal_delta_product_negative_constant():
+    """``out[i+1] = out[i] * -2.0`` -- negative literal via ``ast.UnaryOp(USub)``
+    on the right operand."""
+
+    @dace.program
+    def lit(out: dace.float64[N + 1]):
+        for i in range(N):
+            out[i + 1] = out[i] * -2.0
+
+    sdfg = lit.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+
+    n = 6  # keep magnitudes bounded
+    out = np.zeros(n + 1)
+    out[0] = 1.0
+    expected = out.copy()
+    for i in range(n):
+        expected[i + 1] = expected[i] * -2.0
+    sdfg(out=out, N=n)
+    assert np.allclose(out, expected)
 
 
 def test_tsvc_s222_self_referential_delta_refused():
