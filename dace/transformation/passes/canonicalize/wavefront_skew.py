@@ -283,6 +283,24 @@ def _collect_runtime_guards(offsets: List[Tuple[object, object]]) -> List[object
     return guards
 
 
+def _inner_already_parallel(offsets: List[Tuple[object, object]]) -> bool:
+    """``True`` iff every dep offset has a zero *inner*-axis component, i.e. the
+    inner loop is already parallel without any skew. In that case, the skew
+    rewrite is unnecessary -- a direct ``LoopToMap`` on the inner loop yields
+    the same parallel structure with a simpler axis-aligned form (TSVC
+    ``s1119``: ``aa[i, j] = aa[i-1, j] + bb[i, j]`` has dep ``(1, 0)``; the
+    inner ``j``-loop is fully parallel on its own).
+    """
+    for _r_outer, r_inner in offsets:
+        try:
+            s = symbolic.simplify(r_inner)
+        except Exception:
+            return False
+        if not (getattr(s, 'is_number', False) and s == 0):
+            return False
+    return True
+
+
 def _is_wavefront_amenable(offsets: List[Tuple[object, object]]) -> bool:
     """All read offsets must lie strictly *before* the write in lexicographic
     iteration order, and be non-positive on both axes -- the ``t = i + j``
@@ -293,13 +311,21 @@ def _is_wavefront_amenable(offsets: List[Tuple[object, object]]) -> bool:
     ``sym2`` are declared positive -- a regime DaCe's symbol system supports
     directly, but where polyhedral analyzers without an oracle for symbol
     sign typically give up.
+
+    Refuses when the *inner* axis is already free of carried deps
+    (see :func:`_inner_already_parallel`): the skew gains nothing over a
+    direct ``LoopToMap`` and the axis-aligned form is preferable.
     """
     if not offsets:
         return False
     for r_i, r_j in offsets:
         if not (_nonpositive(r_i) and _nonpositive(r_j)):
             return False
-    return _has_any_nonzero(offsets)
+    if not _has_any_nonzero(offsets):
+        return False
+    if _inner_already_parallel(offsets):
+        return False
+    return True
 
 
 @properties.make_properties

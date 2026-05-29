@@ -166,6 +166,32 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
     assert np.allclose(out, expected)
 
 
+def test_wavefront_skew_refuses_when_inner_already_parallel():
+    """TSVC ``s1119``: ``aa[i, j] = aa[i-1, j] + bb[i, j]``. The dep ``(1, 0)``
+    is only on the outer ``i`` axis; the inner ``j`` is already parallel.
+    A skew would gain nothing -- a direct ``LoopToMap`` on the inner produces
+    the same parallel structure axis-aligned. The pass must refuse so the
+    later ``LoopToMap`` stage handles ``j`` directly without the skew detour.
+    """
+
+    @dace.program
+    def s1119(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+        for i in range(1, N):
+            for j in range(N):
+                aa[i, j] = aa[i - 1, j] + bb[i, j]
+
+    sdfg = s1119.to_sdfg(simplify=True)
+    res = WavefrontSkew().apply_pass(sdfg, {})
+    assert res is None, "skew must refuse when only the outer axis carries"
+    sdfg.validate()
+    # Confirm the inner-j is still a LoopRegion (untouched by skew); the
+    # later ``LoopToMap`` stage will lift it.
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert not any(l.loop_variable.startswith(_SKEW_T_PREFIX) for l in loops)
+    assert not any(l.loop_variable.startswith(_SKEW_P_PREFIX) for l in loops)
+
+
 def test_wavefront_skew_runtime_guard_traps_on_violation():
     """Negative ``sym_unannot`` violates the wavefront-dep assumption; the
     planted ``__builtin_trap`` fires and the program aborts (subprocess
