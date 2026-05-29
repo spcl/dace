@@ -232,48 +232,39 @@ class FuseOverlappingTileLoads(ppl.Pass):
         full_subset = ", ".join(f"0:{e}" for e in union_extent)
         state.add_edge(src_an, None, union_an, None,
                        dace.Memlet(data=src_data, subset=union, other_subset=full_subset))
-        # Rewire each load's downstream consumers to read from ``A_vec`` at
-        # ``[offset_k : offset_k + W_k]``, then drop the load + its tile
-        # transient.
+        # Replace each load with a plain memlet copy from the union buffer
+        # into the *same* dense per-load tile transient. Keeping the tile
+        # transient preserves the binop consumer interface (the lib node's
+        # tasklet expects a dense ``(W_0, ..., W_K)``-stride source connector;
+        # passing it a strided view into ``A_vec`` would mis-stride the
+        # inner-loop index arithmetic). The wide source load happens ONCE
+        # (the ``src_an -> union_an`` staging edge above); each per-load
+        # transient becomes a cheap offset extract.
         for load_node, src_edge in loads:
-            # The load has exactly one DST edge into a tile transient access.
             dst_edges = [e for e in state.out_edges(load_node) if e.src_conn == TileConnectors.DST]
             if len(dst_edges) != 1:
-                # Unexpected shape; skip this load to stay safe.
                 continue
             tile_dst_edge = dst_edges[0]
             tile_acc = tile_dst_edge.dst
             if not isinstance(tile_acc, dace.nodes.AccessNode):
                 continue
-            tile_name = tile_acc.data
             offsets = offsets_per_load[loads.index((load_node, src_edge))]
             sub_subset_str = ", ".join(f"{off}:{off + w}" for off, w in zip(offsets, per_dim_width))
-            # Rewire every consumer of ``tile_acc`` to read from ``union_an``
-            # at the offset window. The consumer's memlet ``tile_name[0:W]``
-            # becomes ``union_name[off:off+W]``.
-            for cons_edge in list(state.out_edges(tile_acc)):
-                state.add_edge(
-                    union_an,
-                    None,
-                    cons_edge.dst,
-                    cons_edge.dst_conn,
-                    dace.Memlet(data=union_name, subset=sub_subset_str),
-                )
-                state.remove_edge(cons_edge)
-            # Drop the original load + the mask edge feeding it.
+            # Wire ``union_an [sub_subset] -> tile_acc [full]`` as the load
+            # replacement. The tile transient keeps its dense register strides;
+            # its downstream binop consumers are unchanged.
+            tile_full = ", ".join(f"0:{w}" for w in tile_acc.desc(sdfg).shape)
+            state.add_edge(
+                union_an,
+                None,
+                tile_acc,
+                None,
+                dace.Memlet(data=union_name, subset=sub_subset_str, other_subset=tile_full),
+            )
+            # Drop the original load + its mask edge.
             for e in list(state.in_edges(load_node)) + list(state.out_edges(load_node)):
                 state.remove_edge(e)
             state.remove_node(load_node)
-            # Drop the now-isolated per-load tile transient.
-            if tile_acc in state.nodes() and state.degree(tile_acc) == 0:
-                state.remove_node(tile_acc)
-            if tile_name in sdfg.arrays:
-                # Only drop the array if no other access node references it
-                # in any state.
-                still_used = any(
-                    n.data == tile_name for st in sdfg.all_states() for n in st.data_nodes())
-                if not still_used:
-                    sdfg.remove_data(tile_name, validate=False)
         # Drop now-orphan source access nodes (each load had its own ``A`` AN
         # in Promote-produced bodies; the one we kept as ``src_an`` is still
         # used by the staging memlet).

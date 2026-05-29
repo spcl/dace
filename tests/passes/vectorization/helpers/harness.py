@@ -154,16 +154,10 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     # per-arch C++ intrinsics, and the descent never fans out per-lane index
     # symbols — so both knobs are accepted as no-ops here (already implied
     # by the tile lowering). ``fuse_overlapping_loads`` is wired through the
-    # tile path at K=1 (auto-enables ``nest_map_bodies`` and runs the
-    # ``FuseOverlappingTileLoads`` pass after Promote / before EmitTileOps).
-    # At K>=2 the auto-nest interacts with multi-slice access patterns
-    # ``Promote`` doesn't yet handle, so we skip the structural fuse
-    # parametrisations there until that emit path is widened.
-    if fuse_overlapping_loads:
-        K = _collapsible_innermost_K(sdfg)
-        if K is None or K >= 2:
-            return ("fuse_overlapping_loads at K>=2 (tile-arm fuse currently "
-                    "covers K=1; K>=2 multi-slice descent is pending)")
+    # tile path at both K=1 and K>=2 (auto-enables ``nest_map_bodies`` and
+    # runs the ``FuseOverlappingTileLoads`` pass after Promote / before
+    # EmitTileOps); the fuse pass replaces per-load TileLoads with offset
+    # memlet copies from the shared ``<base>_vec`` union buffer.
     # ``loop_to_map_permissive`` IS supported on the tile path now (threaded into
     # the orchestrator's LoopToMap call) — scatter benchmarks set it True so the
     # scatter loop parallelises and the tile path can vectorise it. No skip.

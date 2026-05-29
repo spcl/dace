@@ -300,9 +300,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # (the fusion pass walks ``TileLoad`` groups in a single state — the
         # body-NSDFG shape that ``PromoteNSDFGBodyToTiles`` produces). Promote
         # only fires on already-NSDFG bodies, so when the knob is on we also
-        # nest the body so a flat axpy / jacobi body becomes one too. K=1 only:
-        # at K>=2 the auto-nest interacts poorly with the K-dim emit chain.
-        if nest_map_bodies or (fuse_overlapping_loads and len(widths_t) == 1):
+        # nest the body so a flat axpy / jacobi body becomes one too. Applies
+        # at every K (the fuse pass keeps per-load dense tile transients;
+        # binop consumers stay on dense (W,)/(W_0, W_1) views regardless of
+        # whether the source ``<base>_vec`` boundary is 1D or N-D).
+        if nest_map_bodies or fuse_overlapping_loads:
             # Single-emit-path mode: nest EVERY innermost map body into one
             # NestedSDFG so the descent (PromoteNSDFGBodyToTiles) tiles all
             # bodies — a flat axpy-style body and a reused-scalar (vbor) body
