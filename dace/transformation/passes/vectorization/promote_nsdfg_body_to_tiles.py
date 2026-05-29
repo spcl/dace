@@ -1182,12 +1182,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                                 fs_begin |= {str(x) for x in getattr(b, "free_symbols", set())}
                             tile_dims_in_sub = sorted(d for d, (b, _e, _s) in enumerate(up_sub)
                                                        if {str(x) for x in getattr(b, "free_symbols", set())} & set(spec.iter_vars))
-                            # ONE tile-var dim in the source subset matches a
-                            # K=1 tile cleanly. The descent currently only emits
-                            # 1-D ``src_dims`` for K=1 via the same wiring path,
-                            # so refuse multi-tile-dim shapes here loudly.
-                            if len(tile_dims_in_sub) == len(W) == 1:
-                                return "NDTile", (up, up_sub, tile_dims_in_sub[0]), None
+                            # Exactly K tile-var dims in the source subset match
+                            # the K-dim tile cleanly: the wiring emits a TileLoad
+                            # with ``src_dims=(tile_dims_in_sub,)`` reading the
+                            # K-dim widened subset (each tile-var dim grows from
+                            # 1 to its W_k) into a (W,)-shape register tile.
+                            if len(tile_dims_in_sub) == len(W):
+                                return "NDTile", (up, up_sub, tuple(tile_dims_in_sub)), None
                 # A broadcast (Scalar) operand: a true ``dace.data.Scalar``, a
                 # length-1 ``(1,)`` array, OR a single-element TILE-VAR-FREE read
                 # of a larger in-connector array (``a[j]`` where ``j`` is
@@ -1269,18 +1270,34 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     istate.add_edge(info, None, binop, conn,
                                     dace.Memlet(data=info.data, subset=subsets.Range(list(isub.ranges))))
                 elif kind == "NDTile":
-                    # ``info = (up_access, up_sub, tile_dim)`` from the
+                    # ``info = (up_access, up_sub, tile_dims_tuple)`` from the
                     # ``Array[tile_var_subset] -> length-1 transient ->
                     # tasklet[0]`` walk-back. Emit a TileLoad reading the
-                    # upstream N-D source at the per-lane subset (the tile-var
-                    # dim widened from 1 to W), producing a (W,)-shape tile
-                    # transient, and wire that tile into the binop connector.
-                    up_acc, up_sub, tile_dim = info
+                    # upstream N-D source at the per-lane subset (each
+                    # tile-var dim widened from 1 to its W_k), producing a
+                    # ``widths``-shape tile transient, and wire that tile
+                    # into the binop connector.
+                    up_acc, up_sub, tile_dims = info
                     up_arr = inner.arrays[up_acc.data]
+                    # Map each tile-var dim in the source to its tile width.
+                    # The K-dim ordering follows ``spec.iter_vars`` (innermost-
+                    # last); ``tile_dims`` is in source-dim order, so we walk
+                    # both together by matching the iter-var that appears in
+                    # each source dim's begin expression.
+                    tile_dim_to_w = {}
+                    for k_idx, src_dim in enumerate(tile_dims):
+                        b, _e, _s = up_sub.ranges[src_dim]
+                        fs = {str(x) for x in getattr(b, "free_symbols", set())}
+                        iv_match = fs & set(spec.iter_vars)
+                        if len(iv_match) != 1:
+                            return None  # unhandled — multiple tile vars in one dim
+                        iv = next(iter(iv_match))
+                        iv_idx = spec.iter_vars.index(iv)
+                        tile_dim_to_w[src_dim] = W[iv_idx]
                     promoted_ranges = []
                     for d, (b, e_, s) in enumerate(up_sub):
-                        if d == tile_dim:
-                            promoted_ranges.append((b, b + (W[0] - 1), 1))
+                        if d in tile_dim_to_w:
+                            promoted_ranges.append((b, b + (tile_dim_to_w[d] - 1), 1))
                         else:
                             promoted_ranges.append((b, e_, s))
                     promoted_sub = subsets.Range(promoted_ranges)
@@ -1294,8 +1311,8 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     tile_acc = istate.add_access(tile_name)
                     load = TileLoad(name=f"load_{up_acc.data}_ndtile",
                                     widths=W,
-                                    dim_strides=(1, ),
-                                    src_dims=(tile_dim, ),
+                                    dim_strides=tuple(1 for _ in W),
+                                    src_dims=tile_dims,
                                     has_mask=mask_acc is not None)
                     istate.add_node(load)
                     istate.add_edge(up_acc, None, load, TileConnectors.SRC,
