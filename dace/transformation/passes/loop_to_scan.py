@@ -352,23 +352,19 @@ def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_
             src_name, src_subset = _resolve_input(state, e)
             if src_name == out_name and src_subset is not None:
                 r_axis, k_r_cand, r_others = _classify_subset(src_subset, loop_var)
-                # Accept any *positive* offset k_w - k_r_cand: ``1`` is the
-                # contiguous scan; ``S > 1`` is the residue-class scan that the
-                # ``Scan`` libnode's ``stride`` property handles natively (TSVC
-                # s1221 ``b[i] = b[i-4] + a[i]``).
-                # The matcher accepts contiguous-axis recurrences only
-                # (``k_w - k_r == 1``). Residue-class scans (``> 1`` stride)
-                # are detected but currently fall out below: the per-class
-                # seed-add isn't yet wired, so a wrongly seeded scan would
-                # corrupt the output. ``scan_stride`` is captured so the
-                # rewrite gets the info once that's available.
+                # Accept any *positive integer* offset ``k_w - k_r_cand``: ``1``
+                # is the contiguous scan; ``S > 1`` is the residue-class scan
+                # that the ``Scan`` libnode's ``stride`` property handles
+                # natively (TSVC s1221 ``b[i] = b[i-4] + a[i]``). For ``S > 1``
+                # the seed-add Map fans the ``S`` pre-loop seeds out by
+                # ``_i mod S`` (see ``_emit_seed_add``).
                 if r_axis == scan_axis and _same_other_indices(r_others, write_others):
                     try:
                         diff = symbolic.simplify(k_w - k_r_cand)
                     except Exception:
                         diff = None
                     if (diff is not None and getattr(diff, 'is_number', False)
-                            and getattr(diff, 'is_Integer', False) and int(diff) == 1):
+                            and getattr(diff, 'is_Integer', False) and int(diff) >= 1):
                         if carry_edge is not None:
                             ambiguous = True
                             break
@@ -711,13 +707,27 @@ def _emit_scan(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, scan_b
 
 
 def _emit_seed_add(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: str, trip: Any):
-    """Map over ``_i`` writing ``out[start + k_w + _i, ...] = seed + scan_buf[_i]`` where
-    ``seed = out[start + k_r, ...]`` (broadcast over every iteration of the map).
+    """Map over ``_i`` writing ``out[start + k_w + _i, ...] = seed OP scan_buf[_i]``.
+
+    For ``scan_stride == 1`` the seed is a single broadcast value
+    ``out[start + k_r, ...]``. For ``scan_stride == S > 1`` (residue-class
+    scan, e.g. TSVC s1221 ``b[i] = b[i-4] + a[i]``) the seed depends on the
+    class index ``k = _i mod S`` and lives at
+    ``out[start + k_r + k, ...]`` (the pre-loop value at the corresponding
+    head of that class). The libnode has already run the ``S`` independent
+    class scans into ``scan_buf``; this Map fans the ``S`` pre-loop seeds
+    out by ``_i mod S``.
     """
     out_desc = sdfg.arrays[info.out_name]
-    seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
+    _i = symbolic.pystr_to_symbolic('_i')
+    if info.scan_stride == 1:
+        seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
+    else:
+        import sympy
+        class_idx = sympy.Mod(_i, info.scan_stride)
+        seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r + class_idx)
     seed_subset = _build_subset(out_desc, info.scan_axis, seed_axis_expr, info.other_indices)
-    write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + symbolic.pystr_to_symbolic('_i')
+    write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + _i
     write_subset = _build_subset(out_desc, info.scan_axis, write_axis_expr, info.other_indices)
 
     op_expr = {

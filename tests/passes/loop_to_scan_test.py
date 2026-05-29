@@ -103,21 +103,64 @@ def test_inclusive_max_1d():
     assert np.allclose(out, expected)
 
 
-def test_refuses_non_unit_offset():
-    """``out[i+2] = out[i] + delta[i]`` -- the carry's offset is ``2`` (residue-
-    class scan). The matcher captures the stride but the rewrite refuses
-    until the per-residue-class seed-add is wired (broadcast seed is wrong
-    when each residue class has its own initial value)."""
+@pytest.mark.parametrize('stride', [2, 3, 4, 5])
+def test_residue_class_scan(stride):
+    """``out[i+S] = out[i] + delta[i]`` for ``S >= 2`` -- a stride-``S``
+    residue-class scan. The libnode runs the ``S`` independent class scans
+    in parallel; the seed-add Map fans the ``S`` pre-loop seeds out by
+    ``_i mod S``. Numerically matches the sequential oracle."""
 
     @dace.program
-    def stride2(out: dace.float64[N + 2], delta: dace.float64[N]):
+    def stride_scan(out: dace.float64[N + stride], delta: dace.float64[N]):
         for i in range(N):
-            out[i + 2] = out[i] + delta[i]
+            out[i + stride] = out[i] + delta[i]
 
-    sdfg = stride2.to_sdfg(simplify=True)
+    sdfg = stride_scan.to_sdfg(simplify=True)
     res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None
-    assert _num_scan_nodes(sdfg) == 0
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 24
+    rng = np.random.default_rng(stride)
+    delta = rng.uniform(-1.0, 1.0, size=n)
+    out = np.zeros(n + stride)
+    out[:stride] = rng.uniform(-1.0, 1.0, size=stride)
+    expected = out.copy()
+    for i in range(n):
+        expected[i + stride] = expected[i] + delta[i]
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected), \
+        f'stride-{stride} scan mismatch: got {out}, expected {expected}'
+
+
+def test_tsvc_s1221_residue_class_scan_inplace():
+    """TSVC s1221 ``b[i] = b[i-4] + a[i]`` for ``i in [4, N)`` -- the in-place
+    spelling of a stride-4 residue-class scan: the write is at ``i`` and the
+    read at ``i-4``. ``k_w == 0``, ``k_r == -4``, ``stride == 4``.
+    Per-class seed at ``b[k]`` for ``k in [0, 4)`` (the pre-loop values).
+    Numerically matches the sequential oracle."""
+
+    @dace.program
+    def s1221(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(4, N):
+            b[i] = b[i - 4] + a[i]
+
+    sdfg = s1221.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 32
+    rng = np.random.default_rng(1221)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    expected = b.copy()
+    for i in range(4, n):
+        expected[i] = expected[i - 4] + a[i]
+    sdfg(a=a.copy(), b=b, N=n)
+    assert np.allclose(b, expected), f's1221 mismatch: got {b}, expected {expected}'
 
 
 def test_refuses_non_associative_op():
