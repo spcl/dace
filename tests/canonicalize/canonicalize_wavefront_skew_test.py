@@ -101,5 +101,82 @@ def test_wavefront_skew_accepts_symbolic_offsets():
     assert res == 1
 
 
+def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
+    """When the offset symbol is *not* declared ``positive=True`` the matcher
+    still accepts via the optimistic fall-through, but a ``__builtin_trap``
+    runtime guard is planted in a pre-state to catch a runtime sym <= 0
+    violation. A positive runtime value passes the guard and produces the
+    correct skewed result.
+    """
+    sym = dace.symbol('sym_unannot')  # no ``positive=True``
+
+    @dace.program
+    def prog(aa: dace.float64[N, N]):
+        for i in range(sym, N):
+            for j in range(sym, N):
+                aa[i, j] = (aa[i, j - sym] + aa[i - sym, j]) / 1.9
+
+    sdfg = prog.to_sdfg(simplify=True)
+    res = WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+
+    # A pre-state ``_skew_guard_*`` with a single zero-connector tasklet was
+    # planted before the (now skewed) loop. Exactly one such tasklet exists.
+    guard_states = [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState)
+                    and s.label.startswith('_skew_guard_')]
+    assert len(guard_states) == 1, f'expected 1 guard state, got {len(guard_states)}'
+    guards = [n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet)
+              and n.label.startswith('_skew_guard_')]
+    assert len(guards) == 1
+    assert '__builtin_trap' in guards[0].code.as_string
+
+    # Runtime check: a positive ``sym_unannot`` value passes the guard and
+    # the result matches the un-skewed sequential oracle.
+    n_concrete, s_concrete = 12, 2
+    rng = np.random.default_rng(0)
+    aa = rng.standard_normal((n_concrete, n_concrete))
+    expected = aa.copy()
+    for i in range(s_concrete, n_concrete):
+        for j in range(s_concrete, n_concrete):
+            expected[i, j] = (expected[i, j - s_concrete] + expected[i - s_concrete, j]) / 1.9
+    out = aa.copy()
+    sdfg(aa=out, N=n_concrete, sym_unannot=s_concrete)
+    assert np.allclose(out, expected)
+
+
+def test_wavefront_skew_runtime_guard_traps_on_violation():
+    """Negative ``sym_unannot`` violates the wavefront-dep assumption; the
+    planted ``__builtin_trap`` fires and the program aborts (subprocess
+    isolation prevents the trap from killing the test runner)."""
+    import subprocess
+    import textwrap
+    src = textwrap.dedent('''
+        import sys
+        sys.path.insert(0, '/home/primrose/Work/yakup-dev')
+        import numpy as np
+        import dace
+        from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+        N = dace.symbol('N')
+        sym = dace.symbol('sym_unannot')
+
+        @dace.program
+        def prog(aa: dace.float64[N, N]):
+            for i in range(sym, N):
+                for j in range(sym, N):
+                    aa[i, j] = (aa[i, j - sym] + aa[i - sym, j]) / 1.9
+
+        sdfg = prog.to_sdfg(simplify=True)
+        assert WavefrontSkew().apply_pass(sdfg, {}) == 1
+        sdfg(aa=np.zeros((8, 8)), N=8, sym_unannot=-1)  # negative -> trap
+    ''')
+    res = subprocess.run(['/home/primrose/.pyenv/versions/py13/bin/python', '-c', src],
+                         capture_output=True, timeout=120)
+    # ``__builtin_trap`` -> SIGILL; the python interpreter exits with a non-zero
+    # status (typically -SIGILL or similar). A normal exit means no guard fired.
+    assert res.returncode != 0, ('runtime guard did not trap on a violating sym '
+                                 f'(stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})')
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

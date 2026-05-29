@@ -203,10 +203,10 @@ def _nonpositive(expr) -> bool:
     symbolic offsets are non-positive -- the natural case for a read pattern
     ``a[i - sym]`` carried into the wavefront matcher is exactly this: ``sym``
     must be positive for the access to be a valid backward read, otherwise
-    the program would index out of range. A runtime ``sym > 0`` guard
-    (analogous to ``BreakAntiDependence``'s ``WAR_symbolic`` guard) is the
-    proper way to make this assumption sound; emitting one here is a
-    follow-up.
+    the program would index out of range. The optimistic fall-through here is
+    paired with a runtime ``<= 0`` guard plant in :meth:`WavefrontSkew._try_skew`
+    (see :func:`_collect_runtime_guards` + :meth:`_emit_nonpositive_guard`,
+    analogous to ``BreakAntiDependence``'s ``WAR_symbolic`` guard).
     """
     try:
         s = symbolic.simplify(expr)
@@ -243,6 +243,44 @@ def _has_any_nonzero(offsets: List[Tuple[object, object]]) -> bool:
             if not (getattr(cs, 'is_number', False) and cs == 0):
                 return True
     return False
+
+
+def _collect_runtime_guards(offsets: List[Tuple[object, object]]) -> List[object]:
+    """Return one guard expression per offset component that :func:`_nonpositive`
+    accepted *only* via the optimistic fall-through -- i.e., a non-numeric
+    symbolic expression with no sympy positivity oracle. Each returned ``e``
+    is the offset component itself; the caller's planted guard traps when
+    ``e > 0`` (the soundness condition is ``e <= 0``).
+
+    Numeric zero / negative components and symbolic components that sympy can
+    prove non-positive (e.g. ``-sym`` where ``sym`` was declared
+    ``positive=True``) need no runtime check.
+    """
+    guards: List[object] = []
+    seen = set()
+    for r_i, r_j in offsets:
+        for c in (r_i, r_j):
+            try:
+                cs = symbolic.simplify(c)
+            except Exception:
+                continue
+            if getattr(cs, 'is_number', False):
+                continue  # numeric components are checked statically by ``_nonpositive``
+            if getattr(cs, 'is_nonpositive', None) is True:
+                continue  # sympy oracle proves non-positivity; no runtime check needed
+            try:
+                neg = symbolic.simplify(-cs)
+            except Exception:
+                neg = None
+            if neg is not None and (getattr(neg, 'is_nonnegative', None) is True
+                                    or getattr(neg, 'is_positive', None) is True):
+                continue
+            key = str(cs)
+            if key in seen:
+                continue
+            seen.add(key)
+            guards.append(cs)
+    return guards
 
 
 def _is_wavefront_amenable(offsets: List[Tuple[object, object]]) -> bool:
@@ -309,6 +347,15 @@ class WavefrontSkew(ppl.Pass):
         if not _is_wavefront_amenable(offsets):
             return False
 
+        # Plant a runtime ``component <= 0`` guard for every offset component
+        # whose non-positivity ``_nonpositive`` accepted only via the
+        # optimistic fall-through (purely symbolic, no sympy positivity
+        # oracle). If the user later runs with values that violate the
+        # assumption the trap fires loudly instead of corrupting output.
+        runtime_guards = _collect_runtime_guards(offsets)
+        if runtime_guards:
+            self._emit_nonpositive_guard(outer, runtime_guards)
+
         # Synthesise the skewed iterators and rewrite both loops in place.
         nid = _next_id(sdfg)
         t_var = f"{_SKEW_T_PREFIX}{nid}"
@@ -345,6 +392,25 @@ class WavefrontSkew(ppl.Pass):
         repl = {i_sym: f"(({t_var}) - ({p_var}))", j_sym: p_var}
         inner.replace_dict(repl)
         return True
+
+    def _emit_nonpositive_guard(self, outer: LoopRegion, exprs: List[object]):
+        """Plant a side-effect-only tasklet immediately before ``outer`` that
+        traps if any of ``exprs`` is positive at runtime. Matches the shape of
+        :class:`~dace.transformation.passes.break_anti_dependence.BreakAntiDependence`'s
+        ``_emit_positive_guard``: zero-connector CPP tasklet, ``__builtin_trap``
+        on violation, body reads the symbols by name from the enclosing scope.
+        """
+        parts = ' || '.join(f'(({symbolic.symstr(e)}) > 0)' for e in exprs)
+        tag = abs(hash(parts)) & 0xfffffff
+        code = f'if ({parts}) {{ __builtin_trap(); }}'
+        pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
+        pre.add_tasklet(
+            name=f'_skew_guard_{tag:x}',
+            inputs={},
+            outputs={},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
 
 
 __all__ = ['WavefrontSkew']
