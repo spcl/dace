@@ -217,11 +217,16 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if not candidates:
             return {}
 
-        # Speculatively privatize every currently-unmappable loop's safe slots, then
-        # re-check each loop individually (per-loop direct ``LoopToMap.can_be_applied``
-        # -- see ``_l2m_accepts``). A whole-SDFG ``match_patterns`` walk would miss
-        # cloudsc-style deeply-nested inner-region loops.
-        plan: List[Tuple[LoopRegion, List[_Promotion], List[str]]] = []
+        # Per-loop check-promote-verify-commit. Batched verification (all promotions
+        # first, all checks after) doesn't work when an outer loop's promotion would
+        # invalidate an inner loop's: cloudsc's outer klev loop ``for_430`` shares the
+        # ``zvqx`` array with the inner species loops ``for_767_X``, and promoting
+        # zvqx[0..4] in ``for_430`` rewrites the same memlets the inner loops would
+        # have promoted, leaving each inner loop's subsequent promotion a no-op (no
+        # ``zvqx`` accesses left in its body). Doing each loop independently --
+        # commit or undo before moving on -- lets the inner loop's check run against
+        # the post-outer-decision state.
+        kept: Dict[str, List[str]] = {}
         for loop, pairs in candidates.items():
             if self._l2m_accepts(loop, sdfg):
                 continue
@@ -231,15 +236,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 promo = self._promote(sdfg, loop, arr_name, c_subset)
                 applied.append(promo)
                 labels.append(f'{arr_name}@{c_subset}')
-            if applied:
-                plan.append((loop, applied, labels))
-
-        if not plan:
-            return {}
-
-        kept: Dict[str, List[str]] = {}
-        for loop, applied, labels in plan:
-            if self._l2m_accepts(loop, sdfg):
+            if applied and self._l2m_accepts(loop, sdfg):
                 kept[loop.label] = labels
             else:
                 # Undo in reverse: prologues + edits + descriptors come off cleanly.

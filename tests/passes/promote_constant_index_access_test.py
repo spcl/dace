@@ -509,6 +509,38 @@ def test_promotes_multi_dim_constant_slot():
     assert np.allclose(out_run, out_ref)
 
 
+def test_promotes_through_double_nested_conditionals():
+    """The cloudsc ``for_767_X`` body has TWO nested ConditionalBlocks before
+    the constant-index access. PCIA's verification must use per-loop
+    ``LoopToMap.can_be_applied`` (not the whole-SDFG ``match_patterns`` walk
+    that has a CFG-traversal coverage gap on nested regions).
+
+    Failure mode before the per-loop fix: whole-SDFG ``match_patterns`` did not
+    surface loops nested inside multiple ConditionalBlocks even when direct
+    ``can_be_applied`` accepts them, so PCIA's speculate-promote-verify-keep
+    pipeline saw "no transition to mappable" and undid every promotion.
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N],
+             flag_a: dace.int32, flag_b: dace.int32, sink: dace.float64[1]):
+        for jl in range(N):
+            if flag_a > 0:
+                if flag_b > 0:
+                    arr[2] = 0.002 * scale[jl]
+            out[jl] = arr[2] * scale[jl]
+        sink[0] = arr[3]  # different slot post-loop
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, (
+        'PCIA must promote arr[2] through two nested ConditionalBlocks; the '
+        "per-loop ``_l2m_accepts`` check is the path that surfaces this match.")
+    maps_added = _apply_loop_to_map(sdfg)
+    sdfg.validate()
+    assert maps_added >= 1
+
+
 def test_refuses_partial_multi_dim_slot():
     """``arr[jl, 5]`` mixes a loop-variable index with a constant -- not a fixed
     slot, the loop-variable axis varies per iteration. PCIA must refuse: this
