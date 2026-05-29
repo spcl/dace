@@ -1035,8 +1035,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             istate.add_edge(value_access, None, scatter, TileConnectors.SRC,
                             dace.Memlet(f"{value_access.data}[{out_subset}]"))
             for k, sym, idx_arr, window in idx_info:
+                # Use the index tile's actual K-dim shape (``(W_0, ..., W_K)``
+                # for a K-dim Symbol binop) so the scatter expansion's flat
+                # ``_idx_k[__l0 * W1 + __l1]`` indexing reads the per-lane
+                # index value correctly. A 1D-shape index tile (legacy K=1)
+                # keeps the original ``[0:window]`` subset.
+                idx_shape = inner.arrays[idx_arr].shape
+                if len(idx_shape) == 1:
+                    idx_subset = f"0:{window}"
+                else:
+                    idx_subset = ", ".join(f"0:{s}" for s in idx_shape)
                 istate.add_edge(istate.add_access(idx_arr), None, scatter, TileConnectors.idx(k),
-                                dace.Memlet(f"{idx_arr}[0:{window}]"))
+                                dace.Memlet(f"{idx_arr}[{idx_subset}]"))
                 consumed.add(sym)
             self._wire_mask(istate, mask_acc, scatter, out_subset)
             istate.add_edge(scatter, TileConnectors.DST, e.dst, e.dst_conn, dace.Memlet.from_array(dst_name, dst_arr))
@@ -1147,12 +1157,15 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # expression inline via ``(out_dtype)(expr)``. Lower the
                 # tile-var with per-lane substitution ``v -> v + __l_p`` via
                 # :func:`_lane_index_expr` so each lane sees the right value.
-                # K=1 only in this slice: at K>=2 the scatter-index emission
-                # downstream still assumes scalar-shaped affine indices and
-                # would build a (W,)-shape index tile where a (W0, W1)-shape
-                # is needed. Tight guard ``token in spec.iter_vars`` ensures
-                # any other free symbol falls to the existing paths.
-                if len(ie) == 0 and token in spec.iter_vars and len(W) == 1:
+                # Extended to all K: a tile-iter-var read as a value (``c1 = i``,
+                # ``i + offset``) is embedded inline via ``_lane_index_expr`` →
+                # ``i + __l0``, ``j + __l1``, etc. The TileBinop's K-nested-loop
+                # pure expansion writes one value per lane and ``_reshape_transients``
+                # has already grown the destination transient to ``(W_0, ..., W_K)``
+                # so the (subset, target) shapes match. Downstream scatter-index
+                # consumers that hand-roll a 1D index tile are handled where they
+                # are emitted, not preempted here.
+                if len(ie) == 0 and token in spec.iter_vars:
                     expr = _lane_index_expr(token, spec.iter_vars) or token
                     return "Symbol", expr, None
                 if len(ie) != 1 or not isinstance(ie[0].src, dace.nodes.AccessNode):
