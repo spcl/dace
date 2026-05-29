@@ -391,5 +391,88 @@ def test_multi_slot_refuses_if_symbolic_access_to_same_array():
                          'every access to that array is a constant point.')
 
 
+def test_promotes_through_conditional_block_in_body():
+    """The cloudsc ``for_767_X`` body shape: the iteration's species-specific slot is
+    written inside an ``if yrecldp_laericesed`` conditional block. PCIA must
+    promote ``arr[c]`` through the conditional structure -- the post-loop reads
+    are at other slots only, the conditional governs only the write, and the
+    body otherwise has only loop-invariant transient work.
+
+    Failure mode before the extension: PCIA's slot-detection finds
+    ``arr[c]`` but the speculative post-promote LoopToMap check still refuses
+    because the conditional write reads as a loop-carried structure.
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N],
+             flag: dace.int32, sink: dace.float64[1]):
+        for jl in range(N):
+            if flag > 0:
+                arr[3] = 0.002 * scale[jl]
+            out[jl] = arr[3] * scale[jl]
+        # arr[3] is dead post-loop; reads only target a different slot.
+        sink[0] = arr[2]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, (
+        'PCIA must promote arr[3] through the conditional-write body; '
+        'the slot is dead post-loop and the conditional is the only barrier.')
+    maps_added = _apply_loop_to_map(sdfg)
+    sdfg.validate()
+    assert maps_added >= 1, (
+        'Post-promotion LoopToMap should accept the conditional-write loop -- the '
+        "conditional doesn't introduce a loop-carried dependence on its own.")
+
+
+def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
+    """The cloudsc ``for_430`` (outer klev loop) shape: many constant-indexed
+    writes to the same array (``zvqx[0..3]``) spread across the body. PCIA's
+    multi-slot relaxation should promote every distinct slot independently, and
+    the post-promote LoopToMap should accept the parallelised level loop.
+
+    Failure mode before the extension: PCIA correctly identifies the slot set
+    but the post-promote check fails because the loop body has additional
+    structural barriers (nested conditional, multiple writes per slot)
+    that L2M independently rejects.
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+        for jl in range(N):
+            arr[0] = scale[jl] * 0.1
+            arr[1] = scale[jl] * 0.2
+            arr[2] = scale[jl] * 0.3
+            arr[3] = scale[jl] * 0.4
+            out[jl] = arr[0] + arr[1] + arr[2] + arr[3]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, (
+        'PCIA must promote four independent slots arr[0..3]; the multi-slot '
+        'relaxation handles each as a separate per-iteration scalar.')
+    maps_added = _apply_loop_to_map(sdfg)
+    sdfg.validate()
+    assert maps_added >= 1
+
+    # Verify numerical correctness end-to-end.
+    n = 16
+    rng = np.random.default_rng(430)
+    arr_in = rng.random(5)
+    scale = rng.random(n)
+    arr_ref = arr_in.copy()
+    out_ref = np.zeros(n)
+    for jl in range(n):
+        arr_ref[0] = scale[jl] * 0.1
+        arr_ref[1] = scale[jl] * 0.2
+        arr_ref[2] = scale[jl] * 0.3
+        arr_ref[3] = scale[jl] * 0.4
+        out_ref[jl] = arr_ref[0] + arr_ref[1] + arr_ref[2] + arr_ref[3]
+    arr_run = arr_in.copy()
+    out_run = np.zeros(n)
+    sdfg(arr=arr_run, out=out_run, scale=scale, N=n)
+    assert np.allclose(out_run, out_ref)
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__]))

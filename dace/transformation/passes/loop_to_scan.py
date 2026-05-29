@@ -339,40 +339,10 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
     # Match each carrier independently. If ANY fails, refuse the whole loop.
     matched: List[_Scan] = []
     for out_name in carriers:
-        write_edge = _find_unique_write_edge(state, out_name)
-        if write_edge is None:
+        info = _match_one_carrier(loop, sdfg, state, out_name, start, end)
+        if info is None:
             return []
-        write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
-        if write_axis is None:
-            return []
-        candidate = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable,
-                                              write_axis, write_others, k_w)
-        if candidate is None:
-            return []
-        tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = candidate
-        out_edges_t = [e for e in state.out_edges(tasklet)
-                       if e.data is not None and not e.data.is_empty()]
-        if len(out_edges_t) != 1:
-            return []
-        k_r = symbolic.simplify(k_w - scan_stride)
-        matched.append(_Scan(
-            op=op,
-            out_name=out_name,
-            scan_axis=write_axis,
-            k_w=k_w,
-            k_r=k_r,
-            scan_stride=scan_stride,
-            other_indices=write_others,
-            iter_start=start,
-            iter_end=end,
-            body_state=state,
-            scan_update_tasklet=tasklet,
-            carry_in_conn=carry_edge.dst_conn,
-            delta_in_conn=delta_edge.dst_conn if delta_edge is not None else None,
-            out_conn=out_edges_t[0].src_conn,
-            carry_anchor=carry_anchor,
-            literal_delta=literal_delta,
-        ))
+        matched.append(info)
 
     # Body may write only the carriers we matched. Any other non-transient write
     # would need ``lastprivate``-style preservation that the rewrite doesn't model.
@@ -387,6 +357,59 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
             if node.data not in carrier_set:
                 return []
     return matched
+
+
+def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: str,
+                       iter_start: Any, iter_end: Any) -> Optional[_Scan]:
+    """Match the scan recurrence for a single carrier ``out_name``.
+
+    When the body has multiple write AccessNodes for ``out_name`` (the v5 fused-body
+    case, where each pre-fuse state contributed a write to a different subset), tries
+    each write edge in turn and picks the one whose subset + scan-update tasklet form
+    a valid recurrence. Returns the matched ``_Scan`` info or ``None`` if no write
+    edge yields a successful match.
+    """
+    candidates = []
+    for write_edge in _iter_write_edges(state, out_name):
+        if write_edge.data is None or write_edge.data.subset is None:
+            continue
+        write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
+        if write_axis is None:
+            continue
+        cand = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable,
+                                         write_axis, write_others, k_w)
+        if cand is None:
+            continue
+        tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = cand
+        out_edges_t = [e for e in state.out_edges(tasklet)
+                       if e.data is not None and not e.data.is_empty()]
+        if len(out_edges_t) != 1:
+            continue
+        k_r = symbolic.simplify(k_w - scan_stride)
+        candidates.append(_Scan(
+            op=op,
+            out_name=out_name,
+            scan_axis=write_axis,
+            k_w=k_w,
+            k_r=k_r,
+            scan_stride=scan_stride,
+            other_indices=write_others,
+            iter_start=iter_start,
+            iter_end=iter_end,
+            body_state=state,
+            scan_update_tasklet=tasklet,
+            carry_in_conn=carry_edge.dst_conn,
+            delta_in_conn=delta_edge.dst_conn if delta_edge is not None else None,
+            out_conn=out_edges_t[0].src_conn,
+            carry_anchor=carry_anchor,
+            literal_delta=literal_delta,
+        ))
+    # Exactly one write-edge classification must yield a valid scan match. More than
+    # one would mean two recurrences are written to ``out_name`` in the same body
+    # (we cannot pick between them); fewer means no scan shape.
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
 
 
 def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
@@ -430,8 +453,11 @@ def _find_carried_array(state: SDFGState, sdfg: SDFG, loop_var: str) -> Optional
 
 
 def _find_unique_write_edge(state: SDFGState, name: str):
-    """Locate the unique in-edge to a non-transient AccessNode of ``name``. Returns the
-    edge, or ``None`` on ambiguity.
+    """Locate the unique in-edge to a non-transient AccessNode of ``name``.
+
+    Returns the unique write edge, or ``None`` on ambiguity. Use ``_iter_write_edges``
+    when ambiguity must be disambiguated downstream (e.g. distinguishing a scan-carry
+    write from a side-effect write to a different subset).
     """
     found = None
     for n in state.data_nodes():
@@ -444,6 +470,23 @@ def _find_unique_write_edge(state: SDFGState, name: str):
             return None
         found = ins[0]
     return found
+
+
+def _iter_write_edges(state: SDFGState, name: str) -> List[Any]:
+    """Yield every in-edge to any non-transient AccessNode of ``name``.
+
+    Used by the multi-write disambiguator: when the body-state-fusion preprocess
+    merges two states each writing the same carrier at a *different* subset
+    (one side-effect ``out[i]`` and the scan-carry ``out[i+1]``), both writes
+    survive as separate AccessNodes. The scan match tries each in turn and
+    picks the one whose subset + scan-update tasklet match the recurrence shape.
+    """
+    edges: List[Any] = []
+    for n in state.data_nodes():
+        if n.data != name:
+            continue
+        edges.extend(state.in_edges(n))
+    return edges
 
 
 def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_var: str,

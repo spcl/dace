@@ -647,6 +647,57 @@ def test_v5_state_fusion_preprocess_unblocks_multi_state_body():
     assert np.allclose(out, expected), f'two-state-body scan diverged: {out} vs {expected}'
 
 
+def test_v5_multi_write_an_per_carrier_in_fused_body():
+    """The actual cloudsc ``pfsqrf`` shape after v5 fusion: the body has TWO write
+    AccessNodes for the same carrier ``out`` (one from the pre-fuse state-1 write,
+    one from the pre-fuse state-2 write; they get carried over by the merge as
+    separate sink nodes). ``_find_unique_write_edge`` refuses on the multi-write-AN
+    case, so the scan match fails even though the carry is structurally valid.
+
+    Each pre-fuse state writes a DIFFERENT subset of ``out``: state 1 writes
+    ``out[i]`` (an intermediate side-effect), state 2 writes ``out[i+1]`` (the
+    scan carry). Both write nodes survive the fuse; the matcher needs to identify
+    the scan-carry write node (the one whose subset is the loop-variable-indexed
+    one matching the scan recurrence) and ignore the side-effect write.
+    """
+    sdfg = dace.SDFG('multi_write_an_fused')
+    sdfg.add_array('out', [N + 1], dace.float64)
+    sdfg.add_array('delta', [N], dace.float64)
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('loop', initialize_expr='i = 0', condition_expr='i < N',
+                      update_expr='i = i + 1', loop_var='i')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    s1 = loop.add_state('side_effect', is_start_block=True)
+    s2 = loop.add_state('scan_step')
+    loop.add_edge(s1, s2, dace.InterstateEdge())
+
+    # State 1: write a side-effect to out[i] (mimics the cloudsc pre-scan compute).
+    t1 = s1.add_tasklet('side', {'_d'}, {'_o'}, '_o = _d * 0.5')
+    dd = s1.add_read('delta')
+    ow1 = s1.add_write('out')
+    s1.add_edge(dd, None, t1, '_d', dace.Memlet(data='delta', subset='i'))
+    s1.add_edge(t1, '_o', ow1, None, dace.Memlet(data='out', subset='i'))
+
+    # State 2: the scan step. Reads out[i], writes out[i+1].
+    rd = s2.add_read('out')
+    wt = s2.add_write('out')
+    dd2 = s2.add_read('delta')
+    t2 = s2.add_tasklet('scan_step', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
+    s2.add_edge(rd, None, t2, '_a', dace.Memlet(data='out', subset='i'))
+    s2.add_edge(dd2, None, t2, '_d', dace.Memlet(data='delta', subset='i'))
+    s2.add_edge(t2, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    sdfg.validate()
+
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, (
+        'Multi-write-AN per carrier in the fused body: matcher should pick the scan-'
+        f'carry write (out[i+1]) and ignore the side-effect write (out[i]); got {res}')
+    assert _num_scan_nodes(sdfg) == 1
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
