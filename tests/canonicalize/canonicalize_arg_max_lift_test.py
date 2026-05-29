@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 
@@ -402,6 +402,129 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
 
     res = LoopToScan().apply_pass(reduce_loop.to_sdfg(simplify=True), {})
     assert res is None, "LoopToScan must not lift plain reductions"
+
+
+# -----------------------------------------------------------------------------
+# Symbol-carrier tests: the carrier ``x`` lives on interstate-edge assignments,
+# not as a Scalar / length-1 array. Constructed manually because the Python
+# frontend doesn't naturally produce symbol-bound argmax carriers; ``x``-as-
+# symbol is the cloudsc / ICON shape (e.g. iter counters bound via iedges).
+# -----------------------------------------------------------------------------
+
+def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str):
+    """Construct an SDFG where the argmax carrier ``x`` is a symbol.
+
+    Structure::
+
+        [init]
+            | iedge: x := a[0]
+            v
+        [LoopRegion(loop_var=i, range(1, N))]
+            body:
+                [start (empty)]
+                    | iedge: a_index := a[i]
+                    v
+                [cond_prep (empty)]
+                    | iedge: __tmp := (a_index > x)
+                    v
+                [ConditionalBlock(__tmp)]
+                    true-branch:
+                        [t1 (empty)]
+                            | iedge: x := <in_loop_write_rhs>
+                            v
+                        [t2 (empty)]
+            v
+        [post]
+            (carrier ``x`` is read here as a symbol)
+
+    :param in_loop_write_rhs: RHS of the carrier-write iedge inside the
+        true-branch. Use ``'a[i]'`` for the positive test (real argmax shape)
+        and ``'i'`` for the look-alike (wrong RHS) refusal test.
+    """
+    from dace.sdfg.state import ControlFlowRegion
+    from dace.properties import CodeBlock
+
+    sdfg = dace.SDFG(label)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('result', [1], dace.float64)
+    # Symbol carriers + helper symbols.
+    sdfg.add_symbol('x', dace.float64)
+    sdfg.add_symbol('a_index', dace.float64)
+    sdfg.add_symbol('__tmp0', dace.bool)
+
+    init_state = sdfg.add_state('init', is_start_block=True)
+
+    loop = LoopRegion(label + '_loop', initialize_expr='i = 1', condition_expr='i < N',
+                      update_expr='i = i + 1', loop_var='i')
+    sdfg.add_node(loop)
+    # Pre-loop iedge seeds the symbol from ``a[0]``.
+    sdfg.add_edge(init_state, loop, dace.InterstateEdge(assignments={'x': 'a[0]'}))
+
+    # Loop body structure mirrors the Python-frontend lowering shape.
+    start_blk = loop.add_state('start', is_start_block=True)
+    cond_prep = loop.add_state('cond_prep')
+    cond_block = ConditionalBlock('cond_block')
+    loop.add_node(cond_block)
+
+    loop.add_edge(start_blk, cond_prep, dace.InterstateEdge(assignments={'a_index': 'a[i]'}))
+    loop.add_edge(cond_prep, cond_block, dace.InterstateEdge(assignments={'__tmp0': '(a_index > x)'}))
+
+    # True-branch: empty states with the carrier-write iedge between them.
+    true_branch = ControlFlowRegion(label + '_true')
+    cond_block.add_branch(CodeBlock('__tmp0'), true_branch)
+    t1 = true_branch.add_state('t1', is_start_block=True)
+    t2 = true_branch.add_state('t2')
+    true_branch.add_edge(t1, t2, dace.InterstateEdge(assignments={'x': in_loop_write_rhs}))
+
+    # Post-loop state: emit ``result[0] = x`` via a tasklet reading the symbol.
+    post = sdfg.add_state('post')
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    w = post.add_write('result')
+    t = post.add_tasklet('write_result', {}, {'__out'}, '__out = x',
+                         language=dace.dtypes.Language.Python)
+    post.add_edge(t, '__out', w, None, dace.Memlet(data='result', subset='0'))
+
+    return sdfg
+
+
+def test_symbol_carrier_positive():
+    """Symbol-carrier argmax: ``x`` is a symbol bound by iedges (pre-loop
+    init + in-loop write under the conditional). ArgMaxLift should:
+
+    * detect the symbol carrier,
+    * allocate a fresh transient scalar for the Reduce output,
+    * extend the input slice down to ``start - 1`` to include the seed
+      (``a[0]``) since the pre-loop iedge ``x := a[0]`` is dropped,
+    * plant a bind iedge ``x := _arg_max_buf[0]`` after the reduce so the
+      downstream state reads the correct symbol value.
+    """
+    sdfg = _build_symbol_argmax_sdfg('s_arg_pos', in_loop_write_rhs='a[i]')
+    sdfg.validate()
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    assert res == 1, "symbol-carrier argmax must lift"
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert _num_reduces(sdfg) == 1
+
+    n = 16
+    rng = np.random.default_rng(1011)
+    a = rng.standard_normal(n)
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=n)
+    assert np.isclose(out[0], np.max(a)), f"got {out[0]}, expected {np.max(a)}"
+
+
+def test_symbol_carrier_negative_wrong_rhs():
+    """Look-alike with symbol carrier: the in-loop write is ``x := i`` instead
+    of ``x := a[i]``. The carrier is updated to the index, not the value, so
+    this is NOT argmax. The matcher's symbol-true-branch check verifies the
+    RHS is ``arr[loop_var]`` or the gather symbol; ``i`` matches neither, so
+    the lift is refused and the loop stays sequential.
+    """
+    sdfg = _build_symbol_argmax_sdfg('s_arg_neg', in_loop_write_rhs='i')
+    sdfg.validate()
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    assert res is None, "wrong-RHS symbol-carrier write must be refused"
 
 
 if __name__ == '__main__':

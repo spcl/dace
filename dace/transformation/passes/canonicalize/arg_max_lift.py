@@ -193,28 +193,36 @@ class ArgMaxLift(ppl.Pass):
         if input_array is None:
             return None
 
-        # The true-branch's interstate edges must not carry any assignments --
-        # those are independent writes (TSVC s315 puts ``index = i`` on a
-        # branch-internal iedge alongside the ``x = a[i]`` chain). The v1
-        # rewrite cannot preserve them.
-        for e in true_branch.edges():
-            if e.data.assignments:
-                return None
-
-        # The true-branch must contain a single content state that writes
-        # ``carrier = arr[loop_var]`` (additional empty states are allowed --
-        # the frontend often emits a trailing ``assign_*`` empty state).
-        true_state = self._extract_singleton_state(true_branch)
-        if true_state is None:
-            return None
-        if not self._true_state_writes_carrier_from_array(true_state, carrier_name, input_array,
-                                                          loop.loop_variable, sdfg):
-            return None
-
-        # Classify the carrier's storage.
+        # Classify the carrier's storage first; the body-write check differs
+        # by case (scalar / length-1 array use state writes; symbol uses an
+        # iedge inside the true-branch).
         carrier_kind, carrier_subset = self._classify_carrier(carrier_name, sdfg)
         if carrier_kind is None:
             return None
+
+        if carrier_kind in ('scalar', 'length_one_array'):
+            # Data-carrier path: the in-loop write lives on AccessNode chains;
+            # the true-branch's iedges must NOT carry assignments (any iedge
+            # assignment is an extra write -- e.g. TSVC s315's ``index = i``).
+            for e in true_branch.edges():
+                if e.data.assignments:
+                    return None
+            true_state = self._extract_singleton_state(true_branch)
+            if true_state is None:
+                return None
+            if not self._true_state_writes_carrier_from_array(true_state, carrier_name, input_array,
+                                                              loop.loop_variable, sdfg):
+                return None
+        else:
+            # Symbol-carrier path: the in-loop write is an iedge assignment
+            # ``carrier := arr[loop_var]`` (or ``carrier := gather_sym`` where
+            # ``gather_sym`` was bound to ``arr[loop_var]``) inside the
+            # true-branch. The true-branch states must be empty -- any tasklet
+            # / AccessNode work would be a separate side effect the rewrite
+            # cannot preserve.
+            if not self._symbol_true_branch_writes_carrier(true_branch, carrier_name, input_array,
+                                                           gather_sym_name, loop.loop_variable):
+                return None
 
         return _Match(
             op=op,
@@ -362,52 +370,138 @@ class ArgMaxLift(ppl.Pass):
 
     def _classify_carrier(self, name: str, sdfg: SDFG) -> Tuple[Optional[str], Optional[subsets.Range]]:
         desc = sdfg.arrays.get(name)
-        if desc is None:
+        if desc is not None:
+            if isinstance(desc, data.Scalar):
+                return 'scalar', subsets.Range([(0, 0, 1)])
+            if isinstance(desc, data.Array) and tuple(desc.shape) == (1,):
+                return 'length_one_array', subsets.Range([(0, 0, 1)])
             return None, None
-        if isinstance(desc, data.Scalar):
-            return 'scalar', subsets.Range([(0, 0, 1)])
-        if isinstance(desc, data.Array) and tuple(desc.shape) == (1,):
-            return 'length_one_array', subsets.Range([(0, 0, 1)])
+        # Symbol carrier: present in ``sdfg.symbols`` but not in ``sdfg.arrays``.
+        if name in sdfg.symbols:
+            return 'symbol', None
         return None, None
+
+    def _symbol_true_branch_writes_carrier(self, true_branch, carrier: str, array: str,
+                                           gather_sym: str, loop_var: str) -> bool:
+        """For the symbol-carrier case, verify the true-branch contains exactly
+        one iedge whose assignment binds ``carrier := array[loop_var]`` or
+        ``carrier := gather_sym``, and that the true-branch's states are all
+        empty (no tasklet / AccessNode work). Other iedge assignments are
+        refused -- they would be silently dropped by the rewrite.
+        """
+        if not hasattr(true_branch, 'edges'):
+            return False
+        carrier_write_seen = False
+        for e in true_branch.edges():
+            assigns = e.data.assignments or {}
+            for lhs, rhs in assigns.items():
+                if lhs != carrier:
+                    return False  # extra iedge write -> refuse
+                # The RHS must be ``array[loop_var]`` (direct gather) or the
+                # gather symbol (indirect through ``a_index`` bound earlier).
+                rhs_str = str(rhs).strip()
+                if rhs_str == gather_sym:
+                    carrier_write_seen = True
+                    continue
+                try:
+                    tree = ast.parse(rhs_str, mode='eval').body
+                except SyntaxError:
+                    return False
+                if not isinstance(tree, ast.Subscript):
+                    return False
+                if not (isinstance(tree.value, ast.Name) and tree.value.id == array):
+                    return False
+                idx = tree.slice
+                if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+                    idx = idx.value
+                if not (isinstance(idx, ast.Name) and idx.id == loop_var):
+                    return False
+                carrier_write_seen = True
+        # All true-branch states must be empty -- any contained tasklet /
+        # AccessNode work is a separate side effect.
+        for n in true_branch.nodes():
+            if isinstance(n, SDFGState) and len(n.nodes()) > 0:
+                return False
+            if not isinstance(n, SDFGState):
+                return False  # nested control flow not supported in v1
+        return carrier_write_seen
 
     # ------------------------- rewrite -------------------------
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
         """Replace the loop with a :class:`Reduce` libnode."""
-        arr_desc = sdfg.arrays[m.input_array]
-        # Build the reduce-over subset: ``arr[start:end+1]`` on axis 0 (assuming 1-D arr).
         start = symbolic.simplify(m.iter_start)
         end = symbolic.simplify(m.iter_end)
+
+        # Allocate the output container per carrier kind.
+        if m.carrier_kind == 'symbol':
+            # Fresh transient scalar -> Reduce output -> iedge bind to the symbol.
+            output_dtype = sdfg.symbols[m.carrier_name]
+            out_name, _ = sdfg.add_scalar(f'_arg_max_buf_{m.loop.label}', output_dtype,
+                                          transient=True, find_new_name=True)
+            output_subset = subsets.Range([(0, 0, 1)])
+        else:
+            out_name = m.carrier_name
+            output_subset = m.carrier_subset
+
         # Reduce-state replaces the loop.
         reduce_state = m.parent.add_state(m.loop.label + '_argmax')
-        # Re-route edges.
+        # Re-route inbound edges. For symbol carriers, drop any pre-loop iedge
+        # assignment that binds the carrier symbol -- the reduce subsumes it.
         for ie in list(m.parent.in_edges(m.loop)):
-            m.parent.add_edge(ie.src, reduce_state, ie.data)
+            new_assigns = dict(ie.data.assignments or {})
+            if m.carrier_kind == 'symbol' and m.carrier_name in new_assigns:
+                del new_assigns[m.carrier_name]
+            new_iedge = dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+            m.parent.add_edge(ie.src, reduce_state, new_iedge)
             m.parent.remove_edge(ie)
-        for oe in list(m.parent.out_edges(m.loop)):
-            m.parent.add_edge(reduce_state, oe.dst, oe.data)
-            m.parent.remove_edge(oe)
+
+        if m.carrier_kind == 'symbol':
+            # Insert a bind state AFTER the reduce so the carrier symbol gets
+            # re-materialised from the transient scalar before any downstream
+            # state references it. Scalars are bare names (no subscript) in
+            # iedge assignment RHS expressions.
+            bind_state = m.parent.add_state(m.loop.label + '_argmax_bind')
+            m.parent.add_edge(reduce_state, bind_state,
+                              dace.InterstateEdge(assignments={m.carrier_name: out_name}))
+            for oe in list(m.parent.out_edges(m.loop)):
+                m.parent.add_edge(bind_state, oe.dst, oe.data)
+                m.parent.remove_edge(oe)
+        else:
+            for oe in list(m.parent.out_edges(m.loop)):
+                m.parent.add_edge(reduce_state, oe.dst, oe.data)
+                m.parent.remove_edge(oe)
+
         m.parent.remove_node(m.loop)
 
-        # Inputs / outputs.
+        # Inputs / outputs for the libnode.
         read = reduce_state.add_read(m.input_array)
-        write = reduce_state.add_write(m.carrier_name)
+        write = reduce_state.add_write(out_name)
 
-        # ``Reduce`` libnode with identity=None: it seeds from the first read,
-        # which matches the kernel's pre-loop ``x = a[start]`` semantics
-        # (the first element of the input slice IS that seed).
+        # For scalar / length-1 array carriers the pre-loop init ``x = a[0]``
+        # is already in a prior state writing to the same AccessNode; the
+        # libnode's ``identity=None`` semantics fold that pre-existing value
+        # into the running reduction (WCR-Max). For symbol carriers we have
+        # to include the seed position explicitly in the input slice because
+        # the dropped pre-loop iedge no longer materialises the seed.
         wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
         node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=None)
         node.add_in_connector('_in')
         node.add_out_connector('_out')
         reduce_state.add_node(node)
-        # Input memlet: ``arr[start : end+1]``.
-        end_plus_one = symbolic.simplify(end + 1)
+        if m.carrier_kind == 'symbol':
+            # Extend the slice down to ``start - 1`` so a[start - 1] (the seed)
+            # is included in the reduction. (TSVC s314 init reads ``a[0]`` for
+            # ``start = 1``; same shape generalised.)
+            slice_lo = symbolic.simplify(start - 1)
+            if slice_lo < 0:
+                slice_lo = symbolic.simplify(0)
+        else:
+            slice_lo = start
         input_memlet = mm.Memlet(data=m.input_array,
-                                 subset=subsets.Range([(start, end_plus_one - 1, 1)]))
+                                 subset=subsets.Range([(slice_lo, end, 1)]))
         reduce_state.add_edge(read, None, node, '_in', input_memlet)
-        # Output memlet: ``carrier[0]``.
-        output_memlet = mm.Memlet(data=m.carrier_name, subset=m.carrier_subset)
+        output_memlet = mm.Memlet(data=out_name, subset=output_subset)
         reduce_state.add_edge(node, '_out', write, None, output_memlet)
         sdfg.reset_cfg_list()
 
