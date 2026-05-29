@@ -217,15 +217,13 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if not candidates:
             return {}
 
-        before = self._mappable_loops(sdfg)
-
-        # Speculatively privatize every currently-unmappable loop's safe slots. The slots
-        # are array-local to the loop (no other state of the SDFG accesses ``arr``
-        # post-loop, by the live-out guard); a single LoopToMap re-match then decides
-        # each loop.
+        # Speculatively privatize every currently-unmappable loop's safe slots, then
+        # re-check each loop individually (per-loop direct ``LoopToMap.can_be_applied``
+        # -- see ``_l2m_accepts``). A whole-SDFG ``match_patterns`` walk would miss
+        # cloudsc-style deeply-nested inner-region loops.
         plan: List[Tuple[LoopRegion, List[_Promotion], List[str]]] = []
         for loop, pairs in candidates.items():
-            if loop in before:
+            if self._l2m_accepts(loop, sdfg):
                 continue
             applied: List[_Promotion] = []
             labels: List[str] = []
@@ -238,11 +236,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
         if not plan:
             return {}
-        after = self._mappable_loops(sdfg)
 
         kept: Dict[str, List[str]] = {}
         for loop, applied, labels in plan:
-            if loop in after:
+            if self._l2m_accepts(loop, sdfg):
                 kept[loop.label] = labels
             else:
                 # Undo in reverse: prologues + edits + descriptors come off cleanly.
@@ -251,13 +248,29 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return kept
 
     @staticmethod
-    def _mappable_loops(sdfg: SDFG) -> Set[LoopRegion]:
-        """The loop regions ``LoopToMap`` would parallelize right now (refusals silenced)."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
-        from dace.transformation.passes.pattern_matching import match_patterns  # avoid an import cycle
+    def _l2m_accepts(loop: LoopRegion, sdfg: SDFG) -> bool:
+        """Whether ``LoopToMap`` would accept ``loop`` right now (refusals silenced).
 
+        Asks ``LoopToMap.can_be_applied`` directly on the single loop. Avoids the
+        whole-SDFG ``match_patterns(sdfg, LoopToMap)`` walk -- which, on
+        deeply-nested CFGs like cloudsc, fails to surface inner-region loops that
+        a direct check accepts (a pattern-matcher coverage gap, not a real L2M
+        refusal). Per-loop checks are also faster: ``O(candidates)`` instead of
+        ``O(all loops)`` of the SDFG.
+
+        :param loop: The loop region to test.
+        :param sdfg: The owning SDFG.
+        :returns: ``True`` if L2M's strict-mode ``can_be_applied`` returns True.
+        """
+        from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
+        xform = LoopToMap()
+        xform.loop = loop
+        xform.expr_index = 0
         with contextlib.redirect_stdout(io.StringIO()):
-            return {m.loop for m in match_patterns(sdfg, LoopToMap)}
+            try:
+                return bool(xform.can_be_applied(loop.parent_graph, 0, sdfg, permissive=False))
+            except Exception:
+                return False
 
     # -- slot detection -----------------------------------------------------------------
 
