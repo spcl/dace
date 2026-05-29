@@ -236,6 +236,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if in_edge.data.data in in_data or in_edge.data.data in intermediate_data or in_edge.data.data in view_data:
                         return False
 
+        # Refuse fusions that would leave the SDFG with an unordered WAW it did
+        # not have before. Pattern: an AccessNode ``X`` (data ``D``) is in
+        # ``intermediate_nodes & out_nodes`` (read by another map AND visible
+        # externally), AND another AccessNode (also data ``D``) is among
+        # ``out_nodes`` -- i.e. ``D`` has a second sink in the candidate. After
+        # ``apply()``, the ``intermediate & out`` handling at
+        # ``subgraph_fusion.py:904-936`` keeps ``X`` as an outer sink **and**
+        # creates an inner transient for the next-map consumer, so two parallel
+        # writes target the same data slot ``D`` -- one from this path and one
+        # from the other out_node's path. Stream-level ordering pre-fuse hid
+        # the race; the fused single-kernel SDFG no longer has that fallback,
+        # so subsequent intra-kernel codegen traversal picks an emission order
+        # and the "wrong" order silently produces incorrect output. See vadv:
+        # ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
+        intermediate_out_data = {n.data for n in intermediate_nodes if n in out_nodes}
+        other_out_data = {n.data for n in out_nodes if n not in intermediate_nodes}
+        if intermediate_out_data & other_out_data:
+            return False
+
         # Check compressibility for each intermediate node -- this is needed in the following checks
         is_compressible = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes, map_entries,
                                                                       map_exits)
