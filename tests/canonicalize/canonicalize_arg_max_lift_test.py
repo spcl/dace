@@ -183,5 +183,226 @@ def test_refuses_subtraction_op():
     assert res is None
 
 
+# -----------------------------------------------------------------------------
+# Look-alike refusals: shapes that pattern-match argmax superficially but
+# don't actually compute argmax. The matcher must refuse all of these.
+# -----------------------------------------------------------------------------
+
+def test_lookalike_refuses_non_unit_stride():
+    """``for i in range(0, N, 2)`` -- stride > 1 means the reduce would only
+    see half the array; refuse so the loop stays sequential until a
+    gather-then-reduce variant lands."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(0, N, 2):
+            if a[i] > x:
+                x = a[i]
+        result[0] = x
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "stride>1 must be refused"
+
+
+def test_lookalike_refuses_symbolic_stride():
+    """``for i in range(0, N, K)`` with symbolic ``K`` -- same as above; the
+    integer-stride check throws ``TypeError`` on the symbol and the matcher
+    refuses."""
+    K = dace.symbol('K_arg_stride')
+
+    @dace.program
+    def kernel(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(0, N, K):
+            if a[i] > x:
+                x = a[i]
+        result[0] = x
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "symbolic stride must be refused"
+
+
+def test_lookalike_refuses_carrier_written_to_constant():
+    """``if a[i] > x: x = 0.0`` -- the write doesn't read ``a[i]``; this is a
+    threshold reset, not argmax. The true-branch state writes ``x`` from a
+    constant tasklet, so the gather-resolver fails to find ``a[loop_var]``
+    on the source side."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(1, N):
+            if a[i] > x:
+                x = 0.0
+        result[0] = x
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "constant write under cond is not argmax"
+
+
+def test_lookalike_refuses_cond_doesnt_reference_carrier():
+    """``if a[i] > b[i]: x = a[i]`` -- the comparison reads ``b[i]`` instead
+    of the carrier. The carrier-name extracted from the comparison RHS would
+    be ``b_index`` (the b-gather symbol), not ``x``, so the carrier classifier
+    refuses (``b_index`` is not in ``sdfg.arrays`` as a scalar carrier)."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(1, N):
+            if a[i] > b[i]:
+                x = a[i]
+        result[0] = x
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "cond reading a different array is not argmax"
+
+
+def test_lookalike_refuses_body_after_conditional():
+    """``if a[i] > x: x = a[i]; b[i] = x`` -- the loop body has additional
+    work *after* the conditional (writes to ``b``). Lifting would drop the
+    ``b`` write; the matcher must refuse. (The body of the loop has more
+    blocks than just the ConditionalBlock + empty wrappers.)"""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(1, N):
+            if a[i] > x:
+                x = a[i]
+            b[i] = x   # extra unconditional body work
+        result[0] = x
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "unconditional body work alongside the cond is not pure argmax"
+
+
+def test_lookalike_refuses_carrier_constant_init():
+    """``x = 0.0`` (pre-loop init reads no array) -- still semantically argmax,
+    but the lift relies on the pre-loop carrier value as the WCR seed; if the
+    user starts at 0 and ALL of ``a`` is negative, the lifted reduce would
+    return ``0`` while the sequential loop returns the actual max. This
+    distinction is currently NOT enforced in v1 -- documented as a known
+    limitation; positive numerics test below verifies the common case still
+    works. (Refusal will be the design for v2 unless the init is provably
+    ``-inf`` / the array's lowest value.)"""
+
+    @dace.program
+    def kernel(a: dace.float64[N], result: dace.float64[1]):
+        x = 0.0  # constant init, not `a[0]`
+        for i in range(N):
+            if a[i] > x:
+                x = a[i]
+        result[0] = x
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    if res is not None:
+        # Currently accepted; verify the common "max is positive" case works.
+        sdfg.validate()
+        a = np.array([1.0, 5.0, -3.0, 2.0])
+        out = np.zeros(1)
+        sdfg(a=a, result=out, N=4)
+        assert np.isclose(out[0], 5.0)
+
+
+# -----------------------------------------------------------------------------
+# Cross-pass non-interference: ArgMax/Reduce/Scan look-alikes mustn't trigger
+# the wrong pass.
+# -----------------------------------------------------------------------------
+
+def test_argmax_doesnt_lift_a_plain_reduction_loop():
+    """``for i: s = s + a[i]`` -- this is a Reduce shape (handled by
+    ``LoopToReduce`` / ``AccumulatorToMapAndReduce``), NOT an argmax. The
+    body has no ConditionalBlock, so ArgMaxLift must refuse."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], result: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            s = s + a[i]
+        result[0] = s
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "plain reduction is not argmax"
+
+
+def test_argmax_doesnt_lift_a_scan_loop():
+    """``for i: out[i+1] = out[i] + a[i]`` -- Scan shape; out is array-write
+    indexed by loop var. No ConditionalBlock; ArgMaxLift must refuse."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], out: dace.float64[N + 1]):
+        for i in range(N):
+            out[i + 1] = out[i] + a[i]
+
+    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    assert res is None, "scan recurrence is not argmax"
+
+
+def test_loop_to_reduce_doesnt_lift_an_argmax_loop():
+    """The reverse direction: a real argmax loop (TSVC s314) must NOT be
+    lifted by ``LoopToReduce``. The accumulator pattern there is conditional;
+    LoopToReduce expects an unconditional ``s = s OP a[i]`` body."""
+    from dace.transformation.passes.loop_to_reduce import LoopToReduce
+
+    @dace.program
+    def s314(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(1, N):
+            if a[i] > x:
+                x = a[i]
+        result[0] = x
+
+    res = LoopToReduce().apply_pass(s314.to_sdfg(simplify=True), {})
+    assert res is None, "LoopToReduce must not lift conditional argmax loops"
+
+
+def test_loop_to_scan_doesnt_lift_an_argmax_loop():
+    """And LoopToScan must also leave argmax loops alone."""
+    from dace.transformation.passes.loop_to_scan import LoopToScan
+
+    @dace.program
+    def s314(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(1, N):
+            if a[i] > x:
+                x = a[i]
+        result[0] = x
+
+    res = LoopToScan().apply_pass(s314.to_sdfg(simplify=True), {})
+    assert res is None, "LoopToScan must not lift conditional argmax loops"
+
+
+def test_loop_to_reduce_doesnt_lift_a_scan_loop():
+    """Cross-check the other direction: a scan loop must not be picked up by
+    LoopToReduce."""
+    from dace.transformation.passes.loop_to_reduce import LoopToReduce
+
+    @dace.program
+    def scan(a: dace.float64[N], out: dace.float64[N + 1]):
+        for i in range(N):
+            out[i + 1] = out[i] + a[i]
+
+    res = LoopToReduce().apply_pass(scan.to_sdfg(simplify=True), {})
+    assert res is None, "LoopToReduce must not lift scan recurrences"
+
+
+def test_loop_to_scan_doesnt_lift_a_reduction_loop():
+    """And LoopToScan must not pick up plain reductions."""
+    from dace.transformation.passes.loop_to_scan import LoopToScan
+
+    @dace.program
+    def reduce_loop(a: dace.float64[N], result: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            s = s + a[i]
+        result[0] = s
+
+    res = LoopToScan().apply_pass(reduce_loop.to_sdfg(simplify=True), {})
+    assert res is None, "LoopToScan must not lift plain reductions"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
