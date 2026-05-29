@@ -43,9 +43,11 @@ reverted so the SDFG does not grow needlessly.
 
 :note: Scope today:
 
-    - **1-D constant slots only.** The constant-point check accepts only ``arr[c]``
-      where ``arr`` is rank-1 and ``c`` is a literal integer. Multi-dimensional
-      arrays (``arr2d[i, 3]``) are out of scope for v1.
+    - **Fully-constant slots only.** ``arr[c]`` (1-D) and ``arr[c1, c2, ...]``
+      (multi-dim, every axis a literal integer) are accepted. Mixed
+      constant + loop-variable axes (``arr[jl, 3]``) are refused -- the
+      loop-variable axis varies per iteration, so the access isn't a single
+      privatisable point.
     - **Live-out at the same slot triggers a refusal.** Preserving the last-iteration
       value would require a ``lastprivate``-style writeback buffer; DaCe does not
       have that machinery yet, and adding it would change the SDFG more than the
@@ -326,26 +328,35 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
     @staticmethod
     def _is_constant_point_subset(sub) -> bool:
-        """True if ``sub`` is a 1-D single point with no free symbols (a pure integer constant)."""
+        """True if ``sub`` is a single point (size 1 on every axis) with no free symbols.
+
+        Accepts 1-D ``arr[3]`` and multi-dim ``arr[3, 5]`` -- both name a single element
+        whose location does not depend on any symbol. Multi-dim slots with mixed
+        constant + symbolic axes (``arr[i, 3]``) are NOT accepted; they require the
+        non-constant axis to be promoted separately.
+        """
         if not isinstance(sub, subsets.Range):
             return False
-        if len(sub.ranges) != 1:
+        if not sub.ranges:
             return False
-        lo, hi, st = sub.ranges[0]
-        if lo != hi:
-            return False
-        if symbolic.pystr_to_symbolic(st) != 1:
-            return False
-        # Reject tiled subsets (tile_size > 1 covers multiple elements).
-        if sub.tile_sizes and symbolic.pystr_to_symbolic(sub.tile_sizes[0]) != 1:
-            return False
-        # No free symbols -> truly constant (independent of the loop variable).
+        for axis, (lo, hi, st) in enumerate(sub.ranges):
+            if lo != hi:
+                return False
+            if symbolic.pystr_to_symbolic(st) != 1:
+                return False
+            # Reject tiled axes (tile_size > 1 covers multiple elements).
+            if sub.tile_sizes and symbolic.pystr_to_symbolic(sub.tile_sizes[axis]) != 1:
+                return False
+        # No free symbols across any axis -> truly constant.
         return len(sub.free_symbols) == 0
 
     @staticmethod
     def _point_subsets_equal(a: subsets.Range, b: subsets.Range) -> bool:
-        """Equality on two single-point Ranges by lower bound."""
-        return (symbolic.pystr_to_symbolic(a.ranges[0][0]) == symbolic.pystr_to_symbolic(b.ranges[0][0]))
+        """Equality on two single-point Ranges -- compare the lower bound on each axis."""
+        if len(a.ranges) != len(b.ranges):
+            return False
+        return all(symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0])
+                   for ar, br in zip(a.ranges, b.ranges))
 
     def _not_live_out(self, loop: LoopRegion, name: str, slot: Optional[subsets.Range] = None) -> bool:
         """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
@@ -465,7 +476,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
           scalar AccessNode for this slot, and reroute only the matching edges to it.
         """
         desc = sdfg.arrays[arr_name]
-        c_str = str(symbolic.pystr_to_symbolic(c_subset.ranges[0][0]))
+        # Use every axis of the constant point in the scalar's label so multi-dim slots
+        # (``arr[3, 5]``) stay distinguishable from sibling slots (``arr[3, 6]``).
+        c_str = '_'.join(str(symbolic.pystr_to_symbolic(rng[0])) for rng in c_subset.ranges)
         base = f'{arr_name}_at_{c_str}_promoted'
         scalar_name, _ = sdfg.add_scalar(base,
                                          desc.dtype,

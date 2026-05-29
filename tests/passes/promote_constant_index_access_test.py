@@ -474,5 +474,58 @@ def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
     assert np.allclose(out_run, out_ref)
 
 
+def test_promotes_multi_dim_constant_slot():
+    """A 2-D array with a fully-constant slot ``arr[3, 5]`` -- both axes are
+    constant integers, so the slot is a single element that can be privatised
+    to a scalar. Was refused before the multi-dim relaxation
+    (``_is_constant_point_subset`` only accepted 1-D Ranges).
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[6, 8], out: dace.float64[N], scale: dace.float64[N]):
+        for jl in range(N):
+            arr[3, 5] = 0.001 * scale[jl]
+            out[jl] = arr[3, 5] * scale[jl]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, 'PCIA should promote the 2-D constant slot arr[3, 5].'
+    maps_added = _apply_loop_to_map(sdfg)
+    sdfg.validate()
+    assert maps_added >= 1
+
+    n = 12
+    rng = np.random.default_rng(35)
+    arr_in = rng.random((6, 8))
+    scale = rng.random(n)
+    arr_ref = arr_in.copy()
+    out_ref = np.zeros(n)
+    for jl in range(n):
+        arr_ref[3, 5] = 0.001 * scale[jl]
+        out_ref[jl] = arr_ref[3, 5] * scale[jl]
+    arr_run = arr_in.copy()
+    out_run = np.zeros(n)
+    sdfg(arr=arr_run, out=out_run, scale=scale, N=n)
+    assert np.allclose(out_run, out_ref)
+
+
+def test_refuses_partial_multi_dim_slot():
+    """``arr[jl, 5]`` mixes a loop-variable index with a constant -- not a fixed
+    slot, the loop-variable axis varies per iteration. PCIA must refuse: this
+    isn't a single privatisable point, it's a 1-D sweep at axis 0."""
+
+    @dace.program
+    def kern(arr: dace.float64[16, 8], out: dace.float64[N], scale: dace.float64[N]):
+        for jl in range(N):
+            arr[jl, 5] = 0.002 * scale[jl]
+            out[jl] = arr[jl, 5] * scale[jl]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, (
+        'PCIA must refuse a slot whose subset has a loop-variable index on any axis -- '
+        "promoting ``arr[jl, 5]`` to a scalar would erase the per-iteration distinction.")
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__]))
