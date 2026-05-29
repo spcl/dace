@@ -36,7 +36,7 @@ import dace
 from dace import symbolic
 from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -214,6 +214,14 @@ def _chain():
         # is the cloudsc target; the multi-state-wrapper matcher relaxation now accepts
         # the cloudsc shape directly.
         ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
+        # ``AugAssignToWCR`` is the inverse of the ``wcr_to_augassign`` stage near the
+        # top: now that the reduction matchers (``LoopToReduce`` / ``LoopToScan``) have
+        # had their pass on the ``a = a + b`` form, the explicit augmented assignments
+        # that didn't get lifted are re-encoded as WCR edges so the downstream codegen
+        # emits the OMP ``reduction(...)`` / atomic write directly when ``LoopToMap``
+        # parallelises the enclosing loop. Without this, an unlifted scalar accumulator
+        # parallelised by L2M would race on the shared write.
+        ('aug_assign_to_wcr', _pmar(AugAssignToWCR)),
         ('loop_to_map', _pmar(LoopToMap)),
     ]
 
