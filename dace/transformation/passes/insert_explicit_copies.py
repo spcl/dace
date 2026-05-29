@@ -207,40 +207,6 @@ class InsertExplicitCopies(ppl.Pass):
                 or outer_desc.dtype != inner_desc.dtype):
             return False
 
-        # Skip stage-out lifts that would create a copy tasklet competing with another
-        # write to the same outer AccessNode at overlapping subsets.
-        #
-        # Pre-stencil-fuse, each write was in its own kernel and the two writes were
-        # serialised at the host level by stream ordering. Stencil greedy_fuse can merge
-        # two such maps into one, leaving the kernel scope with two parallel paths to the
-        # same outer AccessNode (one direct from the source AccessNode, one from a compute
-        # tasklet). If we lift the AccessNode->MapExit edge to a separate copy_tasklet,
-        # that tasklet becomes a *sibling* of the compute tasklet in the kernel DFS order;
-        # the order between siblings is unspecified, and emitting the compute write first
-        # then the (intermediate) copy write second produces the wrong final value
-        # (see ``tests/npbench/weather_stencils/vadv_test.py::test_gpu`` regression).
-        #
-        # When we leave this edge implicit, the codegen's ``process_out_memlets`` emits
-        # the copy at the source AccessNode's visit time -- which precedes the dependent
-        # compute tasklet in topological order, so the compute write correctly overwrites.
-        if not stage_in:
-            for other_ie in state.in_edges(edge.dst):  # edge.dst is the MapExit
-                if other_ie is edge:
-                    continue
-                if other_ie.data.is_empty():
-                    continue
-                try:
-                    other_outer = sdutils.find_output_arraynode(state, other_ie)
-                except RuntimeError:
-                    continue
-                if other_outer is not outer:
-                    continue
-                inter = subsets.intersects(edge.data.subset, other_ie.data.subset)
-                # ``intersects`` returns True, False, or None (indeterminate). Be
-                # conservative and skip whenever we cannot rule out an overlap.
-                if inter is not False:
-                    return False
-
         outer_memlet = edge.data
         inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)

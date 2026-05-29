@@ -9,7 +9,7 @@ from dace.memlet import Memlet
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.transformation.subgraph import helpers
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
@@ -235,25 +235,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if in_edge.src in map_exits and in_edge.data.wcr:
                     if in_edge.data.data in in_data or in_edge.data.data in intermediate_data or in_edge.data.data in view_data:
                         return False
-
-        # Refuse fusions that would leave the SDFG with an unordered WAW it did
-        # not have before. Pattern: an AccessNode ``X`` (data ``D``) is in
-        # ``intermediate_nodes & out_nodes`` (read by another map AND visible
-        # externally), AND another AccessNode (also data ``D``) is among
-        # ``out_nodes`` -- i.e. ``D`` has a second sink in the candidate. After
-        # ``apply()``, the ``intermediate & out`` handling at
-        # ``subgraph_fusion.py:904-936`` keeps ``X`` as an outer sink **and**
-        # creates an inner transient for the next-map consumer, so two parallel
-        # writes target the same data slot ``D`` -- one from this path and one
-        # from the other out_node's path. Stream-level ordering pre-fuse hid
-        # the race; the fused single-kernel SDFG no longer has that fallback,
-        # so subsequent intra-kernel codegen traversal picks an emission order
-        # and the "wrong" order silently produces incorrect output. See vadv:
-        # ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
-        intermediate_out_data = {n.data for n in intermediate_nodes if n in out_nodes}
-        other_out_data = {n.data for n in out_nodes if n not in intermediate_nodes}
-        if intermediate_out_data & other_out_data:
-            return False
 
         # Check compressibility for each intermediate node -- this is needed in the following checks
         is_compressible = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes, map_entries,
@@ -1285,13 +1266,46 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        if not onode:
-                            onode = graph.add_access(dname)
-                        graph.add_memlet_path(acc,
-                                              global_map_exit,
-                                              onode,
-                                              memlet=Memlet(data=dname, subset=in_subset),
-                                              src_conn=None)
+                        # Dead-store elimination: if another AccessNode of
+                        # ``dname`` is reachable from ``global_map_exit``
+                        # through the candidate's interior consumer chain
+                        # and writes the same outer subset, this
+                        # intermediate's outer store would be a parallel
+                        # sibling write that the downstream chain overwrites.
+                        # Drop it rather than create an unordered WAW under
+                        # the fused MapExit. Regression:
+                        # ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
+                        outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
+                                                        global_map_exit.map.params, global_map_exit.map.range).subset
+                        downstream_dominates = False
+                        for ds in graph.nodes():
+                            if not isinstance(ds, nodes.AccessNode) or ds is onode:
+                                continue
+                            if ds.data != dname or graph.in_degree(ds) == 0:
+                                continue
+                            try:
+                                if not nx.has_path(graph.nx, global_map_exit, ds):
+                                    continue
+                                shortest = nx.shortest_path_length(graph.nx, global_map_exit, ds)
+                            except (nx.NodeNotFound, nx.NetworkXError, nx.NetworkXNoPath):
+                                continue
+                            # A direct MapExit -> AccessNode child is a
+                            # parallel peer, not a dominator; require the
+                            # dominator to sit past a consumer node.
+                            if shortest < 2:
+                                continue
+                            if any(ie.data.subset == outer_subset for ie in graph.in_edges(ds)
+                                   if ie.data.subset is not None):
+                                downstream_dominates = True
+                                break
+                        if not downstream_dominates:
+                            if not onode:
+                                onode = graph.add_access(dname)
+                            graph.add_memlet_path(acc,
+                                                  global_map_exit,
+                                                  onode,
+                                                  memlet=Memlet(data=dname, subset=in_subset),
+                                                  src_conn=None)
 
         for e in edges_to_remove:
             graph.remove_edge(e)
