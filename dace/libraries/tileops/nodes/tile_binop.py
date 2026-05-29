@@ -54,7 +54,7 @@ def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> boo
         return True
     if s_flt and d_flt and dst.bytes >= src.bytes:  # float -> double
         return True
-    if (s_int or s_bool) and d_bool:  # int/bool -> bool (truthiness)
+    if (s_int or s_bool or s_flt) and d_bool:  # numeric -> bool (truthiness)
         return True
     return False
 

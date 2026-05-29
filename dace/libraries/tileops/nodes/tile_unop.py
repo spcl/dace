@@ -79,11 +79,15 @@ def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> boo
     d_int = np.issubdtype(dst.type, np.integer)
     s_flt = np.issubdtype(src.type, np.floating)
     d_flt = np.issubdtype(dst.type, np.floating)
+    s_bool = (src.type is np.bool_)
+    d_bool = (dst.type is np.bool_)
     if s_int and d_flt:
         return True
     if s_int and d_int and dst.bytes >= src.bytes:
         return True
     if s_flt and d_flt and dst.bytes >= src.bytes:
+        return True
+    if (s_int or s_bool or s_flt) and d_bool:  # numeric -> bool (truthiness)
         return True
     return False
 
