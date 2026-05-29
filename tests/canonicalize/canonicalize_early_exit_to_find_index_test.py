@@ -244,6 +244,156 @@ def test_refuses_non_unit_stride():
 
 
 # -----------------------------------------------------------------------------
+# Soundness refusals: shapes where lifting the break to a find-first reduction
+# + parallel map would NOT preserve sequential semantics. All must be refused.
+# -----------------------------------------------------------------------------
+
+def test_refuses_body_loop_carried_dep():
+    """Body has a real read-after-write carry on ``a`` (``a[i] = a[i-1] + ...``).
+    The find-first lift would parallelize the body and race on the carry.
+    Soundness gate S4 (delegated to ``LoopToMap.can_be_applied`` on the
+    splice-out variant of the loop) refuses."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N]):
+        for i in range(1, N):
+            if d[i] < 0.0:
+                break
+            a[i] = a[i - 1] + b[i]   # genuine loop-carried dep on `a`
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, "body with loop-carried dep on `a` must be refused (S4)"
+
+
+def test_refuses_cond_reads_scalar_body_writes():
+    """``acc = 0; for i: if acc > T: break; acc += a[i]`` -- the break
+    condition reads a SCALAR (``acc``) that the body mutates each iteration.
+    The sequential find-first depends on the cumulative ``acc``; the parallel
+    rewrite using the initial ``acc`` would compute a different ``exit_i``.
+
+    Cond's read of ``acc`` (a transient scalar) intersects with the body's
+    write to ``acc`` -- the Tier-Cheap whole-array gate catches this. (Even
+    if scalars were exempt, the dep is real: this is the prefix-scan-find-
+    first family, out of scope for the simple find-first lift.)"""
+
+    @dace.program
+    def kernel(a: dace.float64[N], result: dace.float64[1], threshold: dace.float64):
+        acc = 0.0
+        for i in range(N):
+            if acc > threshold:
+                break
+            acc = acc + a[i]
+        result[0] = acc
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, "cond reading iteration-carried scalar must be refused"
+
+
+def test_refuses_cond_reads_array_body_modifies():
+    """``for i: if d[i] < 0: break; d[i] = ...`` -- cond reads ``d`` and the
+    body ALSO writes ``d``. Parallel cond evaluation sees the initial
+    ``d[i]``; sequential cond at iteration ``i`` would see whatever
+    body[0..i-1] wrote to ``d[i]``. Different exit indices -> different
+    semantics. Tier-Cheap whole-array disjointness refuses."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            d[i] = d[i] * 2.0 + b[i]
+            a[i] = d[i] + b[i]
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, "cond/body overlap on the same array must be refused"
+
+
+def test_refuses_multiple_breaks():
+    """Two break conditionals in the same body. The find-first would have
+    to track multiple exit points; the v1 matcher refuses any loop whose
+    body contains more than one BreakBlock-bearing ConditionalBlock."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            if c[i] > 100.0:
+                break
+            a[i] = a[i] + b[i] * c[i]
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, "multiple breaks must be refused"
+
+
+def test_refuses_break_inside_nested_loop():
+    """Break inside a NESTED loop only escapes the inner loop -- the outer
+    loop's full iteration semantics are preserved. This is not the
+    find-first shape; the matcher must refuse the outer (whose body
+    contains a nested loop, not a top-level break-conditional)."""
+
+    @dace.program
+    def kernel(aa: dace.float64[N, N], d: dace.float64[N, N]):
+        for i in range(N):
+            for j in range(N):
+                if d[i, j] < 0.0:
+                    break  # breaks ONLY the j loop
+                aa[i, j] = aa[i, j] * 2.0
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    # The OUTER ``i`` loop has no top-level break (the break is in the inner ``j``).
+    # The INNER ``j`` loop has a break + non-trivial body; whether it lifts
+    # depends on the inner body's parallelizability, but it must NOT lift the
+    # OUTER. Verify at minimum the outer stays a LoopRegion.
+    outer_loops = [r for r in sdfg.all_control_flow_regions()
+                   if isinstance(r, LoopRegion) and r.loop_variable == 'i']
+    assert len(outer_loops) >= 1, "outer i-loop must NOT be lifted"
+
+
+def test_refuses_body_write_overlaps_cond_array_at_offset():
+    """Body writes ``d[i+1]`` while cond reads ``d[i]``. Tier-Cheap
+    whole-array disjointness can't tell the indices are disjoint
+    (``j+1`` vs ``i`` at parameterised offsets) -- a Tier-Affine
+    polyhedral check could admit some cases, but v1 stays conservative
+    and refuses on any whole-array overlap."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], d: dace.float64[N + 1]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            d[i + 1] = d[i + 1] + 1.0    # writes ``d`` at i+1; cond reads d[i]
+            a[i] = a[i] + d[i + 1]
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, ("Tier-Cheap must refuse any cond/body whole-array "
+                         "overlap; affine index analysis is a follow-up")
+
+
+def test_refuses_war_anti_dep_in_body():
+    """Body reads ``a[i+1]`` and writes ``a[i]`` -- a write-after-read
+    anti-dependence within the loop. ``LoopToMap.can_be_applied`` refuses
+    this kind of body; the delegated S4 check propagates the refusal."""
+
+    @dace.program
+    def kernel(a: dace.float64[N + 1], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            a[i] = a[i + 1] + 1.0   # WAR on `a`
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, "body with WAR anti-dep must be refused (S4 via LoopToMap)"
+
+
+# -----------------------------------------------------------------------------
 # Cross-pass non-interference: the break-loop pass must not fire on any of
 # the other loop-lift shapes.
 # -----------------------------------------------------------------------------
