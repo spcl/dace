@@ -39,6 +39,7 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -59,7 +60,7 @@ _REGIMES = {
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
 #: ``loop_to_scan`` reassociates the carry; ``loop_to_map`` may reorder fold operations.
-_RELAXED_STEPS = {'loop_to_map', 'loop_to_scan'}
+_RELAXED_STEPS = {'loop_to_map', 'loop_to_scan', 'loop_to_reduce'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -158,9 +159,9 @@ def _chain():
       ``dace/transformation/passes/simplify.py``), and the two ``simplify`` /
       ``simplify_after_unroll`` stages above cover the same ground. Nothing
       between them and this stage introduces fresh scalar-write-once patterns.
-    * ``loop_to_reduce`` / ``accumulator_to_map_and_reduce`` -- cloudsc has no
-      scalar-accumulator reduction loops left after the earlier WCR rewrites
-      and unrolling; both passes were no-ops here.
+    * ``accumulator_to_map_and_reduce`` -- targets ``acc[c] OP= g(other_inputs, i)``
+      computed-delta accumulators; cloudsc has none left after the earlier WCR
+      rewrites + unrolling, so it was a no-op here.
     * The trailing ``loop_to_map_post_pcia`` -- ``PromoteConstantIndexAccess``
       checks ``LoopToMap`` eligibility internally (via its own
       ``_mappable_loops`` probe), so running L2M *before* PCIA is wasted. One
@@ -199,6 +200,15 @@ def _chain():
         # slots that would block their own analyses).
         ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
+        # ``LoopToReduce`` lifts bare-fold reduction loops (``acc OP= arr[f(i)]``) to a
+        # ``Reduce`` libnode. No-op on cloudsc today (WCRToAugAssign + the unrolling
+        # earlier in the chain leave no reduction-shaped loops), but it must run before
+        # LoopToScan/LoopToMap because the three matchers carve out non-overlapping
+        # cases of loop-carried writes (Reduce: loop-invariant write subset; Scan:
+        # loop-var-dependent write at offset != 0; Map: loop-var-dependent write at
+        # offset == iteration). Keeping it in the chain locks the ordering invariant
+        # against future re-introductions of reduction shapes upstream.
+        ('loop_to_reduce', lambda sdfg: LoopToReduce().apply_pass(sdfg, {})),
         # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
         # The pfsqrf vertical-flux prefix-sum (``pfcqlng[i] = pfcqlng[i-1] + delta[i]``)
         # is the cloudsc target; the multi-state-wrapper matcher relaxation now accepts
