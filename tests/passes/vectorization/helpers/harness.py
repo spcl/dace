@@ -436,22 +436,39 @@ def assert_fused_nsdfg_structure(sdfg: dace.SDFG, bases):
     for base in bases:
         prefix = f"{base}_vec_"
         fully_wired = False
+        # A connector with a non-tiled multi-slice dim (heat3d-style stencil
+        # where only ``j, k`` are tiled and ``i`` carries 3-point adjacent
+        # reads) gets split into per-slice connectors ``<base>_slice_<n>`` by
+        # :class:`SplitMultiSliceBoundaryConnectors`; each per-slice connector
+        # then fuses into its own ``<base>_slice_<n>_vec`` buffer. The fusion
+        # contract still holds — one shared fused buffer per slice, no per-
+        # subset copies — so accept either the unified ``<base>_vec`` name or
+        # any of the per-slice ``<base>_slice_<n>_vec`` names.
+        slice_prefix = f"{base}_slice_"
         for nsdfg in (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)):
             inner = nsdfg.sdfg
             indexed = [a for a in inner.arrays if a.startswith(prefix) and a[len(prefix):].isdigit()]
             assert not indexed, (f"fuse_overlapping_loads on, but per-subset buffers {indexed} survived for "
                                  f"{base!r} in NSDFG {inner.label}: fusion did not collapse them")
-            shared = f"{base}_vec"
-            if shared not in inner.arrays:
-                continue
-            produced = any(
-                st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
-            consumed = any(
-                st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
-            if produced and consumed:
-                fully_wired = True
-        assert fully_wired, (f"no NSDFG holds a fully-wired shared fused buffer {base}_vec (produced by the union "
-                             f"staging copy-in and consumed by the map body) — fusion did not connect the buffer")
+            shared_candidates = [f"{base}_vec"] + [
+                a for a in inner.arrays
+                if a.startswith(slice_prefix) and a.endswith("_vec")
+            ]
+            for shared in shared_candidates:
+                if shared not in inner.arrays:
+                    continue
+                produced = any(
+                    st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
+                    if an.data == shared)
+                consumed = any(
+                    st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
+                    if an.data == shared)
+                if produced and consumed:
+                    fully_wired = True
+                    break
+        assert fully_wired, (f"no NSDFG holds a fully-wired shared fused buffer {base}_vec or {base}_slice_*_vec "
+                             f"(produced by the union staging copy-in and consumed by the map body) — fusion "
+                             f"did not connect the buffer")
 
 
 def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> dace.SDFG:

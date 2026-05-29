@@ -319,6 +319,19 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             MarkTileDims(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             StrideMapByTileWidths(widths=widths_t),
+        ]
+        # Pre-emit: split a body-NSDFG boundary connector whose propagated
+        # outer subset has a non-tiled dim of extent > 1 (heat3d-style
+        # stencil pattern: ``j, k`` tiled, ``i`` carries 3-point stencil at
+        # ``i-1, i, i+1``) into per-slice connectors. Promote's downstream
+        # widening then sees clean extent-1 non-tiled dims per slice and
+        # handles them via the existing degenerate path. Runs after
+        # ``StrideMapByTileWidths`` (so the tile-var classification matches
+        # the post-stride spec) and before Promote.
+        from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
+            SplitMultiSliceBoundaryConnectors, )
+        passes.append(SplitMultiSliceBoundaryConnectors(widths=widths_t))
+        passes += [
             # Tile a flat body-NSDFG (vbor-style scalar chain) in place so
             # EmitTileOps can skip it; EmitTileOps still raises for un-handled
             # NSDFG bodies (the carried-dep LoopRegion cases stay clean skips).

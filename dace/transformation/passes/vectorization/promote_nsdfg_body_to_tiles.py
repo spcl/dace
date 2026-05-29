@@ -436,12 +436,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         tiled_strides.append(c * src_arr.strides[d])
                     tile_w_per_dim.append(w)
                 else:
-                    # A non-tiled dim must be a fixed point (extent 1): the widened
-                    # connector keeps only the tiled dims in its shape, so a
-                    # non-tiled dim of extent > 1 (a multi-slice connector — two
-                    # fixed-prefix reads unioned, e.g. A[0,0,i] + A[1,0,i] -> dim0
-                    # 0:2) would mismatch the connector volume and silently read
-                    # wrong. Refuse cleanly; per-slice tile loads are a later slice.
+                    # A non-tiled dim must be a fixed point (extent 1). The
+                    # multi-slice case (extent > 1) is split by
+                    # :class:`SplitMultiSliceBoundaryConnectors` before Promote
+                    # runs; if a multi-slice dim survives here, refuse — that
+                    # split missed a case and a silent volume mismatch would
+                    # corrupt reads.
                     try:
                         degenerate = bool(dace.symbolic.simplify(e - b) == 0)
                     except Exception:
