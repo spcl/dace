@@ -37,6 +37,9 @@ def test_loop_lifts_to_scan_libnode_not_just_simd():
     lift means DaCe can dispatch to hand-tuned backend implementations the
     autovectorizer literally cannot produce.
     """
+    # STRENGTH: pattern -> library node. DaCe can recognise textbook patterns
+    # (scan / reduce / matmul / sort) and dispatch to hand-tuned vendor backends
+    # (cub::DeviceScan, MKL, oneDNN). LLVM IR can only emit scalar/SIMD ops.
 
     @dace.program
     def prefix_sum(out: dace.float64[N + 1], delta: dace.float64[N]):
@@ -59,6 +62,9 @@ def test_residue_class_scan_with_stride_LLVM_cannot_vectorize():
     sections. LLVM's vectorizer refuses non-unit-stride recurrences entirely
     (``FixedOrderRecurrence`` only handles ``i-1`` offsets), so the loop stays
     scalar."""
+    # STRENGTH: stride-S recurrence support. DaCe's Scan libnode has a stride
+    # property; the rewrite recognises S independent residue-class chains and
+    # runs them in parallel. LLVM's vectorizer is hard-coded to offset -1.
 
     @dace.program
     def stride2_demo(out: dace.float64[N + 2], delta: dace.float64[N]):
@@ -87,6 +93,9 @@ def test_multiplicative_recurrence_collapses_to_closed_form():
 
     DaCe's :class:`InductionVariableSubstitution` recognises the multiplicative
     pattern via SymPy and replaces the loop with a single tasklet."""
+    # STRENGTH: symbolic recurrence closed-form folding. SymPy's algebraic
+    # backbone lets DaCe represent *non*-polynomial recurrences. LLVM's SCEV
+    # is restricted to AddRec chrecs (polynomial in trip count).
     sdfg = dace.SDFG('mult_iv')
     sdfg.add_array('acc', [1], dace.float64)
     sdfg.add_symbol('M', dace.int32)
@@ -127,6 +136,9 @@ def test_symbolic_loop_bound_no_specialization_needed():
 
     Verified by running the same SDFG at multiple ``N`` without recompilation
     of the optimization pipeline."""
+    # STRENGTH: optimize once, run at any size. Symbolic bounds survive the
+    # whole transformation pipeline, so one optimisation run produces one
+    # specialized-free binary that handles every trip count.
 
     @dace.program
     def scan_sym(out: dace.float64[N + 1], delta: dace.float64[N]):
@@ -167,6 +179,10 @@ def test_symbolic_subset_non_overlap_proven_at_ir_level():
     vs ``a[N/2:N]`` it falls back to ``MayAlias`` and serialises any optimization
     that would care.
     """
+    # STRENGTH: symbolic alias proof. Memlets carry full symbolic subsets, and
+    # subsets.Range.intersects can return PROVEN-False for halves of the same
+    # array. Unlocks parallelism / hoisting that LLVM AA conservatively
+    # forbids.
     M = symbolic.pystr_to_symbolic('M')
     half = symbolic.pystr_to_symbolic('M // 2')
     lower = subsets.Range([(0, half - 1, 1)])
@@ -196,6 +212,10 @@ def test_wcr_explicit_no_reduction_pattern_match_needed():
     floating-point NaN questions, etc.
 
     We verify the IR encodes the reduction explicitly on the edge."""
+    # STRENGTH: reduction semantics encoded on the edge. Codegen reads
+    # ``edge.data.wcr`` directly; no recurrence-detection pass needed and the
+    # operator survives every prior transform (no risk of being "optimised
+    # away" before the vectorizer sees it).
 
     @dace.program
     def reduce_sum(arr: dace.float64[N], acc: dace.float64[1]):
@@ -226,6 +246,10 @@ def test_nested_sdfg_composition_with_symbol_mapping():
     either be inlined (losing the boundary) or extracted into a function (with
     flat parameter passing). DaCe keeps the boundary explicit AND lets passes
     propagate symbols through it (verified by the symbol_propagation pass)."""
+    # STRENGTH: hierarchical IR. NestedSDFG + ``symbol_mapping`` record the
+    # outer<->inner boundary explicitly; passes can opt into either side
+    # (inline, propagate-through, leave alone). LLVM IR is flat: a function
+    # boundary either inlines or stays opaque.
     inner = dace.SDFG('inner')
     inner.add_array('o', [1], dace.float64)
     inner.add_symbol('inner_n', dace.int32)
@@ -264,6 +288,9 @@ def test_same_sdfg_lowers_to_cpu_and_gpu_via_schedule_only():
     emitted code. LLVM has separate ``llc`` invocations per target and the IR
     is target-specific (datalayout/triple); there is no notion of "one IR,
     pick the backend at the loop level"."""
+    # STRENGTH: backend choice is a Map property, not a compilation unit.
+    # The same SDFG can lower to CPU/GPU/FPGA by flipping per-Map ``schedule``;
+    # transformations operate on the IR before the schedule decision.
 
     @dace.program
     def axpy(x: dace.float64[N], y: dace.float64[N], a: dace.float64):
@@ -301,6 +328,9 @@ def test_memlet_subset_is_explicit_no_aliasing_reconstruction():
     when the GEP is purely affine; symbolic strides / multi-level indirection
     fall back to MayAlias.
     """
+    # STRENGTH: dataflow edges carry exact symbolic subsets. Analyses read
+    # them in O(1); LLVM must reconstruct the access expression from GEP +
+    # MemorySSA every time it crosses a transformation boundary.
     sdfg = dace.SDFG('subset_demo')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
@@ -347,6 +377,9 @@ def test_symbolic_shape_and_strides_in_descriptor():
     detection) read the descriptor directly. LLVM has only byte-pointers; layout
     is reconstructed per GEP from data-layout strings + analysis, which loses
     high-level intent (e.g. "row-major vs column-major")."""
+    # STRENGTH: data layout is first-class IR. Shape, strides, offset, and
+    # storage are symbolic properties of the descriptor; tiling and vec passes
+    # query them directly. LLVM only sees byte-pointers and target datalayout.
     sdfg = dace.SDFG('symbolic_shape')
     M = dace.symbol('M')
     K = dace.symbol('K')
