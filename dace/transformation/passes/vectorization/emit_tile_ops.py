@@ -529,7 +529,13 @@ class EmitTileOps(ppl.Pass):
         :param mask_name: Name of the iteration-mask transient.
         :returns: Name of the produced tile transient.
         """
-        src_name = source_edge.data.data
+        # ``source_edge`` is the outermost edge in the memlet path; when an
+        # inner tasklet shares a MapEntry connector pair with a
+        # dependency-only in-edge (``Memlet(None)``), the outer connector edge
+        # can lose its ``data`` and ``source_edge.data.data`` becomes ``None``.
+        # Fall back to ``in_edge.data.data`` (the inner memlet) which still
+        # carries the source data name.
+        src_name = source_edge.data.data if source_edge.data.data is not None else in_edge.data.data
         sdfg = state.sdfg
         src_arr = sdfg.arrays[src_name]
         tile_name = self._add_tile_transient(
@@ -610,7 +616,10 @@ class EmitTileOps(ppl.Pass):
 
         :returns: ``(tile_name, tile_access)`` of the gathered tile.
         """
-        src_name = source_edge.data.data
+        # Mirrors the fallback in :meth:`_emit_tile_load`: if the outer
+        # connector edge lost its data (dep-edge MapEntry-connector sharing),
+        # the inner connector edge still carries the source name.
+        src_name = source_edge.data.data if source_edge.data.data is not None else in_edge.data.data
         sdfg = state.sdfg
         src_arr = sdfg.arrays[src_name]
         src_ndim = len(src_arr.shape)
@@ -940,6 +949,14 @@ class EmitTileOps(ppl.Pass):
         if _is_numeric_literal(token):
             return "Symbol", token
         in_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == token]
+        if len(in_edges) == 0 and len(spec.widths) == 1 and token in spec.iter_vars:
+            # Tile iter-var read as a free symbol (no connector): embed inline
+            # via per-lane expansion ``v -> v + __l_p`` so each lane in the
+            # tile sees its own iteration value. Mirrors the ``Symbol`` path
+            # in :class:`PromoteNSDFGBodyToTiles`. Restricted to K=1 because
+            # the scatter/affine-index shape for K>=2 is not yet wired.
+            expr = _lane_index_expr(token, spec.iter_vars) or token
+            return "Symbol", expr
         if len(in_edges) != 1:
             raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} operand {token!r} has "
                                       f"{len(in_edges)} in-edges")

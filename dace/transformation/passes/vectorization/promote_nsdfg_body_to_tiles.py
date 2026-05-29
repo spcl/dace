@@ -1337,6 +1337,17 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
             istate.add_edge(binop, TileConnectors.C, write_access, write_conn,
                             dace.Memlet(f"{write_access.data}[{subset}]"))
+            # Preserve dependency-only in-edges (the frontend's
+            # ``Memlet(None)`` pattern that orders a tasklet after a
+            # producer without consuming data — e.g. an init tasklet
+            # ``_out = 0`` reading nothing but sequenced after a prior
+            # access). The original tasklet is removed below; re-route
+            # those dep edges onto the new binop so the dataflow ordering
+            # invariant survives. ``dst_conn=None`` on the binop side is
+            # the canonical no-data dep-edge form.
+            for e in list(istate.in_edges(t)):
+                if (e.data is None or e.data.data is None) and e.dst_conn is None:
+                    istate.add_nedge(e.src, binop, dace.Memlet())
             for e in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                 istate.remove_edge(e)
             istate.remove_node(t)
