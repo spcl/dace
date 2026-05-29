@@ -179,23 +179,81 @@ def test_two_distinct_scatters_get_individual_guards():
     assert np.allclose(c, c_ref)
 
 
-def test_no_scatter_elementwise_still_lifts_to_map():
-    """An elementwise loop has no idx to detect; pass returns ``None`` for that part
-    but still permissively-lifts the loop to a Map. The kernel runs correctly."""
+def test_no_scatter_elementwise_no_op_modified_skips_global_permissive_lift():
+    """**Contract changed.** A plain elementwise loop has no scatter idx; the
+    pass now leaves it untouched (the previous behaviour ran a global permissive
+    ``LoopToMap`` which corrupted unrelated loops with genuine carried deps --
+    e.g. a ``WavefrontSkew``-rewritten outer ``t`` loop). The non-permissive
+    ``LoopToMap`` in the ``canonicalize`` ``parallelize`` stage handles
+    elementwise loops earlier in the pipeline, so this pass no longer needs to.
+    Numerics on the elementwise loop are preserved via the original LoopRegion.
+    """
     sdfg = no_scatter_just_elementwise.to_sdfg(simplify=True)
     maps_before = _count_map_entries(sdfg)
+    loops_before = _count_loop_regions(sdfg)
     rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
     sdfg.validate()
 
     assert rewritten is None, "No idx array should be detected for a plain elementwise loop."
     assert _count_integer_sort_nodes(sdfg) == 0, "No guard should be emitted for non-scatter loops."
-    assert _count_map_entries(sdfg) > maps_before, "Elementwise loop should still lift to a Map."
+    assert _count_map_entries(sdfg) == maps_before, (
+        "Non-scatter loops must NOT be permissively lifted here; the parallelize "
+        "stage handles them.")
+    assert _count_loop_regions(sdfg) == loops_before, (
+        "Non-scatter LoopRegion must stay intact so a later strict ``LoopToMap`` "
+        "can handle it on its own terms.")
 
     n = 16
     b = np.random.default_rng(0).random(n)
     a = np.zeros(n)
     sdfg(a=a, b=b, N=n)
     assert np.allclose(a, b * 2.0)
+
+
+def test_carry_loop_not_permissively_lifted_by_scatter_pass():
+    """**New regression** for the bug this fix addresses. A loop with a genuine
+    loop-carried dependence (``a[i] = a[i - 1] + 1``) that lives alongside a
+    scatter loop must NOT be lifted by ``ScatterToGuardedMaps``: only the
+    scatter loop gets the permissive lift, the carry loop stays a LoopRegion.
+    """
+
+    @dace.program
+    def mixed(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N]):
+        # Carry-only loop -- LoopToMap must refuse this even with permissive=True
+        # (the i-1 read aliases the i-th write).
+        for i in range(1, N):
+            a[i] = a[i - 1] + 1.0
+        # Scatter loop -- this is the one ScatterToGuardedMaps should lift.
+        for j in range(N):
+            b[ip[j]] = a[j]
+
+    sdfg = mixed.to_sdfg(simplify=True)
+    loops_before = _count_loop_regions(sdfg)
+    rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert rewritten == 1, "Expected exactly one scatter idx (``ip``)."
+    # The carry loop survives as a LoopRegion; the scatter loop is gone (lifted).
+    assert _count_loop_regions(sdfg) == loops_before - 1, (
+        "Only the scatter loop should have been lifted; the carry loop must "
+        "stay as a LoopRegion.")
+
+    # Numerical correctness: the carry chain still resolves correctly.
+    n = 12
+    rng = np.random.default_rng(0)
+    a = np.zeros(n)
+    a[0] = 3.0
+    b = np.zeros(n)
+    ip = rng.permutation(n).astype(np.int32)
+    expected_a = a.copy()
+    for i in range(1, n):
+        expected_a[i] = expected_a[i - 1] + 1.0
+    expected_b = np.zeros(n)
+    for j in range(n):
+        expected_b[ip[j]] = expected_a[j]
+    sdfg(a=a, b=b, ip=ip, N=n)
+    assert np.allclose(a, expected_a), f"carry chain corrupted: {a} vs {expected_a}"
+    assert np.allclose(b, expected_b), f"scatter wrong: {b} vs {expected_b}"
 
 
 def test_idempotent_on_already_guarded_sdfg():

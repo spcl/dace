@@ -23,16 +23,37 @@ def wavefront_2d(aa: dace.float64[N, N]):
             aa[i, j] = (aa[i, j - 1] + aa[i - 1, j]) / 1.9
 
 
-def test_wavefront_skew_rewrites_to_skewed_iterators():
+def test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map():
+    """**Contract changed.** :class:`WavefrontSkew` now lifts the inner
+    ``p``-loop to a Map directly inside the pass (via the ``LoopToMap.apply``
+    utility -- sound by construction of the skew). After the pass:
+
+    * Exactly one LoopRegion remains -- the outer ``t``-loop, sequential.
+    * Its body contains a Map whose iteration symbol carries the ``p``-prefix.
+
+    Previous contract expected two LoopRegions (both ``t`` and ``p``) and
+    relied on a later ``LoopToMap`` stage to lift the inner; the in-pass
+    lift makes the parallel structure visible immediately, simplifies later
+    stages, and prevents a global permissive ``LoopToMap`` from accidentally
+    racing the outer ``t``-loop downstream.
+    """
+    from dace.sdfg import nodes
+
     sdfg = wavefront_2d.to_sdfg(simplify=True)
     res = WavefrontSkew().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
+
     loops = _loops(sdfg)
-    assert len(loops) == 2
-    # Both iterators carry the skew prefix; outer is `t`, inner is `p`.
-    assert any(l.loop_variable.startswith(_SKEW_T_PREFIX) for l in loops)
-    assert any(l.loop_variable.startswith(_SKEW_P_PREFIX) for l in loops)
+    assert len(loops) == 1, f"expected 1 outer t-loop after skew + inner-map; got {len(loops)}"
+    assert loops[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+        f"surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
+
+    map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(map_entries) == 1, f"expected exactly 1 inner Map; got {len(map_entries)}"
+    map_node = map_entries[0].map
+    assert len(map_node.params) == 1 and map_node.params[0].startswith(_SKEW_P_PREFIX), \
+        f"inner Map should iterate over ``p``; got params={map_node.params}"
 
 
 def test_wavefront_skew_value_preserving():

@@ -318,11 +318,24 @@ class WavefrontSkew(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
-        """Skew every eligible 2-D nest. Returns the count or ``None`` on no match."""
+        """Skew every eligible 2-D nest. Returns the count or ``None`` on no match.
+
+        A successful skew lifts the inner ``p``-loop to a Map (via
+        :meth:`_convert_inner_to_map`), removing it from the CFG. The snapshot
+        ``list(sd.all_control_flow_regions())`` may therefore contain stale
+        references to inner LoopRegions removed by a prior skew; ``_try_skew``
+        rejects those on its parent-graph check before attempting any work.
+        """
         skewed = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions()):
                 if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
+                    continue
+                # Stale-snapshot guard: a previous successful skew may have
+                # removed this LoopRegion from its parent (its ``inner`` was
+                # converted to a Map). Skip rather than process a detached node.
+                parent = cfg.parent_graph
+                if parent is None or cfg not in parent.nodes():
                     continue
                 if self._try_skew(cfg, sd):
                     skewed += 1
@@ -340,6 +353,26 @@ class WavefrontSkew(ppl.Pass):
         j_hi = loop_analysis.get_loop_end(inner)
         if any(x is None for x in (i_lo, i_hi, j_lo, j_hi)):
             return False
+        # Reject *triangular* nests -- bounds where the inner's range depends on
+        # the outer's iterator (TSVC ``s232``: ``for i in range(1, j+1)``). The
+        # skew formula ``t in [i_lo + j_lo, i_hi + j_hi]`` then has an
+        # unresolved outer-var symbol baked into ``t_hi`` / ``p_lo`` / ``p_hi``,
+        # producing a skewed loop whose bounds can't be evaluated at runtime.
+        # A correct triangular skew would need to bound ``t`` purely in terms
+        # of ``N`` (e.g. by using ``j_hi.subs(outer_var, t_hi_resolved)``); for
+        # now refuse and let the outer iteration stay sequential.
+        outer_sym = symbolic.pystr_to_symbolic(outer.loop_variable)
+        inner_sym = symbolic.pystr_to_symbolic(inner.loop_variable)
+        for bound in (i_lo, i_hi, j_lo, j_hi):
+            try:
+                bs = symbolic.simplify(bound)
+            except Exception:
+                bs = bound
+            free = getattr(bs, 'free_symbols', set())
+            if outer_sym in free and bound in (j_lo, j_hi):
+                return False
+            if inner_sym in free:
+                return False  # inner var leaks into a bound -- malformed input
         detected = _extract_wavefront_offsets(inner, outer.loop_variable, inner.loop_variable, sdfg)
         if detected is None:
             return False
@@ -391,7 +424,48 @@ class WavefrontSkew(ppl.Pass):
         # interstate edge.
         repl = {i_sym: f"(({t_var}) - ({p_var}))", j_sym: p_var}
         inner.replace_dict(repl)
+
+        self._convert_inner_to_map(outer, inner, sdfg)
         return True
+
+    def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG):
+        """Lift the just-skewed inner ``p``-loop directly to a Map via the
+        :class:`LoopToMap` conversion utility (``apply``), bypassing the
+        ``can_be_applied`` safety gate.
+
+        The bypass is sound by construction:
+
+        * The skew rewrites the iteration space to ``(t, p)`` where ``t``
+          is the diagonal index. Every dependence in the original body --
+          which was lex-backward in ``(i, j)`` per
+          :func:`_is_wavefront_amenable` -- becomes strictly forward on
+          ``t`` after the substitution ``i = t - p, j = p``. There is no
+          intra-``t`` dependence between two different ``p`` values, so
+          every iteration of the ``p``-loop at fixed ``t`` is independent.
+
+        * The body's structure (state graph, tasklets, memlets, nested
+          regions) is preserved by :meth:`LoopRegion.replace_dict`; only
+          the symbolic iteration variables in subset bounds and tasklet
+          code change. ``LoopToMap.apply`` treats the body as a unit and
+          does not depend on the iteration order, so the rewrite remains
+          well-defined on the substituted form.
+
+        Skipping ``can_be_applied`` matters because its write-write race
+        analysis on the synthesised ``min`` / ``max`` ``p``-bounds is both
+        unnecessarily expensive (we have the proof above) and brittle on
+        synthesised symbolic forms. The underlying ``apply`` utility, in
+        contrast, only needs structurally well-formed loop bounds, which
+        ``_try_skew`` guarantees.
+
+        An exception from ``apply`` here indicates a real upstream bug
+        (malformed memlet, broken NSDFG, etc.) rather than an unfit input,
+        and is intentionally NOT caught so the failure surfaces during
+        canonicalize rather than corrupting downstream output.
+        """
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        instance = LoopToMap()
+        instance.loop = inner
+        instance.apply(outer, sdfg)
 
     def _emit_nonpositive_guard(self, outer: LoopRegion, exprs: List[object]):
         """Plant a side-effect-only tasklet immediately before ``outer`` that
