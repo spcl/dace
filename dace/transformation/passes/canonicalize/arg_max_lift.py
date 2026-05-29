@@ -330,43 +330,58 @@ class ArgMaxLift(ppl.Pass):
         # **Strict refusal**: the true-branch may only have ONE terminal
         # AccessNode (the carrier). A second terminal AN means the conditional
         # updates an extra independent value (TSVC s315 ALSO writes ``index =
-        # i``), and the v1 rewrite would silently drop it. Reject so the loop
-        # stays sequential until index-tracking lift (Max_Location /
-        # Min_Location) lands. Intermediate transients in the carrier chain
-        # have ``out_degree > 0`` and are not counted here.
+        # i``), and the v1 rewrite would silently drop it. Intermediate
+        # transients in the carrier chain have ``out_degree > 0`` and are not
+        # counted here.
         terminal_outs = [n for n in state.data_nodes()
                          if state.in_degree(n) > 0 and state.out_degree(n) == 0]
         if len(terminal_outs) != 1 or terminal_outs[0] is not carrier_an:
             return False
-        ins = list(state.in_edges(carrier_an))
-        if len(ins) != 1:
-            return False
-        upstream = ins[0].src
-        if not isinstance(upstream, nodes.Tasklet):
-            return False
-        # Walk through the tasklet to its input AccessNode that should subset ``array[loop_var]``.
-        t_ins = list(state.in_edges(upstream))
-        if len(t_ins) != 1:
-            return False
-        copy_an = t_ins[0].src
-        if not isinstance(copy_an, nodes.AccessNode):
-            return False
-        copy_ins = list(state.in_edges(copy_an))
-        if len(copy_ins) != 1:
-            return False
-        if not isinstance(copy_ins[0].src, nodes.AccessNode):
-            return False
-        if copy_ins[0].src.data != array:
+        # Walk back through the chain (AN <- [Tasklet?] <- AN <- ... <- AN(array)).
+        # The Python frontend emits an identity ``__out = __inp`` assign tasklet;
+        # ``TrivialTaskletElimination`` strips it. Both shapes are accepted.
+        source_an = self._walk_back_to_source(state, carrier_an)
+        if source_an is None or source_an.data != array:
             return False
         # Verify the memlet from the source array references ``[loop_var]``.
-        subs = copy_ins[0].data.subset
-        if subs is None:
+        # Walk forward one edge from source to find the gather memlet.
+        out_edges = list(state.out_edges(source_an))
+        if not out_edges:
             return False
         loop_var_sym = symbolic.pystr_to_symbolic(loop_var)
-        if not any(loop_var_sym in symbolic.pystr_to_symbolic(str(lo)).free_symbols
-                   for lo, _, _ in subs.ranges):
-            return False
-        return True
+        for oe in out_edges:
+            if oe.data is None or oe.data.subset is None:
+                continue
+            if any(loop_var_sym in symbolic.pystr_to_symbolic(str(lo)).free_symbols
+                   for lo, _, _ in oe.data.subset.ranges):
+                return True
+        return False
+
+    def _walk_back_to_source(self, state: SDFGState, carrier_an: nodes.AccessNode) -> Optional[nodes.AccessNode]:
+        """Walk back from ``carrier_an`` through a chain of transients and
+        identity Tasklets to the source AccessNode (the array we're reading
+        from). Returns the source AN, or ``None`` if the chain doesn't form
+        a single-source linear path.
+        """
+        cur = carrier_an
+        while True:
+            ins = list(state.in_edges(cur))
+            if len(ins) != 1:
+                return None
+            upstream = ins[0].src
+            if isinstance(upstream, nodes.Tasklet):
+                t_ins = list(state.in_edges(upstream))
+                if len(t_ins) != 1:
+                    return None
+                upstream = t_ins[0].src
+                if not isinstance(upstream, nodes.AccessNode):
+                    return None
+            elif not isinstance(upstream, nodes.AccessNode):
+                return None
+            # ``upstream`` is now an AccessNode. If it has no in-edges it's the source.
+            if state.in_degree(upstream) == 0:
+                return upstream
+            cur = upstream
 
     def _classify_carrier(self, name: str, sdfg: SDFG) -> Tuple[Optional[str], Optional[subsets.Range]]:
         desc = sdfg.arrays.get(name)
