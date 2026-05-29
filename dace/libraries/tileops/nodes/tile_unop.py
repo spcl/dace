@@ -33,6 +33,7 @@ _VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
 # op -> (prefix, suffix) for the pure (K>=2) inline C++ form ``<pre>operand<suf>``.
 _UNOP_CPP = {
     "neg": ("(-", ")"),
+    "not": ("(!", ")"),
     "abs": ("std::abs(", ")"),
     "exp": ("std::exp(", ")"),
     "log": ("std::log(", ")"),
@@ -47,6 +48,7 @@ _UNOP_CPP = {
 # op -> the cuTile-Python expression (operand placeholder ``{a}``).
 _CUTE_UNOP_EXPR = {
     "neg": "-{a}",
+    "not": "~{a}",
     "abs": "ct.abs({a})",
     "exp": "ct.exp({a})",
     "log": "ct.log({a})",

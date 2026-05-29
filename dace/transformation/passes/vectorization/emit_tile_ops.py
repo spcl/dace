@@ -70,7 +70,8 @@ def _lane_index_expr(begin_str: str, iter_vars: Tuple[str, ...]) -> Optional[str
 
 _OPERAND = r"(?:[A-Za-z_]\w*|\d+\.?\d*(?:[eE][+-]?\d+)?)"
 _BINOP_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*"
-                       rf"(?:\(\s*)?(?P<a>{_OPERAND})\s*(?P<op>\+|-|\*|/|<=|>=|==|!=|<|>|and|or)\s*"
+                       rf"(?:\(\s*)?(?P<a>{_OPERAND})\s*"
+                       rf"(?P<op>\+|-|\*|/|%|<=|>=|==|!=|<|>|and|or|\^|&|\|)\s*"
                        rf"(?P<b>{_OPERAND})\s*\)?\s*;?\s*$")
 
 # Function-call binops ``out = max(a, b)`` / ``out = min(a, b)`` — two-operand
@@ -123,6 +124,7 @@ _PY_TO_TILEBINOP_OP = {
     "-": "-",
     "*": "*",
     "/": "/",
+    "%": "%",
     "<": "<",
     "<=": "<=",
     ">": ">",
@@ -131,6 +133,9 @@ _PY_TO_TILEBINOP_OP = {
     "!=": "!=",
     "and": "&&",
     "or": "||",
+    "&": "&",
+    "|": "|",
+    "^": "^",
 }
 _ASSIGN_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*(?P<inp>\w+)\s*;?\s*$")
 
@@ -234,6 +239,9 @@ _FUNC_UNOP = {
 }
 _FUNC_UNOP_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*(?P<fn>\w+)\s*\(\s*(?P<a>{_OPERAND})\s*\)\s*;?\s*$")
 _NEG_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*\(?\s*-\s*(?P<a>{_OPERAND})\s*\)?\s*;?\s*$")
+#: Logical NOT — Python ``not a`` or C ``! a`` (post-SplitTasklets / branch
+#: normalisation often emits both spellings depending on the source pass).
+_NOT_RE = re.compile(rf"^\s*(?P<out>\w+)\s*=\s*\(?\s*(?:not\s+|!\s*)(?P<a>{_OPERAND})\s*\)?\s*;?\s*$")
 
 
 def _classify_unop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[str, str, str]]:
@@ -261,6 +269,12 @@ def _classify_unop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[s
         if out not in tasklet.out_connectors:
             return None
         return out, "neg", nm.group("a")
+    nt = _NOT_RE.match(body)
+    if nt is not None:
+        out = nt.group("out")
+        if out not in tasklet.out_connectors:
+            return None
+        return out, "not", nt.group("a")
     return None
 
 
