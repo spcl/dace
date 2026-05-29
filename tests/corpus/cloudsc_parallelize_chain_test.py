@@ -189,18 +189,21 @@ def _chain():
         ('trivial_tasklet_elimination', _pmar(TrivialTaskletElimination)),
         ('wcr_to_augassign', _pmar(WCRToAugAssign)),
         ('scalar_fission', lambda sdfg: PrivatizeScalars().apply_pass(sdfg, {})),
+        # ``PromoteConstantIndexAccess`` introduces a per-iteration scalar for slots
+        # that block ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
+        # an ``if yrecldp_laericesed`` guard). Runs right after ``scalar_fission`` --
+        # PCIA's input is non-transient array slots (``arr[c]``) and is unaffected by
+        # the per-state scalar renames ``scalar_fission`` performs. Sliding it earlier
+        # in the pipeline lets ``symbol_propagation`` / ``loop_to_scan`` see the
+        # already-privatised scalars (no risk of them being seen as live-out array
+        # slots that would block their own analyses).
+        ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
         # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
         # The pfsqrf vertical-flux prefix-sum (``pfcqlng[i] = pfcqlng[i-1] + delta[i]``)
         # is the cloudsc target; the multi-state-wrapper matcher relaxation now accepts
         # the cloudsc shape directly.
         ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
-        # ``PromoteConstantIndexAccess`` introduces a per-iteration scalar for slots
-        # that block ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
-        # an ``if yrecldp_laericesed`` guard). Runs BEFORE the only L2M sweep: PCIA's
-        # internal ``_mappable_loops`` probe already knows what L2M accepts, so a
-        # prior L2M is unnecessary.
-        ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
         ('loop_to_map', _pmar(LoopToMap)),
     ]
 
@@ -225,6 +228,16 @@ def _run(sdfg: dace.SDFG, inputs, ieee_build: bool, sequential: bool, tag: str):
     return args
 
 
+def _roundtrip(sdfg: dace.SDFG, tmpdir: str, tag: str) -> dace.SDFG:
+    """Save ``sdfg`` to ``.sdfgz`` and reload it. Any non-lossless serialization is
+    surfaced as a divergence between the original and the reloaded SDFG when the two
+    are subsequently executed on identical inputs and their outputs compared.
+    """
+    path = os.path.join(tmpdir, f'{tag}.sdfgz')
+    sdfg.save(path, compress=True)
+    return dace.SDFG.from_file(path)
+
+
 @pytest.fixture(scope='module')
 def reference_sdfg_file(tmp_path_factory):
     """Build the un-transformed CloudSC SDFG once and persist it; each regime
@@ -237,7 +250,7 @@ def reference_sdfg_file(tmp_path_factory):
 
 @pytest.mark.integration
 @pytest.mark.parametrize('regime', list(_REGIMES))
-def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
+def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
     ieee_build, sequential, strict_tol, relaxed_tol = _REGIMES[regime]
 
     ref = dace.SDFG.from_file(reference_sdfg_file)
@@ -247,6 +260,8 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
     gc.collect()
 
     candidate = dace.SDFG.from_file(reference_sdfg_file)
+    rt_dir = str(tmp_path / 'roundtrips')
+    os.makedirs(rt_dir, exist_ok=True)
 
     for label, apply_fn in _chain():
         # The loop transforms log every refused loop; keep the test output readable.
@@ -285,6 +300,21 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
         bad = {name: (ma, mr) for name, (ma, mr, ok) in report.items() if not ok}
         assert not bad, (f'{regime}/{label}: outputs diverge from the un-transformed reference '
                          f'(tol={tol:.0e}): {bad}')
+
+        # Serialize/deserialize roundtrip + e2e check. Any non-lossless serialization
+        # surfaces as a divergence between the in-memory SDFG and the reloaded copy
+        # when both run identical inputs. Use strict tolerance regardless of stage --
+        # parallel-reduction reassociation is a property of the *transform*, not of
+        # serialization, so the post-roundtrip output should be bit-identical to the
+        # pre-roundtrip output, which we just verified is within ``tol`` of the
+        # reference.
+        rt = _roundtrip(candidate, rt_dir, f'{regime}_{label}')
+        rt_out = _run(rt, inputs, ieee_build, sequential, tag=f'{regime}_{label}_rt')
+        rt_report = compare_outputs(rt_out, out, rtol=strict_tol, atol=strict_tol)
+        rt_bad = {name: (ma, mr) for name, (ma, mr, ok) in rt_report.items() if not ok}
+        assert not rt_bad, (
+            f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
+            f'(strict_tol={strict_tol:.0e}): {rt_bad}')
 
 
 if __name__ == '__main__':
