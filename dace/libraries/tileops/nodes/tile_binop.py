@@ -29,9 +29,12 @@ def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> boo
     dtype ``dst`` before the op (a widening conversion).
 
     Allowed (widening): same dtype; integer -> wider-or-equal integer; integer
-    -> float / double; float -> double. Disallowed (narrowing -> the caller must
-    crash): float / double -> integer; double -> float; integer narrowing
-    (e.g. int64 -> int32).
+    -> float / double; float -> double; integer -> bool (truthiness cast,
+    ``int != 0`` — well-defined in C++ for any integer operand, used by the
+    merge-cond compound combine where a comparison result stored as int64
+    flows into a bool-output combine tasklet). Disallowed (narrowing -> the
+    caller must crash): float / double -> integer; double -> float; integer
+    narrowing (e.g. int64 -> int32).
 
     :param src: The Tile operand's element dtype.
     :param dst: The output (``_c``) element dtype.
@@ -43,11 +46,15 @@ def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> boo
     d_int = np.issubdtype(dst.type, np.integer)
     s_flt = np.issubdtype(src.type, np.floating)
     d_flt = np.issubdtype(dst.type, np.floating)
+    s_bool = (src.type is np.bool_)
+    d_bool = (dst.type is np.bool_)
     if s_int and d_flt:  # int -> float / double
         return True
     if s_int and d_int and dst.bytes >= src.bytes:  # integer widening
         return True
     if s_flt and d_flt and dst.bytes >= src.bytes:  # float -> double
+        return True
+    if (s_int or s_bool) and d_bool:  # int/bool -> bool (truthiness)
         return True
     return False
 
