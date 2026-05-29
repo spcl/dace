@@ -48,6 +48,10 @@ from dace.transformation.passes.canonicalize.privatize_reduction_accumulator imp
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
+from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
+from dace.transformation.passes.buffer_expansion import BufferExpansion
+from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -224,8 +228,29 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
           ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
           ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
+    # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
+    # nests (``for i in range(0, N, K): for ii in range(0, K): body[i+ii]`` or
+    # ``for ii in range(i, i+K): body[ii]``) back to a single ``for k in
+    # range(N)``. Must run BEFORE ``ShortLoopUnroll`` because the small fixed-
+    # trip inner would otherwise be straight-line-unrolled into ``K`` copies,
+    # re-baking the tile into the body. Memlet audit refuses bodies whose
+    # accesses don't use only ``i + ii`` / ``ii`` -- a bare reference to the
+    # outer iterator alone would change semantics under collapse.
+    s += [('reduce', UntileLoops())]
     if unroll_limit > 0:
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+    # PromoteConstantIndexAccess + BufferExpansion: both privatize loop-carried
+    # false dependences that block ``LoopToMap``. PCIA promotes ``arr[c]``
+    # constant-index slot writes-then-reads on a SHARED array to a per-iteration
+    # scalar; BufferExpansion adds a per-iteration dimension to a transient
+    # SCRATCH buffer that is fully (re)written then read on every iteration.
+    # Both run AFTER ``ShortLoopUnroll`` because unrolling can make the
+    # constant-index / scratch-buffer pattern concrete (loop-variable indices
+    # become literals; trip-1 trivial loops collapse). They are otherwise no-ops
+    # on loops ``LoopToMap`` already accepts -- a built-in ``can_be_applied``
+    # pre/post probe inside each pass leaves the SDFG untouched when the
+    # privatization wouldn't unblock a refusal.
+    s += [('reduce', PromoteConstantIndexAccess()), ('reduce', BufferExpansion())]
     # HoistInductionVariableUpdates runs BEFORE InductionVariableSubstitution: it
     # fissions IV-eligible updates out of compound bodies into sibling single-statement
     # loops so the IVSub matcher (which requires a single tasklet in the body) catches
@@ -237,7 +262,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # reader so the "loop-defined symbol used after the loop" refusal disappears.
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
           ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()),
-          ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
+          ('reduce', SimplifyPass()), ('reduce', LoopToReduce()), ('reduce', LoopToScan())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -318,12 +343,23 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # undo that work and ping-pong. The terminal ``hoist_guards`` stage runs it
     # once, AFTER fuse, where the fusion it would otherwise undo has happened.
 
-    # loop_to_scan (pre-parallelize): lift prefix-scan loops -- ``out[i+1] = out[i] OP
-    # delta[i + d]`` -- to a ``Scan`` libnode call. The shape requires the carried
-    # dependence on ``out`` that ``LoopToReduce`` and ``LoopToMap`` both refuse; the
-    # libnode replaces the loop with a parallel ``cub::DeviceScan`` (GPU) /
-    # ``std::inclusive_scan`` (CPU) and unblocks the recurrence kernels (TSVC ``s111``,
-    # ``s125``, ``s241``, ``s242`` and the cloudsc vertical-flux family).
+    # wavefront_skew (pre-parallelize): apply the ``t = i + j, p = j`` skew to
+    # 2-D perfect nests whose body has a backward dependence pattern (TSVC
+    # ``s2111`` and friends). The outer ``t`` axis stays sequential (diagonal
+    # sweep); the inner ``p`` axis becomes parallel and is then mapped by
+    # ``LoopToMap`` in the ``parallelize`` stage. The rewrite is a relabelling
+    # of the iteration space + an in-body substitution; symbolic offsets get a
+    # runtime ``__builtin_trap`` non-positivity guard planted in a pre-state.
+    s += [('wavefront_skew', WavefrontSkew())]
+
+    # loop_to_scan (late, post-fission + post-skew): a second LoopToScan pass
+    # catches prefix-scan recurrences that only emerged AFTER ``LoopFission``
+    # isolated the recurrence statement (TSVC ``s221``:
+    # ``a[i] = a[i] + c[i]*d[i]; b[i] = b[i-1] + a[i] + d[i]`` -> two fissioned
+    # loops, the ``b`` loop is a clean scan). The earlier in-``reduce``
+    # LoopToScan handles single-statement scan bodies that don't need fission
+    # (``s242``, ``s1221``); running it again here also lifts the post-fission
+    # ones without harming the already-lifted shapes.
     s += [('loop_to_scan', LoopToScan())]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
