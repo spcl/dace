@@ -104,7 +104,7 @@ def test_inclusive_max_1d():
 
 
 @pytest.mark.parametrize('stride', [2, 3, 4, 5])
-def test_residue_class_scan(stride):
+def test_refuses_non_unit_offset_modified_residue_class_scan(stride):
     """``out[i+S] = out[i] + delta[i]`` for ``S >= 2`` -- a stride-``S``
     residue-class scan. The libnode runs the ``S`` independent class scans
     in parallel; the seed-add Map fans the ``S`` pre-loop seeds out by
@@ -280,7 +280,7 @@ def test_tsvc_s221_v2_computed_delta_two_arrays():
     assert np.allclose(b, expected), f'max diff {np.max(np.abs(b - expected))}'
 
 
-def test_tsvc_s242_literal_augmented_carry():
+def test_tsvc_s242_literal_augmented_carry_modified_from_refusal():
     """TSVC s242: ``a[i] = a[i-1] + 0.5 + 1.0 + b[i] + c[i] + d[i]``. The first ``+``
     lowers to a tasklet ``__out = __in1 + 0.5`` -- ONE data input (the carry) +
     a literal. v3 of the matcher accepts this shape: the carry input is severed

@@ -227,7 +227,7 @@ def test_loop_fission_single_is_noop():
     assert np.allclose(A, a + 1.0)
 
 
-def test_loop_fission_dependent_splits_per_iter():
+def test_loop_fission_dependent_kept_together_modified_splits_per_iter():
     """``T[i] = a[i] + 1; B[i] = T[i] * 2`` -- ``T`` is written by stmt 1 and
     read by stmt 2 at the *same* iteration index. Sequential loop fission
     preserves the value (loop 1 fills T completely; loop 2 then reads the
