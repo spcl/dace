@@ -296,7 +296,13 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                 SplitMapForTileRemainder, )
             tail_mode = "scalar" if remainder_strategy == "scalar_postamble" else "masked"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
-        if nest_map_bodies:
+        # ``fuse_overlapping_loads`` requires a NestedSDFG body to fuse inside
+        # (the fusion pass walks ``TileLoad`` groups in a single state — the
+        # body-NSDFG shape that ``PromoteNSDFGBodyToTiles`` produces). Promote
+        # only fires on already-NSDFG bodies, so when the knob is on we also
+        # nest the body so a flat axpy / jacobi body becomes one too. K=1 only:
+        # at K>=2 the auto-nest interacts poorly with the K-dim emit chain.
+        if nest_map_bodies or (fuse_overlapping_loads and len(widths_t) == 1):
             # Single-emit-path mode: nest EVERY innermost map body into one
             # NestedSDFG so the descent (PromoteNSDFGBodyToTiles) tiles all
             # bodies — a flat axpy-style body and a reused-scalar (vbor) body
@@ -315,6 +321,19 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # EmitTileOps can skip it; EmitTileOps still raises for un-handled
             # NSDFG bodies (the carried-dep LoopRegion cases stay clean skips).
             PromoteNSDFGBodyToTiles(widths=widths_t),
+        ]
+        if fuse_overlapping_loads:
+            # Collapse overlapping per-lane TileLoad fans (the stencil pattern
+            # ``A[i:i+W], A[i+1:i+W+1], ...``) into one wider union transient
+            # ``<base>_vec`` shared across the consumers. Runs after Promote
+            # (when the per-subset TileLoad nodes exist in the body NSDFG) and
+            # before ``EmitTileOps`` (which would otherwise rewrite the body
+            # again). See ``fuse_overlapping_tile_loads.py`` for the structural
+            # contract.
+            from dace.transformation.passes.vectorization.fuse_overlapping_tile_loads import (
+                FuseOverlappingTileLoads, )
+            passes.append(FuseOverlappingTileLoads())
+        passes += [
             EmitTileOps(widths=widths_t),
         ]
         super().__init__(passes)
