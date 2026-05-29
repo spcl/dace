@@ -1138,6 +1138,23 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 if _is_numeric_literal(token):
                     return "Symbol", token, None
                 ie = [e for e in istate.in_edges(t) if e.dst_conn == token]
+                # A tile-iter-var used as a *value* (``c3 = (i > c0)``) has NO
+                # in-edge — the symbol comes from the surrounding scope.
+                # TileBinop's ``kind="Symbol"`` path drops the operand
+                # connector entirely (``inputs.discard("_a")`` /
+                # ``"_b"`` depending on which side is Symbol; see
+                # ``tile_binop.py`` lines ~149-152) and embeds the per-lane
+                # expression inline via ``(out_dtype)(expr)``. Lower the
+                # tile-var with per-lane substitution ``v -> v + __l_p`` via
+                # :func:`_lane_index_expr` so each lane sees the right value.
+                # K=1 only in this slice: at K>=2 the scatter-index emission
+                # downstream still assumes scalar-shaped affine indices and
+                # would build a (W,)-shape index tile where a (W0, W1)-shape
+                # is needed. Tight guard ``token in spec.iter_vars`` ensures
+                # any other free symbol falls to the existing paths.
+                if len(ie) == 0 and token in spec.iter_vars and len(W) == 1:
+                    expr = _lane_index_expr(token, spec.iter_vars) or token
+                    return "Symbol", expr, None
                 if len(ie) != 1 or not isinstance(ie[0].src, dace.nodes.AccessNode):
                     raise NotImplementedError(
                         f"PromoteNSDFGBodyToTiles: binop {t.label!r} operand {token!r} not a single tile read")
@@ -1211,11 +1228,15 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # a Tile operand for the "must have one tile" check — the wiring
             # below emits a TileLoad and then routes the resulting tile
             # transient into the binop connector, identical to the plain Tile
-            # case from the lib node's perspective.
-            def _is_tile_kind(k):
-                return k in ("Tile", "NDTile")
+            # case from the lib node's perspective. A ``Symbol`` operand whose
+            # per-lane expression carries ``__l`` (the tile-var-as-value
+            # path, ``c3 = (i > c0)``) also provides per-lane variation; the
+            # TileBinop drops the operand connector for Symbol and embeds the
+            # expression inline, so the lib node still validates.
+            def _is_tile_kind(k, info):
+                return k in ("Tile", "NDTile") or (k == "Symbol" and isinstance(info, str) and "__l" in info)
 
-            if not _is_tile_kind(kind_a) and not _is_tile_kind(kind_b):
+            if not _is_tile_kind(kind_a, info_a) and not _is_tile_kind(kind_b, info_b):
                 raise NotImplementedError(
                     f"PromoteNSDFGBodyToTiles: binop {t.label!r} has no tile operand ({kind_a}/{kind_b})")
             # The TileBinop ``kind_X`` property only accepts ``"Tile" | "Scalar"
