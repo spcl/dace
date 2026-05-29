@@ -194,15 +194,10 @@ class EarlyExitToFindIndex(ppl.Pass):
 
         # The break branch may contain pre-break states (s332: scalar writes
         # BEFORE the break) plus the BreakBlock. Other arms must be empty.
+        # Pre-break content is duplicated into a Phase-3 ConditionalBlock
+        # guarded by ``exit_sym < N`` so the rebind only runs when cond fired.
         true_pre_break_states = self._extract_true_branch_pre_break_states(break_branch)
         if true_pre_break_states is None:
-            return None
-        # **v1 scope**: scalar rebinds from the true-branch (TSVC s332's
-        # ``index = i; value = a[i]``) need a post-Reduce conditional rebind
-        # state that the current implementation does not yet emit. Refuse
-        # explicitly so the loop stays sequential rather than silently
-        # producing wrong results.
-        if any(len(st.nodes()) > 0 for st in true_pre_break_states):
             return None
 
         # Resolve the condition's textual expression by walking iedges.
@@ -561,17 +556,17 @@ class EarlyExitToFindIndex(ppl.Pass):
                                  upper_str=f'{exit_sym}')
             last_state = s_post
 
-        # Phase 3: true-branch scalar rebinds (s332 only).
+        # Phase 3: true-branch scalar rebinds (s332-style).
         if m.true_branch_pre_break_states:
-            s_rebind = parent.add_state(m.loop.label + '_rebind')
-            if sym_bound:
-                parent.add_edge(last_state, s_rebind, dace.InterstateEdge())
-            else:
-                parent.add_edge(last_state, s_rebind,
+            # Ensure exit_sym is bound on the path into the rebind.
+            if not sym_bound:
+                anchor = parent.add_state(m.loop.label + '_exit_bind')
+                parent.add_edge(last_state, anchor,
                                 dace.InterstateEdge(assignments={exit_sym: exit_buf_name}))
+                last_state = anchor
                 sym_bound = True
-            self._emit_rebind(s_rebind, sdfg, m, exit_sym)
-            last_state = s_rebind
+            cond_block = self._emit_rebind(last_state, sdfg, m, exit_sym)
+            last_state = cond_block
 
         # If neither map nor rebind was emitted, still bind the symbol so it's
         # visible downstream (defensive -- shouldn't happen for the target patterns).
@@ -700,20 +695,82 @@ class EarlyExitToFindIndex(ppl.Pass):
                 state.add_memlet_path(cn, map_exit, ext,
                                        memlet=mm.Memlet.from_array(cn.data, sdfg.arrays[cn.data]))
 
-    def _emit_rebind(self, state: SDFGState, sdfg: SDFG, m: _Match, exit_sym: str):
-        """Emit the s332-style rebind: ``if exit_sym < N: index = exit_sym;
-        value = a[exit_sym]``.
+    def _emit_rebind(self, after_state: SDFGState, sdfg: SDFG, m: _Match, exit_sym: str):
+        """Emit Phase 3: ``if exit_sym < N: <duplicated true-branch content>``.
 
-        For v1 we emit an UNCONDITIONAL rebind (since the find-first sentinel
-        guarantees ``exit_sym = N`` exactly when nothing fired -- and at that
-        point the rebind from ``a[N]`` would be out-of-bounds; we wrap in a
-        ConditionalBlock to guard correctness).
+        Duplicates the original break-branch's pre-break content into a fresh
+        :class:`ConditionalBlock` placed in the parent CFG, with the loop
+        variable substituted by ``exit_sym``. The guard ``exit_sym < N``
+        ensures the rebind only runs when ``cond`` actually fired; otherwise
+        the pre-loop initial values of the rebound scalars are preserved
+        (no rebind => the false-branch is empty).
+
+        Returns the newly-added ConditionalBlock (so the caller can chain
+        downstream out-edges from it).
         """
-        # NOTE v1: this path is only exercised when the matcher accepts s332.
-        # Implementation deferred -- the matcher refuses the s332 shape for
-        # now until the rebind state-building is complete (the unsupported
-        # path returns the loop unmodified). Emit a no-op placeholder.
-        pass
+        parent = m.parent
+        # Deep-copy the original break branch.
+        branch_copy = _copy.deepcopy(m.break_branch)
+        # Strip the BreakBlock and any unreachable post-break content from the copy.
+        self._strip_break_and_after(branch_copy)
+        # Wrap in a ConditionalBlock with the ``exit_sym < N`` guard. Must
+        # propagate the SDFG context (state.sdfg, region.parent_graph) onto
+        # every nested block BEFORE calling ``replace_dict``: the replace
+        # walker dereferences ``state.sdfg.arrays`` and a deep-copied region
+        # has those pointers detached.
+        N_str = symbolic.symstr(m.iter_end + 1)
+        cond_block = ConditionalBlock(m.loop.label + '_rebind_cond')
+        cond_block.sdfg = sdfg
+        cond_block.parent_graph = parent
+        parent.add_node(cond_block)
+        cond_block.add_branch(CodeBlock(f'{exit_sym} < ({N_str})'), branch_copy)
+        parent.add_edge(after_state, cond_block, dace.InterstateEdge())
+        self._propagate_sdfg(branch_copy, sdfg)
+        sdfg.reset_cfg_list()
+        # Now safely substitute the loop variable with the exit symbol.
+        branch_copy.replace_dict({m.loop.loop_variable: exit_sym})
+        return cond_block
+
+    def _propagate_sdfg(self, region, sdfg):
+        """Recursively set ``sdfg`` and ``parent_graph`` on every nested
+        SDFGState and sub-region so ``replace_dict`` has the context it
+        needs."""
+        region.sdfg = sdfg
+        for n in region.nodes():
+            if isinstance(n, SDFGState):
+                n.sdfg = sdfg
+                n.parent_graph = region
+            elif hasattr(n, 'sdfg'):
+                n.sdfg = sdfg
+                n.parent_graph = region
+                if hasattr(n, 'nodes'):
+                    self._propagate_sdfg(n, sdfg)
+
+    def _strip_break_and_after(self, branch: ControlFlowRegion):
+        """Remove the BreakBlock and any block reachable from it (within
+        ``branch``) so the duplicated content runs as straight-line code."""
+        try:
+            break_block = next(n for n in branch.nodes() if isinstance(n, BreakBlock))
+        except StopIteration:
+            return
+        # BFS from the break block; mark every reachable node for removal.
+        to_remove = set()
+        queue = [break_block]
+        while queue:
+            b = queue.pop(0)
+            if id(b) in to_remove:
+                continue
+            to_remove.add(id(b))
+            for e in branch.out_edges(b):
+                queue.append(e.dst)
+        # Remove the marked nodes (and their incident edges).
+        for b in list(branch.nodes()):
+            if id(b) in to_remove:
+                for e in list(branch.in_edges(b)):
+                    branch.remove_edge(e)
+                for e in list(branch.out_edges(b)):
+                    branch.remove_edge(e)
+                branch.remove_node(b)
 
 
 # ----------------------------- helpers --------------------------------

@@ -156,14 +156,17 @@ def test_fire_at_first_iteration_no_body_run():
 # Refusal contract (v1 scope).
 # -----------------------------------------------------------------------------
 
-def test_refuses_s332_true_branch_scalar_rebind():
+def test_tsvc_s332_true_branch_scalar_rebind():
     """TSVC s332: the true-branch writes scalars ``index = i; value = a[i]``
-    before the break. The post-Phase-1 conditional rebind state is not yet
-    emitted by v1 -- the pass refuses so the loop stays sequential rather
-    than producing wrong numerics."""
+    before the break. v1.5 emits a Phase-3 ConditionalBlock guarded by
+    ``exit_sym < N`` whose true branch is a deep-copy of the original break
+    branch with the loop variable substituted by ``exit_sym``. When ``cond``
+    never fires the guard is false and the pre-loop initial values
+    ``index = -2``, ``value = -1.0`` are preserved.
+    """
 
     @dace.program
-    def s332(a: dace.float64[N], result: dace.float64[1], threshold: dace.int64):
+    def s332(a: dace.float64[N], result: dace.float64[1], threshold: dace.float64):
         index = -2
         value = -1.0
         for i in range(N):
@@ -175,7 +178,22 @@ def test_refuses_s332_true_branch_scalar_rebind():
 
     sdfg = s332.to_sdfg(simplify=True)
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
-    assert res is None, "s332 must be refused until the rebind state lands in v1.5"
+    sdfg.validate()
+    assert res == 1
+
+    # Fire case: cond fires at index 3.
+    a = np.array([1.0, 2.0, 3.0, 50.0, 5.0, 6.0, 7.0, 8.0])
+    result = np.zeros(1)
+    sdfg(a=a, result=result, threshold=10.0, N=8)
+    # index = 3, value = 50.0 -> result = 50 + 3.0 = 53.0
+    assert np.isclose(result[0], 53.0), f"fire: got {result[0]}, expected 53.0"
+
+    # No-fire case: all a[i] <= threshold.
+    a = np.array([1.0, 2.0, 3.0, 4.0])
+    result = np.zeros(1)
+    sdfg(a=a, result=result, threshold=100.0, N=4)
+    # index = -2 (init), value = -1.0 (init) -> result = -1 + (-2) = -3.0
+    assert np.isclose(result[0], -3.0), f"no-fire: got {result[0]}, expected -3.0"
 
 
 def test_refuses_cond_reads_array_body_writes():
