@@ -15,6 +15,7 @@ from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import 
                                                                                  NaiveGPUStreamScheduler)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_lowering_applied
 from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
+from dace.transformation.passes.gpu_specialization.stream_scheduling import LastWriterDFSStreamScheduler
 from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaultSchedulesAndStorages
 
 
@@ -78,7 +79,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` before the stream scheduler: it moves
         #     the map's dynamic-input edges onto the new libnode and a pre-wired ``__stream``
         #     connector would clash.
-        #   * ``NaiveGPUStreamScheduler`` after ``ExpandLibraryNodes``: the scheduler walks real
+        #   * Stream scheduler after ``ExpandLibraryNodes``: the scheduler walks real
         #     kernel/runtime-call nodes and would miss opaque libnodes.
         #   * ``AddThreadBlockMaps`` after the kernel-internal transient hoist (in
         #     ``InsertExplicitGPUGlobalMemoryCopies``): tiling first leaks the inner-map outer-loop
@@ -91,7 +92,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             AssignmentAndCopyKernelToMemsetAndMemcpy(),
             InsertExplicitGPUGlobalMemoryCopies(),
             ExpandLibraryNodes(),
-            NaiveGPUStreamScheduler(),
+            LastWriterDFSStreamScheduler(),
             LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
             ReinferConnectorTypes(),

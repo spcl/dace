@@ -1218,6 +1218,7 @@ if TYPE_CHECKING:
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
     class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class gpuEvent_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1239,6 +1240,7 @@ else:
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
     gpuStream_t = opaque('gpuStream_t')
+    gpuEvent_t = opaque('gpuEvent_t')
 _bool = bool
 
 

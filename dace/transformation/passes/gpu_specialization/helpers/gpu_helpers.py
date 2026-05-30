@@ -23,9 +23,25 @@ STREAM_CONNECTOR = CURRENT_STREAM_NAME
 # bodies to recognize an already-expanded GPU runtime call.
 LEGACY_AMBIENT_STREAM = STREAM_CONNECTOR
 
+# Event-side analogue. Unlike the stream connector there is no legacy
+# binding to preserve -- the scheduler chose the name, the codegen reads
+# it through the typed connector. Centralised here so producer libnodes
+# and the scheduler cannot drift.
+EVENT_CONNECTOR = "__dace_current_event"
+
 
 def get_gpu_stream_array_name() -> str:
     return "gpu_streams"
+
+
+def get_gpu_event_array_name() -> str:
+    """Name of the SDFG-level ``gpuEvent_t`` array.
+
+    Symmetric to :func:`get_gpu_stream_array_name`. Allocated by
+    :func:`stream_lowering_helpers.allocate_event_array` and propagated
+    through nested SDFGs the same way the stream array is.
+    """
+    return "gpu_events"
 
 
 def dependency_edge():
@@ -204,6 +220,32 @@ def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
     """
     dtype = dtypes.gpuStream_t if single_stream else dtypes.pointer(dtypes.gpuStream_t)
     node.add_in_connector(conn_name, dtype)
+
+
+def add_gpu_event_connector(node, conn_name: str, *, is_input: bool, single_event: bool):
+    """Add a GPU-event connector with the right dtype.
+
+    Symmetric to :func:`add_gpu_stream_connector`. Event handles flow
+    OUT of producers (a kernel records its event slot on completion)
+    and IN to consumers (a wait libnode reads the event slot to block
+    against). ``is_input=True`` adds an in-connector; ``False`` an
+    out-connector. ``single_event=True`` types it as the scalar opaque
+    ``gpuEvent_t``; ``False`` as ``pointer(gpuEvent_t)`` for nodes that
+    receive the full ``gpu_events`` array and index it by id.
+    """
+    dtype = dtypes.gpuEvent_t if single_event else dtypes.pointer(dtypes.gpuEvent_t)
+    if is_input:
+        node.add_in_connector(conn_name, dtype)
+    else:
+        node.add_out_connector(conn_name, dtype)
+
+
+def has_event_connector(node) -> bool:
+    """Return True if ``node`` already carries any GPU-event connector
+    (in or out) -- type-based, so it accepts whatever name the libnode
+    chose."""
+    return (any(t is not None and t == dtypes.gpuEvent_t for t in node.in_connectors.values())
+            or any(t is not None and t == dtypes.gpuEvent_t for t in node.out_connectors.values()))
 
 
 def find_inner_gpu_consumers(sdfg: SDFG):

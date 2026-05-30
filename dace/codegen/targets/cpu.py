@@ -468,6 +468,29 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(definition, cfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
 
+        elif (nodedesc.dtype in (dtypes.gpuStream_t, dtypes.gpuEvent_t)
+              and Config.get('compiler', 'cuda', 'implementation') == 'experimental'):
+            # Guarded: only the experimental CUDA codegen owns the IR-level ``gpu_streams`` /
+            # ``gpu_events`` arrays that alias ``gpu_context->{streams,events}``. The legacy
+            # codegen never reaches this branch.
+            #
+            # Two valid forms:
+            #   - Persistent lifetime: the state-struct field is declared by framecode and bound
+            #     to the backend handles once in ``__dace_init_experimental_cuda``.
+            #   - Scope / non-persistent (legacy register form): emit a local pointer alias at
+            #     the allocation site (matches the prior behaviour for the naive scheduler).
+            # In either form no ``new[]`` is emitted -- the backend handles are owned by
+            # ``gpu_context`` and freed in the exit code.
+            ctype = nodedesc.dtype.ctype
+            members = "streams" if nodedesc.dtype == dtypes.gpuStream_t else "events"
+            if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+                # State-struct field declared + bound by framecode + cuda init.
+                pass
+            else:
+                allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->{members};")
+            define_var(name, DefinedType.Pointer, dtypes.pointer(nodedesc.dtype).ctype)
+            return
+
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
@@ -590,7 +613,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
+        elif (nodedesc.dtype in (dtypes.gpuStream_t, dtypes.gpuEvent_t)
+              and Config.get('compiler', 'cuda', 'implementation') == 'experimental'):
+            # Guarded to experimental codegen: handles are owned by gpu_context; only the
+            # IR-level pointer alias is cleared.
+            callsite_stream.write(f"{alloc_name} = nullptr;")
+            return
         elif nodedesc.dtype == dtypes.gpuStream_t:
+            # Legacy codegen path: preserves the pre-existing nullptr-assignment behaviour
+            # for ``gpuStream_t`` arrays.
             callsite_stream.write(f"{alloc_name} = nullptr;")
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap

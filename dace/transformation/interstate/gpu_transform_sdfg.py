@@ -201,6 +201,25 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if self.host_data is None:
             self.host_data = []
 
+        # Pin host-only arrays. Any data container read by an interstate edge's
+        # condition or assignments at HOST scope is evaluated on the host --
+        # promoting it to GPU storage would make the SDFG invalid (validation
+        # rejects host code reads of GPU-resident containers). Interstate edges
+        # nested inside a device-level kernel scope execute on the device, so
+        # reads from a GPU array are fine there and must NOT be pinned to host.
+        # The same ``get_read_memlets`` API the validator uses identifies these
+        # accesses canonically.
+        for ie in sdfg.all_interstate_edges():
+            owner_sdfg = ie.src.sdfg
+            parent_nsdfg = owner_sdfg.parent_nsdfg_node
+            if parent_nsdfg is not None and scope.is_devicelevel_gpu(owner_sdfg.parent_sdfg, owner_sdfg.parent,
+                                                                    parent_nsdfg):
+                continue
+            for read_memlet in ie.data.get_read_memlets(sdfg.arrays):
+                container = read_memlet.data
+                if container in sdfg.arrays and container not in self.host_data:
+                    self.host_data.append(container)
+
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
 

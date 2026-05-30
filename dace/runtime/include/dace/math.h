@@ -522,27 +522,32 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T, typename U>
+        // Floating / mixed-type pow: defer to std::pow.
+        template<typename T, typename U,
+                 typename std::enable_if<!(std::is_integral<T>::value &&
+                                           std::is_integral<U>::value)>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
         }
 
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
+        // Integer^integer: keep the result integer-typed (so it can index
+        // arrays / launch-dim expressions). Covers any combination of
+        // ``int``, ``unsigned int``, ``int64_t``, ``size_t`` etc. via
+        // ``std::common_type``; the older narrow specializations (only
+        // ``int``/``unsigned int``) silently fell through to ``std::pow``
+        // for e.g. ``int64_t`` symbols and produced ``double`` -- which is
+        // illegal in subscript / launch-dim contexts.
+        template<typename A, typename B,
+                 typename std::enable_if<std::is_integral<A>::value &&
+                                         std::is_integral<B>::value>::type* = nullptr>
+        DACE_CONSTEXPR DACE_HDFI typename std::common_type<A, B>::type
+        pow(const A& a, const B& b)
         {
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-        }
-
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
-        {
-            unsigned int result = 1;
-            for (unsigned int i = 0; i < b; ++i)
-                result *= a;
+            using R = typename std::common_type<A, B>::type;
+            if (b < 0) return R(0);
+            R result = R(1);
+            for (B i = 0; i < b; ++i) result *= R(a);
             return result;
         }
 

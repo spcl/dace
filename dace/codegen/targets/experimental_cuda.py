@@ -685,8 +685,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
-        # gpuStream_t handles are materialised by the GPU stream manager, not here.
-        if nodedesc.dtype == dtypes.gpuStream_t:
+        # gpuStream_t / gpuEvent_t handles live in ``gpu_context`` and are bound to the
+        # IR-level state-struct pointers in ``__dace_init_experimental_cuda`` -- no
+        # malloc here.
+        if nodedesc.dtype in (dtypes.gpuStream_t, dtypes.gpuEvent_t):
             return
 
         gen = getattr(self, f'_prepare_{nodedesc.storage.name}_array', None)
@@ -784,6 +786,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, dace.data.View):
             return
 
+        # gpuStream_t / gpuEvent_t handles are owned by ``gpu_context`` and destroyed by the
+        # cuda exit code; the IR-level pointer needs no freeing.
+        if nodedesc.dtype in (dtypes.gpuStream_t, dtypes.gpuEvent_t):
+            return
+
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
                 # Pooled arrays whose release point was picked up by _compute_pool_release are
@@ -811,16 +818,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
 
-        # The GPU stream array has a persistent allocation lifetime and is declared in the state
-        # struct under an SDFG-id-prefixed name by the frame codegen; resolve the prefixed name so
-        # our backend initialization can refer to the same storage.
-        cnt = 0
-        init_gpu_stream_vars = ""
-        gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
-        for csdfg, name, desc in self._global_sdfg.arrays_recursive(include_nested_data=True):
-            if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
-                init_gpu_stream_vars = f"__state->__{csdfg.cfg_id}_{name}"
-                break
+        # The GPU stream / event IR arrays have ``AllocationLifetime.SDFG`` and are bound to
+        # the ``gpu_context`` storage at the top of each ``__program_*`` function body by
+        # ``CPUCodegen.allocate_array`` (guarded to the experimental codegen). No additional
+        # work is needed in ``__dace_init_*``; the backend stream / event handles are created
+        # in the loop below and the IR-level local pointers alias that storage when the
+        # program runs.
 
         initcode = CodeIOStream()
         for sd in self._global_sdfg.all_sdfgs_recursive():
