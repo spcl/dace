@@ -937,19 +937,18 @@ def test_carrier_with_computed_delta_chain():
 
 
 @pytest.mark.xfail(
-    reason="Composite-body matcher + structural rewrite are in place "
-    "(``_match_composite_body`` + ``_rewrite_composite_body``); the rewrite "
-    "emits a single ``Scan`` libnode over the carrier's delta region with "
-    "``stride = product-of-axes-after-scan-axis``. For a row-major carrier "
-    "``pfsqif[KLON, KLEV + 1]`` where the scan axis is the innermost dim, the "
-    "sliced region ``[*, iter_start : iter_end + 1]`` is NOT linearly "
-    "contiguous in memory, so the libnode's residue-class stream walk lands "
-    "in the wrong positions and the per-row prefix-sum semantics are off. "
-    "Proper fix: use the vector-scan layout (allocate ``delta_buf[trip, "
-    "non_scan_size]`` and mutate BOTH the carry-copy write and the "
-    "accumulate-state's carrier read/write to that buffer, then reuse "
-    "``_emit_scan_nested`` / ``_emit_seed_add_nested``). Structural lift "
-    "verified; numerical correctness depends on the layout fix.",
+    reason="Composite-body matcher fires correctly on this shape AND on the "
+    "cloudsc-actual pfsqXf (verified via the full chain). Rewrite is "
+    "structurally complete (allocates ``delta_buf[trip, inner_size]``, "
+    "redirects body writes there, emits ``Scan`` + seed-add via the "
+    "nested-scan helpers), BUT the body-mutation step renames carrier "
+    "AccessNodes in place + re-subsets memlets to a 2-D layout while the "
+    "intermediate transients keep their 1-D scalar-slice shapes -- the "
+    "resulting memlet/descriptor shape mismatch crashes the generated code. "
+    "Path is DISABLED in ``apply_pass`` until the rewrite is reworked to "
+    "insert FRESH delta_buf AccessNodes at the chain endpoints (boundary "
+    "edges only) rather than blanket-renaming the carrier ANs. Re-enable "
+    "the call site once that refactor lands.",
     strict=True,
 )
 def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
