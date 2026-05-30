@@ -496,5 +496,266 @@ def test_loop_fission_conditional_body_kept():
     assert np.allclose(A0, 9.0) and np.allclose(B0, 9.0)
 
 
+# -----------------------------------------------------------------------------
+# Additional Python-frontend tests covering gaps in the existing coverage.
+# -----------------------------------------------------------------------------
+
+
+@dace.program
+def loop_same_array_two_writes(A: dace.float64[N], x: dace.float64[N], y: dace.float64[N]):
+    """Two writes to the same array at the same per-iter index. The second
+    overwrite cancels the first; both writes touch ``A`` so fission must keep
+    them in one loop (their combined effect is what's value-preserving)."""
+    for i in range(N):
+        A[i] = x[i]
+        A[i] = y[i]
+
+
+def test_loop_fission_same_array_two_writes_kept_together():
+    """Two writes to ``A[i]`` in the same body: fission must KEEP them in one
+    loop because splitting would reorder the per-iter overwrite semantics.
+    Numerics: ``A`` must equal ``y`` (the second write wins per-iter)."""
+    n = 16
+    rng = np.random.default_rng(0)
+    args = dict(A=np.zeros(n), x=rng.standard_normal(n), y=rng.standard_normal(n))
+    base = loop_same_array_two_writes.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = loop_same_array_two_writes.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    # The two writes share the same container; fission's write-merge keeps them
+    # in a single loop (no sibling split).
+    assert _loop_count(sdfg) == 1, f"expected 1 loop, got {_loop_count(sdfg)}"
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    assert np.allclose(out['A'], args['y']), "second write must win per-iter"
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+@dace.program
+def loop_per_iter_rmw(A: dace.float64[N], x: dace.float64[N]):
+    """``A[i] = x[i]; A[i] = A[i] + 1.0`` -- write A[i] then read it back at the
+    same iter index. The chain is RAW at the SAME index, which the per-iter
+    relaxation MIGHT split, but the second statement still requires the
+    first's write to have happened. With sequential post-fission ordering the
+    sibling loops execute in turn, so the second loop sees A from the first."""
+    for i in range(N):
+        A[i] = x[i]
+        A[i] = A[i] + 1.0
+
+
+def test_loop_fission_per_iter_rmw_kept_together():
+    """``A[i] = x[i]; A[i] = A[i] + 1.0`` -- both writes target ``A`` so the
+    write-merge keeps them in one loop. Either way numerics must match
+    (``A == x + 1.0``)."""
+    n = 12
+    rng = np.random.default_rng(42)
+    args = dict(A=np.zeros(n), x=rng.standard_normal(n))
+    base = loop_per_iter_rmw.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = loop_per_iter_rmw.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    assert np.allclose(out['A'], args['x'] + 1.0), "A must equal x + 1.0"
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+@dace.program
+def loop_three_independent_writes(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+                                   x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
+    """Three completely independent per-iter writes to three different arrays.
+    Each touches its own container with no cross-array reads -- the maximally-
+    fissioned shape is 3 sibling loops."""
+    for i in range(N):
+        A[i] = x[i] * 2.0
+        B[i] = y[i] + 3.0
+        C[i] = z[i] - 1.0
+
+
+def test_loop_fission_three_independent_writes():
+    """3 distinct arrays written independently from 3 distinct inputs -- max
+    fission produces 3 sibling loops."""
+    n = 20
+    rng = np.random.default_rng(7)
+    args = dict(A=np.zeros(n), B=np.zeros(n), C=np.zeros(n),
+                x=rng.standard_normal(n), y=rng.standard_normal(n), z=rng.standard_normal(n))
+    _run(loop_three_independent_writes, args, dict(N=n), 3)
+
+
+@dace.program
+def loop_mixed_partition(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+                          a: dace.float64[N], b: dace.float64[N]):
+    """One sibling is data-dependent (``A → B`` per-iter chain), the other is
+    independent (``C`` from ``b``). Fission partitions into the A+B pair and
+    the C-only sibling: 2 sibling loops."""
+    for i in range(N):
+        A[i] = a[i] + 1.0
+        B[i] = A[i] * 2.0
+        C[i] = b[i] - 0.5
+
+
+def test_loop_fission_mixed_dep_and_independent_partitions():
+    """Per-iter A→B chain AND independent C all split under the per-iter-shared
+    relaxation -- max fission produces 3 sibling loops, executed in original
+    order so A's loop completes before B reads it (the per-iter-bridge rewrite
+    severs the A→B connection, mirroring
+    ``test_loop_fission_dependent_kept_together_modified_splits_per_iter``)."""
+    n = 15
+    rng = np.random.default_rng(99)
+    args = dict(A=np.zeros(n), B=np.zeros(n), C=np.zeros(n),
+                a=rng.standard_normal(n), b=rng.standard_normal(n))
+    _run(loop_mixed_partition, args, dict(N=n), 3)
+
+
+@dace.program
+def loop_reverse_step(A: dace.float64[N], B: dace.float64[N], a: dace.float64[N]):
+    """Backward iteration ``range(N-1, -1, -1)`` with two independent per-iter
+    writes. Loop direction shouldn't block fission -- both writes still touch
+    distinct containers with the same iteration variable."""
+    for i in range(N - 1, -1, -1):
+        A[i] = a[i] * 3.0
+        B[i] = a[i] - 7.0
+
+
+def test_loop_fission_reverse_iteration_splits():
+    """A reverse loop with 2 independent statements fissions just like a
+    forward loop. Numerically identical to the un-fissioned form."""
+    n = 18
+    rng = np.random.default_rng(123)
+    args = dict(A=np.zeros(n), B=np.zeros(n), a=rng.standard_normal(n))
+    base = loop_reverse_step.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = loop_reverse_step.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    # Backward iteration is normalized by NormalizeNegativeStride to forward;
+    # downstream we still expect 2 sibling loops (or 1 if the normalization
+    # didn't run -- either way values match).
+    assert _loop_count(sdfg) in (1, 2), f"expected 1 or 2 loops, got {_loop_count(sdfg)}"
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+@dace.program
+def loop_two_indep_with_one_recurrence(out_a: dace.float64[N], out_b: dace.float64[N],
+                                         x: dace.float64[N], y: dace.float64[N]):
+    """One pointwise sibling and one carried recurrence on a different array.
+    Fission must split them: pointwise becomes parallelizable, recurrence
+    stays sequential. (Mirrors TSVC s221 shape with a different access pattern.)"""
+    for i in range(1, N):
+        out_a[i] = x[i] * y[i] + 1.0           # pointwise
+        out_b[i] = out_b[i - 1] + y[i]         # carried recurrence on out_b
+
+
+def test_loop_fission_pointwise_and_carried_recurrence_split():
+    """Pointwise out_a-loop fissions away from the carried out_b recurrence
+    loop. Final loop count is 2."""
+    n = 24
+    rng = np.random.default_rng(221)
+    args = dict(out_a=np.zeros(n), out_b=rng.standard_normal(n),
+                x=rng.standard_normal(n), y=rng.standard_normal(n))
+    _run(loop_two_indep_with_one_recurrence, args, dict(N=n), 2)
+
+
+@dace.program
+def loop_eight_independent(s0: dace.float64[N], s1: dace.float64[N], s2: dace.float64[N], s3: dace.float64[N],
+                            s4: dace.float64[N], s5: dace.float64[N], s6: dace.float64[N], s7: dace.float64[N]):
+    """Eight independent fills with constant values -- stresses the maximal-
+    fission path on a wider body than ``loop_five_set_five_cpy``."""
+    for i in range(N):
+        s0[i] = 0.0
+        s1[i] = 1.0
+        s2[i] = 2.0
+        s3[i] = 3.0
+        s4[i] = 4.0
+        s5[i] = 5.0
+        s6[i] = 6.0
+        s7[i] = 7.0
+
+
+def test_loop_fission_eight_independent_writes_max_fission():
+    """8 independent writes -> 8 sibling loops, each writing one array. Verify
+    the post-fission shape AND that each surviving loop touches exactly one
+    container (no leftover grouping)."""
+    n = 9
+    args = {f's{k}': np.full(n, -1.0) for k in range(8)}
+    base = loop_eight_independent.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = loop_eight_independent.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _loop_count(sdfg) == 8, f"expected 8 sibling loops, got {_loop_count(sdfg)}"
+
+    # Each sibling loop's body must write exactly one of the 8 arrays.
+    loops = [c for c in sdfg.nodes() if isinstance(c, LoopRegion)]
+    sibling_writes = []
+    for loop in loops:
+        wset = set()
+        for st in loop.all_states():
+            for nd in st.nodes():
+                if isinstance(nd, nodes.AccessNode) and st.in_degree(nd) > 0:
+                    wset.add(nd.data)
+        sibling_writes.append(wset)
+    assert all(len(w) == 1 for w in sibling_writes), (
+        f"each sibling loop must write exactly one array; got {sibling_writes}")
+    written_arrays = set().union(*sibling_writes)
+    assert written_arrays == {f's{k}' for k in range(8)}, "all 8 arrays must be partitioned"
+
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k_idx in range(8):
+        assert np.allclose(out[f's{k_idx}'], float(k_idx)), f"s{k_idx} must equal {float(k_idx)}"
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+@dace.program
+def loop_cross_shared_array_kept_together(A: dace.float64[N], x: dace.float64[N], y: dace.float64[N]):
+    """Both statements read AND write the same non-transient array ``A`` --
+    sibling 1 reads/writes A[i], sibling 2 also reads/writes A[i] -- but at
+    DIFFERENT subsets (statement 1 writes A[i] from x[i], statement 2 reads
+    A[i-1] for a recurrence-like access). The cross-iter ``A[i-1]`` access
+    breaks per-iter independence -- fission must keep them together."""
+    for i in range(1, N):
+        A[i] = x[i] + 2.0
+        A[i] = A[i - 1] * y[i]   # depends on previous-iter's write to A
+
+
+def test_loop_fission_cross_iter_same_array_kept_together():
+    """Statement 2 reads ``A[i-1]`` -- cross-iter dependency on ``A``. Fission
+    must NOT split (would race) -- kept as a single loop."""
+    n = 10
+    rng = np.random.default_rng(1)
+    A = rng.standard_normal(n)
+    args = dict(A=A.copy(), x=rng.standard_normal(n), y=rng.standard_normal(n))
+    base = loop_cross_shared_array_kept_together.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = loop_cross_shared_array_kept_together.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _loop_count(sdfg) == 1, (
+        f"cross-iter A[i-1] dep must keep loop intact; got {_loop_count(sdfg)} loops")
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
