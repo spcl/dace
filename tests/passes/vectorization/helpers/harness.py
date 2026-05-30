@@ -53,20 +53,36 @@ def _innermost_map_K(sdfg: dace.SDFG):
     """Return the number of params of the innermost map in ``sdfg``.
 
     Walks every map entry; an entry is "innermost" when no other map
-    entry lies anywhere downstream within its scope.
+    entry lies anywhere downstream within its scope. When the SDFG has
+    no MapEntry yet but DOES contain ``LoopRegion``s, a throwaway probe
+    runs ``LoopToMap`` (the orchestrator's front-of-pipeline stage) on a
+    deep copy so callers see the K the orchestrator will tile.
 
     :param sdfg: SDFG to inspect.
     :returns: ``len(map.params)`` of the first innermost map found, or
-        ``None`` when no map is present.
+        ``None`` when no map is present even after the probe ``LoopToMap``.
     """
-    candidates = []
-    for n, g in sdfg.all_nodes_recursive():
-        if not (isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)):
-            continue
-        between = g.all_nodes_between(n, g.exit_node(n)) or set()
-        if any(isinstance(m, dace.nodes.MapEntry) for m in between):
-            continue
-        candidates.append(n)
+    def _scan(graph):
+        cands = []
+        for n, g in graph.all_nodes_recursive():
+            if not (isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)):
+                continue
+            between = g.all_nodes_between(n, g.exit_node(n)) or set()
+            if any(isinstance(m, dace.nodes.MapEntry) for m in between):
+                continue
+            cands.append(n)
+        return cands
+
+    candidates = _scan(sdfg)
+    if candidates:
+        return len(candidates[0].map.params)
+
+    # No map yet — probe LoopToMap on a copy so loop-carrying kernels
+    # (e.g. raw Python ``@dace.program`` for-loops) still report K.
+    from dace.transformation.interstate import LoopToMap
+    probe = copy.deepcopy(sdfg)
+    probe.apply_transformations_repeated(LoopToMap(), permissive=False, validate=False)
+    candidates = _scan(probe)
     if not candidates:
         return None
     return len(candidates[0].map.params)
