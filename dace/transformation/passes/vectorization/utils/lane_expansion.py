@@ -373,12 +373,42 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
                 new_assignments[k] = v
             else:
                 plain[k] = v
+        # A connector is a length-1 per-lane index source when the OUTER
+        # memlet exposes exactly 1 element per outer iteration AND the outer
+        # subset is 1-dim (so the connector can be widened to a 1D ``(W,)``
+        # tile by :func:`_widen_index_connector_to_tile`). We can't key off
+        # the inner array shape because RefineNestedAccess sometimes leaves
+        # the inner array at its full source shape and constrains the access
+        # via the boundary memlet (vag-style ``ip[i]`` boundary with inner
+        # shape ``(LEN_1D,)``). The 1-dim guard prevents over-triggering on
+        # multi-dim boundary connectors (icon-style ``edge_blk[i, jk, m]``
+        # where the outer is 3-dim, num_elements 1; widening to ``(W,)``
+        # would invalidate downstream multi-dim gather emission).
+        outer_extent_one = {}
+        for oe in parent_state.in_edges(nsdfg_node):
+            if oe.dst_conn is None or oe.data is None or oe.data.subset is None:
+                continue
+            try:
+                ne = oe.data.subset.num_elements()
+                one_elem = (dace.symbolic.simplify(ne) == 1)
+                one_dim = (len(oe.data.subset) == 1)
+                outer_extent_one[oe.dst_conn] = one_elem and one_dim
+            except (TypeError, AttributeError):
+                outer_extent_one[oe.dst_conn] = False
         for k, v in plain.items():
             v_expr = dace.symbolic.SymExpr(v)
+            # The assignment reaches the connector either as a bare symbol
+            # (``ip_index = ip`` when the connector is rank-0) or as a
+            # ``Subscript`` base (``ip_index = ip[0]`` when the connector is a
+            # length-1 array view). ``free_symbols`` only catches the bare
+            # form because ``ip[0]`` parses as ``Subscript(ip, 0)`` whose
+            # base ``ip`` is not a free symbol. ``dace.symbolic.arrays``
+            # collects the subscript bases so we catch both forms.
+            referenced = {str(s) for s in v_expr.free_symbols} | dace.symbolic.arrays(v_expr)
             idx_conns = sorted({
-                str(s)
-                for s in v_expr.free_symbols if str(s) in nsdfg_node.in_connectors
-                and not inner_sdfg.arrays[str(s)].transient and tuple(inner_sdfg.arrays[str(s)].shape) == (1, )
+                s
+                for s in referenced if s in nsdfg_node.in_connectors
+                and not inner_sdfg.arrays[s].transient and outer_extent_one.get(s, False)
             })
             if not idx_conns:
                 new_assignments[k] = v
@@ -386,10 +416,27 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
             for c in idx_conns:
                 _widen_index_connector_to_tile(inner_sdfg, nsdfg_node, parent_state, c, vector_width, tile_iter_var)
                 widened.add(c)
+            # The assignment value uses ``c`` either as a bare ``Symbol`` (rank-0
+            # connector form) OR as the base of a ``Subscript`` ``c[0]`` (rank-1
+            # length-1 view form). For the bare case ``sympy.subs`` replaces the
+            # symbol with ``c(lane)`` (rendered as ``c[lane]`` by the dace
+            # printer). For the subscript case the inner array was just widened
+            # to ``(W,)`` by :func:`_widen_index_connector_to_tile` and the
+            # subscript index ``0`` -> ``lane`` substitution is what produces
+            # the per-lane read ``c[lane]``. Detect each case per connector.
+            from dace.symbolic import Subscript
+            subscript_bases = {str(node.args[0]) for node in v_expr.atoms(Subscript) if hasattr(v_expr, 'atoms')}
             for lane in range(vector_width):
                 lane_expr = v_expr
                 for c in idx_conns:
-                    lane_expr = lane_expr.subs(sympy.Symbol(c), dace.symbolic.SymExpr(f"{c}({lane})"))
+                    if c in subscript_bases:
+                        # ``c[0]`` form: rewrite the subscript index 0 -> lane.
+                        lane_expr = lane_expr.replace(
+                            lambda node: isinstance(node, Subscript) and str(node.args[0]) == c,
+                            lambda node: Subscript(node.args[0], sympy.Integer(lane)))
+                    else:
+                        # Bare symbol form: substitute the symbol with ``c(lane)``.
+                        lane_expr = lane_expr.subs(sympy.Symbol(c), dace.symbolic.SymExpr(f"{c}({lane})"))
                 lane_v = DaceSympyPrinter(set(inner_sdfg.arrays.keys())).doprint(lane_expr)
                 new_assignments[LaneIdScheme.make(k, lane)] = lane_v
                 if lane == 0:

@@ -35,6 +35,8 @@ from dace.transformation.passes.vectorization.generate_tile_iteration_mask impor
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
+from dace.transformation.passes.vectorization.resolve_other_subset_an_edges import (
+    ResolveOtherSubsetANEdges, )
 from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
     PromoteNSDFGBodyToTiles, )
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
@@ -331,6 +333,17 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
             SplitMultiSliceBoundaryConnectors, )
         passes.append(SplitMultiSliceBoundaryConnectors(widths=widths_t))
+        # Reify body-NSDFG ``AccessNode -[other_subset]-> AccessNode`` edges
+        # left behind by ``RemoveRedundantAssignmentTasklets`` (and any other
+        # pass that collapses an assign-tasklet into a single AN -> AN
+        # memlet) into an ``_out = _in`` tasklet on 1-element residuals so the
+        # descent's classify / promote / fan-out walkers find them. Refuses
+        # multi-element residuals — auto-vectorization does not support
+        # multi-element ``other_subset``. Runs right before Promote so it's
+        # the last shape-pass before the descent and is scoped to inner-body
+        # NSDFGs only (the outer-SDFG AN -> AN scatter/gather staging used by
+        # legacy 1D detection is left alone).
+        passes.append(ResolveOtherSubsetANEdges())
         passes += [
             # Tile a flat body-NSDFG (vbor-style scalar chain) in place so
             # EmitTileOps can skip it; EmitTileOps still raises for un-handled

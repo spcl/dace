@@ -36,6 +36,7 @@ entries) and skips them; it still raises for any *un*handled NSDFG body
 (those maps are already W-strided, so a scalar body would be wrong — the
 loud failure keeps the kernel a clean skip until its descent slice lands).
 """
+import copy
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -1051,7 +1052,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             self._wire_mask(istate, mask_acc, scatter, out_subset)
             istate.add_edge(scatter, TileConnectors.DST, e.dst, e.dst_conn, dace.Memlet.from_array(dst_name, dst_arr))
             istate.remove_edge(e)
-            if to_remove is not None and istate.degree(to_remove) == 0:
+            if to_remove is not None:
+                # The assign tasklet's value source already wires into the
+                # new ``TileScatter`` (``value_access`` above), so the dangling
+                # in-edges are dead — drop them with the tasklet so its
+                # connectors don't leak into the validated SDFG.
+                for ie in list(istate.in_edges(to_remove)) + list(istate.out_edges(to_remove)):
+                    istate.remove_edge(ie)
                 istate.remove_node(to_remove)
         return consumed
 
