@@ -322,6 +322,7 @@ def nested_matrix_gather_load_specialized(A: dace.float32[Y, X], B: dace.int32[Y
         C[i, j] = A[i, B[i, j]] * 2.0
 
 
+@pytest.mark.simple  # canonical: test_nested_matrix_gather_load_specialized (harder)
 def test_nested_matrix_gather_load():
     X_val = 32
     Y_val = 32
@@ -545,6 +546,7 @@ def halve_index_s4117(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]
         a[i] = b[i] + c[i // 2] * d[i]
 
 
+@pytest.mark.simple  # canonical: test_halve_index_s4117 (TSVC-style chained ops, harder)
 def test_halve_index_gather(emission_style):
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -608,6 +610,7 @@ def div_index_symbol(src: dace.float64[N], dst: dace.float64[N]):
         dst[i] = src[i // DV]
 
 
+@pytest.mark.simple  # canonical: test_div_index_symbol (symbolic divisor, harder)
 def test_div_index_const3():
     """``src[i // 3]`` — divisor does NOT divide W=8, so the phase ``i % 3``
     is non-zero on most tiles; the lane-replicate must account for it."""
@@ -624,6 +627,7 @@ def test_div_index_const3():
     )
 
 
+@pytest.mark.simple  # canonical: test_div_index_symbol (symbolic divisor, harder)
 def test_div_index_const4():
     """``src[i // 4]`` — divisor divides W=8 (phase 0)."""
     N_val = 64

@@ -41,6 +41,41 @@ def branch_mode(request) -> str:
     return request.param
 
 
+@pytest.fixture(params=["flat", "nested", "nested_copies"])
+def tile_emit_mode(request):
+    """Tile-arm emit-path × boundary-copy combination, opt-in.
+
+    Combines ``nest_map_bodies`` × ``insert_copies`` into three canonical
+    configurations (vs the 4-cell independent cross-product). Tests opt in
+    by taking ``tile_emit_mode`` in their signature; tests that don't take
+    it inherit the harness defaults (``nest_map_bodies=False``,
+    ``insert_copies=False``).
+
+    - ``"flat"`` — ``nest_map_bodies=False, insert_copies=False`` (default
+      tile arm, hybrid emit path: flat body -> ``EmitTileOps``; already-NSDFG
+      body -> ``PromoteNSDFGBodyToTiles`` descent).
+    - ``"nested"`` — ``nest_map_bodies=True, insert_copies=False`` (descent
+      is the single emit path; every innermost map body is wrapped into a
+      NestedSDFG so ``Promote`` handles it).
+    - ``"nested_copies"`` — ``nest_map_bodies=True, insert_copies=True``
+      (descent + boundary copy emission — legacy-arm structural-test
+      contract; required by stencil tests that assert on the
+      ``<base>_vec`` shared union buffer).
+
+    The ``(insert_copies=True, nest_map_bodies=False)`` cell is omitted
+    because boundary copies without body nesting rarely affect the tile
+    arm and would inflate the combo count without adding distinct coverage.
+
+    :returns: ``(nest_map_bodies, insert_copies)`` tuple — unpack in tests
+        and forward to :func:`run_vectorization_test`.
+    """
+    return {
+        "flat": (False, False),
+        "nested": (True, False),
+        "nested_copies": (True, True),
+    }[request.param]
+
+
 @pytest.fixture(params=["default", "sve_style"])
 def emission_style(request) -> str:
     """Emission model the K=1 tile path must support:
@@ -66,12 +101,12 @@ def pytest_configure(config):
         "tile_nodes: legacy marker; the K-dim tile-op config "
         "(VectorizeCPUMultiDim) is now the sole vectorize_config arm.",
     )
-    # ``--tile-nest-bodies`` is a GLOBAL override: it flips every harness test
-    # (whether or not it takes the ``vectorize_config`` fixture) to the
-    # single-descent path, so the whole suite can be run under nest_map_bodies
-    # =True. Stored on the harness module so ``run_vectorization_test`` reads it.
-    from tests.passes.vectorization.helpers import harness as _harness
-    _harness.FORCE_NEST_MAP_BODIES = bool(config.getoption("--tile-nest-bodies"))
+    config.addinivalue_line(
+        "markers",
+        "simple: redundant / trivial test (duplicates lib_nodes coverage or "
+        "a more comprehensive sibling). Skipped by default; opt in with "
+        "``--run-simple`` to include them in the sweep.",
+    )
 
 
 def pytest_addoption(parser):
@@ -80,29 +115,28 @@ def pytest_addoption(parser):
     :param parser: The pytest option parser.
     """
     parser.addoption(
-        "--tile-nest-bodies",
+        "--run-simple",
         action="store_true",
         default=False,
-        help="Run the 'tile_nodes_nested' vectorize_config arm "
-        "(VectorizeCPUMultiDim(nest_map_bodies=True): every map body nested "
-        "into a NestedSDFG so PromoteNSDFGBodyToTiles is the single emit path) "
-        "instead of the default hybrid 'tile_nodes' arm.",
+        help="Include tests marked ``@pytest.mark.simple`` (redundant / "
+        "trivial duplicates of a more comprehensive sibling test or of "
+        "``lib_nodes/`` coverage). Default sweep skips these to keep the "
+        "feedback loop fast; the hardening sweep / CI includes them.",
     )
 
 
 def pytest_generate_tests(metafunc):
     """Parametrise ``vectorize_config`` over the tile-op + legacy paths.
 
-    Three first-class arms — each is a permanent optimisation knob and every
-    harness test runs through all three (subject to per-arm skip predicates
-    in :func:`_tile_nodes_skip_reason` / the legacy gate):
+    Two first-class arms — each is a permanent optimisation knob; every
+    harness test runs through both (subject to per-arm skip predicates):
 
     - ``"tile_nodes"`` — the K-dim tile-op path (``VectorizeCPUMultiDim``)
       in hybrid mode (flat -> ``EmitTileOps``; already-NSDFG bodies ->
-      descent ``PromoteNSDFGBodyToTiles``). The default tile arm.
-    - ``"tile_nodes_nested"`` — the same path with ``nest_map_bodies=True``
-      so the descent is the single emit path. Selected by
-      ``--tile-nest-bodies``; replaces the ``"tile_nodes"`` arm when active.
+      descent ``PromoteNSDFGBodyToTiles``). The single tile arm; the
+      previously-separate ``tile_nodes_nested`` arm is now expressed as a
+      per-test fixture (``tile_emit_mode`` or explicit ``nest_map_bodies``
+      kwarg to ``run_vectorization_test``).
     - ``"legacy_cpu"`` — the legacy non-NSDFG ``VectorizeCPU`` path
       (``scalar_postamble``, K=1 / VLEN=8). A permanent first-class knob;
       tests that pass legacy-only knobs (``lower_to_intrinsics=True`` etc.)
@@ -113,8 +147,7 @@ def pytest_generate_tests(metafunc):
     """
     if "vectorize_config" not in metafunc.fixturenames:
         return
-    tile_arm = "tile_nodes_nested" if metafunc.config.getoption("--tile-nest-bodies") else "tile_nodes"
-    metafunc.parametrize("vectorize_config", [tile_arm, "legacy_cpu"], indirect=True)
+    metafunc.parametrize("vectorize_config", ["tile_nodes", "legacy_cpu"], indirect=True)
 
 
 #: Test files that exercise ONLY the legacy 1D ``VectorizeCPU`` / ``VectorizeSVE``
@@ -185,6 +218,15 @@ def _knob_combo_supported(params: dict) -> bool:
     emission = params.get("emission_style")
     if emission == "sve_style" and branch not in (None, "merge"):
         return False
+    # ``vectorize_config=legacy_cpu`` ignores ``tile_emit_mode`` (it has no
+    # ``nest_map_bodies`` concept — legacy keeps bodies flat). The combo
+    # would run with the tile_emit_mode value simply being ignored, but
+    # exercising 3 redundant variants under legacy adds nothing. Keep only
+    # the ``"flat"`` arm of ``tile_emit_mode`` on the legacy path.
+    tile_emit = params.get("tile_emit_mode")
+    vec_config = params.get("vectorize_config")
+    if vec_config == "legacy_cpu" and tile_emit is not None and tile_emit != "flat":
+        return False
     return True
 
 
@@ -210,6 +252,14 @@ def pytest_collection_modifyitems(config, items):
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = kept
+    # Skip ``@pytest.mark.simple`` items unless ``--run-simple`` is given.
+    # A skip (rather than a deselect) keeps the test visible in collection
+    # reports so the gate is observable.
+    if not config.getoption("--run-simple"):
+        skip_simple = pytest.mark.skip(reason="@pytest.mark.simple — pass --run-simple to include")
+        for item in items:
+            if "simple" in item.keywords:
+                item.add_marker(skip_simple)
 
 
 @pytest.fixture
@@ -220,13 +270,10 @@ def vectorize_config(request) -> str:
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
       (TileBinop / TileLoad / TileStore / TileMerge / TileGather /
       TileScatter), expanded to the per-ISA backend (scalar reference in
-      the harness). The default arm now that the legacy ``scalar_postamble``
-      1D path has been dropped.
-    - ``"tile_nodes_nested"`` — the same path with
-      ``VectorizeCPUMultiDim(nest_map_bodies=True)``: every innermost map body
-      is nested into a NestedSDFG so the descent
-      (``PromoteNSDFGBodyToTiles``) is the single emit path and ``EmitTileOps``
-      is a no-op. Selected by ``--tile-nest-bodies``.
+      the harness). Body-nesting is controlled per-test via the
+      ``tile_emit_mode`` fixture (or an explicit ``nest_map_bodies``
+      kwarg to :func:`run_vectorization_test`).
+    - ``"legacy_cpu"`` — the legacy ``VectorizeCPU`` 1D path.
 
     Both arms must match the unvectorized scalar reference."""
     return request.param

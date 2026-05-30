@@ -165,6 +165,7 @@ def overlapping_access_same_src_and_dst_in_nestedsdfg(A: dace.float64[2, 2, S], 
         A[0, j, i] = A[0, j, i] + A[1, j, i]
 
 
+@pytest.mark.simple  # canonical: test_overlapping_access_same_src_and_dst_in_nestedsdfg (hardest — NSDFG path)
 def test_overlapping_access():
     _S = 64
     A = numpy.random.random((2, 2, _S))
@@ -182,6 +183,7 @@ def test_overlapping_access():
                            sdfg_name="overlapping_access")
 
 
+@pytest.mark.simple  # canonical: test_overlapping_access_same_src_and_dst_in_nestedsdfg (hardest — NSDFG path)
 def test_overlapping_access_same_src_and_dst():
     _S = 64
     A = numpy.random.random((2, 2, _S))
