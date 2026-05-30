@@ -216,12 +216,27 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         if len(nsdfgs) != 1 or tasklets:
             return None
         nsdfg = nsdfgs[0]
-        from dace.sdfg.state import LoopRegion
+        from dace.sdfg.state import ConditionalBlock, LoopRegion
         for cfg in nsdfg.sdfg.nodes():
             if isinstance(cfg, SDFGState):
                 continue
             if isinstance(cfg, LoopRegion) and all(isinstance(inner_cfg, SDFGState) for inner_cfg in cfg.nodes()):
                 continue
+            if isinstance(cfg, ConditionalBlock):
+                # A ConditionalBlock at vectorisation time is a BUG in the
+                # branch-normalisation upstream: ``EliminateBranches``
+                # (fp_factor) and the merge-tasklet branch normalisation
+                # must lower every conditional into straight-line arithmetic
+                # (a ``c*x + (1-c)*y`` factor or a ``TileMerge`` select)
+                # before the descent runs. Refuse loudly so the upstream
+                # gap surfaces rather than silently skipping vectorisation.
+                raise NotImplementedError(
+                    f"PromoteNSDFGBodyToTiles: NSDFG body still carries a "
+                    f"ConditionalBlock {cfg.label!r} after branch "
+                    f"normalisation. Every conditional must be lowered to "
+                    f"merge tasklets (branch_mode='merge') or FP-factor "
+                    f"arithmetic (branch_mode='fp_factor') before the "
+                    f"descent — surface this kernel as a branch-norm gap.")
             return None
         return nsdfg
 

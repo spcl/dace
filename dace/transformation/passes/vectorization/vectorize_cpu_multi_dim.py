@@ -228,8 +228,24 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # fold the condition into a tasklet, then split the multi-op RHS
             # into single-op binop tasklets so ``EmitTileOps`` lowers each to a
             # ``TileBinop`` (no merge/TileMerge). Pairs with scalar_postamble.
+            #
+            # ``permissive=True`` is REQUIRED for the vectorisation pipeline:
+            # the default ``can_be_applied`` refuses any conditional whose
+            # condition references a map parameter (out of caution against
+            # synthetic OOB reads from unconditional execution). At
+            # vectorisation time we accept that risk by design — the
+            # downstream descent EXPECTS every conditional to be lifted into
+            # straight-line arithmetic, and the kernels we tile (TSVC, cloudsc,
+            # icon) are written with map-param-indexed access patterns that
+            # are bounded by the surrounding map range. Without this flag
+            # every map-param-conditional kernel (``s273``, the boolean-op
+            # branches, anything with ``if a[i] < 0`` etc.) is left with a
+            # ``ConditionalBlock`` that ``PromoteNSDFGBodyToTiles`` now
+            # refuses loudly.
+            _eb = EliminateBranches()
+            _eb.permissive = True
             passes += [
-                EliminateBranches(),
+                _eb,
                 LowerInterstateConditionalAssignmentsToTasklets(),
             ]
         else:
