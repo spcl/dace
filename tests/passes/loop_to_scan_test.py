@@ -937,17 +937,19 @@ def test_carrier_with_computed_delta_chain():
 
 
 @pytest.mark.xfail(
-    reason="Reverse-engineered cloudsc ``for_1133`` body shape via the Python "
-    "frontend: outer level loop ``jk``, inner column loop ``jl`` whose body "
-    "has BOTH a slice-copy (``pfsqif[jl, jk] = pfsqif[jl, jk-1]``) AND a "
-    "per-species accumulation (``pfsqif[jl, jk] += (zqxn2d[jl, jm] - "
-    "zqx0[jl, jm]) * zgdph_r`` over ``jm``). The composite update IS a "
-    "scan on ``jk`` (``pfsqif[jl, jk] = pfsqif[jl, jk-1] + delta(jl, jk)``) "
-    "but the body has multiple inner LoopRegions / statements that "
-    "``_descend_to_content_state`` can't fold to a single flat body. "
-    "Extension: per-iteration body folding -- recognize that the cumulative "
-    "effect over jl-loop and jm-loop is a delta that depends on (jk, jl) "
-    "and lift the outer recurrence to a scan with that synthesized delta.",
+    reason="Composite-body matcher + structural rewrite are in place "
+    "(``_match_composite_body`` + ``_rewrite_composite_body``); the rewrite "
+    "emits a single ``Scan`` libnode over the carrier's delta region with "
+    "``stride = product-of-axes-after-scan-axis``. For a row-major carrier "
+    "``pfsqif[KLON, KLEV + 1]`` where the scan axis is the innermost dim, the "
+    "sliced region ``[*, iter_start : iter_end + 1]`` is NOT linearly "
+    "contiguous in memory, so the libnode's residue-class stream walk lands "
+    "in the wrong positions and the per-row prefix-sum semantics are off. "
+    "Proper fix: use the vector-scan layout (allocate ``delta_buf[trip, "
+    "non_scan_size]`` and mutate BOTH the carry-copy write and the "
+    "accumulate-state's carrier read/write to that buffer, then reuse "
+    "``_emit_scan_nested`` / ``_emit_seed_add_nested``). Structural lift "
+    "verified; numerical correctness depends on the layout fix.",
     strict=True,
 )
 def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
@@ -977,6 +979,25 @@ def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
         f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
     assert _num_scan_nodes(sdfg) >= 1
 
+    klev, klon, nclv = 8, 4, 3
+    rng = np.random.default_rng(1133)
+    pfsqif = rng.standard_normal((klon, klev + 1))
+    zqxn2d = rng.standard_normal((klon, nclv))
+    zqx0 = rng.standard_normal((klon, nclv))
+    zgdph_r = 0.137
+    expected = pfsqif.copy()
+    for jk in range(1, klev + 1):
+        for jl in range(klon):
+            expected[jl, jk] = expected[jl, jk - 1]
+        for jm in range(nclv):
+            for jl in range(klon):
+                expected[jl, jk] = expected[jl, jk] + (zqxn2d[jl, jm] - zqx0[jl, jm]) * zgdph_r
+    sdfg(pfsqif=pfsqif, zqxn2d=zqxn2d, zqx0=zqx0, zgdph_r=zgdph_r,
+         KLEV=klev, KLON=klon, NCLV=nclv)
+    assert np.allclose(pfsqif, expected), (
+        f'Composite-body scan numerics must match the sequential oracle; '
+        f'max diff = {np.abs(pfsqif - expected).max()}')
+
 
 def test_backward_stride_minus_one_prefix_sum():
     """The cloudsc ``for_1079`` shape: backward iteration with carry on the
@@ -996,6 +1017,18 @@ def test_backward_stride_minus_one_prefix_sum():
         f'LoopToScan should accept a backward-stride (-1) prefix sum; got '
         f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
     assert _num_scan_nodes(sdfg) >= 1
+
+    n = 16
+    rng = np.random.default_rng(1079)
+    acc = rng.standard_normal(n + 1)
+    delta = rng.standard_normal(n + 1)
+    expected = acc.copy()
+    for jm in range(n, 0, -1):
+        expected[jm - 1] = expected[jm] + delta[jm]
+    sdfg(acc=acc, delta=delta, N=n)
+    assert np.allclose(acc, expected), (
+        f'Backward-stride scan numerics must match the sequential oracle; '
+        f'max diff = {np.abs(acc - expected).max()}')
 
 
 def test_level_indexed_write_with_multiple_constant_slots():

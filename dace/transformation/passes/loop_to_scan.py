@@ -141,6 +141,47 @@ class _Scan(NamedTuple):
     coef: int = 1
 
 
+class _CompositeBodyScan(NamedTuple):
+    """A composite-body scan match (cloudsc ``for_1133`` shape).
+
+    The outer body has a carry-copy state writing ``carrier[*, loop_var] =
+    carrier[*, loop_var - 1]`` via an identity-assign tasklet, plus one or more
+    sibling accumulate states (possibly inside nested LoopRegions) writing
+    ``carrier[*, loop_var] += per-iter-term``. Net recurrence:
+    ``carrier[*, loop_var] = carrier[*, loop_var - 1] + sum(terms)`` -- a
+    standard prefix scan, but expressed as multiple body writes rather than a
+    single binop tasklet. The accumulate inner loops stay as loops in the
+    rewrite -- only the outer scan recurrence gets lifted.
+
+    :param out_name: The carrier array name.
+    :param scan_axis: Carrier axis along which the prefix scan runs.
+    :param other_indices: Non-scan-axis carrier indices ``(axis, expr)`` --
+        loop-invariant constants or enclosing-scope symbols (NOT the inner
+        loop's iterator -- composite bodies typically write the carrier at a
+        per-(inner-iter, scan-axis) slot, e.g. ``pfsqif[jl, jk]``).
+    :param iter_start: Loop start (inclusive).
+    :param iter_end: Loop end (inclusive).
+    :param carry_copy_state: The state whose identity-assign tasklet writes
+        ``carrier[*, loop_var] = carrier[*, loop_var - 1]``. The rewrite mutates
+        this tasklet to emit ``0`` and severs the carrier-read input.
+    :param carry_copy_tasklet: The identity-assign tasklet to mutate.
+    :param carry_copy_carry_anchor: The AccessNode the carry input enters; used
+        for orphan cleanup after the rewrite severs the carrier-read chain.
+    :param carry_copy_in_conn: The tasklet's carrier-read input connector.
+    :param carry_copy_out_conn: The tasklet's output connector.
+    """
+    out_name: str
+    scan_axis: int
+    other_indices: List[Any]
+    iter_start: Any
+    iter_end: Any
+    carry_copy_state: SDFGState
+    carry_copy_tasklet: nodes.Tasklet
+    carry_copy_carry_anchor: nodes.AccessNode
+    carry_copy_in_conn: str
+    carry_copy_out_conn: str
+
+
 class _ScalarCarryScan(NamedTuple):
     """A successfully matched scalar-carry prefix-scan loop (TSVC s3112 family).
 
@@ -274,6 +315,18 @@ class LoopToScan(ppl.Pass):
                 for info in infos:
                     _rewrite(parent, loop, info, sdfg)
                     count += 1
+                continue
+            # No single-tasklet array-carry match; try the COMPOSITE-BODY shape
+            # (cloudsc ``for_1133``): outer body has a carry-copy state
+            # ``carrier[*, jk] = carrier[*, jk-1]`` plus one or more sibling
+            # accumulate states ``carrier[*, jk] += per-iter-term``. Net
+            # recurrence: ``carrier[*, jk] = carrier[*, jk-1] + sum(terms)``.
+            # The inner accumulate loops stay as loops; only the outer scan
+            # gets lifted.
+            comp = _match_composite_body(loop, sdfg)
+            if comp is not None:
+                _rewrite_composite_body(parent, loop, comp, sdfg)
+                count += 1
                 continue
             # No array-carry match; try scalar-carry (TSVC s3112: scalar accumulator
             # whose post-RMW value is written to a per-iter array slot). Mutually
@@ -624,7 +677,7 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
                        if e.data is not None and not e.data.is_empty()]
         if len(out_edges_t) != 1:
             continue
-        k_r = symbolic.simplify(k_w - scan_stride)
+        k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
         candidates.append(_Scan(
             op=op,
             out_name=out_name,
@@ -713,7 +766,7 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
                        if e.data is not None and not e.data.is_empty()]
         if len(out_edges_t) != 1:
             continue
-        k_r = symbolic.simplify(k_w - scan_stride)
+        k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
         candidates.append(_Scan(
             op=op,
             out_name=out_name,
@@ -744,6 +797,447 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     if len(infos) != 1:
         return None
     return infos[0]
+
+
+def _walk_back_to_computation(state: SDFGState, sdfg: SDFG, src_node, carrier: str):
+    """Walk backward from a non-transient carrier write through transient
+    intermediates and identity-assign (``__out = __inp``) tasklets, looking for
+    the first non-identity computational tasklet (a BinOp) OR a pure data
+    copy from the carrier itself. Returns ``(primary, in_edges, carry_in_edge)``
+    where ``primary`` is either a Tasklet (BinOp / identity) or an AccessNode
+    (pure data copy from carrier -- the post-TrivialTaskletElimination
+    carry-copy shape ``pfsqif -> pfsqif_index -> pfsqif``).
+
+    Stops on any branch / multi-input chain other than the identity-assign
+    pattern. The walk's primary purpose is to surface the SAME computational
+    binop that the matcher would have seen on a flat body, even when the
+    frontend has wrapped the carrier write in an extra ``assign_NN`` copy
+    tasklet (the cloudsc ``slice_pfsqXf`` shape) -- and to also accept the
+    post-TTE pure-AN-chain form where the assign tasklet has been folded away.
+    """
+    cur = src_node
+    seen = set()
+    incoming_edge = None  # edge whose dst is ``cur`` (or last-traversed transient)
+    while True:
+        if id(cur) in seen:
+            return None, [], None
+        seen.add(id(cur))
+        if isinstance(cur, nodes.AccessNode):
+            desc = sdfg.arrays.get(cur.data)
+            if desc is None:
+                return None, [], None
+            if not getattr(desc, 'transient', False):
+                # Non-transient source AccessNode. If it's the carrier itself,
+                # we've reached a pure data copy from the carrier -- treat the
+                # AN as the primary and the chain's last edge as the carrier
+                # read whose subset determines carry-copy vs accumulate
+                # classification.
+                if cur.data == carrier and incoming_edge is not None:
+                    return cur, [incoming_edge], incoming_edge
+                return None, [], None
+            ins = list(state.in_edges(cur))
+            if len(ins) != 1:
+                return None, [], None
+            incoming_edge = ins[0]
+            cur = ins[0].src
+            continue
+        if isinstance(cur, nodes.Tasklet):
+            if cur.code.language != dtypes.Language.Python:
+                return None, [], None
+            try:
+                tree = ast.parse((cur.code.as_string or '').strip())
+            except SyntaxError:
+                return None, [], None
+            if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+                return None, [], None
+            rhs = tree.body[0].value
+            ie = [e for e in state.in_edges(cur) if e.data is not None and not e.data.is_empty()]
+            # Identity-assign: walk through it (its sole input source is the
+            # next node back in the chain).
+            if isinstance(rhs, ast.Name) and len(ie) == 1:
+                # Stop if this identity-tasklet reads carrier directly (the
+                # carry-copy case): return it as the primary so the matcher's
+                # carry-copy classification handles it.
+                src_name, _src_sub = _resolve_input(state, ie[0])
+                if src_name == carrier:
+                    return cur, ie, ie[0]
+                incoming_edge = ie[0]
+                cur = ie[0].src
+                continue
+            # Non-identity: this is the primary.
+            return cur, ie, None
+        return None, [], None
+
+
+def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> Optional[_CompositeBodyScan]:
+    """Detect the composite-body scan shape (cloudsc ``for_1133``).
+
+    The outer body has:
+    * a carry-copy state with a single identity-assign tasklet (``__out =
+      __inp``) reading the carrier at ``[*, loop_var - 1]`` and writing
+      ``[*, loop_var]``; AND
+    * at least one accumulate state (possibly inside a nested LoopRegion)
+      with a binop tasklet whose carry input is the carrier at ``[*, loop_var]``
+      and whose write is also to ``[*, loop_var]`` (read-then-modify the same
+      slot, accumulating a delta into the level just initialised by the
+      carry-copy).
+
+    Returns the match info if both shapes are present on the SAME carrier,
+    otherwise ``None``.
+    """
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or stride != 1:
+        return None
+    loop_var = loop.loop_variable
+    if not loop_var:
+        return None
+    # Per-carrier collection of write sites with their classification.
+    # write_sites[carrier] = [(state, primary_tasklet, w_axis, w_others, kind, in_conn, carry_anchor)]
+    # kind: 'carry_copy' if the chain into the carrier resolves to a pure read of
+    #       carrier at offset -1 (no binop -- identity assign)
+    #       'accumulate'  if the chain has a binop tasklet whose carry input
+    #       resolves to carrier at offset 0
+    write_sites: Dict[str, list] = {}
+    for state in loop.all_states():
+        # Walk backward from each non-transient AccessNode of any array that
+        # has in-edges in this state. The first non-identity tasklet upstream
+        # is the "primary" tasklet whose shape determines the kind.
+        for an in state.data_nodes():
+            if state.in_degree(an) == 0:
+                continue
+            desc = sdfg.arrays.get(an.data)
+            if desc is None or getattr(desc, 'transient', False):
+                continue
+            carrier = an.data
+            in_edges = list(state.in_edges(an))
+            if len(in_edges) != 1:
+                continue
+            write_subset = in_edges[0].data.subset if in_edges[0].data is not None else None
+            if write_subset is None:
+                continue
+            w_axis, k_w, w_others, w_coef = _classify_subset(write_subset, loop_var)
+            if w_axis is None or w_coef != 1 or k_w != 0:
+                continue
+            # Walk back: find the first BinOp tasklet upstream (the
+            # computational tasklet) by traversing identity-assign tasklets and
+            # transient AccessNodes. The walk stops at the first non-identity
+            # tasklet OR returns None if it reaches a non-transient source.
+            primary, primary_in_edges, primary_carry_in_edge = _walk_back_to_computation(
+                state, sdfg, in_edges[0].src, carrier)
+            if primary is None:
+                continue
+            kind = None
+            in_conn = None
+            carry_anchor = None
+            # Special case: primary is an AccessNode (post-TTE pure data copy
+            # from the carrier itself). Classify the chain's source-edge
+            # subset directly.
+            if isinstance(primary, nodes.AccessNode):
+                if primary.data != carrier or primary_carry_in_edge is None:
+                    continue
+                src_subset = primary_carry_in_edge.data.subset
+                if src_subset is None:
+                    continue
+                r_axis, k_r, r_others, r_coef = _classify_subset(src_subset, loop_var)
+                if (r_axis == w_axis and r_coef == 1 and _same_other_indices(r_others, w_others)
+                        and k_r is not None):
+                    try:
+                        diff = int(symbolic.simplify(k_w - k_r))
+                    except Exception:
+                        diff = None
+                    if diff == 1:
+                        kind = 'carry_copy_pure'
+                        # No tasklet to mutate -- the rewrite must replace the
+                        # AN-source with a tasklet emitting 0.
+                        carry_anchor = primary_carry_in_edge.src
+                if kind is not None:
+                    write_sites.setdefault(carrier, []).append(
+                        (state, primary, w_axis, w_others, kind, in_conn, carry_anchor))
+                continue
+            # Parse the primary tasklet's body.
+            try:
+                tree = ast.parse((primary.code.as_string or '').strip())
+            except SyntaxError:
+                continue
+            if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+                continue
+            rhs = tree.body[0].value
+            # Identity-assign primary: the chain into the carrier is a pure
+            # read of carrier at SOME subset. Walk back from primary's input to
+            # find the source AccessNode subset.
+            if isinstance(rhs, ast.Name) and len(primary_in_edges) == 1:
+                ie = primary_in_edges[0]
+                src_name, src_subset = _resolve_input(state, ie)
+                if src_name == carrier and src_subset is not None:
+                    r_axis, k_r, r_others, r_coef = _classify_subset(src_subset, loop_var)
+                    if (r_axis == w_axis and r_coef == 1 and _same_other_indices(r_others, w_others)
+                            and k_r is not None):
+                        try:
+                            diff = int(symbolic.simplify(k_w - k_r))
+                        except Exception:
+                            diff = None
+                        if diff == 1:
+                            kind = 'carry_copy'
+                            in_conn = ie.dst_conn
+                            carry_anchor = ie.src
+            # BinOp primary tasklet (the accumulate): two inputs, one is the
+            # carrier at offset 0.
+            if kind is None and isinstance(rhs, ast.BinOp) and len(primary_in_edges) == 2:
+                op = _BINOP_TO_SCAN_OP.get(type(rhs.op))
+                if op == ScanOp.SUM:
+                    for ie in primary_in_edges:
+                        src_name, src_subset = _resolve_input(state, ie)
+                        if src_name != carrier or src_subset is None:
+                            continue
+                        r_axis, k_r, r_others, r_coef = _classify_subset(src_subset, loop_var)
+                        if (r_axis == w_axis and r_coef == 1
+                                and _same_other_indices(r_others, w_others) and k_r == k_w):
+                            kind = 'accumulate'
+                            break
+            if kind is None:
+                continue
+            write_sites.setdefault(carrier, []).append(
+                (state, primary, w_axis, w_others, kind, in_conn, carry_anchor))
+
+    # Look for a carrier with EXACTLY one carry-copy + at least one accumulate.
+    for carrier, sites in write_sites.items():
+        carry_copies = [s for s in sites if s[4] in ('carry_copy', 'carry_copy_pure')]
+        accumulates = [s for s in sites if s[4] == 'accumulate']
+        if len(carry_copies) != 1 or not accumulates:
+            continue
+        cc_state, cc_tasklet, w_axis, w_others, _, cc_in_conn, cc_anchor = carry_copies[0]
+        cc_out_edges = [e for e in cc_state.out_edges(cc_tasklet)
+                        if e.data is not None and not e.data.is_empty()]
+        if len(cc_out_edges) != 1:
+            continue
+        cc_out_conn = cc_out_edges[0].src_conn
+        # Ensure every accumulate carries the SAME other_indices as the carry-copy
+        # (same axis assignments). Composite bodies that write different slots
+        # would need per-slot handling; out of scope.
+        if not all(_same_other_indices(s[3], w_others) and s[2] == w_axis for s in accumulates):
+            continue
+        return _CompositeBodyScan(
+            out_name=carrier,
+            scan_axis=w_axis,
+            other_indices=w_others,
+            iter_start=start,
+            iter_end=end,
+            carry_copy_state=cc_state,
+            carry_copy_tasklet=cc_tasklet,
+            carry_copy_carry_anchor=cc_anchor,
+            carry_copy_in_conn=cc_in_conn,
+            carry_copy_out_conn=cc_out_conn,
+        )
+    return None
+
+
+def _mutate_carry_copy_to_zero(info: _CompositeBodyScan, sdfg: SDFG):
+    """Rewrite the carry-copy state so it writes ``0`` to the carrier instead of
+    the carrier's prior-iteration value. Handles both the with-tasklet shape
+    (primary is a ``Tasklet``) and the post-TTE pure-data-copy shape (primary
+    is an ``AccessNode`` -- the carrier read AN).
+    """
+    state = info.carry_copy_state
+    primary = info.carry_copy_tasklet
+    # Find the write AccessNode for the carrier in this state.
+    write_an = _find_carried_write_an(state, info.out_name)
+    if write_an is None:
+        return
+    write_in_edges = list(state.in_edges(write_an))
+    if len(write_in_edges) != 1:
+        return
+    write_in = write_in_edges[0]
+    if isinstance(primary, nodes.Tasklet):
+        # Tasklet primary: sever carry-input chain + rewrite body.
+        _disconnect_carry_chain(state, primary, info.carry_copy_in_conn,
+                                info.carry_copy_carry_anchor)
+        primary.code.as_string = f'{info.carry_copy_out_conn} = 0'
+        return
+    # AccessNode primary (post-TTE pure copy): the chain is
+    # ``carrier_read_AN -> transient_AN -> carrier_write_AN`` with no tasklet.
+    # Remove the in-edge into the write AN and prune any now-orphaned transient
+    # source ANs. Insert a fresh constant-emit tasklet feeding the write AN.
+    write_subset = write_in.data.subset
+    state.remove_edge(write_in)
+    src = write_in.src
+    # Prune the chain backward. Remove any transient AN with no remaining
+    # outgoing edges; also remove the non-transient source AN (the carrier-read
+    # end of the chain) if it ends up isolated.
+    while isinstance(src, nodes.AccessNode):
+        # If this node still has other in/out connections, leave it in place.
+        if state.out_degree(src) > 0:
+            break
+        ins = list(state.in_edges(src))
+        next_src = ins[0].src if len(ins) == 1 else None
+        for ie in ins:
+            state.remove_edge(ie)
+        # Remove the AN unconditionally now that its outgoing chain is gone
+        # and any incoming edges have been cleared. The carrier read AN is
+        # safe to drop here: the post-loop seed-add reads ``carrier`` from
+        # the parent state, not from this body state.
+        state.remove_node(src)
+        src = next_src
+    # Insert a constant-emit tasklet feeding the write AN.
+    zero_t = state.add_tasklet(state.label + '_zero', inputs=set(), outputs={'_o'},
+                               code='_o = 0')
+    state.add_edge(zero_t, '_o', write_an, None,
+                   mm.Memlet(data=info.out_name, subset=write_subset))
+
+
+def _rewrite_composite_body(parent: ControlFlowRegion, loop: LoopRegion,
+                            info: _CompositeBodyScan, sdfg: SDFG):
+    """Rewrite a composite-body scan: mutate the carry-copy tasklet to emit ``0``
+    (severing the carrier-read input chain), then emit a post-loop ``Scan`` +
+    seed-add over the carrier.
+
+    After mutation:
+    * The carry-copy state writes ``carrier[*, loop_var] = 0``.
+    * The accumulate state(s) still write ``carrier[*, loop_var] += term`` --
+      reading the just-zeroed carrier slot.
+    * The body's per-iter output is now the local delta (no recurrence).
+
+    Post-loop:
+    * ``Scan(carrier[*, iter_start : iter_end + 1])`` -> ``scan_buf``
+    * Seed-add Map writes ``carrier[*, iter_start + i] = seed +
+      scan_buf[..., i]`` where ``seed = carrier[*, iter_start - 1]``.
+    """
+    import dace
+    out_desc = sdfg.arrays[info.out_name]
+    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+
+    # Mutate the carry-copy state so it writes ``0`` instead of
+    # ``carrier[*, loop_var - 1]``. Two shapes are supported:
+    #   * ``Tasklet`` primary: sever the carrier-read input chain and rewrite the
+    #     tasklet body to ``__out = 0``.
+    #   * ``AccessNode`` primary: the post-TrivialTaskletElimination shape where
+    #     the assign tasklet has been folded into a pure ``read AN -> transient
+    #     AN -> write AN`` chain. Replace the AN chain with a fresh
+    #     constant-emit tasklet feeding the write AN.
+    _mutate_carry_copy_to_zero(info, sdfg)
+
+    # Allocate scan_buf with the SAME shape as the carrier's scanned region.
+    # We scan along ``scan_axis`` with the existing carrier layout; we'll use a
+    # per-(non-scan-axis) seed-add Map afterwards.
+    # For the common 2-D cloudsc shape ``carrier[KLON, KLEV + 1]`` with
+    # scan_axis = 1 and other_indices = [(0, jl)] (where jl is the inner loop
+    # var that walks 0..KLON-1), the scanned region is ``carrier[*, iter_start
+    # : iter_end + 1]`` and we want a per-jl prefix sum along jk.
+
+    # Strategy: emit a single ``Scan`` with stride = product of non-scan
+    # extents. This requires that the scan axis is the INNERMOST (contiguous)
+    # axis of the carrier in memory, which it isn't for cloudsc-shape
+    # ``[KLON, KLEV + 1]`` (scan axis = 1, KLEV+1 = innermost). The Scan
+    # libnode walks linearly, so per-(non-scan-axis) prefix sums fall out
+    # naturally with stride = 1 when scan-axis IS contiguous in memory --
+    # exactly our case (scan_axis = 1 is innermost).
+    # For more complex layouts we'd need a transpose; that's a follow-up.
+    scan_buf, _sbn = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{info.out_name}',
+                                    list(out_desc.shape), out_desc.dtype, transient=True,
+                                    find_new_name=True)
+
+    out_edges = list(parent.out_edges(loop))
+    s_scan = parent.add_state(loop.label + '_scan')
+    s_apply = parent.add_state(loop.label + '_scan_apply')
+    parent.add_edge(loop, s_scan, dace.InterstateEdge())
+    parent.add_edge(s_scan, s_apply, dace.InterstateEdge())
+    for e in out_edges:
+        parent.remove_edge(e)
+        parent.add_edge(s_apply, e.dst, e.data)
+
+    _emit_composite_scan(s_scan, sdfg, info, scan_buf, trip)
+    _emit_composite_seed_add(s_apply, sdfg, info, scan_buf, trip)
+    sdfg.reset_cfg_list()
+
+
+def _emit_composite_scan(state: SDFGState, sdfg: SDFG, info: _CompositeBodyScan,
+                          scan_buf: str, trip: Any):
+    """Scan ``carrier[*, iter_start : iter_end + 1]`` -> ``scan_buf`` along the
+    scan axis. Uses the libnode's ``stride`` property = product of NON-scan
+    extents so the per-(non-scan-axis) prefix sums fall out as residue-class
+    streams. With contiguous scan axis (the cloudsc layout), stride = 1.
+    """
+    out_desc = sdfg.arrays[info.out_name]
+    # Per-axis ranges: scan_axis -> [iter_start, iter_end]; others -> full extent.
+    scan_lo = info.iter_start
+    scan_hi = info.iter_end
+    rng = []
+    nonscan_size = 1
+    for ax, ext in enumerate(out_desc.shape):
+        if ax == info.scan_axis:
+            rng.append((scan_lo, scan_hi, 1))
+        else:
+            rng.append((0, ext - 1, 1))
+            nonscan_size = symbolic.simplify(nonscan_size * ext)
+    full_subset = subsets.Range(rng)
+
+    import copy as _copy
+    r = state.add_read(info.out_name)
+    w = state.add_write(scan_buf)
+    node = Scan(name=f'{state.label}_op', op=ScanOp.SUM, exclusive=False)
+    # If scan axis is the LAST (innermost / contiguous) axis, stride = 1.
+    # Otherwise stride = product of axes after scan_axis (the stride between
+    # consecutive scan-axis elements in linear memory).
+    inner_stride = 1
+    for ax in range(info.scan_axis + 1, len(out_desc.shape)):
+        inner_stride = symbolic.simplify(inner_stride * out_desc.shape[ax])
+    node.stride = inner_stride
+    state.add_node(node)
+    state.add_edge(r, None, node, _SCAN_IN,
+                   mm.Memlet(data=info.out_name, subset=_copy.deepcopy(full_subset)))
+    # scan_buf has the SAME shape as carrier; we write to the same slot range.
+    state.add_edge(node, _SCAN_OUT, w, None,
+                   mm.Memlet(data=scan_buf, subset=_copy.deepcopy(full_subset)))
+
+
+def _emit_composite_seed_add(state: SDFGState, sdfg: SDFG, info: _CompositeBodyScan,
+                              scan_buf: str, trip: Any):
+    """Emit a per-non-scan-axis ``Map`` over the seed + scanned-delta sum and
+    write to ``carrier[*, iter_start + i]``. Seed = ``carrier[*, iter_start - 1]``
+    (the pre-loop value at the immediately-prior scan-axis position).
+    """
+    import dace
+    out_desc = sdfg.arrays[info.out_name]
+    # Map iter dims: scan_axis -> i in [0, trip-1]; non-scan axes -> j_ax in full extent.
+    map_ranges = {}
+    inner_dim_vars = []  # (axis, var_name) for non-scan axes
+    for ax, ext in enumerate(out_desc.shape):
+        if ax == info.scan_axis:
+            map_ranges[f'_si_{ax}'] = subsets.Range([(0, trip - 1, 1)])
+            scan_var = f'_si_{ax}'
+        else:
+            v = f'_sj_{ax}'
+            map_ranges[v] = subsets.Range([(0, ext - 1, 1)])
+            inner_dim_vars.append((ax, v))
+    # Carrier index for the WRITE side: scan_axis -> iter_start + scan_var; others -> their map var
+    write_idx_per_axis = {}
+    seed_idx_per_axis = {}
+    scan_idx_per_axis = {}
+    seed_axis_val = symbolic.simplify(info.iter_start - 1)
+    for ax, ext in enumerate(out_desc.shape):
+        if ax == info.scan_axis:
+            write_idx_per_axis[ax] = symbolic.simplify(info.iter_start + symbolic.pystr_to_symbolic(scan_var))
+            seed_idx_per_axis[ax] = seed_axis_val
+            scan_idx_per_axis[ax] = write_idx_per_axis[ax]
+        else:
+            v = [vv for a, vv in inner_dim_vars if a == ax][0]
+            write_idx_per_axis[ax] = symbolic.pystr_to_symbolic(v)
+            seed_idx_per_axis[ax] = symbolic.pystr_to_symbolic(v)
+            scan_idx_per_axis[ax] = symbolic.pystr_to_symbolic(v)
+    def _to_subset(idx_map):
+        return subsets.Range([(idx_map[ax], idx_map[ax], 1) for ax in range(len(out_desc.shape))])
+    state.add_mapped_tasklet(
+        state.label + '_t',
+        map_ranges,
+        {
+            '__seed': mm.Memlet(data=info.out_name, subset=_to_subset(seed_idx_per_axis)),
+            '__d': mm.Memlet(data=scan_buf, subset=_to_subset(scan_idx_per_axis)),
+        },
+        '__o = __seed + __d',
+        {'__o': mm.Memlet(data=info.out_name, subset=_to_subset(write_idx_per_axis))},
+        external_edges=True,
+    )
 
 
 def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> Optional[_ScalarCarryScan]:
