@@ -205,6 +205,67 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            nest_map_bodies: bool = False):
 
     import pytest as _pytest
+    # ``--run-full-matrix`` hook: when the flag is set, the test was
+    # parametrised over knob fixtures it does NOT declare in its signature.
+    # Pick up those knob values from ``request.getfixturevalue`` so the
+    # caller's defaults (or explicit kwargs) are overridden by the
+    # parametrised value. Tests that DO declare the knob in their signature
+    # already passed the right value as a kwarg — those override the
+    # request lookup. Tests that don't go through pytest entirely (e.g.
+    # __main__ direct invocation) have no active request; fallback to
+    # whatever the caller passed.
+    try:
+        request = _pytest.fixture_request_or_none() if hasattr(_pytest, "fixture_request_or_none") else None
+    except Exception:
+        request = None
+    if request is None:
+        # Resolve the active pytest request via the test's introspection.
+        # ``_pytest`` doesn't expose a public "current request"; instead we
+        # look up the caller's local ``request`` fixture via the harness's
+        # frame. Tests that take ``request`` make it visible; for tests that
+        # don't, knob fallbacks stay on the kwargs path.
+        import inspect as _inspect
+        for _frame in _inspect.stack()[1:]:
+            _candidate = _frame.frame.f_locals.get("request")
+            if _candidate is not None and hasattr(_candidate, "getfixturevalue"):
+                request = _candidate
+                break
+    if request is not None and request.config.getoption("--run-full-matrix", default=False):
+        # Override any knob whose fixturename is in the request but the
+        # caller did not explicitly pass (i.e. the value is at its default).
+        # Identify "explicit" vs "default" via the function default: if the
+        # caller passes None or matches the default, treat as default.
+        _default_branch_mode = "merge"
+        _default_remainder = "scalar"
+        _default_emission = "default"
+        _default_nest = False
+        _default_copies = True  # ``insert_copies`` default in the signature
+        if branch_mode == _default_branch_mode and "branch_mode" in request.fixturenames:
+            try:
+                branch_mode = request.getfixturevalue("branch_mode")
+            except Exception:
+                pass
+        if remainder_strategy == _default_remainder and "remainder_strategy" in request.fixturenames:
+            try:
+                remainder_strategy = request.getfixturevalue("remainder_strategy")
+            except Exception:
+                pass
+        if emission_style == _default_emission and "emission_style" in request.fixturenames:
+            try:
+                emission_style = request.getfixturevalue("emission_style")
+            except Exception:
+                pass
+        if "tile_emit_mode" in request.fixturenames:
+            try:
+                _tem = request.getfixturevalue("tile_emit_mode")
+                if isinstance(_tem, tuple) and len(_tem) == 2:
+                    _nest, _copies = _tem
+                    if nest_map_bodies == _default_nest:
+                        nest_map_bodies = _nest
+                    if insert_copies == _default_copies:
+                        insert_copies = _copies
+            except Exception:
+                pass
     # ``sve_style`` (legacy: always-masked, no remainder split) is incompatible
     # with ``fp_factor`` since the SVE chain's ``_iter_mask`` predicate cannot
     # ride through ``c*x + (1-c)*y`` arithmetic. The other two legacy-pipeline

@@ -123,6 +123,19 @@ def pytest_addoption(parser):
         "``lib_nodes/`` coverage). Default sweep skips these to keep the "
         "feedback loop fast; the hardening sweep / CI includes them.",
     )
+    parser.addoption(
+        "--run-full-matrix",
+        action="store_true",
+        default=False,
+        help="Hyper-thorough sweep mode: every test that goes through "
+        "``run_vectorization_test`` is parametrised over the full knob "
+        "matrix (branch_mode x tile_emit_mode x emission_style x "
+        "remainder_strategy), even when the test signature only declares "
+        "a subset. The harness picks up the missing knobs from "
+        "``request.getfixturevalue`` so tests don't need code changes. "
+        "Expect ~3-10x more test cases than the default sweep — opt-in "
+        "only because most tests pin specific knob shapes by design.",
+    )
 
 
 def pytest_generate_tests(metafunc):
@@ -145,9 +158,39 @@ def pytest_generate_tests(metafunc):
 
     :param metafunc: The pytest metafunc for the test being collected.
     """
-    if "vectorize_config" not in metafunc.fixturenames:
+    full_matrix = metafunc.config.getoption("--run-full-matrix")
+    if "vectorize_config" in metafunc.fixturenames:
+        metafunc.parametrize("vectorize_config", ["tile_nodes", "legacy_cpu"], indirect=True)
+    elif full_matrix:
+        # ``--run-full-matrix``: also parametrise ``vectorize_config`` for
+        # tests that don't declare it. The harness routes the missing knob
+        # through ``request.getfixturevalue`` so the test code doesn't have
+        # to change.
+        metafunc.fixturenames.append("vectorize_config")
+        metafunc.parametrize("vectorize_config", ["tile_nodes", "legacy_cpu"], indirect=True)
+    # ``--run-full-matrix``: inject parametrisation for every knob fixture
+    # the test signature does NOT already declare. We use ``indirect=True``
+    # so values flow through the existing fixtures (whose definitions read
+    # ``request.param``); the harness picks them up from
+    # ``request.getfixturevalue`` when the caller didn't pass an explicit
+    # kwarg.
+    if not full_matrix:
         return
-    metafunc.parametrize("vectorize_config", ["tile_nodes", "legacy_cpu"], indirect=True)
+    knob_params = {
+        "branch_mode": ["fp_factor", "merge"],
+        "tile_emit_mode": ["flat", "nested", "nested_copies"],
+        "emission_style": ["default", "sve_style"],
+        "remainder_strategy": ["scalar", "masked"],
+    }
+    for knob, vals in knob_params.items():
+        if knob in metafunc.fixturenames:
+            continue  # already declared by the test; pytest will parametrise via the fixture itself
+        # The fixture isn't on the test signature but we want this test to
+        # run once per value. ``metafunc.parametrize`` requires the argname
+        # to be a fixturename, so append it first (no value reaches the
+        # test function — the harness reads it via ``request``).
+        metafunc.fixturenames.append(knob)
+        metafunc.parametrize(knob, vals, indirect=True)
 
 
 #: Test files that exercise ONLY the legacy 1D ``VectorizeCPU`` / ``VectorizeSVE``
