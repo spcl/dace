@@ -808,6 +808,245 @@ def test_cloudsc_for_1133_shape_after_inner_l2m():
     assert _num_scan_nodes(sdfg) >= 1
 
 
+# -----------------------------------------------------------------------------
+# Refusal-mode probes for the cloudsc pfsqXf shapes. Each test below exercises
+# ONE failure gate in ``LoopToScan._match_all`` that the cloudsc-actual bodies
+# trip. They are marked ``xfail(strict=True)`` so that when the matcher is
+# extended to accept the shape, the test flips to ``XPASS`` and forces the
+# author to remove the marker, locking in the extension.
+# -----------------------------------------------------------------------------
+
+
+def test_outer_body_with_extra_content_state_alongside_inner_loop():
+    """Outer scan ``jk`` body has both the inner column loop AND a separate
+    SDFGState that prepares a transient slice. Mirrors the cloudsc frontend's
+    tendency to materialize per-iteration slices in their own state. The extra
+    state writes only to a transient (``tmp``) so the matcher should accept
+    once descent tolerates extra content states."""
+    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+    import numpy as _np
+
+    @dace.program
+    def with_slice_state(arr: dace.float64[KLEV, KLON], delta: dace.float64[KLEV, KLON]):
+        for jk in range(1, KLEV):
+            # Transient row-slice: lives only across this jk iteration.
+            tmp = _np.empty(KLON, dtype=_np.float64)
+            for jl in range(KLON):
+                tmp[jl] = delta[jk, jl] * 2.0
+            for jl in range(KLON):
+                arr[jk, jl] = arr[jk - 1, jl] + tmp[jl]
+
+    sdfg = with_slice_state.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift the for_1133 shape even with extra body states; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+def test_inner_loop_with_multi_state_body():
+    """Inner column loop body has multiple content statements at the Python
+    level (split into separate frontend states pre-simplify). ``_fuse_body_states``
+    + the existing transient-chain walk together handle the post-simplify shape.
+    Positive lockdown: confirms the matcher accepts the multi-statement inner."""
+    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+
+    @dace.program
+    def multi_inner(arr: dace.float64[KLEV, KLON], delta: dace.float64[KLEV, KLON]):
+        for jk in range(1, KLEV):
+            for jl in range(KLON):
+                # Two-statement inner body. The frontend may keep two states.
+                tmp_val: dace.float64 = arr[jk - 1, jl] + delta[jk, jl]
+                arr[jk, jl] = tmp_val
+
+    sdfg = multi_inner.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift the shape even when the inner body is multi-state; '
+        f'got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+def test_carrier_with_extra_constant_axis_besides_inner_var():
+    """3-D carrier where one axis is constant in the loop (e.g. species
+    index), one is the outer scan axis (``jk``), one is the inner Map axis
+    (``jl``). The cloudsc pfsqXf are scoped per-species; the species index
+    is a constant non-scan axis the matcher must accept."""
+    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+
+    @dace.program
+    def per_species(arr: dace.float64[3, KLEV, KLON], delta: dace.float64[3, KLEV, KLON]):
+        # Hard-coded species index 1 (the constant non-scan axis).
+        for jk in range(1, KLEV):
+            for jl in range(KLON):
+                arr[1, jk, jl] = arr[1, jk - 1, jl] + delta[1, jk, jl]
+
+    sdfg = per_species.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift a 3-D carrier with one constant non-scan axis; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+def test_carrier_read_through_two_hop_transient_chain():
+    """Synthesize a 2-hop transient slice on the carrier read side. Hard to
+    force naturally from the Python frontend; this test uses an explicit
+    SDFG-level helper to plant the second-hop transient."""
+    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+
+    @dace.program
+    def two_hop(arr: dace.float64[KLEV, KLON], delta: dace.float64[KLEV, KLON]):
+        for jk in range(1, KLEV):
+            for jl in range(KLON):
+                # The double-slice forces two intermediates: row slice then column dereference
+                row = arr[jk - 1, :]
+                arr[jk, jl] = row[jl] + delta[jk, jl]
+
+    sdfg = two_hop.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should walk through a 2-hop transient slice chain; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+def test_carrier_with_computed_delta_chain():
+    """Delta is a computed expression (multiply + add) of two arrays, not a
+    direct read of a single delta array. The cloudsc pfsqXf shape has
+    ``delta = (zqxn2d[i] - zqx0[i]) * zgdph_r``."""
+    KLEV = dace.symbol('KLEV')
+
+    @dace.program
+    def computed_delta(out: dace.float64[KLEV], a: dace.float64[KLEV], b: dace.float64[KLEV],
+                       c: dace.float64[KLEV]):
+        for jk in range(1, KLEV):
+            out[jk] = out[jk - 1] + (a[jk] - b[jk]) * c[jk]
+
+    sdfg = computed_delta.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should accept a computed-expression delta; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+@pytest.mark.xfail(
+    reason="Reverse-engineered cloudsc ``for_1133`` body shape via the Python "
+    "frontend: outer level loop ``jk``, inner column loop ``jl`` whose body "
+    "has BOTH a slice-copy (``pfsqif[jl, jk] = pfsqif[jl, jk-1]``) AND a "
+    "per-species accumulation (``pfsqif[jl, jk] += (zqxn2d[jl, jm] - "
+    "zqx0[jl, jm]) * zgdph_r`` over ``jm``). The composite update IS a "
+    "scan on ``jk`` (``pfsqif[jl, jk] = pfsqif[jl, jk-1] + delta(jl, jk)``) "
+    "but the body has multiple inner LoopRegions / statements that "
+    "``_descend_to_content_state`` can't fold to a single flat body. "
+    "Extension: per-iteration body folding -- recognize that the cumulative "
+    "effect over jl-loop and jm-loop is a delta that depends on (jk, jl) "
+    "and lift the outer recurrence to a scan with that synthesized delta.",
+    strict=True,
+)
+def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
+    """Mimics the Fortran cloudsc ``DO JK ...`` body that produces ``for_1133``:
+    per-level slice-copy then per-species accumulation. This is what the
+    actual cloudsc SDFG looks like when emitted by FaCe -- a 5-array
+    prefix-sum on (jl, jk) with a non-trivial computed delta over jm."""
+    KLEV, KLON, NCLV = (dace.symbol(s) for s in ['KLEV', 'KLON', 'NCLV'])
+
+    @dace.program
+    def cloudsc_like(pfsqif: dace.float64[KLON, KLEV + 1], zqxn2d: dace.float64[KLON, NCLV],
+                     zqx0: dace.float64[KLON, NCLV], zgdph_r: dace.float64):
+        for jk in range(1, KLEV + 1):
+            # Slice-copy: carry level-1 value forward
+            for jl in range(KLON):
+                pfsqif[jl, jk] = pfsqif[jl, jk - 1]
+            # Per-species accumulation (the actual delta computation)
+            for jm in range(NCLV):
+                for jl in range(KLON):
+                    pfsqif[jl, jk] = pfsqif[jl, jk] + (zqxn2d[jl, jm] - zqx0[jl, jm]) * zgdph_r
+
+    sdfg = cloudsc_like.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift the cloudsc-like for_1133 body shape; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+@pytest.mark.xfail(
+    reason="cloudsc ``for_1079`` shape: a backward-iterating loop ``for jm in "
+    "range(NCLV - 1, 0, -1)`` whose body is a prefix-sum from right "
+    "(``acc[jm-1] = acc[jm] + delta[jm]``). The recurrence is a valid scan "
+    "on the reversed axis, but ``_match_all`` hard-rejects any loop whose "
+    "stride is not ``1`` at line 445. Extension: accept stride == -1 by "
+    "logically reversing the iteration order (init/end swap, k_w/k_r sign "
+    "flip) and feeding the reversed delta buffer to the libnode -- the "
+    "underlying associative op is commutative, so the running fold value "
+    "is preserved.",
+    strict=True,
+)
+def test_backward_stride_minus_one_prefix_sum():
+    """The cloudsc ``for_1079`` shape: backward iteration with carry on the
+    next-higher index. ``jm`` runs from ``NCLV - 1`` down to ``1`` (stride
+    -1); ``acc[jm-1] = acc[jm] + delta[jm]`` is a right-to-left prefix sum.
+    LoopToScan must accept this by reversing iteration semantics."""
+
+    @dace.program
+    def backward_scan(acc: dace.float64[N + 1], delta: dace.float64[N + 1]):
+        for jm in range(N, 0, -1):
+            acc[jm - 1] = acc[jm] + delta[jm]
+
+    sdfg = backward_scan.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should accept a backward-stride (-1) prefix sum; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+@pytest.mark.xfail(
+    reason="cloudsc ``for_430`` shape: a level loop ``jk`` whose body writes "
+    "MULTIPLE constant-index slots on the same array (``zvqx[0] = ...; "
+    "zvqx[1] = ...; zvqx[2] = ...``). ``PromoteConstantIndexAccess`` "
+    "privatises these into per-loop scalars, after which the loop "
+    "parallelises -- but only if there is no loop-carried dependence on "
+    "the level axis. When the level itself carries (level-indexed write at "
+    "``[..., jk, ...]``), the loop is a sequential level walk that should "
+    "lift to LoopToScan, NOT LoopToMap. The matcher currently rejects the "
+    "multi-slot shape because the body is not a single binary tasklet on "
+    "ONE carrier -- it has parallel writes to multiple slots of the same "
+    "array. Extension: per-slot independent scan matching.",
+    strict=True,
+)
+def test_level_indexed_write_with_multiple_constant_slots():
+    """The cloudsc ``for_430`` shape: multiple constant-index slots on the
+    same carrier in a level loop. Each slot's update is independent and
+    forms its own prefix recurrence along the level axis."""
+    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+
+    @dace.program
+    def multi_slot(zvqx: dace.float64[5, KLEV, KLON], delta: dace.float64[KLEV, KLON]):
+        for jk in range(1, KLEV):
+            for jl in range(KLON):
+                zvqx[0, jk, jl] = zvqx[0, jk - 1, jl] + delta[jk, jl] * 0.1
+                zvqx[1, jk, jl] = zvqx[1, jk - 1, jl] + delta[jk, jl] * 0.2
+                zvqx[2, jk, jl] = zvqx[2, jk - 1, jl] + delta[jk, jl] * 0.3
+
+    sdfg = multi_slot.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift multi-slot level-indexed prefix sums; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
 @pytest.mark.xfail(
     reason="Same descent gap as ``test_cloudsc_for_1133_shape_nested_inner_loopregion`` "
     "but with the inner control structure being a ``ConditionalBlock`` (if/else) "

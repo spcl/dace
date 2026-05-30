@@ -238,6 +238,20 @@ class LoopToScan(ppl.Pass):
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
+        # Normalise backward-iterating loops (``range(N, 0, -1)`` shape; cloudsc
+        # ``for_1079`` is the canonical case) to forward iteration. ``LoopToScan``'s
+        # matcher only handles ``stride == 1``; rather than build sign-flip handling
+        # into every gate, delegate to the dedicated canonicalisation pass once up
+        # front so subsequent analysis sees only positive-stride loops.
+        # ``NormalizeNegativeStride`` rebinds the old iterator on the body entry
+        # iedge (``jm = N - _loop_pos_X``) rather than rewriting body memlets;
+        # follow up with ``SymbolPropagation`` so the body's subsets are expressed
+        # in the new positive-stride iterator and the matcher recognises them.
+        from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
+        from dace.transformation.passes.symbol_propagation import SymbolPropagation
+        if NormalizeNegativeStride().apply_pass(sdfg, {}):
+            SymbolPropagation().apply_pass(sdfg, {})
+
         # Per-loop preprocess: fold adjacent content SDFGStates inside the body when the
         # iedge between them is trivial (v5 -- the cloudsc ``pfsqrf`` shape). Whole-SDFG
         # ``StateFusion`` doesn't reach into LoopRegion bodies via ``MatchPatterns``, so
@@ -284,38 +298,53 @@ def _collect_loops(sdfg: SDFG):
 
 
 def _descend_to_content_state(loop: LoopRegion):
-    """Locate the unique flat content state inside ``loop``'s body, descending
-    through at most one nested ``LoopRegion``.
+    """Find one candidate flat content state inside ``loop``'s body. Convenience
+    wrapper around :func:`_descend_to_content_state_candidates` -- returns the
+    first candidate, kept for callers that don't need to enumerate.
+    """
+    cands = _descend_to_content_state_candidates(loop)
+    return cands[0] if cands else (None, None)
 
-    Returns ``(state, inner_loop)`` where ``inner_loop`` is the nested
-    ``LoopRegion`` that was traversed (``None`` for the flat v1-v5 case). Returns
-    ``(None, None)`` on any shape that doesn't fit -- multiple content states,
-    multiple nested LoopRegions, deeper nesting, anything non-state non-LoopRegion.
+
+def _descend_to_content_state_candidates(loop: LoopRegion):
+    """Enumerate all flat content states inside ``loop``'s body that could host
+    the scan-update tasklet.
+
+    Returns a list of ``(state, inner_loop)`` tuples (``inner_loop`` is ``None``
+    when the candidate is a state at the outer body level). The body may have
+    MULTIPLE sibling inner LoopRegions and sibling content states (cloudsc
+    ``for_1133`` shape: slice-prep inner loop next to scan-update inner loop
+    plus a content state). Each candidate is returned; ``_match_all`` then tries
+    each until one yields a successful match. Downstream gates
+    (``_find_carried_arrays`` / per-loop "only-carriers-written" sweep) reject
+    candidates that aren't the scan-update region.
+
+    Backward-compatibility: returns the same shape as the original
+    single-candidate descent for the v5 flat case and the v6 single-nested case.
     """
     blocks = loop.nodes()
     inner_loop_regions = [b for b in blocks if isinstance(b, LoopRegion)]
     states = [b for b in blocks if isinstance(b, SDFGState)]
     others = [b for b in blocks if not isinstance(b, (LoopRegion, SDFGState))]
     if others:
-        return None, None
+        return []
     content_states = [s for s in states if len(s.nodes()) > 0]
-    # Flat case: no inner LoopRegion, exactly one content state.
+    candidates = []
+    # Flat candidates at the outer body level: every content state is itself
+    # a possible scan-update host (v5 case).
     if not inner_loop_regions:
         if len(content_states) == 1:
-            return content_states[0], None
-        return None, None
-    # Nested case: exactly one inner LoopRegion (with optional empty wrapper states
-    # at the outer level, e.g. ``loop_iter_post_value``), and the inner LoopRegion's
-    # body is itself flat with a single content state.
-    if len(inner_loop_regions) != 1 or content_states:
-        return None, None
-    inner = inner_loop_regions[0]
-    if not inner.loop_variable:
-        return None, None
-    inner_state, deeper = _descend_to_content_state(inner)
-    if inner_state is None or deeper is not None:
-        return None, None
-    return inner_state, inner
+            candidates.append((content_states[0], None))
+    else:
+        # Each sibling inner LoopRegion is a candidate; recurse into each.
+        for inner in inner_loop_regions:
+            if not inner.loop_variable:
+                continue
+            inner_state, deeper = _descend_to_content_state(inner)
+            if inner_state is None or deeper is not None:
+                continue
+            candidates.append((inner_state, inner))
+    return candidates
 
 
 def _fuse_body_states(loop: LoopRegion) -> int:
@@ -446,39 +475,47 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
         return []
 
     # Body shape: either (a) a single flat content state (the v1-v5 case --
-    # only tasklets and AccessNodes), or (b) a single nested ``LoopRegion``
-    # that itself wraps a flat content state (the cloudsc ``for_1133`` case --
-    # an outer scan over levels containing an inner data-parallel column loop).
-    # Empty wrapper states (iedge-assignment carriers) are tolerated -- see
-    # ``apply_pass``.
-    state, inner_loop = _descend_to_content_state(loop)
-    if state is None:
+    # only tasklets and AccessNodes), or (b) one or more nested ``LoopRegion``
+    # candidates that themselves wrap a flat content state (the cloudsc
+    # ``for_1133`` case -- outer scan over levels containing an inner data-
+    # parallel column loop, possibly alongside slice-prep inner loops or
+    # extra content states). Empty wrapper states are tolerated -- see
+    # ``apply_pass``. Each candidate ``(state, inner_loop)`` is tried; the
+    # first one whose state has carriers + matchable scan-update wins.
+    candidates = _descend_to_content_state_candidates(loop)
+    if not candidates:
         return []
-    for n in state.nodes():
-        if not isinstance(n, (nodes.Tasklet, nodes.AccessNode)):
-            return []
-
-    # Discover every candidate carrier: a non-transient Array that has both a
-    # read and a write incident in the body with subsets that depend on the
-    # loop variable. (v4: was the unique such array; now zero-or-more.)
-    carriers = _find_carried_arrays(state, sdfg, loop.loop_variable)
-    if not carriers:
+    matched: Optional[List[_Scan]] = None
+    for state, inner_loop in candidates:
+        bad_node = False
+        for n in state.nodes():
+            if not isinstance(n, (nodes.Tasklet, nodes.AccessNode)):
+                bad_node = True
+                break
+        if bad_node:
+            continue
+        carriers = _find_carried_arrays(state, sdfg, loop.loop_variable)
+        if not carriers:
+            continue
+        cand_matched: List[_Scan] = []
+        cand_failed = False
+        for out_name in carriers:
+            info = _match_one_carrier(loop, sdfg, state, out_name, start, end)
+            if info is None:
+                cand_failed = True
+                break
+            if inner_loop is not None:
+                info = info._replace(inner_loop=inner_loop)
+                if not _other_indices_match_inner(info.other_indices, inner_loop.loop_variable):
+                    cand_failed = True
+                    break
+            cand_matched.append(info)
+        if cand_failed or not cand_matched:
+            continue
+        matched = cand_matched
+        break
+    if matched is None:
         return []
-
-    # Match each carrier independently. If ANY fails, refuse the whole loop.
-    matched: List[_Scan] = []
-    for out_name in carriers:
-        info = _match_one_carrier(loop, sdfg, state, out_name, start, end)
-        if info is None:
-            return []
-        if inner_loop is not None:
-            info = info._replace(inner_loop=inner_loop)
-            # Nested case: the non-scan axis index must be exactly the inner loop's
-            # iterator (the rewrite emits a Map over that one variable). Any other
-            # ``other_indices`` shape is out of scope for v6.
-            if not _other_indices_match_inner(info.other_indices, inner_loop.loop_variable):
-                return []
-        matched.append(info)
 
     # Body may write only the carriers we matched. Any other non-transient write
     # would need ``lastprivate``-style preservation that the rewrite doesn't model.
@@ -496,19 +533,33 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
 
 
 def _other_indices_match_inner(other_indices: List[Any], inner_var: str) -> bool:
-    """``other_indices`` (the non-scan-axis subset entries) must consist of exactly one
-    axis whose index is the inner loop's iterator symbol. The vector-scan rewrite uses
-    that single inner axis as the Map dimension; multi-dim inner-Map shapes are out of
-    scope for v6.
+    """The non-scan-axis entries must consist of exactly ONE axis whose index is the
+    inner loop's iterator symbol, plus any number of axes whose index does NOT
+    reference ``inner_var`` (loop-invariant constants or enclosing-scope symbols
+    -- e.g. ``arr[species, jk, jl]`` where ``species`` is a constant fixed
+    outside the scan and ``jl`` is the inner-loop var). The vector-scan rewrite
+    uses the inner-var axis as the Map dimension; the loop-invariant axes are
+    threaded through verbatim and contribute no Map iter dim.
     """
-    if len(other_indices) != 1:
-        return False
-    _axis, expr = other_indices[0]
     inner_sym = symbolic.pystr_to_symbolic(inner_var)
-    try:
-        return bool(symbolic.simplify(symbolic.pystr_to_symbolic(str(expr)) - inner_sym) == 0)
-    except Exception:
-        return False
+    inner_count = 0
+    for _axis, expr in other_indices:
+        try:
+            e_sym = symbolic.pystr_to_symbolic(str(expr))
+        except Exception:
+            return False
+        try:
+            is_inner = bool(symbolic.simplify(e_sym - inner_sym) == 0)
+        except Exception:
+            is_inner = False
+        if is_inner:
+            inner_count += 1
+            continue
+        # Axis is non-inner: must NOT reference inner_var at all (else it's a
+        # composite axis that we can't safely separate from the Map dim).
+        if inner_var in {str(s) for s in e_sym.free_symbols}:
+            return False
+    return inner_count == 1
 
 
 def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: str,
@@ -1431,6 +1482,67 @@ def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sd
     sdfg.reset_cfg_list()
 
 
+def _nested_axis_kinds(info: _Scan, inner_var: str):
+    """Classify each non-scan axis of the carrier as either the inner-Map axis
+    (whose subset expression equals ``inner_var``) or a constant / loop-invariant
+    axis (passed through verbatim). Returns ``(inner_axis_idx, const_axes)``
+    where ``const_axes`` is a list of ``(axis_idx, const_expr)``.
+    """
+    inner_sym = symbolic.pystr_to_symbolic(inner_var)
+    inner_axis_idx = None
+    const_axes = []
+    for axis_idx, expr in info.other_indices:
+        try:
+            is_inner = bool(symbolic.simplify(symbolic.pystr_to_symbolic(str(expr)) - inner_sym) == 0)
+        except Exception:
+            is_inner = False
+        if is_inner:
+            inner_axis_idx = axis_idx
+        else:
+            const_axes.append((axis_idx, expr))
+    return inner_axis_idx, const_axes
+
+
+def _build_nested_carrier_subset(desc: data.Array, info: _Scan, scan_expr,
+                                 inner_var: str, inner_axis_expr) -> subsets.Range:
+    """Build a full N-dim subset for the carrier: ``scan_expr`` on the scan axis,
+    ``inner_axis_expr`` on the inner-var axis, and the per-axis constant expression
+    on every other axis.
+    """
+    inner_axis_idx, const_axes = _nested_axis_kinds(info, inner_var)
+    const_map = {axis: expr for axis, expr in const_axes}
+    rng = []
+    for axis_idx in range(len(desc.shape)):
+        if axis_idx == info.scan_axis:
+            rng.append((scan_expr, scan_expr, 1))
+        elif axis_idx == inner_axis_idx:
+            rng.append((inner_axis_expr, inner_axis_expr, 1))
+        else:
+            ex = const_map[axis_idx]
+            rng.append((ex, ex, 1))
+    return subsets.Range(rng)
+
+
+def _build_nested_carrier_range_subset(desc: data.Array, info: _Scan, scan_lo, scan_hi,
+                                       inner_var: str, inner_start, inner_end) -> subsets.Range:
+    """Multi-dim range subset for the carrier with a [scan_lo, scan_hi] range on the
+    scan axis and [inner_start, inner_end] on the inner-var axis. Constants pass
+    through verbatim.
+    """
+    inner_axis_idx, const_axes = _nested_axis_kinds(info, inner_var)
+    const_map = {axis: expr for axis, expr in const_axes}
+    rng = []
+    for axis_idx in range(len(desc.shape)):
+        if axis_idx == info.scan_axis:
+            rng.append((scan_lo, scan_hi, 1))
+        elif axis_idx == inner_axis_idx:
+            rng.append((inner_start, inner_end, 1))
+        else:
+            ex = const_map[axis_idx]
+            rng.append((ex, ex, 1))
+    return subsets.Range(rng)
+
+
 def _mutate_body_to_delta_buffer_nested(info: _Scan, delta_buf: str, inner_start: Any):
     """Like :func:`_mutate_body_to_delta_buffer` but routes the final write to a 2-D
     ``delta_buf[outer_iter - outer_start, inner_var - inner_start]``. The
@@ -1504,6 +1616,7 @@ def _emit_seed_add_nested(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: s
     while map_j in sdfg.symbols or map_j == map_i:
         map_j += '_'
 
+    out_desc = sdfg.arrays[info.out_name]
     seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
     write_axis_expr = symbolic.simplify(info.iter_start + info.k_w + symbolic.pystr_to_symbolic(map_i))
 
@@ -1524,28 +1637,40 @@ def _emit_seed_add_nested(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: s
     me.add_out_connector('OUT_scan')
     mx.add_in_connector('IN_o')
     mx.add_out_connector('OUT_o')
+    inner_size = symbolic.simplify(inner_end - inner_start + 1)
+    buf_j_local = symbolic.simplify(symbolic.pystr_to_symbolic(map_j) - inner_start)
+    map_j_sym = symbolic.pystr_to_symbolic(map_j)
+    # ``out`` carrier may have additional loop-invariant axes (e.g. ``[species,
+    # jk, jl]`` with ``species`` constant); ``_build_nested_carrier_*`` weaves
+    # the scan-axis / inner-var axis / constant axes into a full N-dim subset
+    # consistent with ``out_desc.shape``.
     state.add_edge(out_read, None, me, 'IN_seed',
                    mm.Memlet(data=info.out_name,
-                             subset=subsets.Range([(seed_axis_expr, seed_axis_expr, 1),
-                                                   (inner_start, inner_end, 1)])))
+                             subset=_build_nested_carrier_range_subset(
+                                 out_desc, info, seed_axis_expr, seed_axis_expr, inner_var,
+                                 inner_start, inner_end)))
     state.add_edge(scan_read, None, me, 'IN_scan',
                    mm.Memlet(data=scan_buf,
                              subset=subsets.Range([(0, trip - 1, 1),
-                                                   (inner_start, inner_end, 1)])))
+                                                   (0, inner_size - 1, 1)])))
     state.add_edge(me, 'OUT_seed', tasklet, '_seed',
                    mm.Memlet(data=info.out_name,
-                             subset=subsets.Range([(seed_axis_expr, seed_axis_expr, 1), (map_j, map_j, 1)])))
+                             subset=_build_nested_carrier_subset(
+                                 out_desc, info, seed_axis_expr, inner_var, map_j_sym)))
     state.add_edge(me, 'OUT_scan', tasklet, '_delta',
-                   mm.Memlet(data=scan_buf, subset=subsets.Range([(map_i, map_i, 1), (map_j, map_j, 1)])))
+                   mm.Memlet(data=scan_buf,
+                             subset=subsets.Range([(map_i, map_i, 1), (buf_j_local, buf_j_local, 1)])))
     state.add_edge(tasklet, '_o', mx, 'IN_o',
                    mm.Memlet(data=info.out_name,
-                             subset=subsets.Range([(write_axis_expr, write_axis_expr, 1),
-                                                   (map_j, map_j, 1)])))
+                             subset=_build_nested_carrier_subset(
+                                 out_desc, info, write_axis_expr, inner_var, map_j_sym)))
     state.add_edge(mx, 'OUT_o', out_write, None,
                    mm.Memlet(data=info.out_name,
-                             subset=subsets.Range([(symbolic.simplify(info.iter_start + info.k_w),
-                                                    symbolic.simplify(info.iter_start + info.k_w + trip - 1), 1),
-                                                   (inner_start, inner_end, 1)])))
+                             subset=_build_nested_carrier_range_subset(
+                                 out_desc, info,
+                                 symbolic.simplify(info.iter_start + info.k_w),
+                                 symbolic.simplify(info.iter_start + info.k_w + trip - 1),
+                                 inner_var, inner_start, inner_end)))
 
 
 def _scan_op_expression(op) -> str:
