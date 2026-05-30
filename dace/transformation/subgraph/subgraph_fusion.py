@@ -1266,15 +1266,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        # Dead-store elimination: if another AccessNode of
-                        # ``dname`` is reachable from ``global_map_exit``
-                        # through the candidate's interior consumer chain
-                        # and writes the same outer subset, this
-                        # intermediate's outer store would be a parallel
-                        # sibling write that the downstream chain overwrites.
-                        # Drop it rather than create an unordered WAW under
-                        # the fused MapExit. Regression:
-                        # ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
+                        # Dead-store elimination: skip the outer write when a
+                        # downstream consumer chain reaches another AccessNode
+                        # of ``dname`` writing the same outer subset -- the
+                        # intermediate's store is dead and would otherwise
+                        # create an unordered WAW sibling of the fused MapExit.
+                        # See ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
                         outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
                                                         global_map_exit.map.params, global_map_exit.map.range).subset
                         downstream_dominates = False

@@ -208,11 +208,9 @@ class InsertExplicitCopies(ppl.Pass):
             return False
 
         outer_memlet = edge.data
-        # Resolve the source/destination subsets in the outer array's index
-        # space. The inner edge's Memlet may name either the inner (``data ==
-        # inner_node.data``, with ``other_subset`` on the outer side) or the
-        # outer array, so query ``get_src_subset`` / ``get_dst_subset`` rather
-        # than re-using ``outer_memlet.subset`` directly.
+        # The inner Memlet may be dst-relative (``data == inner_node.data``,
+        # outer-side subset in ``other_subset``); resolve the subset in the
+        # outer array's index space via ``get_src/dst_subset``.
         if stage_in:
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset
         else:
