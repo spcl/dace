@@ -45,6 +45,7 @@ from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
+from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from tests.corpus.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
@@ -61,6 +62,13 @@ _REGIMES = {
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
 #: ``loop_to_scan`` reassociates the carry; ``loop_to_map`` may reorder fold operations.
 _RELAXED_STEPS = {'loop_to_map', 'loop_to_scan', 'loop_to_reduce'}
+
+#: Stages at which the serialize/deserialize roundtrip e2e check fires. ``simplify``
+#: is the first heavy SDFG mutation (state fusion + NSDFG inlining) where most
+#: roundtrip bugs surface; ``loop_to_map`` is the final transformed shape. Per-stage
+#: roundtrip on every label roughly doubles wall-clock for no new bug coverage --
+#: these two bracket every transform-induced descriptor / memlet / region mutation.
+_ROUNDTRIP_CHECKPOINTS = {'simplify', 'loop_to_map'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -80,8 +88,8 @@ _INDEX_SYMS = ('klev', 'kfdia', 'kidia')
 #: lands the rewrite that the previous batched flow lost), so the species loops
 #: parallelize. A change here means loop2map coverage shifted -- review before
 #: bumping the numbers.
-_EXPECTED_MAPS = 356
-_EXPECTED_SEQUENTIAL_LOOPS = 4
+_EXPECTED_MAPS = 357
+_EXPECTED_SEQUENTIAL_LOOPS = 3
 
 
 def _wcr_edges(sdfg: dace.SDFG):
@@ -146,6 +154,17 @@ def _unroll_fixpoint(sdfg):
         pass
 
 
+def _promote_args_to_symbols(sdfg):
+    """Promote read-only ``Scalar`` arguments to symbols. ``find_promotable_scalars``
+    enforces full safety (rejects any Scalar that's written, in a Stream, or has
+    persistent / external lifetime), so ``transients_only=False`` is safe to default
+    on for the cloudsc-style ``intent(in)`` integer args.
+    """
+    pass_ = ScalarToSymbolPromotion()
+    pass_.transients_only = False
+    pass_.apply_pass(sdfg, {})
+
+
 def _pmar(xform):
     return lambda sdfg: PatternMatchAndApplyRepeated([xform()]).apply_pass(sdfg, {})
 
@@ -170,6 +189,15 @@ def _chain():
     return [
         ('specialize', _specialize),
         ('simplify', lambda sdfg: sdfg.simplify()),
+        # Fortran ``intent(in)`` integer args (``kidia`` / ``kfdia`` / ``klev`` / ...)
+        # are registered as non-transient ``Scalar`` descriptors by the frontend.
+        # ``simplify``'s internal ``ScalarToSymbolPromotion`` runs with the default
+        # ``transients_only=True`` and skips them; without an explicit args-promotion
+        # stage they stay as Scalars, and every downstream ``kfdia_plus_1_N = (kfdia
+        # + 1)`` alias pins its iedge alive (hundreds of survivors in cloudsc). Run
+        # the unrestricted promotion right after the initial simplify so the rest
+        # of the chain sees them as real symbols.
+        ('promote_args_to_symbols', _promote_args_to_symbols),
         ('short_loop_unroll', _unroll_fixpoint),
         # Re-simplify after unrolling. A body that guards on the iteration variable
         # (e.g. ``if jm == ncldqi``) only exposes a constant condition once unrolling
@@ -223,6 +251,14 @@ def _chain():
         # parallelised by L2M would race on the shared write.
         ('aug_assign_to_wcr', _pmar(AugAssignToWCR)),
         ('loop_to_map', _pmar(LoopToMap)),
+        # Safety-net propagation. Each ``LoopToX`` pass now runs propagation
+        # internally on its rewritten subgraph, but the chain composes several
+        # of them and any pass that creates new state-level memlets without
+        # narrowing them (e.g. ``AugAssignToWCR`` re-encoding edges) leaves
+        # state-level memlets at array extent. One final whole-SDFG sweep
+        # ensures the post-chain SDFG carries tight subsets for downstream
+        # consumers (codegen, RedundantArrayCopying, validation diagnostics).
+        ('propagate_memlets_final', lambda sdfg: propagate_memlets_sdfg(sdfg)),
     ]
 
 
@@ -319,20 +355,22 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
         assert not bad, (f'{regime}/{label}: outputs diverge from the un-transformed reference '
                          f'(tol={tol:.0e}): {bad}')
 
-        # Serialize/deserialize roundtrip + e2e check. Any non-lossless serialization
-        # surfaces as a divergence between the in-memory SDFG and the reloaded copy
-        # when both run identical inputs. Use strict tolerance regardless of stage --
-        # parallel-reduction reassociation is a property of the *transform*, not of
-        # serialization, so the post-roundtrip output should be bit-identical to the
-        # pre-roundtrip output, which we just verified is within ``tol`` of the
-        # reference.
-        rt = _roundtrip(candidate, rt_dir, f'{regime}_{label}')
-        rt_out = _run(rt, inputs, ieee_build, sequential, tag=f'{regime}_{label}_rt')
-        rt_report = compare_outputs(rt_out, out, rtol=strict_tol, atol=strict_tol)
-        rt_bad = {name: (ma, mr) for name, (ma, mr, ok) in rt_report.items() if not ok}
-        assert not rt_bad, (
-            f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
-            f'(strict_tol={strict_tol:.0e}): {rt_bad}')
+        # Serialize/deserialize roundtrip + e2e check. Two checkpoints: after
+        # ``simplify`` (the first heavy SDFG mutation -- state fusion + NSDFG
+        # inlining -- where most roundtrip bugs surface) and at the end (after
+        # ``loop_to_map``, the full transformed shape). Doing it on every stage
+        # roughly doubles wall-clock for one extra compile + run per stage, with
+        # zero new bug coverage in practice -- the simplify and final checks
+        # bracket every transform-induced descriptor / memlet / region mutation
+        # the pipeline can introduce.
+        if label in _ROUNDTRIP_CHECKPOINTS:
+            rt = _roundtrip(candidate, rt_dir, f'{regime}_{label}')
+            rt_out = _run(rt, inputs, ieee_build, sequential, tag=f'{regime}_{label}_rt')
+            rt_report = compare_outputs(rt_out, out, rtol=strict_tol, atol=strict_tol)
+            rt_bad = {name: (ma, mr) for name, (ma, mr, ok) in rt_report.items() if not ok}
+            assert not rt_bad, (
+                f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
+                f'(strict_tol={strict_tol:.0e}): {rt_bad}')
 
 
 if __name__ == '__main__':

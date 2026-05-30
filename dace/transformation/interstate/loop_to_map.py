@@ -1226,3 +1226,15 @@ class LoopToMap(xf.MultiStateTransformation):
                 n.sdfg.parent = p
                 n.sdfg.parent_nsdfg_node = n
                 n.sdfg.parent_sdfg = p.sdfg
+
+        # Narrow the freshly-created state-level memlets. ``body.add_edge`` uses
+        # ``Memlet.from_array`` (full extent) when wiring the new ``NestedSDFG``,
+        # which hides the inside subset and stalls downstream passes that look
+        # at the carrier's state-level memlets (e.g. ``LoopToScan``'s
+        # ``_find_carried_arrays``, ``RedundantArrayCopying*``). Propagating the
+        # inside subsets out through the NSDFG + Map narrows them to
+        # ``[outer_loop_var, map_range]`` -- the symbol set ``symbols_defined_at``
+        # already reports for the ``cnode`` here.
+        from dace.sdfg.propagation import propagate_memlets_nested_sdfg, propagate_memlets_state
+        propagate_memlets_nested_sdfg(sdfg, body, cnode)
+        propagate_memlets_state(sdfg, body)

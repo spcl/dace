@@ -724,37 +724,352 @@ def test_v6_negative_write_offset_scan_with_outer_axis():
     assert _num_scan_nodes(sdfg) == 1
 
 
+KLEV = dace.symbol('KLEV')
+KLON = dace.symbol('KLON')
+
+
+@dace.program
+def _pfsqrf_2d_nested(pfsqrf: dace.float64[KLEV, KLON], delta: dace.float64[KLEV, KLON]):
+    """The cloudsc ``for_1133`` shape: outer scan over levels ``jk``, inner data-parallel
+    column loop ``jl``, prefix-sum recurrence on ``pfsqrf`` along ``jk``."""
+    for jk in range(1, KLEV):
+        for jl in range(KLON):
+            pfsqrf[jk, jl] = pfsqrf[jk - 1, jl] + delta[jk, jl]
+
+
+def test_cloudsc_for_1133_shape_nested_inner_loopregion():
+    """The cloudsc ``for_1133`` shape: outer scan over ``jk`` containing an inner
+    data-parallel ``jl`` column loop, prefix-sum on ``pfsqrf``. ``_match_all``
+    descends one level into the inner ``LoopRegion`` to find the scan-update
+    tasklet; the rewrite emits a single ``Scan`` libnode with
+    ``stride = inner_size`` (residue-class) over a contiguous ``[trip, inner_size]``
+    delta buffer, followed by a ``Map[(i, j)]`` seed-add. End-to-end numerics
+    match the sequential oracle.
+    """
+    import numpy as np
+    sdfg = _pfsqrf_2d_nested.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift the for_1133 prefix-sum shape; got '
+        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+    KL, KO = 5, 4
+    rng = np.random.default_rng(42)
+    p_init = rng.random((KL, KO))
+    d = rng.random((KL, KO))
+    p_ref = p_init.copy()
+    for jk in range(1, KL):
+        for jl in range(KO):
+            p_ref[jk, jl] = p_ref[jk - 1, jl] + d[jk, jl]
+    p_test = p_init.copy()
+    sdfg(pfsqrf=p_test, delta=d, KLEV=KL, KLON=KO)
+    assert np.allclose(p_test, p_ref), (
+        f'Vector-scan rewrite must match the sequential oracle; max diff '
+        f'{np.abs(p_test - p_ref).max()}')
+
+
 @pytest.mark.xfail(
-    reason='Cloudsc-actual ``for_1133`` (5 parallel prefix sums on pfsqif/pfsqrf/pfsqlf/'
-    "pfsqsf/pfcqlng over klev) is the next gap. Synthetic frontend versions of the "
-    'same shape match correctly; the dump-extracted body has intermediate slice '
-    'transients between the carry read and the scan-update tasklet that the v2 '
-    'matcher does not walk through. Tracking as the next LoopToScan extension.',
+    reason="Same cloudsc ``for_1133`` shape after the inner column loop has been "
+    "lifted to a Map by LoopToMap, isolating blocker (2): Map-exit memlet "
+    "propagation widens the state-level ``pfsqrf`` subset to the full array "
+    "extent (``[0:KLEV, 0:KLON]``) so ``_find_carried_arrays`` no longer sees "
+    "the outer scan-axis ``jk`` dependence. Same root cause as the for_430 "
+    "over-approximation follow-up. Fix paths: (A) descend into Map scopes when "
+    "searching for carriers and emit a vector-Scan; (B) tighten Map-exit "
+    "memlet propagation to preserve outer-loop-var indices (touches core dace).",
     strict=True,
 )
-def test_cloudsc_for_1133_isolated_scan():
-    """Loads the exact ``for_1133`` LoopRegion extracted from the cloudsc fixture
-    (the prefix-sum on ``pfsqif`` / ``pfsqrf`` / ``pfsqlf`` / ``pfsqsf`` / ``pfcqlng``
-    over klev). Confirms LoopToScan picks up the cloudsc-actual body shape.
-
-    The synthetic-frontend tests above (``test_v4_five_array_pfsqrf_pattern``,
-    ``test_v6_negative_write_offset_scan_with_outer_axis``,
-    ``test_accepts_two_content_state_body_via_v5_fuser``) cover the same pattern
-    individually; this test runs all of them together on the actual cloudsc body --
-    intermediate slice transients, nested LoopRegion (``for_1134``), and all.
+def test_cloudsc_for_1133_shape_after_inner_l2m():
+    """Synthetic reproduction of the cloudsc ``for_1133`` blocker (2):
+    after the inner column loop is a Map, the state-level memlets on the
+    carrier widen to the full array extent and the scan-axis dependence is
+    lost. Isolates the propagation side from the nested-LoopRegion side.
     """
-    import os
-    here = os.path.dirname(__file__)
-    fixture = os.path.join(here, 'fixtures', 'cloudsc_for_1133.sdfgz')
-    sdfg = dace.SDFG.from_file(fixture)
-    assert _num_loops(sdfg) >= 1, 'fixture should contain at least the for_1133 loop'
+    from dace.transformation.interstate.loop_to_map import LoopToMap
+
+    sdfg = _pfsqrf_2d_nested.to_sdfg(simplify=True)
+    inner = next(r for r in sdfg.all_control_flow_regions()
+                 if isinstance(r, LoopRegion) and r.loop_variable == 'jl')
+    xform = LoopToMap()
+    xform.loop = inner
+    xform.expr_index = 0
+    assert xform.can_be_applied(inner.parent_graph, 0, sdfg, permissive=False), (
+        'inner jl-loop must be parallel for this test to isolate blocker (2)')
+    xform.apply(inner.parent_graph, sdfg)
+    sdfg.validate()
 
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res is not None and res >= 1, (
-        'LoopToScan should lift the cloudsc for_1133 prefix-sum body; got '
-        f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+        f'LoopToScan should lift the for_1133 prefix-sum shape once the inner '
+        f'column loop is a Map; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
     assert _num_scan_nodes(sdfg) >= 1
+
+
+@pytest.mark.xfail(
+    reason="Same descent gap as ``test_cloudsc_for_1133_shape_nested_inner_loopregion`` "
+    "but with the inner control structure being a ``ConditionalBlock`` (if/else) "
+    "instead of a ``LoopRegion``. The carry update is guarded by a runtime mask "
+    "(``if mask[i]: out[i+1] = out[i] + delta[i]; else: out[i+1] = out[i]``). "
+    "``_match_one_carrier`` would need to descend into the ``ConditionalBlock`` "
+    "branches to find the scan-update tasklet and reason about each branch's "
+    "carry semantics. Same Path A extension as the for-loop descent.",
+    strict=True,
+)
+def test_scan_with_conditional_body_descends_into_if():
+    """``out[i+1] = out[i] + delta[i]`` guarded by a mask. The carry update is
+    inside a ``ConditionalBlock`` in the loop body. LoopToScan needs to descend
+    into the if/else branches to see the recurrence.
+    """
+
+    @dace.program
+    def conditional_scan(out: dace.float64[N + 1], delta: dace.float64[N], mask: dace.int32[N]):
+        for i in range(N):
+            if mask[i] > 0:
+                out[i + 1] = out[i] + delta[i]
+            else:
+                out[i + 1] = out[i]
+
+    sdfg = conditional_scan.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1, (
+        f'LoopToScan should lift the conditional scan shape by descending into '
+        f'the if/else branches; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert _num_scan_nodes(sdfg) >= 1
+
+
+# -----------------------------------------------------------------------------
+# Scalar-carry prefix scan (TSVC s3112 family).
+# -----------------------------------------------------------------------------
+
+
+def test_scalar_carry_inclusive_sum_s3112():
+    """``sum=0; for i: sum+=a[i]; b[i]=sum`` -- the canonical scalar-carry shape.
+    After the rewrite the loop is gone, replaced by a delta-build Map -> Scan ->
+    out-write Map chain. ``b`` matches the running prefix sum of ``a``."""
+
+    @dace.program
+    def s3112(a: dace.float64[N], b: dace.float64[N]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = sum_val + a[i]
+            b[i] = sum_val
+
+    sdfg = s3112.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 1
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+    assert _num_loops(sdfg) == 0
+
+    n = 16
+    rng = np.random.default_rng(3112)
+    a = rng.uniform(-1.0, 1.0, size=n)
+    b = np.zeros(n)
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(b, np.cumsum(a))
+
+
+def test_scalar_carry_inclusive_product():
+    """Multiplicative variant: ``prod *= a[i]; b[i] = prod``."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N]):
+        prod = 1.0
+        for i in range(N):
+            prod = prod * a[i]
+            b[i] = prod
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 8
+    rng = np.random.default_rng(0)
+    a = rng.uniform(0.95, 1.05, size=n)
+    b = np.zeros(n)
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(b, np.cumprod(a))
+
+
+def test_scalar_carry_inclusive_max():
+    """Max variant: ``m = max(m, a[i]); b[i] = m``. Matcher recognises
+    ``max(__acc, __delta)`` as ``ScanOp.MAX``."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N]):
+        m = -1e300
+        for i in range(N):
+            m = max(m, a[i])
+            b[i] = m
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 12
+    rng = np.random.default_rng(7)
+    a = rng.uniform(-3.0, 3.0, size=n)
+    b = np.zeros(n)
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(b, np.maximum.accumulate(a))
+
+
+def test_scalar_carry_inclusive_min():
+    """Min variant: ``m = min(m, a[i]); b[i] = m``."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N]):
+        m = 1e300
+        for i in range(N):
+            m = min(m, a[i])
+            b[i] = m
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 9
+    rng = np.random.default_rng(11)
+    a = rng.uniform(-2.0, 2.0, size=n)
+    b = np.zeros(n)
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(b, np.minimum.accumulate(a))
+
+
+def test_scalar_carry_refuses_extra_non_prefix_use():
+    """``sum+=a[i]; b[i]=sum; c[i]=sum*2.0`` -- the accumulator is read for a
+    NON-prefix purpose (the ``c[i]=sum*2.0`` write). Refuse: the matcher
+    requires the post-RMW accumulator to feed exactly one per-iter output."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = sum_val + a[i]
+            b[i] = sum_val
+            c[i] = sum_val * 2.0
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    # Refused -- the original loop survives, no Scan emitted.
+    assert res is None or res == 0
+    assert _num_scan_nodes(sdfg) == 0
+    assert _num_loops(sdfg) == 1
+
+
+def test_scalar_carry_refuses_overwrite_not_rmw():
+    """``sum = a[i]; b[i] = sum`` -- the accumulator is OVERWRITTEN each iter,
+    not RMW-updated. No recurrence, so no scan; refuse."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = a[i]
+            b[i] = sum_val
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    assert res is None or res == 0
+    assert _num_scan_nodes(sdfg) == 0
+
+
+def test_scalar_carry_acc_used_post_loop_emits_writeback():
+    """When the scalar accumulator is read AFTER the loop (TSVC s319-style:
+    ``b[N-1] = sum_val``), the rewrite emits a writeback state that copies
+    the last scan-output element into ``acc[0]`` so downstream readers see
+    the final running value -- matching the pre-rewrite sequential
+    post-loop scalar value."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], result: dace.float64[1]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = sum_val + a[i]
+            b[i] = sum_val
+        result[0] = sum_val  # post-loop use forces the writeback
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 10
+    rng = np.random.default_rng(319)
+    a = rng.uniform(-1.0, 1.0, size=n)
+    b = np.zeros(n)
+    result = np.zeros(1)
+    sdfg(a=a, b=b, result=result, N=n)
+    assert np.allclose(b, np.cumsum(a))
+    assert np.isclose(result[0], a.sum())
+
+
+def test_scalar_carry_acc_not_used_post_loop_no_writeback():
+    """When the accumulator is NOT read after the loop, the rewrite skips
+    the writeback state -- fewer ops, no dead writes."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = sum_val + a[i]
+            b[i] = sum_val
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    # Inspect: the rewrite added s_build, s_scan, s_write. The writeback state
+    # name suffix is ``_scan_acc_post`` -- absent here.
+    state_labels = {s.label for s in sdfg.all_states()}
+    assert not any('_scan_acc_post' in lbl for lbl in state_labels)
+
+
+def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
+    """The rewriter must preserve any interstate-edge assignments on the loop's
+    in-edge and out-edge (the symbol bindings the canonicalize pipeline
+    cascades onto loop boundaries). Synthesizes a contrived case by adding a
+    pre-loop iedge assignment ``offset = 0`` and checks it survives.
+    """
+    import dace
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = sum_val + a[i]
+            b[i] = sum_val
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    # Attach a trivial assignment to the iedge feeding the loop.
+    loop = next(r for r in sdfg.all_control_flow_regions()
+                if isinstance(r, dace.sdfg.state.LoopRegion) and r.loop_variable)
+    parent = loop.parent_graph
+    in_edges = list(parent.in_edges(loop))
+    assert in_edges, 'test fixture: loop should have at least one in-edge'
+    # Add a marker assignment to the first in-edge.
+    in_edges[0].data.assignments['_marker_pre_loop'] = '42'
+
+    LoopToScan().apply_pass(sdfg, {})
+
+    # After the rewrite, the marker must still be on an iedge feeding the new
+    # head state (``*_scan_build``).
+    new_head = next(s for s in sdfg.all_states() if s.label.endswith('_scan_build'))
+    head_in_edges = list(sdfg.in_edges(new_head))
+    found = any(e.data.assignments.get('_marker_pre_loop') == '42' for e in head_in_edges)
+    assert found, 'iedge assignment ``_marker_pre_loop=42`` lost during rewrite'
 
 
 if __name__ == '__main__':

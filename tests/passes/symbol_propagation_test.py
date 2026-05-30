@@ -283,20 +283,47 @@ def test_scalars():
     assert A[0] == 5
 
 
+def test_read_only_scalar_safe_to_propagate():
+    """A read-only ``Scalar`` argument (no AccessNode in-edges anywhere) is
+    semantically a fixed parameter; ``SymbolPropagation`` MUST fold values that
+    reference it. Pair with ``test_scalars`` which exercises the mutated-scalar
+    refusal path (``B`` is written from a Tasklet there)."""
+    sdfg = dace.SDFG('readonly_scalar_test')
+    sdfg.add_symbol('aliased', dace.int32)
+    sdfg.add_scalar('param', dace.int32)
+    sdfg.add_array('out', [4], dace.int32)
+
+    s_entry = sdfg.add_state('entry', is_start_block=True)
+    s_use = sdfg.add_state('use')
+    sdfg.add_edge(s_entry, s_use, dace.InterstateEdge(assignments={'aliased': '(param + 1)'}))
+    t = s_use.add_tasklet('w', {}, {'__o'}, '__o = aliased')
+    w = s_use.add_write('out')
+    s_use.add_edge(t, '__o', w, None, dace.Memlet('out[0]'))
+
+    propagated = SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert propagated and 'aliased' in propagated, (
+        f'symprop should propagate aliased={(param + 1)} when param is a read-only Scalar; got {propagated}')
+    assert all('aliased' not in e.data.assignments for e in sdfg.all_interstate_edges()), (
+        'dead-iedge sweep must drop the aliased assignment after substitution')
+
+
 def test_cloudsc_kidia_kfdia_promote_then_propagate():
     """CloudSC subset: scalar arguments ``kidia`` / ``kfdia`` used as the
     inclusive horizontal loop bound ``range(kidia, kfdia + 1)`` across several
     level nests (the ``DO JK=1,KLEV; DO JL=KIDIA,KFDIA`` shape). ``simplify``
     promotes ``kfdia + 1`` to per-nest symbols ``kfdia_plus_1_N = kfdia + 1``.
 
-    SymbolPropagation alone does NOT fold them: ``kfdia`` is a non-transient
-    scalar ARGUMENT, so values referencing it are (correctly) skipped by the
-    scalar filter -- the pass is a no-op (``apply_pass`` returns ``None``).
-    Promoting the scalar arguments to symbols first with
-    ``ScalarToSymbolPromotion(transients_only=False)`` makes ``kfdia`` a symbol,
-    after which SymbolPropagation folds ``kfdia_plus_1 -> (kfdia + 1)``. The
-    scalar-skip filter itself is unchanged (genuine scalars are still skipped --
-    see ``test_scalars``). Value-preserving throughout."""
+    SymbolPropagation folds these directly: ``kfdia`` is a non-transient ``Scalar``
+    descriptor but is a Fortran ``intent(in)`` argument -- never written anywhere
+    in the SDFG -- so it is semantically a read-only parameter. The scalar filter
+    only refuses propagation when the RHS reads a *mutated* scalar (a scalar with
+    an in-edge into one of its AccessNodes); read-only scalars are safe (see
+    ``test_scalars`` for the mutated-scalar refusal case). Pre-promotion folding is
+    required for cloudsc, where hundreds of ``kfdia_plus_1_N`` aliases survive
+    state fusion and unrolling; without read-only-scalar propagation, every alias
+    pins its iedge alive. ``ScalarToSymbolPromotion`` then becomes an optimisation
+    rather than a correctness prerequisite. Value-preserving throughout."""
     klev, klon = dace.symbol('klev'), dace.symbol('klon')
 
     @dace.program
@@ -321,12 +348,20 @@ def test_cloudsc_kidia_kfdia_promote_then_propagate():
     ref_out = np.zeros((nlev, nlon))
     ref(pt=pt.copy(), ptend=ref_out, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
 
-    # (1) Without promotion: kfdia is a scalar argument -> symprop is a no-op.
+    # (1) Without promotion: kfdia is a read-only Scalar argument -> symprop folds
+    #     ``kfdia_plus_1 -> (kfdia + 1)`` and drops the dead iedge assignments.
     sdfg = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
     assert _kfdia_plus1_syms(sdfg), 'simplify should promote kfdia + 1 to kfdia_plus_1 symbols'
     assert isinstance(sdfg.arrays.get('kfdia'), dace.data.Scalar)
-    assert SymbolPropagation().apply_pass(sdfg, {}) is None, \
-        'symprop must skip values referencing the scalar argument kfdia (no-op)'
+    propagated = SymbolPropagation().apply_pass(sdfg, {})
+    assert propagated and any(s.startswith('kfdia_plus_1') for s in propagated), \
+        f'symprop should fold ``kfdia_plus_1 -> (kfdia + 1)`` when kfdia is a read-only Scalar; got {propagated}'
+    assert not _kfdia_plus1_syms(sdfg), 'all kfdia_plus_1 aliases should be dead-iedge-eliminated'
+    # Numerics still match the reference.
+    sdfg.validate()
+    out1 = np.zeros((nlev, nlon))
+    sdfg(pt=pt.copy(), ptend=out1, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
+    assert np.allclose(out1, ref_out)
 
     # (2) Promote the scalar arguments to symbols first, then symprop folds them.
     sdfg2 = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
