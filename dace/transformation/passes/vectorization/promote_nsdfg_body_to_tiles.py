@@ -900,6 +900,25 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     return name
         return None
 
+    def _index_expr_for_symbol(self, inner: dace.SDFG, sym: str) -> Optional[str]:
+        """Return the right-hand-side string of ``sym``'s interstate assignment.
+
+        Companion to :meth:`_index_array_for_symbol` — that returns the array
+        head, this returns the verbatim ``ie.data.assignments[sym]`` string so
+        the caller can build per-lane access expressions (e.g., the multi-dim
+        source-array gather builds ``edge_blk[0, __l0, 0]`` from the
+        ``edge_blk[0, 0, 0]`` binding by substituting the tile-var-direction
+        index).
+
+        :param inner: The body SDFG.
+        :param sym: The gather index symbol name.
+        :returns: The raw assignment RHS, or ``None`` if not found.
+        """
+        for ie in inner.all_interstate_edges():
+            if sym in ie.data.assignments:
+                return ie.data.assignments[sym]
+        return None
+
     def _collapse_tile_gathers(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> set:
         """Collapse a fanned-out data gather into a masked :class:`TileGather`.
@@ -960,6 +979,19 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # affine-of-gather-symbol fills. Substitute the gather symbol
                 # for the ``__l0``-indexed read of the widened index tile.
                 gather_affine_dims = []
+                # (k, sym, idx_arr, idx_expr_str, tile_var_dim_in_inner_array)
+                # for multi-dim source-array gather indices (icon's
+                # ``edge_blk_index = edge_blk[jb, jc, 0]`` where ``edge_blk``
+                # is the full 3D source, not a widened 1D index tile). The
+                # inner read is window-relative (``edge_blk[0, 0, 0]`` is the
+                # window origin); the fill substitutes ``0`` -> ``__l0`` in
+                # the dim that the OUTER memlet binds to the tile var.
+                multidim_gather_dims = []
+                parent_state = nsdfg_node.sdfg.parent
+                outer_subsets_by_conn = {}
+                for oe in parent_state.in_edges(nsdfg_node):
+                    if oe.dst_conn is not None and oe.data is not None and oe.data.subset is not None:
+                        outer_subsets_by_conn[oe.dst_conn] = oe.data.subset
                 for k in range(src_ndim):
                     if k in sym_by_dim:
                         sym = sym_by_dim[k]
@@ -973,9 +1005,36 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                             unresolved = True
                             break
                         b, _e, _s = e.data.subset.ranges[k]
+                        idx_arr_shape = inner.arrays[idx_arr].shape
+                        idx_arr_ndim = len(idx_arr_shape)
+                        if idx_arr_ndim > 1:
+                            # Multi-dim source array (icon ``edge_blk`` shape
+                            # ``(NB, NPROMA, 3)``): find which inner-array dim
+                            # the outer memlet binds to the tile var, then
+                            # substitute that dim's value in the assignment
+                            # expression with ``__l0``.
+                            outer_sub = outer_subsets_by_conn.get(idx_arr)
+                            tile_var_dim = None
+                            if outer_sub is not None and len(outer_sub.ranges) == idx_arr_ndim:
+                                tv_sym = dace.symbolic.pystr_to_symbolic(spec.iter_vars[0])
+                                for d, (ob, _oe, _os) in enumerate(outer_sub.ranges):
+                                    ob_syms = ob.free_symbols if hasattr(ob, 'free_symbols') else set()
+                                    if tv_sym in ob_syms:
+                                        tile_var_dim = d
+                                        break
+                            if tile_var_dim is None:
+                                unresolved = True
+                                break
+                            idx_expr_str = self._index_expr_for_symbol(inner, sym)
+                            if idx_expr_str is None:
+                                unresolved = True
+                                break
+                            multidim_gather_dims.append((k, sym, idx_arr, idx_expr_str, tile_var_dim))
+                            idx_info.append((k, None, None, W[0], 1))
+                            continue
                         if str(b) == sym:
                             # Bare-symbol form ``src[k]`` — use idx_arr directly.
-                            window = inner.arrays[idx_arr].shape[0]
+                            window = idx_arr_shape[0]
                             idx_info.append((k, sym, idx_arr, window, _index_lane_stride(window, W[0])))
                         else:
                             # Affine-of-gather form ``src[affine(k, invariants...)]``
@@ -1003,7 +1062,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # sort can place the gather BEFORE the fill (the gather reads
                 # uninitialised memory — segfault on the gathered ``c[...]``).
                 agidx_access_by_dim: Dict[int, dace.nodes.AccessNode] = {}
-                if affine_dims or gather_affine_dims:
+                if affine_dims or gather_affine_dims or multidim_gather_dims:
                     off = tile_offset(list(W))
                     # Thread every symbol the affine expressions reference
                     # into the NSDFG (the lane fill tasklets reference the
@@ -1076,6 +1135,66 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         # ``_drop_gather_symbols`` simplifies its fan away.
                         consumed.add(sym)
                         idx_info[k] = (k, None, iname, W[0], 1)
+                    for (k, sym, idx_arr, idx_expr_str, tile_var_dim) in multidim_gather_dims:
+                        iname = f"_agidx_{src_name}_{k}"
+                        suffix = 0
+                        while iname in inner.arrays:
+                            suffix += 1
+                            iname = f"_agidx_{src_name}_{k}_{suffix}"
+                        inner.add_array(iname, list(W), dace.int64,
+                                        storage=dace.dtypes.StorageType.Register, transient=True)
+                        # Substitute the assignment's tile-var-direction index
+                        # (window-relative ``0``) with ``__l0`` so lane ``l``
+                        # reads the right per-lane value:
+                        #   ``edge_blk[0, 0, 0]`` -> ``edge_blk[0, __l0, 0]``
+                        # Use sympy Subscript surgery so we don't accidentally
+                        # rewrite a numeric ``0`` in a non-index position.
+                        idx_expr_sympy = dace.symbolic.pystr_to_symbolic(idx_expr_str)
+                        if not isinstance(idx_expr_sympy, dace.symbolic.Subscript):
+                            unresolved = True
+                            break
+                        new_indices = list(idx_expr_sympy.args[1:])
+                        if tile_var_dim >= len(new_indices):
+                            unresolved = True
+                            break
+                        new_indices[tile_var_dim] = dace.symbolic.pystr_to_symbolic("__l0")
+                        # Connector names cannot collide with inner array
+                        # names (validation rejects ``edge_blk`` as a
+                        # connector when an ``edge_blk`` array exists). Pass
+                        # the source via a connector ``_src`` (a 1D pointer
+                        # in the CPP body), and compute the per-lane access
+                        # as a FLAT offset using the source array's strides:
+                        # ``edge_blk[0, __l0, 0]`` is invalid C++ syntax
+                        # (comma operator collapses it to ``_src[0]``), so
+                        # emit ``_src[0 * strides[0] + __l0 * strides[1] +
+                        # 0 * strides[2]]``. The pointer ``_src`` points at
+                        # the boundary memlet's begin element, so flat-offset
+                        # indexing with the source strides addresses the
+                        # right absolute position.
+                        src_conn = "_src"
+                        src_strides = inner.arrays[idx_arr].strides
+                        flat_offset_terms = []
+                        for d, idx_expr in enumerate(new_indices):
+                            term = f"({dace.symbolic.symstr(idx_expr)}) * ({dace.symbolic.symstr(src_strides[d])})"
+                            flat_offset_terms.append(term)
+                        flat_offset = " + ".join(flat_offset_terms)
+                        expr_str = f"{src_conn}[{flat_offset}]"
+                        full_src_subset = ", ".join(f"0:{s}" for s in inner.arrays[idx_arr].shape)
+                        fill = istate.add_tasklet(name=f"agidx_{iname}",
+                                                  inputs={src_conn},
+                                                  outputs={"_out"},
+                                                  code=nested_loops(list(W), f"_out[{off}] = {expr_str};"),
+                                                  language=dace.dtypes.Language.CPP)
+                        iread = istate.add_access(idx_arr)
+                        istate.add_edge(iread, None, fill, src_conn,
+                                        dace.Memlet(f"{idx_arr}[{full_src_subset}]"))
+                        iacc = istate.add_access(iname)
+                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        agidx_access_by_dim[k] = iacc
+                        consumed.add(sym)
+                        idx_info[k] = (k, None, iname, W[0], 1)
+                if unresolved:
+                    continue
                 gather = TileGather(name=f"gather_{src_name}",
                                     widths=W,
                                     source_ndim=src_ndim,
