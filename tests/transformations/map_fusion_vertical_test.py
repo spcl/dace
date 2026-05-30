@@ -3214,6 +3214,110 @@ def test_map_fusion_stable_label(forward_fusion: bool):
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def test_map_fusion_inout_connector_intermediate_rename_consistency():
+    """Pins the InOut-connector structural split that ``MapFusionVertical``
+    performs when the fusion intermediate's data name matches an InOut
+    connector of a NestedSDFG inside the producer map's body. Without the
+    split, the rename ``inter_name -> __map_fusion_<inter_name>`` would
+    produce a NestedSDFG whose InOut connector references the original
+    outer data on the input edge and the renamed transient on the output
+    edge -- a validation error (`Inout connector X is connected to
+    different input ({'X'}) and output ({'__map_fusion_X'}) arrays`).
+
+    Reproducer minimised from TSVC s221::
+
+        for i in range(1, N):
+            a[i] = a[i] + c[i] * d[i]    # NestedSDFG InOut on 'a' (in-place RMW)
+            b[i] = b[i-1] + a[i] + d[i]  # consumer of 'a', emits a Scan + apply map
+
+    The fix in ``MapFusionVertical.apply`` runs ``_split_inout_for_intermediate``
+    before the standard rename machinery: it allocates a fresh inner array
+    ``__map_fusion_split_<name>`` inside the NestedSDFG, renames every inner
+    read-side AccessNode of ``<name>`` to the fresh name, adds a new input
+    connector with the fresh name, and redirects the outer input edge to it.
+    The NestedSDFG's ``<name>`` connector becomes output-only; the standard
+    rename machinery can then rename it to ``__map_fusion_<name>`` cleanly.
+
+    Test asserts (post-fix): fusion APPLIES, validation passes, the
+    NestedSDFG's InOut overlap is empty, and the numerical outputs match
+    the pre-fuse reference oracle bit-exact.
+    """
+    sdfg = dace.SDFG('mf_inout_repro')
+    sdfg.add_array('a', [10], dace.float64, transient=False)
+    sdfg.add_array('b', [10], dace.float64, transient=False)
+    sdfg.add_array('c', [10], dace.float64, transient=False)
+
+    state = sdfg.add_state('main')
+
+    # Map 1's body: an InOut-on-`a` NestedSDFG performing `a[i] = a[i] + c[i]`.
+    inner = dace.SDFG('inner')
+    inner.add_array('a', [1], dace.float64, transient=False)
+    inner.add_array('c', [1], dace.float64, transient=False)
+    ist = inner.add_state('istate')
+    a_r = ist.add_read('a')
+    c_r = ist.add_read('c')
+    a_w = ist.add_write('a')
+    t = ist.add_tasklet('upd', {'_a', '_c'}, {'_o'}, '_o = _a + _c')
+    ist.add_edge(a_r, None, t, '_a', dace.Memlet(data='a', subset='0'))
+    ist.add_edge(c_r, None, t, '_c', dace.Memlet(data='c', subset='0'))
+    ist.add_edge(t, '_o', a_w, None, dace.Memlet(data='a', subset='0'))
+
+    me1, mx1 = state.add_map('m1', {'i': '0:10'})
+    nsdfg = state.add_nested_sdfg(inner, inputs={'a', 'c'}, outputs={'a'})  # 'a' is InOut
+
+    a_src = state.add_read('a')
+    c_src = state.add_read('c')
+    a_inter = state.add_access('a')  # producer output, consumer input
+
+    state.add_memlet_path(a_src, me1, nsdfg, dst_conn='a', memlet=dace.Memlet(data='a', subset='i'))
+    state.add_memlet_path(c_src, me1, nsdfg, dst_conn='c', memlet=dace.Memlet(data='c', subset='i'))
+    state.add_memlet_path(nsdfg, mx1, a_inter, src_conn='a', memlet=dace.Memlet(data='a', subset='i'))
+
+    # Map 2: simple consumer `b[i] = a[i] + 1`.
+    me2, mx2 = state.add_map('m2', {'i': '0:10'})
+    t2 = state.add_tasklet('cons', {'_a'}, {'_b'}, '_b = _a + 1.0')
+    b_dst = state.add_write('b')
+    state.add_memlet_path(a_inter, me2, t2, dst_conn='_a', memlet=dace.Memlet(data='a', subset='i'))
+    state.add_memlet_path(t2, mx2, b_dst, src_conn='_b', memlet=dace.Memlet(data='b', subset='i'))
+
+    sdfg.validate()
+
+    # Numeric oracle: capture pre-fuse output, then optionally re-run post-fuse.
+    rng = np.random.default_rng(221)
+    a_in = rng.standard_normal(10)
+    c_in = rng.standard_normal(10)
+    ref = {'a': a_in.copy(), 'b': np.zeros(10), 'c': c_in.copy()}
+    res = {'a': a_in.copy(), 'b': np.zeros(10), 'c': c_in.copy()}
+    sdfg_ref = copy.deepcopy(sdfg)
+    sdfg_ref(**ref)
+
+    # Apply MapFusionVertical (the actual production pass) and ensure validation holds.
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+    res_apply = PatternMatchAndApplyRepeated([MapFusionVertical()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # The structural split must let the fusion APPLY (refusal was the pre-fix
+    # behavior; pinning the split here prevents a future regression that
+    # reintroduces a refusal-only path on this shape).
+    assert res_apply is not None and 'MapFusionVertical' in res_apply, (
+        'MapFusionVertical must apply on the InOut shape via the structural split, '
+        f'not refuse; got result={res_apply!r}.'
+    )
+
+    # After the split + fusion the NestedSDFG's InOut overlap must be empty
+    # (the connector that was InOut is now output-only).
+    nsdfgs = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert nsdfgs, 'expected at least one NestedSDFG to survive the fusion'
+    for n in nsdfgs:
+        inout = set(n.in_connectors) & set(n.out_connectors)
+        assert not inout, f'NestedSDFG {n.label} still has InOut overlap after split: {sorted(inout)}'
+
+    # Numerically, the fused SDFG produces the same outputs as the pre-fuse oracle.
+    sdfg(**res)
+    assert np.allclose(ref['a'], res['a']), 'a-array semantics broken by fusion (InOut split desync)'
+    assert np.allclose(ref['b'], res['b']), 'b-array semantics broken by fusion'
+
+
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()
