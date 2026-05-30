@@ -220,6 +220,35 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if container in sdfg.arrays and container not in self.host_data:
                     self.host_data.append(container)
 
+        # Propagate host_data through maps via a fixed point: if any map's
+        # input or output is host-pinned, every other memlet on that same
+        # map must also be host-pinned -- otherwise the map straddles host
+        # and GPU storage, which downstream ``set_default_schedule_and_storage_types``
+        # rejects with conflicting schedule constraints (one input demands
+        # CPU_Multicore, another demands GPU_Device, on the same MapEntry).
+        host_data_set = set(self.host_data)
+        changed = True
+        while changed:
+            changed = False
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                for state in nsdfg.states():
+                    for n in state.nodes():
+                        if not isinstance(n, nodes.EntryNode):
+                            continue
+                        adj_data = set()
+                        for e in state.out_edges(n):
+                            if not e.data.is_empty():
+                                adj_data.add(e.data.data)
+                        for e in state.in_edges(state.exit_node(n)):
+                            if not e.data.is_empty():
+                                adj_data.add(e.data.data)
+                        if adj_data & host_data_set:
+                            for d in adj_data:
+                                if d in nsdfg.arrays and d not in host_data_set:
+                                    host_data_set.add(d)
+                                    self.host_data.append(d)
+                                    changed = True
+
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
 
