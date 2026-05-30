@@ -96,6 +96,16 @@ class InductionVariableSubstitution(ppl.Pass):
                 continue
             if _try_substitute(parent, node, sdfg):
                 count += 1
+                continue
+            # Multi-statement bodies where one of the statements is a scalar IV
+            # recurrence on an interstate edge (``sym := sym + literal``) -- the
+            # canonical TSVC counter-IV shape (s122/s125/s126: ``k = k + 1``
+            # alongside ``flat[k] = ...``). Substitute the body's reads of
+            # ``sym`` with the closed form so the cross-iter dependency is gone
+            # and the surviving loop is parallelisable. Unlike ``_try_substitute``
+            # (which eliminates the loop), this preserves it.
+            if _try_substitute_iedge_iv(parent, node, sdfg):
+                count += 1
         return count or None
 
 
@@ -297,3 +307,178 @@ def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, 
     for e in out_edges:
         parent.add_edge(new_state, e.dst, e.data)
     parent.remove_node(loop)
+
+
+# -----------------------------------------------------------------------------
+# Iedge-based IV substitution (multi-statement bodies)
+# -----------------------------------------------------------------------------
+
+
+def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Substitute an interstate-edge induction variable (``sym := sym + literal``)
+    in the loop body with its closed form.
+
+    Unlike :func:`_try_substitute` which eliminates the whole loop for a
+    pure ``acc = acc OP const`` body, this preserves the loop and only
+    removes the loop-carried dependency on the IV symbol. After the
+    substitution the surviving loop body is no longer cross-iteration
+    coupled through ``sym`` -- the canonical TSVC ``s122 / s125 / s126``
+    shape::
+
+        k = 1                               # pre-loop init (unchanged)
+        for i in range(N):
+            ...
+            k = k + 1                       # iedge ``k := k + 1`` -- removed
+            flat[k - 1] = ...               # ``k`` substituted to closed form
+
+    After the rewrite the inner body references ``k + (loop_var - start + 1)``
+    instead of ``k`` (where ``k`` evaluates to its pre-loop value), so
+    ``flat[k - 1] = ...`` becomes ``flat[k + (loop_var - start) ...] = ...``
+    -- a per-element write the downstream ``LoopToMap`` can lift. The
+    symbol's post-loop value is materialised on the loop's exit edge so
+    later readers see ``k + trip_count * step`` (matching the un-rewritten
+    sequential semantics).
+
+    Scope today (kept narrow for v1):
+
+    * stride ``== 1`` (matches the existing :func:`_try_substitute` scope);
+    * exactly ONE iedge in the body carries an IV assignment of the form
+      ``sym := sym + literal`` (or ``sym := sym - literal``);
+    * the IV iedge has no other assignments and no condition;
+    * the IV iedge is sourced from ``loop.start_block``, and the source
+      block is empty (an iedge-only state) so every other body block is
+      reachable AFTER the iedge -- substituting every body block with the
+      single ``sym + (loop_var - start + 1) * step`` closed form is sound;
+    * no other iedge in the body writes ``sym`` (the IV is unique);
+    * ``sym`` is an SDFG symbol / free symbol (not a data container).
+
+    Out of scope (potential follow-ups):
+
+    * IV iedge between two non-empty content blocks (would need pre-iedge
+      vs post-iedge block partitioning + two different closed-form
+      substitutions);
+    * derived IVs (multiple symbols related by ``j := a*i + b``);
+    * multi-step IV (``sym := sym + sym2`` where ``sym2`` is a loop-
+      invariant non-literal -- the closed form is the same up to
+      symbolic-rendering).
+
+    :param parent: CFG containing ``loop``.
+    :param loop: Candidate ``LoopRegion``.
+    :param sdfg: Owning SDFG.
+    :returns: ``True`` if the substitution was applied; ``False`` if any
+        pre-condition failed (no mutation in that case).
+    """
+    if not loop.loop_variable:
+        return False
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or stride != 1:
+        return False
+
+    # 1. Find the IV iedge: exactly one iedge in the body whose ONLY assignment
+    #    is ``sym := sym + literal`` (or symmetric). Reject any iedge with a
+    #    non-trivial condition.
+    iv_candidate = None  # (edge, sym_name, step_sympy)
+    for e in loop.edges():
+        if e.data.condition.as_string not in ('1', 'True', '(1)'):
+            return False
+        if not e.data.assignments:
+            continue
+        if len(e.data.assignments) != 1:
+            # An IV iedge here carries only the IV; other assignments would
+            # need separate handling.
+            continue
+        ((lhs, rhs), ) = e.data.assignments.items()
+        try:
+            rhs_expr = symbolic.pystr_to_symbolic(rhs)
+            lhs_sym = symbolic.pystr_to_symbolic(lhs)
+            diff = symbolic.simplify(rhs_expr - lhs_sym)
+        except Exception:
+            # ``rhs`` may be a comparison (``StrictGreaterThan`` etc.) or
+            # other non-arithmetic expression on which ``-`` raises
+            # ``TypeError`` -- the assignment is not an arithmetic IV.
+            continue
+        # Step must be a number constant (literal). Symbolic step is a follow-up.
+        if not getattr(diff, 'is_number', False):
+            continue
+        # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
+        if lhs == loop.loop_variable:
+            continue
+        if lhs not in sdfg.symbols and lhs not in sdfg.free_symbols:
+            continue
+        # No other body iedge may also write ``lhs``.
+        other_writers = [oe for oe in loop.edges()
+                         if oe is not e and lhs in (oe.data.assignments or {})]
+        if other_writers:
+            continue
+        if iv_candidate is not None:
+            return False  # >1 IV pattern; defer to a future multi-IV extension
+        iv_candidate = (e, lhs, diff)
+    if iv_candidate is None:
+        return False
+    iv_edge, sym_name, step = iv_candidate
+
+    # 2. v1 shape constraint: the IV iedge sources from loop.start_block, and
+    #    the start block is empty (an iedge-only state). Every other body
+    #    block is then post-iedge and substituting the whole body once with
+    #    the post-iedge closed form is sound.
+    if iv_edge.src is not loop.start_block:
+        return False
+    if not isinstance(iv_edge.src, SDFGState):
+        return False
+    if iv_edge.src.nodes():
+        # start block has content -- pre-iedge reads of ``sym`` would need a
+        # different (pre-step) closed form; defer.
+        return False
+
+    # 3. Build the closed form. At ``loop_var = i`` (with ``stride == 1``):
+    #    - At iv_edge.src (the empty start block): sym = sym_init + (i - start) * step.
+    #    - At iv_edge.dst and post-iedge blocks in the same iter:
+    #      sym = sym_init + (i - start + 1) * step.
+    #    Since the SDFG symbol ``sym`` evaluates to its current value
+    #    (which IS ``sym_init`` once we strip the iedge increment), the
+    #    post-iedge substitution writes ``sym`` -> ``sym + ((i - start) + 1) * step``.
+    loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    sym_sym = symbolic.pystr_to_symbolic(sym_name)
+    norm_iter = symbolic.simplify(loop_var_sym - start)
+    post_iedge_expr = symbolic.simplify(sym_sym + (norm_iter + 1) * step)
+
+    # 4. Substitute. The loop-level ``replace_dict`` walks every state +
+    #    iedge in the body. We protect the IV iedge by clearing its
+    #    assignment first (so the substitution doesn't try to rewrite the
+    #    IV expression onto itself).
+    iv_edge.data.assignments = {}
+
+    # Substitute ``sym`` -> closed form throughout the loop body (every state
+    # + every other iedge inside the loop). Memlet subsets, tasklet code,
+    # iedge conditions and assignment RHSes all get rewritten.
+    loop.replace_dict({sym_name: symbolic.symstr(post_iedge_expr)})
+
+    # 5. Materialise the post-loop value so later readers (including the
+    #    next iteration of an enclosing loop, when this one is nested) see
+    #    ``sym + trip_count * step`` -- the value the un-rewritten
+    #    sequential loop would leave behind. We always splice an empty
+    #    "iv-post" state into ``parent`` immediately after ``loop`` and
+    #    carry the ``sym := ...`` assignment on the iedge to it. This
+    #    handles both shapes uniformly:
+    #
+    #    * ``loop`` has outgoing iedges -- they get rerouted to start from
+    #      ``iv_post`` so any pre-existing exit assignments are preserved.
+    #    * ``loop`` has no outgoing iedges (it is the only / last block of
+    #      a containing loop body) -- the new ``iv_post`` becomes the
+    #      next-block-after-loop inside the parent, ensuring the IV update
+    #      runs once per containing-loop iteration before the body restarts.
+    import dace
+    trip_count = symbolic.simplify((end - start) // stride + 1)
+    post_loop_value = symbolic.symstr(symbolic.simplify(sym_sym + trip_count * step))
+
+    iv_post = parent.add_state(loop.label + '_iv_post')
+    existing_out = list(parent.out_edges(loop))
+    for oe in existing_out:
+        parent.add_edge(iv_post, oe.dst, oe.data)
+        parent.remove_edge(oe)
+    iv_edge_out = dace.InterstateEdge(assignments={sym_name: post_loop_value})
+    parent.add_edge(loop, iv_post, iv_edge_out)
+
+    return True

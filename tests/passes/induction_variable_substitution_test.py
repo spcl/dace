@@ -194,6 +194,127 @@ def test_arithmetic_iv_symbolic_stride_collapses_to_closed_form():
     assert np.isclose(s[0], 1.5 * trip)
 
 
+# ---------------------------------------------------------------------------
+# Iedge-IV substitution: ``k := k + literal_const`` on an interstate edge
+# inside a multi-statement body. Substitute reads of ``k`` with the closed
+# form; surviving loop becomes parallelisable.
+# ---------------------------------------------------------------------------
+
+
+@dace.program
+def _iedge_iv_counter_in_inner_loop(flat: dace.float64[N * N],
+                                     a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N]):
+    """TSVC ``s125`` minimal repro: scalar counter ``k`` incremented each
+    inner iter, indexing a flat output array. After IV substitution the
+    inner-body reference to ``k`` becomes ``k + (loop_var - start + 1)``
+    (a per-iter affine expression) so the inner loop is parallelisable.
+    """
+    k = -1
+    for i in range(N):
+        for j in range(N):
+            k = k + 1
+            flat[k] = a[i, j] + b[i, j] * c[i, j]
+
+
+def test_iedge_iv_counter_in_inner_loop_substitution():
+    """``k := k + 1`` on an inner-loop iedge gets substituted; the inner-
+    body reference ``flat[k]`` becomes ``flat[k + (i+1)]`` (loop-var
+    affine). Numerics match the row-major flatten of ``a + b*c``."""
+    sdfg = _prep_and_run(_iedge_iv_counter_in_inner_loop)
+    sdfg.validate()
+    # The inner loop survives but its body is no longer carrying ``k``;
+    # downstream LoopToMap (run separately) would lift it.
+    n = 6
+    rng = np.random.default_rng(125)
+    a = rng.standard_normal((n, n))
+    b = rng.standard_normal((n, n))
+    c = rng.standard_normal((n, n))
+    flat = np.zeros(n * n)
+    sdfg(flat=flat, a=a, b=b, c=c, N=n)
+    expected = (a + b * c).ravel(order='C')
+    assert np.allclose(flat, expected), f"got {flat}, expected {expected}"
+
+
+@dace.program
+def _iedge_iv_counter_step_two(flat: dace.float64[2 * N], a: dace.float64[N]):
+    """Iedge IV with step != 1: ``k := k + 2``. Closed-form must use the
+    actual step value when substituting reads."""
+    k = 0
+    for i in range(N):
+        k = k + 2
+        flat[k - 2] = a[i]
+        flat[k - 1] = a[i]
+
+
+def test_iedge_iv_counter_step_two_substitution():
+    """``k := k + 2`` -- closed form must scale by 2 in the substituted
+    references."""
+    sdfg = _prep_and_run(_iedge_iv_counter_step_two)
+    sdfg.validate()
+    n = 5
+    a = np.arange(n, dtype=np.float64) + 1.0
+    flat = np.zeros(2 * n)
+    sdfg(flat=flat, a=a, N=n)
+    expected = np.repeat(a, 2)
+    assert np.allclose(flat, expected), f"got {flat}, expected {expected}"
+
+
+@dace.program
+def _iedge_iv_post_loop_value_consumed(out: dace.float64[1], a: dace.float64[N]):
+    """``k`` is updated in the loop AND read after the loop via an
+    interstate-edge symbol use. The substitution must materialise the
+    post-loop value of ``k`` so the read after the loop sees the right
+    value."""
+    k = 10
+    for i in range(N):
+        k = k + 3
+        a[i] = a[i] + 1.0
+    out[0] = k
+
+
+def test_iedge_iv_post_loop_value_materialised():
+    """After substitution, the post-loop read of ``k`` must equal the
+    closed-form final value (init + N*step)."""
+    sdfg = _prep_and_run(_iedge_iv_post_loop_value_consumed)
+    sdfg.validate()
+    n = 7
+    a = np.zeros(n)
+    out = np.array([0.0])
+    sdfg(out=out, a=a, N=n)
+    # k starts at 10, +3 each iter, N iters -> final k = 10 + 3*N
+    assert np.isclose(out[0], 10 + 3 * n), f"post-loop k mismatch: got {out[0]}"
+    # And the array writes happened correctly.
+    assert np.allclose(a, 1.0)
+
+
+@dace.program
+def _iedge_iv_two_assignments_on_same_edge(flat: dace.float64[N], a: dace.float64[N]):
+    """An iedge with TWO assignments (only one is the IV) -- v1 refuses
+    because the pass requires the IV iedge to carry ONLY the IV
+    assignment. The loop stays sequential, numerics still correct."""
+    k = 0
+    j = 0
+    for i in range(N):
+        k = k + 1
+        j = j + 2
+        flat[i] = a[i] + j
+
+
+def test_iedge_iv_refuses_when_iedge_has_other_assignments():
+    """When the IV iedge carries multiple assignments, v1 refuses and the
+    loop stays carried. Numerics still match (the refusal is conservative,
+    not incorrect)."""
+    sdfg = _prep_and_run(_iedge_iv_two_assignments_on_same_edge)
+    sdfg.validate()
+    n = 5
+    a = np.zeros(n)
+    flat = np.zeros(n)
+    sdfg(flat=flat, a=a, N=n)
+    # j starts at 0, becomes 2, 4, 6, ... -- flat[i] = a[i] + (2*(i+1)) = 2*(i+1)
+    expected = 2.0 * (np.arange(n) + 1)
+    assert np.allclose(flat, expected), f"got {flat}, expected {expected}"
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()
