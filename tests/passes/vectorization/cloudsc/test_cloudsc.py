@@ -64,7 +64,8 @@ def cloudsc_snippet_two(
                 E[i, j] = 0.0
 
 
-def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_style, vectorize_config):
+def test_snippet_from_cloudsc_two(tile_emit_mode, branch_mode, remainder_strategy, emission_style, vectorize_config):
+    nest_map_bodies, insert_copies = tile_emit_mode
     _S = 64
     A = numpy.random.random((2, _S, _S))
     B = numpy.random.random((_S, _S))
@@ -88,6 +89,8 @@ def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_styl
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style,
+                           insert_copies=insert_copies,
+                           nest_map_bodies=nest_map_bodies,
                            vectorize_config=vectorize_config)
 
 
@@ -148,7 +151,8 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                           "the vector width was produced")
 
 
-def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_style, vectorize_config):
+def test_snippet_from_cloudsc_one(tile_emit_mode, branch_mode, remainder_strategy, emission_style, vectorize_config):
+    nest_map_bodies, insert_copies = tile_emit_mode
     klev = 64
     kfdia = 32
 
@@ -182,10 +186,14 @@ def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_styl
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style,
+                           insert_copies=insert_copies,
+                           nest_map_bodies=nest_map_bodies,
                            vectorize_config=vectorize_config)
 
 
-def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):
+def test_snippet_from_cloudsc_four(tile_emit_mode, remainder_strategy, emission_style, vectorize_config):
+    """T1-restricted (drops branch_mode for axis distribution)."""
+    nest_map_bodies, insert_copies = tile_emit_mode
     sdfg = _get_cloudsc_snippet_four()
     sdfg.name = f"cloudsc_snippet_four"
     sdfg.validate()
@@ -225,9 +233,11 @@ def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):
                            vector_width=8,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=False,
-                           insert_copies=True,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           emission_style=emission_style,
+                           insert_copies=insert_copies,
+                           nest_map_bodies=nest_map_bodies,
+                           vectorize_config=vectorize_config)
 
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)

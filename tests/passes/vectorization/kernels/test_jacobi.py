@@ -141,9 +141,20 @@ def test_jacobi2d_with_fuse_overlapping_loads():
     assert found_window, "no fused union-window buffer (>vector_width) found in any body NSDFG"
 
 
-@pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
-def test_jacobi2d_with_parameters(param_tuple, emission_style):
-    fuse_overlapping_loads, insert_copies = param_tuple
+@pytest.mark.parametrize("fuse_overlapping_loads", [False, True])
+def test_jacobi2d_with_parameters(fuse_overlapping_loads, tile_emit_mode, emission_style, branch_mode,
+                                  remainder_strategy, vectorize_config):
+    """T1 stencil — full knob matrix.
+
+    ``tile_emit_mode`` covers ``nest_map_bodies`` × ``insert_copies``;
+    ``fuse_overlapping_loads`` is the stencil-specific fixture marker.
+    The structural ``assert_fused_nsdfg_structure`` assertion fires only
+    in the canonical config (``fuse=True``, copies via
+    ``tile_emit_mode="nested_copies"`` on the default emission tile arm)
+    — that combo guarantees the union-window buffer the assertion
+    expects.
+    """
+    nest_map_bodies, insert_copies = tile_emit_mode
     _S = 66
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((_S, _S))
@@ -159,11 +170,17 @@ def test_jacobi2d_with_parameters(param_tuple, emission_style):
             'tsteps': 5,
         },
         vector_width=8,
-        sdfg_name=f"jacobi2d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
+        sdfg_name="jacobi2d_with_parameters",
         fuse_overlapping_loads=fuse_overlapping_loads,
         insert_copies=insert_copies,
-        emission_style=emission_style)
-    if fuse_overlapping_loads and insert_copies and emission_style == "default":
+        nest_map_bodies=nest_map_bodies,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+        vectorize_config=vectorize_config,
+    )
+    if (fuse_overlapping_loads and insert_copies and emission_style == "default"
+            and vectorize_config == "tile_nodes"):
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
 
 
@@ -177,9 +194,18 @@ def jacobi1d(A: dace.float64[S], B: dace.float64[S], tsteps: dace.int64):
             A[i + 1] = 0.33333 * (B[i] + B[i + 1] + B[i + 2])
 
 
-@pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
-def test_jacobi1d_with_parameters(param_tuple, emission_style):
-    fuse_overlapping_loads, insert_copies = param_tuple
+@pytest.mark.parametrize("fuse_overlapping_loads", [False, True])
+def test_jacobi1d_with_parameters(fuse_overlapping_loads, tile_emit_mode, branch_mode, remainder_strategy,
+                                  vectorize_config):
+    """T1-restricted sibling of canonical ``test_jacobi2d_with_parameters``.
+
+    Distributed-axis restriction: ``jacobi1d`` drops ``emission_style``;
+    ``heat3d`` drops ``branch_mode``. Between the three stencil tests,
+    every fixture axis is exercised by at least two — so we get full
+    cross-coverage in the aggregate without paying the full combo cost
+    on every kernel.
+    """
+    nest_map_bodies, insert_copies = tile_emit_mode
     _S = 130
     A = numpy.random.random((_S, ))
     B = numpy.random.random((_S, ))
@@ -195,11 +221,15 @@ def test_jacobi1d_with_parameters(param_tuple, emission_style):
             'tsteps': 5,
         },
         vector_width=8,
-        sdfg_name=f"jacobi1d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
+        sdfg_name="jacobi1d_with_parameters",
         fuse_overlapping_loads=fuse_overlapping_loads,
         insert_copies=insert_copies,
-        emission_style=emission_style)
-    if fuse_overlapping_loads and insert_copies and emission_style == "default":
+        nest_map_bodies=nest_map_bodies,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        vectorize_config=vectorize_config,
+    )
+    if fuse_overlapping_loads and insert_copies and vectorize_config == "tile_nodes":
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
 
 
@@ -221,9 +251,16 @@ def heat3d(A: dace.float64[S, S, S], B: dace.float64[S, S, S], tsteps: dace.int6
                                                B[i + 1, j + 1, k]) + B[i + 1, j + 1, k + 1])
 
 
-@pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
-def test_heat3d_with_parameters(param_tuple, emission_style):
-    fuse_overlapping_loads, insert_copies = param_tuple
+@pytest.mark.parametrize("fuse_overlapping_loads", [False, True])
+def test_heat3d_with_parameters(fuse_overlapping_loads, tile_emit_mode, emission_style, remainder_strategy,
+                                vectorize_config):
+    """T1-restricted sibling of canonical ``test_jacobi2d_with_parameters``.
+
+    Distributed-axis restriction: drops ``branch_mode`` (jacobi1d drops
+    ``emission_style``). Between jacobi2d / jacobi1d / heat3d every
+    fixture axis is exercised by at least two siblings.
+    """
+    nest_map_bodies, insert_copies = tile_emit_mode
     _S = 18
     A = numpy.random.random((_S, _S, _S))
     B = numpy.random.random((_S, _S, _S))
@@ -239,9 +276,14 @@ def test_heat3d_with_parameters(param_tuple, emission_style):
             'tsteps': 3,
         },
         vector_width=8,
-        sdfg_name=f"heat3d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
+        sdfg_name="heat3d_with_parameters",
         fuse_overlapping_loads=fuse_overlapping_loads,
         insert_copies=insert_copies,
-        emission_style=emission_style)
-    if fuse_overlapping_loads and insert_copies and emission_style == "default":
+        nest_map_bodies=nest_map_bodies,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+        vectorize_config=vectorize_config,
+    )
+    if (fuse_overlapping_loads and insert_copies and emission_style == "default"
+            and vectorize_config == "tile_nodes"):
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
