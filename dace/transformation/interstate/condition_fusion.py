@@ -351,8 +351,14 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents
+        # Fix SDFG parents. See the matching note in
+        # ``fuse_consecutive_conditions``: the ``ControlFlowBlock``
+        # isinstance check (not ``hasattr(node, "sdfg")``) is required so
+        # NestedSDFG nodes -- whose ``.sdfg`` is the *inner* SDFG -- are
+        # skipped (writing the outer SDFG into a NestedSDFG's inner-SDFG
+        # slot creates a graph cycle that infinite-recurses
+        # ``all_nodes_recursive``; TSVC s275 RecursionError).
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
-            if hasattr(node, "sdfg"):
+            if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg

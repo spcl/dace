@@ -734,17 +734,27 @@ class EarlyExitToFindIndex(ppl.Pass):
     def _propagate_sdfg(self, region, sdfg):
         """Recursively set ``sdfg`` and ``parent_graph`` on every nested
         SDFGState and sub-region so ``replace_dict`` has the context it
-        needs."""
+        needs.
+
+        Restricted to ``ControlFlowBlock`` subtypes -- ``SDFGState``,
+        ``ControlFlowRegion``, ``ConditionalBlock`` etc. -- whose ``.sdfg``
+        attribute names the *containing* SDFG. ``NestedSDFG`` nodes are
+        deliberately skipped because their ``.sdfg`` is the *inner* SDFG
+        (an ``SDFGReferenceProperty`` with a setter); writing the outer
+        SDFG into that slot would replace the inner with the outer and
+        create a graph cycle (the same TSVC s275 RecursionError as in
+        ``ConditionFusion``).
+        """
+        from dace.sdfg.state import ControlFlowBlock
         region.sdfg = sdfg
         for n in region.nodes():
             if isinstance(n, SDFGState):
                 n.sdfg = sdfg
                 n.parent_graph = region
-            elif hasattr(n, 'sdfg'):
+            elif isinstance(n, ControlFlowBlock):
                 n.sdfg = sdfg
                 n.parent_graph = region
-                if hasattr(n, 'nodes'):
-                    self._propagate_sdfg(n, sdfg)
+                self._propagate_sdfg(n, sdfg)
 
     def _strip_break_and_after(self, branch: ControlFlowRegion):
         """Remove the BreakBlock and any block reachable from it (within
