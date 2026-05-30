@@ -4,7 +4,7 @@ import copy
 from dace import sdfg as sd, properties
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
 
 
@@ -191,10 +191,21 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents
+        # Fix SDFG parents. ``set_nested_sdfg_parent_references`` walks every
+        # NestedSDFG and sets ``node.sdfg.parent_sdfg`` on the *inner* SDFGs;
+        # the follow-up loop repairs ``.sdfg`` on the OUTER container blocks
+        # (``SDFGState`` / ``ControlFlowRegion`` / ``ConditionalBlock``) whose
+        # ``.sdfg`` attribute names the containing SDFG. The
+        # ``ControlFlowBlock`` isinstance check replaces the previous
+        # ``hasattr(node, "sdfg")`` -- ``hasattr`` also matched ``NestedSDFG``
+        # nodes, whose ``.sdfg`` is the *inner* SDFG (an
+        # ``SDFGReferenceProperty`` with a setter), so the assignment was
+        # overwriting the inner-SDFG slot with the outer container and
+        # producing a graph cycle (TSVC s275 RecursionError in
+        # ``all_nodes_recursive``).
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
-            if hasattr(node, "sdfg"):
+            if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg
 
     def fuse_nested_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock):

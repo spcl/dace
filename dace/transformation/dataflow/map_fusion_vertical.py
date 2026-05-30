@@ -279,7 +279,108 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if not (exclusive_outputs or shared_outputs):
             return False
 
+        # NOTE: NestedSDFGs in the producer's body whose InOut connectors match
+        # an intermediate's data name are handled by ``_split_inout_for_intermediate``
+        # below in ``apply`` -- we split the connector inside the NestedSDFG
+        # (rename the inner read-side accesses to a fresh array bound to a new
+        # input connector) so the standard rename machinery can rewire the
+        # output-only connector without producing the mismatched-InOut
+        # validation error (TSVC s221). v1 splits only when every inner
+        # read AN of the InOut name has ``in_degree == 0`` -- the clean
+        # one-RMW-tasklet shape -- and refuses otherwise.
+        intermediate_names = {e.dst.data for e in (exclusive_outputs | shared_outputs)
+                              if isinstance(e.dst, nodes.AccessNode)}
+        if intermediate_names:
+            first_scope = graph.scope_subgraph(first_map_entry, include_entry=False, include_exit=False)
+            for inner in first_scope.nodes():
+                if not isinstance(inner, nodes.NestedSDFG):
+                    continue
+                inout_conns = set(inner.in_connectors) & set(inner.out_connectors)
+                for name in inout_conns & intermediate_names:
+                    if not self._inout_split_is_safe(inner, name):
+                        return False
+
         return True
+
+    @staticmethod
+    def _inout_split_is_safe(nsdfg: nodes.NestedSDFG, name: str) -> bool:
+        """``True`` iff every inner AccessNode of ``name`` is either a pure
+        read source (``in_degree == 0`` and ``out_degree > 0``) or a pure
+        write sink (``in_degree > 0`` and ``out_degree == 0``). Mixed-mode
+        accesses (read AN whose downstream is also written in the same state,
+        e.g. ``a -> ... -> a`` chains within one state) would require more
+        elaborate use-def analysis than v1 handles, so we refuse those.
+        """
+        inner_sdfg = nsdfg.sdfg
+        if inner_sdfg is None:
+            return False
+        for state in inner_sdfg.all_states():
+            for n in state.nodes():
+                if not isinstance(n, nodes.AccessNode) or n.data != name:
+                    continue
+                in_d, out_d = state.in_degree(n), state.out_degree(n)
+                if not ((in_d == 0 and out_d > 0) or (in_d > 0 and out_d == 0)):
+                    return False
+        return True
+
+    @staticmethod
+    def _split_inout_for_intermediate(graph: dace.SDFGState, sdfg: dace.SDFG,
+                                       first_map_entry: nodes.MapEntry,
+                                       intermediate_names: Set[str]) -> None:
+        """For each NestedSDFG inside ``first_map_entry``'s scope whose InOut
+        connectors include any of ``intermediate_names``, split the connector:
+
+        1. Allocate a fresh inner array ``__map_fusion_split_<name>`` (same
+           shape / dtype as the original ``name`` inside the NestedSDFG).
+        2. Rename every inner read-side AccessNode of ``name`` (``in_degree ==
+           0``) to the fresh name; rename the memlet ``data`` on its outgoing
+           edges.
+        3. Drop the InOut input connector ``name`` from the outer NestedSDFG
+           node and add the fresh ``__map_fusion_split_<name>`` input
+           connector with the same dtype.
+        4. Redirect the outer input edge feeding the old ``name`` input
+           connector to the new connector.
+
+        After this rewrite the NestedSDFG's ``name`` connector is OUTPUT-ONLY
+        and the standard MapFusion rename machinery can rename it to
+        ``__map_fusion_<name>`` without producing an InOut-mismatch.
+        """
+        from dace import data as dace_data
+        first_scope = graph.scope_subgraph(first_map_entry, include_entry=False, include_exit=False)
+        for inner in list(first_scope.nodes()):
+            if not isinstance(inner, nodes.NestedSDFG):
+                continue
+            inout_conns = set(inner.in_connectors) & set(inner.out_connectors)
+            for orig in sorted(inout_conns & intermediate_names):
+                inner_sdfg = inner.sdfg
+                if inner_sdfg is None or orig not in inner_sdfg.arrays:
+                    continue
+                # 1. Fresh inner array.
+                new_name = f"__map_fusion_split_{orig}"
+                while new_name in inner_sdfg.arrays:
+                    new_name += "_"
+                new_desc = copy.deepcopy(inner_sdfg.arrays[orig])
+                inner_sdfg._arrays[new_name] = new_desc
+                # 2. Rename inner read-side accesses + their out-edge memlets.
+                for st in inner_sdfg.all_states():
+                    for n in list(st.nodes()):
+                        if not isinstance(n, nodes.AccessNode) or n.data != orig:
+                            continue
+                        if st.in_degree(n) > 0:
+                            continue
+                        n.data = new_name
+                        for e in st.out_edges(n):
+                            if e.data is not None and e.data.data == orig:
+                                e.data.data = new_name
+                # 3. Replace the InOut input connector on the NestedSDFG node.
+                in_type = inner.in_connectors.get(orig)
+                inner.remove_in_connector(orig)
+                inner.add_in_connector(new_name, in_type)
+                # 4. Redirect the outer edge feeding the old input connector.
+                for e in list(graph.in_edges(inner)):
+                    if e.dst_conn == orig:
+                        graph.add_edge(e.src, e.src_conn, inner, new_name, e.data)
+                        graph.remove_edge(e)
 
     def apply(
         self,
@@ -325,6 +426,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
+
+        # If any intermediate's data name is shared with an InOut connector of a
+        # NestedSDFG in the producer's body, split the connector so the standard
+        # rename machinery below produces a valid InOut-free shape (TSVC s221).
+        intermediate_names = {e.dst.data for e in (exclusive_outputs | shared_outputs)
+                              if isinstance(e.dst, nodes.AccessNode)}
+        if intermediate_names:
+            self._split_inout_for_intermediate(graph, sdfg, first_map_entry, intermediate_names)
 
         # Now perform the actual rewiring, we handle each partition separately.
         if len(exclusive_outputs) != 0:
