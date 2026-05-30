@@ -250,15 +250,64 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
     def _reshape_transients(self, inner: dace.SDFG, widths: Tuple[int, ...]) -> Set[str]:
         """Reshape every length-1 transient to a ``(W, ...)`` register tile.
 
+        Two reshape sources:
+
+        1. **Native length-1**: a ``(1,)``-shape transient minted by branch
+           normalization / ScalarToSymbolPromotion (e.g. ``_cond___tmp0``);
+           directly resize to ``(W, ...)``.
+        2. **Oversized, single-point-access**: a transient whose descriptor
+           is full-length (e.g. ``_then_b`` shape ``(LEN_1D,)``) but every
+           memlet access is a single-element subset (post-``RefineNested
+           Access`` ``[0]`` window-relative read). s273's
+           branch normalization leaves the ``_then_<arr>`` arm-local
+           transient at the source array's shape; the TileMerge expansion
+           then takes it as a scalar (``double _t = _then_b[0]``) and the
+           compiler rejects the mismatch with the pointer expected by
+           ``tile_merge<T, T, W, ...>(_o, _cond, _t, _e, ...)``. Narrow to
+           ``(1,)`` first so the rest of this method widens it to ``(W,)``.
+
         Rewrites the memlets of the reshaped arrays to the full tile region.
 
         :param inner: The body SDFG.
         :param widths: Tile widths.
         :returns: The set of reshaped array names.
         """
+        # Phase 1: narrow oversized transients with single-point-only access
+        # to ``(1,)`` so they fall into the widening path below.
+        candidates: Set[str] = set()
+        for name, arr in inner.arrays.items():
+            if not arr.transient or tuple(arr.shape) == (1, ):
+                continue
+            if isinstance(arr, dace.data.View):
+                continue
+            candidates.add(name)
+        if candidates:
+            access_counts: Dict[str, int] = {n: 0 for n in candidates}
+            all_point_access: Dict[str, bool] = {n: True for n in candidates}
+            for istate in inner.states():
+                for ed in istate.edges():
+                    if ed.data is None or ed.data.data not in candidates:
+                        continue
+                    access_counts[ed.data.data] += 1
+                    sub = ed.data.subset
+                    try:
+                        ne = dace.symbolic.simplify(sub.num_elements()) if sub is not None else None
+                        if ne != 1:
+                            all_point_access[ed.data.data] = False
+                    except (TypeError, AttributeError):
+                        all_point_access[ed.data.data] = False
+            for name in list(candidates):
+                if not all_point_access[name] or access_counts[name] == 0:
+                    continue
+                arr = inner.arrays[name]
+                dtype = arr.dtype
+                inner.remove_data(name, validate=False)
+                inner.add_scalar(name, dtype, storage=dace.dtypes.StorageType.Register, transient=True)
+        # Phase 2: native widening for every ``(1,)`` transient (now also
+        # covers the narrowed ones from Phase 1).
         reshaped: Set[str] = set()
         for name, arr in list(inner.arrays.items()):
-            if arr.transient and tuple(arr.shape) == (1, ):
+            if arr.transient and (isinstance(arr, dace.data.Scalar) or tuple(arr.shape) == (1, )):
                 dtype = arr.dtype
                 inner.remove_data(name, validate=False)
                 inner.add_array(name, list(widths), dtype, storage=dace.dtypes.StorageType.Register, transient=True)
