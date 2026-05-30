@@ -203,6 +203,16 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
     deep-copies the whole loop), porting each tasklet together with the
     symbols it needs.
 
+    Refuses (returns ``None``) when any body iedge carries a **stateful**
+    assignment -- one whose RHS references the LHS, like
+    ``k := k + 1`` (a counter recurrence). Cloning the loop for fission
+    would duplicate the increment in every sibling, so a body that
+    semantically does ``k += 1`` per iter would do ``k += 1`` × N_siblings
+    per iter and produce wrong values for any downstream consumer reading
+    ``k`` (TSVC ``s126``). Side-effect-free derivations like
+    ``idx_index := idx[i]`` do not reference their own LHS and remain
+    fissionable -- each sibling rederives the same value from arrays.
+
     :param loop: The loop whose body shape is inspected.
     :returns: The sole compute ``SDFGState``, or ``None`` if the body is not
         of that shape.
@@ -211,7 +221,21 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
     if any(not isinstance(b, SDFGState) for b in blocks):
         return None
     nonempty = [s for s in blocks if s.nodes()]
-    return nonempty[0] if len(nonempty) == 1 else None
+    if len(nonempty) != 1:
+        return None
+    # Refuse stateful (self-referencing) body iedge assignments. Clone-
+    # duplicating ``k := k + 1`` across siblings would multiply the
+    # increment per outer iter.
+    for e in loop.edges():
+        for lhs, rhs in (e.data.assignments or {}).items():
+            try:
+                from dace import symbolic
+                rhs_free = set(str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols)
+            except Exception:
+                rhs_free = {lhs}  # conservative: assume self-reference on parse failure
+            if lhs in rhs_free:
+                return None
+    return nonempty[0]
 
 
 def _block_rw(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
