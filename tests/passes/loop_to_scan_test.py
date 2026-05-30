@@ -1010,20 +1010,6 @@ def test_backward_stride_minus_one_prefix_sum():
     assert _num_scan_nodes(sdfg) >= 1
 
 
-@pytest.mark.xfail(
-    reason="cloudsc ``for_430`` shape: a level loop ``jk`` whose body writes "
-    "MULTIPLE constant-index slots on the same array (``zvqx[0] = ...; "
-    "zvqx[1] = ...; zvqx[2] = ...``). ``PromoteConstantIndexAccess`` "
-    "privatises these into per-loop scalars, after which the loop "
-    "parallelises -- but only if there is no loop-carried dependence on "
-    "the level axis. When the level itself carries (level-indexed write at "
-    "``[..., jk, ...]``), the loop is a sequential level walk that should "
-    "lift to LoopToScan, NOT LoopToMap. The matcher currently rejects the "
-    "multi-slot shape because the body is not a single binary tasklet on "
-    "ONE carrier -- it has parallel writes to multiple slots of the same "
-    "array. Extension: per-slot independent scan matching.",
-    strict=True,
-)
 def test_level_indexed_write_with_multiple_constant_slots():
     """The cloudsc ``for_430`` shape: multiple constant-index slots on the
     same carrier in a level loop. Each slot's update is independent and

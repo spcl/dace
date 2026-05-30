@@ -44,7 +44,7 @@ from typing import Any, List, NamedTuple, Optional
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -500,6 +500,21 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
         cand_matched: List[_Scan] = []
         cand_failed = False
         for out_name in carriers:
+            # Try the multi-slot path first (same carrier, distinct constant-only
+            # slots). If it returns a non-empty list, treat each slot as its own
+            # ``_Scan`` -- one ``Scan`` libnode per slot in the rewrite.
+            multi = _match_multi_slot(loop, sdfg, state, out_name, start, end)
+            if multi:
+                for info in multi:
+                    if inner_loop is not None:
+                        info = info._replace(inner_loop=inner_loop)
+                        if not _other_indices_match_inner(info.other_indices, inner_loop.loop_variable):
+                            cand_failed = True
+                            break
+                    cand_matched.append(info)
+                if cand_failed:
+                    break
+                continue
             info = _match_one_carrier(loop, sdfg, state, out_name, start, end)
             if info is None:
                 cand_failed = True
@@ -607,12 +622,97 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
             carry_anchor=carry_anchor,
             literal_delta=literal_delta,
         ))
-    # Exactly one write-edge classification must yield a valid scan match. More than
-    # one would mean two recurrences are written to ``out_name`` in the same body
-    # (we cannot pick between them); fewer means no scan shape.
-    if len(candidates) != 1:
+    # Single match: the v1-v5 case -- one scan-update tasklet writing the carrier.
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) == 0:
         return None
-    return candidates[0]
+    # Multi-slot case: each candidate writes the SAME array at a DISTINCT
+    # constant slot (different ``other_indices``) -- e.g. cloudsc ``for_430``
+    # zvqx[0..N-1] where each slot is its own prefix-sum on the level axis.
+    # Accept the set if every candidate has matching scan-shape (op, axis,
+    # offsets, stride) and each writes a unique constant-slot configuration
+    # that's pairwise NON-overlapping. Return the FIRST candidate; the others
+    # are reported separately via :func:`_match_multi_slot` so the caller can
+    # emit one ``Scan`` libnode per slot.
+    if _multi_slot_compatible(candidates):
+        return candidates[0]
+    # Otherwise multiple distinct recurrences on the same carrier (e.g.
+    # different scan offsets); refuse since we cannot pick between them.
+    return None
+
+
+def _multi_slot_compatible(candidates) -> bool:
+    """Return ``True`` if all candidates have the same scan shape but distinct
+    constant-only ``other_indices`` (each candidate is its own independent slot
+    on the same carrier). The shape contract: same ``op``, ``scan_axis``,
+    ``k_w``, ``k_r``, ``scan_stride`` -- and ``other_indices`` differs in the
+    constant value(s) (axis indices being identical).
+    """
+    if len(candidates) < 2:
+        return False
+    ref = candidates[0]
+    seen_keys = set()
+    for c in candidates:
+        if c.op != ref.op or c.scan_axis != ref.scan_axis:
+            return False
+        if c.k_w != ref.k_w or c.k_r != ref.k_r or c.scan_stride != ref.scan_stride:
+            return False
+        # ``other_indices`` axes must be the same set; the constants may differ.
+        if {a for a, _ in c.other_indices} != {a for a, _ in ref.other_indices}:
+            return False
+        key = tuple(sorted((a, str(e)) for a, e in c.other_indices))
+        if key in seen_keys:
+            return False
+        seen_keys.add(key)
+    return True
+
+
+def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: str,
+                      iter_start: Any, iter_end: Any) -> List[_Scan]:
+    """Same matching as :func:`_match_one_carrier` but returns ALL slot candidates
+    when the carrier is written at multiple distinct constant slots. Returns an
+    empty list when the multi-slot shape doesn't apply (caller falls back to the
+    single-match path).
+    """
+    candidates = []
+    for write_edge in _iter_write_edges(state, out_name):
+        if write_edge.data is None or write_edge.data.subset is None:
+            continue
+        write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
+        if write_axis is None:
+            continue
+        cand = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable,
+                                         write_axis, write_others, k_w)
+        if cand is None:
+            continue
+        tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = cand
+        out_edges_t = [e for e in state.out_edges(tasklet)
+                       if e.data is not None and not e.data.is_empty()]
+        if len(out_edges_t) != 1:
+            continue
+        k_r = symbolic.simplify(k_w - scan_stride)
+        candidates.append(_Scan(
+            op=op,
+            out_name=out_name,
+            scan_axis=write_axis,
+            k_w=k_w,
+            k_r=k_r,
+            scan_stride=scan_stride,
+            other_indices=write_others,
+            iter_start=iter_start,
+            iter_end=iter_end,
+            body_state=state,
+            scan_update_tasklet=tasklet,
+            carry_in_conn=carry_edge.dst_conn,
+            delta_in_conn=delta_edge.dst_conn if delta_edge is not None else None,
+            out_conn=out_edges_t[0].src_conn,
+            carry_anchor=carry_anchor,
+            literal_delta=literal_delta,
+        ))
+    if _multi_slot_compatible(candidates):
+        return candidates
+    return []
 
 
 def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
