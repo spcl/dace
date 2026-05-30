@@ -240,7 +240,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         else:
             base = getattr(dace_func, "name", None) or getattr(dace_func, "__name__", "kernel")
         sdfg_name = re.sub(r"\W+", "_", base).strip("_")
-    sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}"
+    # Include ``nest_map_bodies`` + ``insert_copies`` in the suffix so the
+    # three ``tile_emit_mode`` variants (flat / nested / nested_copies) each
+    # get their own ``.dacecache/<name>/`` build dir; without this they
+    # collide under ``-n``-parallel xdist on the same combo of (branch_mode,
+    # remainder_strategy, emission_style, vectorize_config) and CMake races
+    # mid-configure ("file too short" / "Configuring incomplete").
+    tile_tag = f"_n{int(nest_map_bodies)}c{int(insert_copies)}"
+    sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
     if param_tag is not None:
         sdfg_name = f"{sdfg_name}_{param_tag}"
 
