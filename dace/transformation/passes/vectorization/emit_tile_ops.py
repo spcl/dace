@@ -1262,6 +1262,33 @@ class EmitTileOps(ppl.Pass):
                 wcr_target = self._wcr_scalar_target(state, final_edge.dst)
                 if wcr_target is not None:
                     reductions.append((out_access, final_edge, wcr_target))
+        # Second pass: emit stores for reused-result patterns where a binop's
+        # output transient feeds MULTIPLE consumers (s1281 ``x = b*c + a*d + e;
+        # a = x - 1; b = x`` — ``x`` is read by both ``_Sub_`` and the assign
+        # that writes ``b``). The binop-loop walk stops at the multi-consumer
+        # AccessNode (``_walk_through_assigns`` refuses ``len(out_edges) != 1``)
+        # so the assign-tasklet -> output-array path is never queued for a
+        # ``TileStore``. Walk forward from every assign tasklet whose source
+        # is a tile already in ``tile_map``; if the chain reaches a
+        # ``MapExit``, add a store using the producer's tile as the source.
+        for at in assign_tasklets:
+            in_e = list(state.in_edges(at))
+            if not in_e or not isinstance(in_e[0].src, dace.nodes.AccessNode):
+                continue
+            src_data = in_e[0].src.data
+            if src_data not in tile_map:
+                continue
+            out_e = list(state.out_edges(at))
+            if not out_e:
+                continue
+            final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+            if not isinstance(final_edge.dst, dace.nodes.MapExit):
+                continue
+            _, src_tile_access = tile_map[src_data]
+            if any(s[0] is src_tile_access and s[1] is final_edge for s in stores):
+                continue
+            all_intermediates |= set(inters)
+            stores.append((src_tile_access, final_edge))
         if copy_only_emit:
             # Walk forward from each assign; if it lands on the MapExit, emit a
             # load for its in-edge and queue the load's tile as the store source.
