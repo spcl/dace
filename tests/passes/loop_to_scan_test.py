@@ -978,18 +978,6 @@ def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
     assert _num_scan_nodes(sdfg) >= 1
 
 
-@pytest.mark.xfail(
-    reason="cloudsc ``for_1079`` shape: a backward-iterating loop ``for jm in "
-    "range(NCLV - 1, 0, -1)`` whose body is a prefix-sum from right "
-    "(``acc[jm-1] = acc[jm] + delta[jm]``). The recurrence is a valid scan "
-    "on the reversed axis, but ``_match_all`` hard-rejects any loop whose "
-    "stride is not ``1`` at line 445. Extension: accept stride == -1 by "
-    "logically reversing the iteration order (init/end swap, k_w/k_r sign "
-    "flip) and feeding the reversed delta buffer to the libnode -- the "
-    "underlying associative op is commutative, so the running fold value "
-    "is preserved.",
-    strict=True,
-)
 def test_backward_stride_minus_one_prefix_sum():
     """The cloudsc ``for_1079`` shape: backward iteration with carry on the
     next-higher index. ``jm`` runs from ``NCLV - 1`` down to ``1`` (stride
@@ -1033,20 +1021,15 @@ def test_level_indexed_write_with_multiple_constant_slots():
     assert _num_scan_nodes(sdfg) >= 1
 
 
-@pytest.mark.xfail(
-    reason="Same descent gap as ``test_cloudsc_for_1133_shape_nested_inner_loopregion`` "
-    "but with the inner control structure being a ``ConditionalBlock`` (if/else) "
-    "instead of a ``LoopRegion``. The carry update is guarded by a runtime mask "
-    "(``if mask[i]: out[i+1] = out[i] + delta[i]; else: out[i+1] = out[i]``). "
-    "``_match_one_carrier`` would need to descend into the ``ConditionalBlock`` "
-    "branches to find the scan-update tasklet and reason about each branch's "
-    "carry semantics. Same Path A extension as the for-loop descent.",
-    strict=True,
-)
 def test_scan_with_conditional_body_descends_into_if():
     """``out[i+1] = out[i] + delta[i]`` guarded by a mask. The carry update is
     inside a ``ConditionalBlock`` in the loop body. LoopToScan needs to descend
     into the if/else branches to see the recurrence.
+
+    Verifies BOTH structural lift (Scan libnode emitted) AND numerical
+    correctness against the sequential oracle so that the rewrite handles each
+    branch consistently (the matched-branch's scan-update + the OTHER
+    branch's writes to the carrier).
     """
 
     @dace.program
@@ -1064,6 +1047,23 @@ def test_scan_with_conditional_body_descends_into_if():
         f'LoopToScan should lift the conditional scan shape by descending into '
         f'the if/else branches; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
     assert _num_scan_nodes(sdfg) >= 1
+
+    n = 16
+    rng = np.random.default_rng(99)
+    delta = rng.uniform(-1.0, 1.0, size=n)
+    mask = rng.integers(0, 2, size=n).astype(np.int32)
+    out = np.zeros(n + 1)
+    out[0] = 0.5
+    expected = out.copy()
+    for i in range(n):
+        if mask[i] > 0:
+            expected[i + 1] = expected[i] + delta[i]
+        else:
+            expected[i + 1] = expected[i]
+    sdfg(out=out, delta=delta, mask=mask, N=n)
+    assert np.allclose(out, expected), (
+        f'Conditional-carry numerics must match the sequential oracle; got {out}, '
+        f'expected {expected}, max-diff {np.abs(out - expected).max()}')
 
 
 # -----------------------------------------------------------------------------

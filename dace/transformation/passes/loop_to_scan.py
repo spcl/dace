@@ -131,6 +131,14 @@ class _Scan(NamedTuple):
     # emits a vector Scan -- a Map over the inner loop variable wrapping the
     # 1-D Scan along the outer (scan) axis. ``None`` for the flat v1-v5 case.
     inner_loop: Optional[LoopRegion] = None
+    # Direction: ``+1`` for the canonical forward iteration (write at
+    # ``loop_var + k_w``); ``-1`` for the reverse iteration (write at
+    # ``k_w - loop_var``) -- the cloudsc ``for_1079`` shape after
+    # :class:`NormalizeNegativeStride` normalises the loop. With ``coef == -1``,
+    # ``k_w`` / ``k_r`` hold the array constants (i.e. the array index visited
+    # at the first iteration), and the rewrite emits seed-add Map subscripts
+    # ``k_w - i`` instead of ``iter_start + k_w + i``.
+    coef: int = 1
 
 
 class _ScalarCarryScan(NamedTuple):
@@ -324,15 +332,16 @@ def _descend_to_content_state_candidates(loop: LoopRegion):
     """
     blocks = loop.nodes()
     inner_loop_regions = [b for b in blocks if isinstance(b, LoopRegion)]
+    cond_blocks = [b for b in blocks if isinstance(b, ConditionalBlock)]
     states = [b for b in blocks if isinstance(b, SDFGState)]
-    others = [b for b in blocks if not isinstance(b, (LoopRegion, SDFGState))]
+    others = [b for b in blocks if not isinstance(b, (LoopRegion, SDFGState, ConditionalBlock))]
     if others:
         return []
     content_states = [s for s in states if len(s.nodes()) > 0]
     candidates = []
     # Flat candidates at the outer body level: every content state is itself
     # a possible scan-update host (v5 case).
-    if not inner_loop_regions:
+    if not inner_loop_regions and not cond_blocks:
         if len(content_states) == 1:
             candidates.append((content_states[0], None))
     else:
@@ -344,6 +353,18 @@ def _descend_to_content_state_candidates(loop: LoopRegion):
             if inner_state is None or deeper is not None:
                 continue
             candidates.append((inner_state, inner))
+        # ``ConditionalBlock`` branches: each branch's content state is also a
+        # candidate (the cloudsc-like conditional-carry shape -- if/else
+        # whose branches each implement a scan-update on the same carrier).
+        # The matcher then picks the branch that has the scan-update tasklet;
+        # the rewrite step also mutates any sibling branch's writes (see
+        # ``_mutate_sibling_branches_to_zero_delta`` -- emitted post-match).
+        for cb in cond_blocks:
+            for cond, branch in cb.branches:
+                branch_state, deeper = _descend_to_content_state(branch)
+                if branch_state is None or deeper is not None:
+                    continue
+                candidates.append((branch_state, None))
     return candidates
 
 
@@ -591,11 +612,11 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
     for write_edge in _iter_write_edges(state, out_name):
         if write_edge.data is None or write_edge.data.subset is None:
             continue
-        write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
+        write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop.loop_variable)
         if write_axis is None:
             continue
         cand = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable,
-                                         write_axis, write_others, k_w)
+                                         write_axis, write_others, k_w, write_coef)
         if cand is None:
             continue
         tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = cand
@@ -621,6 +642,7 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
             out_conn=out_edges_t[0].src_conn,
             carry_anchor=carry_anchor,
             literal_delta=literal_delta,
+            coef=write_coef,
         ))
     # Single match: the v1-v5 case -- one scan-update tasklet writing the carrier.
     if len(candidates) == 1:
@@ -679,11 +701,11 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
     for write_edge in _iter_write_edges(state, out_name):
         if write_edge.data is None or write_edge.data.subset is None:
             continue
-        write_axis, k_w, write_others = _classify_subset(write_edge.data.subset, loop.loop_variable)
+        write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop.loop_variable)
         if write_axis is None:
             continue
         cand = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable,
-                                         write_axis, write_others, k_w)
+                                         write_axis, write_others, k_w, write_coef)
         if cand is None:
             continue
         tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = cand
@@ -709,6 +731,7 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
             out_conn=out_edges_t[0].src_conn,
             carry_anchor=carry_anchor,
             literal_delta=literal_delta,
+            coef=write_coef,
         ))
     if _multi_slot_compatible(candidates):
         return candidates
@@ -1055,8 +1078,8 @@ def _resolve_per_iter_gather(state: SDFGState, edge, sdfg: SDFG, loop_var: str):
                 sub = last_edge.data.subset if last_edge.data is not None else None
                 if sub is None:
                     return None
-            scan_axis, offset, others = _classify_subset(sub, loop_var)
-            if scan_axis is None:
+            scan_axis, offset, others, coef = _classify_subset(sub, loop_var)
+            if scan_axis is None or coef != 1:
                 return None
             return cur.data, scan_axis, offset, others
         ins = list(state.in_edges(cur))
@@ -1096,8 +1119,8 @@ def _resolve_per_iter_write(state: SDFGState, edge, sdfg: SDFG, loop_var: str, a
                 sub = cur_edge.data.subset
                 if sub is None:
                     return None
-                scan_axis, offset, others = _classify_subset(sub, loop_var)
-                if scan_axis is None:
+                scan_axis, offset, others, coef = _classify_subset(sub, loop_var)
+                if scan_axis is None or coef != 1:
                     return None
                 return dst.data, scan_axis, offset, others
             # passthrough transient: continue along the unique out-edge.
@@ -1222,7 +1245,7 @@ def _iter_write_edges(state: SDFGState, name: str) -> List[Any]:
 
 
 def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_var: str,
-                              scan_axis: int, write_others, k_w):
+                              scan_axis: int, write_others, k_w, write_coef=1):
     """Search the body for the scan-update tasklet -- the unique tasklet whose body is
     ``__out = a OP b`` for an associative OP and whose two inputs are (a) the carry
     (resolves to ``out`` at offset ``k_w - 1`` on the scan axis, matching non-scan
@@ -1281,16 +1304,22 @@ def _find_scan_update_tasklet(state: SDFGState, sdfg: SDFG, out_name: str, loop_
         for e in in_edges:
             src_name, src_subset = _resolve_input(state, e)
             if src_name == out_name and src_subset is not None:
-                r_axis, k_r_cand, r_others = _classify_subset(src_subset, loop_var)
-                # Accept any *positive integer* offset ``k_w - k_r_cand``: ``1``
-                # is the contiguous scan; ``S > 1`` is the residue-class scan
-                # that the ``Scan`` libnode's ``stride`` property handles
-                # natively (TSVC s1221 ``b[i] = b[i-4] + a[i]``). For ``S > 1``
-                # the seed-add Map fans the ``S`` pre-loop seeds out by
-                # ``_i mod S`` (see ``_emit_seed_add``).
-                if r_axis == scan_axis and _same_other_indices(r_others, write_others):
+                r_axis, k_r_cand, r_others, r_coef = _classify_subset(src_subset, loop_var)
+                # Carry-read must have the SAME coefficient on the scan axis as
+                # the write (both forward or both reverse). Otherwise we'd be
+                # mixing iteration directions, which the scan rewrite can't
+                # express.
+                # Accept any *positive integer* scan stride in iter order:
+                #   forward (coef +1): stride = k_w - k_r
+                #   reverse (coef -1): stride = k_r - k_w   (write moves DOWN
+                #     in array order; read at higher array index = prior iter's
+                #     write target)
+                # ``1`` is the contiguous scan; ``S > 1`` is the residue-class
+                # scan that the ``Scan`` libnode's ``stride`` property handles
+                # natively (TSVC s1221 ``b[i] = b[i-4] + a[i]``).
+                if r_axis == scan_axis and _same_other_indices(r_others, write_others) and r_coef == write_coef:
                     try:
-                        diff = symbolic.simplify(k_w - k_r_cand)
+                        diff = symbolic.simplify((k_w - k_r_cand) if write_coef == 1 else (k_r_cand - k_w))
                     except Exception:
                         diff = None
                     if (diff is not None and getattr(diff, 'is_number', False)
@@ -1430,37 +1459,59 @@ def _subset_uses(subset: subsets.Subset, loop_var: str) -> bool:
 
 
 def _classify_subset(subset: subsets.Subset, loop_var: str):
-    """Return ``(scan_axis, offset, non_scan_indices)`` for ``subset``, or
-    ``(None, None, None)`` if the subset doesn't fit the v1 shape.
+    """Return ``(scan_axis, offset, non_scan_indices, coef)`` for ``subset``, or
+    ``(None, None, None, 0)`` if the subset doesn't fit the v1 shape.
 
     The "v1 shape": every dimension is a single point (``lo == hi``, stride 1),
     *exactly one* axis depends on ``loop_var`` (linearly with constant offset),
     all other axes are loop-invariant.
+
+    ``coef`` is the coefficient of ``loop_var`` on the scan axis -- ``+1`` for
+    the canonical forward case (``loop_var + k``) or ``-1`` for the reverse
+    case (``c - loop_var`` -- the cloudsc ``for_1079`` backward shape after
+    :class:`NormalizeNegativeStride` rewrites the loop but leaves the body
+    subsets in their original form). When ``coef == -1`` the returned
+    ``offset`` is the constant ``c`` (i.e. the array position visited at the
+    first iteration); when ``coef == +1`` it is the canonical ``k`` offset.
     """
     if not isinstance(subset, subsets.Range):
-        return None, None, None
+        return None, None, None, 0
     loop_var_sym = symbolic.pystr_to_symbolic(loop_var)
     scan_axis = None
     offset = None
+    coef = 0
     others: List[Any] = []
     for axis_idx, (lo, hi, st) in enumerate(subset.ranges):
         if lo != hi or st != 1:
-            return None, None, None
+            return None, None, None, 0
         lo_sym = symbolic.pystr_to_symbolic(str(lo))
         if loop_var_sym in lo_sym.free_symbols:
             if scan_axis is not None:
-                return None, None, None
+                return None, None, None, 0
+            # Try forward (coef +1): off = lo - loop_var.
             try:
-                off = symbolic.simplify(lo_sym - loop_var_sym)
+                off_pos = symbolic.simplify(lo_sym - loop_var_sym)
             except Exception:
-                return None, None, None
-            if loop_var_sym in off.free_symbols:
-                return None, None, None
-            scan_axis = axis_idx
-            offset = off
+                off_pos = None
+            if off_pos is not None and loop_var_sym not in off_pos.free_symbols:
+                scan_axis = axis_idx
+                offset = off_pos
+                coef = 1
+                continue
+            # Reverse (coef -1): off = lo + loop_var (so lo = const - loop_var).
+            try:
+                off_neg = symbolic.simplify(lo_sym + loop_var_sym)
+            except Exception:
+                off_neg = None
+            if off_neg is not None and loop_var_sym not in off_neg.free_symbols:
+                scan_axis = axis_idx
+                offset = off_neg
+                coef = -1
+                continue
+            return None, None, None, 0
         else:
             others.append((axis_idx, lo_sym))
-    return scan_axis, offset, others
+    return scan_axis, offset, others, coef
 
 
 def _same_other_indices(a, b) -> bool:
@@ -1471,6 +1522,53 @@ def _same_other_indices(a, b) -> bool:
         if ax_a != ax_b or symbolic.simplify(ex_a - ex_b) != 0:
             return False
     return True
+
+
+def _in_conditional_branch(state: SDFGState) -> bool:
+    """``True`` iff the parent chain of ``state`` includes a ``ConditionalBlock``."""
+    cur = getattr(state, 'parent_graph', None)
+    while cur is not None:
+        if isinstance(cur, ConditionalBlock):
+            return True
+        cur = getattr(cur, 'parent_graph', None)
+    return False
+
+
+def _identity_for_op(op) -> float:
+    """The identity element for an associative scan op -- writes to a per-iter
+    ``delta_buf[i]`` of this value contribute nothing to the fold.
+    """
+    if op == ScanOp.SUM:
+        return 0.0
+    if op == ScanOp.PRODUCT:
+        return 1.0
+    # MIN / MAX: identity would be +inf / -inf; conditional-branch matches that
+    # use these ops are out of scope for the bare init helper.
+    return 0.0
+
+
+def _emit_delta_buf_zero_init(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
+                              delta_buf: str, trip: Any, op):
+    """Insert a state BEFORE ``loop`` that fills ``delta_buf`` with the op's
+    identity element (0 for SUM, 1 for PRODUCT). The state's single ``Map`` over
+    the trip range writes one element per iteration.
+    """
+    import dace
+    init_val = _identity_for_op(op)
+    s_init = parent.add_state(loop.label + '_delta_init')
+    pre_edges = list(parent.in_edges(loop))
+    for e in pre_edges:
+        parent.remove_edge(e)
+        parent.add_edge(e.src, s_init, e.data)
+    parent.add_edge(s_init, loop, dace.InterstateEdge())
+    s_init.add_mapped_tasklet(
+        s_init.label + '_t',
+        {'_di': f'0:{trip}'},
+        {},
+        f'_o = {init_val}',
+        {'_o': mm.Memlet(data=delta_buf, subset=subsets.Range([('_di', '_di', 1)]))},
+        external_edges=True,
+    )
 
 
 def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDFG):
@@ -1505,6 +1603,14 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
     trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
     delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True,
                                   find_new_name=True)
+
+    # If the matched scan-update lives inside a ``ConditionalBlock`` branch,
+    # sibling branches that skip the delta computation leave their iteration's
+    # ``delta_buf[i]`` uninitialised. Pre-zero ``delta_buf`` so those iterations
+    # contribute the identity element. Cheap (one Map over the iter range) and
+    # only emitted when actually needed.
+    if _in_conditional_branch(info.body_state):
+        _emit_delta_buf_zero_init(parent, loop, sdfg, delta_buf, trip, info.op)
 
     _mutate_body_to_delta_buffer(info, delta_buf)
 
@@ -1791,12 +1897,16 @@ def _scan_op_expression(op) -> str:
 def _can_emit_direct_write(info: _Scan, out_desc) -> bool:
     """Whether the scan output can be written straight into ``out`` -- skipping
     the seed-add Map -- via :func:`_emit_scan_with_init_direct`. Requires a 1-D
-    output array, no other-axis indices, and ``scan_stride == 1`` so the write
-    subset ``out[start + k_w : start + k_w + trip]`` is a contiguous range on
-    the single axis the scan covers. Stride > 1 residue-class scans fall
-    through to the general 3-stage path.
+    output array, no other-axis indices, ``scan_stride == 1``, AND forward
+    iteration (``coef == 1``) so the write subset
+    ``out[start + k_w : start + k_w + trip]`` is a contiguous range walked in
+    iter order. Stride > 1 residue-class scans + reverse-iteration scans fall
+    through to the general 3-stage path (the reverse case needs an explicit Map
+    to write ``out[k_w - i]`` in array-reversed order from the iter-order
+    ``scan_buf``).
     """
-    return len(out_desc.shape) == 1 and not info.other_indices and info.scan_stride == 1
+    return (len(out_desc.shape) == 1 and not info.other_indices and info.scan_stride == 1
+            and info.coef == 1)
 
 
 def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, trip: Any):
@@ -1870,7 +1980,16 @@ def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):
         return
     final_edge = final_write_edges[0]
     state.remove_edge(final_edge)
-    loop_var = info.body_state.parent_graph.loop_variable
+    # Walk up the parent_graph chain to find the enclosing scan ``LoopRegion``.
+    # For the flat case ``state.parent_graph`` IS that LoopRegion; for a
+    # state inside a ``ConditionalBlock`` branch the chain is
+    # ``state -> branch (ControlFlowRegion) -> ConditionalBlock -> LoopRegion``.
+    cur = info.body_state.parent_graph
+    while cur is not None and not (isinstance(cur, LoopRegion) and cur.loop_variable):
+        cur = getattr(cur, 'parent_graph', None)
+    if cur is None:
+        return
+    loop_var = cur.loop_variable
     idx_expr = symbolic.simplify(symbolic.pystr_to_symbolic(loop_var) - info.iter_start)
     buf_an = state.add_write(delta_buf)
     state.add_edge(final_edge.src, final_edge.src_conn, buf_an, None,
@@ -1981,14 +2100,22 @@ def _emit_seed_add(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: str, tri
     """
     out_desc = sdfg.arrays[info.out_name]
     _i = symbolic.pystr_to_symbolic('_i')
-    if info.scan_stride == 1:
+    if info.coef == -1:
+        # Reverse iteration: ``k_w`` / ``k_r`` are array constants (positions at
+        # iter 0). Seed reads from ``out[k_r]`` (pre-loop value, broadcast),
+        # write goes to ``out[k_w - _i]`` (i.e. iter 0 writes the highest array
+        # index, iter trip-1 writes the lowest).
+        seed_axis_expr = symbolic.simplify(info.k_r)
+        write_axis_expr = symbolic.simplify(info.k_w - _i)
+    elif info.scan_stride == 1:
         seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
+        write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + _i
     else:
         import sympy
         class_idx = sympy.Mod(_i, info.scan_stride)
         seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r + class_idx)
+        write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + _i
     seed_subset = _build_subset(out_desc, info.scan_axis, seed_axis_expr, info.other_indices)
-    write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + _i
     write_subset = _build_subset(out_desc, info.scan_axis, write_axis_expr, info.other_indices)
 
     op_expr = {
