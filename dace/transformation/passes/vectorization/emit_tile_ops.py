@@ -1329,6 +1329,28 @@ class EmitTileOps(ppl.Pass):
                 state.remove_edge(e)
             if node in state.nodes():
                 state.remove_node(node)
+        # Drop any scalar-transient AccessNode in this map's STATE that is
+        # now isolated — the binop emission rewrites consumers to read from
+        # the previous binop's TILE output rather than the original scalar
+        # transient, so reused-result patterns (s251 ``s = b + c*d; a = s*s``,
+        # s1281 ``x = ...; a = x - 1; b = x``) leave the named scalar (``s``,
+        # ``x``) dangling once its producer binop is removed above. The
+        # dangler may sit OUTSIDE the map scope when the body NSDFG's outer
+        # AccessNode is what carried the reused value (masked-remainder
+        # split: the same AccessNode existed once at state level and was
+        # cross-referenced by each map copy). Only touches scalars / length-1
+        # transients (point-storage stand-ins for binop outputs); arrays and
+        # non-transients stay.
+        for n in list(state.nodes()):
+            if not isinstance(n, dace.nodes.AccessNode) or state.degree(n) != 0:
+                continue
+            desc = state.sdfg.arrays.get(n.data)
+            if desc is None or not desc.transient:
+                continue
+            is_scalar_storage = (isinstance(desc, dace.data.Scalar)
+                                 or (isinstance(desc, dace.data.Array) and desc.total_size == 1))
+            if is_scalar_storage:
+                state.remove_node(n)
         self._drop_dangling_scope_connectors(state, map_entry)
         self._drop_mask_placeholder_edge(state, mask_name, map_entry)
 
