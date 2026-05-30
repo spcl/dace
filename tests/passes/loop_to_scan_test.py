@@ -936,21 +936,6 @@ def test_carrier_with_computed_delta_chain():
     assert _num_scan_nodes(sdfg) >= 1
 
 
-@pytest.mark.xfail(
-    reason="Composite-body matcher fires correctly on this shape AND on the "
-    "cloudsc-actual pfsqXf (verified via the full chain). Rewrite is "
-    "structurally complete (allocates ``delta_buf[trip, inner_size]``, "
-    "redirects body writes there, emits ``Scan`` + seed-add via the "
-    "nested-scan helpers), BUT the body-mutation step renames carrier "
-    "AccessNodes in place + re-subsets memlets to a 2-D layout while the "
-    "intermediate transients keep their 1-D scalar-slice shapes -- the "
-    "resulting memlet/descriptor shape mismatch crashes the generated code. "
-    "Path is DISABLED in ``apply_pass`` until the rewrite is reworked to "
-    "insert FRESH delta_buf AccessNodes at the chain endpoints (boundary "
-    "edges only) rather than blanket-renaming the carrier ANs. Re-enable "
-    "the call site once that refactor lands.",
-    strict=True,
-)
 def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
     """Mimics the Fortran cloudsc ``DO JK ...`` body that produces ``for_1133``:
     per-level slice-copy then per-species accumulation. This is what the

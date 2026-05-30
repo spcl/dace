@@ -317,24 +317,18 @@ class LoopToScan(ppl.Pass):
                     _rewrite(parent, loop, info, sdfg)
                     count += 1
                 continue
-            # The COMPOSITE-BODY shape (cloudsc ``for_1133``) is detected by
-            # ``_match_composite_body``; the rewrite ``_rewrite_composite_body``
-            # is structurally complete (allocates fresh ``delta_buf[trip,
-            # inner_size]``, mutates carry-copy + accumulate states to redirect
-            # carrier accesses there, emits ``Scan`` + seed-add via the
-            # nested-scan helpers). BUT the body-mutation step renames carrier
-            # AccessNodes in place + re-subsets the memlets to a 2-D layout,
-            # while the intermediate transients (``pfsqif_index_0`` /
-            # ``pfsqif_slice_plus_*``) keep their original 1-D scalar-slice
-            # shapes; the resulting memlet shape/desc mismatch crashes at run
-            # time. Path stays DISABLED until the rewrite is reworked to
-            # insert FRESH delta_buf AccessNodes at the chain endpoints
-            # instead of blanket-renaming the carrier ANs.
-            # comp = _match_composite_body(loop, sdfg)
-            # if comp is not None:
-            #     if _rewrite_composite_body(parent, loop, comp, sdfg):
-            #         count += 1
-            #         continue
+            # The COMPOSITE-BODY shape (cloudsc ``for_1133``): outer body has
+            # a carry-copy state + sibling accumulate states writing the same
+            # carrier. The rewrite redirects body writes to a fresh
+            # ``delta_buf[trip, inner_size]`` (inserting fresh delta_buf
+            # AccessNodes at the chain endpoints, leaving intermediate
+            # transients untouched) and emits the standard
+            # ``Scan`` + seed-add via the nested-scan helpers.
+            comp = _match_composite_body(loop, sdfg)
+            if comp is not None:
+                if _rewrite_composite_body(parent, loop, comp, sdfg):
+                    count += 1
+                    continue
             # No array-carry match; try scalar-carry (TSVC s3112: scalar accumulator
             # whose post-RMW value is written to a per-iter array slot). Mutually
             # exclusive with array-carry by construction -- array-carry needs the
@@ -1131,16 +1125,14 @@ def _rewrite_composite_body(parent: ControlFlowRegion, loop: LoopRegion,
     scan_buf, _ = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{info.out_name}', [trip, inner_size], out_desc.dtype,
                                  transient=True, find_new_name=True)
 
-    # Determine the OUTER scan loop variable by walking up from the carry-copy
-    # state until we hit the matched LoopRegion (it owns ``info.iter_start``).
-    cur = info.carry_copy_state.parent_graph
-    outer_var = None
-    while cur is not None:
-        if isinstance(cur, LoopRegion) and cur.loop_variable:
-            outer_var = cur.loop_variable
-            break
-        cur = getattr(cur, 'parent_graph', None)
-    if outer_var is None:
+    # The OUTER scan loop variable is ``loop.loop_variable`` (the matched
+    # outer ``LoopRegion`` that owns the prefix-scan recurrence). The carry-
+    # copy state's immediate parent_graph is typically an INNER LoopRegion
+    # (e.g. ``for_jl`` in the cloudsc shape) -- walking up to the first
+    # ``LoopRegion`` would land on that inner iterator instead of the outer
+    # scan axis.
+    outer_var = loop.loop_variable
+    if not outer_var:
         return False
 
     # Mutate carry-copy state: write ``0`` to ``delta_buf[outer-iter_start,
@@ -1269,22 +1261,34 @@ def _composite_replace_carry_copy(info: _CompositeBodyScan, delta_buf: str, oute
 def _composite_redirect_carrier_to_delta_buf(state: SDFGState, info: _CompositeBodyScan,
                                              delta_buf: str, outer_var: str, inner_var: str,
                                              inner_start: Any, sdfg: SDFG):
-    """Rename every ``carrier`` AccessNode in ``state`` to ``delta_buf``, and
-    re-subset every memlet referring to the carrier to the [outer, inner]
-    layout (``delta_buf[outer_var - iter_start, inner_var - inner_start]``).
-    Preserves the body's tasklets and intermediate transients verbatim --
-    only the carrier endpoints + memlets touching them change.
+    """Replace each carrier ``AccessNode`` in ``state`` with a FRESH ``delta_buf``
+    ``AccessNode`` and update only the BOUNDARY edges' memlets (the edges that
+    touched the carrier AN). Intermediate transients (``pfsqif_index_0`` /
+    ``pfsqif_slice_plus_*``) keep their original 1-D scalar-slice shapes and
+    their interior memlets stay untouched. Element counts match (1 -> 1) on
+    every boundary edge, so the post-rewrite SDFG validates and codegens
+    correctly.
     """
     outer_idx = symbolic.simplify(symbolic.pystr_to_symbolic(outer_var) - info.iter_start)
     inner_idx = symbolic.simplify(symbolic.pystr_to_symbolic(inner_var) - inner_start)
-    new_subset_range = subsets.Range([(outer_idx, outer_idx, 1), (inner_idx, inner_idx, 1)])
+    new_subset = subsets.Range([(outer_idx, outer_idx, 1), (inner_idx, inner_idx, 1)])
     import copy as _copy
-    for an in [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == info.out_name]:
-        an.data = delta_buf
-    for e in state.edges():
-        if e.data is not None and e.data.data == info.out_name:
-            e.data.data = delta_buf
-            e.data.subset = _copy.deepcopy(new_subset_range)
+    carrier_ans = [n for n in list(state.nodes())
+                   if isinstance(n, nodes.AccessNode) and n.data == info.out_name]
+    for an in carrier_ans:
+        # Create the fresh delta_buf AN to replace this carrier endpoint.
+        new_an = state.add_access(delta_buf)
+        # Move every in-edge to the new AN with a re-subset memlet.
+        for e in list(state.in_edges(an)):
+            state.remove_edge(e)
+            state.add_edge(e.src, e.src_conn, new_an, None,
+                           mm.Memlet(data=delta_buf, subset=_copy.deepcopy(new_subset)))
+        # Move every out-edge from the new AN with a re-subset memlet.
+        for e in list(state.out_edges(an)):
+            state.remove_edge(e)
+            state.add_edge(new_an, None, e.dst, e.dst_conn,
+                           mm.Memlet(data=delta_buf, subset=_copy.deepcopy(new_subset)))
+        state.remove_node(an)
 
 
 def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> Optional[_ScalarCarryScan]:
