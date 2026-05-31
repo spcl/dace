@@ -201,25 +201,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if self.host_data is None:
             self.host_data = []
 
-        # Pin host-only arrays. Any data container read by an interstate edge's
-        # condition or assignments at HOST scope is evaluated on the host --
-        # promoting it to GPU storage would make the SDFG invalid (validation
-        # rejects host code reads of GPU-resident containers). Interstate edges
-        # nested inside a device-level kernel scope execute on the device, so
-        # reads from a GPU array are fine there and must NOT be pinned to host.
-        # The same ``get_read_memlets`` API the validator uses identifies these
-        # accesses canonically.
-        for ie in sdfg.all_interstate_edges():
-            owner_sdfg = ie.src.sdfg
-            parent_nsdfg = owner_sdfg.parent_nsdfg_node
-            if parent_nsdfg is not None and scope.is_devicelevel_gpu(owner_sdfg.parent_sdfg, owner_sdfg.parent,
-                                                                    parent_nsdfg):
-                continue
-            for read_memlet in ie.data.get_read_memlets(sdfg.arrays):
-                container = read_memlet.data
-                if container in sdfg.arrays and container not in self.host_data:
-                    self.host_data.append(container)
-
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
 
@@ -399,19 +380,27 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         # NOTE: The outputs of LibraryNodes, NestedSDFGs and Map that have GPU schedule must be moved to GPU memory.
         # TODO: Also use GPU-shared and GPU-register memory when appropriate.
+        # Register every transient that gets promoted here in ``data_already_on_gpu``
+        # so that Step 8 will create a host mirror for it if a host interstate edge
+        # later reads it (e.g. ``while length > 0: if I[j]: ...``). Without this,
+        # transients promoted to GPU outside the ``cloned_arrays`` / ``gpu_scalars``
+        # bookkeeping were invisible to Step 8 and the SDFG failed validation on
+        # the next host iedge read.
+        def _register_gpu_transient(dst_node):
+            if not isinstance(dst_node, nodes.AccessNode):
+                return
+            desc = sdfg.arrays[dst_node.data]
+            desc.storage = dtypes.StorageType.GPU_Global
+            if desc.transient and dst_node.data not in data_already_on_gpu:
+                data_already_on_gpu[dst_node.data] = None
+
         for state, node in gpu_nodes:
             if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                 for e in state.out_edges(node):
-                    dst = state.memlet_path(e)[-1].dst
-                    if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                    _register_gpu_transient(state.memlet_path(e)[-1].dst)
             if isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
-                    dst = state.memlet_path(e)[-1].dst
-                    if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                    _register_gpu_transient(state.memlet_path(e)[-1].dst)
 
         #######################################################
         # Step 5: Collect free tasklets and check for scalars that have to be moved to the GPU
@@ -496,6 +485,15 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
                         if node.data not in self.host_data:
                             nodedesc.storage = dtypes.StorageType.GPU_Global
+                            # Register the freshly-promoted transient so Step 8 will
+                            # mirror it to host when an outgoing interstate edge reads
+                            # it (e.g. ``while length > 0: if I[j]: ...``). Without
+                            # this, Step 8's ``cloned_data`` set excluded transients
+                            # that Step 6 promoted in place (they were never in
+                            # ``cloned_arrays`` / ``gpu_scalars``) and validation
+                            # later rejected the host iedge read of a GPU container.
+                            if node.data not in data_already_on_gpu:
+                                data_already_on_gpu[node.data] = None
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
@@ -606,11 +604,15 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 name_mapping[devicename] = hostname
             return name_mapping
 
-        for block in list(sdfg.all_control_flow_blocks()):
+        # Recurse into LoopRegion / ConditionalBlock / ... -- otherwise interstate
+        # edges nested inside a LoopRegion (e.g. ``while ...: if I[j]: ...``) are
+        # missed and the host iedge keeps reading a GPU container. Use
+        # ``used_arrays(sdfg.arrays)`` (filters to declared array names) instead
+        # of ``free_symbols`` (returns scalar/iterator symbol names too).
+        for block in list(sdfg.all_control_flow_blocks(recursive=True)):
             arrays_used = set()
             for e in block.parent_graph.out_edges(block):
-                # Used arrays = intersection between symbols and cloned data
-                arrays_used.update(set(e.data.free_symbols) & cloned_data)
+                arrays_used.update(e.data.used_arrays(sdfg.arrays) & cloned_data)
 
             # Create a state and copy out used arrays
             if len(arrays_used) > 0:
@@ -626,7 +628,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     for e in block.parent_graph.out_edges(co_state):
                         e.data.replace(devicename, hostname, False)
 
-        for block in list(sdfg.all_control_flow_blocks()):
+        for block in list(sdfg.all_control_flow_blocks(recursive=True)):
             arrays_used = set(block.used_symbols(all_symbols=True, with_contents=False)) & cloned_data
 
             # Create a state and copy out used arrays
