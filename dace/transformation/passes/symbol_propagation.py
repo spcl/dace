@@ -251,12 +251,31 @@ class SymbolPropagation(ppl.Pass):
             # ``m``); both must stay live so ``B[m]`` / ``B[n]`` read the edge's
             # outputs, not a re-applied expression).
             edge_keys = set(edge.data.assignments.keys())
+            # Resolve this edge's RHSes against the (un-invalidated) PRE-edge
+            # table: the assignments read their incoming values, and a carried
+            # value such as ``k = j + 1`` still denotes the pre-edge ``j`` here.
             resolved = {}
             for k, v in edge.data.assignments.items():
                 rv = _resolve(v, sym_table)
                 if rv is not None and (_free_symbols(rv) & edge_keys):
                     rv = None
                 resolved[k] = rv
+            # A value CARRIED IN from the predecessor (already in ``sym_table``,
+            # not (re)assigned on this edge) that references a symbol this edge
+            # reassigns is now STALE for the downstream block: it was computed
+            # from that symbol's pre-edge value, but the edge rebinds the
+            # symbol, so the block past this edge sees the NEW value.
+            # Propagating the carried value would read the wrong (old) value
+            # (e.g. carrying ``k = j + 1`` past an edge ``j = j + 2`` would make
+            # ``c[k]`` read ``c[j + 1]`` against the reassigned ``j``, an
+            # off-by-two). Invalidate such entries (-> None / live) -- the same
+            # simultaneity rule the per-edge guard above applies to the edge's
+            # own assignments. Done AFTER resolving so the edge's own RHSes still
+            # see the carried pre-edge values.
+            for sym in list(sym_table.keys()):
+                val = sym_table[sym]
+                if sym not in edge_keys and val is not None and (_free_symbols(val) & edge_keys):
+                    sym_table[sym] = None
             sym_table.update(resolved)
 
             # Filter out symbols containing arrays accesses as they cannot be safely propagated (nested array accesses are not supported)

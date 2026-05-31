@@ -945,13 +945,6 @@ def test_no_else_branch_implicit_merge_api():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="GENUINE SymbolPropagation bug: the input SDFG validates, but the pass "
-                   "propagates `anext = a + b` forward INTO the `{b: a, a: anext}` edge, producing "
-                   "`{b: a, a: a + b}` -- now `a` is both READ (by `b = a` and `a + b`) and WRITTEN on "
-                   "the same interstate edge, which validation rejects as a race condition. The pass "
-                   "must not substitute a symbol into an edge when doing so makes a variable both read "
-                   "and assigned on that edge. Pinned to fix.")
 def test_interdependent_pair_loop_api():
     """
     Two mutually inter-dependent loop-carried symbols updated on one edge.
