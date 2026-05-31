@@ -469,22 +469,9 @@ def set_fast_implementations(sdfg: SDFG,
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     node.implementation = "pure"
                     continue
-                # ``GPUAuto`` builds a nested SDFG whose ``_in`` slot is a copy of the
-                # input descriptor. If the outer input is a ``View``, copying preserves
-                # the View kind, but the viewed source array is not carried into the
-                # nested SDFG -- the View ends up dangling and validation rejects it on
-                # the next ``MapCollapse``. The CUB ``CUDA (device)`` expansion reads
-                # the input through a flat pointer at the call site and handles Views
-                # correctly, so skip ``GPUAuto`` for View inputs and fall through to it.
-                input_is_view = False
-                in_edges = state.in_edges(node)
-                if in_edges:
-                    in_data = in_edges[0].data.data
-                    if in_data in state.sdfg.arrays:
-                        input_is_view = isinstance(state.sdfg.arrays[in_data], dace.data.View)
                 # use GPUAuto expansion if applicable
                 if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
-                        and state.scope_dict()[node] is None and not input_is_view):
+                        and state.scope_dict()[node] is None):
                     node.implementation = 'GPUAuto'
                     continue
                 # Use CUB for device-level reductions
