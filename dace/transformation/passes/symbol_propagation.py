@@ -29,33 +29,6 @@ def _free_symbols(value) -> Set[str]:
         return set()
 
 
-def _mutated_scalar_names(sdfg: SDFG) -> Set[str]:
-    """Names of ``Scalar`` descriptors in ``sdfg`` that are written somewhere -- an
-    AccessNode of that scalar has at least one in-edge.
-
-    A ``Scalar`` whose value is fixed for the whole SDFG run (no in-edges into any
-    of its AccessNodes) is semantically a read-only parameter, indistinguishable
-    from a symbol for propagation. The Fortran frontend registers ``intent(in)``
-    arguments such as ``kidia`` / ``kfdia`` / ``klev`` as ``Scalar`` descriptors;
-    refusing to propagate ``kfdia_plus_1 = (kfdia + 1)`` because the RHS reads a
-    ``Scalar`` would strand every bound-symbol alias forever (cloudsc has hundreds).
-    The stricter "is this scalar actually mutated?" check is sound: if the value
-    is fixed for the SDFG run, the symbol behaves like any other free symbol.
-
-    :param sdfg: The SDFG to inspect.
-    :returns: Names of ``Scalar`` descriptors with at least one write site.
-    """
-    mutated: Set[str] = set()
-    for state in sdfg.all_states():
-        for n in state.data_nodes():
-            if state.in_degree(n) == 0:
-                continue
-            desc = sdfg.arrays.get(n.data)
-            if isinstance(desc, dt.Scalar):
-                mutated.add(n.data)
-    return mutated
-
-
 def _resolve(value, table: Dict[str, Any]):
     """Substitute known symbol values from ``table`` into an assignment RHS.
 
@@ -119,16 +92,6 @@ class SymbolPropagation(ppl.Pass):
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
                 all_cfg_blks[node] = parent
-
-        # Per-SDFG: which Scalar descriptors are actually mutated (have an in-edge
-        # into one of their AccessNodes). A scalar that is NEVER written is a
-        # read-only parameter and behaves like a symbol for propagation purposes
-        # (Fortran ``intent(in)`` args like ``kfdia`` show up as ``Scalar``
-        # descriptors but their value is fixed for the whole SDFG run). Cached
-        # per-SDFG so the per-block ``_get_in_syms`` filter is O(1) per call.
-        self._mutated_scalars: Dict[SDFG, Set[str]] = {}
-        for sd in sdfg.all_sdfgs_recursive():
-            self._mutated_scalars[sd] = _mutated_scalar_names(sd)
 
         # For each CFG Block maintain a dict of incoming and outgoing symbols
         in_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
@@ -327,19 +290,8 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
-            # Skip assignments whose RHS reads a MUTATED scalar -- one whose value
-            # can change across the SDFG (any AccessNode of that scalar has an
-            # in-edge). Read-only scalars (e.g. Fortran ``intent(in)`` args like
-            # ``kfdia`` -- registered as ``Scalar`` descriptors but never written)
-            # are constant for the run and behave like symbols, so propagating
-            # ``kfdia_plus_1 = (kfdia + 1)`` through them is safe and necessary
-            # for cloudsc's bound-symbol aliases to clean up.
-            mutated = self._mutated_scalars.get(sdfg, set())
-            sym_table = {
-                k: v
-                for k, v in sym_table.items()
-                if v is None or not (scalars(v, sdfg.arrays) & mutated)
-            }
+            # Also skip assignments that read a scalar (scalars cannot be propagated as symbols)
+            sym_table = {k: v for k, v in sym_table.items() if v is None or not scalars(v, sdfg.arrays)}
 
             # Combine the symbols
             if i == 0:

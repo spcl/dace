@@ -102,33 +102,6 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return found
 
 
-def _constant_dim_disjoint(read: subsets.Subset, write: subsets.Subset, dep_indices: Set[int]) -> bool:
-    """``True`` iff some iteration-independent dimension carries different
-    constants on the read vs the write. Such a dimension makes the two
-    accesses pointwise disjoint regardless of what the iteration-dependent
-    dimensions look like, so no cross-iteration alias is possible.
-
-    ``aa[0, i]`` (write) vs ``aa[1, i - 1]`` (read) is the canonical case --
-    TSVC s132. The two accesses live on disjoint rows.
-    """
-    rndr = list(read.ndrange())
-    wndr = list(write.ndrange())
-    if len(rndr) != len(wndr):
-        return False
-    for i, ((rb, re_, _), (wb, we_, _)) in enumerate(zip(rndr, wndr)):
-        if i in dep_indices:
-            continue
-        if rb != re_ or wb != we_:
-            continue
-        try:
-            diff = symbolic.simplify(rb - wb)
-        except Exception:
-            continue
-        if getattr(diff, 'is_number', False) and diff != 0:
-            return True
-    return False
-
-
 def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     """ Finds the indices or ranges of a subset that depend on the iteration
         variable. Returns their index in the subset's indices/ranges list.
@@ -156,232 +129,6 @@ def _affine_coeffs(expr, itersym):
     if sp.simplify(e - (a * itersym + b)) != 0:
         return None
     return a, b
-
-
-def _collect_iedge_bindings(loop: LoopRegion) -> Dict[str, str]:
-    """Symbol -> RHS for every assignment carried by an interstate edge inside
-    ``loop``'s body. The frontend often binds the per-iteration index of a
-    compound write (e.g. ``a[i + M] = ...``) to a fresh symbol on an interstate
-    edge -- ``a_slice = i + M`` -- and then writes ``a[a_slice]`` in the next
-    state. The subset on the final write thus reads ``a_slice``, not a clean
-    ``a*i + b`` form, and the affine matcher gives up. Substituting these
-    bindings back lets the matcher see the original linear access.
-    """
-    out: Dict[str, str] = {}
-    for e in loop.all_interstate_edges():
-        if not e.data.assignments:
-            continue
-        for sym, rhs in e.data.assignments.items():
-            # Single source of truth: if the same symbol is assigned in
-            # multiple places, give up rather than picking one arbitrarily.
-            if sym in out and out[sym] != str(rhs):
-                out[sym] = None  # ambiguous
-            elif sym not in out:
-                out[sym] = str(rhs)
-    return {k: v for k, v in out.items() if v is not None}
-
-
-def _subset_with_iedge_subs(subset: subsets.Range, bindings: Dict[str, str]) -> subsets.Range:
-    """Return ``subset`` with every reference to a bound symbol replaced by its
-    interstate-edge RHS. Bindings whose RHS still references another bound
-    symbol are resolved transitively (fixed-point) so chained stagings flatten.
-
-    The returned :class:`subsets.Range` shares no state with ``subset``; safe
-    to pass through downstream affine checks.
-    """
-    if not bindings:
-        return subset
-    sym_map = {sp.Symbol(k): symbolic.pystr_to_symbolic(v) for k, v in bindings.items()}
-    # Transitively resolve: substitute the map into its own RHS until stable.
-    for _ in range(8):
-        changed = False
-        for k, v in list(sym_map.items()):
-            nv = v.subs(sym_map)
-            if nv != v:
-                sym_map[k] = nv
-                changed = True
-        if not changed:
-            break
-    new_ranges = []
-    for rb, re_, rs in subset.ndrange():
-        new_ranges.append((symbolic.simplify(symbolic.pystr_to_symbolic(str(rb)).subs(sym_map)),
-                           symbolic.simplify(symbolic.pystr_to_symbolic(str(re_)).subs(sym_map)),
-                           symbolic.simplify(symbolic.pystr_to_symbolic(str(rs)).subs(sym_map))))
-    return subsets.Range(new_ranges)
-
-
-def _joint_disjoint_2d(read: subsets.Subset, write: subsets.Subset, itersym, start, stride) -> bool:
-    """Joint cross-iteration disjointness for multi-dimensional affine accesses.
-
-    A per-dimension check (:func:`_cross_iter_disjoint`) returns True when
-    *some* dimension is disjoint by itself; that misses cases where every
-    dimension can individually collide for some ``(p1, p2)`` but the two
-    constraints cannot hold *simultaneously*. The canonical case is the
-    wavefront ``arr[t-p, p]`` write vs ``arr[t-p, p-1]`` read after skewing:
-    dim 0 requires ``p1 = p2`` and dim 1 requires ``p1 = p2 - 1``, both
-    satisfiable separately but jointly inconsistent.
-
-    Forms the per-dimension alias equation ``a1*p1 - a2*p2 = b2 - b1`` and
-    looks for a pair of dimensions whose 2x2 system has no solution -- either
-    determinant ``!= 0`` with non-integer / out-of-range solution, or
-    determinant ``== 0`` with the augmented system inconsistent.
-    """
-    try:
-        s_sym = symbolic.simplify(stride)
-    except Exception:
-        return False
-    if not getattr(s_sym, 'is_Integer', False) or int(s_sym) <= 0:
-        return False
-    rndr = list(read.ndrange())
-    wndr = list(write.ndrange())
-    if len(rndr) != len(wndr):
-        return False
-    coeffs = []
-    for (rb, re_, _), (wb, we_, _) in zip(rndr, wndr):
-        if rb != re_ or wb != we_:
-            return False
-        f_r = _affine_coeffs(rb, itersym)
-        f_w = _affine_coeffs(wb, itersym)
-        if f_r is None or f_w is None:
-            return False
-        a_r, b_r = f_r
-        a_w, b_w = f_w
-        if not (getattr(a_r, 'is_Integer', False) and getattr(a_w, 'is_Integer', False)):
-            return False
-        coeffs.append((int(a_w), int(a_r), symbolic.simplify(b_r - b_w)))
-
-    for i in range(len(coeffs)):
-        for j in range(i + 1, len(coeffs)):
-            a1_w, a1_r, c1 = coeffs[i]
-            a2_w, a2_r, c2 = coeffs[j]
-            # System: a1_w * p1 - a1_r * p2 = c1
-            #         a2_w * p1 - a2_r * p2 = c2
-            det = a1_w * (-a2_r) - (-a1_r) * a2_w
-            if det != 0:
-                # Unique solution -- need both c-values to be numeric to check.
-                if not (getattr(c1, 'is_number', False) and getattr(c2, 'is_number', False)):
-                    continue
-                # Solve via Cramer's: p1 = ((-a2_r)*c1 - (-a1_r)*c2) / det
-                num_p1 = (-a2_r) * c1 - (-a1_r) * c2
-                num_p2 = a1_w * c2 - a2_w * c1
-                if num_p1 % det != 0 or num_p2 % det != 0:
-                    return True  # non-integer solution -> disjoint
-                p1_val = num_p1 // det
-                p2_val = num_p2 // det
-                # We don't have bounds at hand, so accept only the strict
-                # non-integer case here; that's still enough to catch the
-                # wavefront ``det == 0`` family below.
-                if p1_val == p2_val:
-                    # Same iteration -> not cross-iter alias.
-                    return True
-            else:
-                # Singular system -- consistent iff (a1_w, -a1_r, c1) and
-                # (a2_w, -a2_r, c2) are linearly dependent including the c
-                # column. Otherwise inconsistent -> no joint solution.
-                if not (getattr(c1, 'is_number', False) and getattr(c2, 'is_number', False)):
-                    continue
-                # Find a non-zero entry in row 1 to compute the ratio.
-                if a1_w != 0:
-                    if a2_w * c1 != a1_w * c2:
-                        return True
-                elif a1_r != 0:
-                    if (-a2_r) * c1 != (-a1_r) * c2:
-                        return True
-                # Both rows are (0, 0, c) -- consistent iff c == 0.
-                elif c1 != 0 or c2 != 0:
-                    return True
-    return False
-
-
-def _cross_iter_disjoint(idx1, idx2, itersym, start, stride) -> bool:
-    """True iff a write at ``idx1(i)`` cannot collide with a read at ``idx2(j)``
-    for any pair of *distinct* iterations ``i``, ``j`` both in the strided
-    iteration set ``{start, start+stride, start+2*stride, ...}``.
-
-    For affine accesses ``idx1 = a1*itersym + b1`` and ``idx2 = a2*itersym + b2``,
-    the alias condition ``idx1(i) = idx2(j)`` substituted by ``i = start + s*ki``,
-    ``j = start + s*kj`` reduces to ``s * (a1*ki - a2*kj) = (a2-a1)*start + (b2-b1)``.
-    The RHS must be divisible by ``s``; if it is not, no integer solution exists
-    and the accesses are provably cross-iteration-disjoint. If it is divisible,
-    the reduced equation ``a1*ki - a2*kj = rhs/s`` has solutions iff
-    ``gcd(a1, a2)`` divides ``rhs/s`` (standard linear Diophantine).
-
-    Plugs the gap when ``propagate_subset`` collapses a strided iteration into
-    a stride-1 box on the propagated range -- e.g. ``a[i]`` (writes ``{1,3,...}``)
-    vs ``a[i-1]`` (reads ``{0,2,...}``) for ``range(1, N, 2)`` would otherwise
-    look like overlapping ``[0..N-1]`` boxes after propagation. (TSVC ``s111``.)
-    """
-    f1 = _affine_coeffs(idx1, itersym)
-    f2 = _affine_coeffs(idx2, itersym)
-    if f1 is None or f2 is None:
-        return False
-    a1, b1 = f1
-    a2, b2 = f2
-    if not (getattr(a1, 'is_Integer', False) and getattr(a2, 'is_Integer', False)):
-        return False
-    try:
-        s_sym = symbolic.simplify(stride)
-    except Exception:
-        return False
-    if not getattr(s_sym, 'is_Integer', False) or int(s_sym) <= 1:
-        return False
-    s = int(s_sym)
-    try:
-        rhs = symbolic.simplify((a2 - a1) * start + (b2 - b1))
-    except Exception:
-        return False
-    if not getattr(rhs, 'is_number', False) or not getattr(rhs, 'is_Integer', False):
-        return False
-    rhs_i = int(rhs)
-    if rhs_i % s != 0:
-        return True
-    reduced = rhs_i // s
-    g = sp.igcd(int(a1), int(a2))
-    if g <= 0:
-        return False
-    return reduced % g != 0
-
-
-def _ranges_disjoint_by_stride(r1: subsets.Range, r2: subsets.Range) -> bool:
-    """Two propagated ranges are disjoint when, on some dimension, their strides
-    and starts put them in different residue classes mod ``gcd(stride1, stride2)``.
-
-    The general linear-Diophantine criterion: ``s1 + p1 * k1 == s2 + p2 * k2`` has
-    an integer solution iff ``gcd(p1, p2)`` divides ``s2 - s1``. If it does NOT, no
-    iteration of either range can hit the same element on that dimension, so the
-    multidimensional ranges themselves cannot intersect.
-
-    Plugs the gap in :func:`dace.subsets.Range.intersects`, whose docstring notes
-    it does not consider strides. Covers the canonical odd-write / even-read case
-    (``a[1:N:2]`` vs ``a[0:N-1:2]`` -- TSVC ``s111`` after frontend lowering).
-    """
-    if len(r1) != len(r2):
-        return False
-    for (s1, _e1, p1), (s2, _e2, p2) in zip(r1, r2):
-        try:
-            p1s = symbolic.simplify(p1)
-            p2s = symbolic.simplify(p2)
-        except Exception:
-            continue
-        if not (getattr(p1s, 'is_Integer', False) and getattr(p2s, 'is_Integer', False)):
-            continue
-        p1i, p2i = int(p1s), int(p2s)
-        if p1i <= 0 or p2i <= 0:
-            continue
-        if p1i == 1 and p2i == 1:
-            continue  # stride-1 ranges -- nothing to gain over the existing box check
-        g = sp.igcd(p1i, p2i)
-        if g <= 1:
-            continue
-        try:
-            diff = symbolic.simplify(s2 - s1)
-        except Exception:
-            continue
-        if not getattr(diff, 'is_number', False) or not getattr(diff, 'is_Integer', False):
-            continue
-        if int(diff) % g != 0:
-            return True
-    return False
 
 
 def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
@@ -455,8 +202,8 @@ class LoopToMap(xf.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
 
         def refuse(reason: str) -> bool:
-            """Log why this loop stays sequential (keyed by loop label) and refuse."""
-            print(f"LoopToMap refused [{self.loop.label}]: {reason}")
+            """Refuse the match. The reason is dropped; transformation diagnostics live
+            in the upstream pipeline driver, not in transformation bodies."""
             return False
 
         # If loop information cannot be determined, fail.
@@ -515,27 +262,12 @@ class LoopToMap(xf.MultiStateTransformation):
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return refuse(f"loop body contains a StructureView in state {loop_state}")
 
-        # Build a substitution map from interstate-edge symbol bindings inside the
-        # loop body; used to resolve staged write/read subsets like ``a[a_slice]``
-        # where ``a_slice := i + M`` on an interstate edge.
-        iedge_bindings = _collect_iedge_bindings(self.loop)
-
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(
             cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
         for block in in_order_loop_blocks:
-            # A symbol read in the block's own dataflow (e.g. a memlet subset
-            # ``b[im]``) is read before any symbol the block assigns on its
-            # out-edges; if the loop later reassigns it, it is loop-carried. The
-            # per-edge ``read_symbols()`` below only sees interstate-edge reads, so
-            # fold in these in-state reads.
-            try:
-                block_reads = {str(s) for s in block.free_symbols}
-            except Exception:
-                block_reads = set()
-            used_before_assignment |= (block_reads - symbols_that_may_be_used)
             for e in block.parent_graph.out_edges(block):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
                 # see above call to `blockorder_topological_sort`)
@@ -607,22 +339,6 @@ class LoopToMap(xf.MultiStateTransformation):
                             # per-iteration write; look past the connector.
                             if not ok and isinstance(e.src, nodes.NestedSDFG):
                                 ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
-                            # If the subset references a symbol bound by a loop
-                            # interstate edge (the frontend's compound-index
-                            # staging shape), substitute and re-check. The
-                            # mutation is intentional and persistent: this is
-                            # ``can_be_applied`` but rewriting the staged
-                            # subset is needed for both downstream affine
-                            # disjoint checks (this method) and the final
-                            # apply (which reads the same memlet); the iedge
-                            # bindings are loop-invariant so the substitution
-                            # never changes semantics.
-                            if not ok and dst_subset is not None and iedge_bindings:
-                                resolved = _subset_with_iedge_subs(dst_subset, iedge_bindings)
-                                if _check_range(resolved, a, itersym, b, step):
-                                    e.data.subset = resolved
-                                    dst_subset = resolved
-                                    ok = True
                             if not ok and not permissive:
                                 return refuse(f"write to {dn.data} is not uniquely indexed by the iteration variable "
                                               f"(needs an a*i+b subset) - dst_subset={dst_subset}")
@@ -774,13 +490,6 @@ class LoopToMap(xf.MultiStateTransformation):
             indices = set(ridx) | set(widx)
             if not indices:
                 indices = set(range(len(read)))
-            # If some iteration-independent dimension carries a different
-            # constant on the read vs the write (e.g. ``aa[0, i]`` written,
-            # ``aa[1, i-1]`` read), the two accesses are pointwise disjoint
-            # there and the rest of the dependence analysis would lose that
-            # by sanitising the dimension away.
-            if _constant_dim_disjoint(read, write, indices):
-                continue
             read = _sanitize_by_index(indices, read)
             write = _sanitize_by_index(indices, write)
             if read == write:
@@ -791,35 +500,8 @@ class LoopToMap(xf.MultiStateTransformation):
                                       subsets.Range([(start, end, step)]),
                                       use_dst=True)
             t_pread = _sanitize_by_index(indices, pread.src_subset)
-            pwrite_san = _sanitize_by_index(indices, pwrite.dst_subset)
-            if subsets.intersects(t_pread, pwrite_san) is False:
-                continue
-            # ``subsets.intersects`` is stride-blind (its own TODO); when
-            # propagation collapses a strided iteration set into a stride-1
-            # box, two cross-iteration accesses in different residue classes
-            # look like overlapping boxes. Defer to a per-iteration
-            # stride-aware Diophantine on each dimension: if *some* dimension
-            # is provably cross-iteration-disjoint, no pair (i, j) of distinct
-            # iterations aliases.
-            if _ranges_disjoint_by_stride(t_pread, pwrite_san):
-                continue
-            itersym_sym = symbolic.pystr_to_symbolic(itervar)
-            cross_disjoint = False
-            for ridx_d, widx_d in zip(src_subset.ndrange(), candidate.dst_subset.ndrange()):
-                rb, re_, _ = ridx_d
-                wb, we_, _ = widx_d
-                if rb != re_ or wb != we_:
-                    continue
-                if _cross_iter_disjoint(wb, rb, itersym_sym, start, step):
-                    cross_disjoint = True
-                    break
-            if cross_disjoint:
-                continue
-            # Joint multi-dim Diophantine: when no single dimension is
-            # disjoint by itself but the system across two or more dimensions
-            # is inconsistent, the multi-dim alias has no solution -- the
-            # wavefront pattern after skewing is the canonical case.
-            if _joint_disjoint_2d(src_subset, candidate.dst_subset, itersym_sym, start, step):
+            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
+            if subsets.intersects(t_pread, pwrite) is False:
                 continue
             return False
 
@@ -1226,15 +908,3 @@ class LoopToMap(xf.MultiStateTransformation):
                 n.sdfg.parent = p
                 n.sdfg.parent_nsdfg_node = n
                 n.sdfg.parent_sdfg = p.sdfg
-
-        # Narrow the freshly-created state-level memlets. ``body.add_edge`` uses
-        # ``Memlet.from_array`` (full extent) when wiring the new ``NestedSDFG``,
-        # which hides the inside subset and stalls downstream passes that look
-        # at the carrier's state-level memlets (e.g. ``LoopToScan``'s
-        # ``_find_carried_arrays``, ``RedundantArrayCopying*``). Propagating the
-        # inside subsets out through the NSDFG + Map narrows them to
-        # ``[outer_loop_var, map_range]`` -- the symbol set ``symbols_defined_at``
-        # already reports for the ``cnode`` here.
-        from dace.sdfg.propagation import propagate_memlets_nested_sdfg, propagate_memlets_state
-        propagate_memlets_nested_sdfg(sdfg, body, cnode)
-        propagate_memlets_state(sdfg, body)

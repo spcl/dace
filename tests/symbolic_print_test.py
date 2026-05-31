@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import sympy
 from dace.symbolic import sympy_numeric_fix, pystr_to_symbolic, symstr
 
@@ -101,3 +102,30 @@ def test_cpp_floor_of_fraction_difference_recombines_to_integer_division():
     assert 'floor' not in clean, f'C++ printer must not emit floor(...); got {out!r}'
     assert '1/8' not in clean, f'literal Rational 1/8 leaked into C++ output: {out!r}'
     assert 'LEN-1' in clean, f'expected combined numerator (LEN - 1); got {out!r}'
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        1.0 / 21.0,  # FFT ifft factor; needs 17 sig digits to round-trip
+        0.1 + 0.2,
+        1e-300,
+        1e300,
+        1.7976931348623157e308,  # near DBL_MAX
+        1.0,
+        5.0,
+        3.14,
+        -0.0476190476190476,
+        1234567890.1234567,
+    ])
+def test_format_float_is_idempotent_under_parse_and_reformat(value):
+    """The float-to-string serializer must be idempotent: ``f -> str -> f -> str``
+    yields the same string as ``f -> str``. Otherwise SDFG save -> load -> save
+    fails the round-trip equality check the framework runs on every serialization
+    (e.g. ``tests/library/fft_test.py::test_ifft[backward]`` regressed because
+    ``1/21`` was emitted as 17 digits in one save and 15 in the next)."""
+    from dace.symbolic import _format_float
+    s1 = _format_float(value)
+    s2 = _format_float(float(s1))
+    assert s1 == s2, f'_format_float not idempotent: {value!r} -> {s1!r} -> {s2!r}'
+    assert float(s1) == float(value), (f'_format_float loses precision for {value!r}: parsed back as {float(s1)!r}')
