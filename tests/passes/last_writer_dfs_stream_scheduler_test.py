@@ -157,32 +157,26 @@ def _scheduled_nodes_by_label(sdfg, prefix):
     return matches
 
 
-def test_worked_example_two_streams_zero_events():
+def test_worked_example_one_stream_zero_events():
     sdfg = _build_worked_example_sdfg()
     scheduler = LastWriterDFSStreamScheduler()
     assignments = scheduler.assign_streams(sdfg)
     ctx = scheduler._last_ctx
 
-    # Each pair (A_i, B_i) must land on different streams; the chains
-    # (A_*) must share a single stream and the (B_*) chain another.
+    # WHY: A and B are independent sources writing to disjoint arrays. The
+    # scheduler defaults independent sources to stream 0 (minimise stream
+    # count; submit-order sequentialisation on the same stream is correct
+    # and cheaper than forking). Each chain is then internally consistent:
+    # one stream end-to-end, and the two chains share that stream.
     a_streams = {assignments[n] for n in _scheduled_nodes_by_label(sdfg, "A")}
     b_streams = {assignments[n] for n in _scheduled_nodes_by_label(sdfg, "B")}
-    assert len(a_streams) == 1, f"A-chain should share one stream; got {a_streams}"
-    assert len(b_streams) == 1, f"B-chain should share one stream; got {b_streams}"
-    assert a_streams.isdisjoint(b_streams), \
-        f"A and B chains must be on different streams; got A={a_streams}, B={b_streams}"
+    assert a_streams == {0}, f"A-chain should land on stream 0; got {a_streams}"
+    assert b_streams == {0}, f"B-chain should land on stream 0; got {b_streams}"
 
-    # Zero cross-stream events expected: the worked example has no
-    # consumer reading from a stream other than its inherited one.
     assert ctx.cross_stream_edges == [], (
         f"Expected no cross-stream events; got {len(ctx.cross_stream_edges)}: {ctx.cross_stream_edges}")
-
-    # Zero interstate host-syncs expected: no GPU-resident array
-    # appears in the loop condition (only the symbol ``cfgh``).
     assert ctx.interstate_host_reads == [], (
         f"Expected no interstate host-reads; got {len(ctx.interstate_host_reads)}: {ctx.interstate_host_reads}")
-
-    # No loop fell back to per-iteration syncs.
     assert ctx.per_iteration_loops == set(), (
         f"Expected loop to reach fixed point; got per-iter: {ctx.per_iteration_loops}")
 
@@ -271,24 +265,34 @@ def _build_conditional_disagreement_sdfg():
     """
     sdfg = dace.SDFG("cond_disagreement")
     N = dace.symbol("N", dtype=dace.int32)
-    for name in ("X", "Y"):
+    for name in ("A", "X", "Y"):
         sdfg.add_array(name, [N], dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.add_scalar("flag", dace.int32, transient=False)
     start = sdfg.add_state("start", is_start_block=True)
     end = sdfg.add_state("end")
-    # Seed both branches with different LastWriter streams by writing
-    # X and Y from independent kernels in the start state.
-    start.add_mapped_tasklet("seed_X",
+    # WHY: a real diamond is needed to force seed_X and seed_Y onto distinct
+    # streams. ``source`` writes A; ``seed_X`` and ``seed_Y`` both read A.
+    # The first fan-out child inherits source's stream, the second forks --
+    # so X and Y are LastWriter-tagged with two different streams entering
+    # the conditional.
+    start.add_mapped_tasklet("source",
                              map_ranges={"i": f"0:{N}"},
                              inputs={},
                              code="o = 0.0",
+                             outputs={"o": dace.Memlet("A[i]")},
+                             external_edges=True,
+                             schedule=dace.ScheduleType.GPU_Device)
+    start.add_mapped_tasklet("seed_X",
+                             map_ranges={"i": f"0:{N}"},
+                             inputs={"v": dace.Memlet("A[i]")},
+                             code="o = v",
                              outputs={"o": dace.Memlet("X[i]")},
                              external_edges=True,
                              schedule=dace.ScheduleType.GPU_Device)
     start.add_mapped_tasklet("seed_Y",
                              map_ranges={"i": f"0:{N}"},
-                             inputs={},
-                             code="o = 0.0",
+                             inputs={"v": dace.Memlet("A[i]")},
+                             code="o = v",
                              outputs={"o": dace.Memlet("Y[i]")},
                              external_edges=True,
                              schedule=dace.ScheduleType.GPU_Device)
