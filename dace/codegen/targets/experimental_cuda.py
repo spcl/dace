@@ -697,13 +697,26 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def _declare_pointer_if_needed(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, node: nodes.AccessNode,
                                    nodedesc: dt.Data, declaration_stream: CodeIOStream) -> str:
-        """Emit ``T* {name};`` once and register it in defined_vars; return the
-        resolved data name. No-op if a prior pass already declared it."""
+        """Emit ``T* {name};`` once and register the host pointer in defined_vars.
+
+        The C declaration is skipped when ``declare_array`` already emitted one
+        (tracked via ``declared_arrays``): that happens in the framecode's
+        split-DECLARE/ALLOCATE path for non-free-symbol-dependent transients
+        used across multiple states. When that split path runs, this helper
+        executes inside the first producing state's scope, but the host pointer
+        must outlive that state so the consuming state's kernel codegen can
+        resolve it -- so the registration is placed at the parent (SDFG)
+        scope. For the unified path the register lands at the current scope,
+        which is also one level under the surrounding caller's frame.
+        """
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
+        array_ctype = f'{nodedesc.dtype.ctype} *'
         if not self._dispatcher.declared_arrays.has(dataname):
-            array_ctype = f'{nodedesc.dtype.ctype} *'
             declaration_stream.write(f'{array_ctype} {dataname};\n', cfg, state_id, node)
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
+        # ``ancestor=1`` puts the entry one level above the state scope so the
+        # binding survives state boundaries inside the SDFG.
+        if not self._dispatcher.defined_vars.has(dataname):
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype, ancestor=1)
         return dataname
 
     def _prepare_GPU_Global_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
