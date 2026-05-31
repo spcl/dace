@@ -288,8 +288,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # validation error. v1 splits only when every inner read AN of the
         # InOut name has ``in_degree == 0`` (the clean one-RMW-tasklet shape)
         # and refuses otherwise.
-        intermediate_names = {e.dst.data for e in (exclusive_outputs | shared_outputs)
-                              if isinstance(e.dst, nodes.AccessNode)}
+        intermediate_names = {
+            e.dst.data
+            for e in (exclusive_outputs | shared_outputs) if isinstance(e.dst, nodes.AccessNode)
+        }
         if intermediate_names:
             first_scope = graph.scope_subgraph(first_map_entry, include_entry=False, include_exit=False)
             for inner in first_scope.nodes():
@@ -324,9 +326,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         return True
 
     @staticmethod
-    def _split_inout_for_intermediate(graph: dace.SDFGState, sdfg: dace.SDFG,
-                                       first_map_entry: nodes.MapEntry,
-                                       intermediate_names: Set[str]) -> None:
+    def _split_inout_for_intermediate(graph: dace.SDFGState, sdfg: dace.SDFG, first_map_entry: nodes.MapEntry,
+                                      intermediate_names: Set[str]) -> None:
         """For each NestedSDFG inside ``first_map_entry``'s scope whose InOut
         connectors include any of ``intermediate_names``, split the connector:
 
@@ -345,7 +346,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         and the standard MapFusion rename machinery can rename it to
         ``__map_fusion_<name>`` without producing an InOut-mismatch.
         """
-        from dace import data as dace_data
         first_scope = graph.scope_subgraph(first_map_entry, include_entry=False, include_exit=False)
         for inner in list(first_scope.nodes()):
             if not isinstance(inner, nodes.NestedSDFG):
@@ -430,8 +430,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # If any intermediate's data name is shared with an InOut connector of a
         # NestedSDFG in the producer's body, split the connector so the standard
         # rename machinery below produces a valid InOut-free shape.
-        intermediate_names = {e.dst.data for e in (exclusive_outputs | shared_outputs)
-                              if isinstance(e.dst, nodes.AccessNode)}
+        intermediate_names = {
+            e.dst.data
+            for e in (exclusive_outputs | shared_outputs) if isinstance(e.dst, nodes.AccessNode)
+        }
         if intermediate_names:
             self._split_inout_for_intermediate(graph, sdfg, first_map_entry, intermediate_names)
 

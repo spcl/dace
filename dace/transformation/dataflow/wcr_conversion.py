@@ -371,8 +371,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if tlet.language is not dtypes.Language.Python or len(tlet.code.code) != 1:
             return False
         node = tlet.code.code[0]
-        if (not isinstance(node, ast.Assign) or len(node.targets) != 1
-                or not isinstance(node.targets[0], ast.Name) or node.targets[0].id != oute.src_conn):
+        if (not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name)
+                or node.targets[0].id != oute.src_conn):
             return False
         data_in = [e for e in graph.in_edges(tlet) if e.data is not None and not e.data.is_empty()]
         data_out = [e for e in graph.out_edges(tlet) if e.data is not None and not e.data.is_empty()]
@@ -406,8 +406,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         wcr = f'lambda a,b: {op}(a, b)' if op in self._FUNCTIONS else f'lambda a,b: a {op} b'
         state.remove_edge(oute)
         state.remove_edge(store)
-        state.add_edge(tlet, oute.src_conn, out, store.dst_conn,
-                       Memlet(data=out.data, subset=acc_subset, wcr=wcr))
+        state.add_edge(tlet, oute.src_conn, out, store.dst_conn, Memlet(data=out.data, subset=acc_subset, wcr=wcr))
         if state.degree(cout) == 0:
             state.remove_node(cout)
 

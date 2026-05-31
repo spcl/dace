@@ -273,7 +273,6 @@ def _build_copy_wrapped_rmw(op_code: str, op_wcr: str, n: int = 6):
     and copied back into ``A[0]`` -- ``A[0] -> a_in -> tasklet -> a_sum ->
     A[0]``. ``op_code`` is the tasklet RHS (``__in1 <op> __in2``); ``op_wcr`` is
     the numpy reduction used to build the oracle."""
-    import numpy as np
     sdfg = dace.SDFG(f'copy_wrapped_rmw_{op_wcr}')
     sdfg.add_array('A', [2], dace.float64)
     sdfg.add_array('B', [n], dace.float64)
@@ -316,13 +315,13 @@ def test_aug_assign_copy_wrapped_rmw_match():
     sdfg.validate()
 
     body = next(s for s in sdfg.all_states() if s.label == 'body')
-    wcr_writes = [e for e in body.edges()
-                  if isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'A' and e.data.wcr is not None]
+    wcr_writes = [
+        e for e in body.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'A' and e.data.wcr is not None
+    ]
     assert len(wcr_writes) == 1
     assert 'a + b' in wcr_writes[0].data.wcr
     # The accumulator is no longer loaded inside the body.
-    assert not any(isinstance(n, nodes.AccessNode) and n.data == 'A' and body.out_degree(n) > 0
-                   for n in body.nodes())
+    assert not any(isinstance(n, nodes.AccessNode) and n.data == 'A' and body.out_degree(n) > 0 for n in body.nodes())
 
 
 def test_aug_assign_copy_wrapped_rmw_value_and_parallelize():

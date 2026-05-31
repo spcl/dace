@@ -224,8 +224,9 @@ def test_used_array_keeps_symbolic_extent():
     sdfg.add_array('a', (n, ), dace.float64, strides=(s, ), transient=False)
     sdfg.add_array('b', (n, ), dace.float64, transient=False)
     state = sdfg.add_state()
-    state.add_mapped_tasklet('m', {'__i': '0:n'}, {'__in': dace.Memlet('a[__i]')}, '__out = __in + 1.0',
-                             {'__out': dace.Memlet('b[__i]')}, external_edges=True)
+    state.add_mapped_tasklet('m', {'__i': '0:n'}, {'__in': dace.Memlet('a[__i]')},
+                             '__out = __in + 1.0', {'__out': dace.Memlet('b[__i]')},
+                             external_edges=True)
     sdfg.validate()
 
     used = sdfg.used_symbols(all_symbols=False)
