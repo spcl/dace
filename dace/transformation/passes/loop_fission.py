@@ -18,7 +18,95 @@ from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
+def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
+    """``True`` iff every dimension of ``subset`` is a single-point access at
+    the loop variable with offset zero (or loop-invariant).
+
+    A ``write-then-read`` chain through a non-transient AccessNode that obeys
+    this is *per-iteration* -- the produced and consumed values coincide on
+    the same loop index. Sequential loop fission preserves the value because
+    the producer loop finishes (every ``a[i]`` updated) before the consumer
+    loop starts (each ``a[i]`` read sees the just-updated value, exactly as
+    in the original interleaved order).
+
+    Cross-iteration subsets like ``a[i - 1]`` break this property and force
+    the producer / consumer to stay in the same fission group.
+    """
+    if loop_var is None or subset is None:
+        return False
+    import sympy as sp
+    try:
+        loop_sym = sp.Symbol(loop_var)
+    except Exception:
+        return False
+    for rb, re_, _ in subset.ndrange():
+        if rb != re_:
+            return False
+        try:
+            expr = sp.sympify(str(rb))
+        except Exception:
+            return False
+        if loop_sym in expr.free_symbols:
+            offset = sp.simplify(expr - loop_sym)
+            if not (getattr(offset, 'is_number', False) and offset == 0):
+                return False
+    return True
+
+
+def _container_per_iter_only(state: SDFGState, data: str, loop_var: Optional[str]) -> bool:
+    """``True`` iff every memlet referencing ``data`` in ``state`` is per-iter."""
+    for n in state.nodes():
+        if not (isinstance(n, nodes.AccessNode) and n.data == data):
+            continue
+        for e in list(state.in_edges(n)) + list(state.out_edges(n)):
+            if e.data is None:
+                continue
+            sub = e.data.get_dst_subset(e, state) if e.data.subset is None else e.data.subset
+            if not _is_per_iter_subset(sub, loop_var):
+                return False
+    return True
+
+
+def _rewrite_per_iter_bridges(state: SDFGState, loop_var: Optional[str]):
+    """In-place: replace writer-side AccessNodes whose out-edges feed
+    downstream consumers (the textbook fission bridge) with a fresh reader
+    AccessNode for the same data.
+
+    For a non-transient ``a`` that's *only* accessed per-iteration in this
+    state, the value the writer just produced equals ``a[loop_var]`` -- which
+    is exactly what a fresh reader on the same array would load. The pre-
+    rewrite makes the producer and consumer naturally appear as separate
+    dataflow components, and downstream loops in the parent CFG will see
+    the producer's loop finish before the consumer's loop starts, so each
+    reader genuinely sees the just-written value.
+
+    Has no effect if ``loop_var`` is ``None`` or if no per-iter shared
+    container exists.
+    """
+    if loop_var is None:
+        return
+    written = {n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
+    for data in list(written):
+        desc = state.sdfg.arrays.get(data)
+        if desc is None or getattr(desc, 'transient', False):
+            continue
+        if not _container_per_iter_only(state, data, loop_var):
+            continue
+        # Find writer-side AccessNodes with downstream consumers.
+        for n in list(state.nodes()):
+            if not (isinstance(n, nodes.AccessNode) and n.data == data
+                    and state.in_degree(n) > 0 and state.out_degree(n) > 0):
+                continue
+            out_edges = list(state.out_edges(n))
+            if not out_edges:
+                continue
+            for oe in out_edges:
+                fresh = state.add_access(data)
+                state.add_edge(fresh, oe.src_conn, oe.dst, oe.dst_conn, oe.data)
+                state.remove_edge(oe)
+
+
+def _independent_groups(state: SDFGState, loop_var: Optional[str] = None) -> List[List[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
 
     A *pure input* is an AccessNode with no in-edges whose data is never
@@ -29,7 +117,16 @@ def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
     returned group also carries the input nodes feeding it, so cloning then
     pruning to a group keeps a self-contained body.
 
+    When ``loop_var`` is provided and a non-transient container is accessed
+    *only* per-iteration (``a[loop_var]`` everywhere) the producer/consumer
+    bridge through that container is severed in both the dataflow union and
+    the container-shared merge: sequential loop fission preserves the value
+    in that case. TSVC s221 (``a[i] = a[i] + c[i] * d[i]; b[i] = b[i-1] +
+    a[i] + d[i]``) fissions into two loops under this rule.
+
     :param state: The loop body state.
+    :param loop_var: The enclosing loop's iteration variable. ``None`` keeps
+        the legacy strict-merge behaviour.
     :returns: A list of node lists, one per independent group, deterministic.
     """
     order = {n: i for i, n in enumerate(state.nodes())}
@@ -63,6 +160,15 @@ def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
         return [find(node)]
 
     for data in written:
+        # Skip per-iter non-transient containers: write-then-read at the same
+        # loop index can be safely sequenced into sibling loops (the producer
+        # finishes all writes before the consumer reads). The bridges are
+        # rewritten in :func:`_fission` to give each clone its own reader.
+        if loop_var is not None:
+            desc = state.sdfg.arrays.get(data)
+            if (desc is not None and not getattr(desc, 'transient', False)
+                    and _container_per_iter_only(state, data, loop_var)):
+                continue
         reps = []
         for n in state.nodes():
             if isinstance(n, nodes.AccessNode) and n.data == data:
@@ -97,6 +203,16 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
     deep-copies the whole loop), porting each tasklet together with the
     symbols it needs.
 
+    Refuses (returns ``None``) when any body iedge carries a **stateful**
+    assignment -- one whose RHS references the LHS, like
+    ``k := k + 1`` (a counter recurrence). Cloning the loop for fission
+    would duplicate the increment in every sibling, so a body that
+    semantically does ``k += 1`` per iter would do ``k += 1`` × N_siblings
+    per iter and produce wrong values for any downstream consumer reading
+    ``k`` (TSVC ``s126``). Side-effect-free derivations like
+    ``idx_index := idx[i]`` do not reference their own LHS and remain
+    fissionable -- each sibling rederives the same value from arrays.
+
     :param loop: The loop whose body shape is inspected.
     :returns: The sole compute ``SDFGState``, or ``None`` if the body is not
         of that shape.
@@ -105,7 +221,21 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
     if any(not isinstance(b, SDFGState) for b in blocks):
         return None
     nonempty = [s for s in blocks if s.nodes()]
-    return nonempty[0] if len(nonempty) == 1 else None
+    if len(nonempty) != 1:
+        return None
+    # Refuse stateful (self-referencing) body iedge assignments. Clone-
+    # duplicating ``k := k + 1`` across siblings would multiply the
+    # increment per outer iter.
+    for e in loop.edges():
+        for lhs, rhs in (e.data.assignments or {}).items():
+            try:
+                from dace import symbolic
+                rhs_free = set(str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols)
+            except Exception:
+                rhs_free = {lhs}  # conservative: assume self-reference on parse failure
+            if lhs in rhs_free:
+                return None
+    return nonempty[0]
 
 
 def _block_rw(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
@@ -230,7 +360,8 @@ class LoopFission(ppl.Pass):
                     continue
                 compute = _single_compute_state(loop)
                 if compute is not None:
-                    if len(_independent_groups(compute)) < 2:
+                    _rewrite_per_iter_bridges(compute, loop.loop_variable)
+                    if len(_independent_groups(compute, loop.loop_variable)) < 2:
                         continue
                     self._fission(loop, compute)
                 else:
@@ -300,7 +431,8 @@ class LoopFission(ppl.Pass):
         out_edges = list(parent.out_edges(loop))
         is_start = parent.start_block is loop
         cidx = list(loop.nodes()).index(compute)
-        ngroups = len(_independent_groups(compute))
+        loop_var = loop.loop_variable
+        ngroups = len(_independent_groups(compute, loop_var))
 
         clones: List[LoopRegion] = []
         for gi in range(ngroups):
@@ -308,7 +440,7 @@ class LoopFission(ppl.Pass):
             clone.label = f"{loop.label}_fis{gi}"
             parent.add_node(clone)
             cstate = list(clone.nodes())[cidx]
-            keep = set(_independent_groups(cstate)[gi])
+            keep = set(_independent_groups(cstate, loop_var)[gi])
             for n in [n for n in cstate.nodes() if n not in keep]:
                 cstate.remove_node(n)
             clones.append(clone)

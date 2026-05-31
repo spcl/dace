@@ -65,7 +65,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
 
-        idx_arrays = detect_scatter_idx_arrays(sdfg)
+        scatter_loops, idx_arrays = detect_scatter_loops_and_idx_arrays(sdfg)
         for idx_name in sorted(idx_arrays):
             # ``insert_scatter_guard`` refuses to double-emit; swallow that one case so
             # re-running the pass on an already-guarded SDFG is a no-op.
@@ -75,22 +75,55 @@ class ScatterToGuardedMaps(ppl.Pass):
                 if 'already exists' not in str(exc):
                     raise
 
-        sdfg.apply_transformations_repeated(LoopToMap, permissive=True)
+        # Convert each scatter loop directly via ``LoopToMap.apply`` -- the
+        # post-guard contract (idx is a permutation) makes the lift sound, so
+        # the ``can_be_applied`` write-write-race refusal does not apply.
+        # The previous implementation called ``apply_transformations_repeated``
+        # with ``permissive=True`` *globally*, which incorrectly lifted
+        # unrelated carry loops (TSVC ``s2111`` / ``s1119`` after WavefrontSkew
+        # left genuine carried deps on the outer ``t`` axis). Calling the
+        # underlying ``apply`` utility on each detected scatter loop scopes the
+        # lift to exactly the loops the guard makes safe.
+        for loop in scatter_loops:
+            parent = loop.parent_graph
+            if parent is None or loop not in parent.nodes():
+                continue  # already removed by a sibling lift
+            owner_sdfg = _owning_sdfg(sdfg, loop)
+            instance = LoopToMap()
+            instance.loop = loop
+            try:
+                instance.apply(parent, owner_sdfg)
+            except Exception:
+                # Direct ``apply`` is best-effort -- skip a loop the converter
+                # can't handle rather than abort the whole pass.
+                pass
         return len(idx_arrays) or None
 
 
 def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
     """Find every ``idx`` array name used as an indirect-write index in any LoopRegion.
 
-    Scans every ``LoopRegion``'s interstate edges for assignments of the form
-    ``sym := arr[loop_var]`` (or ``sym := arr[loop_var + const]`` etc.), then
-    checks every write-memlet subset inside the region's states for references
-    to ``sym``. Whenever a match is found, ``arr`` is added to the result set.
+    See :func:`detect_scatter_loops_and_idx_arrays` for the underlying scan; this
+    helper drops the loops set and returns only the idx-array names.
+    """
+    _, idx_arrays = detect_scatter_loops_and_idx_arrays(sdfg)
+    return idx_arrays
+
+
+def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
+    """Scan ``sdfg`` (and nested SDFGs) for scatter loops; return
+    ``(scatter_loops, idx_arrays)``.
+
+    A ``LoopRegion`` qualifies as a scatter loop iff any interstate edge in the
+    region binds a symbol via ``sym := arr[loop_var]`` AND a write-memlet to a
+    non-transient array inside the region's body references that symbol.
 
     :param sdfg: The SDFG to scan; nested SDFGs are walked too.
-    :returns: Set of ``idx`` array names (resolved against ``sdfg.arrays`` at the
-              owning SDFG level).
+    :returns: ``(list[LoopRegion], set[str])`` -- deterministic-order list of
+              the scatter ``LoopRegion`` instances + set of ``idx`` array names
+              resolved against the owning SDFG's ``arrays`` table.
     """
+    scatter_loops: list = []
     idx_arrays: Set[str] = set()
     for sd in sdfg.all_sdfgs_recursive():
         for region in sd.all_control_flow_regions():
@@ -99,6 +132,7 @@ def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
             bindings = _collect_indirect_bindings(region, sd)
             if not bindings:
                 continue
+            loop_arrays: Set[str] = set()
             for state in region.all_states():
                 for node in state.data_nodes():
                     if state.in_degree(node) == 0:
@@ -112,8 +146,11 @@ def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
                         for sym in e.data.subset.free_symbols:
                             arr = bindings.get(str(sym))
                             if arr is not None:
-                                idx_arrays.add(arr)
-    return idx_arrays
+                                loop_arrays.add(arr)
+            if loop_arrays:
+                scatter_loops.append(region)
+                idx_arrays |= loop_arrays
+    return scatter_loops, idx_arrays
 
 
 def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, str]:
@@ -134,6 +171,17 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, str]
             if arr is not None:
                 bindings[lhs] = arr
     return bindings
+
+
+def _owning_sdfg(root: SDFG, loop: LoopRegion) -> SDFG:
+    """Walk the SDFG tree to find the SDFG that owns ``loop``. Used so
+    ``LoopToMap.apply`` reads / writes the correct arrays table on nested
+    SDFGs.
+    """
+    for sd in root.all_sdfgs_recursive():
+        if loop in list(sd.all_control_flow_regions()):
+            return sd
+    return root  # defensive fallback
 
 
 def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
@@ -160,4 +208,4 @@ def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optiona
     return arr
 
 
-__all__ = ['ScatterToGuardedMaps', 'detect_scatter_idx_arrays']
+__all__ = ['ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays']

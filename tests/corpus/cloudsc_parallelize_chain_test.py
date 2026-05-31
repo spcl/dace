@@ -36,15 +36,18 @@ import dace
 from dace import symbolic
 from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
-from dace.transformation.passes.constant_propagation import ConstantPropagation
-from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
+from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from tests.corpus.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
@@ -59,7 +62,15 @@ _REGIMES = {
 }
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
-_RELAXED_STEPS = {'loop_to_reduce', 'accumulator_to_map_and_reduce', 'loop_to_map'}
+#: ``loop_to_scan`` reassociates the carry; ``loop_to_map`` may reorder fold operations.
+_RELAXED_STEPS = {'loop_to_map', 'loop_to_scan', 'loop_to_reduce'}
+
+#: Stages at which the serialize/deserialize roundtrip e2e check fires. ``simplify``
+#: is the first heavy SDFG mutation (state fusion + NSDFG inlining) where most
+#: roundtrip bugs surface; ``loop_to_map`` is the final transformed shape. Per-stage
+#: roundtrip on every label roughly doubles wall-clock for no new bug coverage --
+#: these two bracket every transform-induced descriptor / memlet / region mutation.
+_ROUNDTRIP_CHECKPOINTS = {'simplify', 'loop_to_map'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -70,17 +81,17 @@ _INDEX_SYMS = ('klev', 'kfdia', 'kidia')
 #: loops are: LU triangular back-substitution on ``zqxn`` (2 loops, mathematically
 #: sequential), the vertical flux prefix-sum on ``pfcqlng`` / ``pfsqrf`` (1 loop,
 #: genuine scan; a separate optional scan->elementwise+reduce transform addresses
-#: it), the level loop blocked by a ``tendency_loc_cld`` propagation
+#: it), and the level loop blocked by a ``tendency_loc_cld`` propagation
 #: over-approximation (1 loop; the inner write IS ``jk``-indexed but
 #: ``propagate_memlets_nested_sdfg`` widens it -- a 2nd-order propagation fix is
-#: a follow-up to the ``symbols_defined_at`` enclosing-LoopRegion fix), and the
-#: ICE ``for_767`` (1 loop, jm=ncldqi=2 so the guard is the runtime
-#: ``yrecldp_laericesed`` rather than a dead ``1==2``, leaving a constant-index
-#: ``zvqx[1]`` write whose privatization requires a separate
-#: ``PromoteConstantIndexAccess`` transform). A change here means loop2map
-#: coverage shifted -- review before bumping the numbers.
-_EXPECTED_MAPS = 355
-_EXPECTED_SEQUENTIAL_LOOPS = 5
+#: a follow-up to the ``symbols_defined_at`` enclosing-LoopRegion fix). The ICE
+#: ``for_767`` ``zvqx[1]`` slot is now privatized by
+#: ``PromoteConstantIndexAccess`` (per-loop atomic check-promote-verify-commit
+#: lands the rewrite that the previous batched flow lost), so the species loops
+#: parallelize. A change here means loop2map coverage shifted -- review before
+#: bumping the numbers.
+_EXPECTED_MAPS = 357
+_EXPECTED_SEQUENTIAL_LOOPS = 3
 
 
 def _wcr_edges(sdfg: dace.SDFG):
@@ -145,24 +156,98 @@ def _unroll_fixpoint(sdfg):
         pass
 
 
+def _promote_args_to_symbols(sdfg):
+    """Promote read-only ``Scalar`` arguments to symbols. ``find_promotable_scalars``
+    enforces full safety (rejects any Scalar that's written, in a Stream, or has
+    persistent / external lifetime), so ``transients_only=False`` is safe to default
+    on for the cloudsc-style ``intent(in)`` integer args.
+    """
+    pass_ = ScalarToSymbolPromotion()
+    pass_.transients_only = False
+    pass_.apply_pass(sdfg, {})
+
+
+def _post_unroll_cleanup(sdfg):
+    """Fold the now-constant conditionals that ``short_loop_unroll`` exposes and
+    drop the unreachable branches. Replaces a full ``sdfg.simplify()`` here -- the
+    only thing the second simplify was doing on this trace is dead-branch removal,
+    so the targeted passes are enough.
+    """
+    LiftTrivialIf().apply_pass(sdfg, {})
+    DeadStateElimination().apply_pass(sdfg, {})
+    EmptyStateElimination().apply_pass(sdfg, {})
+
+
 def _pmar(xform):
     return lambda sdfg: PatternMatchAndApplyRepeated([xform()]).apply_pass(sdfg, {})
 
 
 def _chain():
-    """The ordered ``(label, apply_fn)`` chain applied to the candidate."""
+    """The ordered ``(label, apply_fn)`` chain applied to the candidate.
+
+    Trimmed to the passes that actually fire on cloudsc. Per-stage analysis
+    (from a full chain diagnostic, pre-trim baseline):
+
+    * ``wcr_to_augassign`` was a no-op (cloudsc has no pre-pipeline WCRs).
+      DROPPED.
+    * ``loop_to_reduce`` was a no-op (no reduction-shaped loops survive
+      unroll + simplify). DROPPED.
+    * ``propagate_memlets_final`` was a defensive safety net at the tail;
+      ``LoopToMap`` / ``LoopToScan`` / ``LoopToReduce`` now run propagation
+      internally after their own rewrites, so the post-chain SDFG is already
+      tight. DROPPED.
+    * ``constant_propagation`` -- ``SimplifyPass`` already invokes it.
+    * ``accumulator_to_map_and_reduce`` -- targets ``acc[c] OP= g(other_inputs,
+      i)`` computed-delta accumulators; cloudsc has none.
+    * Trailing ``loop_to_map_post_pcia`` -- ``PromoteConstantIndexAccess``
+      checks ``LoopToMap`` eligibility internally; one ``LoopToMap`` after
+      PCIA catches everything.
+
+    Stages that DO fire on cloudsc (kept):
+
+    * ``specialize``, ``promote_args_to_symbols``, ``simplify`` -- frontend
+      conditioning.
+    * ``post_unroll_cleanup`` -- ``LiftTrivialIf`` + ``DeadStateElimination`` +
+      ``EmptyStateElimination`` -- folds the ``if 1 == 2`` shape that surfaces
+      after ``short_loop_unroll`` pins the species iterator.
+    * ``short_loop_unroll`` -- exposes constant species axes for downstream.
+    * ``propagate_memlets`` -- narrows post-unroll/simplify memlets so
+      enclosing-LoopRegion vars survive into nested-SDFG out-connector
+      memlets (the ``symbols_defined_at`` integration).
+    * ``unique_loop_iterators`` -- globally-unique iterator names; required
+      so ``symbol_propagation`` can fold the bound-symbol aliases the rename
+      introduces.
+    * ``trivial_tasklet_elimination`` -- collapses frontend assign-copies.
+    * ``scalar_fission`` -- privatizes per-state scalar accumulators.
+    * ``promote_constant_index_access`` -- ICE-style multi-slot privatization.
+    * ``symbol_propagation`` -- folds ``unique_loop_iterators``'s bound aliases.
+    * ``loop_to_scan`` -- lifts pfsqXf prefix-sums + the cloudsc composite
+      shape (carry-copy + accumulate states).
+    * ``aug_assign_to_wcr`` -- re-WCRs the PCIA-privatised accumulators so
+      the subsequent ``LoopToMap`` sees real reduction edges (this stage
+      ACTUALLY fires -- 356 WCR edges on the cloudsc trace).
+    * ``loop_to_map`` -- final parallelization.
+    """
     return [
         ('specialize', _specialize),
+        # Fortran ``intent(in)`` integer args (``kidia`` / ``kfdia`` / ``klev`` / ...)
+        # are registered as non-transient ``Scalar`` descriptors by the frontend.
+        # ``simplify``'s internal ``ScalarToSymbolPromotion`` runs with the default
+        # ``transients_only=True`` and skips them. Promoting BEFORE the first
+        # ``simplify`` lets the internal ``SymbolPropagation`` clean up bound aliases
+        # in one pass.
+        ('promote_args_to_symbols', _promote_args_to_symbols),
         ('simplify', lambda sdfg: sdfg.simplify()),
         ('short_loop_unroll', _unroll_fixpoint),
-        # Re-simplify after unrolling. A body that guards on the iteration variable
-        # (e.g. ``if jm == ncldqi``) only exposes a constant condition once unrolling
-        # pins ``jm``; the first ``simplify`` ran while the guard was still symbolic, so
-        # it could not fold it. Unrolling (with species constants specialised) then
-        # leaves dead branches like ``if 1 == 2`` whose never-taken bodies still hold
-        # constant-index writes (e.g. ``zvqx[1] = ...``) that read as a loop-carried
-        # conflict and block LoopToMap; this second simplify folds them away.
-        ('simplify_after_unroll', lambda sdfg: sdfg.simplify()),
+        # Targeted post-unroll cleanup. Unrolling pins species iterators
+        # (``jm``), turning body guards like ``if jm == ncldqi`` into ``if 1 == 2``;
+        # the dead branches still hold constant-index writes (e.g. ``zvqx[1] = ...``)
+        # that read as a loop-carried conflict and would block ``LoopToMap``.
+        # The full ``simplify`` sledgehammer is unnecessary here -- only two passes
+        # matter: ``LiftTrivialIf`` rewrites the now-constant conditional into the
+        # surviving branch, and ``DeadStateElimination`` drops the resulting
+        # unreachable states. ``EmptyStateElimination`` is a cheap follow-up.
+        ('post_unroll_cleanup', _post_unroll_cleanup),
         # Re-propagate memlets now that unroll+simplify changed the structure and the
         # ``symbols_defined_at`` fix lets enclosing-LoopRegion loop variables count as
         # defined. Without this, NSDFG out-connector memlets that propagation had
@@ -172,14 +257,28 @@ def _chain():
         ('propagate_memlets', lambda sdfg: propagate_memlets_sdfg(sdfg)),
         ('unique_loop_iterators', lambda sdfg: UniqueLoopIterators().apply_pass(sdfg, {})),
         ('trivial_tasklet_elimination', _pmar(TrivialTaskletElimination)),
-        ('wcr_to_augassign', _pmar(WCRToAugAssign)),
         ('scalar_fission', lambda sdfg: PrivatizeScalars().apply_pass(sdfg, {})),
+        # ``PromoteConstantIndexAccess`` introduces a per-iteration scalar for slots
+        # that block ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
+        # an ``if yrecldp_laericesed`` guard). Runs right after ``scalar_fission`` --
+        # PCIA's input is non-transient array slots (``arr[c]``) and is unaffected by
+        # the per-state scalar renames ``scalar_fission`` performs.
+        ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
+        # ``unique_loop_iterators`` (above) re-introduces ``kfdia_plus_1_X = (kfdia
+        # + 1)`` bound-symbol aliases as it renames each iterator. ``SymbolPropagation``
+        # folds them back out so ``LoopToScan`` / ``LoopToMap`` see clean conditions.
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
-        ('constant_propagation', lambda sdfg: ConstantPropagation().apply_pass(sdfg, {})),
-        ('loop_to_reduce', lambda sdfg: LoopToReduce().apply_pass(sdfg, {})),
-        # Scalar accumulators with computed deltas (or extra body side-effects) that
-        # ``LoopToReduce`` refuses become a buffer-writing Map + ``Reduce`` libnode here.
-        ('accumulator_to_map_and_reduce', lambda sdfg: AccumulatorToMapAndReduce().apply_pass(sdfg, {})),
+        # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
+        # The pfsqXf vertical-flux prefix-sum and the composite-body shape
+        # (carry-copy state + sibling accumulate state(s) on the same carrier) both
+        # match here. Must run BEFORE ``LoopToMap`` -- the three matchers carve out
+        # non-overlapping cases of loop-carried writes.
+        ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
+        # Re-WCR the augmented assignments that PCIA privatisation + LoopToScan
+        # left behind so the subsequent ``LoopToMap`` lifts them as reductions
+        # (OMP ``reduction(...)`` / atomic write) rather than a serial RMW.
+        # Actually FIRES on cloudsc (356 WCR edges).
+        ('aug_assign_to_wcr', _pmar(AugAssignToWCR)),
         ('loop_to_map', _pmar(LoopToMap)),
     ]
 
@@ -204,6 +303,16 @@ def _run(sdfg: dace.SDFG, inputs, ieee_build: bool, sequential: bool, tag: str):
     return args
 
 
+def _roundtrip(sdfg: dace.SDFG, tmpdir: str, tag: str) -> dace.SDFG:
+    """Save ``sdfg`` to ``.sdfgz`` and reload it. Any non-lossless serialization is
+    surfaced as a divergence between the original and the reloaded SDFG when the two
+    are subsequently executed on identical inputs and their outputs compared.
+    """
+    path = os.path.join(tmpdir, f'{tag}.sdfgz')
+    sdfg.save(path, compress=True)
+    return dace.SDFG.from_file(path)
+
+
 @pytest.fixture(scope='module')
 def reference_sdfg_file(tmp_path_factory):
     """Build the un-transformed CloudSC SDFG once and persist it; each regime
@@ -216,7 +325,7 @@ def reference_sdfg_file(tmp_path_factory):
 
 @pytest.mark.integration
 @pytest.mark.parametrize('regime', list(_REGIMES))
-def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
+def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
     ieee_build, sequential, strict_tol, relaxed_tol = _REGIMES[regime]
 
     ref = dace.SDFG.from_file(reference_sdfg_file)
@@ -226,6 +335,8 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
     gc.collect()
 
     candidate = dace.SDFG.from_file(reference_sdfg_file)
+    rt_dir = str(tmp_path / 'roundtrips')
+    os.makedirs(rt_dir, exist_ok=True)
 
     for label, apply_fn in _chain():
         # The loop transforms log every refused loop; keep the test output readable.
@@ -245,6 +356,10 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
         if label == 'symbol_propagation':
             assert not bad_assigns, (f'{regime}/{label}: bound symbol assignments survived symbol propagation: '
                                      f'{bad_assigns}')
+        # Pin the map/loop counts at the final parallelization step (the single L2M
+        # sweep that follows PCIA). PCIA unblocks the ICE ``for_767`` slot, dropping
+        # the loop count by 1; LoopToScan handles ``pfsqrf`` once the multi-state
+        # matcher relaxation catches its 3-block shape.
         if label == 'loop_to_map':
             n_maps, n_loops = len(_map_entries(candidate)), len(_loop_regions(candidate))
             print(f'{regime}/{label}: maps={n_maps} sequential_loops={n_loops}')
@@ -260,6 +375,23 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime):
         bad = {name: (ma, mr) for name, (ma, mr, ok) in report.items() if not ok}
         assert not bad, (f'{regime}/{label}: outputs diverge from the un-transformed reference '
                          f'(tol={tol:.0e}): {bad}')
+
+        # Serialize/deserialize roundtrip + e2e check. Two checkpoints: after
+        # ``simplify`` (the first heavy SDFG mutation -- state fusion + NSDFG
+        # inlining -- where most roundtrip bugs surface) and at the end (after
+        # ``loop_to_map``, the full transformed shape). Doing it on every stage
+        # roughly doubles wall-clock for one extra compile + run per stage, with
+        # zero new bug coverage in practice -- the simplify and final checks
+        # bracket every transform-induced descriptor / memlet / region mutation
+        # the pipeline can introduce.
+        if label in _ROUNDTRIP_CHECKPOINTS:
+            rt = _roundtrip(candidate, rt_dir, f'{regime}_{label}')
+            rt_out = _run(rt, inputs, ieee_build, sequential, tag=f'{regime}_{label}_rt')
+            rt_report = compare_outputs(rt_out, out, rtol=strict_tol, atol=strict_tol)
+            rt_bad = {name: (ma, mr) for name, (ma, mr, ok) in rt_report.items() if not ok}
+            assert not rt_bad, (
+                f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
+                f'(strict_tol={strict_tol:.0e}): {rt_bad}')
 
 
 if __name__ == '__main__':

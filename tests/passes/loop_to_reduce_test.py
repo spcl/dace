@@ -600,6 +600,80 @@ def test_gather_sum_reduction_is_lifted():
     assert lifted >= 1
 
 
+# ---- 1D-reduction guard: GEMM-shaped multi-input loops must NOT lift -------
+
+
+def test_gemm_innermost_loop_not_lifted_to_reduce():
+    """A textbook GEMM ``C[i, j] += A[i, k] * B[k, j]`` has THREE data reads in
+    the body (``C[i, j]``, ``A[i, k]``, ``B[k, j]``), TWO of which depend on
+    the innermost loop variable ``k``. ``LoopToReduce``'s matcher only handles
+    single-binary-op tasklets with exactly 2 data inputs and AT MOST ONE
+    input subset using the loop variable -- the second loop-var-dependent
+    input (``B[k, j]``) trips the "multiple arrays" early-out and the loop is
+    refused. The k-loop in GEMM is semantically a 1-D reduction per
+    ``(i, j)``, but lifting it loses the multi-array structure that
+    GEMM-as-a-whole has; downstream library matching or tiling is the right
+    handler. This test pins the refusal so the matcher does not get widened."""
+    N, M, K = (dace.symbol(s) for s in ['NN', 'MM', 'KK'])
+
+    @dace.program
+    def gemm(A: dace.float64[N, K], B: dace.float64[K, M], C: dace.float64[N, M]):
+        for i in range(N):
+            for j in range(M):
+                for k in range(K):
+                    C[i, j] += A[i, k] * B[k, j]
+
+    sdfg = gemm.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted == 0, (
+        f'GEMM inner k-loop must NOT lift to Reduce; got {lifted} lifted. '
+        'Three data inputs with two loop-var-dependent subsets ought to be refused.')
+
+
+def test_matvec_innermost_loop_not_lifted_to_reduce():
+    """Matrix-vector ``y[i] += A[i, j] * x[j]`` -- same shape concern as GEMM,
+    just one rank down. Two of the three data reads (``A[i, j]``, ``x[j]``)
+    use the inner loop variable; the matcher must refuse the j-loop. Lifting
+    it would lose the GEMV pattern recognisable downstream."""
+    N, M = (dace.symbol(s) for s in ['NN', 'MM'])
+
+    @dace.program
+    def matvec(A: dace.float64[N, M], x: dace.float64[M], y: dace.float64[N]):
+        for i in range(N):
+            for j in range(M):
+                y[i] += A[i, j] * x[j]
+
+    sdfg = matvec.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted == 0, (
+        f'GEMV inner j-loop must NOT lift to Reduce; got {lifted} lifted.')
+
+
+def test_outer_axis_reduction_per_column_is_lifted():
+    """Genuine 1-D reduction along ``i`` with a single loop-var-dependent
+    read: ``c[j] += A[i, j]``. Per fixed outer-loop ``j``, this is a
+    standard 1-D fold over ``i`` of ``A[:, j]`` -- exactly what
+    ``LoopToReduce`` is designed to handle. Pinning this ensures the
+    refusal in ``test_gemm_innermost_loop_not_lifted_to_reduce`` doesn't
+    over-tighten and reject legitimate 1-D outer-axis reductions."""
+    N, M = (dace.symbol(s) for s in ['NN', 'MM'])
+
+    @dace.program
+    def axis_sum(A: dace.float64[N, M], c: dace.float64[M]):
+        for j in range(M):
+            for i in range(N):
+                c[j] += A[i, j]
+
+    sdfg = axis_sum.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg)
+    assert lifted >= 1, (
+        f'``c[j] += A[i, j]`` (single loop-var-dependent read) must lift as a '
+        f'1-D reduction along i; got {lifted}.')
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()

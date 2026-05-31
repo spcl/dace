@@ -130,8 +130,10 @@ def test_nested_sdfg_free_symbols():
 
 
 def _build_with_optional_unused_array(create_unused_transient: bool) -> dace.SDFG:
-    """The issue #2382 reproducer: two used arrays + an optional unused transient
-    ``x`` whose shape uses ``x_shape``.
+    """
+    Builds the issue #2382 reproducer SDFG: two used arrays plus an optional
+    transient array whose shape depends on the symbol ``x_shape`` but that is
+    never read, written, or allocated.
 
     :param create_unused_transient: If True, declare the unused ``x`` array.
     :returns: The constructed SDFG.
@@ -150,8 +152,12 @@ def _build_with_optional_unused_array(create_unused_transient: bool) -> dace.SDF
 
 
 def test_unused_array_does_not_leak_shape_symbol():
-    """Issue #2382: declaring an unused array must not leak its shape symbol into
-    the signature -- it must not change the arguments needed to invoke the SDFG."""
+    """
+    Regression test for issue #2382: the shape symbol of an array that is
+    merely declared (never read, written, or allocated) must not leak into the
+    SDFG signature. Declaring the unused transient ``x`` must not change the
+    set of arguments needed to invoke the SDFG.
+    """
     without = _build_with_optional_unused_array(False)
     with_unused = _build_with_optional_unused_array(True)
 
@@ -168,8 +174,13 @@ def test_unused_array_does_not_leak_shape_symbol():
 
 
 def test_used_codeblock_array_keeps_shape_symbol():
-    """A used array's stride symbol must survive even when its only reference is a
-    code block: a guard indexes a 2D array with stride ``S``, so ``S`` must be kept."""
+    """
+    The shape/stride symbols of an array that *is* used must be preserved even
+    when the only reference is in a control-flow code block. Here a
+    ``ConditionalBlock`` guard indexes a 2D array whose stride uses the free
+    symbol ``S``; ``S`` must remain in the SDFG's used symbols so that codegen
+    declares it.
+    """
     from dace.properties import CodeBlock
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
@@ -199,9 +210,13 @@ def test_used_codeblock_array_keeps_shape_symbol():
 
 
 def test_used_array_keeps_symbolic_extent():
-    """Guards against the #2382 fix being too aggressive: an array used only through
-    a map memlet (no access node, no code-block ref) must still keep its shape/stride
-    symbols in the signature."""
+    """
+    An array that is used only through a map memlet (no top-level access node
+    and no code-block reference) must still contribute its symbolic shape and
+    stride symbols to the SDFG signature. This guards against the fix for
+    issue #2382 being too aggressive and dropping a genuinely needed extent
+    symbol.
+    """
     n = dace.symbol('n')
     s = dace.symbol('s')
 

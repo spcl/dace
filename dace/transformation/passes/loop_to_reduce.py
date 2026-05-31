@@ -86,6 +86,14 @@ class LoopToReduce(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        # Normalise reductions written as WCR edges back to in-body augmented
+        # assignment so the body matcher sees a uniform ``acc <op>= arr[f(i)]``
+        # tasklet shape regardless of how the reduction was originally encoded.
+        # No-op on SDFGs whose reductions are already in augassign form.
+        from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+        PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+
         count = 0
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
@@ -95,6 +103,14 @@ class LoopToReduce(ppl.Pass):
                 continue
             _lift(parent, node, info)
             count += 1
+        if count > 0:
+            # Narrow the freshly-emitted state-level memlets on the new
+            # ``Reduce`` libnode and surrounding read/write edges. The lifting
+            # uses array-extent memlets; propagation collapses them to the
+            # reduction axis range so downstream codegen / DCE see the tight
+            # subset.
+            from dace.sdfg.propagation import propagate_memlets_sdfg
+            propagate_memlets_sdfg(sdfg)
         return count or None
 
 
@@ -321,6 +337,19 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
     loop_var_sym = symbolic.pystr_to_symbolic(loop_var)
 
     # Tasklet pattern: single state with exactly one tasklet.
+    #
+    # NOTE: the single-tasklet + EXACTLY-2-data-inputs constraints below are also
+    # what guarantees this pass does NOT lift tensor contractions / GEMM. A GEMM
+    # inner loop ``for k: c[i,j] += a[i,k] * b[k,j]`` produces either two
+    # tasklets in the body (a separate ``Mul`` for the product, then an ``Add``
+    # for the accumulation) or a single tasklet with THREE data inputs (acc + 2
+    # array gathers). Both shapes are refused, leaving the contraction loop to
+    # ``LoopToMap`` + WCR; the resulting Map+Tasklet+WCR-Sum shape is then the
+    # canonical input for :class:`~dace.transformation.dataflow.lift_einsum.LiftEinsum`
+    # to detect as an einsum (``ik,kj->ij`` for the GEMM example). Keep the
+    # 2-input constraint conservative: relaxing it without paired
+    # contraction-detection would silently turn matmuls into ``Reduce`` libnodes,
+    # bypassing the BLAS lowering path LiftEinsum opens.
     if len(blocks) == 1 and isinstance(blocks[0], SDFGState):
         state = blocks[0]
         tasklet = None

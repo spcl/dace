@@ -204,9 +204,124 @@ def test_break_anti_dependence_symbolic_offset_uses_iter_var_refused():
     assert BreakAntiDependence().apply_pass(sdfg, {}) is None
 
 
+def test_break_anti_dependence_post_normalize_negative_stride_reverse_scan():
+    """Reverse-stride scan (TSVC s112-reversed: ``for i in range(N-2, -1, -1):
+    a[i+1] = a[i] + b[i]``) is a WAR pattern in iteration time -- iter 0 reads
+    ``a[N-2]`` before iter 1 writes ``a[N-2]``.
+
+    Pipeline: ``NormalizeNegativeStride`` rewrites the loop to positive stride
+    with an iedge ``i := LEN_1D - _loop_pos_0 - 2`` and the loop variable
+    becomes ``_loop_pos_0``. After NNS the write expression in terms of the
+    new iterator ``k`` is ``a[N-1-k]`` (coefficient ``-1``).
+
+    BAD must (a) inline the iedge binding into the memlet subsets so the
+    matcher sees ``wb = N-1-k``, and (b) recognise the ``alpha = -1`` write-
+    coefficient case and flip the iteration-time direction of
+    ``carried_offset`` accordingly. The snapshot-and-redirect rewrite is
+    direction-agnostic; only the matcher needed the extension. Numerics
+    match the sequential reverse-scan oracle.
+    """
+    from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
+
+    @dace.program
+    def rev_scan(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - 2, -1, -1):
+            a[i + 1] = a[i] + b[i]
+
+    sdfg = rev_scan.to_sdfg(simplify=True)
+    # NNS first -- BAD operates on the positive-stride form.
+    nns = NormalizeNegativeStride().apply_pass(sdfg, {})
+    assert nns == 1, "NormalizeNegativeStride must rewrite the negative-stride loop"
+    # BAD now recognises the alpha=-1 WAR.
+    bad = BreakAntiDependence().apply_pass(sdfg, {})
+    assert bad == 1, "BAD must recognise the reverse-scan WAR post-NNS"
+    _l2m(sdfg)
+    sdfg.validate()
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, (
+        "after NNS + BAD + L2M the reverse scan must be lifted")
+
+    # Numerics: reverse-iteration scan produces a SPECIFIC value pattern
+    # (different from the forward-iteration scan because of the WAR).
+    n = 8
+    a = np.arange(1, n + 1, dtype=np.float64)
+    b = np.arange(n, dtype=np.float64) * 0.5
+    ref = a.copy()
+    for i in range(n - 2, -1, -1):
+        ref[i + 1] = ref[i] + b[i]   # reads ORIGINAL a[i] thanks to reverse iteration
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), N=n)
+    assert np.allclose(out, ref), f"got {out}, expected {ref}"
+
+
+def test_break_anti_dependence_alpha_minus_one_with_larger_offset():
+    """``alpha = -1`` with carried offset of magnitude > 1: the post-NNS
+    shape of ``a[i+3] = a[i] + b[i]`` iterating in reverse.
+
+    Sequential: at iter ``i``, writes ``a[i+3]``, reads ``a[i]``. Reverse
+    iteration: iter k=0 (= original i=N-4) reads ``a[N-4]`` and writes
+    ``a[N-1]``; iter k=1 (= original i=N-5) reads ``a[N-5]`` and writes
+    ``a[N-2]``; ... Iter 0's read at a[N-4] doesn't overlap with iter k>0's
+    writes (which go to ``a[N-1-k]`` for k=0..N-4, never reaching N-4).
+    Actually a[N-4] is reached by k=3 (write at N-1-3 = N-4). So iter 0 reads
+    a[N-4], iter 3 writes a[N-4] -- WAR with offset > 1 in iteration time.
+
+    Post-NNS, BAD must classify this as WAR with offset = +3 (after the
+    alpha=-1 sign flip), not RAW. Snapshot + redirect + parallelize.
+    """
+    from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
+
+    @dace.program
+    def kernel(a: dace.float64[N + 3], b: dace.float64[N]):
+        for i in range(N - 1, -1, -1):
+            a[i + 3] = a[i] + b[i]
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    NormalizeNegativeStride().apply_pass(sdfg, {})
+    bad = BreakAntiDependence().apply_pass(sdfg, {})
+    assert bad == 1
+    _l2m(sdfg)
+    sdfg.validate()
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+
+    n = 8
+    a = np.arange(1, n + 4, dtype=np.float64)
+    b = np.arange(n, dtype=np.float64) * 0.5
+    ref = a.copy()
+    for i in range(n - 1, -1, -1):
+        ref[i + 3] = ref[i] + b[i]
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), N=n)
+    assert np.allclose(out, ref)
+
+
+def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
+    """Regression for the iedge-substitution fix. The indirected-gather case
+    (``a[i + idx[i]] = ...``) MUST still be recognised as ``WAR_indirected``
+    even with the new substitution path active. The ``_collect_iedge_substitutions``
+    helper specifically refuses to inline bindings whose RHS does not
+    reference the loop iterator (the indirected chain
+    ``__sym := i_plus_idx_slice`` would otherwise erase the chain that
+    ``_try_recognize_indirected`` walks to identify the indirection array).
+    """
+
+    @dace.program
+    def indirect(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+        for i in range(N - 1):
+            a[i] = a[i + idx[i]] + b[i]
+
+    sdfg = indirect.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    _l2m(sdfg)
+    sdfg.validate()
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+
+
 if __name__ == '__main__':
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
     test_break_anti_dependence_out_of_place_noop()
     test_break_anti_dependence_symbolic_positive_offset()
     test_break_anti_dependence_symbolic_offset_uses_iter_var_refused()
+    test_break_anti_dependence_post_normalize_negative_stride_reverse_scan()
+    test_break_anti_dependence_alpha_minus_one_with_larger_offset()
+    test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected()

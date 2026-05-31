@@ -29,6 +29,33 @@ def _free_symbols(value) -> Set[str]:
         return set()
 
 
+def _mutated_scalar_names(sdfg: SDFG) -> Set[str]:
+    """Names of ``Scalar`` descriptors in ``sdfg`` that are written somewhere -- an
+    AccessNode of that scalar has at least one in-edge.
+
+    A ``Scalar`` whose value is fixed for the whole SDFG run (no in-edges into any
+    of its AccessNodes) is semantically a read-only parameter, indistinguishable
+    from a symbol for propagation. The Fortran frontend registers ``intent(in)``
+    arguments such as ``kidia`` / ``kfdia`` / ``klev`` as ``Scalar`` descriptors;
+    refusing to propagate ``kfdia_plus_1 = (kfdia + 1)`` because the RHS reads a
+    ``Scalar`` would strand every bound-symbol alias forever (cloudsc has hundreds).
+    The stricter "is this scalar actually mutated?" check is sound: if the value
+    is fixed for the SDFG run, the symbol behaves like any other free symbol.
+
+    :param sdfg: The SDFG to inspect.
+    :returns: Names of ``Scalar`` descriptors with at least one write site.
+    """
+    mutated: Set[str] = set()
+    for state in sdfg.all_states():
+        for n in state.data_nodes():
+            if state.in_degree(n) == 0:
+                continue
+            desc = sdfg.arrays.get(n.data)
+            if isinstance(desc, dt.Scalar):
+                mutated.add(n.data)
+    return mutated
+
+
 def _resolve(value, table: Dict[str, Any]):
     """Substitute known symbol values from ``table`` into an assignment RHS.
 
@@ -93,6 +120,16 @@ class SymbolPropagation(ppl.Pass):
             if isinstance(node, ControlFlowBlock):
                 all_cfg_blks[node] = parent
 
+        # Per-SDFG: which Scalar descriptors are actually mutated (have an in-edge
+        # into one of their AccessNodes). A scalar that is NEVER written is a
+        # read-only parameter and behaves like a symbol for propagation purposes
+        # (Fortran ``intent(in)`` args like ``kfdia`` show up as ``Scalar``
+        # descriptors but their value is fixed for the whole SDFG run). Cached
+        # per-SDFG so the per-block ``_get_in_syms`` filter is O(1) per call.
+        self._mutated_scalars: Dict[SDFG, Set[str]] = {}
+        for sd in sdfg.all_sdfgs_recursive():
+            self._mutated_scalars[sd] = _mutated_scalar_names(sd)
+
         # For each CFG Block maintain a dict of incoming and outgoing symbols
         in_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
         out_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
@@ -127,7 +164,102 @@ class SymbolPropagation(ppl.Pass):
         propagated: Set[str] = set()
         for cfg_blk, parent in all_cfg_blks.items():
             propagated |= self._update_syms(cfg_blk, parent, in_syms, out_syms)
+        # Substitution leaves the *defining* iedge assignment (``k_plus_1 = klev + 1``)
+        # in place even after every consumer has been rewritten to use the resolved
+        # value. Sweep those dead assignments to a fixed point so the pass output
+        # is canonical (e.g. cloudsc's 346 bound-symbol ``+1`` assignments disappear
+        # once their downstream uses are gone).
+        eliminated = self._eliminate_dead_iedge_assignments(sdfg)
+        if eliminated:
+            propagated |= eliminated
         return propagated if propagated else None
+
+    def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> Set[str]:
+        """Drop interstate-edge assignments whose LHS is no longer referenced anywhere.
+
+        After :meth:`_update_syms` rewrites every use site in the dataflow graph, the
+        defining iedge assignment ``X = expr`` becomes dead -- *unless* ``X`` is still
+        referenced by an array descriptor's shape / strides / offset. The IR-level
+        ``replace_dict`` does not reach into descriptors, so those references survive
+        propagation and pin the iedge alive. Before deciding an iedge is dead, we
+        substitute ``X -> expr`` into the owning SDFG's descriptors (a semantic no-op
+        since the symbol IS that expression by construction), then sweep.
+
+        Iterates to a fixed point so chained assignments (``a = klev + 1; b = a + 1``)
+        unravel from the leaves inward.
+
+        :param sdfg: The SDFG to clean up.
+        :returns: The set of LHS names that were removed (empty if no change).
+        """
+        removed: Set[str] = set()
+        while True:
+            this_round = self._eliminate_round(sdfg)
+            if not this_round:
+                break
+            removed |= this_round
+        return removed
+
+    def _eliminate_round(self, sdfg: SDFG) -> Set[str]:
+        """One sweep of dead-iedge elimination across ``sdfg`` and its nested SDFGs.
+
+        Substitutes propagatable iedge LHSes into the SDFG's descriptors first, since
+        ``SDFGState.free_symbols`` pulls array-shape symbols via the access nodes that
+        read those arrays (state.py:709). Without the descriptor substitution, the
+        symbol still reads as "used in IR" and the iedge never gets eliminated.
+        """
+        eliminated: Set[str] = set()
+        for sd in sdfg.all_sdfgs_recursive():
+            # Gather candidate substitutions: a symbol is propagatable if every iedge
+            # binding it agrees on the same RHS (no per-edge disagreement -> ambiguous)
+            # and the RHS does not self-reference (a self-reference like ``i = i + 1``
+            # marks a loop-carried iter, which cannot be substituted out).
+            bindings: Dict[str, Optional[str]] = {}
+            for e in sd.all_interstate_edges():
+                for lhs, rhs in e.data.assignments.items():
+                    if rhs is None or lhs in _free_symbols(rhs):
+                        bindings[lhs] = None
+                        continue
+                    if lhs not in bindings:
+                        bindings[lhs] = rhs
+                    elif bindings[lhs] is not None and bindings[lhs] != rhs:
+                        bindings[lhs] = None
+            safe_subs = {sym: rhs for sym, rhs in bindings.items() if rhs is not None}
+
+            # Substitute every propagatable LHS into the SDFG's descriptors. Symbols
+            # whose value was already substituted everywhere will have no live shape
+            # reference after this; the dead-iedge sweep below then drops them.
+            if safe_subs:
+                sd.replace_dict(safe_subs, replace_keys=False, replace_in_graph=False)
+
+            # Now compute the IR-level used set; this no longer includes the symbols
+            # that have been folded into descriptors.
+            used_in_ir: Set[str] = set()
+            for blk in sd.all_control_flow_blocks():
+                used_in_ir |= {str(s) for s in blk.free_symbols}
+            for e in sd.all_interstate_edges():
+                for rhs in e.data.assignments.values():
+                    used_in_ir |= _free_symbols(rhs)
+                if e.data.condition is not None:
+                    try:
+                        used_in_ir |= {str(s) for s in e.data.condition.get_free_symbols()}
+                    except Exception:
+                        pass
+
+            sd_eliminated: Set[str] = set()
+            for e in sd.all_interstate_edges():
+                for lhs in list(e.data.assignments.keys()):
+                    if lhs not in used_in_ir:
+                        del e.data.assignments[lhs]
+                        sd_eliminated.add(lhs)
+            # Drop the now-orphaned declarations so nested-SDFG validation does not
+            # demand the symbol from outside.
+            if sd_eliminated:
+                still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
+                for name in sd_eliminated:
+                    if (name in sd.symbols and name not in still_bound and name not in used_in_ir):
+                        del sd.symbols[name]
+            eliminated |= sd_eliminated
+        return eliminated
 
     # Given a cfg_blk, builds the incoming set of symbols
     def _get_in_syms(
@@ -195,8 +327,19 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
-            # Also skip assignments that read a scalar (scalars cannot be propagated as symbols)
-            sym_table = {k: v for k, v in sym_table.items() if v is None or not scalars(v, sdfg.arrays)}
+            # Skip assignments whose RHS reads a MUTATED scalar -- one whose value
+            # can change across the SDFG (any AccessNode of that scalar has an
+            # in-edge). Read-only scalars (e.g. Fortran ``intent(in)`` args like
+            # ``kfdia`` -- registered as ``Scalar`` descriptors but never written)
+            # are constant for the run and behave like symbols, so propagating
+            # ``kfdia_plus_1 = (kfdia + 1)`` through them is safe and necessary
+            # for cloudsc's bound-symbol aliases to clean up.
+            mutated = self._mutated_scalars.get(sdfg, set())
+            sym_table = {
+                k: v
+                for k, v in sym_table.items()
+                if v is None or not (scalars(v, sdfg.arrays) & mutated)
+            }
 
             # Combine the symbols
             if i == 0:

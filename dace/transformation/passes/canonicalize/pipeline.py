@@ -17,6 +17,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -41,10 +42,19 @@ from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
+from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
+from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
+from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
+from dace.transformation.passes.buffer_expansion import BufferExpansion
+from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
+from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
+from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
+from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -158,7 +168,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # clean: unique loop iterators -> split tasklets -> the single SimplifyPass
     # (only here and at the end). Trivial-tasklet elimination now opens the
     # 'reduce' recipe (after simplify), not here.
-    s += [('clean', _uniq), ('clean', SplitTasklets()), ('clean', SimplifyPass())]
+    # NormalizeNegativeStride runs first so every downstream matcher
+    # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
+    # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
+    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq),
+          ('clean', SplitTasklets()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
@@ -217,15 +231,43 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
           ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
           ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
+    # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
+    # nests (``for i in range(0, N, K): for ii in range(0, K): body[i+ii]`` or
+    # ``for ii in range(i, i+K): body[ii]``) back to a single ``for k in
+    # range(N)``. Must run BEFORE ``ShortLoopUnroll`` because the small fixed-
+    # trip inner would otherwise be straight-line-unrolled into ``K`` copies,
+    # re-baking the tile into the body. Memlet audit refuses bodies whose
+    # accesses don't use only ``i + ii`` / ``ii`` -- a bare reference to the
+    # outer iterator alone would change semantics under collapse.
+    s += [('reduce', UntileLoops())]
     if unroll_limit > 0:
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+    # PromoteConstantIndexAccess + BufferExpansion: both privatize loop-carried
+    # false dependences that block ``LoopToMap``. PCIA promotes ``arr[c]``
+    # constant-index slot writes-then-reads on a SHARED array to a per-iteration
+    # scalar; BufferExpansion adds a per-iteration dimension to a transient
+    # SCRATCH buffer that is fully (re)written then read on every iteration.
+    # Both run AFTER ``ShortLoopUnroll`` because unrolling can make the
+    # constant-index / scratch-buffer pattern concrete (loop-variable indices
+    # become literals; trip-1 trivial loops collapse). They are otherwise no-ops
+    # on loops ``LoopToMap`` already accepts -- a built-in ``can_be_applied``
+    # pre/post probe inside each pass leaves the SDFG untouched when the
+    # privatization wouldn't unblock a refusal.
+    s += [('reduce', PromoteConstantIndexAccess()), ('reduce', BufferExpansion())]
     # HoistInductionVariableUpdates runs BEFORE InductionVariableSubstitution: it
     # fissions IV-eligible updates out of compound bodies into sibling single-statement
     # loops so the IVSub matcher (which requires a single tasklet in the body) catches
     # them. Together they turn O(N) recurrences with surrounding loop work into O(1)
-    # straight-line plus the surviving body.
+    # straight-line plus the surviving body. MaterializeLoopExitSymbols then handles
+    # the surviving body-defined IV symbols (``k = k + step`` on an interstate edge)
+    # whose final value is read after the loop: it materialises the closed-form exit
+    # under a fresh ``_loop_exit_<sym>_<N>`` symbol and rewrites every downstream
+    # reader so the "loop-defined symbol used after the loop" refusal disappears.
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
-          ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()), ('reduce', LoopToReduce())]
+          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()),
+          ('reduce', SimplifyPass()), ('reduce', LoopToReduce()), ('reduce', LoopToScan()),
+          ('reduce', ArgMaxLift()), ('reduce', EarlyExitToFindIndex()),
+          ('reduce', LoopToConditionalReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -305,6 +347,25 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the earlier ``MoveIfIntoLoop`` stage, so hoisting guards back out here would
     # undo that work and ping-pong. The terminal ``hoist_guards`` stage runs it
     # once, AFTER fuse, where the fusion it would otherwise undo has happened.
+
+    # wavefront_skew (pre-parallelize): apply the ``t = i + j, p = j`` skew to
+    # 2-D perfect nests whose body has a backward dependence pattern (TSVC
+    # ``s2111`` and friends). The outer ``t`` axis stays sequential (diagonal
+    # sweep); the inner ``p`` axis becomes parallel and is then mapped by
+    # ``LoopToMap`` in the ``parallelize`` stage. The rewrite is a relabelling
+    # of the iteration space + an in-body substitution; symbolic offsets get a
+    # runtime ``__builtin_trap`` non-positivity guard planted in a pre-state.
+    s += [('wavefront_skew', WavefrontSkew())]
+
+    # loop_to_scan (late, post-fission + post-skew): a second LoopToScan pass
+    # catches prefix-scan recurrences that only emerged AFTER ``LoopFission``
+    # isolated the recurrence statement (TSVC ``s221``:
+    # ``a[i] = a[i] + c[i]*d[i]; b[i] = b[i-1] + a[i] + d[i]`` -> two fissioned
+    # loops, the ``b`` loop is a clean scan). The earlier in-``reduce``
+    # LoopToScan handles single-statement scan bodies that don't need fission
+    # (``s242``, ``s1221``); running it again here also lifts the post-fission
+    # ones without harming the already-lifted shapes.
+    s += [('loop_to_scan', LoopToScan())]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]

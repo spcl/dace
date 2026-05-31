@@ -235,9 +235,19 @@ def test_deeply_nested_sdfg():
     SymbolPropagation().apply_pass(sdfg1, {})
     sdfg1.validate()
 
-    # No assignment should have been changed
-    assert edge1.data.assignments["v"] == "a"
-    assert edge4.data.assignments["c"] == "v+1"
+    # The outer iedge ``v = a`` was the only binding of ``v``; with propagation reaching
+    # the NSDFG ``symbol_mapping`` (``{"v": "v"}`` -> ``{"v": "a"}``) the binding is
+    # dead and gets swept, taking the now-unused ``v`` declaration with it so the
+    # nested chain remains self-consistent. Same fate for the inner ``c = v+1``: its
+    # destination state has no readers of ``c``, so the binding + the ``c`` declaration
+    # both drop.
+    assert "v" not in edge1.data.assignments, (
+        f"propagation should have substituted v->a everywhere and dropped the dead binding; "
+        f"got {dict(edge1.data.assignments)}")
+    assert "v" not in sdfg1.symbols, "declaration of v should be removed with its binding"
+    assert "c" not in edge4.data.assignments, (
+        f"unused c=v+1 binding should be swept; got {dict(edge4.data.assignments)}")
+    assert "c" not in sdfg4.symbols, "declaration of c should be removed with its binding"
 
 
 def test_scalars():
@@ -273,20 +283,47 @@ def test_scalars():
     assert A[0] == 5
 
 
+def test_read_only_scalar_safe_to_propagate():
+    """A read-only ``Scalar`` argument (no AccessNode in-edges anywhere) is
+    semantically a fixed parameter; ``SymbolPropagation`` MUST fold values that
+    reference it. Pair with ``test_scalars`` which exercises the mutated-scalar
+    refusal path (``B`` is written from a Tasklet there)."""
+    sdfg = dace.SDFG('readonly_scalar_test')
+    sdfg.add_symbol('aliased', dace.int32)
+    sdfg.add_scalar('param', dace.int32)
+    sdfg.add_array('out', [4], dace.int32)
+
+    s_entry = sdfg.add_state('entry', is_start_block=True)
+    s_use = sdfg.add_state('use')
+    sdfg.add_edge(s_entry, s_use, dace.InterstateEdge(assignments={'aliased': '(param + 1)'}))
+    t = s_use.add_tasklet('w', {}, {'__o'}, '__o = aliased')
+    w = s_use.add_write('out')
+    s_use.add_edge(t, '__o', w, None, dace.Memlet('out[0]'))
+
+    propagated = SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert propagated and 'aliased' in propagated, (
+        f'symprop should propagate aliased={(param + 1)} when param is a read-only Scalar; got {propagated}')
+    assert all('aliased' not in e.data.assignments for e in sdfg.all_interstate_edges()), (
+        'dead-iedge sweep must drop the aliased assignment after substitution')
+
+
 def test_cloudsc_kidia_kfdia_promote_then_propagate():
     """CloudSC subset: scalar arguments ``kidia`` / ``kfdia`` used as the
     inclusive horizontal loop bound ``range(kidia, kfdia + 1)`` across several
     level nests (the ``DO JK=1,KLEV; DO JL=KIDIA,KFDIA`` shape). ``simplify``
     promotes ``kfdia + 1`` to per-nest symbols ``kfdia_plus_1_N = kfdia + 1``.
 
-    SymbolPropagation alone does NOT fold them: ``kfdia`` is a non-transient
-    scalar ARGUMENT, so values referencing it are (correctly) skipped by the
-    scalar filter -- the pass is a no-op (``apply_pass`` returns ``None``).
-    Promoting the scalar arguments to symbols first with
-    ``ScalarToSymbolPromotion(transients_only=False)`` makes ``kfdia`` a symbol,
-    after which SymbolPropagation folds ``kfdia_plus_1 -> (kfdia + 1)``. The
-    scalar-skip filter itself is unchanged (genuine scalars are still skipped --
-    see ``test_scalars``). Value-preserving throughout."""
+    SymbolPropagation folds these directly: ``kfdia`` is a non-transient ``Scalar``
+    descriptor but is a Fortran ``intent(in)`` argument -- never written anywhere
+    in the SDFG -- so it is semantically a read-only parameter. The scalar filter
+    only refuses propagation when the RHS reads a *mutated* scalar (a scalar with
+    an in-edge into one of its AccessNodes); read-only scalars are safe (see
+    ``test_scalars`` for the mutated-scalar refusal case). Pre-promotion folding is
+    required for cloudsc, where hundreds of ``kfdia_plus_1_N`` aliases survive
+    state fusion and unrolling; without read-only-scalar propagation, every alias
+    pins its iedge alive. ``ScalarToSymbolPromotion`` then becomes an optimisation
+    rather than a correctness prerequisite. Value-preserving throughout."""
     klev, klon = dace.symbol('klev'), dace.symbol('klon')
 
     @dace.program
@@ -311,12 +348,20 @@ def test_cloudsc_kidia_kfdia_promote_then_propagate():
     ref_out = np.zeros((nlev, nlon))
     ref(pt=pt.copy(), ptend=ref_out, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
 
-    # (1) Without promotion: kfdia is a scalar argument -> symprop is a no-op.
+    # (1) Without promotion: kfdia is a read-only Scalar argument -> symprop folds
+    #     ``kfdia_plus_1 -> (kfdia + 1)`` and drops the dead iedge assignments.
     sdfg = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
     assert _kfdia_plus1_syms(sdfg), 'simplify should promote kfdia + 1 to kfdia_plus_1 symbols'
     assert isinstance(sdfg.arrays.get('kfdia'), dace.data.Scalar)
-    assert SymbolPropagation().apply_pass(sdfg, {}) is None, \
-        'symprop must skip values referencing the scalar argument kfdia (no-op)'
+    propagated = SymbolPropagation().apply_pass(sdfg, {})
+    assert propagated and any(s.startswith('kfdia_plus_1') for s in propagated), \
+        f'symprop should fold ``kfdia_plus_1 -> (kfdia + 1)`` when kfdia is a read-only Scalar; got {propagated}'
+    assert not _kfdia_plus1_syms(sdfg), 'all kfdia_plus_1 aliases should be dead-iedge-eliminated'
+    # Numerics still match the reference.
+    sdfg.validate()
+    out1 = np.zeros((nlev, nlon))
+    sdfg(pt=pt.copy(), ptend=out1, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
+    assert np.allclose(out1, ref_out)
 
     # (2) Promote the scalar arguments to symbols first, then symprop folds them.
     sdfg2 = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
@@ -376,6 +421,103 @@ def test_carried_index_symbol_not_propagated_stale():
         assert np.allclose(ra[name], ca[name]), f"{name}: SymbolPropagation changed the result"
 
 
+def test_dead_iedge_assignment_eliminated_after_substitution():
+    """A bound-symbol shorthand iedge assignment (``k_plus_1 = klev + 1``) survived
+    symbol_propagation: its uses got substituted to ``klev + 1`` but the defining
+    assignment was left in place. The fix sweeps such dead assignments to a fixed
+    point at the end of the pass; nothing references ``k_plus_1`` after the
+    substitution, so the iedge ends with an empty ``assignments`` dict.
+    """
+    sdfg = dace.SDFG('dead_iedge_repro')
+    sdfg.add_array('out', [16], dace.float64)
+    sdfg.add_symbol('klev', dace.int32)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'k_plus_1': '(klev + 1)'}))
+
+    t = s2.add_tasklet('t', {}, {'_o'}, '_o = 1.0')
+    w = s2.add_write('out')
+    s2.add_edge(t, '_o', w, None, dace.Memlet(data='out', subset='k_plus_1'))
+    sdfg.validate()
+
+    res = SymbolPropagation().apply_pass(sdfg, {})
+    assert res == {'k_plus_1'}, f'expected k_plus_1 to be reported propagated; got {res}'
+
+    surviving = [(lhs, rhs)
+                 for e in sdfg.all_interstate_edges()
+                 for lhs, rhs in e.data.assignments.items()]
+    assert surviving == [], f'dead k_plus_1 assignment must be eliminated; got {surviving}'
+
+    # The substitution must reach the memlet: the write to s2's ``out`` now indexes
+    # ``klev + 1`` directly, not via the shorthand symbol.
+    seen = []
+    for st in sdfg.states():
+        for e in st.edges():
+            if e.data is not None and e.data.data == 'out':
+                seen.append(str(e.data.subset))
+    assert 'klev + 1' in seen, f'expected memlet subset to be substituted to klev+1; got {seen}'
+
+
+def test_dead_iedge_chain_unravels_to_fixed_point():
+    """Chained shorthands (``a = klev + 1; b = a; c = b``) must all be eliminated
+    once their uses are substituted -- the cleanup sweep iterates to a fixed point."""
+    sdfg = dace.SDFG('chain_repro')
+    sdfg.add_array('out', [16], dace.float64)
+    sdfg.add_symbol('klev', dace.int32)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    s3 = sdfg.add_state('s3')
+    s4 = sdfg.add_state('s4')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'a': '(klev + 1)'}))
+    sdfg.add_edge(s2, s3, dace.InterstateEdge(assignments={'b': 'a'}))
+    sdfg.add_edge(s3, s4, dace.InterstateEdge(assignments={'c': 'b'}))
+
+    t = s4.add_tasklet('t', {}, {'_o'}, '_o = 2.0')
+    w = s4.add_write('out')
+    s4.add_edge(t, '_o', w, None, dace.Memlet(data='out', subset='c'))
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    surviving = [(lhs, rhs)
+                 for e in sdfg.all_interstate_edges()
+                 for lhs, rhs in e.data.assignments.items()]
+    assert surviving == [], f'every link of the dead chain must be eliminated; got {surviving}'
+
+
+def test_dead_iedge_with_array_shape_substituted_into_descriptor():
+    """A symbol referenced *only* by an array descriptor's shape (cloudsc's
+    ``[0:kfdia_plus_1, 0:klon]`` pattern) used to keep the defining iedge alive
+    because the IR-level ``replace_dict`` does not reach into descriptors. The
+    fix substitutes the symbol into descriptors as a final step before
+    elimination, so the array shape becomes ``kfdia + 1`` directly and the
+    iedge drops."""
+    sdfg = dace.SDFG('array_shape_repro')
+    sdfg.add_symbol('klev', dace.int32)
+    sdfg.add_symbol('k_plus_1', dace.int32)
+    sdfg.add_array('out', ['k_plus_1'], dace.float64)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'k_plus_1': '(klev + 1)'}))
+
+    t = s2.add_tasklet('t', {}, {'_o'}, '_o = 3.0')
+    w = s2.add_write('out')
+    s2.add_edge(t, '_o', w, None, dace.Memlet(data='out', subset='0'))
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    surviving = [(lhs, rhs)
+                 for e in sdfg.all_interstate_edges()
+                 for lhs, rhs in e.data.assignments.items()]
+    assert surviving == [], (f'k_plus_1 should have been substituted into the array shape and the '
+                             f'binding dropped; got {surviving}')
+    shape_str = ', '.join(str(s) for s in sdfg.arrays['out'].shape)
+    assert 'klev' in shape_str and 'k_plus_1' not in shape_str, (
+        f'array shape must read klev + 1 directly; got {shape_str}')
+    assert 'k_plus_1' not in sdfg.symbols, 'declaration of k_plus_1 should be removed with its binding'
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
@@ -385,4 +527,7 @@ if __name__ == "__main__":
     test_deeply_nested_sdfg()
     test_scalars()
     test_cloudsc_kidia_kfdia_promote_then_propagate()
-    test_scalars()
+    test_carried_index_symbol_not_propagated_stale()
+    test_dead_iedge_assignment_eliminated_after_substitution()
+    test_dead_iedge_chain_unravels_to_fixed_point()
+    test_dead_iedge_preserved_when_lhs_still_used()

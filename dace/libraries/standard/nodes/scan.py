@@ -57,6 +57,10 @@ from dace.libraries.standard.environments.cpu import CPU as CPUEnv
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
 OUTPUT_CONNECTOR_NAME = "_scan_out"
+#: Optional scalar input. When wired, the expansion emits an inclusive scan
+#: with an initial accumulator value (``out[k] = init OP in[0] OP ... OP in[k]``),
+#: which lets the LoopToScan rewrite skip its separate seed-add Map.
+INIT_CONNECTOR_NAME = "_scan_init"
 
 
 class ScanOp(enum.Enum):
@@ -105,12 +109,20 @@ _OP_TO_IDENTITY_CPP = {
 
 
 def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG):
-    """Resolve and validate the in/out edges; raise on any wiring/shape/dtype mismatch."""
+    """Resolve and validate the in/out edges; raise on any wiring/shape/dtype mismatch.
+
+    ``_scan_init`` is optional; when present it must be a single scalar / length-1
+    edge whose dtype matches the input array's element type.
+    """
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     out_edges = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
+    init_edges = [e for e in state.in_edges(node) if e.dst_conn == INIT_CONNECTOR_NAME]
     if len(in_edges) != 1 or len(out_edges) != 1:
         raise ValueError(f"Scan node {node.label} expects exactly one ``{INPUT_CONNECTOR_NAME}`` "
                          f"in-edge and one ``{OUTPUT_CONNECTOR_NAME}`` out-edge.")
+    if len(init_edges) > 1:
+        raise ValueError(f"Scan node {node.label}: ``{INIT_CONNECTOR_NAME}`` is optional but at "
+                         f"most one in-edge is allowed; got {len(init_edges)}.")
     in_desc = sdfg.arrays[in_edges[0].data.data]
     out_desc = sdfg.arrays[out_edges[0].data.data]
     if not isinstance(in_desc, dace.data.Array) or not isinstance(out_desc, dace.data.Array):
@@ -118,7 +130,17 @@ def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace
                          f"{type(out_desc).__name__}.")
     if in_desc.dtype != out_desc.dtype:
         raise ValueError(f"Scan input/output dtype mismatch: {in_desc.dtype} vs {out_desc.dtype}.")
+    if init_edges:
+        init_desc = sdfg.arrays[init_edges[0].data.data]
+        if init_desc.dtype != in_desc.dtype:
+            raise ValueError(f"Scan node {node.label}: ``{INIT_CONNECTOR_NAME}`` dtype "
+                             f"{init_desc.dtype} must match input dtype {in_desc.dtype}.")
     return in_desc, out_desc, in_edges[0], out_edges[0]
+
+
+def _has_init(node: "Scan") -> bool:
+    """``True`` iff this Scan instance has the optional ``_scan_init`` connector wired."""
+    return INIT_CONNECTOR_NAME in node.in_connectors
 
 
 def _resolve_length(node: "Scan", state: dace.SDFGState, _sdfg: dace.SDFG) -> str:
@@ -219,6 +241,15 @@ class ExpandPure(ExpandTransformation):
                     f"      _acc = ({op_cpp})(_acc, _v);\n"
                     f"  }}\n"
                     f"}}")
+        elif _has_init(node):
+            # Inclusive scan with explicit init: ``out[k] = init OP in[0] OP ... OP in[k]``.
+            # The connector materialises a scalar; dereference to get the seed value.
+            body = (f"{{ auto _acc = {INIT_CONNECTOR_NAME};\n"
+                    f"  for (decltype({n_expr}) _i = 0; _i < ({n_expr}); ++_i) {{\n"
+                    f"      _acc = ({op_cpp})(_acc, {INPUT_CONNECTOR_NAME}[_i]);\n"
+                    f"      {OUTPUT_CONNECTOR_NAME}[_i] = _acc;\n"
+                    f"  }}\n"
+                    f"}}")
         else:
             body = (f"{{ auto _acc = {INPUT_CONNECTOR_NAME}[0];\n"
                     f"  {OUTPUT_CONNECTOR_NAME}[0] = _acc;\n"
@@ -227,9 +258,12 @@ class ExpandPure(ExpandTransformation):
                     f"      {OUTPUT_CONNECTOR_NAME}[_i] = _acc;\n"
                     f"  }}\n"
                     f"}}")
+        inputs = {INPUT_CONNECTOR_NAME}
+        if _has_init(node):
+            inputs.add(INIT_CONNECTOR_NAME)
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME},
+            inputs=inputs,
             outputs={OUTPUT_CONNECTOR_NAME},
             code=body,
             language=dace.Language.CPP,
@@ -261,9 +295,12 @@ class ExpandCPU(ExpandTransformation):
         stride_expr = sym2cpp(node.stride)
         is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
 
+        op_cpp = _OP_TO_STD_CPP[node.op]
         if not is_stride_one:
             if node.exclusive:
                 raise NotImplementedError("Scan: ``exclusive=True`` with ``stride > 1`` is not yet supported.")
+            if _has_init(node):
+                raise NotImplementedError("Scan: ``_scan_init`` with ``stride > 1`` is not yet supported.")
             call = (f"::dace::scan::strided_inclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));")
         elif node.exclusive:
@@ -271,13 +308,22 @@ class ExpandCPU(ExpandTransformation):
             call = (f"::dace::scan::exclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
                     f"{OUTPUT_CONNECTOR_NAME}, {seed});")
+        elif _has_init(node):
+            # Inclusive scan with init: use C++17 ``std::inclusive_scan`` 5-arg overload.
+            # Sequential; parallel-with-init would require extending the runtime header.
+            call = (f"#include <numeric>\n"
+                    f"std::inclusive_scan({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
+                    f"{OUTPUT_CONNECTOR_NAME}, {op_cpp}, {INIT_CONNECTOR_NAME});")
         else:
             call = (f"::dace::scan::inclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
                     f"{OUTPUT_CONNECTOR_NAME});")
+        inputs = {INPUT_CONNECTOR_NAME}
+        if _has_init(node):
+            inputs.add(INIT_CONNECTOR_NAME)
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME},
+            inputs=inputs,
             outputs={OUTPUT_CONNECTOR_NAME},
             code=call,
             language=dace.Language.CPP,
@@ -320,6 +366,17 @@ class ExpandCUDA(ExpandTransformation):
             query_call = (f"::cub::DeviceScan::ExclusiveScan(nullptr, _sc_needed, "
                           f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, {seed}, "
                           f"({n_expr}), __dace_current_stream);")
+        elif _has_init(node):
+            # Inclusive scan with init. ``cub::DeviceScan::InclusiveScanInit`` is the
+            # direct API (CUB >= 2.0 / CUDA 12+); on older CUB it'd need an
+            # ``ExclusiveScan`` + tail-add fallback, which can be added when
+            # supporting CUDA 11 becomes a requirement.
+            scan_call = (f"::cub::DeviceScan::InclusiveScanInit(_sc_scratch, _sc_needed, "
+                         f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, "
+                         f"{INIT_CONNECTOR_NAME}, ({n_expr}), __dace_current_stream);")
+            query_call = (f"::cub::DeviceScan::InclusiveScanInit(nullptr, _sc_needed, "
+                          f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, "
+                          f"{INIT_CONNECTOR_NAME}, ({n_expr}), __dace_current_stream);")
         else:
             scan_call = (f"::cub::DeviceScan::InclusiveScan(_sc_scratch, _sc_needed, "
                          f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, {op_cub}, "
@@ -332,9 +389,12 @@ class ExpandCUDA(ExpandTransformation):
                 f"void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>("
                 f"_sc_needed, __dace_current_stream);\n"
                 f"{scan_call}")
+        inputs = {INPUT_CONNECTOR_NAME}
+        if _has_init(node):
+            inputs.add(INIT_CONNECTOR_NAME)
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME},
+            inputs=inputs,
             outputs={OUTPUT_CONNECTOR_NAME},
             code=code,
             language=dace.Language.CPP,
@@ -370,6 +430,10 @@ class Scan(nodes.LibraryNode):
 
     INPUT_CONNECTOR_NAME = INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = OUTPUT_CONNECTOR_NAME
+    #: Optional scalar input connector; wire to a length-1 / scalar read to make
+    #: the inclusive scan fold an explicit init value in (``out[k] = init OP in[0]
+    #: OP ... OP in[k]``). Lets LoopToScan skip its seed-add Map.
+    INIT_CONNECTOR_NAME = INIT_CONNECTOR_NAME
 
     op = EnumProperty(dtype=ScanOp, default=ScanOp.SUM, desc="Associative binary op for the scan.")
     exclusive = Property(dtype=bool, default=False,
