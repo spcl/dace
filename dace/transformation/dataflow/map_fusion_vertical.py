@@ -285,9 +285,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # (rename the inner read-side accesses to a fresh array bound to a new
         # input connector) so the standard rename machinery can rewire the
         # output-only connector without producing the mismatched-InOut
-        # validation error (TSVC s221). v1 splits only when every inner
-        # read AN of the InOut name has ``in_degree == 0`` -- the clean
-        # one-RMW-tasklet shape -- and refuses otherwise.
+        # validation error. v1 splits only when every inner read AN of the
+        # InOut name has ``in_degree == 0`` (the clean one-RMW-tasklet shape)
+        # and refuses otherwise.
         intermediate_names = {e.dst.data for e in (exclusive_outputs | shared_outputs)
                               if isinstance(e.dst, nodes.AccessNode)}
         if intermediate_names:
@@ -429,7 +429,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # If any intermediate's data name is shared with an InOut connector of a
         # NestedSDFG in the producer's body, split the connector so the standard
-        # rename machinery below produces a valid InOut-free shape (TSVC s221).
+        # rename machinery below produces a valid InOut-free shape.
         intermediate_names = {e.dst.data for e in (exclusive_outputs | shared_outputs)
                               if isinstance(e.dst, nodes.AccessNode)}
         if intermediate_names:

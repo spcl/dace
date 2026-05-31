@@ -17,14 +17,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     Converts an augmented assignment ("a += b", "a = a + b") into a tasklet
     with a write-conflict resolution.
 
-    A third pattern handles the *copy-wrapped* read-modify-write the array
-    frontends (HLFIR, Python) emit, where the accumulator slice is materialized
-    into a scalar transient before the combining tasklet and copied back after
-    it (``arr[S] -> copy_in -> tasklet -> copy_out -> arr[S]``). Those
-    materialization copies cannot be folded away by the redundant-array passes,
-    because ``arr`` is both read and written in the same state; recognising the
-    shape directly is what lets loop-carried reductions (cloudsc/ICON
-    accumulators) become WCR writes and so parallelize via ``LoopToMap``.
+    A third pattern handles the *copy-wrapped* read-modify-write shape where
+    the accumulator slice is materialized into a scalar transient before the
+    combining tasklet and copied back after it
+    (``arr[S] -> copy_in -> tasklet -> copy_out -> arr[S]``). Those
+    materialization copies cannot be folded away by the redundant-array
+    passes because ``arr`` is both read and written in the same state;
+    recognising the shape directly is what lets loop-carried reductions
+    become WCR writes and so parallelize via ``LoopToMap``.
     """
     input = transformation.PatternNode(nodes.AccessNode)
     tasklet = transformation.PatternNode(nodes.Tasklet)

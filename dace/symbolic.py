@@ -2316,19 +2316,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
         sympy's ``//`` operator on symbolic integers (e.g. ``(LEN - 1) // 8``)
         simplifies to ``floor(LEN/8 - 1/8)`` where ``1/8`` becomes a
-        ``Rational(1, 8)``.  Without this override the printer emits a
-        literal ``floor(LEN_1D/8 - 1/8)`` which in C++ becomes
-        ``floor(int / int - int / int)`` — and integer ``1 / 8`` is ``0``
-        so the floor argument collapses to ``LEN_1D / 8`` instead of
-        ``(LEN_1D - 1) / 8``.  TSVC s2244-shape kernels (pre-loop scalar
-        write + ``range(N - 1)`` body) silently overran the loop bound
-        because of this.
+        ``Rational(1, 8)``. Without this override the printer emits a literal
+        ``floor(LEN/8 - 1/8)`` which in C++ collapses ``1 / 8`` to ``0`` via
+        integer division, so the floor argument becomes ``LEN/8`` instead of
+        ``(LEN - 1) / 8`` -- the loop bound silently overshoots by one.
 
-        Recombine: if the floor argument is an addition of fractions
-        with a common denominator (sympy's natural simplification),
-        reassemble the numerator and emit a single
-        ``((numerator) / (denominator))`` integer division.  Otherwise
-        fall through to the math-library ``floor(...)`` call.
+        Recombine: if the floor argument is an addition of fractions with a
+        common denominator, reassemble the numerator and emit a single
+        ``((numerator) / (denominator))`` integer division. Otherwise fall
+        through to the math-library ``floor(...)`` call.
         """
         if not self.cpp_mode:
             return super()._print_Function(expr) if hasattr(super(), "_print_Function") else super()._print_floor(expr)
