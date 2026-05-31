@@ -29,33 +29,6 @@ def _free_symbols(value) -> Set[str]:
         return set()
 
 
-def _mutated_scalar_names(sdfg: SDFG) -> Set[str]:
-    """Names of ``Scalar`` descriptors in ``sdfg`` that are written somewhere -- an
-    AccessNode of that scalar has at least one in-edge.
-
-    A ``Scalar`` whose value is fixed for the whole SDFG run (no in-edges into any
-    of its AccessNodes) is semantically a read-only parameter, indistinguishable
-    from a symbol for propagation. The Fortran frontend registers ``intent(in)``
-    arguments such as ``kidia`` / ``kfdia`` / ``klev`` as ``Scalar`` descriptors;
-    refusing to propagate ``kfdia_plus_1 = (kfdia + 1)`` because the RHS reads a
-    ``Scalar`` would strand every bound-symbol alias forever (cloudsc has hundreds).
-    The stricter "is this scalar actually mutated?" check is sound: if the value
-    is fixed for the SDFG run, the symbol behaves like any other free symbol.
-
-    :param sdfg: The SDFG to inspect.
-    :returns: Names of ``Scalar`` descriptors with at least one write site.
-    """
-    mutated: Set[str] = set()
-    for state in sdfg.all_states():
-        for n in state.data_nodes():
-            if state.in_degree(n) == 0:
-                continue
-            desc = sdfg.arrays.get(n.data)
-            if isinstance(desc, dt.Scalar):
-                mutated.add(n.data)
-    return mutated
-
-
 def _resolve(value, table: Dict[str, Any]):
     """Substitute known symbol values from ``table`` into an assignment RHS.
 

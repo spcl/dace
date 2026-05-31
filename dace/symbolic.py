@@ -565,16 +565,15 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
 
 
 def _format_float(value: float) -> str:
-    # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
+    # ``repr`` for finite Python floats is the shortest decimal that
+    # round-trips through ``float()`` -- guaranteed idempotent under
+    # save->load->save and at most 17 significant digits for fp64.
     f = float(value)
-    s = f'{f:.15g}'
-    if float(s) != f:
-        # 15 significant figures did not round-trip (e.g. ``0.1 + 0.2`` or a near-max
-        # double that needs 16-17 digits); fall back to the shortest exact form.
-        s = repr(f)
+    s = repr(f)
     if 'e' in s or 'E' in s:
         return s
     if '.' not in s:
+        # Keep one fractional digit so an integer-valued float stays floating-point.
         return s + '.0'
     int_part, frac_part = s.split('.')
     return f'{int_part}.{frac_part.rstrip("0") or "0"}'
