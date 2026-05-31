@@ -18,48 +18,87 @@ from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    STREAM_CONNECTOR, add_gpu_stream_connector, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
-    has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node, is_gpu_stream_consumer,
-    is_inside_gpu_device_kernel)
-
-# Stream-array allocation + propagation.
+    STREAM_CONNECTOR, add_gpu_event_connector, add_gpu_stream_connector, dependency_edge, enclosing_map_chain,
+    get_gpu_event_array_name, get_gpu_stream_array_name, has_stream_connector, innermost_enclosing_map,
+    is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel)
 
 
 def allocate_stream_array(sdfg: SDFG, num_streams: int):
     """Add the ``gpu_streams`` transient at the root SDFG and propagate it
     (non-transient) into every nested SDFG that hosts a stream consumer."""
-    name = get_gpu_stream_array_name()
-    if name not in sdfg.arrays:
-        _add_stream_array(sdfg, name, num_streams, transient=True)
+    _allocate_gpu_resource_array(sdfg, get_gpu_stream_array_name(), num_streams, dace.dtypes.gpuStream_t,
+                                 _add_stream_connector_to_parent)
 
+
+def allocate_event_array(sdfg: SDFG, num_events: int):
+    """Add the ``gpu_events`` transient at the root SDFG and propagate it
+    (non-transient) into every nested SDFG that hosts an event producer
+    or consumer."""
+    _allocate_gpu_resource_array(sdfg, get_gpu_event_array_name(), num_events, dace.dtypes.gpuEvent_t,
+                                 _add_event_connector_to_parent)
+
+
+def _allocate_gpu_resource_array(sdfg: SDFG, name: str, count: int, dtype: dtypes.typeclass,
+                                 add_connector_to_parent: Callable[[nodes.NestedSDFG, str], None]):
+    """Add an opaque-handle resource array (gpu_streams / gpu_events) at the
+    root SDFG and propagate it as a non-transient into every nested SDFG that
+    hosts a host-side stream-bound call. Devices-code NestedSDFGs are skipped
+    because they never reference the host-resident handle arrays.
+
+    :param sdfg: root SDFG.
+    :param name: descriptor name (e.g. ``gpu_streams``, ``gpu_events``).
+    :param count: array length.
+    :param dtype: element type (``gpuStream_t`` or ``gpuEvent_t``).
+    :param add_connector_to_parent: adds the matching connector to a
+        NestedSDFG node when propagating up.
+    """
+    if name not in sdfg.arrays:
+        _add_resource_array(sdfg, name, count, dtype, transient=True)
     for child_sdfg in _find_child_sdfgs_requiring_gpu_stream(sdfg):
         if name in child_sdfg.arrays:
             continue
-        _propagate_stream_array_up(child_sdfg, name, num_streams)
+        _propagate_resource_array_up(child_sdfg, name, count, dtype, add_connector_to_parent)
 
 
-def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool):
-    desc = dace.data.Array(dtype=dace.dtypes.gpuStream_t,
-                           shape=(num_streams, ),
+def _add_resource_array(target_sdfg: SDFG, name: str, count: int, dtype: dtypes.typeclass, *, transient: bool):
+    desc = dace.data.Array(dtype=dtype,
+                           shape=(count, ),
                            transient=transient,
                            storage=dace.dtypes.StorageType.CPU_Heap,
                            lifetime=dace.dtypes.AllocationLifetime.SDFG)
-    target_sdfg.add_datadesc(stream_name, desc, _internal_use=True)
+    target_sdfg.add_datadesc(name, desc, _internal_use=True)
 
 
-def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int):
-    """Add ``stream_name`` to ``child_sdfg`` and every parent up to the first
-    ancestor that already has it, wiring the NestedSDFG connector at each
-    level."""
-    _add_stream_array(child_sdfg, stream_name, num_streams, transient=False)
-    slice_str = f"{stream_name}[0:{num_streams}]"
-
+def _propagate_resource_array_up(child_sdfg: SDFG, name: str, count: int, dtype: dtypes.typeclass,
+                                 add_connector_to_parent: Callable[[nodes.NestedSDFG, str], None]):
+    """Add the resource array to ``child_sdfg`` and to every parent up to the
+    first ancestor that already has it, wiring the NestedSDFG connector at
+    each level."""
+    _add_resource_array(child_sdfg, name, count, dtype, transient=False)
+    slice_memlet = dace.Memlet(f"{name}[0:{count}]")
     cur = child_sdfg
-    while stream_name not in cur.parent_sdfg.arrays:
-        _add_stream_array(cur.parent_sdfg, stream_name, num_streams, transient=False)
-        _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
+    while name not in cur.parent_sdfg.arrays:
+        _add_resource_array(cur.parent_sdfg, name, count, dtype, transient=False)
+        _wire_resource_into_parent(cur, name, slice_memlet, add_connector_to_parent)
         cur = cur.parent_sdfg
-    _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
+    _wire_resource_into_parent(cur, name, slice_memlet, add_connector_to_parent)
+
+
+def _wire_resource_into_parent(level: SDFG, name: str, memlet: dace.Memlet,
+                               add_connector_to_parent: Callable[[nodes.NestedSDFG, str], None]):
+    nsdfg_node = level.parent_nsdfg_node
+    parent_state = level.parent
+    add_connector_to_parent(nsdfg_node, name)
+    src = parent_state.add_access(name)
+    parent_state.add_edge(src, None, nsdfg_node, name, memlet)
+
+
+def _add_stream_connector_to_parent(nsdfg_node: nodes.NestedSDFG, name: str):
+    add_gpu_stream_connector(nsdfg_node, name, single_stream=False)
+
+
+def _add_event_connector_to_parent(nsdfg_node: nodes.NestedSDFG, name: str):
+    add_gpu_event_connector(nsdfg_node, name, is_input=True, single_event=False)
 
 
 def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
@@ -85,65 +124,6 @@ def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
             if child_sdfg in requiring:
                 break
     return requiring
-
-
-def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet):
-    nsdfg_node = level.parent_nsdfg_node
-    parent_state = level.parent
-    add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
-    src = parent_state.add_access(stream_name)
-    parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)
-
-
-# Event-array allocation + propagation (symmetric to streams above).
-
-
-def allocate_event_array(sdfg: SDFG, num_events: int):
-    """Add the ``gpu_events`` transient at the root SDFG and propagate it
-    (non-transient) into every nested SDFG that hosts an event producer
-    or consumer. Symmetric to :func:`allocate_stream_array`."""
-    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_event_array_name
-    name = get_gpu_event_array_name()
-    if name not in sdfg.arrays:
-        _add_event_array(sdfg, name, num_events, transient=True)
-
-    for child_sdfg in _find_child_sdfgs_requiring_gpu_stream(sdfg):
-        if name in child_sdfg.arrays:
-            continue
-        _propagate_event_array_up(child_sdfg, name, num_events)
-
-
-def _add_event_array(target_sdfg: SDFG, event_name: str, num_events: int, *, transient: bool):
-    desc = dace.data.Array(dtype=dace.dtypes.gpuEvent_t,
-                           shape=(num_events, ),
-                           transient=transient,
-                           storage=dace.dtypes.StorageType.CPU_Heap,
-                           lifetime=dace.dtypes.AllocationLifetime.SDFG)
-    target_sdfg.add_datadesc(event_name, desc, _internal_use=True)
-
-
-def _propagate_event_array_up(child_sdfg: SDFG, event_name: str, num_events: int):
-    """Add ``event_name`` to ``child_sdfg`` and every parent up to the
-    first ancestor that already has it, wiring the NestedSDFG connector
-    at each level. Symmetric to :func:`_propagate_stream_array_up`."""
-    _add_event_array(child_sdfg, event_name, num_events, transient=False)
-    slice_str = f"{event_name}[0:{num_events}]"
-
-    cur = child_sdfg
-    while event_name not in cur.parent_sdfg.arrays:
-        _add_event_array(cur.parent_sdfg, event_name, num_events, transient=False)
-        _wire_event_into_parent(cur, event_name, dace.Memlet(slice_str))
-        cur = cur.parent_sdfg
-    _wire_event_into_parent(cur, event_name, dace.Memlet(slice_str))
-
-
-def _wire_event_into_parent(level: SDFG, event_name: str, memlet: dace.Memlet):
-    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import add_gpu_event_connector
-    nsdfg_node = level.parent_nsdfg_node
-    parent_state = level.parent
-    add_gpu_event_connector(nsdfg_node, event_name, is_input=True, single_event=False)
-    src = parent_state.add_access(event_name)
-    parent_state.add_edge(src, None, nsdfg_node, event_name, memlet)
 
 
 # Stream-connector wiring (per-stream chains + Sequential-scope routing).
