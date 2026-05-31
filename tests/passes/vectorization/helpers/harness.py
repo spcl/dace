@@ -28,7 +28,6 @@ from dace.sdfg.state import ConditionalBlock
 
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
-
 N = dace.symbol('N')
 S1 = dace.symbol("S1")
 S2 = dace.symbol("S2")
@@ -62,6 +61,7 @@ def _innermost_map_K(sdfg: dace.SDFG):
     :returns: ``len(map.params)`` of the first innermost map found, or
         ``None`` when no map is present even after the probe ``LoopToMap``.
     """
+
     def _scan(graph):
         cands = []
         for n, g in graph.all_nodes_recursive():
@@ -410,8 +410,19 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             loop_to_map_permissive,
             filter_map,
         )
+        # ``no innermost map`` and ``filter_map`` are legitimate no-ops: the
+        # SDFG has nothing to tile (no map; or filter_map selected only outer
+        # maps the v2 orchestrator wouldn't touch anyway). The test's
+        # numerical-equivalence assertion still holds trivially because the
+        # un-vectorized SDFG equals the reference. Set a flag so we skip the
+        # orchestrator call but still run the comparison below; SKIP only
+        # the genuine knob-incompatibility cases.
+        _tile_nodes_noop = False
         if _skip_reason:
-            _pytest.skip(f"tile_nodes arm: {_skip_reason}")
+            if "no innermost map" in _skip_reason or "filter_map" in _skip_reason:
+                _tile_nodes_noop = True
+            else:
+                _pytest.skip(f"tile_nodes arm: {_skip_reason}")
         widths = _auto_tile_widths(copy_sdfg, vector_width)
         from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
             VectorizeCPUMultiDim, )
@@ -431,17 +442,18 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             tile_remainder = "masked_tail"
         else:  # remainder == "scalar"
             tile_remainder = "scalar_postamble"
-        try:
-            VectorizeCPUMultiDim(widths=widths,
-                                 target_isa="SCALAR",
-                                 remainder_strategy=tile_remainder,
-                                 branch_mode=branch_mode,
-                                 loop_to_map_permissive=loop_to_map_permissive,
-                                 nest_map_bodies=nest_map_bodies,
-                                 insert_copies=insert_copies,
-                                 fuse_overlapping_loads=fuse_overlapping_loads).apply_pass(copy_sdfg, {})
-        except NotImplementedError as _e:
-            _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
+        if not _tile_nodes_noop:
+            try:
+                VectorizeCPUMultiDim(widths=widths,
+                                     target_isa="SCALAR",
+                                     remainder_strategy=tile_remainder,
+                                     branch_mode=branch_mode,
+                                     loop_to_map_permissive=loop_to_map_permissive,
+                                     nest_map_bodies=nest_map_bodies,
+                                     insert_copies=insert_copies,
+                                     fuse_overlapping_loads=fuse_overlapping_loads).apply_pass(copy_sdfg, {})
+            except NotImplementedError as _e:
+                _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
         copy_sdfg.validate()
     else:
         if branch_mode == "fp_factor":
@@ -532,19 +544,15 @@ def assert_fused_nsdfg_structure(sdfg: dace.SDFG, bases):
             indexed = [a for a in inner.arrays if a.startswith(prefix) and a[len(prefix):].isdigit()]
             assert not indexed, (f"fuse_overlapping_loads on, but per-subset buffers {indexed} survived for "
                                  f"{base!r} in NSDFG {inner.label}: fusion did not collapse them")
-            shared_candidates = [f"{base}_vec"] + [
-                a for a in inner.arrays
-                if a.startswith(slice_prefix) and a.endswith("_vec")
-            ]
+            shared_candidates = [f"{base}_vec"
+                                 ] + [a for a in inner.arrays if a.startswith(slice_prefix) and a.endswith("_vec")]
             for shared in shared_candidates:
                 if shared not in inner.arrays:
                     continue
                 produced = any(
-                    st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
-                    if an.data == shared)
+                    st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
                 consumed = any(
-                    st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
-                    if an.data == shared)
+                    st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
                 if produced and consumed:
                     fully_wired = True
                     break

@@ -1319,15 +1319,21 @@ class CPUCodeGen(TargetCodeGenerator):
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         else:
-                            # Pointer reference
+                            # Pointer reference. ``ctypedef`` may already include
+                            # ``__restrict__`` (from a parent scope's Scalar->Pointer
+                            # registration in :func:`emit_memlet_reference` ~line 337),
+                            # so don't append a second one — gcc rejects duplicate
+                            # cv-qualifiers.
                             pruned_expr = replace_float_literals(expr)
-                            result += "{} __restrict__ {} = {};".format(ctypedef, local_name, pruned_expr)
+                            _restrict = "" if "__restrict__" in ctypedef else "__restrict__ "
+                            result += "{} {}{} = {};".format(ctypedef, _restrict, local_name, pruned_expr)
                 else:
                     # Variable number of reads: get a const reference that can
-                    # be read if necessary
+                    # be read if necessary.
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        result += "{} __restrict__ {} = {};".format(memlet_type, local_name, expr)
+                        _restrict = "" if "__restrict__" in memlet_type else "__restrict__ "
+                        result += "{} {}{} = {};".format(memlet_type, _restrict, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)

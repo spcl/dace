@@ -100,11 +100,21 @@ class MarkTileDims(ppl.Pass):
                 return self._fail_or_skip(
                     f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1")
             trip_expr = symbolic.simplify(ub - lb + 1)
+            # Map iter-var ``iv`` is the ``-K + idx``-th param; pair it with
+            # ``self.widths[idx]`` (innermost-last alignment) so a too-small
+            # trip is checked against the right width.
+            dim_idx = iter_vars.index(iv)
+            tile_w = int(self.widths[dim_idx])
             try:
                 trip_int = int(trip_expr)
                 if trip_int <= 1:
                     return self._fail_or_skip(f"map {map_entry.label!r} dim {iv!r} has degenerate trip {trip_int} "
                                               f"(must be > 1); flatten the map first")
+                if trip_int < tile_w:
+                    return self._fail_or_skip(
+                        f"map {map_entry.label!r} dim {iv!r} trip {trip_int} < tile width {tile_w}; "
+                        f"smaller-than-W outer dims are not supported in this slice (collapse the dim "
+                        f"or pick smaller widths)")
             except (TypeError, ValueError):
                 pass
             global_ubs.append(str(ub + 1))

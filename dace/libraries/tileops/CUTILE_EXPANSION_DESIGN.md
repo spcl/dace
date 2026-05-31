@@ -664,3 +664,30 @@ checked once a GPU/cuTile environment exists):
 8. **`ct.bid(k)` block-id** signature and that `index=` to `ct.load`/
    `ct.store` is a tuple of block ids (not element offsets).
 9. **`.astype(dtype)` on a tile** (used by the `ct.where`-free fallbacks).
+
+## REFINEMENT (2026-05-27, user): implicit-padding is unsafe -> scalar width-1 remainder
+
+**Problem:** cuTile `ct.load`'s implicit `padding_mode` pads OOB lanes; that
+padded value can corrupt downstream compute (it is not a true mask), and cuTile
+does not support per-lane masking on most ops. Relying on padding/masking for the
+boundary can produce INCORRECT programs.
+
+**Fix:** the cuTile lowering must NOT use a padded/masked W-wide tile for the
+remainder. Split like `scalar_postamble`:
+- **Main (divisible) region:** full W-wide cuTile tiles, no boundary mask (fast path).
+- **Remainder region:** a SCALAR loop with **width-1 (single-element) tile nodes**
+  — each tail element is a `widths=(1,)` cuTile op (no padding, no mask). This is
+  the "scalar variant of cutile": a cutile expansion path for width-1 tiles that
+  emits single-element scalar ops.
+
+**cuTile test matrix (structural; cuda.tile not installed -> not executed):**
+1. **no-remainder** (trip % W == 0): full tiles; test branch lowering via
+   `fp_factor` AND `masked`; the masked tile NODE is still exercised (mask on the
+   COMPUTE / merge select, not on the load padding).
+2. **remainder** (trip % W != 0): main W-tiles + **scalar width-1 remainder lib
+   nodes** for the tail; AND a masked-remainder variant.
+
+So cuTile's masking lives only on the compute/merge node (where a select can be
+synthesized), never on the load/store boundary — the boundary is handled by the
+width-1 scalar tail. NEXT cuTile slice: add the width-1 scalar cutile expansion +
+the test matrix above.

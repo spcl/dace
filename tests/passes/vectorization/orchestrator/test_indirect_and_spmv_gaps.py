@@ -26,9 +26,7 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
     classify_tile_access,
 )
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim,
-)
-
+    VectorizeCPUMultiDim, )
 
 _N = dace.symbol("N")
 _M = dace.symbol("M")
@@ -50,8 +48,7 @@ def _k2_indirect_kernel(a: dace.float64[_M, _N], c: dace.float64[_M, _N], idx: d
 
 
 @dace.program
-def _spmv_kernel(y: dace.float64[_N], A: dace.float64[_N, _NNZ],
-                 x: dace.float64[_N], col: dace.int32[_NNZ]):
+def _spmv_kernel(y: dace.float64[_N], A: dace.float64[_N, _NNZ], x: dace.float64[_N], col: dace.int32[_NNZ]):
     """SpMV-style: ``y[i] = sum_k A[i, k] * x[col[k]]``."""
     for i, k in dace.map[0:_N, 0:_NNZ]:
         y[i] += A[i, k] * x[col[k]]
@@ -83,7 +80,7 @@ def test_classify_tile_access_indirect_returns_gather():
     from dace import subsets
     from dace.symbolic import pystr_to_symbolic
     indirect = subsets.Range([(pystr_to_symbolic("idx[i]"), pystr_to_symbolic("idx[i]"), 1)])
-    cls = classify_tile_access(indirect, array_strides=(1,), tile_iter_vars=("i",))
+    cls = classify_tile_access(indirect, array_strides=(1, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.GATHER
 
 
@@ -106,7 +103,7 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
     ref.name = f"ind1d_ref{n}"
     vec = _build_1d_indirect_stencil()
     vec.name = f"ind1d_vec{n}"
-    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
 
     ref.compile()(a=a_ref, b=b.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), idx=idx.copy(), N=n)
@@ -126,20 +123,41 @@ def test_1d_indirect_stencil_emits_tilegather():
     from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
         StrideMapByTileWidths, )
     sdfg = _build_1d_indirect_stencil()
-    for p in (CleanAccessNodeToScalarSliceToTaskletPattern(), MarkTileDims(widths=(8,)),
-              GenerateTileIterationMask(widths=(8,)), StrideMapByTileWidths(widths=(8,)),
-              PromoteNSDFGBodyToTiles(widths=(8,))):
+    for p in (CleanAccessNodeToScalarSliceToTaskletPattern(), MarkTileDims(widths=(8, )),
+              GenerateTileIterationMask(widths=(8, )), StrideMapByTileWidths(widths=(8, )),
+              PromoteNSDFGBodyToTiles(widths=(8, ))):
         p.apply_pass(sdfg, {})
     assert any(isinstance(node, TileGather) for node, _ in sdfg.all_nodes_recursive()), \
         "expected a TileGather for the 1D data gather"
 
 
-def test_vectorize_cpu_multi_dim_refuses_2d_indirect_stencil():
-    """2D indirect stencil raises ``NotImplementedError`` for the same
-    reason — gather on the leading dim is not yet supported."""
-    sdfg = _build_2d_indirect_stencil()
-    with pytest.raises(NotImplementedError):
-        VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(sdfg, {})
+@pytest.mark.parametrize("m,n", [(16, 16), (8, 24), (12, 17)])
+def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
+    """2D indirect stencil ``c[i, j] = a[idx[i, j], j] + 1.0`` lowers via
+    the K-aware gather-descent slice (multi-dim index source: ``idx``
+    indexed by both tile vars) and matches the unvectorized reference.
+
+    The descent's K-shape index fan-out widens the ``idx`` boundary
+    connector to a ``(W_0, W_1)`` strided view of the source array, then
+    the ``multidim_gather_dims`` path subscript-substitutes each
+    tile iter-var-bound inner-array dim with its ``__l<p>`` so lane
+    ``(l0, l1)`` reads ``idx[i + l0, j + l1]``. Non-W-divisible trips
+    exercise the masked tail."""
+    rng = np.random.default_rng(seed=m * 100 + n)
+    a = rng.random((m, n))
+    idx = rng.integers(0, m, size=(m, n)).astype(np.int32)
+    c_ref = np.zeros((m, n))
+    c_vec = np.zeros((m, n))
+
+    ref = _build_2d_indirect_stencil()
+    ref.name = f"ind2d_ref{m}_{n}"
+    vec = _build_2d_indirect_stencil()
+    vec.name = f"ind2d_vec{m}_{n}"
+    VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(vec, {})
+
+    ref.compile()(a=a.copy(), c=c_ref, idx=idx.copy(), M=m, N=n)
+    vec.compile()(a=a.copy(), c=c_vec, idx=idx.copy(), M=m, N=n)
+    np.testing.assert_allclose(c_vec, c_ref, rtol=1e-12, atol=1e-12)
 
 
 def test_vectorize_cpu_multi_dim_refuses_spmv():
@@ -151,7 +169,7 @@ def test_vectorize_cpu_multi_dim_refuses_spmv():
         VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(sdfg, {})
 
 
-@pytest.mark.parametrize("widths", [(8,), (4, 8)])
+@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
 def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     """Element-wise sum reduction ``s += a[i]`` uses WCR; the orchestrator's
     ``NormalizeWCRSource`` pre-pass + ``EmitTileOps`` reduction emission now
@@ -161,8 +179,8 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     contract was the inverse refusal."""
     N = dace.symbol("N")
     sdfg = dace.SDFG(f"reduce_{'x'.join(str(w) for w in widths)}")
-    sdfg.add_array("a", (N,) if len(widths) == 1 else (N, N), dace.float64)
-    sdfg.add_array("s", (1,), dace.float64)
+    sdfg.add_array("a", (N, ) if len(widths) == 1 else (N, N), dace.float64)
+    sdfg.add_array("s", (1, ), dace.float64)
     state = sdfg.add_state("main")
     if len(widths) == 1:
         state.add_mapped_tasklet(
@@ -176,7 +194,10 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     else:
         state.add_mapped_tasklet(
             "sum2",
-            {"i": "0:N", "j": "0:N"},
+            {
+                "i": "0:N",
+                "j": "0:N"
+            },
             {"_a": dace.Memlet("a[i, j]")},
             "_s = _a",
             {"_s": dace.Memlet("s[0]", wcr="lambda a, b: a + b")},

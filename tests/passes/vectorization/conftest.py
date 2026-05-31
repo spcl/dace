@@ -259,6 +259,7 @@ def _knob_combo_supported(params: dict) -> bool:
     """
     branch = params.get("branch_mode")
     emission = params.get("emission_style")
+    remainder = params.get("remainder_strategy")
     if emission == "sve_style" and branch not in (None, "merge"):
         return False
     # ``vectorize_config=legacy_cpu`` ignores ``tile_emit_mode`` (it has no
@@ -270,6 +271,15 @@ def _knob_combo_supported(params: dict) -> bool:
     vec_config = params.get("vectorize_config")
     if vec_config == "legacy_cpu" and tile_emit is not None and tile_emit != "flat":
         return False
+    # ``legacy_cpu`` cannot do ``use_fp_factor=True + masked_remainder`` (its
+    # ``VectorizeCPU`` constructor raises ValueError) and ``sve_style`` has
+    # no remainder loop (the global ``_iter_mask`` covers the tail).
+    # Deselect at collection so these don't surface as runtime skips.
+    if vec_config == "legacy_cpu":
+        if branch == "fp_factor" and remainder == "masked":
+            return False
+        if emission == "sve_style" and remainder is not None and remainder != "scalar":
+            return False
     return True
 
 
