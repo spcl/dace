@@ -1,11 +1,23 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains redundant array removal transformations. """
 
+from dace import subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as pm
+
+
+def _is_full_copy(graph: SDFGState, edge, src_desc, dst_desc) -> bool:
+    """Whether ``edge`` copies the whole source array onto the whole destination
+    array (a full identity copy on both ends). An unspecified side defaults to
+    the full range of that array."""
+    src_full = subsets.Range.from_array(src_desc)
+    dst_full = subsets.Range.from_array(dst_desc)
+    src_subset = edge.data.get_src_subset(edge, graph)
+    dst_subset = edge.data.get_dst_subset(edge, graph)
+    return ((src_subset is None or src_subset == src_full) and (dst_subset is None or dst_subset == dst_full))
 
 
 class RedundantArrayCopyingIn(pm.SingleStateTransformation):
@@ -26,8 +38,11 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
         med_array = self.med_array
         out_array = self.out_array
 
-        # Safety first (could be relaxed)
-        if not (graph.out_degree(in_array) == 1 and graph.in_degree(med_array) == 1 and graph.out_degree(med_array)):
+        # Safety first (could be relaxed). ``med_array`` must feed only
+        # ``out_array``: ``apply`` removes it, so any other consumer would lose
+        # its source.
+        if not (graph.out_degree(in_array) == 1 and graph.in_degree(med_array) == 1
+                and graph.out_degree(med_array) == 1):
             return False
 
         # Make sure that the removal candidates are transient
@@ -42,6 +57,24 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
         if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
                 i != o for i, o in zip(in_array.desc(sdfg).shape,
                                        out_array.desc(sdfg).shape)):
+            return False
+
+        # ``apply`` redirects the writers of ``in_array`` straight onto
+        # ``out_array`` keeping their original subsets. That is only sound if
+        # the whole array flows through the chain unchanged -- i.e. both copies
+        # are full identity copies and the middle array shares the shape.
+        # Otherwise a partial / offset copy would be silently widened to a full
+        # one, corrupting the region the chain never actually wrote.
+        in_desc = in_array.desc(sdfg)
+        med_desc = med_array.desc(sdfg)
+        if len(med_desc.shape) != len(in_desc.shape) or any(i != m for i, m in zip(in_desc.shape, med_desc.shape)):
+            return False
+        in_med = graph.edges_between(in_array, med_array)
+        med_out = graph.edges_between(med_array, out_array)
+        if len(in_med) != 1 or len(med_out) != 1:
+            return False
+        if not (_is_full_copy(graph, in_med[0], in_desc, med_desc)
+                and _is_full_copy(graph, med_out[0], med_desc, out_array.desc(sdfg))):
             return False
 
         return True
