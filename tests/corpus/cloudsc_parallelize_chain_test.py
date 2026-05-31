@@ -36,10 +36,9 @@ import dace
 from dace import symbolic
 from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -172,32 +171,56 @@ def _pmar(xform):
 def _chain():
     """The ordered ``(label, apply_fn)`` chain applied to the candidate.
 
-    Trimmed to the passes that actually fire on cloudsc. Dropped:
+    Trimmed to the passes that actually fire on cloudsc. Per-stage analysis
+    (from a full chain diagnostic, pre-trim baseline):
 
-    * ``constant_propagation`` -- ``SimplifyPass`` already invokes it (see
-      ``dace/transformation/passes/simplify.py``), and the two ``simplify`` /
-      ``simplify_after_unroll`` stages above cover the same ground. Nothing
-      between them and this stage introduces fresh scalar-write-once patterns.
-    * ``accumulator_to_map_and_reduce`` -- targets ``acc[c] OP= g(other_inputs, i)``
-      computed-delta accumulators; cloudsc has none left after the earlier WCR
-      rewrites + unrolling, so it was a no-op here.
-    * The trailing ``loop_to_map_post_pcia`` -- ``PromoteConstantIndexAccess``
-      checks ``LoopToMap`` eligibility internally (via its own
-      ``_mappable_loops`` probe), so running L2M *before* PCIA is wasted. One
-      L2M after PCIA catches everything.
+    * ``wcr_to_augassign`` was a no-op (cloudsc has no pre-pipeline WCRs).
+      DROPPED.
+    * ``loop_to_reduce`` was a no-op (no reduction-shaped loops survive
+      unroll + simplify). DROPPED.
+    * ``propagate_memlets_final`` was a defensive safety net at the tail;
+      ``LoopToMap`` / ``LoopToScan`` / ``LoopToReduce`` now run propagation
+      internally after their own rewrites, so the post-chain SDFG is already
+      tight. DROPPED.
+    * ``constant_propagation`` -- ``SimplifyPass`` already invokes it.
+    * ``accumulator_to_map_and_reduce`` -- targets ``acc[c] OP= g(other_inputs,
+      i)`` computed-delta accumulators; cloudsc has none.
+    * Trailing ``loop_to_map_post_pcia`` -- ``PromoteConstantIndexAccess``
+      checks ``LoopToMap`` eligibility internally; one ``LoopToMap`` after
+      PCIA catches everything.
+
+    Stages that DO fire on cloudsc (kept):
+
+    * ``specialize``, ``promote_args_to_symbols``, ``simplify`` /
+      ``simplify_after_unroll`` -- frontend conditioning.
+    * ``short_loop_unroll`` -- exposes constant species axes for downstream.
+    * ``propagate_memlets`` -- narrows post-unroll/simplify memlets so
+      enclosing-LoopRegion vars survive into nested-SDFG out-connector
+      memlets (the ``symbols_defined_at`` integration).
+    * ``unique_loop_iterators`` -- globally-unique iterator names; required
+      so ``symbol_propagation`` can fold the bound-symbol aliases the rename
+      introduces.
+    * ``trivial_tasklet_elimination`` -- collapses frontend assign-copies.
+    * ``scalar_fission`` -- privatizes per-state scalar accumulators.
+    * ``promote_constant_index_access`` -- ICE-style multi-slot privatization.
+    * ``symbol_propagation`` -- folds ``unique_loop_iterators``'s bound aliases.
+    * ``loop_to_scan`` -- lifts pfsqXf prefix-sums + the cloudsc composite
+      shape (carry-copy + accumulate states).
+    * ``aug_assign_to_wcr`` -- re-WCRs the PCIA-privatised accumulators so
+      the subsequent ``LoopToMap`` sees real reduction edges (this stage
+      ACTUALLY fires -- 356 WCR edges on the cloudsc trace).
+    * ``loop_to_map`` -- final parallelization.
     """
     return [
         ('specialize', _specialize),
-        ('simplify', lambda sdfg: sdfg.simplify()),
         # Fortran ``intent(in)`` integer args (``kidia`` / ``kfdia`` / ``klev`` / ...)
         # are registered as non-transient ``Scalar`` descriptors by the frontend.
         # ``simplify``'s internal ``ScalarToSymbolPromotion`` runs with the default
-        # ``transients_only=True`` and skips them; without an explicit args-promotion
-        # stage they stay as Scalars, and every downstream ``kfdia_plus_1_N = (kfdia
-        # + 1)`` alias pins its iedge alive (hundreds of survivors in cloudsc). Run
-        # the unrestricted promotion right after the initial simplify so the rest
-        # of the chain sees them as real symbols.
+        # ``transients_only=True`` and skips them. Promoting BEFORE the first
+        # ``simplify`` lets the internal ``SymbolPropagation`` clean up bound aliases
+        # in one pass.
         ('promote_args_to_symbols', _promote_args_to_symbols),
+        ('simplify', lambda sdfg: sdfg.simplify()),
         ('short_loop_unroll', _unroll_fixpoint),
         # Re-simplify after unrolling. A body that guards on the iteration variable
         # (e.g. ``if jm == ncldqi``) only exposes a constant condition once unrolling
@@ -216,49 +239,29 @@ def _chain():
         ('propagate_memlets', lambda sdfg: propagate_memlets_sdfg(sdfg)),
         ('unique_loop_iterators', lambda sdfg: UniqueLoopIterators().apply_pass(sdfg, {})),
         ('trivial_tasklet_elimination', _pmar(TrivialTaskletElimination)),
-        ('wcr_to_augassign', _pmar(WCRToAugAssign)),
         ('scalar_fission', lambda sdfg: PrivatizeScalars().apply_pass(sdfg, {})),
         # ``PromoteConstantIndexAccess`` introduces a per-iteration scalar for slots
         # that block ``LoopToMap`` (cloudsc ICE ``for_767`` writing ``zvqx[1]`` inside
         # an ``if yrecldp_laericesed`` guard). Runs right after ``scalar_fission`` --
         # PCIA's input is non-transient array slots (``arr[c]``) and is unaffected by
-        # the per-state scalar renames ``scalar_fission`` performs. Sliding it earlier
-        # in the pipeline lets ``symbol_propagation`` / ``loop_to_scan`` see the
-        # already-privatised scalars (no risk of them being seen as live-out array
-        # slots that would block their own analyses).
+        # the per-state scalar renames ``scalar_fission`` performs.
         ('promote_constant_index_access', lambda sdfg: PromoteConstantIndexAccess().apply_pass(sdfg, {})),
+        # ``unique_loop_iterators`` (above) re-introduces ``kfdia_plus_1_X = (kfdia
+        # + 1)`` bound-symbol aliases as it renames each iterator. ``SymbolPropagation``
+        # folds them back out so ``LoopToScan`` / ``LoopToMap`` see clean conditions.
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
-        # ``LoopToReduce`` lifts bare-fold reduction loops (``acc OP= arr[f(i)]``) to a
-        # ``Reduce`` libnode. No-op on cloudsc today (WCRToAugAssign + the unrolling
-        # earlier in the chain leave no reduction-shaped loops), but it must run before
-        # LoopToScan/LoopToMap because the three matchers carve out non-overlapping
-        # cases of loop-carried writes (Reduce: loop-invariant write subset; Scan:
-        # loop-var-dependent write at offset != 0; Map: loop-var-dependent write at
-        # offset == iteration). Keeping it in the chain locks the ordering invariant
-        # against future re-introductions of reduction shapes upstream.
-        ('loop_to_reduce', lambda sdfg: LoopToReduce().apply_pass(sdfg, {})),
         # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
-        # The pfsqrf vertical-flux prefix-sum (``pfcqlng[i] = pfcqlng[i-1] + delta[i]``)
-        # is the cloudsc target; the multi-state-wrapper matcher relaxation now accepts
-        # the cloudsc shape directly.
+        # The pfsqXf vertical-flux prefix-sum and the composite-body shape
+        # (carry-copy state + sibling accumulate state(s) on the same carrier) both
+        # match here. Must run BEFORE ``LoopToMap`` -- the three matchers carve out
+        # non-overlapping cases of loop-carried writes.
         ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
-        # ``AugAssignToWCR`` is the inverse of the ``wcr_to_augassign`` stage near the
-        # top: now that the reduction matchers (``LoopToReduce`` / ``LoopToScan``) have
-        # had their pass on the ``a = a + b`` form, the explicit augmented assignments
-        # that didn't get lifted are re-encoded as WCR edges so the downstream codegen
-        # emits the OMP ``reduction(...)`` / atomic write directly when ``LoopToMap``
-        # parallelises the enclosing loop. Without this, an unlifted scalar accumulator
-        # parallelised by L2M would race on the shared write.
+        # Re-WCR the augmented assignments that PCIA privatisation + LoopToScan
+        # left behind so the subsequent ``LoopToMap`` lifts them as reductions
+        # (OMP ``reduction(...)`` / atomic write) rather than a serial RMW.
+        # Actually FIRES on cloudsc (356 WCR edges).
         ('aug_assign_to_wcr', _pmar(AugAssignToWCR)),
         ('loop_to_map', _pmar(LoopToMap)),
-        # Safety-net propagation. Each ``LoopToX`` pass now runs propagation
-        # internally on its rewritten subgraph, but the chain composes several
-        # of them and any pass that creates new state-level memlets without
-        # narrowing them (e.g. ``AugAssignToWCR`` re-encoding edges) leaves
-        # state-level memlets at array extent. One final whole-SDFG sweep
-        # ensures the post-chain SDFG carries tight subsets for downstream
-        # consumers (codegen, RedundantArrayCopying, validation diagnostics).
-        ('propagate_memlets_final', lambda sdfg: propagate_memlets_sdfg(sdfg)),
     ]
 
 
