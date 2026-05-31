@@ -522,30 +522,34 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        // Floating / mixed-type pow: defer to std::pow.
+        // Generic ``pow``: defers to ``std::pow``, returning ``double``. Used for
+        // floating arguments, and also for any *signed*-exponent case: a signed
+        // exponent could be negative and the mathematically correct result
+        // ``a^b`` is then fractional, which an integer-only specialization
+        // would have to silently round.
         template<typename T, typename U,
                  typename std::enable_if<!(std::is_integral<T>::value &&
-                                           std::is_integral<U>::value)>::type* = nullptr>
+                                           std::is_integral<U>::value &&
+                                           std::is_unsigned<U>::value)>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
         }
 
-        // Integer^integer: keep the result integer-typed (so it can index
-        // arrays / launch-dim expressions). Covers any combination of
-        // ``int``, ``unsigned int``, ``int64_t``, ``size_t`` etc. via
-        // ``std::common_type``; the older narrow specializations (only
-        // ``int``/``unsigned int``) silently fell through to ``std::pow``
-        // for e.g. ``int64_t`` symbols and produced ``double`` -- which is
-        // illegal in subscript / launch-dim contexts.
+        // Integer^*unsigned*-integer: keep the result integer-typed so it can
+        // index arrays and launch-dim expressions. The unsigned exponent is
+        // the missing assumption from the old narrow ``pow(int,int)`` overload
+        // -- without it, ``b`` could be negative and an integer return would be
+        // mathematically wrong. Covers every (base, unsigned-exponent) pair
+        // including ``int64_t^uint32_t`` and ``size_t^size_t``.
         template<typename A, typename B,
                  typename std::enable_if<std::is_integral<A>::value &&
-                                         std::is_integral<B>::value>::type* = nullptr>
+                                         std::is_integral<B>::value &&
+                                         std::is_unsigned<B>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI typename std::common_type<A, B>::type
         pow(const A& a, const B& b)
         {
             using R = typename std::common_type<A, B>::type;
-            if (b < 0) return R(0);
             R result = R(1);
             for (B i = 0; i < b; ++i) result *= R(a);
             return result;
