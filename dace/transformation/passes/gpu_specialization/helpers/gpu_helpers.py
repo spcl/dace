@@ -5,7 +5,7 @@ Canonical stream-threading names, node/connector predicates (single
 source of truth so passes don't reimplement scope walks), and the
 :func:`is_gpu_lowering_applied` idempotency signal.
 """
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -49,6 +49,31 @@ def dependency_edge():
     single future migration point)."""
     from dace.memlet import Memlet
     return Memlet()
+
+
+def exit_anchor_for(state: SDFGState, node: nodes.Node) -> nodes.Node:
+    """Return the peer-level node to chain after for a "runs-after-``node``" dependency.
+
+    For a ``MapEntry``, this is the matching ``MapExit`` -- the kernel is
+    only "done" once execution leaves the scope. For other peer-level nodes
+    (``LibraryNode``, ``Tasklet``, etc.), ``node`` itself is the right anchor.
+    """
+    if isinstance(node, nodes.MapEntry):
+        try:
+            return state.exit_node(node)
+        except (KeyError, StopIteration):
+            return node
+    return node
+
+
+def entry_exit_pair(state: SDFGState, node: nodes.Node) -> Tuple[nodes.Node, nodes.Node]:
+    """Return ``(entry, exit)`` for a ``MapEntry`` / ``(node, node)`` otherwise.
+
+    Useful when wiring a stream connector that needs to bracket a scope.
+    """
+    if isinstance(node, nodes.MapEntry):
+        return node, state.exit_node(node)
+    return node, node
 
 
 def is_gpu_lowering_applied(sdfg: SDFG) -> bool:

@@ -8,7 +8,7 @@ identical across strategies and live here: :func:`allocate_stream_array`,
 :func:`insert_per_node_syncs`. No policy lives here.
 """
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set
 
 import dace
 from dace import SDFG, SDFGState, dtypes
@@ -19,7 +19,7 @@ from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR, add_gpu_event_connector, add_gpu_stream_connector, dependency_edge, enclosing_map_chain,
-    get_gpu_event_array_name, get_gpu_stream_array_name, has_stream_connector, innermost_enclosing_map,
+    entry_exit_pair, get_gpu_event_array_name, get_gpu_stream_array_name, has_stream_connector, innermost_enclosing_map,
     is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel)
 
 
@@ -176,7 +176,7 @@ def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], str
     prev_access: Optional[nodes.AccessNode] = None
 
     for node in stream_users:
-        entry, exit_ = _entry_exit(state, node)
+        entry, exit_ = entry_exit_pair(state, node)
         in_conn = STREAM_CONNECTOR
 
         if has_stream_connector(entry):
@@ -243,12 +243,6 @@ def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry]
         get_source_access=lambda: state.add_access(stream_array_name),
         memlet_factory=lambda: Memlet(accessed_slot),
     )
-
-
-def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
-    if isinstance(node, nodes.MapEntry):
-        return node, state.exit_node(node)
-    return node, node
 
 
 # Sync-tasklet emission.

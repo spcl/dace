@@ -28,6 +28,7 @@ from dace.transformation import transformation
 
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import GPUStreamSchedulingStrategy
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (EVENT_CONNECTOR, STREAM_CONNECTOR,
+                                                                               exit_anchor_for,
                                                                                get_gpu_event_array_name,
                                                                                get_gpu_stream_array_name)
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (allocate_event_array,
@@ -131,7 +132,7 @@ def _insert_record_then_wait(state, src, dst, event_id: int, src_stream: int, ds
     connectors -- the SDFG explicitly shows which stream-slot records
     and which stream-slot waits, plus the event slot that connects them.
     """
-    src_anchor = _peer_dep_anchor_for_src(state, src)
+    src_anchor = exit_anchor_for(state, src)
     dst_anchor = dst  # MapEntry / LibraryNode / Tasklet -- peer-level
 
     record = StreamEventRecordLibraryNode(name=f"record_e{event_id}_after_{getattr(src, 'label', 'src')}")
@@ -165,7 +166,7 @@ def _insert_inter_state_record_wait(producer_state, producer, src_stream: int, c
     The record hangs off the producer's MapExit (peer-anchor) in the producer's state;
     the wait hangs off the consumer's MapEntry (peer-anchor) in the consumer's state.
     """
-    src_anchor = _peer_dep_anchor_for_src(producer_state, producer)
+    src_anchor = exit_anchor_for(producer_state, producer)
     record = StreamEventRecordLibraryNode(name=f"record_e{event_id}_after_{getattr(producer, 'label', 'src')}")
     producer_state.add_node(record)
 
@@ -183,21 +184,6 @@ def _insert_inter_state_record_wait(producer_state, producer, src_stream: int, c
     streams_for_wait = consumer_state.add_access(get_gpu_stream_array_name())
     consumer_state.add_edge(streams_for_wait, None, wait, STREAM_CONNECTOR, _stream_slot_memlet(dst_stream))
     consumer_state.add_edge(wait, None, consumer, None, dace.Memlet())
-
-
-def _peer_dep_anchor_for_src(state, src):
-    """Pick the peer-level anchor for chaining a record-after-src dependency.
-
-    For a MapEntry, the record must run after the kernel finishes -- chain off
-    the matching MapExit. For other peer-level nodes (LibraryNodes, Tasklets),
-    chain off the node itself.
-    """
-    if isinstance(src, nodes.MapEntry):
-        try:
-            return state.exit_node(src)
-        except (KeyError, StopIteration):
-            return src
-    return src
 
 
 def _insert_program_sink_syncs(sdfg: SDFG, assignments: Dict[nodes.Node, int]):
