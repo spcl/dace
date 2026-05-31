@@ -564,6 +564,86 @@ def test_idempotent_skips_already_unique_iterators():
     assert np.allclose(A, exp)
 
 
+N = dace.symbol('N')
+
+
+@dace.program
+def sibling_loops_share_name(out: dace.float64[N], a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        out[i] = a[i]
+    for i in range(N):
+        out[i] = out[i] + b[i]
+
+
+def test_value_preserving_sibling_loops_share_name():
+    """Two sibling LoopRegions sharing the source name ``i`` get distinct
+    ``_loop_it_<N>`` and the program still computes ``a[i] + b[i]``."""
+    n = 8
+    sdfg = sibling_loops_share_name.to_sdfg(simplify=False)
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    sdfg.validate()
+    iters = [r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert len(iters) == 2 and len(set(iters)) == 2, f'iterators not disambiguated: {iters}'
+    rng = np.random.default_rng(2)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    out = np.zeros(n)
+    sdfg(out=out, a=a, b=b, N=n)
+    assert np.allclose(out, a + b), f'value corrupted: out={out}, expected={a + b}'
+
+
+@dace.program
+def map_and_loop_share_iterator_name(out: dace.float64[N], a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        out[i] = a[i]
+    for i in range(N):
+        out[i] = out[i] + b[i]
+
+
+def test_map_and_loop_share_iterator_name():
+    """``dace.map[i]`` and ``for i in range`` coexisting: the pass renames
+    only the LoopRegion iterator; the map parameter stays ``i``."""
+    n = 8
+    sdfg = map_and_loop_share_iterator_name.to_sdfg(simplify=False)
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    sdfg.validate()
+    map_params = [
+        p for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry) for p in n.map.params
+    ]
+    assert 'i' in map_params, f'map parameter was renamed away: {map_params}'
+    loop_iters = [r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert all(v.startswith('_loop_it_') for v in loop_iters), f'loop iterator not renamed: {loop_iters}'
+    assert 'i' not in loop_iters, f'loop iterator kept its original name: {loop_iters}'
+    rng = np.random.default_rng(3)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    out = np.zeros(n)
+    sdfg(out=out, a=a, b=b, N=n)
+    assert np.allclose(out, a + b), f'value corrupted: out={out}, expected={a + b}'
+
+
+@dace.program
+def nested_map_over_loop_same_name(out: dace.float64[N, N], a: dace.float64[N, N]):
+    for i in dace.map[0:N]:
+        for i in range(N):
+            out[i, i] = a[i, i]
+
+
+def test_nested_map_over_loop_same_name():
+    """Map ``i`` with an inner LoopRegion also named ``i`` (shadowing): the
+    rename of the inner loop must not cascade into the enclosing map."""
+    n = 6
+    sdfg = nested_map_over_loop_same_name.to_sdfg(simplify=False)
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    sdfg.validate()
+    map_params = [
+        p for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry) for p in n.map.params
+    ]
+    assert 'i' in map_params, f'map parameter was renamed: {map_params}'
+    loop_iters = [r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert all(v.startswith('_loop_it_') for v in loop_iters), f'loop iterator not renamed: {loop_iters}'
+
+
 @dace.program
 def triply_nested(A: dace.float64[6, 6, 6]):
     for i in range(6):
