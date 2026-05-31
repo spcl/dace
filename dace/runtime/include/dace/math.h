@@ -522,27 +522,28 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T, typename U>
+        template<typename T, typename U,
+                 typename std::enable_if<!(std::is_integral<T>::value &&
+                                           std::is_integral<U>::value &&
+                                           std::is_unsigned<U>::value)>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
         }
 
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
+        // WHY: only integer^*unsigned*-integer returns an integer (b >= 0 is
+        // guaranteed). A signed exponent could be negative and yield a
+        // fractional value.
+        template<typename A, typename B,
+                 typename std::enable_if<std::is_integral<A>::value &&
+                                         std::is_integral<B>::value &&
+                                         std::is_unsigned<B>::value>::type* = nullptr>
+        DACE_CONSTEXPR DACE_HDFI typename std::common_type<A, B>::type
+        pow(const A& a, const B& b)
         {
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-        }
-
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
-        {
-            unsigned int result = 1;
-            for (unsigned int i = 0; i < b; ++i)
-                result *= a;
+            using R = typename std::common_type<A, B>::type;
+            R result = R(1);
+            for (B i = 0; i < b; ++i) result *= R(a);
             return result;
         }
 
