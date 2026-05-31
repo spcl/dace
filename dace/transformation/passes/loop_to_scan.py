@@ -285,7 +285,13 @@ class LoopToScan(ppl.Pass):
         # matcher sees the bare ``out[i+1] = out[i] + delta[i]`` shape. Without this the
         # carry hides behind an ``assign_NN`` copy node on the write side.
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+        from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+        # Normalise reductions written as WCR edges back to in-body augmented
+        # assignment so the matcher sees a uniform tasklet shape. No-op on SDFGs
+        # whose pre-existing reductions are already in augassign form (the
+        # common case for canonicalised Fortran frontends).
+        PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
         PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
         # Normalise backward-iterating loops (``range(N, 0, -1)`` shape; cloudsc

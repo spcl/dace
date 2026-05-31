@@ -39,6 +39,9 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -164,6 +167,17 @@ def _promote_args_to_symbols(sdfg):
     pass_.apply_pass(sdfg, {})
 
 
+def _post_unroll_cleanup(sdfg):
+    """Fold the now-constant conditionals that ``short_loop_unroll`` exposes and
+    drop the unreachable branches. Replaces a full ``sdfg.simplify()`` here -- the
+    only thing the second simplify was doing on this trace is dead-branch removal,
+    so the targeted passes are enough.
+    """
+    LiftTrivialIf().apply_pass(sdfg, {})
+    DeadStateElimination().apply_pass(sdfg, {})
+    EmptyStateElimination().apply_pass(sdfg, {})
+
+
 def _pmar(xform):
     return lambda sdfg: PatternMatchAndApplyRepeated([xform()]).apply_pass(sdfg, {})
 
@@ -191,8 +205,11 @@ def _chain():
 
     Stages that DO fire on cloudsc (kept):
 
-    * ``specialize``, ``promote_args_to_symbols``, ``simplify`` /
-      ``simplify_after_unroll`` -- frontend conditioning.
+    * ``specialize``, ``promote_args_to_symbols``, ``simplify`` -- frontend
+      conditioning.
+    * ``post_unroll_cleanup`` -- ``LiftTrivialIf`` + ``DeadStateElimination`` +
+      ``EmptyStateElimination`` -- folds the ``if 1 == 2`` shape that surfaces
+      after ``short_loop_unroll`` pins the species iterator.
     * ``short_loop_unroll`` -- exposes constant species axes for downstream.
     * ``propagate_memlets`` -- narrows post-unroll/simplify memlets so
       enclosing-LoopRegion vars survive into nested-SDFG out-connector
@@ -222,14 +239,15 @@ def _chain():
         ('promote_args_to_symbols', _promote_args_to_symbols),
         ('simplify', lambda sdfg: sdfg.simplify()),
         ('short_loop_unroll', _unroll_fixpoint),
-        # Re-simplify after unrolling. A body that guards on the iteration variable
-        # (e.g. ``if jm == ncldqi``) only exposes a constant condition once unrolling
-        # pins ``jm``; the first ``simplify`` ran while the guard was still symbolic, so
-        # it could not fold it. Unrolling (with species constants specialised) then
-        # leaves dead branches like ``if 1 == 2`` whose never-taken bodies still hold
-        # constant-index writes (e.g. ``zvqx[1] = ...``) that read as a loop-carried
-        # conflict and block LoopToMap; this second simplify folds them away.
-        ('simplify_after_unroll', lambda sdfg: sdfg.simplify()),
+        # Targeted post-unroll cleanup. Unrolling pins species iterators
+        # (``jm``), turning body guards like ``if jm == ncldqi`` into ``if 1 == 2``;
+        # the dead branches still hold constant-index writes (e.g. ``zvqx[1] = ...``)
+        # that read as a loop-carried conflict and would block ``LoopToMap``.
+        # The full ``simplify`` sledgehammer is unnecessary here -- only two passes
+        # matter: ``LiftTrivialIf`` rewrites the now-constant conditional into the
+        # surviving branch, and ``DeadStateElimination`` drops the resulting
+        # unreachable states. ``EmptyStateElimination`` is a cheap follow-up.
+        ('post_unroll_cleanup', _post_unroll_cleanup),
         # Re-propagate memlets now that unroll+simplify changed the structure and the
         # ``symbols_defined_at`` fix lets enclosing-LoopRegion loop variables count as
         # defined. Without this, NSDFG out-connector memlets that propagation had

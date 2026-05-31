@@ -86,6 +86,14 @@ class LoopToReduce(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        # Normalise reductions written as WCR edges back to in-body augmented
+        # assignment so the body matcher sees a uniform ``acc <op>= arr[f(i)]``
+        # tasklet shape regardless of how the reduction was originally encoded.
+        # No-op on SDFGs whose reductions are already in augassign form.
+        from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+        PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+
         count = 0
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
