@@ -9,8 +9,8 @@ in ``defined_vars`` at a scope that survives state boundaries, otherwise the
 consuming state's kernel codegen (``_define_variables_in_kernel_scope``) fails
 with ``KeyError: 'Variable X has not been defined'``.
 
-The reproducer hand-builds that exact SDFG shape so the test does not depend on
-any frontend or transformation pass.
+The reproducer hand-builds that exact SDFG shape, so the test does not depend
+on any frontend or transformation pass.
 """
 import pytest
 
