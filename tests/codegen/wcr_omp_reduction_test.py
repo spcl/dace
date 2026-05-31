@@ -149,8 +149,192 @@ def test_multiple_omp_reducible_targets_fall_back_to_atomic():
         "expected no reduction(...) clause when 2+ targets qualify -- got:\n" + "\n".join(pragma_lines)
 
 
+def _build_op_sdfg(op_name: str, wcr: str, dtype: dace.typeclass, init: str) -> dace.SDFG:
+    """Scalar accumulator with a configurable WCR op, dtype, and seed value.
+
+    :param op_name: Tag for the SDFG name (no spaces).
+    :param wcr: WCR lambda string (e.g. ``'lambda a, b: a + b'``).
+    :param dtype: DaCe element type for ``src`` / ``acc`` / ``out``.
+    :param init: Tasklet code for the seed write (e.g. ``'o = 0.0'``).
+    """
+    sdfg = dace.SDFG(f"wcr_scalar_{op_name}")
+    sdfg.add_array("src", [N], dtype)
+    sdfg.add_array("out", [1], dtype)
+    sdfg.add_scalar("acc", dtype, transient=True)
+
+    init_state = sdfg.add_state("init", is_start_block=True)
+    t0 = init_state.add_tasklet("seed", {}, {"o"}, init)
+    init_state.add_edge(t0, "o", init_state.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    ms = sdfg.add_state("ms")
+    sdfg.add_edge(init_state, ms, dace.InterstateEdge())
+    me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
+    t = ms.add_tasklet("acc", {"v"}, {"r"}, "r = v")
+    ms.add_memlet_path(ms.add_read("src"), me, t, dst_conn="v", memlet=dace.Memlet("src[i]"))
+    ms.add_memlet_path(t, mx, ms.add_write("acc"), src_conn="r", memlet=dace.Memlet("acc[0]", wcr=wcr))
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(ms, post, dace.InterstateEdge())
+    wb = post.add_tasklet("wb", {"i"}, {"o"}, "o = i")
+    post.add_edge(post.add_read("acc"), None, wb, "i", dace.Memlet("acc[0]"))
+    post.add_edge(wb, "o", post.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+    return sdfg
+
+
+_FLOAT_RNG = np.random.default_rng(42)
+
+
+def _f64_rand(n):
+    """Bounded floats so Product / Min / Max don't overflow or saturate."""
+    return _FLOAT_RNG.uniform(0.9, 1.1, size=n)
+
+
+def _i32_rand(n):
+    return np.random.default_rng(7).integers(0, 16, size=n, dtype=np.int32)
+
+
+def _bool_rand_mostly_true(n):
+    """Mostly True so Logical_And does not degenerate to a constant False oracle."""
+    arr = np.random.default_rng(11).choice([True, False], size=n, p=[0.95, 0.05])
+    return arr.astype(np.bool_)
+
+
+def _bool_rand_mostly_false(n):
+    """Mostly False so Logical_Or does not degenerate to a constant True oracle."""
+    arr = np.random.default_rng(13).choice([True, False], size=n, p=[0.05, 0.95])
+    return arr.astype(np.bool_)
+
+
+# Tuple layout: op_name, wcr_lambda, expected_clause_op, dtype, init_tasklet_body,
+# np_input_generator, np_oracle_callable, scalar_compare_callable. The
+# expected_clause_op is the EXACT substring that must appear in the
+# ``reduction(<op>:acc)`` clause of the emitted OMP pragma, jointly pinning
+# detect_reduction_type's WCR-lambda -> ReductionType mapping AND the
+# _REDUCTION_TO_OMP_OP table.
+PER_OP_CASES = [
+    ("sum", "lambda a, b: a + b", "+", dace.float64, "o = 0.0", _f64_rand, lambda x: float(x.sum()), np.isclose),
+    ("product", "lambda a, b: a * b", "*", dace.float64, "o = 1.0", _f64_rand, lambda x: float(x.prod()), np.isclose),
+    ("min", "lambda a, b: min(a, b)", "min", dace.float64, "o = 1e9", _f64_rand, lambda x: float(x.min()), np.isclose),
+    ("max", "lambda a, b: max(a, b)", "max", dace.float64, "o = -1e9", _f64_rand, lambda x: float(x.max()),
+     np.isclose),
+    ("band", "lambda a, b: a & b", "&", dace.int32, "o = -1", _i32_rand,
+     lambda x: int(np.bitwise_and.reduce(x)), lambda a, b: int(a) == int(b)),
+    ("bor", "lambda a, b: a | b", "|", dace.int32, "o = 0", _i32_rand,
+     lambda x: int(np.bitwise_or.reduce(x)), lambda a, b: int(a) == int(b)),
+    ("bxor", "lambda a, b: a ^ b", "^", dace.int32, "o = 0", _i32_rand,
+     lambda x: int(np.bitwise_xor.reduce(x)), lambda a, b: int(a) == int(b)),
+    ("land", "lambda a, b: a and b", "&&", dace.int32, "o = 1",
+     lambda n: _bool_rand_mostly_true(n).astype(np.int32),
+     lambda x: int(bool(np.all(x))), lambda a, b: bool(int(a)) == bool(int(b))),
+    ("lor", "lambda a, b: a or b", "||", dace.int32, "o = 0",
+     lambda n: _bool_rand_mostly_false(n).astype(np.int32),
+     lambda x: int(bool(np.any(x))), lambda a, b: bool(int(a)) == bool(int(b))),
+]
+
+
+@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES,
+                         ids=[c[0] for c in PER_OP_CASES])
+def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
+                                                        compare):
+    """Each supported WCR op must produce the matching ``reduction(<op>:acc)``
+    clause AND compute the right numerical result. Pins three things at once:
+
+    1. ``detect_reduction_type`` correctly classifies the WCR lambda.
+    2. ``_REDUCTION_TO_OMP_OP`` maps that classification to the right OpenMP
+       operator token.
+    3. End-to-end runtime: the OMP per-thread privatize + final tree-reduce
+       computes the same result as the un-parallelised oracle.
+    """
+    sdfg = _build_op_sdfg(op_name, wcr, dtype, init)
+    csdfg, src = _compile_and_read_src(sdfg)
+
+    pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    target_clause = f"reduction({expected_op}:"
+    assert any(target_clause in l for l in pragma_lines), (
+        f"expected '{target_clause}' clause for op '{op_name}' (wcr={wcr!r}); got pragmas:\n" + "\n".join(pragma_lines))
+
+    n = 1024
+    src_arr = gen_input(n)
+    out = np.zeros(1, dtype=src_arr.dtype)
+    csdfg(src=src_arr, out=out, N=n)
+    expected = oracle(src_arr)
+    assert compare(out[0], expected), f"{op_name}: got {out[0]}, expected {expected}"
+
+
+@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES,
+                         ids=[c[0] for c in PER_OP_CASES])
+def test_per_operator_suppresses_atomic_on_covered_target(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
+                                                         compare):
+    """For each supported op, the per-edge ``reduce_atomic`` must be skipped
+    on the OMP-reduction-covered target: the runtime's per-thread copy + final
+    tree-reduce makes an extra atomic on top strictly wasted work (and would
+    be wrong if the implementation privatised by value rather than pointer).
+    """
+    sdfg = _build_op_sdfg(op_name, wcr, dtype, init)
+    _, src = _compile_and_read_src(sdfg)
+    bad = [l for l in src.splitlines() if "reduce_atomic" in l and "acc" in l]
+    assert not bad, f"{op_name}: per-iter atomic on covered target:\n" + "\n".join(bad)
+
+
+def test_unsupported_op_falls_back_to_atomic():
+    """A WCR op outside _REDUCTION_TO_OMP_OP (here subtraction, which OpenMP
+    does NOT support as a reduction operator -- ``a - b`` is not associative)
+    must fall through to the existing atomic-add path. No reduction clause;
+    the atomic is the only correctness guarantee."""
+    sdfg = _build_op_sdfg("sub", "lambda a, b: a - b", dace.float64, "o = 0.0")
+    _, src = _compile_and_read_src(sdfg)
+    pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert not any("reduction(" in l for l in pragma_lines), (
+        "expected NO reduction clause for an unsupported op; got:\n" + "\n".join(pragma_lines))
+    assert any("reduce_atomic" in l and "acc" in l for l in src.splitlines()), \
+        "expected reduce_atomic on 'acc' as fallback when no reduction clause is emitted"
+
+
+def test_length_one_array_target_falls_back_to_atomic():
+    """A length-1 ``Array`` accumulator (``arr[0]``) is emitted by DaCe as a
+    ``T*`` pointer slot, which OpenMP's ``reduction(...)`` clause cannot use
+    (it needs a scalar VARIABLE). Detection must refuse this case; the atomic
+    path must fire instead. ``PrivatizeReductionAccumulator`` is the upstream
+    rewrite that converts such targets into a transient ``Scalar``; without
+    it, atomic is the correct fallback."""
+    sdfg = dace.SDFG("wcr_len1_array_target")
+    sdfg.add_array("src", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64, transient=True)  # length-1 Array, NOT Scalar
+    sdfg.add_array("out", [1], dace.float64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    t0 = init.add_tasklet("seed", {}, {"o"}, "o = 0.0")
+    init.add_edge(t0, "o", init.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    ms = sdfg.add_state("ms")
+    sdfg.add_edge(init, ms, dace.InterstateEdge())
+    me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
+    t = ms.add_tasklet("acc", {"v"}, {"r"}, "r = v")
+    ms.add_memlet_path(ms.add_read("src"), me, t, dst_conn="v", memlet=dace.Memlet("src[i]"))
+    ms.add_memlet_path(t, mx, ms.add_write("acc"), src_conn="r",
+                       memlet=dace.Memlet("acc[0]", wcr="lambda a, b: a + b"))
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(ms, post, dace.InterstateEdge())
+    wb = post.add_tasklet("wb", {"i"}, {"o"}, "o = i")
+    post.add_edge(post.add_read("acc"), None, wb, "i", dace.Memlet("acc[0]"))
+    post.add_edge(wb, "o", post.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    _, src = _compile_and_read_src(sdfg)
+    pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert not any("reduction(" in l for l in pragma_lines), (
+        "expected NO reduction clause for length-1 Array target; got:\n" + "\n".join(pragma_lines))
+
+
 if __name__ == "__main__":
     test_scalar_wcr_emits_omp_reduction_clause()
     test_scalar_wcr_does_not_emit_atomic_for_covered_target()
     test_scalar_wcr_numerically_correct()
     test_multiple_omp_reducible_targets_fall_back_to_atomic()
+    for case in PER_OP_CASES:
+        test_per_operator_emits_correct_omp_reduction_clause(*case)
+        test_per_operator_suppresses_atomic_on_covered_target(*case)
+    test_unsupported_op_falls_back_to_atomic()
+    test_length_one_array_target_falls_back_to_atomic()
