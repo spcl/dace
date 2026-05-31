@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU-offloading bug reproducers.
 
-Each test pre-validates the SDFG after ``auto_optimize(device=GPU)``; numerical
-correctness is asserted where the kernel is small and tractable.
+Each test pre-validates the SDFG after ``auto_optimize(device=GPU)``, and
+asserts numerical correctness where the kernel is small and tractable.
 """
 import numpy as np
 import pytest
