@@ -13,7 +13,7 @@ from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
-from dace import dtypes
+from dace import data, dtypes
 from dace import subsets
 import warnings
 from dace.sdfg import scope
@@ -938,11 +938,29 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        input_data = dcpy(raw_input_data)
-        input_data.transient = False
-        input_data.shape = schedule.in_shape
-        input_data.strides = schedule.in_strides
-        nsdfg.add_datadesc('_in', input_data)
+        # ``_in`` is the nested SDFG's input connector. It must be a standalone
+        # data descriptor inside the nested SDFG. A plain ``dcpy`` of the outer
+        # input descriptor preserves the View kind when the outer source is a
+        # View -- but a View's viewed-source array is not carried into the
+        # nested SDFG, so the inner ``_in`` would be a View pointing at
+        # nothing in this SDFG (``get_view_edge`` returns ``None`` -> validation
+        # fails on the next ``MapCollapse.apply``). What flows in through the
+        # connector is a contiguous read of the View's resolved shape, so
+        # collapse the View into a fresh Array with the schedule's shape /
+        # strides / storage.
+        if isinstance(raw_input_data, data.View):
+            nsdfg.add_array('_in',
+                            schedule.in_shape,
+                            raw_input_data.dtype,
+                            strides=schedule.in_strides,
+                            storage=raw_input_data.storage,
+                            transient=False)
+        else:
+            input_data = dcpy(raw_input_data)
+            input_data.transient = False
+            input_data.shape = schedule.in_shape
+            input_data.strides = schedule.in_strides
+            nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
         nsdfg.add_array('_out',
