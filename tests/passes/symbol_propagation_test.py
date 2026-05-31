@@ -408,9 +408,7 @@ def test_dead_iedge_assignment_eliminated_after_substitution():
     res = SymbolPropagation().apply_pass(sdfg, {})
     assert res == {'k_plus_1'}, f'expected k_plus_1 to be reported propagated; got {res}'
 
-    surviving = [(lhs, rhs)
-                 for e in sdfg.all_interstate_edges()
-                 for lhs, rhs in e.data.assignments.items()]
+    surviving = [(lhs, rhs) for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items()]
     assert surviving == [], f'dead k_plus_1 assignment must be eliminated; got {surviving}'
 
     # The substitution must reach the memlet: the write to s2's ``out`` now indexes
@@ -444,9 +442,7 @@ def test_dead_iedge_chain_unravels_to_fixed_point():
 
     SymbolPropagation().apply_pass(sdfg, {})
 
-    surviving = [(lhs, rhs)
-                 for e in sdfg.all_interstate_edges()
-                 for lhs, rhs in e.data.assignments.items()]
+    surviving = [(lhs, rhs) for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items()]
     assert surviving == [], f'every link of the dead chain must be eliminated; got {surviving}'
 
 
@@ -472,9 +468,7 @@ def test_dead_iedge_with_array_shape_substituted_into_descriptor():
 
     SymbolPropagation().apply_pass(sdfg, {})
 
-    surviving = [(lhs, rhs)
-                 for e in sdfg.all_interstate_edges()
-                 for lhs, rhs in e.data.assignments.items()]
+    surviving = [(lhs, rhs) for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items()]
     assert surviving == [], (f'k_plus_1 should have been substituted into the array shape and the '
                              f'binding dropped; got {surviving}')
     shape_str = ', '.join(str(s) for s in sdfg.arrays['out'].shape)
