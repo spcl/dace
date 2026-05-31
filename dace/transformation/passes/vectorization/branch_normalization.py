@@ -358,20 +358,32 @@ class BranchNormalization(ppl.Pass):
         # substantive compute state. The wholesale lift preserves the
         # region's structure and gates only the escaping writes via
         # ``merge``; the side-effect-free compute runs unconditionally and
-        # the merge selects. But an interstate *assignment* inside the arm
-        # is a conditional symbol binding — lifting it makes it
-        # unconditional, which silently corrupts any out-of-arm consumer of
-        # that symbol. We don't prove arm-locality, so refuse.
+        # the merge selects. An interstate *assignment* inside the arm is
+        # a conditional symbol binding — lifting it makes it unconditional,
+        # which silently corrupts any out-of-arm consumer of that symbol.
+        # We allow arm-local symbol bindings (the symbol is only read
+        # inside the same arm — e.g. ``__sym = __tmp[0]`` immediately
+        # consumed by a sibling memlet within the same body) since lifting
+        # them is value-preserving.
         states = [n for n in body.nodes() if isinstance(n, dace.SDFGState)]
         if len(states) != len(body.nodes()):
             return False
+        local_sdfg_for_arm: dace.SDFG = cb.sdfg
         for e in body.edges():
-            if e.data.assignments:
+            if not e.data.assignments:
+                continue
+            # Each assigned symbol must be *arm-local*: every read of the
+            # symbol lives inside ``body``. Otherwise the lift breaks
+            # downstream consumers.
+            non_local = []
+            for sym in e.data.assignments.keys():
+                if not self._symbol_is_arm_local(local_sdfg_for_arm, body, sym):
+                    non_local.append(sym)
+            if non_local:
                 raise NotImplementedError(
                     f"BranchNormalization: IF arm {body.label!r} carries interstate assignment(s) "
-                    f"{dict(e.data.assignments)}; lifting the arm would make this conditional symbol "
-                    f"binding unconditional (unsafe unless the symbol is provably arm-local). "
-                    f"Unsupported branch shape.")
+                    f"for symbol(s) {non_local} that are read outside the arm; lifting would make "
+                    f"this conditional symbol binding unconditional (unsafe). Unsupported branch shape.")
         substantive = [s for s in states if not s.is_empty()]
         if not substantive:
             return False
@@ -435,6 +447,69 @@ class BranchNormalization(ppl.Pass):
             self._rewrite_writes_to_merge(local_sdfg, s, ms, cond_text, skip_cb=cb, preresolved=pr)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
+        return True
+
+    @staticmethod
+    def _symbol_is_arm_local(sdfg: dace.SDFG, body: ControlFlowRegion, sym: str) -> bool:
+        """Whether ``sym``'s reads are confined to ``body`` (the arm region).
+
+        An arm-local symbol binding can be safely lifted out of the
+        conditional: the assignment becomes unconditional, but no consumer
+        outside the arm reads it, so the lift is value-preserving. A
+        symbol referenced anywhere else (sibling state, interstate edge,
+        other conditional arm) is NOT arm-local.
+
+        :param sdfg: The SDFG that owns ``body`` and ``sym``.
+        :param body: The arm region whose locality is being checked.
+        :param sym: The symbol name.
+        :returns: ``True`` iff every read of ``sym`` lives inside ``body``.
+        """
+        arm_blocks = set(body.all_control_flow_blocks(
+            recursive=True)) if hasattr(body, "all_control_flow_blocks") else set(body.nodes())
+        # Walk every block in the SDFG; any reference to ``sym`` outside the
+        # arm disqualifies the lift.
+        for cfg in sdfg.all_control_flow_regions(recursive=True):
+            for blk in cfg.nodes():
+                if blk in arm_blocks:
+                    continue
+                # Interstate-edge references (assignments + condition).
+                in_edges = cfg.in_edges(blk) + cfg.out_edges(blk)
+                for ie in in_edges:
+                    for v in ie.data.assignments.values():
+                        if sym in symbolic.symbols_in_code(str(v)):
+                            return False
+                    if ie.data.condition is not None:
+                        cond_str = ie.data.condition.as_string if isinstance(ie.data.condition, CodeBlock) else str(
+                            ie.data.condition)
+                        if sym in symbolic.symbols_in_code(cond_str):
+                            return False
+                # Branch-block conditions on conditional blocks.
+                if isinstance(blk, ConditionalBlock):
+                    for cnd, _br in blk.branches:
+                        if cnd is None:
+                            continue
+                        cond_str = cnd.as_string if isinstance(cnd, CodeBlock) else str(cnd)
+                        if sym in symbolic.symbols_in_code(cond_str):
+                            return False
+                # State-level references: tasklet bodies + memlet subsets.
+                if isinstance(blk, dace.SDFGState):
+                    for n in blk.nodes():
+                        if isinstance(n, dace.nodes.Tasklet):
+                            if sym in symbolic.symbols_in_code(n.code.as_string):
+                                return False
+                    for ed in blk.edges():
+                        if ed.data is None:
+                            continue
+                        for s in (ed.data.subset, getattr(ed.data, "other_subset", None)):
+                            if s is None:
+                                continue
+                            for r in s.ranges:
+                                for elem in r:
+                                    if elem is None:
+                                        continue
+                                    fs = {str(x) for x in getattr(elem, "free_symbols", set())}
+                                    if sym in fs:
+                                        return False
         return True
 
     @staticmethod
@@ -533,7 +608,11 @@ class BranchNormalization(ppl.Pass):
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
         return collect_element_write_subsets(state)
 
-    def _resolve_arm_cond(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str, any_subset_str: str,
+    def _resolve_arm_cond(self,
+                          sdfg: dace.SDFG,
+                          state: dace.SDFGState,
+                          cond_text: str,
+                          any_subset_str: str,
                           skip_cb=None):
         """Resolve the arm condition to ``(cond_array_name, cond_producer)``.
 
@@ -556,8 +635,11 @@ class BranchNormalization(ppl.Pass):
         """
         from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
             SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
-        resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(
-            sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
+        resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(sdfg,
+                                                                         state,
+                                                                         cond_text,
+                                                                         any_subset_str,
+                                                                         skip_cb=skip_cb)
         return (None, None) if resolved is None else resolved
 
     def _rewrite_writes_to_merge(self,
@@ -592,8 +674,11 @@ class BranchNormalization(ppl.Pass):
             cond_array_name, cond_producer = preresolved
         else:
             any_subset_str = str(next(iter(write_subsets.values())))
-            cond_array_name, cond_producer = self._resolve_arm_cond(
-                sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
+            cond_array_name, cond_producer = self._resolve_arm_cond(sdfg,
+                                                                    state,
+                                                                    cond_text,
+                                                                    any_subset_str,
+                                                                    skip_cb=skip_cb)
 
         for arr_name in list(write_subsets.keys()):
             # Find every write access node for this array in this state.

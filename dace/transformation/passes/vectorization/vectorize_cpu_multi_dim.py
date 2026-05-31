@@ -41,6 +41,7 @@ from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import
     PromoteNSDFGBodyToTiles, )
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
     SameWriteSetIfElseToMergeCFG, )
+from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
@@ -255,7 +256,13 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # PromoteNSDFGBodyToTiles can descend; the merge tasklets lower to a
             # per-lane TileMerge select (the K-dim analogue of the 1D
             # ``vector_select`` blend), gated by the tile map's iteration mask.
-            passes += [SameWriteSetIfElseToMergeCFG()]
+            # SameWriteSetIfElseToMergeCFG handles two-arm same-write-set
+            # if/else by emitting per-target merge tasklets; the residual
+            # BranchNormalization flattens any remaining single-arm /
+            # disjoint-write two-arm ConditionalBlocks (and recurses through
+            # nested ones via the fix-point loop) so the descent sees pure
+            # dataflow.
+            passes += [SameWriteSetIfElseToMergeCFG(), BranchNormalization()]
         # Full prep, run BEFORE tiling exactly as the legacy 1D pipeline
         # (vectorize_cpu.py) does, so the tile path handles the same kernels:
         #   * RemoveEmptyStates / RemoveRedundantAssignmentTasklets — clean up
