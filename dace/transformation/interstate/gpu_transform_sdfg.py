@@ -201,37 +201,31 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if self.host_data is None:
             self.host_data = []
 
-        # Pin host-only arrays. The set ``self.host_data`` is grown in two
-        # steps before any storage promotion runs:
-        #
-        # (1) Interstate-edge reads at host scope. Any container that an
-        #     interstate edge's condition or assignments reads is evaluated
-        #     on the host, so promoting it to GPU storage would produce
-        #     ``InvalidSDFGInterstateEdgeError: reading inaccessible
-        #     GPU_Global container in host code interstate edge``. Interstate
-        #     edges nested in a device-level kernel scope execute on the
-        #     device -- those reads are fine and we skip them. The arrays
-        #     dict is the one that *owns* the iedge (an iedge in a nested
-        #     SDFG references containers from that nested SDFG's name space).
+        # Pin host-only arrays. Any data container read by an interstate edge's
+        # condition or assignments at HOST scope is evaluated on the host --
+        # promoting it to GPU storage would make the SDFG invalid (validation
+        # rejects host code reads of GPU-resident containers). Interstate edges
+        # nested inside a device-level kernel scope execute on the device, so
+        # reads from a GPU array are fine there and must NOT be pinned to host.
+        # The same ``get_read_memlets`` API the validator uses identifies these
+        # accesses canonically.
         for ie in sdfg.all_interstate_edges():
             owner_sdfg = ie.src.sdfg
             parent_nsdfg = owner_sdfg.parent_nsdfg_node
             if parent_nsdfg is not None and scope.is_devicelevel_gpu(owner_sdfg.parent_sdfg, owner_sdfg.parent,
                                                                     parent_nsdfg):
                 continue
-            for read_memlet in ie.data.get_read_memlets(owner_sdfg.arrays):
+            for read_memlet in ie.data.get_read_memlets(sdfg.arrays):
                 container = read_memlet.data
-                if container in owner_sdfg.arrays and container not in self.host_data:
+                if container in sdfg.arrays and container not in self.host_data:
                     self.host_data.append(container)
 
-        # (2) Fixed-point propagation through maps. If any of a map's adjacent
-        #     memlets references a host_data container, every other adjacent
-        #     memlet on the same map joins host_data -- otherwise the map
-        #     straddles host and GPU storage on its own connectors and
-        #     downstream ``infer_types.set_default_schedule_and_storage_types``
-        #     fails with conflicting schedule constraints (one neighbour
-        #     demands CPU_Multicore, another GPU_Device). The lattice has
-        #     finite height so the loop terminates in O(|arrays|) iterations.
+        # Propagate host_data through maps via a fixed point: if any map's
+        # input or output is host-pinned, every other memlet on that same
+        # map must also be host-pinned -- otherwise the map straddles host
+        # and GPU storage, which downstream ``set_default_schedule_and_storage_types``
+        # rejects with conflicting schedule constraints (one input demands
+        # CPU_Multicore, another demands GPU_Device, on the same MapEntry).
         host_data_set = set(self.host_data)
         changed = True
         while changed:
@@ -241,16 +235,19 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     for n in state.nodes():
                         if not isinstance(n, nodes.EntryNode):
                             continue
-                        adj_data = {e.data.data for e in state.out_edges(n) if not e.data.is_empty()}
-                        adj_data.update(e.data.data for e in state.in_edges(state.exit_node(n))
-                                        if not e.data.is_empty())
-                        if not (adj_data & host_data_set):
-                            continue
-                        for d in adj_data:
-                            if d in nsdfg.arrays and d not in host_data_set:
-                                host_data_set.add(d)
-                                self.host_data.append(d)
-                                changed = True
+                        adj_data = set()
+                        for e in state.out_edges(n):
+                            if not e.data.is_empty():
+                                adj_data.add(e.data.data)
+                        for e in state.in_edges(state.exit_node(n)):
+                            if not e.data.is_empty():
+                                adj_data.add(e.data.data)
+                        if adj_data & host_data_set:
+                            for d in adj_data:
+                                if d in nsdfg.arrays and d not in host_data_set:
+                                    host_data_set.add(d)
+                                    self.host_data.append(d)
+                                    changed = True
 
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
@@ -302,8 +299,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 continue
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
-            if inodename in self.host_data:  # Host-pinned: keep on host, no GPU clone
-                continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
@@ -315,8 +310,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 data_already_on_gpu[onodename] = None
                 continue
             if onodename in cloned_arrays:
-                continue
-            if onodename in self.host_data:  # Host-pinned: keep on host, no GPU clone
                 continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
