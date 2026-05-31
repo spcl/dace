@@ -594,7 +594,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 name_mapping[devicename] = hostname
             return name_mapping
 
-        for block in list(sdfg.all_control_flow_blocks(recursive=True)):
+        for block in list(sdfg.all_control_flow_blocks(recursive=False)):
             arrays_used = set()
             for e in block.parent_graph.out_edges(block):
                 arrays_used.update(e.data.used_arrays(sdfg.arrays) & cloned_data)
@@ -613,7 +613,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     for e in block.parent_graph.out_edges(co_state):
                         e.data.replace(devicename, hostname, False)
 
-        for block in list(sdfg.all_control_flow_blocks(recursive=True)):
+        for block in list(sdfg.all_control_flow_blocks(recursive=False)):
             arrays_used = set(block.used_symbols(all_symbols=True, with_contents=False)) & cloned_data
 
             # Create a state and copy out used arrays
