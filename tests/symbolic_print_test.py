@@ -84,3 +84,20 @@ def test_max_int_literal_stays_int():
     # This one SHOULD have bare 0, not 0.0
     clean = result.replace(" ", "")
     assert "0.0" not in clean, f"Integer literal 0 was promoted to float: '{result}'"
+
+
+def test_cpp_floor_of_fraction_difference_recombines_to_integer_division():
+    """sympy normalises ``(LEN - 1) // 8`` on integer symbols to
+    ``floor(LEN/8 - 1/8)``. The C++ printer must recombine the common-denominator
+    sum and emit a single ``((LEN - 1) / (8))`` integer division -- not
+    ``floor(LEN/8 - 1/8)`` (which in C++ collapses ``1/8`` to ``0`` and
+    overshoots the loop bound) and not the literal ``LEN/8 - 1/8`` string."""
+    from dace.symbolic import DaceSympyPrinter
+    LEN = sympy.Symbol('LEN', integer=True)
+    expr = (LEN - 1) // 8
+    out = DaceSympyPrinter(arrays={}, cpp_mode=True).doprint(expr)
+
+    clean = out.replace(' ', '')
+    assert 'floor' not in clean, f'C++ printer must not emit floor(...); got {out!r}'
+    assert '1/8' not in clean, f'literal Rational 1/8 leaked into C++ output: {out!r}'
+    assert 'LEN-1' in clean, f'expected combined numerator (LEN - 1); got {out!r}'
