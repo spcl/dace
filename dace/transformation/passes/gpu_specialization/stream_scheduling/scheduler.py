@@ -41,8 +41,8 @@ class SchedulingContext:
     # -- EventRecord in ``producer_state`` on ``src_stream`` + StreamWaitEvent in
     # ``consumer_state`` on ``dst_stream``. Closes the inter-state sync gap that
     # ``cross_stream_edges`` (intra-state only) can't express.
-    inter_state_cross_stream: List[Tuple[SDFGState, nodes.Node, int, SDFGState, nodes.Node, int, int]] = field(
-        default_factory=list)
+    inter_state_cross_stream: List[Tuple[SDFGState, nodes.Node, int, SDFGState, nodes.Node, int,
+                                         int]] = field(default_factory=list)
     # Each entry: (interstate_edge, stream_id) -- one StreamSynchronize
     # at the interstate-edge boundary before the condition evaluates.
     interstate_host_reads: List[Tuple[Edge, int]] = field(default_factory=list)
@@ -195,85 +195,92 @@ def schedule_state(state: SDFGState, last_writer: LastWriter, ctx: SchedulingCon
     writer_node: Dict[str, nodes.Node] = {}
 
     for n in order:
-        reads = _read_data_names(n, state)
         writes = _written_data_names(n, state)
-        # Resolve each read-after-write and write-after-write to its prior
-        # writer + stream + producer-token. RAW + WAW both produce real
-        # dependencies; missing WAW causes overwrite races when two writers
-        # of the same array end up on different streams (e.g. ``copyin``
-        # writes ``gpu_A``, then a zero-fill kernel ``gpu_A[i]=0`` runs
-        # concurrently). Contributions carry the full StreamEventToken (or
-        # None) so cross-state syncs can demand-allocate events on the
-        # original producer.
-        contributions: List[Tuple[Optional[nodes.Node], int, Optional[StreamEventToken]]] = []
-        seen_deps: Set[str] = set()
-        for d in list(reads) + list(writes):
-            if d in seen_deps:
-                continue
-            seen_deps.add(d)
-            if d in writer_node:
-                pred = writer_node[d]
-                contributions.append((pred, ctx.assignments[pred], None))
-            elif d in out and out[d].stream_id >= 0:
-                tok = out[d]
-                contributions.append((None, tok.stream_id, tok))
-
-        if not contributions:
-            # No dependency -> source node. Default to stream 0 instead of
-            # allocating a fresh stream; independent sources sequentialise via
-            # submit order on stream 0, which is correct and minimises the
-            # stream count. Forks happen only at real diamond patterns (a
-            # predecessor with ``childpath_used==True`` below).
-            chosen = 0
-            ctx.next_stream_id = max(ctx.next_stream_id, 1)
-        else:
-            # First predecessor donates its stream (forking if it has
-            # already donated to a previous sibling).
-            first_pred, first_stream, _ = contributions[0]
-            if first_pred is not None and childpath_used.get(first_pred, False):
-                chosen = ctx.fresh_stream()
-            else:
-                chosen = first_stream
-                if first_pred is not None:
-                    childpath_used[first_pred] = True
-
+        contributions = _collect_contributions(n, state, out, writer_node, ctx)
+        chosen = _choose_stream(contributions, childpath_used, ctx)
         ctx.assignments[n] = chosen
 
-        # NestedSDFG: propagate the chosen stream to every inner consumer so
-        # the codegen can wire ``__dace_current_stream`` inside the nested
-        # function. The inner body shares the parent's stream end-to-end.
         if isinstance(n, nodes.NestedSDFG):
             _propagate_stream_into_nested(n, chosen, ctx)
 
-        # Cross-stream events: one per contribution on a different stream.
-        # Lazy allocation -- the producer gets a unique event slot only on
-        # first cross-stream demand. ``ctx.event_for_producer`` returns
-        # the same id for every subsequent consumer of the same producer.
-        for pred, pred_stream, prev_tok in contributions:
-            if pred_stream == chosen:
-                continue
-            if pred is not None:
-                # Intra-state cross-stream: record + wait both in ``state``.
-                event_id = ctx.event_for_producer(pred)
-                ctx.cross_stream_edges.append((state, pred, n, event_id))
-            elif prev_tok is not None and prev_tok.producer is not None and prev_tok.producer_state is not None:
-                # Inter-state cross-stream: record runs in the producer's state
-                # (after the producer), wait runs in this state (before n).
-                # The pair shares one event id allocated on the producer node.
-                event_id = ctx.event_for_producer(prev_tok.producer)
-                ctx.inter_state_cross_stream.append((prev_tok.producer_state, prev_tok.producer, pred_stream, state, n,
-                                                     chosen, event_id))
+        _emit_cross_stream_for_node(n, chosen, contributions, state, ctx)
 
-        # Update outputs. The token's event_id is left ``None`` until a
-        # later consumer cross-streams from this node and asks for one
-        # via ``ctx.event_for_producer``. The producer + producer_state
-        # are recorded so the demand-driven allocation can pin the record
-        # site in the producer's state (not the consumer's).
         for d in writes:
             out[d] = StreamEventToken(chosen, event_id=None, producer=n, producer_state=state)
             writer_node[d] = n
 
     return out
+
+
+_Contribution = Tuple[Optional[nodes.Node], int, Optional[StreamEventToken]]
+
+
+def _collect_contributions(n: nodes.Node, state: SDFGState, out: LastWriter, writer_node: Dict[str, nodes.Node],
+                           ctx: 'SchedulingContext') -> List[_Contribution]:
+    """Per-data dependency contributions for ``n`` (RAW + WAW, deduped).
+
+    A WAW (write-after-write) is a real dependency: two writers of the same
+    array on different streams race without an explicit sync. Each entry is
+    ``(predecessor, predecessor_stream, prior_token)`` -- the predecessor is
+    only set when it lives in this state; for cross-state contributions the
+    full ``StreamEventToken`` is carried so demand-allocation can target the
+    original producer's state.
+    """
+    contributions: List[_Contribution] = []
+    seen_deps: Set[str] = set()
+    for d in list(_read_data_names(n, state)) + list(_written_data_names(n, state)):
+        if d in seen_deps:
+            continue
+        seen_deps.add(d)
+        if d in writer_node:
+            pred = writer_node[d]
+            contributions.append((pred, ctx.assignments[pred], None))
+        elif d in out and out[d].stream_id >= 0:
+            tok = out[d]
+            contributions.append((None, tok.stream_id, tok))
+    return contributions
+
+
+def _choose_stream(contributions: List[_Contribution], childpath_used: Dict[nodes.Node, bool],
+                   ctx: 'SchedulingContext') -> int:
+    """Pick the stream id for the current node.
+
+    WHY: independent source nodes go to stream 0 (submit order sequentialises
+    them; minimises the stream count). The first predecessor donates its
+    stream unless it has already donated to a previous sibling -- only then
+    do we fork onto a fresh stream (this is the diamond / fan-out case).
+    """
+    if not contributions:
+        ctx.next_stream_id = max(ctx.next_stream_id, 1)
+        return 0
+    first_pred, first_stream, _ = contributions[0]
+    if first_pred is not None and childpath_used.get(first_pred, False):
+        return ctx.fresh_stream()
+    if first_pred is not None:
+        childpath_used[first_pred] = True
+    return first_stream
+
+
+def _emit_cross_stream_for_node(n: nodes.Node, chosen: int, contributions: List[_Contribution], state: SDFGState,
+                                ctx: 'SchedulingContext'):
+    """Emit ``cross_stream_edges`` / ``inter_state_cross_stream`` entries for
+    every contribution whose stream differs from ``chosen``.
+
+    Demand-driven: the producer gets a unique event id on first cross-stream
+    demand (cached so subsequent consumers of the same producer reuse it).
+    Intra-state syncs land in ``state``; inter-state syncs split record (in
+    the producer's state) and wait (in this state).
+    """
+    for pred, pred_stream, prev_tok in contributions:
+        if pred_stream == chosen:
+            continue
+        if pred is not None:
+            event_id = ctx.event_for_producer(pred)
+            ctx.cross_stream_edges.append((state, pred, n, event_id))
+        elif prev_tok is not None and prev_tok.producer is not None and prev_tok.producer_state is not None:
+            event_id = ctx.event_for_producer(prev_tok.producer)
+            ctx.inter_state_cross_stream.append(
+                (prev_tok.producer_state, prev_tok.producer, pred_stream, state, n, chosen, event_id))
 
 
 def _topo_order_scheduled(state: SDFGState, scheduled: List[nodes.Node]) -> List[nodes.Node]:
