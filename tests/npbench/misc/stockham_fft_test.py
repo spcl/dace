@@ -7,7 +7,7 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-R, K, M1, M2 = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True) for s in ('R', 'K', 'M1', 'M2'))
+R, K, M1, M2 = (dc.symbol(s, dtype=dc.uint64, integer=True, positive=True) for s in ('R', 'K', 'M1', 'M2'))
 N = R**K
 
 

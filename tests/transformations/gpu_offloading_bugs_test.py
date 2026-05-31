@@ -128,6 +128,80 @@ def test_reduce_on_view_complex():
     sdfg.validate()
 
 
+# WHY: ``L`` is an SDFG symbol with an interstate assignment inside the SDFG, so a
+# temporary shaped ``(L,)`` is "non-free-symbol dependent" at the SDFG scope. The
+# framecode then splits the DECLARE (at SDFG scope) from the ALLOCATE/DEALLOCATE
+# (at the first/last producing states). Hand-built so the two access sites of
+# ``tmp`` land in DIFFERENT states under one outer ControlFlowRegion, exercising
+# the same split-declare/allocate codegen path the ``declare_array`` regression
+# hit (previously omitted the host pointer from ``defined_vars`` so kernel-scope
+# variable definition failed with KeyError).
+L = dace.symbol('L', dace.int64)
+
+
+def _build_split_scope_transient_sdfg():
+    """Build a GPU-resident SDFG where ``tmp`` is Scope-lifetime, multi-state,
+    and its shape depends on a non-free symbol. The two producer/consumer states
+    live inside a ``LoopRegion`` so they are reachable from each other across
+    iterations -- which is the structural shape that mandelbrot2 lands on after
+    ``auto_optimize`` and what makes the framecode split DECLARE (at SDFG scope)
+    from ALLOCATE (at the first producing state). The previous
+    ``_declare_pointer_if_needed`` skipped ``defined_vars.add`` on the second
+    state's allocate, leaving the host pointer absent from the kernel's
+    variable-definition lookup.
+    """
+    from dace.sdfg.state import LoopRegion
+    GPU = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG('split_scope_lifetime_transient')
+    sdfg.add_symbol('L', dace.int64)
+    sdfg.add_symbol('length', dace.int64)
+    sdfg.add_array('Z', (L, ), dace.float64, storage=GPU)
+    sdfg.add_array('C', (L, ), dace.float64, storage=GPU)
+    sdfg.add_array('out', (L, ), dace.float64, storage=GPU)
+    length_sym = dace.symbol('length', dace.int64)
+    sdfg.add_transient('tmp', (length_sym, ), dace.float64, storage=GPU, lifetime=dace.dtypes.AllocationLifetime.Scope)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion(label='lr',
+                      condition_expr='length > 0',
+                      loop_var='length',
+                      initialize_expr='length = L',
+                      update_expr='length = length - 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    write_tmp = loop.add_state('write_tmp', is_start_block=True)
+    z_in = write_tmp.add_read('Z')
+    tmp_w = write_tmp.add_write('tmp')
+    me, mx = write_tmp.add_map('mul_map', dict(i='0:length'), schedule=dace.ScheduleType.GPU_Device)
+    t = write_tmp.add_tasklet('mul', {'a'}, {'b'}, 'b = a * a')
+    write_tmp.add_memlet_path(z_in, me, t, dst_conn='a', memlet=dace.Memlet('Z[i]'))
+    write_tmp.add_memlet_path(t, mx, tmp_w, src_conn='b', memlet=dace.Memlet('tmp[i]'))
+
+    read_tmp = loop.add_state('read_tmp')
+    tmp_r = read_tmp.add_read('tmp')
+    c_in = read_tmp.add_read('C')
+    o_w = read_tmp.add_write('out')
+    me2, mx2 = read_tmp.add_map('add_map', dict(i='0:length'), schedule=dace.ScheduleType.GPU_Device)
+    t2 = read_tmp.add_tasklet('add', {'a', 'c'}, {'b'}, 'b = a + c')
+    read_tmp.add_memlet_path(tmp_r, me2, t2, dst_conn='a', memlet=dace.Memlet('tmp[i]'))
+    read_tmp.add_memlet_path(c_in, me2, t2, dst_conn='c', memlet=dace.Memlet('C[i]'))
+    read_tmp.add_memlet_path(t2, mx2, o_w, src_conn='b', memlet=dace.Memlet('out[i]'))
+
+    loop.add_edge(write_tmp, read_tmp, dace.InterstateEdge())
+    return sdfg
+
+
+@pytest.mark.gpu
+def test_split_scope_lifetime_transient_across_states():
+    # This bug only surfaces on the experimental CUDA backend; force-select it.
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        sdfg = _build_split_scope_transient_sdfg()
+        sdfg.validate()
+        # The compile path is the actual regression site (codegen-time KeyError).
+        sdfg.compile()
+
+
 if __name__ == "__main__":
     test_reduce_on_view()
     test_host_iedge_read()
@@ -135,3 +209,4 @@ if __name__ == "__main__":
     test_int_pow_used_as_index()
     test_int_pow_signed_base_unsigned_exp()
     test_reduce_on_view_complex()
+    test_split_scope_lifetime_transient_across_states()
