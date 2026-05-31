@@ -15,7 +15,7 @@ from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.graph import Edge
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_gpu_relevant_node,
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (free_symbol_names, is_gpu_relevant_node,
                                                                                is_gpu_stream_consumer)
 
 from .last_writer import LastWriter, StreamEventToken, lastwriter_stream_join, stream_signatures_match
@@ -478,12 +478,9 @@ def _record_interstate_sync_triggers(ie: Edge, last_writer: LastWriter, ctx: Sch
     assigns = getattr(ie.data, "assignments", {}) or {}
     syms: Set[str] = set()
     if cond is not None and not _is_unconditional(cond):
-        try:
-            syms |= {str(s) for s in cond.get_free_symbols()}
-        except (AttributeError, RuntimeError):
-            pass
+        syms |= free_symbol_names(cond)
     for rhs in assigns.values():
-        syms |= _free_symbols_in_rhs(rhs)
+        syms |= free_symbol_names(rhs)
     for name in syms:
         tok = last_writer.get(name)
         if tok is not None and tok.event_id is not None:
@@ -499,17 +496,6 @@ def _is_unconditional(cond) -> bool:
     if callable(txt):
         txt = txt()
     return txt is None or str(txt).strip() in ("", "1", "True", "true")
-
-
-def _free_symbols_in_rhs(rhs) -> Set[str]:
-    """Symbol names referenced on the RHS of an interstate assignment."""
-    try:
-        return {str(s) for s in rhs.get_free_symbols()}
-    except (AttributeError, RuntimeError):
-        try:
-            return set(map(str, rhs.free_symbols))
-        except AttributeError:
-            return set()
 
 
 # ----------------------------------------------------------------------------
@@ -554,26 +540,23 @@ def _schedule_cfr_with_scratch(loop_or_cfr, last_writer: LastWriter, ctx: Schedu
 
 
 def _condition_reads_gpu(loop: LoopRegion, last_writer: LastWriter) -> bool:
+    """True if the loop's condition reads a GPU-resident array (any entering
+    ``LastWriter`` token for one of the condition's free symbols carries an
+    event_id, i.e. it was emitted by a GPU writer)."""
     cond = getattr(loop, "loop_condition", None) or getattr(loop, "condition", None)
     if cond is None:
         return False
-    try:
-        syms = {str(s) for s in cond.get_free_symbols()}
-    except (AttributeError, RuntimeError):
-        return False
-    return any(s in last_writer and last_writer[s].event_id is not None for s in syms)
+    return any(s in last_writer and last_writer[s].event_id is not None for s in free_symbol_names(cond))
 
 
 def _gpu_streams_read_by_condition(loop: LoopRegion, last_writer: LastWriter) -> Set[int]:
+    """Stream ids of the GPU writers whose results are read by the loop's
+    condition (one host-sync per stream is enough to make the read safe)."""
     cond = getattr(loop, "loop_condition", None) or getattr(loop, "condition", None)
     if cond is None:
         return set()
-    try:
-        syms = {str(s) for s in cond.get_free_symbols()}
-    except (AttributeError, RuntimeError):
-        return set()
     streams: Set[int] = set()
-    for s in syms:
+    for s in free_symbol_names(cond):
         tok = last_writer.get(s)
         if tok is not None and tok.event_id is not None:
             streams.add(tok.stream_id)

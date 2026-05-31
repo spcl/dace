@@ -5,7 +5,7 @@ Canonical stream-threading names, node/connector predicates (single
 source of truth so passes don't reimplement scope walks), and the
 :func:`is_gpu_lowering_applied` idempotency signal.
 """
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -49,6 +49,21 @@ def dependency_edge():
     single future migration point)."""
     from dace.memlet import Memlet
     return Memlet()
+
+
+def free_symbol_names(expr) -> Set[str]:
+    """Best-effort free-symbol names for a CodeBlock / sympy expr / raw RHS.
+
+    Tries ``get_free_symbols()`` first, falls back to the ``free_symbols``
+    attribute, then to an empty set. Returns names as strings.
+    """
+    try:
+        return {str(s) for s in expr.get_free_symbols()}
+    except (AttributeError, RuntimeError):
+        try:
+            return set(map(str, expr.free_symbols))
+        except AttributeError:
+            return set()
 
 
 def exit_anchor_for(state: SDFGState, node: nodes.Node) -> nodes.Node:
