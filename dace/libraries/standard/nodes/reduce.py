@@ -25,6 +25,92 @@ from dace.libraries.standard.environments.cuda import CUDA
 from dace.libraries.standard import reduction_planner as red_planner
 
 
+def _expand_view_input_via_nested(outer_node, outer_state, outer_sdfg, inedge, outedge):
+    """Wrap an Array -> View -> Reduce outer pattern into a NestedSDFG whose
+    external input connector is the *source* Array; the inner SDFG rebuilds
+    the View and delegates the reduction to a fresh Reduce node configured
+    to use the CUB ``CUDA (device)`` expansion.
+
+    This is the design the user pointed to: don't materialise the View away
+    (which loses its semantics) and don't replay the chain into a planner
+    that does dimension-collapsing reshape -- pass the Array in and put the
+    View inside, where the fast library reduce sees an honest descriptor.
+
+    :param outer_node: the Reduce LibraryNode being expanded.
+    :param outer_state: the state containing ``outer_node``.
+    :param outer_sdfg: the SDFG containing ``outer_state``.
+    :param inedge: ``state.in_edges(outer_node)[0]`` -- View -> outer_node.
+    :param outedge: ``state.out_edges(outer_node)[0]`` -- outer_node -> dst.
+    """
+    outer_view_node = inedge.src
+    outer_view_desc = outer_sdfg.arrays[outer_view_node.data]
+    outer_source_node = sdutil.get_last_view_node(outer_state, outer_view_node)
+    if outer_source_node is None:
+        # No resolved source -- fall back to Pure rather than break.
+        return ExpandReducePure.expansion(outer_node, outer_state, outer_sdfg)
+    outer_source_desc = outer_sdfg.arrays[outer_source_node.data]
+    outer_view_edge = sdutil.get_view_edge(outer_state, outer_view_node)
+
+    raw_output_desc = outer_sdfg.arrays[outedge.data.data]
+
+    # Build the NestedSDFG that takes the source Array as input.
+    nsdfg = SDFG('reduce_view')
+
+    # _in_src: the source Array connector (non-transient).
+    inner_src_desc = dcpy(outer_source_desc)
+    inner_src_desc.transient = False
+    nsdfg.add_datadesc('_in_src', inner_src_desc)
+
+    # _in_view: a transient View into _in_src, mirroring the outer View.
+    inner_view_desc = dcpy(outer_view_desc)
+    inner_view_desc.transient = True
+    nsdfg.add_datadesc('_in_view', inner_view_desc)
+
+    # _out: fresh Array, mirroring the existing _out treatment elsewhere.
+    nsdfg.add_array('_out',
+                    outedge.data.subset.size(),
+                    raw_output_desc.dtype,
+                    strides=[s for i, s in enumerate(raw_output_desc.strides)
+                             if i in dcpy(outedge.data.subset).squeeze()],
+                    storage=raw_output_desc.storage)
+
+    # Inner state: Array -> View -> Reduce -> output.
+    inner_state = nsdfg.add_state('reduce_view_body')
+    in_src_ac = inner_state.add_access('_in_src')
+    in_view_ac = inner_state.add_access('_in_view')
+    out_ac = inner_state.add_access('_out')
+
+    # Reproduce the outer view edge (Array -> View) inside.
+    inner_view_memlet = dcpy(outer_view_edge.data)
+    inner_view_memlet.data = '_in_src'
+    inner_state.add_edge(in_src_ac, outer_view_edge.src_conn, in_view_ac, outer_view_edge.dst_conn, inner_view_memlet)
+
+    # Inner Reduce node: same wcr / axes / identity, CUB implementation.
+    inner_reduce = Reduce('reduce_view_inner',
+                          wcr=outer_node.wcr,
+                          axes=outer_node.axes,
+                          identity=outer_node.identity)
+    inner_reduce.implementation = 'CUDA (device)'
+    inner_state.add_node(inner_reduce)
+    inner_state.add_edge(in_view_ac, None, inner_reduce, '_in',
+                         dace.Memlet.from_array('_in_view', inner_view_desc))
+    inner_state.add_edge(inner_reduce, '_out', out_ac, None, dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
+
+    # Rewire the outer state's input edge to feed the source Array into the
+    # new ``_in_src`` connector. The source Array's outer access node is the
+    # one feeding ``outer_view_node`` (via the outer view edge). The outer
+    # subset on the new edge is the View's outer-resolved subset.
+    outer_subset = dcpy(outer_view_edge.data.subset)
+    outer_state.remove_edge(inedge)
+    outer_node.add_in_connector('_in_src')
+    outer_state.add_edge(outer_source_node, None, outer_node, '_in_src',
+                         dace.Memlet(data=outer_source_node.data, subset=outer_subset))
+    outedge._src_conn = '_out'
+    outer_node.add_out_connector('_out')
+
+    return nsdfg
+
+
 @dace.library.expansion
 class ExpandReducePure(pm.ExpandTransformation):
     """
@@ -922,6 +1008,21 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             warnings.warn('Cannot use GPUAuto expansion: node.identity is None. Falling back to Pure expansion')
             return ExpandReducePure.expansion(node, state, sdfg)
 
+        if isinstance(raw_input_data, data.View):
+            # GPUAuto's ``red_planner`` collapses the input shape into a
+            # reduction-friendly layout (e.g. a 4-D maxpool tile becomes
+            # ``[N, 4, 8]``). Materialising the View into that collapsed shape
+            # loses the View structure; a ``views`` edge cannot do
+            # dimension-collapsing reshape.
+            #
+            # Right design: replay the outer ``Array -> View -> Reduce`` chain
+            # *inside* a NestedSDFG whose external input connector is the
+            # *source* Array. The View is reconstructed on the inside; the
+            # actual reduction is delegated to a fresh inner Reduce node set
+            # to the CUB-backed expansion (``CUDA (device)``) -- so we keep
+            # the fast library implementation while preserving the View.
+            return _expand_view_input_via_nested(node, state, sdfg, inedge, outedge)
+
         # Standardize and squeeze axes
         axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         # this removes reduction of size 1 axes from the list
@@ -939,40 +1040,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        # ``_in`` is the nested SDFG's input connector. A plain ``dcpy`` of the
-        # outer input descriptor preserves the View kind when the outer source
-        # is a View -- but a View's viewed source is not carried in alone, so
-        # the inner ``_in`` would dangle (``get_view_edge`` returns None ->
-        # validation fails on the next ``MapCollapse.apply``).
-        #
-        # Replaying the View -> viewed-array chain inside the nested SDFG
-        # (using ``sdutil.get_all_view_nodes`` / ``get_all_view_edges``) would
-        # be the cleanest preservation of the outer View structure, but it
-        # collides with the reduction-planner reshape:
-        # ``red_planner.get_reduction_schedule`` collapses the View's resolved
-        # shape into the body's reduction-friendly shape (e.g. a 4-D maxpool
-        # tile becomes a 3-D ``[N, 4, 8]``). A chain views-edge would carry a
-        # 4-D subset into a 3-D ``_in`` and validation rejects the dimensional
-        # mismatch. The body's tasklets are written against the schedule's
-        # shape, so it cannot be widened without redesigning every expansion
-        # variant. Mirror ``_out`` instead: build ``_in`` as a fresh ``Array``
-        # of the schedule's shape / strides / storage. The View's offset and
-        # stride pattern is resolved at the call site (the outer connector
-        # memlet); the inner body sees a flat pointer, which is what the
-        # tasklets already expect.
-        if isinstance(raw_input_data, data.View):
-            nsdfg.add_array('_in',
-                            schedule.in_shape,
-                            raw_input_data.dtype,
-                            strides=schedule.in_strides,
-                            storage=raw_input_data.storage,
-                            transient=False)
-        else:
-            input_data = dcpy(raw_input_data)
-            input_data.transient = False
-            input_data.shape = schedule.in_shape
-            input_data.strides = schedule.in_strides
-            nsdfg.add_datadesc('_in', input_data)
+        input_data = dcpy(raw_input_data)
+        input_data.transient = False
+        input_data.shape = schedule.in_shape
+        input_data.strides = schedule.in_strides
+        nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
         nsdfg.add_array('_out',
