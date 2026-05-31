@@ -380,19 +380,24 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         # NOTE: The outputs of LibraryNodes, NestedSDFGs and Map that have GPU schedule must be moved to GPU memory.
         # TODO: Also use GPU-shared and GPU-register memory when appropriate.
+
+        # WHY: registering the promoted transient lets Step 8 create a host mirror
+        # if an interstate edge later reads it on the host.
+        def _register_gpu_transient(dst_node):
+            if not isinstance(dst_node, nodes.AccessNode):
+                return
+            desc = sdfg.arrays[dst_node.data]
+            desc.storage = dtypes.StorageType.GPU_Global
+            if desc.transient and dst_node.data not in data_already_on_gpu:
+                data_already_on_gpu[dst_node.data] = None
+
         for state, node in gpu_nodes:
             if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                 for e in state.out_edges(node):
-                    dst = state.memlet_path(e)[-1].dst
-                    if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                    _register_gpu_transient(state.memlet_path(e)[-1].dst)
             if isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
-                    dst = state.memlet_path(e)[-1].dst
-                    if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                    _register_gpu_transient(state.memlet_path(e)[-1].dst)
 
         #######################################################
         # Step 5: Collect free tasklets and check for scalars that have to be moved to the GPU
@@ -477,6 +482,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
                         if node.data not in self.host_data:
                             nodedesc.storage = dtypes.StorageType.GPU_Global
+                            if node.data not in data_already_on_gpu:
+                                data_already_on_gpu[node.data] = None
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
@@ -587,11 +594,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 name_mapping[devicename] = hostname
             return name_mapping
 
-        for block in list(sdfg.all_control_flow_blocks()):
+        for block in list(sdfg.all_control_flow_blocks(recursive=True)):
             arrays_used = set()
             for e in block.parent_graph.out_edges(block):
-                # Used arrays = intersection between symbols and cloned data
-                arrays_used.update(set(e.data.free_symbols) & cloned_data)
+                arrays_used.update(e.data.used_arrays(sdfg.arrays) & cloned_data)
 
             # Create a state and copy out used arrays
             if len(arrays_used) > 0:
@@ -607,7 +613,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     for e in block.parent_graph.out_edges(co_state):
                         e.data.replace(devicename, hostname, False)
 
-        for block in list(sdfg.all_control_flow_blocks()):
+        for block in list(sdfg.all_control_flow_blocks(recursive=True)):
             arrays_used = set(block.used_symbols(all_symbols=True, with_contents=False)) & cloned_data
 
             # Create a state and copy out used arrays
