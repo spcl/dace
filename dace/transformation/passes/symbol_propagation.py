@@ -93,16 +93,6 @@ class SymbolPropagation(ppl.Pass):
             if isinstance(node, ControlFlowBlock):
                 all_cfg_blks[node] = parent
 
-        # Per-SDFG: which Scalar descriptors are actually mutated (have an in-edge
-        # into one of their AccessNodes). A scalar that is NEVER written is a
-        # read-only parameter and behaves like a symbol for propagation purposes
-        # (Fortran ``intent(in)`` args like ``kfdia`` show up as ``Scalar``
-        # descriptors but their value is fixed for the whole SDFG run). Cached
-        # per-SDFG so the per-block ``_get_in_syms`` filter is O(1) per call.
-        self._mutated_scalars: Dict[SDFG, Set[str]] = {}
-        for sd in sdfg.all_sdfgs_recursive():
-            self._mutated_scalars[sd] = _mutated_scalar_names(sd)
-
         # For each CFG Block maintain a dict of incoming and outgoing symbols
         in_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
         out_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
@@ -300,19 +290,8 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
-            # Skip assignments whose RHS reads a MUTATED scalar -- one whose value
-            # can change across the SDFG (any AccessNode of that scalar has an
-            # in-edge). Read-only scalars (e.g. Fortran ``intent(in)`` args like
-            # ``kfdia`` -- registered as ``Scalar`` descriptors but never written)
-            # are constant for the run and behave like symbols, so propagating
-            # ``kfdia_plus_1 = (kfdia + 1)`` through them is safe and necessary
-            # for cloudsc's bound-symbol aliases to clean up.
-            mutated = self._mutated_scalars.get(sdfg, set())
-            sym_table = {
-                k: v
-                for k, v in sym_table.items()
-                if v is None or not (scalars(v, sdfg.arrays) & mutated)
-            }
+            # Also skip assignments that read a scalar (scalars cannot be propagated as symbols)
+            sym_table = {k: v for k, v in sym_table.items() if v is None or not scalars(v, sdfg.arrays)}
 
             # Combine the symbols
             if i == 0:

@@ -268,16 +268,6 @@ class LoopToMap(xf.MultiStateTransformation):
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
         for block in in_order_loop_blocks:
-            # A symbol read in the block's own dataflow (e.g. a memlet subset
-            # ``b[im]``) is read before any symbol the block assigns on its
-            # out-edges; if the loop later reassigns it, it is loop-carried. The
-            # per-edge ``read_symbols()`` below only sees interstate-edge reads, so
-            # fold in these in-state reads.
-            try:
-                block_reads = {str(s) for s in block.free_symbols}
-            except Exception:
-                block_reads = set()
-            used_before_assignment |= (block_reads - symbols_that_may_be_used)
             for e in block.parent_graph.out_edges(block):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
                 # see above call to `blockorder_topological_sort`)
@@ -500,13 +490,6 @@ class LoopToMap(xf.MultiStateTransformation):
             indices = set(ridx) | set(widx)
             if not indices:
                 indices = set(range(len(read)))
-            # If some iteration-independent dimension carries a different
-            # constant on the read vs the write (e.g. ``aa[0, i]`` written,
-            # ``aa[1, i-1]`` read), the two accesses are pointwise disjoint
-            # there and the rest of the dependence analysis would lose that
-            # by sanitising the dimension away.
-            if _constant_dim_disjoint(read, write, indices):
-                continue
             read = _sanitize_by_index(indices, read)
             write = _sanitize_by_index(indices, write)
             if read == write:
@@ -517,35 +500,8 @@ class LoopToMap(xf.MultiStateTransformation):
                                       subsets.Range([(start, end, step)]),
                                       use_dst=True)
             t_pread = _sanitize_by_index(indices, pread.src_subset)
-            pwrite_san = _sanitize_by_index(indices, pwrite.dst_subset)
-            if subsets.intersects(t_pread, pwrite_san) is False:
-                continue
-            # ``subsets.intersects`` is stride-blind (its own TODO); when
-            # propagation collapses a strided iteration set into a stride-1
-            # box, two cross-iteration accesses in different residue classes
-            # look like overlapping boxes. Defer to a per-iteration
-            # stride-aware Diophantine on each dimension: if *some* dimension
-            # is provably cross-iteration-disjoint, no pair (i, j) of distinct
-            # iterations aliases.
-            if _ranges_disjoint_by_stride(t_pread, pwrite_san):
-                continue
-            itersym_sym = symbolic.pystr_to_symbolic(itervar)
-            cross_disjoint = False
-            for ridx_d, widx_d in zip(src_subset.ndrange(), candidate.dst_subset.ndrange()):
-                rb, re_, _ = ridx_d
-                wb, we_, _ = widx_d
-                if rb != re_ or wb != we_:
-                    continue
-                if _cross_iter_disjoint(wb, rb, itersym_sym, start, step):
-                    cross_disjoint = True
-                    break
-            if cross_disjoint:
-                continue
-            # Joint multi-dim Diophantine: when no single dimension is
-            # disjoint by itself but the system across two or more dimensions
-            # is inconsistent, the multi-dim alias has no solution -- the
-            # wavefront pattern after skewing is the canonical case.
-            if _joint_disjoint_2d(src_subset, candidate.dst_subset, itersym_sym, start, step):
+            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
+            if subsets.intersects(t_pread, pwrite) is False:
                 continue
             return False
 
@@ -952,15 +908,3 @@ class LoopToMap(xf.MultiStateTransformation):
                 n.sdfg.parent = p
                 n.sdfg.parent_nsdfg_node = n
                 n.sdfg.parent_sdfg = p.sdfg
-
-        # Narrow the freshly-created state-level memlets. ``body.add_edge`` uses
-        # ``Memlet.from_array`` (full extent) when wiring the new ``NestedSDFG``,
-        # which hides the inside subset and stalls downstream passes that look
-        # at the carrier's state-level memlets (e.g. ``LoopToScan``'s
-        # ``_find_carried_arrays``, ``RedundantArrayCopying*``). Propagating the
-        # inside subsets out through the NSDFG + Map narrows them to
-        # ``[outer_loop_var, map_range]`` -- the symbol set ``symbols_defined_at``
-        # already reports for the ``cnode`` here.
-        from dace.sdfg.propagation import propagate_memlets_nested_sdfg, propagate_memlets_state
-        propagate_memlets_nested_sdfg(sdfg, body, cnode)
-        propagate_memlets_state(sdfg, body)
