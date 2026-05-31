@@ -10,6 +10,7 @@ import dace.serialize
 import dace.library
 from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
 from dace.sdfg import graph
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
@@ -938,16 +939,27 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        # ``_in`` is the nested SDFG's input connector. It must be a standalone
-        # data descriptor inside the nested SDFG. A plain ``dcpy`` of the outer
-        # input descriptor preserves the View kind when the outer source is a
-        # View -- but a View's viewed-source array is not carried into the
-        # nested SDFG, so the inner ``_in`` would be a View pointing at
-        # nothing in this SDFG (``get_view_edge`` returns ``None`` -> validation
-        # fails on the next ``MapCollapse.apply``). What flows in through the
-        # connector is a contiguous read of the View's resolved shape, so
-        # collapse the View into a fresh Array with the schedule's shape /
-        # strides / storage.
+        # ``_in`` is the nested SDFG's input connector. A plain ``dcpy`` of the
+        # outer input descriptor preserves the View kind when the outer source
+        # is a View -- but a View's viewed source is not carried in alone, so
+        # the inner ``_in`` would dangle (``get_view_edge`` returns None ->
+        # validation fails on the next ``MapCollapse.apply``).
+        #
+        # Replaying the View -> viewed-array chain inside the nested SDFG
+        # (using ``sdutil.get_all_view_nodes`` / ``get_all_view_edges``) would
+        # be the cleanest preservation of the outer View structure, but it
+        # collides with the reduction-planner reshape:
+        # ``red_planner.get_reduction_schedule`` collapses the View's resolved
+        # shape into the body's reduction-friendly shape (e.g. a 4-D maxpool
+        # tile becomes a 3-D ``[N, 4, 8]``). A chain views-edge would carry a
+        # 4-D subset into a 3-D ``_in`` and validation rejects the dimensional
+        # mismatch. The body's tasklets are written against the schedule's
+        # shape, so it cannot be widened without redesigning every expansion
+        # variant. Mirror ``_out`` instead: build ``_in`` as a fresh ``Array``
+        # of the schedule's shape / strides / storage. The View's offset and
+        # stride pattern is resolved at the call site (the outer connector
+        # memlet); the inner body sees a flat pointer, which is what the
+        # tasklets already expect.
         if isinstance(raw_input_data, data.View):
             nsdfg.add_array('_in',
                             schedule.in_shape,
