@@ -262,10 +262,9 @@ class ConditionFusion(xf.MultiStateTransformation):
         # ``ControlFlowBlock`` isinstance check replaces the previous
         # ``hasattr(node, "sdfg")`` -- ``hasattr`` also matched ``NestedSDFG``
         # nodes, whose ``.sdfg`` is the *inner* SDFG (an
-        # ``SDFGReferenceProperty`` with a setter), so the assignment was
-        # overwriting the inner-SDFG slot with the outer container and
-        # producing a graph cycle (TSVC s275 RecursionError in
-        # ``all_nodes_recursive``).
+        # ``SDFGReferenceProperty`` with a setter), so the assignment
+        # overwrote the inner-SDFG slot with the outer container and produced
+        # a graph cycle that infinite-recurses ``all_nodes_recursive``.
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
@@ -351,13 +350,11 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. See the matching note in
-        # ``fuse_consecutive_conditions``: the ``ControlFlowBlock``
-        # isinstance check (not ``hasattr(node, "sdfg")``) is required so
-        # NestedSDFG nodes -- whose ``.sdfg`` is the *inner* SDFG -- are
-        # skipped (writing the outer SDFG into a NestedSDFG's inner-SDFG
-        # slot creates a graph cycle that infinite-recurses
-        # ``all_nodes_recursive``; TSVC s275 RecursionError).
+        # Fix SDFG parents. The ``ControlFlowBlock`` isinstance check (not
+        # ``hasattr(node, "sdfg")``) is required so ``NestedSDFG`` nodes --
+        # whose ``.sdfg`` is the *inner* SDFG -- are skipped. Writing the
+        # outer SDFG into a NestedSDFG's inner-SDFG slot creates a graph
+        # cycle that infinite-recurses ``all_nodes_recursive``.
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):

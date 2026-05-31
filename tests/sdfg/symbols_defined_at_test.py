@@ -21,7 +21,6 @@ import pytest
 
 from dace.sdfg.state import LoopRegion
 
-
 N = dace.symbol('N')
 
 
@@ -79,12 +78,15 @@ def test_map_iteration_var_visible_inside_scope():
     sdfg.add_array('A', [10], dace.float64)
     s = sdfg.add_state('s')
     me, mx = s.add_map('m', {'i': '0:10'})
-    me.add_in_connector('IN_A'); me.add_out_connector('OUT_A')
-    A_r = s.add_read('A'); A_w = s.add_write('A')
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    A_r = s.add_read('A')
+    A_w = s.add_write('A')
     t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
     s.add_edge(A_r, None, me, 'IN_A', dace.Memlet('A[0:10]'))
     s.add_edge(me, 'OUT_A', t, 'a', dace.Memlet('A[i]'))
-    mx.add_in_connector('IN_A'); mx.add_out_connector('OUT_A')
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
     s.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[i]'))
     s.add_edge(mx, 'OUT_A', A_w, None, dace.Memlet('A[0:10]'))
 
@@ -100,16 +102,21 @@ def test_nested_map_iteration_vars_both_visible():
 
     me_o, mx_o = s.add_map('mo', {'i': '0:10'})
     me_i, mx_i = s.add_map('mi', {'j': '0:10'})
-    me_o.add_in_connector('IN_A'); me_o.add_out_connector('OUT_A')
-    me_i.add_in_connector('IN_A'); me_i.add_out_connector('OUT_A')
-    A_r = s.add_read('A'); A_w = s.add_write('A')
+    me_o.add_in_connector('IN_A')
+    me_o.add_out_connector('OUT_A')
+    me_i.add_in_connector('IN_A')
+    me_i.add_out_connector('OUT_A')
+    A_r = s.add_read('A')
+    A_w = s.add_write('A')
     t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
 
     s.add_edge(A_r, None, me_o, 'IN_A', dace.Memlet('A[0:10, 0:10]'))
     s.add_edge(me_o, 'OUT_A', me_i, 'IN_A', dace.Memlet('A[i, 0:10]'))
     s.add_edge(me_i, 'OUT_A', t, 'a', dace.Memlet('A[i, j]'))
-    mx_o.add_in_connector('IN_A'); mx_o.add_out_connector('OUT_A')
-    mx_i.add_in_connector('IN_A'); mx_i.add_out_connector('OUT_A')
+    mx_o.add_in_connector('IN_A')
+    mx_o.add_out_connector('OUT_A')
+    mx_i.add_in_connector('IN_A')
+    mx_i.add_out_connector('OUT_A')
     s.add_edge(t, 'o', mx_i, 'IN_A', dace.Memlet('A[i, j]'))
     s.add_edge(mx_i, 'OUT_A', mx_o, 'IN_A', dace.Memlet('A[i, 0:10]'))
     s.add_edge(mx_o, 'OUT_A', A_w, None, dace.Memlet('A[0:10, 0:10]'))
@@ -133,7 +140,8 @@ def test_dynamic_non_passthrough_map_connector_visible():
     # Map range parameterized by a dynamic input connector ``N_arr_val``.
     me, mx = s.add_map('m', {'i': '0:N_arr_val'})
     me.add_in_connector('N_arr_val')
-    me.add_in_connector('IN_A'); me.add_out_connector('OUT_A')
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
     N_read = s.add_read('N_arr')
     s.add_edge(N_read, None, me, 'N_arr_val', dace.Memlet('N_arr[0]'))
     A_read = s.add_read('A')
@@ -141,17 +149,17 @@ def test_dynamic_non_passthrough_map_connector_visible():
 
     t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
     s.add_edge(me, 'OUT_A', t, 'a', dace.Memlet('A[i]'))
-    mx.add_in_connector('IN_o'); mx.add_out_connector('OUT_o')
+    mx.add_in_connector('IN_o')
+    mx.add_out_connector('OUT_o')
     s.add_edge(t, 'o', mx, 'IN_o', dace.Memlet('out[i]'))
     out_w = s.add_write('out')
     s.add_edge(mx, 'OUT_o', out_w, None, dace.Memlet('out[0:100]'))
 
     syms = s.symbols_defined_at(t)
     assert 'i' in syms, 'Map iter var must be visible'
-    assert 'N_arr_val' in syms, (
-        'non-pass-through Map in-connector must be reported as defined inside the scope; '
-        'without this, memlets that reference the dynamic-range parameter would widen '
-        'to the array extent when propagated outward.')
+    assert 'N_arr_val' in syms, ('non-pass-through Map in-connector must be reported as defined inside the scope; '
+                                 'without this, memlets that reference the dynamic-range parameter would widen '
+                                 'to the array extent when propagated outward.')
 
 
 def test_loop_region_and_map_combined_visible():
@@ -165,12 +173,15 @@ def test_loop_region_and_map_combined_visible():
     sdfg.add_node(loop)
     s = loop.add_state('s', is_start_block=True)
     me, mx = s.add_map('m', {'jl': '0:20'})
-    me.add_in_connector('IN_A'); me.add_out_connector('OUT_A')
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
     t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
-    A_r = s.add_read('A'); A_w = s.add_write('A')
+    A_r = s.add_read('A')
+    A_w = s.add_write('A')
     s.add_edge(A_r, None, me, 'IN_A', dace.Memlet('A[0:10, 0:20]'))
     s.add_edge(me, 'OUT_A', t, 'a', dace.Memlet('A[jk, jl]'))
-    mx.add_in_connector('IN_A'); mx.add_out_connector('OUT_A')
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
     s.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[jk, jl]'))
     s.add_edge(mx, 'OUT_A', A_w, None, dace.Memlet('A[0:10, 0:20]'))
 
@@ -194,21 +205,25 @@ def test_nsdfg_inside_map_inside_loop_region_propagation_endpoint():
     sdfg.add_node(loop)
     s = loop.add_state('s', is_start_block=True)
     me, mx = s.add_map('m', {'jl': '0:20'})
-    me.add_in_connector('IN_A'); me.add_out_connector('OUT_A')
-    mx.add_in_connector('IN_A'); mx.add_out_connector('OUT_A')
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
 
     inner = dace.SDFG('inner')
-    inner.add_symbol('jk', dace.int32); inner.add_symbol('jl', dace.int32)
+    inner.add_symbol('jk', dace.int32)
+    inner.add_symbol('jl', dace.int32)
     inner.add_array('A', [10, 20], dace.float64)
     si = inner.add_state('si')
     t_inner = si.add_tasklet('t', {'a'}, {'o'}, 'o = a')
-    A_ri = si.add_read('A'); A_wi = si.add_write('A')
+    A_ri = si.add_read('A')
+    A_wi = si.add_write('A')
     si.add_edge(A_ri, None, t_inner, 'a', dace.Memlet('A[jk, jl]'))
     si.add_edge(t_inner, 'o', A_wi, None, dace.Memlet('A[jk, jl]'))
 
-    nsdfg = s.add_nested_sdfg(inner, inputs={'A'}, outputs={'A'},
-                              symbol_mapping={'jk': 'jk', 'jl': 'jl'})
-    A_r = s.add_read('A'); A_w = s.add_write('A')
+    nsdfg = s.add_nested_sdfg(inner, inputs={'A'}, outputs={'A'}, symbol_mapping={'jk': 'jk', 'jl': 'jl'})
+    A_r = s.add_read('A')
+    A_w = s.add_write('A')
     s.add_edge(A_r, None, me, 'IN_A', dace.Memlet('A[0:10, 0:20]'))
     s.add_edge(me, 'OUT_A', nsdfg, 'A', dace.Memlet('A[0:10, 0:20]'))
     s.add_edge(nsdfg, 'A', mx, 'IN_A', dace.Memlet('A[0:10, 0:20]'))

@@ -17,14 +17,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     Converts an augmented assignment ("a += b", "a = a + b") into a tasklet
     with a write-conflict resolution.
 
-    A third pattern handles the *copy-wrapped* read-modify-write the array
-    frontends (HLFIR, Python) emit, where the accumulator slice is materialized
-    into a scalar transient before the combining tasklet and copied back after
-    it (``arr[S] -> copy_in -> tasklet -> copy_out -> arr[S]``). Those
-    materialization copies cannot be folded away by the redundant-array passes,
-    because ``arr`` is both read and written in the same state; recognising the
-    shape directly is what lets loop-carried reductions (cloudsc/ICON
-    accumulators) become WCR writes and so parallelize via ``LoopToMap``.
+    A third pattern handles the *copy-wrapped* read-modify-write shape where
+    the accumulator slice is materialized into a scalar transient before the
+    combining tasklet and copied back after it
+    (``arr[S] -> copy_in -> tasklet -> copy_out -> arr[S]``). Those
+    materialization copies cannot be folded away by the redundant-array
+    passes because ``arr`` is both read and written in the same state;
+    recognising the shape directly is what lets loop-carried reductions
+    become WCR writes and so parallelize via ``LoopToMap``.
     """
     input = transformation.PatternNode(nodes.AccessNode)
     tasklet = transformation.PatternNode(nodes.Tasklet)
@@ -371,8 +371,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if tlet.language is not dtypes.Language.Python or len(tlet.code.code) != 1:
             return False
         node = tlet.code.code[0]
-        if (not isinstance(node, ast.Assign) or len(node.targets) != 1
-                or not isinstance(node.targets[0], ast.Name) or node.targets[0].id != oute.src_conn):
+        if (not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name)
+                or node.targets[0].id != oute.src_conn):
             return False
         data_in = [e for e in graph.in_edges(tlet) if e.data is not None and not e.data.is_empty()]
         data_out = [e for e in graph.out_edges(tlet) if e.data is not None and not e.data.is_empty()]
@@ -406,8 +406,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         wcr = f'lambda a,b: {op}(a, b)' if op in self._FUNCTIONS else f'lambda a,b: a {op} b'
         state.remove_edge(oute)
         state.remove_edge(store)
-        state.add_edge(tlet, oute.src_conn, out, store.dst_conn,
-                       Memlet(data=out.data, subset=acc_subset, wcr=wcr))
+        state.add_edge(tlet, oute.src_conn, out, store.dst_conn, Memlet(data=out.data, subset=acc_subset, wcr=wcr))
         if state.degree(cout) == 0:
             state.remove_node(cout)
 

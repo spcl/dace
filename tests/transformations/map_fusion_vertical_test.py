@@ -3301,8 +3301,7 @@ def test_map_fusion_inout_connector_intermediate_rename_consistency():
     # reintroduces a refusal-only path on this shape).
     assert res_apply is not None and 'MapFusionVertical' in res_apply, (
         'MapFusionVertical must apply on the InOut shape via the structural split, '
-        f'not refuse; got result={res_apply!r}.'
-    )
+        f'not refuse; got result={res_apply!r}.')
 
     # After the split + fusion the NestedSDFG's InOut overlap must be empty
     # (the connector that was InOut is now output-only).
