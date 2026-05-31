@@ -522,11 +522,6 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        // Generic ``pow``: defers to ``std::pow``, returning ``double``. Used for
-        // floating arguments, and also for any *signed*-exponent case: a signed
-        // exponent could be negative and the mathematically correct result
-        // ``a^b`` is then fractional, which an integer-only specialization
-        // would have to silently round.
         template<typename T, typename U,
                  typename std::enable_if<!(std::is_integral<T>::value &&
                                            std::is_integral<U>::value &&
@@ -536,12 +531,9 @@ namespace dace
             return std::pow(a, b);
         }
 
-        // Integer^*unsigned*-integer: keep the result integer-typed so it can
-        // index arrays and launch-dim expressions. The unsigned exponent is
-        // the missing assumption from the old narrow ``pow(int,int)`` overload
-        // -- without it, ``b`` could be negative and an integer return would be
-        // mathematically wrong. Covers every (base, unsigned-exponent) pair
-        // including ``int64_t^uint32_t`` and ``size_t^size_t``.
+        // WHY: only integer^*unsigned*-integer returns an integer (b >= 0 is
+        // guaranteed). A signed exponent could be negative and yield a
+        // fractional value.
         template<typename A, typename B,
                  typename std::enable_if<std::is_integral<A>::value &&
                                          std::is_integral<B>::value &&
