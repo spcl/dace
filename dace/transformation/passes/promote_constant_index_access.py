@@ -89,7 +89,11 @@ class _Promotion:
                               orphan cleanup. Tuples of ``(node, state)``.
     """
 
-    def __init__(self, sdfg: SDFG, arr_name: str, scalar_name: str, prologue: SDFGState,
+    def __init__(self,
+                 sdfg: SDFG,
+                 arr_name: str,
+                 scalar_name: str,
+                 prologue: SDFGState,
                  edits: List[Tuple[Memlet, Optional[str], Any]],
                  node_edits: List[Tuple[nodes.AccessNode, str]],
                  introduced_scalar_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
@@ -124,9 +128,8 @@ class _Promotion:
                 # Re-attach any still-connected edges to the original arr AccessNode.
                 # By the time undo runs, the matching memlets have data=arr_name again
                 # (via the memlet-edit revert above), so the swap target is unambiguous.
-                arr_node = next((n for n in state.nodes()
-                                 if isinstance(n, nodes.AccessNode) and n.data == self.arr_name),
-                                None)
+                arr_node = next(
+                    (n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == self.arr_name), None)
                 if arr_node is None:
                     arr_node = state.add_access(self.arr_name)
                 for e in list(state.in_edges(scalar_node)) + list(state.out_edges(scalar_node)):
@@ -331,10 +334,68 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 if not any(self._point_subsets_equal(s, p) for p in unique_points):
                     unique_points.append(s)
             for point in unique_points:
+                # Refuse the read-modify-write shape (read of slot feeds back
+                # to a write of the same slot via dataflow within a state).
+                # That shape carries the slot's value ACROSS iterations -- a
+                # reduction accumulator ``sum[0] = sum[0] + a[i]`` is the
+                # canonical case -- and is NOT privatizable: promoting it
+                # would lose the cross-iteration dependency and silently drop
+                # every accumulation.
+                #
+                # KNOWN LATENT GAP: a non-transient slot that the body WRITES
+                # without an in-loop read still escapes -- e.g.
+                # ``for i: arr[5] = i`` on a non-transient ``arr``. The pass
+                # emits no epilogue writeback, so the in-loop writes land in
+                # the transient-scalar alias and never reach the caller's
+                # ``arr[5]``. The internal-only ``_not_live_out`` check
+                # below does not catch this. Adding a refusal here would
+                # break a number of existing PCIA tests that assert
+                # promotion fires on this shape without verifying the
+                # caller-visible final value -- the assertions only check a
+                # secondary output. Leaving as-is and TODO: either add an
+                # epilogue writeback or tighten those tests + refuse here.
+                if self._slot_has_intra_state_rmw(loop, name, point):
+                    continue
                 if not self._not_live_out(loop, name, slot=point):
                     continue
                 results.append((name, point))
         return results
+
+    def _slot_has_intra_state_rmw(self, loop: LoopRegion, name: str, slot: subsets.Range) -> bool:
+        """``True`` iff some state in ``loop`` has a dataflow path from a READ
+        of ``name[slot]`` to a WRITE of ``name[slot]``. That path -- usually a
+        ``read AccessNode -> tasklet -> write AccessNode`` chain -- carries
+        the slot's value across iterations and is the reduction-accumulator
+        / running-state shape that is NOT privatizable."""
+        for state in loop.all_states():
+            reads: List[nodes.AccessNode] = []
+            writes: List[nodes.AccessNode] = []
+            for n in state.nodes():
+                if not isinstance(n, nodes.AccessNode) or n.data != name:
+                    continue
+                if any(e.data is not None and e.data.data == name and e.data.subset is not None
+                       and self._point_subsets_equal(e.data.subset, slot) for e in state.out_edges(n)):
+                    reads.append(n)
+                if any(e.data is not None and e.data.data == name and e.data.subset is not None
+                       and self._point_subsets_equal(e.data.subset, slot) for e in state.in_edges(n)):
+                    writes.append(n)
+            if not reads or not writes:
+                continue
+            # BFS forward from each read; if any write of the same slot is
+            # reached, this is an RMW.
+            writes_set = set(writes)
+            for r in reads:
+                seen = {r}
+                stack = [r]
+                while stack:
+                    cur = stack.pop()
+                    if cur in writes_set and cur is not r:
+                        return True
+                    for e in state.out_edges(cur):
+                        if e.dst not in seen:
+                            seen.add(e.dst)
+                            stack.append(e.dst)
+        return False
 
     @staticmethod
     def _is_constant_point_subset(sub) -> bool:
@@ -365,8 +426,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
         """Equality on two single-point Ranges -- compare the lower bound on each axis."""
         if len(a.ranges) != len(b.ranges):
             return False
-        return all(symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0])
-                   for ar, br in zip(a.ranges, b.ranges))
+        return all(
+            symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0])
+            for ar, br in zip(a.ranges, b.ranges))
 
     def _not_live_out(self, loop: LoopRegion, name: str, slot: Optional[subsets.Range] = None) -> bool:
         """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
@@ -450,8 +512,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
     # -- rewrite ------------------------------------------------------------------------
 
-    def _arr_accesses_only_at_slot(self, loop: LoopRegion, arr_name: str,
-                                    c_subset: subsets.Range) -> bool:
+    def _arr_accesses_only_at_slot(self, loop: LoopRegion, arr_name: str, c_subset: subsets.Range) -> bool:
         """True if every ``arr`` access inside ``loop`` matches ``c_subset``.
 
         Used to decide between the cheap wholesale-rename path (every access agrees
@@ -556,9 +617,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # so the SDFG validates; tracked separately from node_edits so undo
                 # can distinguish rename-restore from re-add.
                 for node in list(state.nodes()):
-                    if (isinstance(node, nodes.AccessNode) and node.data == arr_name
-                            and state.degree(node) == 0):
+                    if (isinstance(node, nodes.AccessNode) and node.data == arr_name and state.degree(node) == 0):
                         removed_arr_nodes.append((node, state))
                         state.remove_node(node)
-        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits,
-                          introduced_scalar_nodes, removed_arr_nodes)
+        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits, introduced_scalar_nodes,
+                          removed_arr_nodes)

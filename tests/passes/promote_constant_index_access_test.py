@@ -315,8 +315,9 @@ def test_promotes_multiple_distinct_constant_slots_of_same_array():
     arr_run = arr_in.copy()
     out_run = np.zeros(n)
     sdfg(arr=arr_run, out=out_run, scale=scale, N=n)
-    assert np.allclose(out_run, out_ref), (
-        f'Multi-slot promotion changed the numeric result. got={out_run[:4]}, expected={out_ref[:4]}')
+    assert np.allclose(
+        out_run,
+        out_ref), (f'Multi-slot promotion changed the numeric result. got={out_run[:4]}, expected={out_ref[:4]}')
 
 
 def test_promotes_cloudsc_for767_species_pattern():
@@ -366,8 +367,9 @@ def test_promotes_cloudsc_for767_species_pattern():
     zvqx_run = zvqx_in.copy()
     out_run = np.zeros(n)
     sdfg(zvqx=zvqx_run, pre_ice=pre_ice, zdtgdp=zdtgdp, out=out_run, N=n)
-    assert np.allclose(out_run, out_ref), (
-        f'5-species multi-slot promotion changed the result. got={out_run[:3]} expected={out_ref[:3]}')
+    assert np.allclose(
+        out_run,
+        out_ref), (f'5-species multi-slot promotion changed the result. got={out_run[:3]} expected={out_ref[:3]}')
 
 
 def test_multi_slot_refuses_if_symbolic_access_to_same_array():
@@ -404,8 +406,8 @@ def test_promotes_through_conditional_block_in_body():
     """
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N],
-             flag: dace.int32, sink: dace.float64[1]):
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int32,
+             sink: dace.float64[1]):
         for jl in range(N):
             if flag > 0:
                 arr[3] = 0.002 * scale[jl]
@@ -415,14 +417,12 @@ def test_promotes_through_conditional_block_in_body():
 
     sdfg = kern.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, (
-        'PCIA must promote arr[3] through the conditional-write body; '
-        'the slot is dead post-loop and the conditional is the only barrier.')
+    assert res is not None, ('PCIA must promote arr[3] through the conditional-write body; '
+                             'the slot is dead post-loop and the conditional is the only barrier.')
     maps_added = _apply_loop_to_map(sdfg)
     sdfg.validate()
-    assert maps_added >= 1, (
-        'Post-promotion LoopToMap should accept the conditional-write loop -- the '
-        "conditional doesn't introduce a loop-carried dependence on its own.")
+    assert maps_added >= 1, ('Post-promotion LoopToMap should accept the conditional-write loop -- the '
+                             "conditional doesn't introduce a loop-carried dependence on its own.")
 
 
 def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
@@ -448,9 +448,8 @@ def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
 
     sdfg = kern.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, (
-        'PCIA must promote four independent slots arr[0..3]; the multi-slot '
-        'relaxation handles each as a separate per-iteration scalar.')
+    assert res is not None, ('PCIA must promote four independent slots arr[0..3]; the multi-slot '
+                             'relaxation handles each as a separate per-iteration scalar.')
     maps_added = _apply_loop_to_map(sdfg)
     sdfg.validate()
     assert maps_added >= 1
@@ -522,8 +521,8 @@ def test_promotes_through_double_nested_conditionals():
     """
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N],
-             flag_a: dace.int32, flag_b: dace.int32, sink: dace.float64[1]):
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag_a: dace.int32, flag_b: dace.int32,
+             sink: dace.float64[1]):
         for jl in range(N):
             if flag_a > 0:
                 if flag_b > 0:
@@ -533,9 +532,8 @@ def test_promotes_through_double_nested_conditionals():
 
     sdfg = kern.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, (
-        'PCIA must promote arr[2] through two nested ConditionalBlocks; the '
-        "per-loop ``_l2m_accepts`` check is the path that surfaces this match.")
+    assert res is not None, ('PCIA must promote arr[2] through two nested ConditionalBlocks; the '
+                             "per-loop ``_l2m_accepts`` check is the path that surfaces this match.")
     maps_added = _apply_loop_to_map(sdfg)
     sdfg.validate()
     assert maps_added >= 1
@@ -554,9 +552,51 @@ def test_refuses_partial_multi_dim_slot():
 
     sdfg = kern.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is None, (
-        'PCIA must refuse a slot whose subset has a loop-variable index on any axis -- '
-        "promoting ``arr[jl, 5]`` to a scalar would erase the per-iteration distinction.")
+    assert res is None, ('PCIA must refuse a slot whose subset has a loop-variable index on any axis -- '
+                         "promoting ``arr[jl, 5]`` to a scalar would erase the per-iteration distinction.")
+
+
+_RMW_N = dace.symbol('RMW_N')
+
+
+@dace.program
+def _rmw_accumulator(a: dace.float64[_RMW_N], sum_out: dace.float64[_RMW_N]):
+    """Textbook reduction: ``sum_out[0] = 0; for i: sum_out[0] = sum_out[0] + a[i]``.
+    The single accumulator slot ``sum_out[0]`` is both READ and WRITTEN in
+    the loop body and the read feeds back into the write -- the canonical
+    read-modify-write recurrence."""
+    sum_out[0] = 0.0
+    for i in range(_RMW_N):
+        sum_out[0] = sum_out[0] + a[i]
+
+
+def test_refuses_reduction_accumulator_rmw():
+    """PCIA must refuse to promote a slot whose body forms a read-modify-write
+    recurrence (the value at iteration ``i`` is computed from the value at
+    iteration ``i-1`` via the SAME slot).
+
+    Pre-fix PCIA promoted ``sum_out[0]`` to a transient scalar without an
+    epilogue writeback. The in-loop accumulation landed in a dead scalar
+    alias and the caller-visible ``sum_out[0]`` stayed at whatever the seed
+    wrote -- a silent value corruption.
+
+    Asserts (a) PCIA returns ``None`` (no promotions), (b) end-to-end the
+    SDFG computes the right sum. Reduction-shape slots are intentionally
+    left for the downstream reduction-to-WCR path
+    (``AugAssignToWCR -> LoopToMap -> PrivatizeReductionAccumulator``)
+    which DOES emit init + writeback."""
+    n = 64
+    sdfg = _rmw_accumulator.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is None, (f'PCIA must refuse a read-modify-write reduction-accumulator slot; '
+                         f'got promotions: {res}')
+
+    rng = np.random.default_rng(0)
+    a = rng.standard_normal(n)
+    sum_out = np.zeros(n)
+    sdfg(a=a.copy(), sum_out=sum_out, RMW_N=n)
+    assert np.isclose(sum_out[0], a.sum()), (f'value mismatch: got {sum_out[0]}, expected {a.sum()}')
 
 
 if __name__ == '__main__':
