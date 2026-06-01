@@ -1656,6 +1656,80 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if base in base_syms:
                 inner.remove_symbol(name)
 
+    def _ssa_correct_rmw_reads(self, inner: dace.SDFG) -> None:
+        """Redirect post-write reads of a non-transient array to the
+        new-value transient that produced them.
+
+        Targets the ``fp_factor`` collapse shape: a single state holding
+        two AccessNodes for the same non-transient array ``arr`` — one
+        with ``in_degree == 0`` (read source feeding the producer
+        chain), and one with ``in_degree >= 1`` (receiving the new value
+        from a transient AccessNode via an AN -> AN assign edge) and
+        ``out_degree >= 1`` (feeding cond / mult / etc. consumers).
+
+        Without correction the K-dim descent emits one ``TileLoad`` for
+        ``arr`` and routes every consumer to it, so the cond / mult
+        consumers see the original (pre-update) snapshot. Rewrite each
+        such consumer's read to come from the new-value transient
+        directly. The post-write AN ``arr`` becomes an SSA sink (every
+        consumer-edge moved away); the descent then sees one clean
+        TileLoad for the original read.
+
+        :param inner: Body NSDFG to scan + rewrite.
+        """
+        for istate in list(inner.states()):
+            # Group AccessNodes by data name.
+            by_data: Dict[str, List[dace.nodes.AccessNode]] = {}
+            for n in list(istate.data_nodes()):
+                desc = inner.arrays.get(n.data)
+                if desc is None or desc.transient:
+                    continue
+                by_data.setdefault(n.data, []).append(n)
+            for arr_name, ans in by_data.items():
+                if len(ans) < 2:
+                    continue
+                for post_an in list(ans):
+                    if istate.in_degree(post_an) == 0 or istate.out_degree(post_an) == 0:
+                        continue
+                    # Pick the producer's source — the transient feeding the
+                    # post-write AN. ``fp_factor`` emits a transient (e.g.
+                    # ``a_slice_plus_d_slice_e_slice``) plus an explicit
+                    # ``_assign_<transient>_to_<arr>`` tasklet that copies
+                    # it into ``arr``. Walk back through the assign Tasklet
+                    # (one extra hop) to reach the transient AccessNode.
+                    in_e = list(istate.in_edges(post_an))
+                    if len(in_e) != 1:
+                        continue
+                    src = in_e[0].src
+                    if isinstance(src, dace.nodes.Tasklet):
+                        t_ins = list(istate.in_edges(src))
+                        if len(t_ins) != 1 or not isinstance(t_ins[0].src, dace.nodes.AccessNode):
+                            continue
+                        new_val_an = t_ins[0].src
+                    elif isinstance(src, dace.nodes.AccessNode):
+                        new_val_an = src
+                    else:
+                        continue
+                    src_desc = inner.arrays.get(new_val_an.data)
+                    if src_desc is None or not src_desc.transient:
+                        continue
+                    # Redirect every consumer of post_an to read from
+                    # new_val_an instead. The post_an still receives the
+                    # write (so the array is updated for downstream states),
+                    # but in-state consumers no longer pull through it.
+                    for out_e in list(istate.out_edges(post_an)):
+                        old_mem = out_e.data
+                        new_mem = dace.Memlet(data=new_val_an.data,
+                                              subset=old_mem.subset,
+                                              other_subset=old_mem.other_subset,
+                                              wcr=old_mem.wcr)
+                        istate.remove_edge(out_e)
+                        istate.add_edge(new_val_an, None, out_e.dst, out_e.dst_conn, new_mem)
+        # Recurse into nested SDFGs.
+        for n, _ in inner.all_nodes_recursive():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                self._ssa_correct_rmw_reads(n.sdfg)
+
     def _promote_loads(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mask_acc: dace.nodes.AccessNode,
                        spec: TileDimSpec) -> None:
         """Replace connector-array copy edges with masked :class:`TileLoad`.
@@ -2646,6 +2720,22 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # store promotion expects.
             FuseStates().apply_pass(inner, {})
             SplitTasklets().apply_pass(inner, {})
+        # SSA-correct the body for arrays with both read and write AccessNodes
+        # in the same state. ``fp_factor`` branch lowering (s273-style:
+        # ``a[i] = a[i] + d*e; if a[i] < 0: ...; c[i] = c[i] + a[i] * d``)
+        # collapses every state into one body where a non-transient ``a`` has
+        # TWO AccessNode instances: a read-source AN(a) with no in-edges
+        # (feeding ``_Add_``), and a separate write-destination AN(a) that
+        # receives the new value via ``new_val_transient -> AN(a)`` and
+        # itself flows into ``_Mult_`` / cond consumers. Those consumers
+        # SHOULD read the new value, but the descent's later
+        # :meth:`_promote_loads` emits one TileLoad for the whole ``a``
+        # array — every consumer ends up reading the original (pre-update)
+        # snapshot. Redirect the post-write AN(a) consumers to read from
+        # the new-value transient directly so the descent sees a clean
+        # SSA-form body (one TileLoad for the original read; consumers of
+        # the new value read from the transient).
+        self._ssa_correct_rmw_reads(inner)
         if mask_name is not None:
             self._thread_mask(parent_state, map_entry, nsdfg_node, mask_name, W)
         # Gather descent (mirrors 1D expand -> DetectGather): fan a per-lane
