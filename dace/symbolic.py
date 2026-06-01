@@ -2099,7 +2099,11 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
     if isinstance(expr, int) and not isinstance(expr, bool):
         return str(expr)
     if isinstance(expr, float):
-        return sympy.printing.str.sstr(expr)
+        # Route through the shared formatter so a Python float reaches the same
+        # repr-based shortest-round-trip path the sympy.Float branch uses below.
+        # Otherwise sympy's default sstr emits a 15-sig-digit form that fails
+        # the SDFG save->load->save equality check.
+        return _format_float(expr)
     if isinstance(expr, sympy.Basic):
         return DaceSympySerializer().doprint(expr)
     return str(expr)
