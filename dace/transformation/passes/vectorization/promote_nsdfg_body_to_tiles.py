@@ -45,8 +45,9 @@ from dace.sdfg.nodes import MapEntry
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 
-from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileMerge, TileScatter, TileStore, TileUnop
-from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
+from dace.libraries.tileops import (TileBinop, TileGather, TileIota, TileLoad, TileMerge, TileScatter, TileStore,
+                                    TileUnop)
+from dace.libraries.tileops._pure_codegen import tile_offset
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
     _classify_unop_tasklet_body,
@@ -450,14 +451,25 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # A pure-affine non-box gather (diagonal / structured) was already
             # consumed by _collapse_affine_gathers (its outer edge is now the
             # tile-var-free full-array subset, so it never reaches here). A
-            # non-box access still carrying a tile var is therefore a
-            # DATA-dependent / mixed gather (``zqx[jo-1, 0, i]``, jo = iorder[i])
-            # the descent does not yet handle — refuse cleanly instead of
-            # box-widening it into an invalid (cross-product) connector.
+            # remaining non-box outer access is one of:
+            #   * a fully-unstructured boundary subset (every dim independent
+            #     of the tile vars — the body indexes into the connector via
+            #     data-dep symbols; ICON ``z_kin_hor_e[edge_blk[jb,jc,m], jk,
+            #     edge_idx[jb,jc,m]]`` after symbol fan-out has the outer
+            #     subset ``[0:NB, jk, 0:NPROMA]`` whose two data-gather dims
+            #     are full-extent, classified UNRECOGNIZED because the K-2
+            #     tile vars are unbound to subset dims);
+            #   * a MIXED gather (some tile vars bound to affine dims, others
+            #     unbound — the body still descends into a TileGather using
+            #     the fanned-out index tiles for the unbound dims).
+            # Either way, the box widening cannot synthesize a faithful
+            # tile-shape view (the unbound-dim extent is the data-gather
+            # domain, not a tile widow), so SKIP this connector here. The
+            # downstream :meth:`_collapse_tile_gathers` operates on the
+            # unwidened connector + the inner data-gather access, lowering
+            # the read to a :class:`TileGather` rather than a TileLoad.
             if classify_tile_access(oe.data.subset, tuple(src_arr.strides), spec.iter_vars).kind not in _BOX_KINDS:
-                raise NotImplementedError(
-                    f"PromoteNSDFGBodyToTiles: boundary connector {conn!r} access {oe.data.subset} is a "
-                    f"data-dependent / mixed gather (not pure affine); not supported in the descent yet")
+                continue
             tiled_widths: List[int] = []
             tiled_strides: List = []
             tile_w_per_dim: List[int] = []
@@ -597,6 +609,24 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # as a regular contiguous load.
             if cls.kind == TileAccessKind.BROADCAST_SYMBOL and len(iter_vars) == 1:
                 return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS, dim_strides=(1, ), match_dims=(0, ))
+            # K>=2 BROADCAST_SYMBOL: every dim of the inner subset is tile-
+            # var-free (the access reads the same element on every lane,
+            # typically a jk-independent ``e_bln_slice[0, 0]`` lookup inside
+            # a K-dim tile that iterates over (jk, jc)). Lower as a
+            # contiguous tile load with all per-tile-dim strides set to 0
+            # — TileLoad's lane offset becomes
+            # ``sum(0 * src_strides[d] * __l<d>) = 0`` on every lane, so
+            # the load reads the boundary element and broadcasts it across
+            # the K-dim tile. ``match_dims`` maps lane p -> connector dim p
+            # (identity), avoiding bounds-check shenanigans during code-gen.
+            if cls.kind == TileAccessKind.BROADCAST_SYMBOL:
+                K = len(iter_vars)
+                ndim = len(arr.shape)
+                return TileAccessClassification(
+                    kind=TileAccessKind.CONTIGUOUS,
+                    dim_strides=(0, ) * K,
+                    match_dims=tuple(d % ndim for d in range(K)) if ndim > 0 else tuple(range(K)),
+                )
             raise NotImplementedError(
                 f"PromoteNSDFGBodyToTiles: connector access {subset} is {cls.kind.value}; "
                 f"only perfect-box (contiguous / strided) loads/stores are supported in this slice")
@@ -874,13 +904,10 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                                         dace.int64,
                                         storage=dace.dtypes.StorageType.Register,
                                         transient=True)
-                        fill = istate.add_tasklet(name=f"agidx_{iname}",
-                                                  inputs=set(),
-                                                  outputs={"_out"},
-                                                  code=nested_loops(list(W), f"_out[{off}] = {expr};"),
-                                                  language=dace.dtypes.Language.CPP)
+                        fill = TileIota(name=f"agidx_{iname}", widths=list(W), expr=str(expr))
+                        istate.add_node(fill)
                         iacc = istate.add_access(iname)
-                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                         idx_accs.append(iacc)
                     gather = TileGather(name=f"agather_{conn}",
                                         widths=W,
@@ -986,15 +1013,16 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             suffix += 1
             mat_name = f"{idx_arr}_lc_{suffix}"
         inner.add_array(mat_name, [1], desc.dtype, storage=dace.dtypes.StorageType.Register, transient=True)
-        # Emit a CPP copy tasklet (Language.CPP needed because the connector
-        # is a non-trivial pointer-typed input; Python tasklet codegen would
-        # not be able to type-infer the connector).
+        # Single-element scalar materialization: a Python tasklet ``_out = _in``
+        # is K-dim-rule-compliant (no CPP for multi-element tile ops; Python is
+        # allowed for single-element scalars). Memlets read/write the lone
+        # element, so connector type-inference sees scalar dtypes on both sides.
         copy_t = istate.add_tasklet(
             name=f"copy_lc_{mat_name}",
             inputs={"_in"},
             outputs={"_out"},
-            code="_out[0] = _in[0];",
-            language=dace.dtypes.Language.CPP,
+            code="_out = _in",
+            language=dace.dtypes.Language.Python,
         )
         in_acc = istate.add_access(idx_arr)
         out_acc = istate.add_access(mat_name)
@@ -1193,13 +1221,10 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                                         dace.int64,
                                         storage=dace.dtypes.StorageType.Register,
                                         transient=True)
-                        fill = istate.add_tasklet(name=f"agidx_{iname}",
-                                                  inputs=set(),
-                                                  outputs={"_out"},
-                                                  code=nested_loops(list(W), f"_out[{off}] = {expr};"),
-                                                  language=dace.dtypes.Language.CPP)
+                        fill = TileIota(name=f"agidx_{iname}", widths=list(W), expr=str(expr))
+                        istate.add_node(fill)
                         iacc = istate.add_access(iname)
-                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                         agidx_access_by_dim[k] = iacc
                         # Replace the placeholder with the fresh tile.
                         idx_info[k] = (k, None, iname, W[0], 1)
@@ -1224,15 +1249,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         substituted = begin_expr.subs(sym_expr, placeholder)
                         expr_str = dace.symbolic.symstr(substituted).replace("__GATHER_LANE_READ__", "_idx[__l0]")
                         idx_window = inner.arrays[idx_arr].shape[0]
-                        fill = istate.add_tasklet(name=f"agidx_{iname}",
-                                                  inputs={"_idx"},
-                                                  outputs={"_out"},
-                                                  code=nested_loops(list(W), f"_out[{off}] = {expr_str};"),
-                                                  language=dace.dtypes.Language.CPP)
+                        fill = TileIota(name=f"agidx_{iname}", widths=list(W), expr=expr_str, extra_inputs=("_idx", ))
+                        istate.add_node(fill)
                         iread = istate.add_access(idx_arr)
                         istate.add_edge(iread, None, fill, "_idx", dace.Memlet(f"{idx_arr}[0:{idx_window}]"))
                         iacc = istate.add_access(iname)
-                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                         agidx_access_by_dim[k] = iacc
                         # Mark ``sym`` as consumed so the post-collapse
                         # ``_drop_gather_symbols`` simplifies its fan away.
@@ -1289,15 +1311,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         flat_offset = " + ".join(flat_offset_terms)
                         expr_str = f"{src_conn}[{flat_offset}]"
                         full_src_subset = ", ".join(f"0:{s}" for s in inner.arrays[idx_arr].shape)
-                        fill = istate.add_tasklet(name=f"agidx_{iname}",
-                                                  inputs={src_conn},
-                                                  outputs={"_out"},
-                                                  code=nested_loops(list(W), f"_out[{off}] = {expr_str};"),
-                                                  language=dace.dtypes.Language.CPP)
+                        fill = TileIota(name=f"agidx_{iname}", widths=list(W), expr=expr_str, extra_inputs=(src_conn, ))
+                        istate.add_node(fill)
                         iread = istate.add_access(idx_arr)
                         istate.add_edge(iread, None, fill, src_conn, dace.Memlet(f"{idx_arr}[{full_src_subset}]"))
                         iacc = istate.add_access(iname)
-                        istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                        istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                         agidx_access_by_dim[k] = iacc
                         consumed.add(sym)
                         idx_info[k] = (k, None, iname, W[0], 1)
@@ -1511,13 +1530,10 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                                     dace.int64,
                                     storage=dace.dtypes.StorageType.Register,
                                     transient=True)
-                    fill = istate.add_tasklet(name=f"agidx_{iname}",
-                                              inputs=set(),
-                                              outputs={"_out"},
-                                              code=nested_loops(list(W), f"_out[{off}] = {expr};"),
-                                              language=dace.dtypes.Language.CPP)
+                    fill = TileIota(name=f"agidx_{iname}", widths=list(W), expr=str(expr))
+                    istate.add_node(fill)
                     iacc = istate.add_access(iname)
-                    istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                    istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                     agidx_access_by_dim[k] = iacc
                     idx_info[k] = (k, None, iname, W[0])
                 for (k, sym, idx_arr, idx_expr_str, tile_var_dim_per_iter) in multidim_scatter_dims:
@@ -1550,15 +1566,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     flat_offset = " + ".join(flat_offset_terms)
                     expr_str = f"{src_conn}[{flat_offset}]"
                     full_src_subset = ", ".join(f"0:{s}" for s in inner.arrays[idx_arr].shape)
-                    fill = istate.add_tasklet(name=f"agidx_{iname}",
-                                              inputs={src_conn},
-                                              outputs={"_out"},
-                                              code=nested_loops(list(W), f"_out[{off}] = {expr_str};"),
-                                              language=dace.dtypes.Language.CPP)
+                    fill = TileIota(name=f"agidx_{iname}", widths=list(W), expr=expr_str, extra_inputs=(src_conn, ))
+                    istate.add_node(fill)
                     iread = istate.add_access(idx_arr)
                     istate.add_edge(iread, None, fill, src_conn, dace.Memlet(f"{idx_arr}[{full_src_subset}]"))
                     iacc = istate.add_access(iname)
-                    istate.add_edge(fill, "_out", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
+                    istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                     agidx_access_by_dim[k] = iacc
                     consumed.add(sym)
                     idx_info[k] = (k, None, iname, W[0])
@@ -2301,32 +2314,34 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             const_stores.append((t, val, out_edges[0], is_transient))
         for t, val, out_edge, is_transient in const_stores:
             out_access = out_edge.dst
-            if is_transient:
-                out_dtype = inner.arrays[out_access.data].dtype.ctype
-                if mask_acc is not None:
-                    body = f"_out[{off}] = _mask[{off}] ? {val} : {out_dtype}(0);"
-                    inputs = {"_mask"}
-                else:
-                    body = f"_out[{off}] = {val};"
-                    inputs = set()
-                fill = istate.add_tasklet(name=f"const_{out_access.data}",
-                                          inputs=inputs,
-                                          outputs={"_out"},
-                                          code=nested_loops(list(W), body),
-                                          language=dace.dtypes.Language.CPP)
-                self._wire_mask(istate, mask_acc, fill, subset)
-                istate.add_edge(fill, "_out", out_access, out_edge.dst_conn,
-                                dace.Memlet(f"{out_access.data}[{subset}]"))
+            # ``TileStore(src_kind='Symbol', src_expr=val)`` broadcasts
+            # the literal to every lane: the lib node's pure expansion
+            # emits ``_dst[off] = (T)(val);`` (mask-gated when
+            # ``has_mask=True``). This is the semantic operation — "store
+            # this constant into the tile region" — without the
+            # ``val + 0`` TileBinop hack.
+            mask_for_fill = mask_acc if is_transient else None
+            if not is_transient:
+                # Output-connector const store: fill a fresh contiguous
+                # transient tile UNMASKED and let ``_promote_stores`` lower
+                # the connector write to a masked ``TileStore`` (the
+                # masking has to gate the *memory* write, not the lane
+                # values).
+                out_access, out_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
+                out_dst_conn = out_conn
             else:
-                # Output-connector const store: fill a fresh contiguous transient
-                # tile (every lane) and let _promote_stores mask the store.
-                write_access, write_conn = self._route_output(istate, out_access, out_edge.dst_conn, nsdfg_node, spec)
-                fill = istate.add_tasklet(name=f"const_{out_access.data}",
-                                          inputs=set(),
-                                          outputs={"_out"},
-                                          code=nested_loops(list(W), f"_out[{off}] = {val};"),
-                                          language=dace.dtypes.Language.CPP)
-                istate.add_edge(fill, "_out", write_access, write_conn, dace.Memlet(f"{write_access.data}[{subset}]"))
+                out_dst_conn = out_edge.dst_conn
+            fill = TileStore(
+                name=f"const_{out_access.data}_tile",
+                widths=W,
+                has_mask=mask_for_fill is not None,
+                src_kind="Symbol",
+                src_expr=str(val),
+            )
+            istate.add_node(fill)
+            if mask_for_fill is not None:
+                self._wire_mask(istate, mask_for_fill, fill, subset)
+            istate.add_edge(fill, "_dst", out_access, out_dst_conn, dace.Memlet(f"{out_access.data}[{subset}]"))
             for e in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                 istate.remove_edge(e)
             istate.remove_node(t)
@@ -2424,13 +2439,51 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 assign = ed.src
                 src_edge = istate.in_edges(assign)[0]
                 src_access = src_edge.src
+                src_subset = src_edge.data.subset if src_edge.data is not None else None
                 to_remove_node = assign
             elif isinstance(ed.src, dace.nodes.AccessNode):
                 src_access = ed.src
+                src_subset = ed.data.subset
                 to_remove_node = None
             else:
                 raise NotImplementedError(
                     f"PromoteNSDFGBodyToTiles: store into {dst_name!r} from {type(ed.src).__name__} unsupported")
+            # If the source AccessNode is not tile-shape and not the inner mask
+            # placeholder (a non-transient boundary connector or a scalar/
+            # length-1 transient driving a broadcast-store assign), materialize
+            # the broadcast tile first via a :class:`TileLoad` whose
+            # ``dim_strides`` come from the destination's box classification
+            # (typically ``(0,)*K`` for a scalar broadcast or
+            # ``(1, 0)``/``(0, 1)`` for a 1-D row/col broadcast). Keeps
+            # TileStore's ``_src`` connected to a real tile-shape transient
+            # (matching the lib node's memlet contract).
+            src_arr_desc = inner.arrays.get(src_access.data)
+            if (src_arr_desc is not None and tuple(src_arr_desc.shape) != tuple(W) and src_access.data != _INNER_MASK):
+                load_cls = self._box_classification(src_subset, src_arr_desc, spec.iter_vars, src_access.data)
+                load_name = f"_brd_{src_access.data}"
+                suffix = 0
+                while load_name in inner.arrays:
+                    suffix += 1
+                    load_name = f"_brd_{src_access.data}_{suffix}"
+                inner.add_array(load_name,
+                                list(W),
+                                src_arr_desc.dtype,
+                                storage=dace.dtypes.StorageType.Register,
+                                transient=True)
+                load = TileLoad(name=f"brd_{src_access.data}",
+                                widths=W,
+                                dim_strides=tuple(load_cls.dim_strides),
+                                src_dims=tuple(load_cls.match_dims),
+                                has_mask=mask_acc is not None)
+                istate.add_node(load)
+                load_in_subset = _tile_region_subset(src_subset, spec.iter_vars, W) if src_subset is not None else None
+                load_in_memlet = (dace.Memlet(data=src_access.data, subset=load_in_subset)
+                                  if load_in_subset is not None else dace.Memlet(f"{src_access.data}[{subset}]"))
+                istate.add_edge(src_access, None, load, TileConnectors.SRC, load_in_memlet)
+                self._wire_mask(istate, mask_acc, load, subset)
+                tile_acc = istate.add_access(load_name)
+                istate.add_edge(load, TileConnectors.DST, tile_acc, None, dace.Memlet(f"{load_name}[{subset}]"))
+                src_access = tile_acc
             store = TileStore(name=f"store_{dst_name}",
                               widths=W,
                               dim_strides=tuple(cls.dim_strides),

@@ -49,12 +49,24 @@ class ExpandTileStorePure(ExpandTransformation):
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
         dst_off = offset_via_strides(coeff, dst_strides)
         src_off = tile_offset(widths)
-        if node.has_mask:
-            body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = _src[{src_off}]; }}"
+        # Resolve the per-lane source reference for each ``src_kind``:
+        #   * ``Tile`` — the existing per-lane tile read.
+        #   * ``Symbol`` — the literal / expression broadcast to every lane,
+        #     cast to the destination dtype so a typed store resolves.
+        #   * ``Scalar`` — a length-1 array read, broadcast to every lane.
+        out_dtype = dst_arr.dtype.ctype
+        if node.src_kind == "Symbol":
+            src_ref = f"({out_dtype})({node.src_expr})"
+        elif node.src_kind == "Scalar":
+            src_ref = f"({out_dtype})(_src[0])"
         else:
-            body = f"_dst[{dst_off}] = _src[{src_off}];"
+            src_ref = f"_src[{src_off}]"
+        if node.has_mask:
+            body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = {src_ref}; }}"
+        else:
+            body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
-        inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
+        inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
@@ -227,6 +239,23 @@ class TileStore(nodes.LibraryNode):
         default=False,
         desc="When True, the ``_mask`` input connector is required.",
     )
+    src_kind = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="Tile",
+        desc="Source operand kind. 'Tile' (default) reads a ``widths``-shaped "
+        "tile transient via ``_src``. 'Symbol' broadcasts ``src_expr`` (a "
+        "symbolic expression / numeric literal) to every lane and omits the "
+        "``_src`` connector. 'Scalar' broadcasts a length-1 array value read "
+        "via ``_src``.",
+    )
+    src_expr = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Symbolic expression embedded inline when ``src_kind=='Symbol'``; "
+        "ignored otherwise.",
+    )
 
     def __init__(self,
                  name: str,
@@ -234,6 +263,8 @@ class TileStore(nodes.LibraryNode):
                  dim_strides: Optional[Tuple[int, ...]] = None,
                  dst_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
+                 src_kind: str = "Tile",
+                 src_expr: Optional[str] = None,
                  location: Optional[str] = None):
         """Construct a ``TileStore`` node.
 
@@ -242,20 +273,35 @@ class TileStore(nodes.LibraryNode):
         :param dim_strides: Per-tile-dim stride coefficients; defaults
             to all 1s (contiguous).
         :param has_mask: When True, declare the ``_mask`` input.
+        :param src_kind: Source operand shape — ``"Tile"`` (default),
+            ``"Symbol"`` (broadcast ``src_expr`` to every lane; ``_src``
+            omitted), or ``"Scalar"`` (broadcast a length-1 array read
+            via ``_src``).
+        :param src_expr: Required when ``src_kind == 'Symbol'``.
         :param location: Optional DaCe node location override.
-        :raises ValueError: If ``widths`` is empty / longer than 3 or
-            if ``dim_strides`` length disagrees with ``widths``.
+        :raises ValueError: If ``widths`` is empty / longer than 3, if
+            ``dim_strides`` length disagrees with ``widths``, or if
+            ``src_kind`` is unsupported.
         """
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileStore: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
             raise ValueError(f"TileStore: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
-        inputs = {"_src"} | ({"_mask"} if has_mask else set())
+        if src_kind not in ("Tile", "Symbol", "Scalar"):
+            raise ValueError(f"TileStore: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
+        if src_kind == "Symbol" and not src_expr:
+            raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
+        # ``Symbol`` source has no ``_src`` connector — the literal is
+        # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
+        # read through ``_src``.
+        inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         self.dst_dims = list(dst_dims) if dst_dims else []
         self.has_mask = has_mask
+        self.src_kind = src_kind
+        self.src_expr = src_expr
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.
@@ -266,8 +312,8 @@ class TileStore(nodes.LibraryNode):
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if "_src" not in in_e:
-            raise ValueError(f"{self.label}: required input '_src' not connected")
+        if self.src_kind != "Symbol" and "_src" not in in_e:
+            raise ValueError(f"{self.label}: required input '_src' not connected (src_kind={self.src_kind!r})")
         if "_dst" not in out_e:
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:

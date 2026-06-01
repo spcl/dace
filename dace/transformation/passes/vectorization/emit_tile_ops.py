@@ -24,8 +24,8 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileReduce, TileScatter, TileStore, TileUnop
-from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
+from dace.libraries.tileops import (TileBinop, TileGather, TileIota, TileLoad, TileReduce, TileScatter, TileStore,
+                                    TileUnop)
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
@@ -567,10 +567,11 @@ class EmitTileOps(ppl.Pass):
     def _emit_gather_index_tiles(self, state: dace.SDFGState, map_entry: MapEntry, per_iter_subset: subsets.Range,
                                  src_ndim: int, spec: TileDimSpec) -> List[dace.nodes.AccessNode]:
         """Build one affine per-dim index tile (the "gather map") per source
-        array dim. Each ``_gidx_k`` tile is filled by a small CPP tasklet
-        ``_gidx_k[lane] = begin_k + sum_p coeff_p * __l_p`` (begin_k read from
-        ``per_iter_subset``); the tasklet hangs off the map entry so the tile
-        iter-vars are in scope.
+        array dim, each via a :class:`TileIota` lib node whose ``expr`` is the
+        per-lane affine substitution ``begin_k(v_p -> v_p + __l_p)``. The lib
+        node hangs off the map entry so the tile iter-vars are in scope (same
+        wiring as :class:`TileMaskGen`). Keeps the K-dim path tile-only — no
+        raw CPP tasklet for the index materialization.
 
         :param state: Parent state.
         :param map_entry: Inner (strided) map entry — the dependency source.
@@ -591,21 +592,11 @@ class EmitTileOps(ppl.Pass):
                 raise NotImplementedError(f"EmitTileOps: gather index dim {k} ({begin_str!r}) is not affine "
                                           f"in the tile vars (indirect gather not yet emitted)")
             idx_name = self._add_tile_transient(sdfg, "_gidx", dace.int64, spec.widths)
-            # Use a generic ``_out`` connector (not the array name) — a tasklet
-            # connector must not collide with an SDFG data/symbol name.
-            body = f"_out[{tile_offset(spec.widths)}] = {expr};"
-            fill = state.add_tasklet(
-                name=f"gidx_{idx_name}",
-                inputs=set(),
-                outputs={"_out"},
-                code=nested_loops(spec.widths, body),
-                language=dace.dtypes.Language.CPP,
-            )
-            # Keep the fill tasklet inside the map scope so the tile iter-vars
-            # are defined symbols (mirrors the TileMaskGen wiring).
+            fill = TileIota(name=f"gidx_{idx_name}", widths=spec.widths, expr=expr)
+            state.add_node(fill)
             state.add_nedge(map_entry, fill, dace.Memlet())
             idx_acc = state.add_access(idx_name)
-            state.add_edge(fill, "_out", idx_acc, None, dace.Memlet(f"{idx_name}[{out_subset}]"))
+            state.add_edge(fill, "_dst", idx_acc, None, dace.Memlet(f"{idx_name}[{out_subset}]"))
             idx_accesses.append(idx_acc)
         return idx_accesses
 
@@ -684,6 +675,12 @@ class EmitTileOps(ppl.Pass):
         """Materialize a tile filled with a constant (for a ``out = <const>``
         broadcast-store body), returning ``(out_data, tile_access)``.
 
+        Lowers to a :class:`TileStore` lib node with ``src_kind="Symbol"`` —
+        the broadcast contract that ``_promote_const_stores`` already uses for
+        the NSDFG-body descent. Keeps the K-dim emit path tile-only (no CPP
+        fill tasklet) so :meth:`apply_pass` can run with
+        ``expand_tile_nodes=False`` and observe lib nodes for every store.
+
         :param state: Parent state.
         :param map_entry: Inner map entry (dependency source for scope).
         :param tasklet: The constant-store tasklet (its out-edge names the
@@ -697,17 +694,17 @@ class EmitTileOps(ppl.Pass):
         dtype = sdfg.arrays[out_data].dtype
         tile_name = self._add_tile_transient(sdfg, "_tile_c", dtype, spec.widths)
         out_subset = ", ".join(f"0:{w}" for w in spec.widths)
-        body = f"_out[{tile_offset(spec.widths)}] = {val};"
-        fill = state.add_tasklet(
+        fill = TileStore(
             name=f"const_{tile_name}",
-            inputs=set(),
-            outputs={"_out"},
-            code=nested_loops(spec.widths, body),
-            language=dace.dtypes.Language.CPP,
+            widths=spec.widths,
+            has_mask=False,
+            src_kind="Symbol",
+            src_expr=str(val),
         )
+        state.add_node(fill)
         state.add_nedge(map_entry, fill, dace.Memlet())
         acc = state.add_access(tile_name)
-        state.add_edge(fill, "_out", acc, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
+        state.add_edge(fill, "_dst", acc, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
         return out_data, acc
 
     def _map_entry_of(self, state: dace.SDFGState, node: dace.nodes.Node) -> MapEntry:

@@ -279,7 +279,17 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
 
 
 def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
-    """CPP tasklet calling ``dace::tileops::tile_store`` (RMW skip-inactive)."""
+    """CPP tasklet calling ``dace::tileops::tile_store`` (RMW skip-inactive).
+
+    The ISA runtime ``tile_store`` takes a tile pointer (``_src``) and
+    streams it to the destination; ``src_kind != 'Tile'`` (a broadcast
+    Symbol literal or a Scalar length-1 read) has no per-lane source
+    pointer, so the pure expansion's per-lane store is the right
+    lowering for those shapes. Delegate to it instead.
+    """
+    if getattr(node, "src_kind", "Tile") != "Tile":
+        from dace.libraries.tileops.nodes.tile_store import ExpandTileStorePure
+        return ExpandTileStorePure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
     dst_dtype = parent_sdfg.arrays[dst_edge.data.data].dtype.ctype
