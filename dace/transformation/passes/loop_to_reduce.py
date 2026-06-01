@@ -18,7 +18,7 @@ Accumulator forms accepted: a ``Scalar``, a length-1 ``Array``, a single
 loop-invariant slice of a multi-element ``Array`` (``C[k]``).
 """
 import ast
-import copy as _copy
+import copy
 from typing import Dict, NamedTuple, Optional
 
 import sympy
@@ -75,9 +75,23 @@ class LoopToReduce(ppl.Pass):
         "which assumes the guard array is 0/1-valued).",
     )
 
-    def __init__(self, permissive: bool = False):
+    prefer = properties.Property(
+        dtype=str,
+        default='reduce-libnode',
+        choices=('reduce-libnode', 'wcr-scalar'),
+        desc="Emission strategy. ``reduce-libnode`` (default) emits a single "
+        "``Reduce`` library node; ``wcr-scalar`` keeps a LoopRegion that "
+        "accumulates into a transient scalar with WCR, plus init + writeback "
+        "states. The wcr-scalar form lets downstream ``LoopToMap`` parallelize "
+        "the loop into a Map+WCR-on-scalar shape that the WCR codegen lowers "
+        "to ``#pragma omp parallel for reduction(op:scalar)`` -- the right "
+        "lowering for accumulator ops the ``Reduce`` libnode cannot express.",
+    )
+
+    def __init__(self, permissive: bool = False, prefer: str = 'reduce-libnode'):
         super().__init__()
         self.permissive = permissive
+        self.prefer = prefer
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -101,7 +115,10 @@ class LoopToReduce(ppl.Pass):
             info = _extract(node, sdfg, permissive=self.permissive)
             if info is None:
                 continue
-            _lift(parent, node, info)
+            if self.prefer == 'wcr-scalar':
+                _lift_wcr_scalar(parent, node, info)
+            else:
+                _lift(parent, node, info)
             count += 1
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
@@ -422,7 +439,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 if (not isinstance(pred.src, nodes.AccessNode) or pred.data is None or pred.data.subset is None
                         or _one_elem(e.data.subset) != _one_elem(pred.data.subset)):
                     return None
-                resolved.append((pred.src.data, _copy.deepcopy(pred.data.subset)))
+                resolved.append((pred.src.data, copy.deepcopy(pred.data.subset)))
             else:
                 resolved.append((src.data, e.data.subset))
 
@@ -624,3 +641,106 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     red = red_state.add_reduce(info.wcr, axes=list(range(len(info.array_subset))), identity=None)
     red_state.add_edge(arr, None, red, None, mm.Memlet(data=info.array, subset=info.array_subset))
     red_state.add_edge(red, None, dst, None, mm.Memlet(data=dest_name, subset=dest_subset))
+
+
+def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
+    """Replace ``loop`` with ``init -> LoopRegion(WCR-on-scalar body) -> writeback``.
+
+    Mirrors the reduce-libnode lift but keeps the iteration explicit so the
+    downstream :class:`~dace.transformation.interstate.loop_to_map.LoopToMap`
+    pass turns the LoopRegion into a Map with a WCR-on-scalar exit memlet --
+    the shape the WCR codegen lowers to ``#pragma omp parallel for
+    reduction(op:scalar)``.
+
+    Body shape: ``arr_an --(arr[f(i)], wcr)--> priv_an``. The WCR annotation
+    on the AccessNode-to-AccessNode memlet tells codegen to combine the
+    source value with the destination via ``info.wcr`` instead of plain
+    assignment, so no intermediate tasklet is needed. Init state seeds the
+    scalar from ``info.accum[info.accum_subset]`` (or from a symbol
+    assignment when the accumulator is a DaCe symbol); writeback copies the
+    post-loop scalar back into the accumulator (or assigns the symbol via an
+    iedge on the loop's out-edge).
+
+    :param parent: The control-flow region containing ``loop``.
+    :param loop: The reduction loop to replace.
+    :param info: The reduction shape extracted by ``_extract``.
+    """
+    import dace
+    root = parent
+    while not isinstance(root, SDFG):
+        root = root.parent_graph
+
+    was_start = parent.start_block is loop
+    in_edges = list(parent.in_edges(loop))
+    out_edges = list(parent.out_edges(loop))
+    extra_assignments: Dict[str, str] = {}
+
+    accum_in_arrays = info.accum in root.arrays
+    dtype = root.arrays[info.accum].dtype if accum_in_arrays else root.symbols[info.accum]
+    priv_name, _ = root.add_scalar(f"_priv_{info.accum}", dtype=dtype, transient=True, find_new_name=True)
+
+    init_state = parent.add_state(loop.label + "_priv_init", is_start_block=was_start)
+    if accum_in_arrays:
+        seed_r = init_state.add_read(info.accum)
+        seed_w = init_state.add_write(priv_name)
+        init_state.add_edge(seed_r, None, seed_w, None,
+                            mm.Memlet(data=info.accum, subset=copy.deepcopy(info.accum_subset)))
+    else:
+        seed = init_state.add_tasklet("seed", set(), {"_out"}, f"_out = {info.accum}")
+        init_state.add_edge(seed, "_out", init_state.add_write(priv_name), None,
+                            mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)])))
+
+    new_loop = LoopRegion(
+        loop.label + "_priv",
+        condition_expr=loop.loop_condition.as_string,
+        loop_var=loop.loop_variable,
+        initialize_expr=loop.init_statement.as_string,
+        update_expr=loop.update_statement.as_string,
+    )
+    parent.add_node(new_loop)
+
+    body = new_loop.add_state(loop.label + "_body", is_start_block=True)
+    arr_an = body.add_read(info.array)
+    priv_an = body.add_write(priv_name)
+    # ``info.array_subset`` is the union-over-iterations extent the ``Reduce``
+    # libnode consumes (typically the whole array), which is too wide for an
+    # in-body element-by-element accumulate. Project each loop-spanning axis
+    # onto the loop variable; leave loop-invariant constant slices as-is.
+    iter_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    array_shape = root.arrays[info.array].shape
+    per_iter_ranges = []
+    for axis, (lo, hi, st) in enumerate(info.array_subset.ndrange()):
+        full_axis = (lo == 0 and st == 1 and symbolic.inequal_symbols(hi, 0)
+                     and not symbolic.inequal_symbols(hi + 1, array_shape[axis]))
+        if full_axis:
+            per_iter_ranges.append((iter_sym, iter_sym, 1))
+        else:
+            per_iter_ranges.append((lo, hi, st))
+    body.add_edge(
+        arr_an, None, priv_an, None,
+        mm.Memlet(data=info.array,
+                  subset=subsets.Range(per_iter_ranges),
+                  other_subset=subsets.Range([(0, 0, 1)]),
+                  wcr=info.wcr))
+
+    wb_state = parent.add_state(loop.label + "_priv_wb")
+    if accum_in_arrays:
+        wb_r = wb_state.add_read(priv_name)
+        wb_w = wb_state.add_write(info.accum)
+        wb_state.add_edge(wb_r, None, wb_w, None, mm.Memlet(data=info.accum, subset=copy.deepcopy(info.accum_subset)))
+    else:
+        # Symbol accumulator: lift the closed-form value via an interstate-edge
+        # assignment on the OUT-edge of the writeback state, the same shape
+        # the reduce-libnode path uses for symbol accumulators.
+        extra_assignments[info.accum] = priv_name
+
+    parent.add_edge(init_state, new_loop, dace.InterstateEdge())
+    parent.add_edge(new_loop, wb_state, dace.InterstateEdge())
+    for e in in_edges:
+        parent.add_edge(e.src, init_state, e.data)
+    for e in out_edges:
+        assigns = dict(e.data.assignments or {})
+        assigns.update(extra_assignments)
+        cond = e.data.condition.as_string if e.data.condition is not None else "1"
+        parent.add_edge(wb_state, e.dst, dace.InterstateEdge(condition=cond, assignments=assigns))
+    parent.remove_node(loop)
