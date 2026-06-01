@@ -298,6 +298,72 @@ def test_same_named_writer_transient_does_not_collapse():
     _assert_fusion_preserves_semantics(sdfg, 1, arr=arr, out1=out1, out2=out2)
 
 
+import pytest
+
+
+@pytest.mark.xfail(
+    reason="Reproduces the loop-peeling shape: two peeled states each write a "
+    "boundary slice of ``A`` (``A[N-1] += 1`` then ``A[N-2] += 1``), then a "
+    "remainder Map writes ``A[i] = B[i]*2`` over ``0:N``. The peeled-write "
+    "subsets overlap the Map's write range, so the un-fused interstate "
+    "ordering (peeled0 -> peeled1 -> remainder) is load-bearing. After "
+    "``StateFusionExtended`` collapses all three into one state, only some "
+    "of the cross-chain happens-before empty-memlet edges are emitted via "
+    "``connections_to_make``: the *second* peeled write chain's tail is "
+    "not wired to the remainder's source, so the scheduler is free to run "
+    "the remainder Map BEFORE the second peeled ``+= 1`` lands -- yielding "
+    "``A[N-2] = (B[N-2]*2) + 1`` instead of ``B[N-2]*2``. Marked strict so "
+    "a fix flips it on automatically; integration pin in "
+    "tests/canonicalize/canonicalize_parallelization_knobs_test.py.",
+    strict=True,
+)
+def test_peeled_iterations_then_remainder_map_keep_ordering():
+    """Two peeled iterations + a remainder Map: the un-fused interstate
+    ordering is load-bearing because the peeled writes alias the Map's
+    write range. ``StateFusionExtended`` must preserve the ordering by
+    emitting happens-before edges between every peeled-chain tail and the
+    remainder's source."""
+    N_SYM = 8
+    sdfg = SDFG('peel_then_remainder')
+    sdfg.add_array('A', [N_SYM], dtypes.float64)
+    sdfg.add_array('B', [N_SYM], dtypes.float64)
+    sdfg.add_transient('acc0', [1], dtypes.float64)
+    sdfg.add_transient('acc1', [1], dtypes.float64)
+
+    s_peel0 = sdfg.add_state('peeled_iter_0', is_start_block=True)
+    s_peel1 = sdfg.add_state('peeled_iter_1')
+    s_rem = sdfg.add_state('remainder_map')
+    sdfg.add_edge(s_peel0, s_peel1, InterstateEdge())
+    sdfg.add_edge(s_peel1, s_rem, InterstateEdge())
+
+    def add_peel(state, dst_idx: str, acc_name: str):
+        ar = state.add_access('A')
+        acc_in = state.add_access(acc_name)
+        acc_out = state.add_access(acc_name)
+        aw = state.add_access('A')
+        plus1 = state.add_tasklet(f'plus1_{dst_idx}', {'_in'}, {'_out'}, '_out = _in + 1.0')
+        state.add_edge(ar, None, acc_in, None, Memlet(f'A[{dst_idx}] -> [0]'))
+        state.add_edge(acc_in, None, plus1, '_in', Memlet(f'{acc_name}[0]'))
+        state.add_edge(plus1, '_out', acc_out, None, Memlet(f'{acc_name}[0]'))
+        state.add_edge(acc_out, None, aw, None, Memlet(f'{acc_name}[0] -> [{dst_idx}]'))
+
+    add_peel(s_peel0, f'{N_SYM - 1}', 'acc0')  # A[N-1] += 1
+    add_peel(s_peel1, f'{N_SYM - 2}', 'acc1')  # A[N-2] += 1
+
+    # Remainder map: A[i] = B[i] * 2 for i in 0:N (overlaps A[N-1] and A[N-2]).
+    br = s_rem.add_access('B')
+    aw = s_rem.add_access('A')
+    me, mx = s_rem.add_map('rem', {'i': f'0:{N_SYM}'})
+    times2 = s_rem.add_tasklet('times2', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    s_rem.add_memlet_path(br, me, times2, dst_conn='_in', memlet=Memlet('B[i]'))
+    s_rem.add_memlet_path(times2, mx, aw, src_conn='_out', memlet=Memlet('A[i]'))
+    sdfg.validate()
+
+    a = np.zeros(N_SYM, dtype=np.float64)
+    b = np.arange(N_SYM, dtype=np.float64) + 0.5
+    _assert_fusion_preserves_semantics(sdfg, 1, A=a, B=b)
+
+
 if __name__ == '__main__':
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
@@ -306,3 +372,4 @@ if __name__ == '__main__':
     test_war_write_after_read()
     test_rar_read_after_read_no_hazard()
     test_same_named_writer_transient_does_not_collapse()
+    test_peeled_iterations_then_remainder_map_keep_ordering()
