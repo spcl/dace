@@ -910,6 +910,42 @@ def _split_two_strided(A: dace.float64[N], evens_out: dace.float64[1], odds_out:
     evens_out[0] = evens
 
 
+def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
+    """TSVC s317 ``q[0] *= 0.99`` is NOT a LoopToReduce target -- it is an
+    induction variable closed form ``q[0] *= 0.99**N``, handled by
+    ``InductionVariableSubstitution`` (which the canonicalize pipeline
+    runs BEFORE LoopToReduce). This test documents the contract: after
+    ``TTE + IVS`` the loop is gone, so a subsequent LoopToReduce sees
+    nothing to lift -- which is the right outcome.
+
+    The ``test_array_slot_const_product_is_lifted`` xfails above pin the
+    inverse: LoopToReduce in isolation must NOT recognise the IV shape,
+    so the path through IVS is the only correct one.
+    """
+    import numpy as np
+    from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution)
+
+    sdfg = _array_slot_const_product.to_sdfg(simplify=True)
+    sdfg.validate()
+    assert _count_loops(sdfg) >= 1
+
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    substituted = InductionVariableSubstitution().apply_pass(sdfg, {})
+    assert substituted == 1, f'IVS must close-form the geometric IV; got {substituted}'
+    assert _count_loops(sdfg) == 0, 'IVS must eliminate the loop entirely'
+
+    # A subsequent LoopToReduce is a no-op (no loops left).
+    lifted = LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    assert lifted is None or lifted == 0, f'no loops left to lift, got {lifted}'
+    sdfg.validate()
+
+    n = 16
+    q = np.zeros(n)
+    sdfg(q=q, N=n)
+    expected = 1.0 * (0.99**(n // 2))
+    assert np.isclose(q[0], expected), f'got {q[0]}, expected {expected}'
+
+
 def test_split_two_strided_loops_both_lift(prefer):
     """Two strided reductions (``evens += A[2*i]``, ``odds += A[2*i+1]``)
     in two separate loops. Each is a single-accumulator loop with a
