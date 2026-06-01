@@ -619,14 +619,16 @@ def _branched_max(a: dace.float64[N], result: dace.float64[N]):
     result[0] = x
 
 
-@pytest.mark.xfail(reason="TSVC s314: frontend lowers ``if a[i] > x: x = a[i]`` to a loop body of "
-                   "``[ConditionalBlock, SDFGState, SDFGState]`` at loop level (not the "
-                   "in-conditional 2-empty-states form the conditional-interstate pattern in "
-                   "``_extract`` expects). Needs the loop-level branched-min/max shape. "
-                   "See parallelization_report.md group B.",
-                   strict=True)
 def test_branched_max_is_lifted(prefer):
-    """TSVC s314."""
+    """TSVC s314: ``for i: if a[i] > x: x = a[i]``.
+
+    The frontend lowers the masked update into a loop body of
+    ``[ConditionalBlock, cond_prep_state, post_state]`` joined by iedges
+    ``{arr_sym: a[i]}`` and ``{guard_sym: arr_sym > x}``. ``max`` is
+    idempotent so the conditional is redundant at the WCR level
+    (``acc = max(acc, a[i])`` matches the masked semantics whether the
+    guard fires or not). Both emit modes produce the right result.
+    """
     sdfg = _branched_max.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
@@ -642,9 +644,8 @@ def _branched_min(a: dace.float64[N], result: dace.float64[N]):
     result[0] = x
 
 
-@pytest.mark.xfail(reason="TSVC s316: same shape as s314 (branched min). See test_branched_max_is_lifted.", strict=True)
 def test_branched_min_is_lifted(prefer):
-    """TSVC s316."""
+    """TSVC s316: same shape as s314 with ``<`` (branched min)."""
     sdfg = _branched_min.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)

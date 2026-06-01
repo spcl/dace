@@ -641,7 +641,166 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1)]),
         )
 
+    # Branched min/max pattern (TSVC s314, s316):
+    #
+    #   for i:
+    #       if a[i] > x: x = a[i]
+    #
+    # The frontend lowers this into a loop body with three blocks:
+    # ``[ConditionalBlock, cond_prep_state, post_state]`` joined by iedges
+    # that thread the comparison through a temp symbol:
+    #
+    #   (block) -> (cond_prep) {arr_sym: arr[i]}
+    #   (cond_prep) -> (if_N) {guard_sym: arr_sym <cmp> accum}
+    #   if_N TRUE branch body: ``accum = arr[i]`` (passthrough copy)
+    #
+    # ``max`` and ``min`` are idempotent, so the conditional is redundant at
+    # the wcr level: ``acc = max(acc, arr[i])`` is correct whether the guard
+    # fires or not. Both the libnode lift (``Reduce(wcr=max/min, ...)``) and
+    # the wcr-scalar lift (``_priv_X = wcr(_priv_X, arr[i])`` body) consume
+    # the resulting ``_Reduction`` info as-is.
+    info = _extract_branched_minmax(loop, sdfg, loop_var_sym, start, end)
+    if info is not None:
+        return info
+
     return None
+
+
+def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start,
+                             end) -> Optional[_Reduction]:
+    """Match a ``for i: if arr[i] <cmp> accum: accum = arr[i]`` loop where the
+    frontend lowers the masked update into a loop body of:
+
+    - one ``ConditionalBlock`` (single TRUE branch guarded by a temp symbol),
+    - one ``cond_prep`` SDFGState whose only role is to be a hub for the iedge
+      that computes the guard from a previously-loaded array temp,
+    - one trailing empty SDFGState,
+
+    threaded together by iedge assignments ``{arr_sym: arr[i]}`` and
+    ``{guard_sym: arr_sym <cmp> accum}``.
+
+    Returns the standard ``_Reduction`` info (``wcr`` = ``max`` for
+    ``>``/``>=``, ``min`` for ``<``/``<=``) the existing lift functions
+    consume to emit either a ``Reduce`` libnode or a wcr-scalar body.
+    Returns ``None`` if any structural / semantic check fails.
+    """
+    blocks = loop.nodes()
+    cond_blocks = [b for b in blocks if isinstance(b, ConditionalBlock)]
+    if len(cond_blocks) != 1:
+        return None
+    cb = cond_blocks[0]
+    if len(cb.branches) != 1:
+        return None
+    branch_cond, branch_body = cb.branches[0]
+    if branch_cond is None:
+        return None
+    guard_sym = branch_cond.as_string.strip()
+    if not guard_sym.isidentifier():
+        return None
+
+    # Walk back from the conditional through iedges to find where guard_sym
+    # is assigned. Look one hop back from the conditional.
+    guard_iedge = next(
+        (ie for ie in loop.edges() if ie.dst is cb and ie.data is not None and guard_sym in ie.data.assignments),
+        None,
+    )
+    if guard_iedge is None:
+        return None
+    guard_rhs = guard_iedge.data.assignments[guard_sym]
+    try:
+        guard_tree = ast.parse(guard_rhs.strip().lstrip('(').rstrip(')'), mode='eval').body
+    except SyntaxError:
+        return None
+    if not isinstance(guard_tree, ast.Compare) or len(guard_tree.ops) != 1:
+        return None
+    cmp_op = guard_tree.ops[0]
+    if not isinstance(cmp_op, _CMP_GT + _CMP_LT):
+        return None
+    if not (isinstance(guard_tree.left, ast.Name) and isinstance(guard_tree.comparators[0], ast.Name)):
+        return None
+    cmp_lhs_sym, cmp_rhs_sym = guard_tree.left.id, guard_tree.comparators[0].id
+
+    # Walk back one more hop to find where the array temp is loaded:
+    # the iedge into ``guard_iedge.src`` must assign the array-temp symbol.
+    prep_state = guard_iedge.src
+    arr_iedge = next(
+        (ie for ie in loop.edges() if ie.dst is prep_state and ie.data is not None and ie.data.assignments),
+        None,
+    )
+    if arr_iedge is None:
+        return None
+    arr_sym = None
+    accum_name = None
+    cmp_is_gt = None
+    if cmp_lhs_sym in arr_iedge.data.assignments:
+        arr_sym, accum_name = cmp_lhs_sym, cmp_rhs_sym
+        # cmp is ``arr_sym <op> accum`` -- ``>``/``>=`` => max
+        cmp_is_gt = isinstance(cmp_op, _CMP_GT)
+    elif cmp_rhs_sym in arr_iedge.data.assignments:
+        arr_sym, accum_name = cmp_rhs_sym, cmp_lhs_sym
+        # cmp is ``accum <op> arr_sym`` -- ``<``/``<=`` => max (because the
+        # guard fires when accum is the smaller side, meaning arr_sym is larger)
+        cmp_is_gt = isinstance(cmp_op, _CMP_LT)
+    if arr_sym is None:
+        return None
+
+    arr_rhs = arr_iedge.data.assignments[arr_sym]
+    try:
+        arr_tree = ast.parse(arr_rhs.strip(), mode='eval').body
+    except SyntaxError:
+        return None
+    if not isinstance(arr_tree, ast.Subscript) or not isinstance(arr_tree.value, ast.Name):
+        return None
+    array_name = arr_tree.value.id
+    desc = sdfg.arrays.get(array_name)
+    if desc is None:
+        return None
+
+    # The TRUE branch body must be a single state whose only effect is
+    # ``accum_name = arr[i]`` (or ``accum_name = arr_sym``). Inspect by
+    # finding an AccessNode write to ``accum_name`` that has a single
+    # in-edge tracing back through a passthrough chain to a read of
+    # ``array_name`` -- delegate the chain walk to ``_chase_forward_to_accum``
+    # in reverse via the simpler shape we expect.
+    branch_states = [s for s in branch_body.nodes() if isinstance(s, SDFGState)]
+    if len(branch_states) != 1:
+        return None
+    body_state = branch_states[0]
+
+    accum_writes = [
+        n for n in body_state.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data == accum_name and body_state.in_degree(n) > 0
+    ]
+    array_reads = [
+        n for n in body_state.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data == array_name and body_state.out_degree(n) > 0
+    ]
+    if len(accum_writes) != 1 or len(array_reads) != 1:
+        return None
+
+    # Per-iteration array subset (the carry-input form ``arr[i]``).
+    array_read_edges = [e for e in body_state.out_edges(array_reads[0]) if e.data and not e.data.is_empty()]
+    if len(array_read_edges) != 1:
+        return None
+    array_subset = array_read_edges[0].data.subset
+    if not _uses(array_subset, loop_var_sym):
+        return None
+    if _one_elem(array_subset) != 1:
+        return None
+
+    # Accumulator slot from the body's write to accum_name.
+    accum_write_edges = [e for e in body_state.in_edges(accum_writes[0]) if e.data and not e.data.is_empty()]
+    if len(accum_write_edges) != 1:
+        return None
+    accum_subset = accum_write_edges[0].data.subset
+    if _one_elem(accum_subset) != 1 or _uses(accum_subset, loop_var_sym):
+        return None
+
+    wcr = _CALL_TO_WCR["max"] if cmp_is_gt else _CALL_TO_WCR["min"]
+    expanded = _expand_over_loop(array_subset, loop_var_sym, start, end)
+    if expanded is None:
+        return None
+    return _Reduction(wcr, accum_name, accum_subset, array_name, expanded)
 
 
 def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
@@ -754,17 +913,28 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     arr_an = body.add_read(info.array)
     priv_an = body.add_write(priv_name)
     # ``info.array_subset`` is the union-over-iterations extent the ``Reduce``
-    # libnode consumes (typically the whole array), which is too wide for an
-    # in-body element-by-element accumulate. Project each loop-spanning axis
-    # onto the loop variable; leave loop-invariant constant slices as-is.
+    # libnode consumes; project each axis whose range matches the loop
+    # iteration span (``loop_start`` -> ``loop_end``) back onto the loop
+    # variable plus a per-iter offset. Loop-invariant constant slices stay
+    # as-is. Catches both the full-array case (``a[0:N]`` for ``range(N)``)
+    # and the offset case (``a[1:N]`` for ``range(1, N)`` -- TSVC s314).
     iter_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    array_shape = root.arrays[info.array].shape
+    loop_start = loop_analysis.get_init_assignment(loop)
+    loop_end = loop_analysis.get_loop_end(loop)
     per_iter_ranges = []
     for axis, (lo, hi, st) in enumerate(info.array_subset.ndrange()):
-        full_axis = (lo == 0 and st == 1 and symbolic.inequal_symbols(hi, 0)
-                     and not symbolic.inequal_symbols(hi + 1, array_shape[axis]))
-        if full_axis:
-            per_iter_ranges.append((iter_sym, iter_sym, 1))
+        axis_len = symbolic.simplify(hi - lo + 1)
+        # An axis whose extent equals the loop's iteration count is the
+        # reduction axis. Per-iter index is ``iter_sym + (lo - loop_start)``.
+        is_reduction_axis = False
+        if loop_start is not None and loop_end is not None and st == 1:
+            iters = symbolic.simplify(loop_end - loop_start + 1)
+            if not symbolic.inequal_symbols(axis_len, iters):
+                is_reduction_axis = True
+        if is_reduction_axis:
+            offset = symbolic.simplify(lo - loop_start)
+            idx = symbolic.simplify(iter_sym + offset)
+            per_iter_ranges.append((idx, idx, 1))
         else:
             per_iter_ranges.append((lo, hi, st))
     body.add_edge(
