@@ -129,3 +129,21 @@ def test_format_float_is_idempotent_under_parse_and_reformat(value):
     s2 = _format_float(float(s1))
     assert s1 == s2, f'_format_float not idempotent: {value!r} -> {s1!r} -> {s2!r}'
     assert float(s1) == float(value), (f'_format_float loses precision for {value!r}: parsed back as {float(s1)!r}')
+
+
+@pytest.mark.parametrize('value', [1.0 / 21.0, 0.1 + 0.2, 1e-300, 1e300, 5.0, 3.14])
+def test_serialize_symbolic_float_path_is_idempotent(value):
+    """``serialize_symbolic`` dispatches on type: ``isinstance(expr, float)`` is a
+    distinct branch from ``isinstance(expr, sympy.Basic)``. Both must produce the
+    SAME 17-sig-digit shortest-round-trip form -- otherwise a SymbolicProperty
+    that was set as a Python float gets a 15-digit string on save 1 (sympy's
+    default sstr) and a 17-digit string on save 2 (DaceSympySerializer), breaking
+    the SDFG save -> load -> save equality check (e.g. FFT/IFFT
+    ``factor = 1/21`` regressed this way).
+    """
+    from dace.symbolic import serialize_symbolic, deserialize_symbolic
+    s1 = serialize_symbolic(value)
+    loaded = deserialize_symbolic(s1)
+    s2 = serialize_symbolic(loaded)
+    assert s1 == s2, (f'serialize_symbolic not idempotent across the float/sympy.Basic branches: '
+                      f'save 1 (float)={s1!r}, save 2 (sympy.Float)={s2!r}')
