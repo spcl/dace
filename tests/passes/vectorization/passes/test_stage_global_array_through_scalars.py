@@ -124,25 +124,17 @@ def _has_global_to_tasklet_edge(sdfg: dace.SDFG, array_name: str) -> bool:
 # Input SDFG builders (construction API)
 # ---------------------------------------------------------------------------
 def _build_single_global_array_chain(name: str, *, s1: str, s2: str, shape, strides) -> dace.SDFG:
-    """Build ``T1 -> A(global) -> T2`` over a single global array.
+    """Build ``T1 -> A(global) -> T2`` inside a single-iteration Map.
 
-    A single state computes:
-
-    - ``T1``: ``A[s1] = src[0] + 1.0``  (writes the global array at ``s1``)
-    - ``T2``: ``dst[0] = A[s2] * 2.0``  (reads the global array at ``s2``)
-
-    ``A`` is a single non-transient array bridging the two tasklets — the exact
-    ``Tasklet1 -> A(global) -> Tasklet2`` pattern. ``s1`` and ``s2`` are textual
-    subset strings: disjoint constants (e.g. ``"0"`` / ``"1"``) make a Case-A
-    kernel, identical constants make a Case-B (RMW) kernel.
-
-    The form is deliberately unmapped (a flat producer/consumer state) so the
-    pattern is unambiguous and the SDFG runs as a clean numerical reference; the
-    pass targets the data hop, not the surrounding map.
+    The Map body holds only tasklets and access nodes (the no-NSDFG
+    restriction the staging pass enforces). For ``s1 != s2`` the read
+    subset is sourced from an outer ``A`` access node via the Map's
+    entry; ``s1 == s2`` is RMW (the in-iteration write satisfies the
+    read directly).
 
     :param name: SDFG name.
     :param s1: Subset string written by ``T1`` (e.g. ``"0"`` or ``"0, 0"``).
-    :param s2: Subset string read by ``T2`` (e.g. ``"0, 1"``).
+    :param s2: Subset string read by ``T2``.
     :param shape: Shape of the global array ``A``.
     :param strides: Strides for ``A``.
     :returns: The constructed SDFG.
@@ -155,15 +147,25 @@ def _build_single_global_array_chain(name: str, *, s1: str, s2: str, shape, stri
 
     src = state.add_access("src")
     dst = state.add_access("dst")
-    a_node = state.add_access("A")
-
+    outer_a_in = state.add_access("A")
+    outer_a_out = state.add_access("A")
+    me, mx = state.add_map("stage_map", dict(_i="0:1"))
+    bridge = state.add_access("A")
     t1 = state.add_tasklet("t1", {"_in"}, {"_out"}, "_out = _in + 1.0")
     t2 = state.add_tasklet("t2", {"_in"}, {"_out"}, "_out = _in * 2.0")
 
-    state.add_edge(src, None, t1, "_in", dace.memlet.Memlet("src[0]"))
-    state.add_edge(t1, "_out", a_node, None, dace.memlet.Memlet(f"A[{s1}]"))
-    state.add_edge(a_node, None, t2, "_in", dace.memlet.Memlet(f"A[{s2}]"))
-    state.add_edge(t2, "_out", dst, None, dace.memlet.Memlet("dst[0]"))
+    state.add_memlet_path(src, me, t1, dst_conn="_in", memlet=dace.Memlet("src[0]"))
+    state.add_edge(t1, "_out", bridge, None, dace.Memlet(f"A[{s1}]"))
+    state.add_edge(bridge, None, t2, "_in", dace.Memlet(f"A[{s2}]"))
+    state.add_memlet_path(t2, mx, dst, src_conn="_out", memlet=dace.Memlet("dst[0]"))
+    # Always source the bridge from the outer-A-in side so the writes
+    # to ``A[s1]`` are not aliased away by the codegen when ``s1 == s2``.
+    # The full-array read keeps the inner bridge in sync with the outer
+    # array on entry, the write at ``s1`` then takes effect via the
+    # drain on exit.
+    full = ",".join(f"0:{s}" for s in shape)
+    state.add_memlet_path(outer_a_in, me, bridge, memlet=dace.Memlet(f"A[{full}]"))
+    state.add_memlet_path(bridge, mx, outer_a_out, memlet=dace.Memlet(f"A[{full}]"))
 
     sdfg.validate()
     return sdfg
@@ -305,9 +307,51 @@ def _run_and_compare(build_fn, name: str, arrays, params):
     ref.compile()(**ref_arrays, **params)
     vec.compile()(**vec_arrays, **params)
     for key in arrays:
-        numpy.testing.assert_allclose(vec_arrays[key], ref_arrays[key], rtol=RTOL, atol=ATOL,
+        numpy.testing.assert_allclose(vec_arrays[key],
+                                      ref_arrays[key],
+                                      rtol=RTOL,
+                                      atol=ATOL,
                                       err_msg=f"{name}: array {key!r} diverged after staging")
     return vec
+
+
+def _run_and_compare_python(build_fn, name: str, arrays, params, python_ref):
+    """Compile + run the pass-applied SDFG, then compare against a pure-Python reference.
+
+    This is the StageGlobalArrayThroughScalars-only second arm of every
+    fixture's correctness check: the pass-applied SDFG must produce the
+    same output as a NumPy-only model of the kernel, NOT just the same
+    output as its un-transformed twin. The SDFG-vs-SDFG check in
+    :func:`_run_and_compare` catches "the pass changed the SDFG's
+    output"; this check catches "the pass and the fixture are both
+    consistently wrong".
+
+    :param build_fn: Zero-arg builder returning a fresh input SDFG.
+    :param name: Base SDFG name (suffixed for the build dir).
+    :param arrays: Mapping of array-arg name -> numpy array.
+    :param params: Mapping of scalar / symbol arg name -> value.
+    :param python_ref: Callable ``(arrays_copy, params) -> arrays_copy``
+        that mutates an array dict in place to the expected post-kernel
+        state. The fixture's plain-Python model.
+    """
+    vec = build_fn(name + "_pyvec")
+    StageGlobalArrayThroughScalars().apply_pass(vec, {})
+    vec.validate()
+
+    sdfg_arrays = {k: copy.deepcopy(v) for k, v in arrays.items()}
+    vec.compile()(**sdfg_arrays, **params)
+
+    expected = {k: copy.deepcopy(v) for k, v in arrays.items()}
+    python_ref(expected, params)
+
+    for key in arrays:
+        numpy.testing.assert_allclose(
+            sdfg_arrays[key],
+            expected[key],
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=f"{name}: array {key!r} drifted from the pure-Python reference",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -317,11 +361,7 @@ def test_disjoint_constant_dim_is_case_a_structure():
     """A 1-D global array written at ``A[0]`` and read at ``A[1]`` is a Case-A
     occurrence: the pass inserts TWO transient scalars and the global array
     keeps its store but loses the direct ``A -> T2`` feed."""
-    sdfg = _build_single_global_array_chain("stage_disjoint_struct",
-                                            s1="0",
-                                            s2="1",
-                                            shape=(4, ),
-                                            strides=(1, ))
+    sdfg = _build_single_global_array_chain("stage_disjoint_struct", s1="0", s2="1", shape=(4, ), strides=(1, ))
     n_before = len(_transient_scalars(sdfg))
     applied = StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
     sdfg.validate()
@@ -335,6 +375,30 @@ def test_disjoint_constant_dim_is_case_a_structure():
     assert not _has_global_to_tasklet_edge(sdfg, "A"), "T2 must read a transient, not the global node"
 
 
+def _python_ref_single_global_array_chain(s1, s2):
+    """Build the pure-Python model of :func:`_build_single_global_array_chain`.
+
+    The fixture's kernel:
+        A[s1] = src[0] + 1.0
+        dst[0] = A[s2] * 2.0  # reads the post-write A at s2 when s1 == s2
+
+    Returns a closure mutating its first argument's ``A`` / ``dst`` in place.
+    """
+
+    def _ref(arrays, params):
+        A = arrays["A"]
+        src = arrays["src"]
+        dst = arrays["dst"]
+        # Honour single-element subset semantics: ``s1`` / ``s2`` are
+        # whitespace-tolerant comma-separated index expressions.
+        idx1 = tuple(int(t.strip()) for t in s1.split(","))
+        idx2 = tuple(int(t.strip()) for t in s2.split(","))
+        A[idx1] = src[0] + 1.0
+        dst[0] = A[idx2] * 2.0
+
+    return _ref
+
+
 def test_disjoint_constant_dim_is_case_a_numerics():
     """Case-A staging is value-preserving for the disjoint 1-D kernel."""
     rng = numpy.random.default_rng(seed=0)
@@ -345,6 +409,8 @@ def test_disjoint_constant_dim_is_case_a_numerics():
     }
     _run_and_compare(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="1", shape=(4, ), strides=(1, )),
                      "stage_disjoint_num", arrays, {})
+    _run_and_compare_python(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="1", shape=(4, ), strides=(1, )),
+                            "stage_disjoint_num", arrays, {}, _python_ref_single_global_array_chain("0", "1"))
 
 
 def test_disjoint_multidim_offsets_is_case_a_numerics():
@@ -361,6 +427,10 @@ def test_disjoint_multidim_offsets_is_case_a_numerics():
         lambda nm: _build_single_global_array_chain(
             nm, s1="1, 0", s2="3, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_disjoint_offset",
         arrays, {})
+    _run_and_compare_python(
+        lambda nm: _build_single_global_array_chain(
+            nm, s1="1, 0", s2="3, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_disjoint_offset",
+        arrays, {}, _python_ref_single_global_array_chain("1, 0", "3, 0"))
 
 
 # ---------------------------------------------------------------------------
@@ -368,24 +438,19 @@ def test_disjoint_multidim_offsets_is_case_a_numerics():
 # ---------------------------------------------------------------------------
 def test_identical_subset_is_case_b_structure():
     """A global element written and then read at the SAME subset ``A[0]`` is a
-    Case-B RMW: the pass inserts ONE transient scalar carrying the value
-    ``T1 -> T2``, plus an assignment tasklet storing it to the global array."""
-    sdfg = _build_single_global_array_chain("stage_rmw_struct",
-                                            s1="0",
-                                            s2="0",
-                                            shape=(1, ),
-                                            strides=(1, ))
+    Case-B RMW: the pass inserts ONE transient scalar that serves both producer
+    and consumer, drains to the global through the enclosing ``MapExit`` chain
+    (no extra assignment tasklet needed), and the consumer no longer reads
+    the global node directly."""
+    sdfg = _build_single_global_array_chain("stage_rmw_struct", s1="0", s2="0", shape=(1, ), strides=(1, ))
     n_scalars_before = len(_transient_scalars(sdfg))
-    n_tasklets_before = _count_tasklets(sdfg)
     applied = StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
     sdfg.validate()
 
     assert applied, "expected the RMW chain to be staged"
-    # Case B introduces one fresh transient scalar.
+    # Case B introduces one fresh transient scalar (shared by producer / consumer).
     assert len(_transient_scalars(sdfg)) >= n_scalars_before + 1, "Case B must add a transient scalar"
-    # Case B adds an assignment tasklet for the global store.
-    assert _count_tasklets(sdfg) > n_tasklets_before, "Case B must add an assignment tasklet"
-    # The global array still receives the stored value.
+    # The global array still receives the stored value via the MapExit drain.
     assert _global_write_edges(sdfg, "A"), "global store to A must be preserved"
     # The consumer reads the transient, not the global node.
     assert not _has_global_to_tasklet_edge(sdfg, "A"), "T2 must read the transient, not the global node"
@@ -401,6 +466,8 @@ def test_identical_subset_is_case_b_numerics():
     }
     _run_and_compare(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="0", shape=(1, ), strides=(1, )),
                      "stage_rmw_num", arrays, {})
+    _run_and_compare_python(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="0", shape=(1, ), strides=(1, )),
+                            "stage_rmw_num", arrays, {}, _python_ref_single_global_array_chain("0", "0"))
 
 
 def test_overlapping_multidim_subset_is_case_b_numerics():
@@ -416,6 +483,10 @@ def test_overlapping_multidim_subset_is_case_b_numerics():
     _run_and_compare(
         lambda nm: _build_single_global_array_chain(
             nm, s1="2, 0", s2="2, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_rmw_2d", arrays, {})
+    _run_and_compare_python(
+        lambda nm: _build_single_global_array_chain(
+            nm, s1="2, 0", s2="2, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_rmw_2d", arrays, {},
+        _python_ref_single_global_array_chain("2, 0", "2, 0"))
 
 
 # ---------------------------------------------------------------------------
@@ -432,12 +503,21 @@ def test_multidim_global_disjoint_species_numerics():
         "dst": numpy.zeros(1),
     }
     vec = _run_and_compare(
-        lambda nm: _build_single_global_array_chain(
-            nm, s1="1, 1, 4", s2="1, 1, 2", shape=(NSPECIES, NSPECIES, NSPECIES), strides=(NSPECIES * NSPECIES,
-                                                                                           NSPECIES, 1)),
-        "stage_multidim", arrays, {})
+        lambda nm: _build_single_global_array_chain(nm,
+                                                    s1="1, 1, 4",
+                                                    s2="1, 1, 2",
+                                                    shape=(NSPECIES, NSPECIES, NSPECIES),
+                                                    strides=(NSPECIES * NSPECIES, NSPECIES, 1)), "stage_multidim",
+        arrays, {})
     # Two transient scalars for the disjoint species hop.
     assert len(_transient_scalars(vec)) >= 2, "multi-dim disjoint hop must stage through two scalars"
+    _run_and_compare_python(
+        lambda nm: _build_single_global_array_chain(nm,
+                                                    s1="1, 1, 4",
+                                                    s2="1, 1, 2",
+                                                    shape=(NSPECIES, NSPECIES, NSPECIES),
+                                                    strides=(NSPECIES * NSPECIES, NSPECIES, 1)), "stage_multidim",
+        arrays, {}, _python_ref_single_global_array_chain("1, 1, 4", "1, 1, 2"))
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +590,6 @@ def test_pass_is_idempotent_case_a():
 
 # The cloudsc-pattern (zqlhs / zsolqb reuse) tests live separately in
 # ``test_stage_global_array_cloudsc.py``.
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
