@@ -302,5 +302,54 @@ def test_positive_control_disjoint_strides_becomes_map():
     assert np.array_equal(a, ref)
 
 
+_CR_N = dace.symbol('CR_N')
+
+
+@dace.program
+def _forward_dep_recurrence(a: dace.float64[_CR_N], b: dace.float64[_CR_N], c: dace.float64[_CR_N],
+                            d: dace.float64[_CR_N], e: dace.float64[_CR_N]):
+    """Forward loop-carried dependency: ``a[i] = ... + a[i+1] * ...`` reads
+    the value at a position another iteration WRITES. Mirrors the TSVC s243
+    body."""
+    for i in range(_CR_N - 1):
+        a[i] = b[i] + c[i] * d[i]
+        b[i] = a[i] + d[i] * e[i]
+        a[i] = b[i] + a[i + 1] * d[i]
+
+
+def test_loop_to_map_refuses_forward_carried_read():
+    """``LoopToMap`` must refuse a loop where a read of an array references a
+    position that another iteration WRITES (forward / backward loop-carried
+    dependency, even when each iteration's write is per-iteration unique).
+
+    Pre-fix the write-pattern check alone accepted the loop because every
+    write ``a[i]`` matched ``a*i + b``; the read ``a[i+1]`` slipped through
+    because the same-iteration disjoint check found no overlap WITHIN one
+    iteration. The new carried-read check refuses when any read references
+    the iter symbol at an offset that doesn't match the write pattern."""
+    sdfg = _forward_dep_recurrence.to_sdfg(simplify=True)
+    applied = sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
+    assert applied == 0, ('LoopToMap must refuse a forward-carried recurrence '
+                          f'(``a[i] = ... a[i+1]``); got applied={applied}.')
+
+    n = 32
+    rng = np.random.default_rng(0)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    c = rng.standard_normal(n)
+    d = rng.standard_normal(n)
+    e = rng.standard_normal(n)
+    ra, rb = a.copy(), b.copy()
+    for i in range(n - 1):
+        ra[i] = rb[i] + c[i] * d[i]
+        rb[i] = ra[i] + d[i] * e[i]
+        ra[i] = rb[i] + ra[i + 1] * d[i]
+    sa, sb = a.copy(), b.copy()
+    sdfg(a=sa, b=sb, c=c.copy(), d=d.copy(), e=e.copy(), CR_N=n)
+    assert np.allclose(sa, ra), f'a mismatch: max diff {np.abs(sa - ra).max():.2e}'
+    assert np.allclose(sb, rb), f'b mismatch: max diff {np.abs(sb - rb).max():.2e}'
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

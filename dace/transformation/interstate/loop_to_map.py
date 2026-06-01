@@ -102,6 +102,60 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return found
 
 
+def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
+    """Whether every read of ``conn``'s array *inside* ``nsdfg_node`` matches
+    the SAME ``a*i+b`` pattern as the writes do, or is loop-invariant.
+
+    The companion of :func:`_nested_writes_iter_indexed`. The write check
+    proves per-iteration UNIQUENESS of writes. A loop-carried READ of the
+    same array at a DIFFERENT iter-indexed position
+    (``a[i] = ... + a[i+1] * ...``) would still race when parallelised:
+    iteration ``i`` reads ``a[i+1]`` while iteration ``i+1`` writes
+    ``a[i+1]``.
+
+    The check is conservative: every inner read of the carrier array must
+    either match ``a*i+b`` (the same affine form the writes use) OR be
+    loop-invariant (its subset does not reference the outer ``itersym``).
+    Nested NestedSDFGs are walked recursively, composing the symbol maps.
+
+    :returns: ``True`` if no carried-read pattern is found, ``False`` if any
+              inner read references the carrier array at a position outside
+              the write's affine form.
+    """
+    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
+    for state in nsdfg_node.sdfg.all_states():
+        for dn in state.data_nodes():
+            if dn.data != conn or state.out_degree(dn) == 0:
+                continue
+            for e in state.out_edges(dn):
+                if e.data is None:
+                    continue
+                if isinstance(e.dst, nodes.NestedSDFG):
+                    # The read enters another nested SDFG; descend.
+                    if not _nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step):
+                        return False
+                    continue
+                src_subset = e.data.get_src_subset(e, state)
+                if src_subset is None:
+                    return False
+                outer = copy.deepcopy(src_subset)
+                outer.replace(repl)
+                # Loop-invariant read: no itersym in the subset -- safe (the
+                # same value is read every iteration).
+                free = set()
+                for rb, re, _ in outer.ndrange():
+                    for expr in (rb, re):
+                        if hasattr(expr, 'free_symbols'):
+                            free |= set(expr.free_symbols)
+                if itersym not in free:
+                    continue
+                # Read references itersym: must match the same a*i+b form
+                # the writes match. If not, it's a carried read.
+                if not _check_range(outer, a, itersym, b, step):
+                    return False
+    return True
+
+
 def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     """ Finds the indices or ranges of a subset that depend on the iteration
         variable. Returns their index in the subset's indices/ranges list.
@@ -339,12 +393,59 @@ class LoopToMap(xf.MultiStateTransformation):
                             # per-iteration write; look past the connector.
                             if not ok and isinstance(e.src, nodes.NestedSDFG):
                                 ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
+                                # The NSDFG descent only proves WRITES are
+                                # per-iteration unique. A loop-carried READ of
+                                # the same array at a DIFFERENT iter-indexed
+                                # position (e.g. ``a[i+1]`` while writing
+                                # ``a[i]``) is a forward / backward dependence
+                                # that the parallel form would race on.
+                                # Require every inner read of ``conn`` to
+                                # match the SAME ``a*i+b`` form the writes
+                                # match (or be loop-invariant -- no itersym).
+                                if ok and not _nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
+                                    ok = False
                             if not ok and not permissive:
                                 return refuse(f"write to {dn.data} is not uniquely indexed by the iteration variable "
                                               f"(needs an a*i+b subset) - dst_subset={dst_subset}")
                         # End of check
 
                         write_memlets[dn.data].append(e.data)
+
+        # Carried-read check: for every array also written in the loop, every
+        # in-loop READ subset must either be loop-invariant (no itersym) or
+        # match the SAME ``a*i+b`` form the writes match. A read at a
+        # DIFFERENT iter-indexed offset (e.g. ``a[i+1]`` while writing ``a[i]``)
+        # is a forward/backward loop-carried dependency that the parallel
+        # form would race on -- iteration ``i`` reads ``a[i+1]`` while
+        # iteration ``i+1`` writes ``a[i+1]``. The existing same-iteration
+        # disjoint check only catches reads that overlap a write within ONE
+        # iteration; cross-iteration carries slip through.
+        for state in loop_states:
+            for dn in state.data_nodes():
+                data = dn.data
+                if data not in write_memlets:
+                    continue
+                for e in state.out_edges(dn):
+                    if e.data is None:
+                        continue
+                    src_subset = e.data.get_src_subset(e, state)
+                    if src_subset is None:
+                        continue
+                    # Loop-invariant read (no itersym) is safe -- all
+                    # iterations see the same input value.
+                    free = set()
+                    for rb, re_, _ in src_subset.ndrange():
+                        for expr in (rb, re_):
+                            if hasattr(expr, 'free_symbols'):
+                                free |= set(expr.free_symbols)
+                    if itersym not in free:
+                        continue
+                    # itersym-dependent read: must match a*i+b just like the
+                    # writes do, otherwise this iteration is reading a value
+                    # another iteration writes.
+                    if not _check_range(src_subset, a, itersym, b, step) and not permissive:
+                        return refuse(f"read of {data} at {src_subset} is iter-indexed but does not match the "
+                                      f"write pattern a*i+b -- loop-carried forward/backward dependency")
 
         # Two writes with distinct affine subscripts into the same container can
         # hit the same element on different iterations even when each is
