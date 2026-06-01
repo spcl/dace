@@ -5,7 +5,6 @@ import numpy as np
 
 from dace import SDFG, InterstateEdge, Memlet
 from dace import dtypes
-from dace.sdfg import nodes
 from dace.transformation.interstate import StateFusionExtended
 
 # ---------------------------------------------------------------------------
@@ -249,6 +248,56 @@ def test_extended_fusion_refuses_unsafe_write_after_read():
     assert sdfg.number_of_nodes() == 2, 'the two states must remain separate'
 
 
+def test_same_named_writer_transient_does_not_collapse():
+    """Two states each have an intermediate scalar transient ``T`` written from
+    a *different* source subset and read by a per-state tasklet. After fusion,
+    the matcher must not merge the two ``T`` AccessNodes into one node (last-
+    writer-wins would alias both readers to the same value); the empty memlet
+    inserted via ``connections_to_make`` orders the two chains, and the second
+    chain's reader sees the second chain's writer.
+
+    Reproduces the compound-nest sibling-write shape (TSVC-style augassigns
+    over a shared per-iteration intermediate buffer)."""
+    sdfg = SDFG('fuse_same_named_writer_transient')
+    sdfg.add_array('arr', [8], dtypes.float64)
+    sdfg.add_array('out1', [1], dtypes.float64)
+    sdfg.add_array('out2', [1], dtypes.float64)
+    sdfg.add_transient('t', [1], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    # state1: arr[k] -> t -> out1
+    ar1 = s1.add_read('arr')
+    tw1 = s1.add_access('t')
+    ow1 = s1.add_write('out1')
+    cp1 = s1.add_tasklet('cp1', {'i'}, {'o'}, 'o = i')
+    rd1 = s1.add_tasklet('rd1', {'i'}, {'o'}, 'o = i')
+    s1.add_edge(ar1, None, cp1, 'i', Memlet('arr[k]'))
+    s1.add_edge(cp1, 'o', tw1, None, Memlet('t[0]'))
+    s1.add_edge(tw1, None, rd1, 'i', Memlet('t[0]'))
+    s1.add_edge(rd1, 'o', ow1, None, Memlet('out1[0]'))
+
+    # state2: arr[k+1] -> t -> out2
+    ar2 = s2.add_read('arr')
+    tw2 = s2.add_access('t')
+    ow2 = s2.add_write('out2')
+    cp2 = s2.add_tasklet('cp2', {'i'}, {'o'}, 'o = i')
+    rd2 = s2.add_tasklet('rd2', {'i'}, {'o'}, 'o = i')
+    s2.add_edge(ar2, None, cp2, 'i', Memlet('arr[k+1]'))
+    s2.add_edge(cp2, 'o', tw2, None, Memlet('t[0]'))
+    s2.add_edge(tw2, None, rd2, 'i', Memlet('t[0]'))
+    s2.add_edge(rd2, 'o', ow2, None, Memlet('out2[0]'))
+    sdfg.validate()
+
+    arr = np.arange(8, dtype=np.float64) * 1.0  # arr[k] = k
+    out1 = np.zeros(1, dtype=np.float64)
+    out2 = np.zeros(1, dtype=np.float64)
+    _assert_fusion_preserves_semantics(sdfg, 1, arr=arr, out1=out1, out2=out2)
+
+
 if __name__ == '__main__':
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
@@ -256,3 +305,4 @@ if __name__ == '__main__':
     test_waw_write_after_write()
     test_war_write_after_read()
     test_rar_read_after_read_no_hazard()
+    test_same_named_writer_transient_does_not_collapse()

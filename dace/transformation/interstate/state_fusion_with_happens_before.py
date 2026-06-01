@@ -602,7 +602,20 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # If not source node, try to connect every memlet-intersecting candidate
             if not source_node:
+                # WAW guard: refuse the same-name merge when ``can_be_applied``
+                # flagged a write-write hazard for this (cand, node) data via
+                # ``connections_to_make`` (cross-CC sibling writes that need
+                # happens-before ordering, not last-writer-wins collapse). The
+                # empty memlet added above wires the ordering; leaving both
+                # AccessNodes distinct is what preserves correctness when the two
+                # chains write different source data to the same shared scalar.
+                # Pinned by compound_nest's per-iteration ``arr_index`` (TSVC-
+                # shape sibling tasklets where both writers feed disjoint ``arr``
+                # subsets).
+                node_waw_flagged = any(node in conn[1] for conn in self.connections_to_make)
                 for cand in candidates:
+                    if node_waw_flagged and first_state.in_degree(cand) > 0:
+                        continue
                     if StateFusionExtended.memlets_intersect(first_state, [cand], False, second_state, [node], True):
                         if nx.has_path(first_state._nx, cand, node):  # Do not create cycles
                             continue
