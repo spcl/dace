@@ -339,7 +339,22 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         # chain in this state. The flat NSDFG-internal case relies on
         # the parent state's Map for persistence: the bridge's outer
         # data lives behind the NSDFG's connectors, so we leave the
-        # scalar reroute alone.
+        # scalar reroute alone EXCEPT when the bridge is an NSDFG
+        # OUT-connector — then the parent state's view of this array
+        # comes from the bridge's incoming edges, and if every write
+        # is redirected to the per-key scalar with no path back to the
+        # bridge, the NSDFG's outer write is silently dropped (D in
+        # ``cloudsc_snippet_two[fp_factor]`` regresses to whatever the
+        # caller passed in). Bridge an additional ``scalar -> bridge``
+        # edge per write_key so the out-connector still receives the
+        # staged value, and keep the bridge alive even when its
+        # incoming-edge count reaches zero through the orphan-removal
+        # at the end of the rewrite.
+        bridge_is_out_connector = False
+        if not entries:
+            parent_nsdfg_node = sdfg.parent_nsdfg_node
+            if parent_nsdfg_node is not None and array_name in parent_nsdfg_node.out_connectors:
+                bridge_is_out_connector = True
         if entries and outer_drain is not None:
             for k in write_keys:
                 self._add_scoped_path(state,
@@ -356,6 +371,13 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                                       dst=scalar_nodes[k],
                                       array_name=array_name,
                                       subset=reads_by_key[k]["subset"])
+        elif bridge_is_out_connector:
+            # NSDFG out-connector path: each scalar still has to write back
+            # to the bridge AccessNode so the NSDFG's outer view receives
+            # the staged value. One ``scalar -> bridge`` edge per write_key.
+            for k in write_keys:
+                state.add_edge(scalar_nodes[k], None, bridge, None,
+                               Memlet(data=array_name, subset=writes_by_key[k]["subset"]))
 
         # W x R cross-product dep edges (empty memlets) -- enforce
         # all-writes-before-all-reads ordering for cross-subset hops.
@@ -365,13 +387,20 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             for rk in sorted(read_only_keys):
                 state.add_edge(scalar_nodes[wk], None, scalar_nodes[rk], None, Memlet())
 
-        if bridge in state.nodes() and state.in_degree(bridge) == 0 and state.out_degree(bridge) == 0:
+        # Keep the bridge alive when it is the out-connector path's
+        # final sink for the staged writes — the NSDFG's outer view
+        # reads from it. Otherwise drop the bridge if it has been left
+        # disconnected by the producer / consumer redirects.
+        if (not bridge_is_out_connector and bridge in state.nodes() and state.in_degree(bridge) == 0
+                and state.out_degree(bridge) == 0):
             state.remove_node(bridge)
         # The bridge's source purge may have left a now-isolated outer
         # input access node for the same array (it only fed the bridge's
         # MapEntry-source path). Drop any such orphans so the SDFG
         # validates.
         for n in list(state.data_nodes()):
+            if n is bridge and bridge_is_out_connector:
+                continue
             if n.data == array_name and state.in_degree(n) == 0 and state.out_degree(n) == 0:
                 state.remove_node(n)
         return True
