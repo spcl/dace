@@ -2453,31 +2453,94 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # (matching the lib node's memlet contract).
             src_arr_desc = inner.arrays.get(src_access.data)
             if (src_arr_desc is not None and tuple(src_arr_desc.shape) != tuple(W) and src_access.data != _INNER_MASK):
-                load_cls = self._box_classification(src_subset, src_arr_desc, spec.iter_vars, src_access.data)
-                load_name = f"_brd_{src_access.data}"
-                suffix = 0
-                while load_name in inner.arrays:
-                    suffix += 1
-                    load_name = f"_brd_{src_access.data}_{suffix}"
-                inner.add_array(load_name,
-                                list(W),
-                                src_arr_desc.dtype,
-                                storage=dace.dtypes.StorageType.Register,
-                                transient=True)
-                load = TileLoad(name=f"brd_{src_access.data}",
-                                widths=W,
-                                dim_strides=tuple(load_cls.dim_strides),
-                                src_dims=tuple(load_cls.match_dims),
-                                has_mask=mask_acc is not None)
-                istate.add_node(load)
-                load_in_subset = _tile_region_subset(src_subset, spec.iter_vars, W) if src_subset is not None else None
-                load_in_memlet = (dace.Memlet(data=src_access.data, subset=load_in_subset)
-                                  if load_in_subset is not None else dace.Memlet(f"{src_access.data}[{subset}]"))
-                istate.add_edge(src_access, None, load, TileConnectors.SRC, load_in_memlet)
-                self._wire_mask(istate, mask_acc, load, subset)
-                tile_acc = istate.add_access(load_name)
-                istate.add_edge(load, TileConnectors.DST, tile_acc, None, dace.Memlet(f"{load_name}[{subset}]"))
-                src_access = tile_acc
+                # Detect a length-1 / Scalar source — broadcast directly via
+                # ``TileLoad(src_kind="Scalar")`` (one tile op, no per-lane
+                # indexing). Distinguishes a real ``dace.data.Scalar`` (passed
+                # by value, no subset) from a length-1 ``Array`` (pointer,
+                # subset ``[0]``).
+                # GUARD: only emit Scalar broadcast when the OUTER edge's
+                # subset is tile-var-free (a true loop-invariant scalar input).
+                # When the outer subset has a tile-var dep (``a[jk]`` with jk
+                # = K-tile var), the inner array is refined to ``(1,)`` per
+                # iteration but each K-tile-lane needs a DIFFERENT value
+                # along that var; lowering as Scalar would silently broadcast
+                # one element to every lane. Let the partial-binding path
+                # (still ``NotImplementedError`` here) surface the gap loudly
+                # until proper composition lands.
+                tile_var_set = set(spec.iter_vars)
+                outer_edge = next(
+                    (oe for oe in nsdfg_node.sdfg.parent.in_edges(nsdfg_node) if oe.dst_conn == src_access.data),
+                    None,
+                )
+                outer_has_tilevar_dep = False
+                if outer_edge is not None and outer_edge.data is not None and outer_edge.data.subset is not None:
+                    for (b, e, _s) in outer_edge.data.subset.ranges:
+                        for sym in (str(x) for x in dace.symbolic.pystr_to_symbolic(str(b)).free_symbols):
+                            if sym in tile_var_set:
+                                outer_has_tilevar_dep = True
+                                break
+                        if outer_has_tilevar_dep:
+                            break
+                is_scalar = isinstance(src_arr_desc, dace.data.Scalar)
+                is_len1_array = (isinstance(src_arr_desc, dace.data.Array)
+                                 and all(bool(dace.symbolic.simplify(s == 1)) for s in src_arr_desc.shape))
+                if (is_scalar or is_len1_array) and not outer_has_tilevar_dep:
+                    load_name = f"_brd_{src_access.data}"
+                    suffix = 0
+                    while load_name in inner.arrays:
+                        suffix += 1
+                        load_name = f"_brd_{src_access.data}_{suffix}"
+                    inner.add_array(load_name,
+                                    list(W),
+                                    src_arr_desc.dtype,
+                                    storage=dace.dtypes.StorageType.Register,
+                                    transient=True)
+                    load = TileLoad(name=f"brd_{src_access.data}",
+                                    widths=W,
+                                    src_kind="Scalar",
+                                    has_mask=mask_acc is not None)
+                    istate.add_node(load)
+                    if is_scalar:
+                        load_in_memlet = dace.Memlet(data=src_access.data)
+                    else:
+                        load_in_memlet = dace.Memlet(data=src_access.data,
+                                                     subset=subsets.Range([(0, 0, 1)] * len(src_arr_desc.shape)))
+                    istate.add_edge(src_access, None, load, TileConnectors.SRC, load_in_memlet)
+                    self._wire_mask(istate, mask_acc, load, subset)
+                    tile_acc = istate.add_access(load_name)
+                    istate.add_edge(load, TileConnectors.DST, tile_acc, None, dace.Memlet(f"{load_name}[{subset}]"))
+                    src_access = tile_acc
+                else:
+                    # Non-Scalar mismatch (e.g. partial-binding 1-D source) —
+                    # the classifier still raises ``NotImplementedError`` for
+                    # K>=2 ``BROADCAST_SYMBOL`` here, surfaced loudly until
+                    # the partial-binding TileLoad composition lands.
+                    load_cls = self._box_classification(src_subset, src_arr_desc, spec.iter_vars, src_access.data)
+                    load_name = f"_brd_{src_access.data}"
+                    suffix = 0
+                    while load_name in inner.arrays:
+                        suffix += 1
+                        load_name = f"_brd_{src_access.data}_{suffix}"
+                    inner.add_array(load_name,
+                                    list(W),
+                                    src_arr_desc.dtype,
+                                    storage=dace.dtypes.StorageType.Register,
+                                    transient=True)
+                    load = TileLoad(name=f"brd_{src_access.data}",
+                                    widths=W,
+                                    dim_strides=tuple(load_cls.dim_strides),
+                                    src_dims=tuple(load_cls.match_dims),
+                                    has_mask=mask_acc is not None)
+                    istate.add_node(load)
+                    load_in_subset = (_tile_region_subset(src_subset, spec.iter_vars, W)
+                                      if src_subset is not None else None)
+                    load_in_memlet = (dace.Memlet(data=src_access.data, subset=load_in_subset)
+                                      if load_in_subset is not None else dace.Memlet(f"{src_access.data}[{subset}]"))
+                    istate.add_edge(src_access, None, load, TileConnectors.SRC, load_in_memlet)
+                    self._wire_mask(istate, mask_acc, load, subset)
+                    tile_acc = istate.add_access(load_name)
+                    istate.add_edge(load, TileConnectors.DST, tile_acc, None, dace.Memlet(f"{load_name}[{subset}]"))
+                    src_access = tile_acc
             store = TileStore(name=f"store_{dst_name}",
                               widths=W,
                               dim_strides=tuple(cls.dim_strides),

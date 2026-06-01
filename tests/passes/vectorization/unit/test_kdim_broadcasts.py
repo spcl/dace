@@ -192,7 +192,6 @@ _BROADCAST_GAP_REASON = ("K>=2 BROADCAST_SYMBOL composition gap: the descent nee
                          "binding + a TileGather composition for fanned indices.")
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_scalar_broadcast_descent_to_tile_only():
     """Scalar broadcast produces 0 raw tasklets + at least one TileLoad."""
     sdfg = _scalar_broadcast.to_sdfg()
