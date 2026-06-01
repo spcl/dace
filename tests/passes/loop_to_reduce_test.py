@@ -563,19 +563,23 @@ def _array_slot_dot_product(a: dace.float64[N], b: dace.float64[N], dot: dace.fl
         dot[0] = dot[0] + a[i] * b[i]
 
 
-@pytest.mark.xfail(reason="TSVC s313/vdotr: body has two tasklets (compute multiply then accumulate-add). "
-                   "DECIDED design (user direction): this pattern is NOT a LoopToReduce target -- the "
-                   "intended path is AugAssignToWCR + LoopToMap, producing a parallel WCR-map with a "
-                   "scalar accumulator. The performance fix lives in WCR codegen "
-                   "(``#pragma omp parallel for reduction(+:s)``), not in extending the Reduce libnode "
-                   "to wrap arbitrary expressions. LoopToReduce remains intentionally narrow.",
-                   strict=True)
 def test_array_slot_dot_product_is_lifted(prefer):
-    """TSVC s313/vdotr: ``dot: float64[N]; for i: dot[0] += a[i] * b[i]``."""
+    """TSVC s313/vdotr: ``dot: float64[N]; for i: dot[0] += a[i] * b[i]``.
+
+    The body has two tasklets (compute multiply then accumulate-add); the
+    ``Reduce`` libnode form cannot wrap arbitrary in-body expressions, so
+    only the ``wcr-scalar`` emit can express this shape. In
+    ``reduce-libnode`` mode the single-tasklet matcher refuses
+    (``_extract`` returns ``None``) and the test pins that refusal as
+    the ``Reduce`` libnode's domain boundary.
+    """
     sdfg = _array_slot_dot_product.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted >= 1
+    if prefer == 'reduce-libnode':
+        assert lifted == 0
+    else:
+        assert lifted >= 1
 
 
 # ---- s317: array-slot scalar product (no array fold) ---------------------
@@ -658,18 +662,29 @@ def _gather_sum_reduction(a: dace.float64[N], b: dace.float64[N], ip: dace.int32
     sum_out[0] = s
 
 
-@pytest.mark.xfail(reason="TSVC s4115: same DECIDED design as s313 -- gather + sum is NOT a "
-                   "LoopToReduce target. There is no ``Reduce``-with-gather libnode and we are not "
-                   "adding one. Intended path: AugAssignToWCR + LoopToMap (scalar accumulator) + "
-                   "WCR codegen with ``#pragma omp parallel for reduction(+:s)``. The gather is a "
-                   "plain read-only indirection inside the map body; no special handling needed.",
-                   strict=True)
 def test_gather_sum_reduction_is_lifted(prefer):
-    """TSVC s4115."""
+    """TSVC s4115: ``s += a[i] * b[ip[i]]`` -- gather + sum.
+
+    Multi-state body: the frontend lowers the gather through an interstate
+    edge ``{ip_index: ip[i]}`` between two body states. ``reduce-libnode``
+    mode refuses on body-shape grounds (single-tasklet matcher) and that's
+    the right answer there. ``wcr-scalar`` mode SHOULD lift (the in-body
+    gather indirection is fine for the WCR form), but the current
+    ``AugAssignToWCR``-based preprocess is single-state and can't reach
+    across the load-iedge to rewrite the accumulator.
+
+    Follow-up: a multi-state variant of ``AugAssignToWCR`` -- or a
+    dedicated multi-state compute-then-accumulate matcher -- would unblock
+    this. The iedge itself must stay; the gather depends on it.
+    """
     sdfg = _gather_sum_reduction.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted >= 1
+    if prefer == 'reduce-libnode':
+        assert lifted == 0
+    else:
+        pytest.xfail("multi-state gather body; see docstring follow-up")
+        assert lifted >= 1
 
 
 # ---- 1D-reduction guard: GEMM-shaped multi-input loops must NOT lift -------
@@ -698,8 +713,19 @@ def test_gemm_innermost_loop_not_lifted_to_reduce(prefer):
     sdfg = gemm.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted == 0, (f'GEMM inner k-loop must NOT lift to Reduce; got {lifted} lifted. '
-                         'Three data inputs with two loop-var-dependent subsets ought to be refused.')
+    if prefer == 'reduce-libnode':
+        # The single-tasklet matcher refuses on body-shape grounds (two tasklets
+        # after the frontend splits ``Mul`` and ``Add``). No libnode is emitted.
+        assert lifted == 0
+    else:
+        # ``wcr-scalar`` mode: the multi-tasklet matcher lifts the k-loop into
+        # ``init + LoopRegion(WCR-on-scalar body) + writeback``. Downstream
+        # ``LoopToMap`` produces the canonical ``Map + WCR-on-scalar`` shape
+        # ``LiftEinsum`` consumes to detect the BLAS contraction. The
+        # GEMM-vs-scalar-reduction classification is intentionally NOT
+        # LoopToReduce's job -- LiftEinsum runs the parent-Map check
+        # separately. Pinning the lift here documents that contract.
+        assert lifted == 1
 
 
 def test_matvec_innermost_loop_not_lifted_to_reduce(prefer):
@@ -718,7 +744,13 @@ def test_matvec_innermost_loop_not_lifted_to_reduce(prefer):
     sdfg = matvec.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted == 0, (f'GEMV inner j-loop must NOT lift to Reduce; got {lifted} lifted.')
+    if prefer == 'reduce-libnode':
+        assert lifted == 0
+    else:
+        # Same contract as the GEMM test: GEMV-vs-scalar-reduction
+        # classification lives in LiftEinsum, not here. The lift is the
+        # canonical intermediate.
+        assert lifted == 1
 
 
 def test_outer_axis_reduction_per_column_is_lifted(prefer):

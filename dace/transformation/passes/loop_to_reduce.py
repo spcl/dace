@@ -120,6 +120,37 @@ class LoopToReduce(ppl.Pass):
             else:
                 _lift(parent, node, info)
             count += 1
+
+        # Multi-tasklet ``compute then accumulate`` shapes (TSVC s313/vdotr
+        # ``dot[0] += a[i]*b[i]``, s4115 gather+sum) don't match ``_extract``
+        # -- the single-tasklet matcher refuses bodies with multiple tasklets,
+        # by design (a relaxed matcher would silently lift GEMM contractions to
+        # a ``Reduce`` libnode and bypass ``LiftEinsum`` BLAS lowering). In
+        # ``wcr-scalar`` mode only, run the ``TTE + AugAssignToWCR`` normaliser
+        # the existing ``reduction_to_wcr_map`` stage uses: it collapses the
+        # in-body copy chain to a clean ``WCR-on-accum[c]`` write the
+        # retarget lift can then privatise. The ``Reduce`` libnode form
+        # cannot express the in-body compute chain, so this path stays
+        # gated on ``prefer == 'wcr-scalar'``.
+        if self.prefer == 'wcr-scalar':
+            from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+            from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+            # ``TTE`` collapses the trivial ``out = in`` passthrough tasklets
+            # the frontend leaves around the accumulator's load/store so
+            # ``AugAssignToWCR`` (a SingleStateTransformation matching the
+            # 5-node ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape)
+            # actually sees a clean pattern.
+            PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+            sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=True)
+            for node, parent in list(sdfg.all_nodes_recursive()):
+                if not isinstance(node, LoopRegion):
+                    continue
+                wcr_info = _extract_wcr_body(node, sdfg)
+                if wcr_info is None:
+                    continue
+                _lift_wcr_scalar_retarget(parent, node, *wcr_info)
+                count += 1
+
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
             # ``Reduce`` libnode and surrounding read/write edges. The lifting
@@ -744,3 +775,98 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         cond = e.data.condition.as_string if e.data.condition is not None else "1"
         parent.add_edge(wb_state, e.dst, dace.InterstateEdge(condition=cond, assignments=assigns))
     parent.remove_node(loop)
+
+
+def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
+    """Locate a single WCR-bearing write to a constant slot of a non-transient
+    array in the loop's body.
+
+    After running ``TTE + AugAssignToWCR`` on the loop body, a multi-tasklet
+    ``compute then accumulate`` shape (e.g. ``dot[0] = dot[0] + a[i]*b[i]``)
+    collapses to a clean WCR write to ``accum[c]``. This extractor picks up
+    that shape, returns the carrier info the wcr-scalar retarget needs, and
+    refuses any body that doesn't have exactly one such write (multiple
+    independent reductions in the same loop are an ambiguous shape we don't
+    privatise as a single accumulator).
+
+    :returns: ``(wcr_state, wcr_edge, accum_name, accum_subset)`` or ``None``.
+    """
+    if not loop.loop_variable:
+        return None
+    loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    candidates = []
+    for state in loop.all_states():
+        for e in state.edges():
+            if e.data is None or e.data.wcr is None:
+                continue
+            if not isinstance(e.dst, nodes.AccessNode):
+                continue
+            desc = sdfg.arrays.get(e.dst.data)
+            if desc is None or desc.transient:
+                continue
+            if e.data.subset is None or _uses(e.data.subset, loop_var_sym):
+                continue
+            if _one_elem(e.data.subset) != 1:
+                continue
+            candidates.append((state, e, e.dst.data, copy.deepcopy(e.data.subset)))
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_state: SDFGState, wcr_edge,
+                              accum_name: str, accum_subset: subsets.Subset):
+    """Wrap ``loop`` with ``init -> loop -> writeback`` states and retarget
+    the in-body WCR write from ``accum[accum_subset]`` to a fresh transient
+    scalar ``_priv_<accum>``.
+
+    Preserves the loop's body (including any compute chain feeding the
+    accumulator) and only rewrites the WCR edge's destination. The result is
+    the same Map-able shape ``PrivatizeReductionAccumulator`` produces today
+    when the canonicalize pipeline runs ``AugAssignToWCR + LoopToMap + PRA``
+    -- but the parallelisation step happens later (downstream ``LoopToMap``)
+    rather than as part of this pass.
+
+    :param parent: The control-flow region containing ``loop``.
+    :param loop: The reduction loop to wrap.
+    :param wcr_state: The state containing the WCR-bearing edge.
+    :param wcr_edge: The WCR-bearing edge to retarget.
+    :param accum_name: The accumulator descriptor's name.
+    :param accum_subset: The constant slot ``accum`` is updated at.
+    """
+    import dace
+    root = parent
+    while not isinstance(root, SDFG):
+        root = root.parent_graph
+
+    desc = root.arrays[accum_name]
+    priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
+
+    was_start = parent.start_block is loop
+    in_edges = list(parent.in_edges(loop))
+    out_edges = list(parent.out_edges(loop))
+
+    init_state = parent.add_state(loop.label + "_priv_init", is_start_block=was_start)
+    init_state.add_edge(init_state.add_read(accum_name), None, init_state.add_write(priv_name), None,
+                        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+
+    accum_sink = wcr_edge.dst
+    wcr_state.remove_edge(wcr_edge)
+    priv_an = wcr_state.add_write(priv_name)
+    wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_an, None,
+                       mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr_edge.data.wcr))
+    if wcr_state.degree(accum_sink) == 0:
+        wcr_state.remove_node(accum_sink)
+
+    wb_state = parent.add_state(loop.label + "_priv_wb")
+    wb_state.add_edge(wb_state.add_read(priv_name), None, wb_state.add_write(accum_name), None,
+                      mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+
+    for e in in_edges:
+        parent.remove_edge(e)
+        parent.add_edge(e.src, init_state, e.data)
+    parent.add_edge(init_state, loop, dace.InterstateEdge())
+    parent.add_edge(loop, wb_state, dace.InterstateEdge())
+    for e in out_edges:
+        parent.remove_edge(e)
+        parent.add_edge(wb_state, e.dst, e.data)
