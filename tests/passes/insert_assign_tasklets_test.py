@@ -278,5 +278,38 @@ def test_map_exit_stage_out_preserves_wcr():
     assert isinstance(we.src, nodes.Tasklet), 'WCR must move to the tasklet output side of the split'
 
 
+def test_wcr_stage_out_executes_correctly_after_split():
+    """End-to-end numerical regression. Build a Map that accumulates ``A[i]``
+    into a transient scalar via WCR (the canonical wcr-scalar shape
+    ``LoopToReduce(prefer='wcr-scalar') + LoopToMap`` lands), apply
+    ``InsertAssignTaskletsAtMapBoundary`` to split the stage-out path, and
+    assert the executed SDFG still computes ``sum(A)``. If the WCR semantics
+    were dropped during the split (the regression this commit's pass fix
+    closes), the result would be a single ``A[last]`` write instead of the
+    full sum.
+    """
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("wcr_stage_out_exec")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    state = sdfg.add_state()
+    a_an = state.add_access("A")
+    acc_an = state.add_access("acc")
+    me, mx = state.add_map("m", {"i": "0:N"})
+    t = state.add_tasklet("inc", {"_in"}, {"_out"}, "_out = _in")
+    state.add_memlet_path(a_an, me, t, dst_conn="_in", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(t, mx, acc_an, src_conn="_out", memlet=dace.Memlet("acc[0]", wcr="lambda a, b: a + b"))
+    sdfg.validate()
+
+    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.random.rand(16)
+    out = np.zeros(1)
+    sdfg(A=A, acc=out, N=16)
+    assert np.isclose(out[0], A.sum()), (f'WCR semantics lost across the split: got {out[0]}, '
+                                         f'expected sum(A)={A.sum()}')
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
