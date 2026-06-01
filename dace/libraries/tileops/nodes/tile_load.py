@@ -46,6 +46,15 @@ class ExpandTileLoadPure(ExpandTransformation):
         from the connector descriptor at expansion time) scaled by an
         optional :attr:`dim_strides` coefficient (defaulting to 1).
 
+        Three source kinds (mirrors :class:`TileStore`):
+
+        * ``src_kind="Tile"`` (default): ``_src`` is a tile-shape transient
+          / strided view; standard per-lane indexed read.
+        * ``src_kind="Scalar"``: ``_src`` is a length-1 array; every lane
+          reads ``_src[0]`` (broadcast).
+        * ``src_kind="Symbol"``: no ``_src`` connector; every lane writes
+          the cast of :attr:`src_expr` (broadcast literal / symbolic).
+
         :param node: The ``TileLoad`` lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
@@ -54,24 +63,39 @@ class ExpandTileLoadPure(ExpandTransformation):
         from dace.symbolic import symstr
         widths = list(node.widths)
         K = len(widths)
-        src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
-        src_arr = parent_sdfg.arrays[src_edge.data.data]
-        ndim = len(src_arr.strides)
-        # Step along the array dim each tile dim maps to (``src_dims``);
-        # default to the last K dims in order (a plain row-major tile).
-        dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
-        src_strides = [symstr(src_arr.strides[d]) for d in dims]
-        coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-        src_off = offset_via_strides(coeff, src_strides)
         dst_off = tile_offset(widths)
         dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_dst").data.data].dtype.ctype
-        if node.has_mask:
-            body = f"_dst[{dst_off}] = _mask[{dst_off}] ? _src[{src_off}] : {dst_dtype}(0);"
+        if node.src_kind == "Symbol":
+            src_ref = f"({dst_dtype})({node.src_expr})"
+        elif node.src_kind == "Scalar":
+            # DaCe passes a tasklet connector by value (``T _src``) for a true
+            # ``dace.data.Scalar`` and for a single-element access into a
+            # larger array (``a[j]``); only a genuine length-1 *array*
+            # connector is a pointer (``T* _src``) needing ``_src[0]``.
+            src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
+            desc = parent_sdfg.arrays[src_edge.data.data]
+            is_len1_array = (isinstance(desc, dace.data.Array)
+                             and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
+            ref = "_src[0]" if is_len1_array else "_src"
+            src_ref = f"({dst_dtype})({ref})"
         else:
-            body = f"_dst[{dst_off}] = _src[{src_off}];"
+            src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
+            src_arr = parent_sdfg.arrays[src_edge.data.data]
+            ndim = len(src_arr.strides)
+            # Step along the array dim each tile dim maps to (``src_dims``);
+            # default to the last K dims in order (a plain row-major tile).
+            dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
+            src_strides = [symstr(src_arr.strides[d]) for d in dims]
+            coeff = list(node.dim_strides) if node.dim_strides else [1] * K
+            src_off = offset_via_strides(coeff, src_strides)
+            src_ref = f"_src[{src_off}]"
+        if node.has_mask:
+            body = f"_dst[{dst_off}] = _mask[{dst_off}] ? {src_ref} : {dst_dtype}(0);"
+        else:
+            body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
-        inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
+        inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
@@ -262,6 +286,22 @@ class TileLoad(nodes.LibraryNode):
         "(``+`` → ZERO, ``min`` → POS_INF); ``max`` / ``prod`` have no padding "
         "identity in cuTile and rely on the reduction's pre-select instead.",
     )
+    src_kind = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="Tile",
+        desc="Source kind. 'Tile' (default) reads the per-lane indexed element from a "
+        "tile transient / strided view via ``_src``. 'Symbol' broadcasts ``src_expr`` "
+        "(a numeric literal or in-scope symbolic expression) to every lane, omitting "
+        "the ``_src`` connector. 'Scalar' broadcasts a length-1 array / "
+        "``dace.data.Scalar`` value read via ``_src``.",
+    )
+    src_expr = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Literal / symbolic expression for ``src_kind='Symbol'``; ignored otherwise.",
+    )
 
     def __init__(self,
                  name: str,
@@ -270,6 +310,8 @@ class TileLoad(nodes.LibraryNode):
                  src_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
                  pad_mode: str = "ZERO",
+                 src_kind: str = "Tile",
+                 src_expr: Optional[str] = None,
                  location: Optional[str] = None):
         """Construct a ``TileLoad`` node.
 
@@ -283,21 +325,39 @@ class TileLoad(nodes.LibraryNode):
         :param pad_mode: cuTile OOB padding mode (``ZERO | NAN | POS_INF
             | NEG_ZERO | UNDETERMINED``); only the ``cutile`` expansion uses
             it.
+        :param src_kind: ``"Tile"`` (default; per-lane indexed read of a
+            tile-shape ``_src``), ``"Scalar"`` (broadcast a length-1 array
+            / ``dace.data.Scalar`` value read via ``_src``), or ``"Symbol"``
+            (broadcast ``src_expr`` to every lane; ``_src`` connector is
+            omitted).
+        :param src_expr: Required when ``src_kind="Symbol"`` — the literal
+            / symbolic expression broadcast to every lane; ignored
+            otherwise.
         :param location: Optional DaCe node location override.
-        :raises ValueError: If ``widths`` is empty / longer than 3 or
-            if ``dim_strides`` length disagrees with ``widths``.
+        :raises ValueError: If ``widths`` is empty / longer than 3, if
+            ``dim_strides`` length disagrees with ``widths``, if
+            ``src_kind`` is unknown, or if ``src_kind="Symbol"`` is
+            given without ``src_expr``.
         """
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileLoad: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
             raise ValueError(f"TileLoad: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
-        inputs = {"_src"} | ({"_mask"} if has_mask else set())
+        if src_kind not in ("Tile", "Symbol", "Scalar"):
+            raise ValueError(f"TileLoad: src_kind must be one of 'Tile' | 'Symbol' | 'Scalar', got {src_kind!r}")
+        if src_kind == "Symbol" and not src_expr:
+            raise ValueError("TileLoad: src_kind='Symbol' requires a non-empty src_expr")
+        # ``Symbol`` source has no ``_src`` connector — the literal is embedded
+        # inline at expansion time.
+        inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         self.src_dims = list(src_dims) if src_dims else []
         self.has_mask = has_mask
         self.pad_mode = pad_mode
+        self.src_kind = src_kind
+        self.src_expr = src_expr
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.
@@ -308,8 +368,8 @@ class TileLoad(nodes.LibraryNode):
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if "_src" not in in_e:
-            raise ValueError(f"{self.label}: required input '_src' not connected")
+        if self.src_kind != "Symbol" and "_src" not in in_e:
+            raise ValueError(f"{self.label}: required input '_src' not connected (src_kind={self.src_kind!r})")
         if "_dst" not in out_e:
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
