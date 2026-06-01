@@ -667,15 +667,12 @@ def test_gather_sum_reduction_is_lifted(prefer):
 
     Multi-state body: the frontend lowers the gather through an interstate
     edge ``{ip_index: ip[i]}`` between two body states. ``reduce-libnode``
-    mode refuses on body-shape grounds (single-tasklet matcher) and that's
-    the right answer there. ``wcr-scalar`` mode SHOULD lift (the in-body
-    gather indirection is fine for the WCR form), but the current
-    ``AugAssignToWCR``-based preprocess is single-state and can't reach
-    across the load-iedge to rewrite the accumulator.
-
-    Follow-up: a multi-state variant of ``AugAssignToWCR`` -- or a
-    dedicated multi-state compute-then-accumulate matcher -- would unblock
-    this. The iedge itself must stay; the gather depends on it.
+    mode refuses on body-shape grounds (the libnode form cannot express the
+    in-body gather indirection). ``wcr-scalar`` lifts via the dedicated
+    multi-state-chain matcher: the iedge stays (the gather depends on it),
+    the compute-then-accumulate chain in the second state is rewritten in
+    place to drop the carry input and add WCR on the privatised scalar, and
+    init/writeback states seed/drain the original ``s``.
     """
     sdfg = _gather_sum_reduction.to_sdfg(simplify=True)
     sdfg.validate()
@@ -683,7 +680,6 @@ def test_gather_sum_reduction_is_lifted(prefer):
     if prefer == 'reduce-libnode':
         assert lifted == 0
     else:
-        pytest.xfail("multi-state gather body; see docstring follow-up")
         assert lifted >= 1
 
 

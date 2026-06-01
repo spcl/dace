@@ -151,6 +151,26 @@ class LoopToReduce(ppl.Pass):
                 _lift_wcr_scalar_retarget(parent, node, *wcr_info)
                 count += 1
 
+            # Dedicated multi-state-chain matcher for the gather + sum shape
+            # (TSVC s4115 ``s += a[i] * b[ip[i]]``): the accumulator is a
+            # transient scalar, the body splits into a pre-load state and a
+            # compute state joined by an iedge assigning a gather index symbol,
+            # and the final write goes through an extra transient AccessNode
+            # between the combining tasklet and the accumulator sink -- enough
+            # to take it past every shape ``AugAssignToWCR`` recognises.
+            # Handles the chain in place: drops the tasklet's carry input,
+            # adds WCR to the final write, and wraps the loop with init +
+            # writeback states. Same gating as ``_extract_wcr_body``
+            # (wcr-scalar only).
+            for node, parent in list(sdfg.all_nodes_recursive()):
+                if not isinstance(node, LoopRegion):
+                    continue
+                chain_info = _extract_multi_state_chain(node, sdfg)
+                if chain_info is None:
+                    continue
+                _lift_multi_state_chain(parent, node, chain_info)
+                count += 1
+
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
             # ``Reduce`` libnode and surrounding read/write edges. The lifting
@@ -857,6 +877,202 @@ def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_s
                        mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr_edge.data.wcr))
     if wcr_state.degree(accum_sink) == 0:
         wcr_state.remove_node(accum_sink)
+
+    wb_state = parent.add_state(loop.label + "_priv_wb")
+    wb_state.add_edge(wb_state.add_read(priv_name), None, wb_state.add_write(accum_name), None,
+                      mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+
+    for e in in_edges:
+        parent.remove_edge(e)
+        parent.add_edge(e.src, init_state, e.data)
+    parent.add_edge(init_state, loop, dace.InterstateEdge())
+    parent.add_edge(loop, wb_state, dace.InterstateEdge())
+    for e in out_edges:
+        parent.remove_edge(e)
+        parent.add_edge(wb_state, e.dst, e.data)
+
+
+def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
+    """Look for a body state containing a ``read-accum -> op-tasklet ->
+    (transient passthrough AccessNodes)* -> write-accum`` chain on the SAME
+    constant slot, where ``AugAssignToWCR`` cannot reach (an extra transient
+    AccessNode between the combining tasklet and the accumulator sink takes
+    the shape past the 5-node ``arr -> copy_in -> tasklet -> copy_out ->
+    arr`` pattern). Walks through transient AccessNodes with in_degree ==
+    out_degree == 1 in either direction.
+
+    Accepts both transient (the TSVC s4115 ``s`` shape) and non-transient
+    accumulators; either way the privatised scalar takes over and is seeded
+    / written back from / to the original at the boundary.
+
+    :returns: ``(state, final_tasklet, carry_in_edge, value_in_edge,
+              first_write_edge, last_write_edge, accum_source_an,
+              accum_sink_an, wcr_lambda, accum_name, accum_subset)`` or
+              ``None``.
+    """
+    if not loop.loop_variable:
+        return None
+    loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    for state in loop.all_states():
+        by_data: Dict[str, List[nodes.AccessNode]] = {}
+        for n in state.nodes():
+            if isinstance(n, nodes.AccessNode):
+                by_data.setdefault(n.data, []).append(n)
+        for data_name, ans in by_data.items():
+            sources = [n for n in ans if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
+            sinks = [n for n in ans if state.in_degree(n) >= 1 and state.out_degree(n) == 0]
+            if len(sources) != 1 or len(sinks) != 1:
+                continue
+            src_an, sink_an = sources[0], sinks[0]
+
+            # Source's single out-edge must go to a Tasklet (the carry input).
+            src_out = list(state.out_edges(src_an))
+            if len(src_out) != 1:
+                continue
+            carry_in_edge = src_out[0]
+            if not isinstance(carry_in_edge.dst, nodes.Tasklet):
+                continue
+            final_tasklet = carry_in_edge.dst
+
+            # Walk backward from the sink through 1-in/1-out transient
+            # passthrough AccessNodes until reaching a Tasklet -- must be
+            # the same ``final_tasklet`` we arrived at from the source.
+            sink_in = list(state.in_edges(sink_an))
+            if len(sink_in) != 1:
+                continue
+            last_write_edge = sink_in[0]
+            cur_edge = last_write_edge
+            cur_src = cur_edge.src
+            while isinstance(cur_src, nodes.AccessNode):
+                desc = sdfg.arrays.get(cur_src.data)
+                if (desc is None or not desc.transient or state.in_degree(cur_src) != 1
+                        or state.out_degree(cur_src) != 1):
+                    break
+                prev = list(state.in_edges(cur_src))[0]
+                cur_edge = prev
+                cur_src = cur_edge.src
+            if cur_src is not final_tasklet:
+                continue
+            first_write_edge = cur_edge
+
+            # Validate subsets: both the carry-read and the final write must
+            # use the same constant single-element slot, loop-invariant.
+            carry_subset = carry_in_edge.data.subset if carry_in_edge.data is not None else None
+            write_subset = last_write_edge.data.subset if last_write_edge.data is not None else None
+            if carry_subset is None or write_subset is None:
+                continue
+            if _one_elem(carry_subset) != 1 or _one_elem(write_subset) != 1:
+                continue
+            if _uses(carry_subset, loop_var_sym) or _uses(write_subset, loop_var_sym):
+                continue
+            if str(carry_subset) != str(write_subset):
+                continue
+
+            # Validate the final tasklet's body is a known WCR-able op.
+            try:
+                tree = ast.parse((final_tasklet.code.as_string or "").strip())
+            except SyntaxError:
+                continue
+            if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+                continue
+            rhs = tree.body[0].value
+            if isinstance(rhs, ast.BinOp):
+                wcr = _BINOP_TO_WCR.get(type(rhs.op))
+            elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
+                wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
+            elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
+                wcr = _CALL_TO_WCR.get(rhs.func.id)
+            else:
+                wcr = None
+            if wcr is None:
+                continue
+
+            # The tasklet must have exactly 2 data inputs (carry + value) and
+            # 1 data output.
+            data_in = [e for e in state.in_edges(final_tasklet) if e.data is not None and not e.data.is_empty()]
+            data_out = [e for e in state.out_edges(final_tasklet) if e.data is not None and not e.data.is_empty()]
+            if len(data_in) != 2 or len(data_out) != 1:
+                continue
+            value_in_edge = next((e for e in data_in if e is not carry_in_edge), None)
+            if value_in_edge is None:
+                continue
+
+            return (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an,
+                    sink_an, wcr, data_name, copy.deepcopy(carry_subset))
+    return None
+
+
+def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
+    """Surgical rewrite of the chain found by ``_extract_multi_state_chain``:
+
+    - Drop the tasklet's carry input by rewriting its RHS to keep only the
+      value-input subexpression and removing the carry in-edge + connector.
+    - Add WCR to the final write edge (the one into the sink AccessNode) and
+      retarget the sink AccessNode's data to ``_priv_<accum>``.
+    - Add ``init`` (copy original accumulator to ``_priv_X``) and ``wb``
+      (copy ``_priv_X`` back to the original) states around the loop.
+    """
+    import dace
+    (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an, sink_an, wcr,
+     accum_name, accum_subset) = info
+
+    root = parent
+    while not isinstance(root, SDFG):
+        root = root.parent_graph
+
+    desc = root.arrays[accum_name]
+    priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
+
+    # ---- rewrite the tasklet's RHS to drop the carry operand ----
+    tree = ast.parse((final_tasklet.code.as_string or "").strip())
+    assign_node = tree.body[0]
+    rhs = assign_node.value
+    carry_conn = carry_in_edge.dst_conn
+
+    new_rhs = None
+    if isinstance(rhs, ast.BinOp):
+        if isinstance(rhs.left, ast.Name) and rhs.left.id == carry_conn:
+            new_rhs = rhs.right
+        elif isinstance(rhs.right, ast.Name) and rhs.right.id == carry_conn:
+            new_rhs = rhs.left
+    elif isinstance(rhs, ast.BoolOp):
+        kept = [v for v in rhs.values if not (isinstance(v, ast.Name) and v.id == carry_conn)]
+        if len(kept) == 1:
+            new_rhs = kept[0]
+    elif isinstance(rhs, ast.Call):
+        kept_args = [a for a in rhs.args if not (isinstance(a, ast.Name) and a.id == carry_conn)]
+        if len(kept_args) == 1:
+            new_rhs = kept_args[0]
+    if new_rhs is None:
+        # Could not simplify -- leave the SDFG untouched.
+        return
+
+    final_tasklet.code.code = [ast.copy_location(ast.Assign(targets=assign_node.targets, value=new_rhs), assign_node)]
+
+    state.remove_edge(carry_in_edge)
+    if carry_conn in final_tasklet.in_connectors:
+        final_tasklet.remove_in_connector(carry_conn)
+    if state.degree(src_an) == 0:
+        state.remove_node(src_an)
+
+    # ---- retarget the final write to ``_priv_X`` with WCR ----
+    last_src = last_write_edge.src
+    last_src_conn = last_write_edge.src_conn
+    state.remove_edge(last_write_edge)
+    priv_sink_an = state.add_write(priv_name)
+    state.add_edge(last_src, last_src_conn, priv_sink_an, None,
+                   mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr))
+    if state.degree(sink_an) == 0:
+        state.remove_node(sink_an)
+
+    # ---- wrap the loop with init + writeback states ----
+    was_start = parent.start_block is loop
+    in_edges = list(parent.in_edges(loop))
+    out_edges = list(parent.out_edges(loop))
+
+    init_state = parent.add_state(loop.label + "_priv_init", is_start_block=was_start)
+    init_state.add_edge(init_state.add_read(accum_name), None, init_state.add_write(priv_name), None,
+                        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
 
     wb_state = parent.add_state(loop.label + "_priv_wb")
     wb_state.add_edge(wb_state.add_read(priv_name), None, wb_state.add_write(accum_name), None,
