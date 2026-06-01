@@ -251,6 +251,14 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
 
+    if isinstance(desc, data.DistributedDescriptor):  # Skip CFG ID mangling for distributed descriptors
+        name = desc.name
+        if (desc.transient
+                and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
+                and not is_cuda_codegen_in_device(framecode)):
+            return f'__state->{name}'
+        return name
+
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):

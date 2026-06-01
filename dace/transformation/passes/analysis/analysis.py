@@ -89,9 +89,9 @@ class ControlFlowBlockReachability(ppl.Pass):
         self,
         region: ControlFlowRegion,
         block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]],
-        cached_closures: dict[int, set[SDFGState]],
-    ) -> Set[SDFGState]:
-        closure: Set[SDFGState] = set()
+        cached_closures: dict[int, Set[ControlFlowBlock]],
+    ) -> Set[ControlFlowBlock]:
+        closure: Set[ControlFlowBlock] = set()
         if isinstance(region, LoopRegion):
             # Any point inside the loop may reach any other point inside the loop again.
             # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
@@ -109,7 +109,7 @@ class ControlFlowBlockReachability(ppl.Pass):
         while pivot and not isinstance(pivot, SDFG):
             graph_id = id(pivot)
             if graph_id not in cached_closures:
-                cached_closures[graph_id] = self._region_closure(pivot, block_reach)
+                cached_closures[graph_id] = self._region_closure(pivot, block_reach, cached_closures)
             closure.update(cached_closures[graph_id])
             pivot = pivot.parent_graph
         return closure
@@ -119,6 +119,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
+        top_sdfg.reset_cfg_list()
+
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
@@ -139,7 +141,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             return single_level_reachable
 
         reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = {}
-        cached_closures: dict[int, set[SDFGState]] = {}
+        cached_closures: dict[int, Set[ControlFlowBlock]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             for cfg in sdfg.all_control_flow_regions():
                 result: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
@@ -262,7 +264,7 @@ class AccessSets(ppl.Pass):
         if init_stmt:
             exprs.add(init_stmt)
         for expr in exprs:
-            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+            readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
         return readset
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]:
@@ -292,7 +294,8 @@ class AccessSets(ppl.Pass):
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:
-                                readset |= symbolic.free_symbols_and_functions(cond.as_string) & arrays
+                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
+                                            | symbolic.arrays(cond.as_string)) & arrays
 
                 result[block] = (readset, writeset)
 

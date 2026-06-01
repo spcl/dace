@@ -27,7 +27,7 @@ from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumPro
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, generate_element_id)
-from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg import propagation as sdprop
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -130,8 +130,8 @@ class BlockGraphView(object):
         (i.e., an SDFG or a scope block).
 
         :param predicate: An optional predicate function that decides on whether the traversal should recurse or not.
-        If the predicate returns False, traversal is not recursed any further into the graph found under NodeT for
-        a given [NodeT, GraphT] pair.
+                          If the predicate returns False, traversal is not recursed any further into the graph found
+                          under NodeT for a given [NodeT, GraphT] pair.
         """
         return []
 
@@ -1372,7 +1372,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                                default=CodeBlock("1", language=dtypes.Language.CPP))
 
     location = DictProperty(key_type=str,
-                            value_type=symbolic.pystr_to_symbolic,
+                            value_type=sympy.Basic,
                             desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __repr__(self) -> str:
@@ -1485,15 +1485,51 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         for edge in self.edges():
             edge.data.try_initialize(self.sdfg, self, edge)
 
+        # Resolve the authoritative dtype of every symbol an element may reference, so
+        # serialization emits a deterministic dtype that depends only on the enclosing
+        # scopes -- never on a symbol instance's own (cache-stale) dtype. The authority
+        # is rebuilt fresh on every serialization (never stored): opening a scope (entry
+        # node) augments the running map with that scope's ``new_symbols`` (its map
+        # iterators and dynamic-input connector symbols), and the parent level is
+        # restored when the recursion returns.
+        authority_by_node: Dict[nd.Node, Dict[str, dtypes.typeclass]] = {}
+        try:
+            scope_children = self.scope_children()
+
+            def _open_scope(scope_entry: Optional[nd.Node], authority: Dict[str, dtypes.typeclass]):
+                for child in scope_children.get(scope_entry, []):
+                    if isinstance(child, nd.EntryNode):
+                        inner = {**authority, **child.new_symbols(self.sdfg, self, authority)}
+                        authority_by_node[child] = inner
+                        _open_scope(child, inner)
+                    else:
+                        authority_by_node[child] = authority
+
+            _open_scope(None, dict(self.sdfg.symbols))
+        except (RuntimeError, ValueError, KeyError):
+            authority_by_node = {}
+
+        nodes_json = []
+        for n in self.nodes():
+            with symbolic.serialization_symbol_dtypes(authority_by_node.get(n, self.sdfg.symbols)):
+                nodes_json.append(n.to_json(self))
+
+        # An edge's memlet sees the symbols of both endpoints' scopes (the richer
+        # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
+        edges_json = []
+        for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or '')):
+            authority = {**authority_by_node.get(e.src, {}), **authority_by_node.get(e.dst, {})}
+            with symbolic.serialization_symbol_dtypes(authority):
+                edges_json.append(e.to_json(self))
+
         ret = {
             'type': type(self).__name__,
             'label': self.name,
             'id': parent.node_id(self) if parent is not None else None,
             'collapsed': self.is_collapsed,
             'scope_dict': scope_dict,
-            'nodes': [n.to_json(self) for n in self.nodes()],
-            'edges':
-            [e.to_json(self) for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or ''))],
+            'nodes': nodes_json,
+            'edges': edges_json,
             'attributes': serialize.all_properties_to_json(self),
         }
 
@@ -1978,7 +2014,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2009,7 +2045,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[out], map_exit, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))
@@ -2137,7 +2173,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Add external edge
         if external_memlet is None:
             # If undefined, propagate
-            external_memlet = propagate_memlet(self, internal_memlet, scope_node, True)
+            external_memlet = sdprop.propagate_memlet(self, internal_memlet, scope_node, True)
 
         if isinstance(scope_node, nd.EntryNode):
             eedge = self.add_edge(
@@ -2258,7 +2294,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 snode = edge.dst if propagate_forward else edge.src
                 if not cur_memlet.is_empty():
                     if propagate:
-                        cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
+                        cur_memlet = sdprop.propagate_memlet(self, cur_memlet, snode, True)
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.sdfg, self, edge)
@@ -2604,13 +2640,14 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                                 ControlFlowBlock, abc.ABC):
     """
     Abstract superclass to represent all kinds of control flow regions in an SDFG.
-    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock``s,
-    ``SDFGState``s, and nested ``AbstractControlFlowRegion``s. An ``AbstractControlFlowRegion`` can further be either a
-    region that directly contains a control flow graph (``ControlFlowRegion``s and subclasses thereof), or something
+
+    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock`` s,
+    ``SDFGState`` s, and nested ``AbstractControlFlowRegion`` s. An ``AbstractControlFlowRegion`` can further be either a
+    region that directly contains a control flow graph (``ControlFlowRegion`` s and subclasses thereof), or something
     that acts like and has the same utilities as a control flow region, including the same API, but is itself not
     directly a single graph. An example of this is the ``ConditionalBlock``, which acts as a single control flow region
     to the outside, but contains multiple actual graphs (one per branch). As such, there are very few but important
-    differences between the subclasses of ``AbstractControlFlowRegion``s, such as how traversals are performed, how many
+    differences between the subclasses of ``AbstractControlFlowRegion`` s, such as how traversals are performed, how many
     start blocks there are, etc.
     """
 
@@ -2650,6 +2687,44 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                              which accesses to them should be replaced.
         """
         pass
+
+    def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+        """
+        Propagate child-block memlets to this region boundary.
+
+        The default implementation treats the region conservatively as
+        straight-line control flow: it collects memlets from child states and
+        nested regions, then merges them as if every collected contribution may
+        reach the region boundary.
+
+        :param border_memlets: A mapping from connector direction and name to
+                               the accumulated border memlet. The mapping is
+                               updated in-place.
+        :note: ``border_memlets`` mapping is updated in-place.
+        """
+        from dace.sdfg import propagation as sdprop
+
+        candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+
+        for block in self.nodes():
+            if isinstance(block, SDFGState):
+                sdprop._collect_state_border_memlet_candidates(block, candidates)
+            elif isinstance(block, AbstractControlFlowRegion):
+                nested_memlets = sdprop._make_border_memlets(border_memlets)
+                block.propagate_memlets(nested_memlets)
+                sdprop._append_border_memlet_candidates(candidates, nested_memlets)
+
+        for direction in border_memlets:
+            for connector in border_memlets[direction]:
+                propagated = sdprop._propagate_border_memlet_candidates(candidates, self.sdfg.arrays, direction,
+                                                                        connector)
+                if propagated is None:
+                    continue
+
+                array_name = propagated.data if propagated.data is not None else connector
+                border_memlets[direction][connector] = sdprop._merge_border_memlet(border_memlets[direction][connector],
+                                                                                   propagated,
+                                                                                   self.sdfg.arrays[array_name])
 
     @property
     def root_sdfg(self) -> 'SDFG':
@@ -3126,6 +3201,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 class ControlFlowRegion(AbstractControlFlowRegion):
     """
     A ``ControlFlowRegion`` represents a control flow graph node that itself contains a control flow graph.
+
     This can be an arbitrary control flow graph, but may also be a specific type of control flow region with additional
     semantics, such as a loop or a function call.
     """
@@ -3190,34 +3266,27 @@ class LoopRegion(ControlFlowRegion):
                  update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None,
-                 update_before_condition=True,
+                 update_before_condition: bool = True,
                  unroll: bool = False,
                  unroll_factor: int = 0):
         super(LoopRegion, self).__init__(label, sdfg)
 
-        if initialize_expr is not None:
-            if isinstance(initialize_expr, CodeBlock):
-                self.init_statement = initialize_expr
-            else:
-                self.init_statement = CodeBlock(initialize_expr)
+        if initialize_expr is None or isinstance(initialize_expr, CodeBlock):
+            self.init_statement = initialize_expr
         else:
-            self.init_statement = None
+            self.init_statement = CodeBlock(initialize_expr)
 
-        if condition_expr:
-            if isinstance(condition_expr, CodeBlock):
-                self.loop_condition = condition_expr
-            else:
-                self.loop_condition = CodeBlock(condition_expr)
-        else:
+        if condition_expr is None:
             self.loop_condition = CodeBlock('True')
-
-        if update_expr is not None:
-            if isinstance(update_expr, CodeBlock):
-                self.update_statement = update_expr
-            else:
-                self.update_statement = CodeBlock(update_expr)
+        elif isinstance(condition_expr, CodeBlock):
+            self.loop_condition = condition_expr
         else:
-            self.update_statement = None
+            self.loop_condition = CodeBlock(condition_expr)
+
+        if update_expr is None or isinstance(update_expr, CodeBlock):
+            self.update_statement = update_expr
+        else:
+            self.update_statement = CodeBlock(update_expr)
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
@@ -3511,14 +3580,23 @@ class LoopRegion(ControlFlowRegion):
             codes.append(self.update_statement)
         return codes
 
-    def get_meta_read_memlets(self) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self, arrays: Optional[Dict[str, dt.Data]] = None) -> List[mm.Memlet]:
+        """
+        Get a list of all (read) memlets in meta codeblocks.
+
+        :param arrays: An optional dictionary mapping array names to their data descriptors.
+            If not not given defaults to ``self.sdfg.arrays``.
+        """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
-        read_memlets = memlets_in_ast(self.loop_condition.code[0], self.sdfg.arrays)
+
+        arrays = arrays if arrays is not None else self.sdfg.arrays
+
+        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays)
         if self.init_statement:
-            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], self.sdfg.arrays))
+            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays))
         if self.update_statement:
-            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], self.sdfg.arrays))
+            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays))
         return read_memlets
 
     def replace_meta_accesses(self, replacements):
@@ -3529,6 +3607,106 @@ class LoopRegion(ControlFlowRegion):
             replace_in_codeblock(self.init_statement, replacements)
         if self.update_statement:
             replace_in_codeblock(self.update_statement, replacements)
+
+    def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+        """
+        Propagate memlets across a loop region boundary.
+
+        When the loop trip count can be derived from the loop metadata, the
+        region propagates its candidate memlets through that symbolic iteration
+        range. Inverted loops are split into their unconditional first
+        iteration and the remaining iterations. Loops that cannot be analyzed
+        precisely fall back to the conservative base-region behavior.
+
+        :param border_memlets: A mapping from connector direction and name to
+                               the accumulated border memlet. The mapping is
+                               updated in-place.
+        :note: ``border_memlets`` mapping is updated in-place.
+        """
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        if self.has_break:
+            super().propagate_memlets(border_memlets)
+            return
+
+        init = loop_analysis.get_init_assignment(self)
+        end = loop_analysis.get_loop_end(self)
+        stride = loop_analysis.get_loop_stride(self)
+        if not self.loop_variable or init is None or end is None or stride in (None, 0):
+            super().propagate_memlets(border_memlets)
+            return
+
+        candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+
+        for block in self.nodes():
+            if isinstance(block, SDFGState):
+                sdprop._collect_state_border_memlet_candidates(block, candidates)
+            elif isinstance(block, AbstractControlFlowRegion):
+                nested_memlets = sdprop._make_border_memlets(border_memlets)
+                block.propagate_memlets(nested_memlets)
+                sdprop._append_border_memlet_candidates(candidates, nested_memlets)
+
+        def _range_is_definitely_empty(start, stop) -> bool:
+            """Returns True only when the remaining inverted-loop range is provably empty."""
+            simplified_start = symbolic.simplify(start)
+            simplified_stop = symbolic.simplify(stop)
+            simplified_stride = symbolic.simplify(stride)
+            if any(
+                    getattr(expr, 'free_symbols', set())
+                    for expr in (simplified_start, simplified_stop, simplified_stride)):
+                return False
+            if simplified_stride > 0:
+                return (simplified_start > simplified_stop) == True
+            return (simplified_start < simplified_stop) == True
+
+        def _propagate_range(start, stop, target_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+            """Propagates all candidate memlets through one loop-iteration range."""
+            loop_range = Range([(start, stop, stride)])
+            for direction in target_memlets:
+                for connector in target_memlets[direction]:
+                    propagated = sdprop._propagate_border_memlet_candidates(
+                        candidates,
+                        self.sdfg.arrays,
+                        direction,
+                        connector,
+                        params=[self.loop_variable],
+                        rng=loop_range,
+                        scale_by_range=True,
+                    )
+                    if propagated is None:
+                        continue
+
+                    array_name = propagated.data if propagated.data is not None else connector
+                    target_memlets[direction][connector] = sdprop._merge_border_memlet(
+                        target_memlets[direction][connector], propagated, self.sdfg.arrays[array_name])
+
+        if not self.inverted:
+            _propagate_range(init, end, border_memlets)
+            return
+
+        first_iteration_memlets = sdprop._make_border_memlets(border_memlets)
+        _propagate_range(init, init, first_iteration_memlets)
+
+        remaining_iterations_memlets = sdprop._make_border_memlets(border_memlets)
+        remaining_start = symbolic.simplify(init + stride)
+        # For inverted loops with update-before-condition disabled, the body can
+        # execute once at ``end + stride`` before the termination condition is
+        # observed, so the propagated range must include that final iteration.
+        remaining_end = end if self.update_before_condition else symbolic.simplify(end + stride)
+        if not _range_is_definitely_empty(remaining_start, remaining_end):
+            _propagate_range(remaining_start, remaining_end, remaining_iterations_memlets)
+
+        for direction in border_memlets:
+            for connector in border_memlets[direction]:
+                for propagated in (first_iteration_memlets[direction][connector],
+                                   remaining_iterations_memlets[direction][connector]):
+                    if propagated is None:
+                        continue
+
+                    array_name = propagated.data if propagated.data is not None else connector
+                    border_memlets[direction][connector] = sdprop._merge_border_memlet(
+                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name])
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -3541,8 +3719,10 @@ class LoopRegion(ControlFlowRegion):
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        defined_syms.add(self.loop_variable)
         if self.init_statement is not None:
+            # Loops with no initialization statement do not redefine the loop variable
+            defined_syms.add(self.loop_variable)
+
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:
             free_syms |= self.update_statement.get_free_symbols()
@@ -3682,6 +3862,42 @@ class ConditionalBlock(AbstractControlFlowRegion):
             if c is not None:
                 read_memlets.extend(memlets_in_ast(c.code[0], self.sdfg.arrays))
         return read_memlets
+
+    def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+        """
+        Propagate memlets across a conditional region boundary.
+
+        Each branch is propagated independently and then merged into a single
+        boundary memlet. Because at most one branch executes per traversal, the
+        merged subset is the union of branch subsets while the merged volume is
+        an upper bound over branch volumes instead of their sum.
+
+        :param border_memlets: A mapping from connector direction and name to
+                               the accumulated border memlet. The mapping is
+                               updated in place.
+        :note: ``border_memlets`` mapping is updated in-place.
+        """
+        from dace.sdfg import propagation as sdprop
+        has_condition = False
+
+        for condition, region in self._branches:
+            has_condition = has_condition or condition is not None
+            branch_memlets = sdprop._make_border_memlets(border_memlets)
+            region.propagate_memlets(branch_memlets)
+
+            for direction in border_memlets:
+                for connector in border_memlets[direction]:
+                    propagated = branch_memlets[direction][connector]
+                    if propagated is None:
+                        continue
+
+                    if has_condition:
+                        propagated = copy.deepcopy(propagated)
+                        propagated.dynamic = True
+
+                    array_name = propagated.data if propagated.data is not None else connector
+                    border_memlets[direction][connector] = sdprop._merge_border_memlet_upper_bound(
+                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name])
 
     def _used_symbols_internal(self,
                                all_symbols: bool,

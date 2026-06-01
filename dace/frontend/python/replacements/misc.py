@@ -3,6 +3,7 @@
 Contains replacements for miscellaneous functions and convenience utility functions, such as a function that
 calls element-wise operations on data containers.
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import StringLiteral
@@ -26,7 +27,7 @@ def _infer_slice(input_descs, *args, **kwargs):
 
 
 @oprepo.replaces_operator('Array', 'MatMult', otherclass='StorageType')
-def _cast_storage(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, stype: dtypes.StorageType) -> str:
+def _cast_storage(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, stype: dtypes.StorageType) -> str:
     desc = sdfg.arrays[arr]
     desc.storage = stype
     return arr
@@ -43,7 +44,7 @@ def _infer_cast_storage(arr_desc, stype: dtypes.StorageType):
 
 
 @oprepo.replaces('dace.elementwise')
-def elementwise(pv: 'ProgramVisitor',
+def elementwise(pv: ProgramVisitor,
                 sdfg: SDFG,
                 state: SDFGState,
                 func: Union[StringLiteral, str],

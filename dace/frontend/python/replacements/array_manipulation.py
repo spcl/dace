@@ -1,7 +1,8 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for N-dimensional array transformations.
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput
@@ -172,8 +173,8 @@ def _transpose(pv: ProgramVisitor,
     if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
-        import dace.libraries.standard  # Avoid import loop
-        tasklet = dace.libraries.standard.Transpose('_Transpose_', restype)
+        import dace.libraries.linalg  # Avoid import loop
+        tasklet = dace.libraries.linalg.Transpose('_Transpose_', restype)
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
@@ -190,7 +191,7 @@ def _transpose(pv: ProgramVisitor,
 
         read = state.add_read(inpname)
         write = state.add_write(outname)
-        from dace.libraries.standard import TensorTranspose
+        from dace.libraries.linalg import TensorTranspose  # Avoid import loop
         tasklet = TensorTranspose('_TensorTranspose', axes or list(range(len(arr1.shape))))
         state.add_node(tasklet)
         state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))

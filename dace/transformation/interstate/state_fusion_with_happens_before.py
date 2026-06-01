@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
 from typing import Dict, List, Set
@@ -44,7 +44,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         and fuses them into one state. If permissive, also applies if potential memory
         access hazards are created.
     """
-    connections_to_make = []
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
@@ -55,6 +54,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.connections_to_make = []
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
@@ -176,6 +179,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
+        # We keep it alive, such that `apply()` can use it later.
+        self.connections_to_make.clear()
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -376,6 +381,17 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                                              nodes_second, True, False):
                                     return False
 
+                                # Same-cc write-after-read: first reads ``d``,
+                                # second writes it, ``d`` not a first output.
+                                # Safe fusion would need a dependency edge to
+                                # every first-state sink reading ``d``; refuse
+                                # instead and keep the two states separate.
+                                if d in fused_cc.first_inputs:
+                                    nodes_first_read = [n for n in first_input if n.data == d]
+                                    if StateFusionExtended.memlets_intersect(first_state, nodes_first_read, True,
+                                                                             second_state, nodes_second, False):
+                                        return False
+
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
@@ -385,13 +401,17 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         if d in other_cc.second_outputs:
                             # Check for intersection (if None, fusion is ok)
                             nodes_second = [n for n in second_output if n.data == d]
-                            # Read-Write race
+                            # Read-Write race (write-after-read / anti-
+                            # dependency): the first state reads ``d`` and the
+                            # second writes it. Safely fusing would require a
+                            # dependency edge to every first-state sink reading
+                            # ``d`` (arbitrarily fanned out); refuse instead and
+                            # keep the two states separate.
                             if d in fused_cc.first_inputs:
                                 nodes_first = [n for n in first_input if n.data == d]
                                 if StateFusionExtended.memlets_intersect(first_state, nodes_first, True, second_state,
                                                                          nodes_second, False):
-                                    self.connections_to_make.append([nodes_first, nodes_second])
-                                    #return False
+                                    return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
@@ -460,6 +480,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
+
+        # This will populate `self.connections_to_make`.
+        self.can_be_applied(graph, 0, sdfg)
 
         # Remove interstate edge(s)
         edges = graph.edges_between(first_state, second_state)
@@ -584,3 +607,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         graph.remove_node(second_state)
         if graph.start_block == second_state:
             graph.start_block = graph.node_id(first_state)
+
+        # Technically unneeded, but better to keep track.
+        self.connections_to_make.clear()

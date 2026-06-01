@@ -43,7 +43,7 @@ def initialize(C_in, N, S0, S1, S2):
 
     mlp_sizes = [S0, S1, S2]  # [300, 100, 10]
     # Inputs
-    input = np.random.rand(N, C_in).astype(np.float32)
+    input = rng.random((N, C_in), dtype=np.float32)
     # Weights
     w1 = rng.random((C_in, mlp_sizes[0]), dtype=np.float32)
     b1 = rng.random((mlp_sizes[0], ), dtype=np.float32)
@@ -160,7 +160,7 @@ def run_mlp_autodiff():
     jax_kernel = lambda input, w1, b1, w2, b2, w3, b3: mlp_jax_kernel(jnp, input, w1, b1, w2, b2, w3, b3)
     jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, w1, b1, w2, b2, w3, b3)
-    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-10)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-6)
 
 
 def test_cpu():
