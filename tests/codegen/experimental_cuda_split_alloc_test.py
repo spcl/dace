@@ -1,16 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Regression test for the experimental CUDA backend's split-DECLARE/ALLOCATE path.
-
-When a Scope-lifetime GPU transient has a non-free-symbolic shape and is used
-across multiple states, the framecode splits its allocation: ``declare_array``
-emits the ``T*`` declaration at SDFG scope, and ``allocate_array`` emits the
-``cudaMalloc`` in the first producing state. The host pointer name must end up
-in ``defined_vars`` at a scope that survives state boundaries, otherwise the
-consuming state's kernel codegen (``_define_variables_in_kernel_scope``) fails
-with ``KeyError: 'Variable X has not been defined'``.
-
-The reproducer hand-builds that exact SDFG shape, so the test does not depend
-on any frontend or transformation pass.
+"""Split-DECLARE/ALLOCATE path: a Scope-lifetime GPU transient with a
+non-free-symbol shape used across two states must stay visible to the
+consuming state's kernel codegen.
 """
 import pytest
 
@@ -29,9 +20,7 @@ def _build_split_scope_transient_sdfg():
     sdfg.add_array('Z', (L, ), dace.float64, storage=GPU)
     sdfg.add_array('C', (L, ), dace.float64, storage=GPU)
     sdfg.add_array('out', (L, ), dace.float64, storage=GPU)
-    # The shape uses ``length``, which is assigned by the LoopRegion -- not a
-    # free SDFG symbol. ``is_nonfree_sym_dependent`` therefore returns True,
-    # triggering the split DECLARE/ALLOCATE codegen path.
+    # Shape on the LoopRegion-assigned (non-free) symbol -> split-alloc path.
     sdfg.add_transient('tmp', (length_sym, ), dace.float64, storage=GPU, lifetime=dace.dtypes.AllocationLifetime.Scope)
 
     init = sdfg.add_state('init', is_start_block=True)
@@ -67,11 +56,9 @@ def _build_split_scope_transient_sdfg():
 
 @pytest.mark.gpu
 def test_split_scope_lifetime_transient_across_states():
-    # Bug surfaces only on the experimental CUDA backend; force-select it.
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         sdfg = _build_split_scope_transient_sdfg()
         sdfg.validate()
-        # The compile path is the regression site (codegen-time KeyError).
         sdfg.compile()
 
 

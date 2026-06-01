@@ -697,24 +697,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def _declare_pointer_if_needed(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, node: nodes.AccessNode,
                                    nodedesc: dt.Data, declaration_stream: CodeIOStream) -> str:
-        """Emit ``T* {name};`` once and register the host pointer in defined_vars.
+        """Emit ``T* {name};`` once and register the host pointer in ``defined_vars``.
 
-        The C declaration is skipped when ``declare_array`` already emitted one
-        (tracked via ``declared_arrays``): that happens in the framecode's
-        split-DECLARE/ALLOCATE path for non-free-symbol-dependent transients
-        used across multiple states. In that case this helper executes inside
-        the first producing state's scope, but the host pointer must outlive
-        that state so the consuming state's kernel codegen can resolve it --
-        so the registration is hoisted to the enclosing SDFG scope.
-
-        Choice of registration scope:
-        - Topmost scope is an ``SDFGState`` -> add at ``ancestor=1`` (the
-          enclosing SDFG-level frame). State scopes are popped between states
-          but the SDFG frame survives the whole graph.
-        - Topmost scope is an ``SDFG`` (e.g. nested SDFG codegen, where the
-          frame itself blocks access to outer scopes via
-          ``can_access_parent=False``) or none of the above -> add at
-          ``ancestor=0`` so the binding lives inside the current SDFG frame.
+        Hoist the binding above ``SDFGState`` scopes (which are popped between
+        states) so a Scope-lifetime transient declared at SDFG scope and
+        allocated at first-state scope stays visible to the consuming state.
+        Stay at the current scope when it is already an ``SDFG`` (nested SDFG
+        codegen) -- its ``can_access_parent=False`` blocks the outer frame.
         """
         from dace.sdfg.state import SDFGState
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
