@@ -6,7 +6,7 @@ from dace import dtypes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
 
 
 @dace.library.expansion
@@ -44,8 +44,9 @@ class ExpandBcastMPI(ExpandTransformation):
 
         init = ""
         comm = "MPI_COMM_WORLD"
-        if node.grid:
-            comm = f"__state->{node.grid}_comm"
+        grid = input_descriptor_name(node, parent_state, '_grid')
+        if grid:
+            comm = "_grid"
         elif node.fcomm:
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
@@ -55,7 +56,7 @@ class ExpandBcastMPI(ExpandTransformation):
             MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
             _outbuffer = _inbuffer;"""
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          expanded_input_connectors(node, parent_state),
                                           node.out_connectors,
                                           code,
                                           language=dtypes.Language.CPP)
@@ -71,12 +72,10 @@ class Bcast(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
-    def __init__(self, name, grid=None, fcomm=None, *args, **kwargs):
+    def __init__(self, name, fcomm=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
-        self.grid = grid
         self.fcomm = fcomm
 
     def validate(self, sdfg, state):

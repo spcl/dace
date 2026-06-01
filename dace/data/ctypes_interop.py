@@ -7,12 +7,15 @@ This module contains functions for converting data descriptors to ctypes.
 import ctypes
 import warnings
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import numpy as np
 import sympy as sp
 
 from dace import config, dtypes, symbolic
+
+if TYPE_CHECKING:
+    from dace.data import Data
 
 
 def make_ctypes_argument(arg: Any,

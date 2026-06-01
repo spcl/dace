@@ -2,6 +2,7 @@
 """
 Contains replacements for array-filling methods (zeros, ones, etc.)
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together

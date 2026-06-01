@@ -175,7 +175,7 @@ class Memlet(object):
         attrs['is_data_src'] = self._is_data_src
 
         # Fill in legacy (DEPRECATED) values for backwards compatibility
-        attrs['num_accesses'] = str(self.volume) if not self.dynamic else -1
+        attrs['num_accesses'] = symbolic.serialize_symbolic(self.volume) if not self.dynamic else -1
 
         return {"type": "Memlet", "attributes": attrs}
 

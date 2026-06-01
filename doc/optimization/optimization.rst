@@ -29,7 +29,7 @@ When working with specific platforms, be sure to read the **Best Practices** doc
 recommended to read vendor-provided documentation on how to maximize performance on that platform.
 
 Finally, our experimental auto-tuning API allows for automatic optimization of SDFGs by searching over the set of possible
-configurations. This is done by :ref:`evaluating the performance of each configuration <auto_tuning>` and selecting the best one.
+configurations. This is done by evaluating the performance of each configuration and selecting the best one.
 For example, :class:`~dace.optimization.map_permutation_tuner.MapPermutationTuner` automatically tunes the order of
 multi-dimensional maps for the best performance, and :class:`~dace.optimization.data_layout_tuner.DataLayoutTuner` globally
 tunes the data layout of arrays.
@@ -49,7 +49,5 @@ The following subsections provide more information on the different types of opt
     blas
     vscode
     gpu
-
-
-.. interactive
-.. guidelines
+    interactive
+    guidelines

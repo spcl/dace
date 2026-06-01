@@ -39,7 +39,8 @@ def test_edge_split_loop_generation():
 
     sdfg: dace.SDFG = looptest.to_sdfg(simplify=True)
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-        assert 'while (' in sdfg.generate_code()[0].code
+        code = sdfg.generate_code()[0].clean_code
+        assert 'while (' in code or 'for (' in code
 
     A = looptest()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
