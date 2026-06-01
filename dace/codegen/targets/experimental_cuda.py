@@ -702,21 +702,29 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         The C declaration is skipped when ``declare_array`` already emitted one
         (tracked via ``declared_arrays``): that happens in the framecode's
         split-DECLARE/ALLOCATE path for non-free-symbol-dependent transients
-        used across multiple states. When that split path runs, this helper
-        executes inside the first producing state's scope, but the host pointer
-        must outlive that state so the consuming state's kernel codegen can
-        resolve it -- so the registration is placed at the parent (SDFG)
-        scope. For the unified path the register lands at the current scope,
-        which is also one level under the surrounding caller's frame.
+        used across multiple states. In that case this helper executes inside
+        the first producing state's scope, but the host pointer must outlive
+        that state so the consuming state's kernel codegen can resolve it --
+        so the registration is hoisted to the enclosing SDFG scope.
+
+        Choice of registration scope:
+        - Topmost scope is an ``SDFGState`` -> add at ``ancestor=1`` (the
+          enclosing SDFG-level frame). State scopes are popped between states
+          but the SDFG frame survives the whole graph.
+        - Topmost scope is an ``SDFG`` (e.g. nested SDFG codegen, where the
+          frame itself blocks access to outer scopes via
+          ``can_access_parent=False``) or none of the above -> add at
+          ``ancestor=0`` so the binding lives inside the current SDFG frame.
         """
+        from dace.sdfg.state import SDFGState
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
         array_ctype = f'{nodedesc.dtype.ctype} *'
         if not self._dispatcher.declared_arrays.has(dataname):
             declaration_stream.write(f'{array_ctype} {dataname};\n', cfg, state_id, node)
-        # ``ancestor=1`` puts the entry one level above the state scope so the
-        # binding survives state boundaries inside the SDFG.
         if not self._dispatcher.defined_vars.has(dataname):
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype, ancestor=1)
+            topmost_parent, _, _ = self._dispatcher.defined_vars._scopes[-1]
+            ancestor = 1 if isinstance(topmost_parent, SDFGState) else 0
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype, ancestor=ancestor)
         return dataname
 
     def _prepare_GPU_Global_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
