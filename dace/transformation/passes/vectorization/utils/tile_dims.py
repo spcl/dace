@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
 
-import dace
 from dace import subsets
 from dace.symbolic import pystr_to_symbolic
 
@@ -42,10 +41,8 @@ class TileDimSpec:
         if not (1 <= len(self.widths) <= 3):
             raise ValueError(f"TileDimSpec: K must be in {{1, 2, 3}}, got {len(self.widths)}")
         if not (len(self.iter_vars) == len(self.widths) == len(self.global_ubs)):
-            raise ValueError(
-                f"TileDimSpec: iter_vars / widths / global_ubs lengths must agree; "
-                f"got {len(self.iter_vars)}, {len(self.widths)}, {len(self.global_ubs)}"
-            )
+            raise ValueError(f"TileDimSpec: iter_vars / widths / global_ubs lengths must agree; "
+                             f"got {len(self.iter_vars)}, {len(self.widths)}, {len(self.global_ubs)}")
 
     @property
     def K(self) -> int:
@@ -293,13 +290,11 @@ def classify_tile_access(
 
     K = len(tile_iter_vars)
     if all(not di.dep for di in dims):
-        return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=(0,) * K)
+        return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=(0, ) * K)
 
     # Bijection check: each tile var must bind to exactly one array dim, and
     # each tile-dependent dim to exactly one tile var.
     tilevar_dims = {p: [d for d, di in enumerate(dims) if p in di.dep] for p in range(K)}
-    if any(len(ds) == 0 for ds in tilevar_dims.values()):
-        return TileAccessClassification(TileAccessKind.UNRECOGNIZED)  # tile var bound to no dim
     if any(len(ds) > 1 for ds in tilevar_dims.values()):
         # A tile var spanning ≥2 array dims is a diagonal (``a[i, i]``).
         # K=1 lowers it via a TileGather over an affine per-dim index map
@@ -310,15 +305,38 @@ def classify_tile_access(
         # so refuse (UNRECOGNIZED) and let the orchestrator skip it cleanly.
         if K > 1:
             return TileAccessClassification(TileAccessKind.UNRECOGNIZED)
-        return TileAccessClassification(TileAccessKind.GATHER)        # K=1 diagonal
+        return TileAccessClassification(TileAccessKind.GATHER)  # K=1 diagonal
     if any(len(di.dep) > 1 for di in dims):
-        return TileAccessClassification(TileAccessKind.GATHER)        # dim mixes ≥2 tile vars (a[i+j])
+        return TileAccessClassification(TileAccessKind.GATHER)  # dim mixes ≥2 tile vars (a[i+j])
 
-    # Perfect box: per tile dim, classify affine vs structured vs neither.
+    # PARTIAL binding: some tile vars are bound to a dim, others are unbound.
+    # The unbound lanes broadcast (``dim_strides[p] = 0``); the bound lanes
+    # carry the affine / structured coefficient like a fully-bound box.
+    # ``match_dims[p]`` for an unbound lane piggy-backs on a bound dim — the
+    # zero stride makes the choice address-irrelevant, but a valid dim index
+    # is required for the codegen (the lib node would emit
+    # ``arr.strides[match_dims[p]]`` even though the term is then multiplied
+    # by zero). ``col_broadcast c[jk, jc] = a[jk]`` lands here: jk bound to
+    # dim 0 with coefficient 1, jc unbound → ``dim_strides=(1, 0)`` and
+    # ``match_dims=(0, 0)``.
+    unbound = [p for p in range(K) if len(tilevar_dims[p]) == 0]
+    bound = [p for p in range(K) if len(tilevar_dims[p]) == 1]
+
+    # Perfect box (or partial box): per tile dim, classify affine vs structured
+    # vs unbound vs neither.
     match_dims: List[int] = []
     per_tile_dim_strides: List[int] = []
     structured = False
+    # First pick a fallback ``match_dims`` value for the unbound lanes (any
+    # bound dim works; default to 0 when nothing is bound — but at K=1 a
+    # fully-unbound access is BROADCAST_SYMBOL handled above, so ``bound`` is
+    # non-empty when we reach this loop for the partial case).
+    fallback_dim = tilevar_dims[bound[0]][0] if bound else 0
     for p in range(K):
+        if p in unbound:
+            match_dims.append(fallback_dim)
+            per_tile_dim_strides.append(0)
+            continue
         d = tilevar_dims[p][0]
         di = dims[d]
         match_dims.append(d)
@@ -328,13 +346,14 @@ def classify_tile_access(
             structured = True
             per_tile_dim_strides.append(1)  # structured: index built by substitution at lowering
         else:
-            return TileAccessClassification(TileAccessKind.GATHER)    # non-affine, non-structured
+            return TileAccessClassification(TileAccessKind.GATHER)  # non-affine, non-structured
 
     dim_strides = tuple(per_tile_dim_strides)
     match_dims_t = tuple(match_dims)
     if structured:
         return TileAccessClassification(kind=TileAccessKind.STRUCTURED,
-                                        dim_strides=dim_strides, match_dims=match_dims_t)
+                                        dim_strides=dim_strides,
+                                        match_dims=match_dims_t)
 
     # CONTIGUOUS = aligned to the last K dims, unit coefficients, unit
     # innermost memory stride; else STRIDED. Both lower via

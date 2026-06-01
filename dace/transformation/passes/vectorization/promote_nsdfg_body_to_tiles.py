@@ -425,6 +425,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         # ``_box_classification`` (-> TileLoad/TileStore ``src_dims``/``dst_dims``)
         # so lane ``p`` addresses the right connector dim (no transpose).
         self._conn_match_dims: Dict[str, Tuple[int, ...]] = {}
+        self._conn_dim_strides: Dict[str, Tuple[int, ...]] = {}
         conn_edges = ([(e.dst_conn, e)
                        for e in parent_state.in_edges(nsdfg_node)] + [(e.src_conn, e)
                                                                       for e in parent_state.out_edges(nsdfg_node)])
@@ -533,13 +534,26 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                             strides=tiled_strides,
                             storage=dace.dtypes.StorageType.Register,
                             transient=False)
-            # Record the tile-lane -> connector-dim permutation (only when the
-            # connector covers every tile dim, i.e. conn_itervar is exactly the
-            # iter-var set). ``match_dims[p]`` = the connector dim holding
-            # ``iter_vars[p]``; identity for a C-order map, ``[1, 0]`` for a
-            # transposed (Fortran) ``A[i, j]`` with iter_vars ``[j, i]``.
-            if len(conn_itervar) == len(spec.iter_vars) and set(conn_itervar) == tile_var_set:
-                self._conn_match_dims[conn] = tuple(conn_itervar.index(iv) for iv in spec.iter_vars)
+            # Record the tile-lane -> connector-dim permutation. ``match_dims[p]``
+            # = the connector dim holding ``iter_vars[p]``; identity for a
+            # C-order map, ``[1, 0]`` for a transposed (Fortran) ``A[i, j]`` with
+            # iter_vars ``[j, i]``. PARTIAL binding (some tile vars are not
+            # bound to any connector dim — ``col_broadcast c[jk, jc] = a[jk]``
+            # has jk → conn dim 0, jc unbound) maps the unbound lane to any
+            # bound dim (the broadcast lane's offset is zeroed out by
+            # ``dim_strides[p] = 0`` at lib-node lowering time, so the chosen
+            # connector dim is address-irrelevant). The descent uses the
+            # presence of an unbound lane in ``match_dims`` to set the
+            # corresponding ``dim_strides[p] = 0``.
+            if conn_itervar and set(conn_itervar).issubset(tile_var_set):
+                fallback_dim = conn_itervar.index(conn_itervar[0])
+                self._conn_match_dims[conn] = tuple(
+                    conn_itervar.index(iv) if iv in conn_itervar else fallback_dim for iv in spec.iter_vars)
+                # Per-tile-dim coefficient: 1 for a lane bound to a connector
+                # dim (the widen made it contiguous so the lane offset is
+                # ``stride[match_dims[p]] * __l<p>``); 0 for an unbound lane
+                # (broadcast — zeros out the lane's contribution).
+                self._conn_dim_strides[conn] = tuple(1 if iv in conn_itervar else 0 for iv in spec.iter_vars)
             # A symbolic source stride (e.g. ``N``) the connector view now
             # references must be defined inside the NSDFG; thread it through the
             # symbol mapping (identity) and the inner symbol table.
@@ -610,6 +624,19 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             K = len(self.widths)
             match = self._conn_match_dims.get(conn_name, tuple(range(K)))
             return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS, dim_strides=(1, ) * K, match_dims=match)
+        # PARTIAL-binding widen recorded both ``match_dims`` and the per-lane
+        # broadcast/non-broadcast coefficients in ``_conn_dim_strides``. For
+        # ``col_broadcast c[jk, jc] = a[jk]`` the connector is widened to
+        # shape ``(W_jk,)`` (1-D), the inner access is ``[0:W_jk]``, and the
+        # recorded match is ``(0, 0)`` with strides ``(1, 0)``. Use those
+        # directly so the descent emits the right per-lane TileLoad.
+        if conn_name in self._conn_dim_strides:
+            K = len(self.widths)
+            return TileAccessClassification(
+                kind=TileAccessKind.CONTIGUOUS,
+                dim_strides=self._conn_dim_strides[conn_name],
+                match_dims=self._conn_match_dims.get(conn_name, tuple(range(K))),
+            )
         cls = classify_tile_access(subset, tuple(arr.strides), iter_vars)
         if cls.kind not in _BOX_KINDS:
             # K=0 / widths=(1,) single-lane postamble: a broadcast scalar

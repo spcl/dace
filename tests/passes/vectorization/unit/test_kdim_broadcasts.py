@@ -203,7 +203,6 @@ def test_scalar_broadcast_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_col_broadcast_descent_to_tile_only():
     """1D-column broadcast (a[jk] across jc) produces 0 raw tasklets."""
     sdfg = _col_broadcast.to_sdfg()
@@ -215,7 +214,6 @@ def test_col_broadcast_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_row_broadcast_descent_to_tile_only():
     """1D-row broadcast (a[jc] across jk) produces 0 raw tasklets."""
     sdfg = _row_broadcast.to_sdfg()
@@ -253,7 +251,6 @@ def test_col_gather_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_col_structured_descent_to_tile_only():
     """Per-row structured ``a[jk // 2]`` broadcast across jc."""
     sdfg = _col_structured.to_sdfg()
@@ -275,7 +272,6 @@ def test_row_gather_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_row_structured_descent_to_tile_only():
     """Per-column structured ``a[jc // 2]`` broadcast across jk."""
     sdfg = _row_structured.to_sdfg()

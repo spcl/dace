@@ -17,35 +17,34 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
 
 def _range(*begins):
     """Build a Range whose per-dim begin (==end, step 1) are ``begins``."""
-    return subsets.Range([(dace.symbolic.pystr_to_symbolic(b),
-                           dace.symbolic.pystr_to_symbolic(b), 1) for b in begins])
+    return subsets.Range([(dace.symbolic.pystr_to_symbolic(b), dace.symbolic.pystr_to_symbolic(b), 1) for b in begins])
 
 
 def test_build_dim_index_map_affine_and_structured():
     """The per-lane index map records affine coeffs and the structured flag."""
     # a[2*i, j]: dim0 affine coeff 2 in tile 0; dim1 affine coeff 1 in tile 1.
     dims = build_dim_index_map(_range("2*i", "j"), ("i", "j"))
-    assert dims[0].dep == (0,) and dims[0].affine_coeffs == {0: 2} and not dims[0].structured
-    assert dims[1].dep == (1,) and dims[1].affine_coeffs == {1: 1}
+    assert dims[0].dep == (0, ) and dims[0].affine_coeffs == {0: 2} and not dims[0].structured
+    assert dims[1].dep == (1, ) and dims[1].affine_coeffs == {1: 1}
     # a[i // 2]: structured (int_floor of affine arg), not affine.
-    sdims = build_dim_index_map(_range("int_floor(i, 2)"), ("i",))
-    assert sdims[0].dep == (0,) and sdims[0].structured and 0 not in sdims[0].affine_coeffs
+    sdims = build_dim_index_map(_range("int_floor(i, 2)"), ("i", ))
+    assert sdims[0].dep == (0, ) and sdims[0].structured and 0 not in sdims[0].affine_coeffs
 
 
 def test_classify_structured_int_floor():
     """``a[i // 2]`` (int_floor of an affine arg) classifies as STRUCTURED."""
-    cls = classify_tile_access(_range("int_floor(i, 2)"), array_strides=(1,), tile_iter_vars=("i",))
+    cls = classify_tile_access(_range("int_floor(i, 2)"), array_strides=(1, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.STRUCTURED
 
 
 def test_classify_structured_int_ceil():
     """``int_ceil`` of an affine arg is STRUCTURED."""
-    cls = classify_tile_access(_range("int_ceil(i, 4)"), array_strides=(1,), tile_iter_vars=("i",))
+    cls = classify_tile_access(_range("int_ceil(i, 4)"), array_strides=(1, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.STRUCTURED
 
 
 @pytest.mark.parametrize("widths,iter_vars,global_ubs", [
-    ((8,), ("i",), ("N",)),
+    ((8, ), ("i", ), ("N", )),
     ((4, 8), ("i", "j"), ("M", "N")),
 ])
 def test_tile_dim_spec_accepts_K_1_2(widths, iter_vars, global_ubs):
@@ -61,8 +60,7 @@ def test_tile_dim_spec_accepts_K_1_2(widths, iter_vars, global_ubs):
 def test_tile_dim_spec_rejects_K_outside_1_3():
     """K must be in ``{1, 2, 3}``."""
     with pytest.raises(ValueError, match="K must be in"):
-        TileDimSpec(iter_vars=("i", "j", "k", "l"), widths=(2, 2, 2, 2),
-                    global_ubs=("A", "B", "C", "D"))
+        TileDimSpec(iter_vars=("i", "j", "k", "l"), widths=(2, 2, 2, 2), global_ubs=("A", "B", "C", "D"))
     with pytest.raises(ValueError, match="K must be in"):
         TileDimSpec(iter_vars=(), widths=(), global_ubs=())
 
@@ -70,50 +68,42 @@ def test_tile_dim_spec_rejects_K_outside_1_3():
 def test_tile_dim_spec_rejects_length_mismatch():
     """The three tuples must agree on length."""
     with pytest.raises(ValueError, match="lengths must agree"):
-        TileDimSpec(iter_vars=("i", "j"), widths=(8,), global_ubs=("N",))
+        TileDimSpec(iter_vars=("i", "j"), widths=(8, ), global_ubs=("N", ))
 
 
 def test_classify_contiguous_1d():
     """``A[i_0:i_0+W]`` with stride-1 array is :attr:`CONTIGUOUS`."""
-    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
-                          dace.symbolic.pystr_to_symbolic("i+7"),
-                          1)])
-    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i",))
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1)])
+    cls = classify_tile_access(sub, array_strides=(1, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.CONTIGUOUS
-    assert cls.dim_strides == (1,)
+    assert cls.dim_strides == (1, )
 
 
 def test_classify_strided_1d_with_array_stride():
     """``A[i]`` on a non-unit *memory*-stride dim is :attr:`STRIDED`. The
     coefficient is 1 (``dim_strides``); the non-unit stride lives in the
     array's stride on the matched dim, applied at lowering time."""
-    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
-                          dace.symbolic.pystr_to_symbolic("i+7"),
-                          1)])
-    cls = classify_tile_access(sub, array_strides=(2,), tile_iter_vars=("i",))
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1)])
+    cls = classify_tile_access(sub, array_strides=(2, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.STRIDED
-    assert cls.dim_strides == (1,)
-    assert cls.match_dims == (0,)
+    assert cls.dim_strides == (1, )
+    assert cls.match_dims == (0, )
 
 
 def test_classify_strided_1d_with_linear_coeff():
     """``A[2*i]`` on a unit-array-stride dim is :attr:`STRIDED` with coeff 2."""
-    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("2*i"),
-                          dace.symbolic.pystr_to_symbolic("2*i+14"),
-                          1)])
-    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i",))
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("2*i"), dace.symbolic.pystr_to_symbolic("2*i+14"), 1)])
+    cls = classify_tile_access(sub, array_strides=(1, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.STRIDED
-    assert cls.dim_strides == (2,)
+    assert cls.dim_strides == (2, )
 
 
 def test_classify_broadcast_symbol_1d():
     """``A[k]`` (where ``k`` is NOT in tile iter-vars) is :attr:`BROADCAST_SYMBOL`."""
-    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("k"),
-                          dace.symbolic.pystr_to_symbolic("k"),
-                          1)])
-    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i",))
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("k"), dace.symbolic.pystr_to_symbolic("k"), 1)])
+    cls = classify_tile_access(sub, array_strides=(1, ), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.BROADCAST_SYMBOL
-    assert cls.dim_strides == (0,)
+    assert cls.dim_strides == (0, )
 
 
 def test_classify_contiguous_2d():
@@ -139,10 +129,10 @@ def test_classify_transposed_2d_is_strided():
         (dace.symbolic.pystr_to_symbolic("j"), dace.symbolic.pystr_to_symbolic("j+7"), 1),
         (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i"), 1),
     ])
-    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("j",))
+    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("j", ))
     assert cls.kind == TileAccessKind.STRIDED
-    assert cls.dim_strides == (1,)
-    assert cls.match_dims == (0,)
+    assert cls.dim_strides == (1, )
+    assert cls.match_dims == (0, )
 
 
 def test_classify_diagonal_is_gather():
@@ -152,7 +142,7 @@ def test_classify_diagonal_is_gather():
         (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1),
         (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1),
     ])
-    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("i",))
+    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("i", ))
     assert cls.kind == TileAccessKind.GATHER
 
 
@@ -171,14 +161,20 @@ def test_classify_diagonal_refused_for_K_gt_1():
     assert cls.kind == TileAccessKind.UNRECOGNIZED
 
 
-def test_classify_unrecognized_when_tile_var_missing():
-    """If a tile iter-var is referenced in NO subset dim, classifier
-    can't bind it — :attr:`UNRECOGNIZED`."""
-    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
-                          dace.symbolic.pystr_to_symbolic("i+7"),
-                          1)])
-    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i", "j"))
-    assert cls.kind == TileAccessKind.UNRECOGNIZED
+def test_classify_partial_binding_returns_strided_with_broadcast_strides():
+    """When a tile iter-var is referenced in NO subset dim (``c[jk, jc] =
+    a[jk]`` with ``jc`` unbound), the classifier returns a ``STRIDED`` /
+    ``CONTIGUOUS`` shape with ``dim_strides[unbound] = 0`` so the lib
+    node broadcasts that lane while the bound lane carries its real
+    affine coefficient. ``match_dims[unbound]`` piggy-backs on a bound
+    dim (the zero stride makes the lane offset address-irrelevant)."""
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1)])
+    cls = classify_tile_access(sub, array_strides=(1, ), tile_iter_vars=("i", "j"))
+    assert cls.kind in (TileAccessKind.STRIDED, TileAccessKind.CONTIGUOUS)
+    assert cls.dim_strides == (1, 0)
+    # Both lanes index the same (only) source dim — the broadcast lane's
+    # offset is zeroed out by ``dim_strides[1] = 0``.
+    assert cls.match_dims == (0, 0)
 
 
 def _build_k2_sdfg():
@@ -191,7 +187,10 @@ def _build_k2_sdfg():
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "body",
-        {"i": "0:M", "j": "0:N"},
+        {
+            "i": "0:M",
+            "j": "0:N"
+        },
         {"_a": dace.Memlet("A[i, j]")},
         "_c = _a",
         {"_c": dace.Memlet("C[i, j]")},
@@ -215,20 +214,20 @@ def test_mark_tile_dims_picks_K_innermost():
 def test_mark_tile_dims_K1_collapse():
     """K=1 spec only takes the last param of the inner map."""
     sdfg = _build_k2_sdfg()
-    result = MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
+    result = MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
     assert result is not None
     spec = next(iter(result.values()))
-    assert spec.iter_vars == ("j",)
-    assert spec.widths == (8,)
-    assert spec.global_ubs == ("N",)
+    assert spec.iter_vars == ("j", )
+    assert spec.widths == (8, )
+    assert spec.global_ubs == ("N", )
 
 
 def test_mark_tile_dims_raises_on_too_few_params():
     """A 1D map under K=2 raises ``NotImplementedError`` by default."""
     sdfg = dace.SDFG("k1_outer")
     N = dace.symbol("N")
-    sdfg.add_array("A", (N,), dace.float64)
-    sdfg.add_array("C", (N,), dace.float64)
+    sdfg.add_array("A", (N, ), dace.float64)
+    sdfg.add_array("C", (N, ), dace.float64)
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "body",
@@ -246,8 +245,8 @@ def test_mark_tile_dims_soft_skip_ineligible():
     """``skip_ineligible=True`` silently drops the ineligible map."""
     sdfg = dace.SDFG("k1_outer_skip")
     N = dace.symbol("N")
-    sdfg.add_array("A", (N,), dace.float64)
-    sdfg.add_array("C", (N,), dace.float64)
+    sdfg.add_array("A", (N, ), dace.float64)
+    sdfg.add_array("C", (N, ), dace.float64)
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "body",
