@@ -199,3 +199,4 @@ _all_tests/
 /*.onnx
 /*.bin
 latex-tools/
+_session_scratch/

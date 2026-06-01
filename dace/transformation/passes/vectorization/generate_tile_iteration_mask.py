@@ -14,7 +14,8 @@ from dace import properties
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileMaskGen
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
+                                                                                   TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
@@ -166,6 +167,10 @@ class GenerateTileIterationMask(ppl.Pass):
             if not is_innermost_map(g, n):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: no mask
+                continue
+            # ``__tile_k1_tail`` postamble: K=1 widths=(1,), runs element by
+            # element. Every iteration is in bounds by construction — no mask.
+            if n.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
             if specs is not None and n not in specs:
                 continue

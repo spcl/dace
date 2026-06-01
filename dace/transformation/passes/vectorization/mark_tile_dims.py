@@ -15,7 +15,8 @@ import dace
 from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                   TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -87,7 +88,12 @@ class MarkTileDims(ppl.Pass):
         :raises NotImplementedError: When ``skip_ineligible`` is
             ``False`` and the map is ineligible.
         """
-        K = len(self.widths)
+        # ``__tile_k1_tail`` tail maps are pinned to K=1 widths=(1,)
+        # regardless of the orchestrator-level widths; the postamble is
+        # always a single-lane scalar-tile remainder over the innermost
+        # iter var only.
+        widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
+        K = len(widths)
         params = list(map_entry.map.params)
         ranges = list(map_entry.map.range.ranges)
         if len(params) < K:
@@ -101,10 +107,10 @@ class MarkTileDims(ppl.Pass):
                     f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1")
             trip_expr = symbolic.simplify(ub - lb + 1)
             # Map iter-var ``iv`` is the ``-K + idx``-th param; pair it with
-            # ``self.widths[idx]`` (innermost-last alignment) so a too-small
+            # ``widths[idx]`` (innermost-last alignment) so a too-small
             # trip is checked against the right width.
             dim_idx = iter_vars.index(iv)
-            tile_w = int(self.widths[dim_idx])
+            tile_w = int(widths[dim_idx])
             try:
                 trip_int = int(trip_expr)
                 if trip_int <= 1:
@@ -120,7 +126,7 @@ class MarkTileDims(ppl.Pass):
             global_ubs.append(str(ub + 1))
         return TileDimSpec(
             iter_vars=iter_vars,
-            widths=tuple(self.widths),
+            widths=widths,
             global_ubs=tuple(global_ubs),
         )
 

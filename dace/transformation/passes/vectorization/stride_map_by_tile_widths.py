@@ -13,7 +13,8 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                   TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -69,14 +70,17 @@ class StrideMapByTileWidths(ppl.Pass):
         :returns: ``True`` if ``map.range`` was rewritten; ``False`` if
             the map already steps by ``widths`` (idempotent no-op).
         """
-        K = len(self.widths)
+        # ``__tile_k1_tail`` maps are K=1 widths=(1,): stride stays 1 since
+        # the postamble is a per-element single-lane tile-op loop.
+        widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
+        K = len(widths)
         ranges = list(map_entry.map.range.ranges)
         if len(ranges) < K:
             return False
         prefix = ranges[:-K]
         new_inner: list = []
         rewritten = False
-        for (lb, ub, step), w in zip(ranges[-K:], self.widths):
+        for (lb, ub, step), w in zip(ranges[-K:], widths):
             if step == w or str(step) == str(w):
                 new_inner.append((lb, ub, step))
                 continue
@@ -110,7 +114,8 @@ class StrideMapByTileWidths(ppl.Pass):
                 continue
             if specs is not None and n not in specs:
                 continue
-            if len(n.map.params) < len(self.widths):
+            map_widths = (1, ) if n.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
+            if len(n.map.params) < len(map_widths):
                 continue
             if self._stride_one(n):
                 rewritten += 1

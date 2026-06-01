@@ -137,7 +137,9 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  loop_to_map_permissive: bool = False,
                  nest_map_bodies: bool = False,
                  insert_copies: bool = False,
-                 fuse_overlapping_loads: bool = False):
+                 fuse_overlapping_loads: bool = False,
+                 scalar_remainder_emit: Literal["scalar", "tile_k1"] = "scalar",
+                 expand_tile_nodes: bool = True):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -183,9 +185,36 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             single emit path. Both values must produce identical numerics; the
             descent path is what a strided / gather / structured access inside a
             non-inlinable body needs regardless of this knob.
+        :param scalar_remainder_emit: How the ``scalar_postamble`` tail is
+            emitted. ``"scalar"`` (default) keeps the legacy step-1 scalar
+            loop running the original body, untouched by every tile prep
+            pass. ``"tile_k1"`` routes the tail through the tile-op
+            pipeline at ``widths=(1,)`` (single-lane "scalar tile") so the
+            remainder body uses the same ``TileBinop`` / ``TileLoad`` /
+            ``TileStore`` shape as the main interior, just at one element
+            per iteration. Only meaningful when ``remainder_strategy=
+            "scalar_postamble"``; raises at any other strategy.
+        :param expand_tile_nodes: When ``True`` (default), call
+            ``sdfg.expand_library_nodes()`` after the pipeline finishes so
+            every emitted ``TileBinop`` / ``TileLoad`` / ``TileStore`` /
+            ``TileMaskGen`` / ``TileReduce`` / ... is lowered to its
+            per-ISA pure body (the SDFG is ready to compile). When
+            ``False``, the orchestrator returns the SDFG with the tile
+            lib nodes still present so the caller can inspect, save, or
+            run further transformations against the lib-node shape;
+            ``sdfg.expand_library_nodes()`` is the caller's responsibility
+            and the post-expansion ``assert_no_laneid_in_tile_path``
+            audit is skipped (it can only run after expansion).
         :raises NotImplementedError: On any disallowed combination (e.g. a
             K=1-only knob at K>=2, or fp_factor with a masked remainder).
         """
+        if scalar_remainder_emit not in ("scalar", "tile_k1"):
+            raise NotImplementedError(f"VectorizeCPUMultiDim: scalar_remainder_emit "
+                                      f"{scalar_remainder_emit!r} not in {{'scalar', 'tile_k1'}}")
+        if scalar_remainder_emit == "tile_k1" and remainder_strategy != "scalar_postamble":
+            raise NotImplementedError(f"VectorizeCPUMultiDim: scalar_remainder_emit='tile_k1' "
+                                      f"requires remainder_strategy='scalar_postamble'; got "
+                                      f"remainder_strategy={remainder_strategy!r}")
         if not (1 <= len(widths) <= 3):
             raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} not in {{1, 2, 3}}; "
                                       f"got widths={widths!r}")
@@ -319,7 +348,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # every tile prep pass skips.
             from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
                 SplitMapForTileRemainder, )
-            tail_mode = "scalar" if remainder_strategy == "scalar_postamble" else "masked"
+            if remainder_strategy == "scalar_postamble":
+                tail_mode = "tile_k1" if scalar_remainder_emit == "tile_k1" else "scalar"
+            else:
+                tail_mode = "masked"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
         # ``fuse_overlapping_loads`` requires a NestedSDFG body to fuse inside
         # (the fusion pass walks ``TileLoad`` groups in a single state — the
@@ -395,6 +427,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._branch_mode = branch_mode
         self._nest_map_bodies = nest_map_bodies
         self._loop_to_map_permissive = loop_to_map_permissive
+        self._expand_tile_nodes = expand_tile_nodes
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -447,9 +480,16 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # and stays an NSDFG for the tile descent. See ``normalize_loop_nests``.
         normalize_loop_nests(sdfg)
         result = super().apply_pass(sdfg, pipeline_results)
-        self._select_tile_implementations(sdfg)
-        sdfg.expand_library_nodes()
-        assert_no_laneid_in_tile_path(sdfg)
+        # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
+        # to the caller — the SDFG returns with tile lib nodes still
+        # present (for inspection / saving / further transformations).
+        # The ``assert_no_laneid_in_tile_path`` audit runs only after
+        # expansion (it walks lowered tasklets); skip it on the deferred
+        # path.
+        if self._expand_tile_nodes:
+            self._select_tile_implementations(sdfg)
+            sdfg.expand_library_nodes()
+            assert_no_laneid_in_tile_path(sdfg)
         return result
 
     def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:

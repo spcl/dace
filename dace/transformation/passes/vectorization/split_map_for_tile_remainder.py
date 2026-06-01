@@ -61,6 +61,15 @@ TILE_MAIN_MARKER = "__tile_main"
 # strided, nor masked.
 SCALAR_TAIL_MARKER = "__scalar_tail"
 
+# Label suffix marking a boundary region that flows through the tile-op pipeline
+# at K=1 ``widths=(1,)`` — a single-lane "scalar tile" remainder. Every tile prep
+# pass treats this suffix as a tile-main region pinned at K=1 width=1: the
+# stride is 1 (no W-stride), no iteration mask, but the body is rewritten to
+# tile ops (TileBinop, TileLoad, TileStore at one lane). Enables uniform
+# emission for the remainder when the user opts in via ``scalar_remainder_emit
+# ="tile"`` on the orchestrator.
+TILE_K1_TAIL_MARKER = "__tile_k1_tail"
+
 
 @properties.make_properties
 class SplitMapForTileRemainder(ppl.Pass):
@@ -79,24 +88,30 @@ class SplitMapForTileRemainder(ppl.Pass):
         allow_none=False,
         default="masked",
         desc="Boundary-region handling: 'masked' (W-strided masked slabs, the "
-        "masked_tail strategy) or 'scalar' (step-1 scalar-loop slabs marked "
-        "__scalar_tail, the scalar_postamble strategy).",
+        "masked_tail strategy), 'scalar' (step-1 scalar-loop slabs marked "
+        "__scalar_tail, the scalar_postamble strategy), or 'tile_k1' (step-1 "
+        "tile-op slabs at widths=(1,) marked __tile_k1_tail, the K=0/single-lane "
+        "tile-op variant of the scalar_postamble strategy).",
     )
 
     def __init__(self, widths: Tuple[int, ...] = (8, ), tail_mode: str = "masked"):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
-        :param tail_mode: ``"masked"`` (W-strided masked slabs) or ``"scalar"``
-            (step-1 scalar-loop slabs marked :data:`SCALAR_TAIL_MARKER`).
+        :param tail_mode: ``"masked"`` (W-strided masked slabs), ``"scalar"``
+            (step-1 scalar-loop slabs marked :data:`SCALAR_TAIL_MARKER`), or
+            ``"tile_k1"`` (step-1 tile-op slabs at ``widths=(1,)`` marked
+            :data:`TILE_K1_TAIL_MARKER` — the K=0 single-lane tile-op variant
+            of the ``scalar_postamble`` strategy).
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}`` or
-            ``tail_mode`` is not ``"masked"`` / ``"scalar"``.
+            ``tail_mode`` is not one of the supported values.
         """
         super().__init__()
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"SplitMapForTileRemainder: widths length {len(widths)} not in {{1, 2, 3}}")
-        if tail_mode not in ("masked", "scalar"):
-            raise ValueError(f"SplitMapForTileRemainder: tail_mode {tail_mode!r} not in {{'masked', 'scalar'}}")
+        if tail_mode not in ("masked", "scalar", "tile_k1"):
+            raise ValueError(f"SplitMapForTileRemainder: tail_mode {tail_mode!r} not in "
+                             f"{{'masked', 'scalar', 'tile_k1'}}")
         self.widths = list(widths)
         self.tail_mode = tail_mode
 
@@ -183,6 +198,11 @@ class SplitMapForTileRemainder(ppl.Pass):
             # it -> it stays a plain step-1 scalar loop running the original body.
             if self.tail_mode == "scalar" and not slab.entry.map.label.endswith(SCALAR_TAIL_MARKER):
                 slab.entry.map.label = slab.entry.map.label + SCALAR_TAIL_MARKER
+            # ``tile_k1`` tail mode: mark the slab so every tile prep pass
+            # treats it as a tile-main region pinned at K=1 widths=(1,) — step
+            # 1, no mask, body lowered to single-lane tile ops.
+            elif self.tail_mode == "tile_k1" and not slab.entry.map.label.endswith(TILE_K1_TAIL_MARKER):
+                slab.entry.map.label = slab.entry.map.label + TILE_K1_TAIL_MARKER
         # The interior is fully tiled on every dim (skipped dims were divisible;
         # peeled dims are tightened to a multiple of W) — mark it mask-free.
         if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
@@ -200,9 +220,10 @@ class SplitMapForTileRemainder(ppl.Pass):
         applied = 0
         # Snapshot up front: splitting mutates the state graph and we must not
         # re-split a freshly replicated remainder map.
-        eligible = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, MapEntry)
-                    and isinstance(g, dace.SDFGState) and is_innermost_map(g, n) and len(n.map.params) >= K
-                    and not n.map.label.endswith(TILE_MAIN_MARKER) and not n.map.label.endswith(SCALAR_TAIL_MARKER)]
+        eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
+                    if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState) and is_innermost_map(g, n)
+                    and len(n.map.params) >= K and not n.map.label.endswith(TILE_MAIN_MARKER)
+                    and not n.map.label.endswith(SCALAR_TAIL_MARKER) and not n.map.label.endswith(TILE_K1_TAIL_MARKER)]
         for n, g in eligible:
             if self._split(g, n, K):
                 applied += 1

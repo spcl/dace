@@ -36,7 +36,6 @@ entries) and skips them; it still raises for any *un*handled NSDFG body
 (those maps are already W-strided, so a scalar body would be wrong — the
 loud failure keeps the kernel a clean skip until its descent slice lands).
 """
-import copy
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -58,7 +57,8 @@ from dace.transformation.passes.vectorization.emit_tile_ops import (
     _mask_name_for_map,
     _tile_region_subset,
 )
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
+                                                                                   TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.lane_expansion import (demote_non_index_symbols,
                                                                            fan_out_tile_gather_index_symbols,
                                                                            fan_out_tile_gather_index_symbols_kd)
@@ -590,6 +590,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS, dim_strides=(1, ) * K, match_dims=match)
         cls = classify_tile_access(subset, tuple(arr.strides), iter_vars)
         if cls.kind not in _BOX_KINDS:
+            # K=0 / widths=(1,) single-lane postamble: a broadcast scalar
+            # load IS a single-element load (only one lane to fill), so
+            # treat ``BROADCAST_SYMBOL`` as a contiguous box at K=1
+            # widths=(1,). The descent's downstream emission is the same
+            # as a regular contiguous load.
+            if cls.kind == TileAccessKind.BROADCAST_SYMBOL and len(iter_vars) == 1:
+                return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS, dim_strides=(1, ), match_dims=(0, ))
             raise NotImplementedError(
                 f"PromoteNSDFGBodyToTiles: connector access {subset} is {cls.kind.value}; "
                 f"only perfect-box (contiguous / strided) loads/stores are supported in this slice")
@@ -2591,7 +2598,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 continue
             if specs is not None and n not in specs:
                 continue
-            if len(n.map.params) < K:
+            # ``__tile_k1_tail`` is pinned to K=1 widths=(1,) regardless of the
+            # orchestrator-level widths; the postamble runs single-lane per
+            # element so it needs only one innermost param.
+            map_K = 1 if n.map.label.endswith(TILE_K1_TAIL_MARKER) else K
+            if len(n.map.params) < map_K:
                 continue
             nsdfg = self._flat_body_nsdfg(g, n)
             if nsdfg is None:
@@ -2599,10 +2610,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
             mask_name = _mask_name_for_map(g, n)
             # A no-mask map is only legitimately unmasked when it is the
-            # masked_tail split's provably-divisible interior (``__tile_main``).
+            # masked_tail split's provably-divisible interior (``__tile_main``)
+            # or the K=0 / widths=(1,) ``__tile_k1_tail`` single-lane postamble
+            # (every iteration is a single in-bounds element by construction).
             # An unmarked no-mask map means GenerateTileIterationMask was not
             # run; emitting has_mask=False there could be OOB-unsafe — refuse.
-            if mask_name is None and not n.map.label.endswith(TILE_MAIN_MARKER):
+            if mask_name is None and not (n.map.label.endswith(TILE_MAIN_MARKER)
+                                          or n.map.label.endswith(TILE_K1_TAIL_MARKER)):
                 raise NotImplementedError(
                     f"PromoteNSDFGBodyToTiles: map {n.map.label!r} has no TileMaskGen in scope and "
                     f"is not a masked_tail interior (__tile_main); run GenerateTileIterationMask first.")

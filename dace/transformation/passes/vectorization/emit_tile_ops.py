@@ -26,7 +26,8 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileReduce, TileScatter, TileStore, TileUnop
 from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
+                                                                                   TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileConnectors
 from dace.transformation.passes.vectorization.utils.tile_dims import (
@@ -763,7 +764,11 @@ class EmitTileOps(ppl.Pass):
             ``__tile_main`` interior.
         """
         mask_name = _mask_name_for_map(state, map_entry)
-        if mask_name is None and not map_entry.map.label.endswith(TILE_MAIN_MARKER):
+        # ``__tile_k1_tail`` postamble maps are K=1 widths=(1,) — every
+        # iteration writes exactly one element in bounds by construction,
+        # so they're mask-free just like the ``__tile_main`` interior.
+        if mask_name is None and not (map_entry.map.label.endswith(TILE_MAIN_MARKER)
+                                      or map_entry.map.label.endswith(TILE_K1_TAIL_MARKER)):
             raise NotImplementedError(f"EmitTileOps: map {map_entry.label!r} has no TileMaskGen in scope and is not a "
                                       f"masked_tail interior (__tile_main); run GenerateTileIterationMask first.")
         return mask_name
@@ -1017,8 +1022,7 @@ class EmitTileOps(ppl.Pass):
         state.add_edge(node, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
         return self._binop_output_data(state, tasklet), out_access
 
-    def _wcr_scalar_target(self, state: dace.SDFGState,
-                           candidate) -> Optional[Tuple[dace.nodes.AccessNode, str]]:
+    def _wcr_scalar_target(self, state: dace.SDFGState, candidate) -> Optional[Tuple[dace.nodes.AccessNode, str]]:
         """Detect the post-:class:`NormalizeWCRSource` reduction shape.
 
         After ``NormalizeWCRSource`` interposes a private scalar between a
@@ -1038,8 +1042,8 @@ class EmitTileOps(ppl.Pass):
         desc = state.sdfg.arrays.get(candidate.data)
         if desc is None:
             return None
-        if not (isinstance(desc, dace.data.Scalar)
-                or (isinstance(desc, dace.data.Array) and tuple(desc.shape) == (1, ))):
+        if not (isinstance(desc, dace.data.Scalar) or
+                (isinstance(desc, dace.data.Array) and tuple(desc.shape) == (1, ))):
             return None
         wcr_edges = [e for e in state.out_edges(candidate) if e.data is not None and e.data.wcr is not None]
         if len(wcr_edges) != 1:
@@ -1050,8 +1054,8 @@ class EmitTileOps(ppl.Pass):
         return candidate, op
 
     def _emit_tile_reduce(self, state: dace.SDFGState, tile_access: dace.nodes.AccessNode,
-                          scalar_access: dace.nodes.AccessNode, op: str,
-                          spec: TileDimSpec, mask_name: Optional[str]) -> None:
+                          scalar_access: dace.nodes.AccessNode, op: str, spec: TileDimSpec,
+                          mask_name: Optional[str]) -> None:
         """Emit a :class:`TileReduce` writing the tile to the scalar.
 
         The original tasklet that fed ``scalar_access`` is removed by the
@@ -1228,9 +1232,8 @@ class EmitTileOps(ppl.Pass):
         # stores phase below picks it up exactly like a binop's output tile.
         copy_only_emit = (not binops and not const_stores)
         if copy_only_emit and not assign_tasklets:
-            raise NotImplementedError(
-                f"EmitTileOps: map {map_entry.label!r} body has no binop, constant-store, "
-                f"or assign tasklet")
+            raise NotImplementedError(f"EmitTileOps: map {map_entry.label!r} body has no binop, constant-store, "
+                                      f"or assign tasklet")
 
         mask_name = self._resolve_map_mask(state, map_entry)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
@@ -1410,7 +1413,11 @@ class EmitTileOps(ppl.Pass):
                 continue
             if specs is not None and n not in specs:
                 continue
-            if len(n.map.params) < K:
+            # ``__tile_k1_tail`` maps are K=1 widths=(1,); a per-map override
+            # so the orchestrator-level widths don't dominate when checking
+            # the param count.
+            map_K = 1 if n.map.label.endswith(TILE_K1_TAIL_MARKER) else K
+            if len(n.map.params) < map_K:
                 continue
             # Verify this map either has a mask producer in scope or is a
             # masked_tail divisible interior (raises NotImplementedError

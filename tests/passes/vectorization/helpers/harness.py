@@ -202,7 +202,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            emission_style: str = "default",
                            num_cores: int = 8,
                            vectorize_config: str = "tile_nodes",
-                           nest_map_bodies: bool = False):
+                           nest_map_bodies: bool = False,
+                           scalar_remainder_emit: str = "scalar"):
 
     import pytest as _pytest
     # ``--run-full-matrix`` hook: when the flag is set, the test was
@@ -451,7 +452,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                      loop_to_map_permissive=loop_to_map_permissive,
                                      nest_map_bodies=nest_map_bodies,
                                      insert_copies=insert_copies,
-                                     fuse_overlapping_loads=fuse_overlapping_loads).apply_pass(copy_sdfg, {})
+                                     fuse_overlapping_loads=fuse_overlapping_loads,
+                                     scalar_remainder_emit=scalar_remainder_emit).apply_pass(copy_sdfg, {})
             except NotImplementedError as _e:
                 _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
         copy_sdfg.validate()
