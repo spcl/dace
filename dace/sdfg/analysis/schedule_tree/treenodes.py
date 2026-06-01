@@ -269,10 +269,10 @@ class ScheduleTreeScope(ScheduleTreeNode):
 @dataclass
 class ScheduleTreeRoot(ScheduleTreeScope):
     """
-    The root of a schedule tree. This is a `ScheduleTreeScope` with additional information on
+    The root of a schedule tree. This is a ``ScheduleTreeScope`` with additional information on
     the available descriptors, symbol types, and constants of the tree, aka the descriptor repository.
 
-    Each schedule tree has only one `ScheduleTreeRoot`. The `ScheduleTreeRoot` is the only `ScheduleTreeScope`
+    Each schedule tree has only one ``ScheduleTreeRoot``. The ``ScheduleTreeRoot`` is the only ``ScheduleTreeScope``
     without a parent (because it is the root node of the tree).
     """
     name: str
@@ -335,40 +335,6 @@ class ScheduleTreeRoot(ScheduleTreeScope):
 
     def get_root(self) -> 'ScheduleTreeRoot':
         return self
-
-
-@dataclass
-class ScheduleTreeRoot(ScheduleTreeScope):
-    """
-    A root of an SDFG schedule tree. This is a schedule tree scope with additional information on
-    the available descriptors, symbol types, and constants of the tree, aka the descriptor repository.
-    """
-    name: str
-    containers: Dict[str, data.Data]
-    symbols: Dict[str, dtypes.typeclass]
-    constants: Dict[str, Tuple[data.Data, Any]]
-    callback_mapping: Dict[str, str]
-    arg_names: List[str]
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        children: List[ScheduleTreeNode],
-        containers: Optional[Dict[str, data.Data]] = None,
-        symbols: Optional[Dict[str, dtypes.typeclass]] = None,
-        constants: Optional[Dict[str, Tuple[data.Data, Any]]] = None,
-        callback_mapping: Optional[Dict[str, str]] = None,
-        arg_names: Optional[List[str]] = None,
-    ) -> None:
-        super().__init__(children=children)
-
-        self.name = name
-        self.containers = containers if containers is not None else dict()
-        self.symbols = symbols if symbols is not None else dict()
-        self.constants = constants if constants is not None else dict()
-        self.callback_mapping = callback_mapping if callback_mapping is not None else dict()
-        self.arg_names = arg_names if arg_names is not None else list()
 
 
 @dataclass
