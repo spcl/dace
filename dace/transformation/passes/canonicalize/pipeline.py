@@ -63,6 +63,7 @@ from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvar
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+from dace.transformation.interstate.state_fusion import StateFusion
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
@@ -71,26 +72,26 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     fuse adjacent states, flatten nested SDFGs, then drop empty states, so each
     phase starts from a tidy state machine.
 
-    Order: ``StateFusionExtended`` (the variant that also fuses across happens-
-    before dependencies and emits empty-memlet ordering edges as needed)
-    collapses adjacent states; both inliners flatten nestings -- ``InlineSDFG``
-    a single-``SDFGState`` NestedSDFG, ``InlineMultistateSDFG`` the control-
-    flow-bearing NestedSDFGs that map->loop lowering produces (a NestedSDFG
-    wrapping a ``LoopRegion``/``ConditionalBlock``); without the latter those
-    nestings are permanent, burying loops so ``MoveIfIntoLoop`` and cross-nest
-    fusion cannot see them. ``EmptyStateElimination`` then removes the empty
-    states fusion/inlining leave behind. None of these changes the computation;
-    they only normalize structure.
+    Order: ``StateFusion`` then ``StateFusionExtended`` (the latter also fuses
+    across happens-before dependencies) collapse adjacent states; both inliners
+    flatten nestings -- ``InlineSDFG`` a single-``SDFGState`` NestedSDFG,
+    ``InlineMultistateSDFG`` the control-flow-bearing NestedSDFGs that map->loop
+    lowering produces (a NestedSDFG wrapping a ``LoopRegion``/``ConditionalBlock``);
+    without the latter those nestings are permanent, burying loops so
+    ``MoveIfIntoLoop`` and cross-nest fusion cannot see them. ``EmptyStateElimination``
+    then removes the empty states fusion/inlining leave behind. None of these
+    changes the computation; they only normalize structure.
 
-    The non-extended ``StateFusion`` is intentionally omitted: every shape it
-    can fuse, the extended variant can fuse (the extended one is a strict
-    superset), and running both back-to-back creates pairwise-merge orderings
-    that compose differently from running the extended variant alone.
+    Long-term goal: drop the non-extended ``StateFusion`` entirely and run only
+    the extended variant. Currently kept because the extended variant misses a
+    few independent-Map shapes that the base variant catches (TODO: make the
+    extended variant a true strict superset).
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
-    return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
+    return [(label, PatternMatchAndApplyRepeated([StateFusion()])),
+            (label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
             (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, EmptyStateElimination())]
 
