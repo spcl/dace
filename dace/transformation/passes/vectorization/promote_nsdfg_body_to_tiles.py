@@ -619,24 +619,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # as a regular contiguous load.
             if cls.kind == TileAccessKind.BROADCAST_SYMBOL and len(iter_vars) == 1:
                 return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS, dim_strides=(1, ), match_dims=(0, ))
-            # K>=2 BROADCAST_SYMBOL: every dim of the inner subset is tile-
-            # var-free (the access reads the same element on every lane,
-            # typically a jk-independent ``e_bln_slice[0, 0]`` lookup inside
-            # a K-dim tile that iterates over (jk, jc)). Lower as a
-            # contiguous tile load with all per-tile-dim strides set to 0
-            # — TileLoad's lane offset becomes
-            # ``sum(0 * src_strides[d] * __l<d>) = 0`` on every lane, so
-            # the load reads the boundary element and broadcasts it across
-            # the K-dim tile. ``match_dims`` maps lane p -> connector dim p
-            # (identity), avoiding bounds-check shenanigans during code-gen.
-            if cls.kind == TileAccessKind.BROADCAST_SYMBOL:
-                K = len(iter_vars)
-                ndim = len(arr.shape)
-                return TileAccessClassification(
-                    kind=TileAccessKind.CONTIGUOUS,
-                    dim_strides=(0, ) * K,
-                    match_dims=tuple(d % ndim for d in range(K)) if ndim > 0 else tuple(range(K)),
-                )
             raise NotImplementedError(
                 f"PromoteNSDFGBodyToTiles: connector access {subset} is {cls.kind.value}; "
                 f"only perfect-box (contiguous / strided) loads/stores are supported in this slice")
