@@ -387,16 +387,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # inline+fuse, privatize) form an atomic logical transformation.
     s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
-    # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG states
-    # whose intermediate scalar transients (``arr_index``, ``__tmp*``) share
-    # names across siblings. The downstream ``_structural_cleanup`` runs
-    # ``StateFusionExtended``, whose apply-stage merger collapses same-named
-    # writer AccessNodes into one node when memlets intersect -- yielding
-    # last-writer-wins on independent per-state buffers. ``PrivatizeScalars``
-    # renames each scope's transient so the matcher's same-name candidate list
-    # is empty, preventing the merge at the source. Pinned by the compound
-    # guarded-nest value-preservation test (canonicalize_compound_nest).
-    s += [('reduction_to_wcr_map', _PrivatizeScalarsStage())]
     s += _structural_cleanup('reduction_to_wcr_map')
 
     # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
