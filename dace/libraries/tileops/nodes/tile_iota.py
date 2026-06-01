@@ -36,16 +36,44 @@ class ExpandTileIotaPure(ExpandTransformation):
     def expansion(node: "TileIota", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         """Return a CPP tasklet that fills the tile lane by lane.
 
+        K=0 / W=1 single-lane postamble: DaCe collapses ``Register
+        Array(shape=(1,))`` transients to plain scalars, so the standard
+        ``_dst[__l0] = expr`` body (with ``__l0 = 0``) would index into
+        ``int64_t _dst;`` — a compile error. Detect the all-ones width
+        case and emit the body WITHOUT the indexing wrappers: substitute
+        each lane var ``__l<p>`` with ``0`` directly in ``expr``, and
+        rewrite trailing ``_idx[0]`` / ``_src[0]`` extra-input reads to
+        the bare connector name (the connector is also a scalar in this
+        case). The result is a single CPP statement
+        ``_dst = <expr_substituted>;``.
+
         :param node: The ``TileIota`` lib node being expanded.
         :param parent_state: State that owns the lib node (unused).
         :param parent_sdfg: SDFG that owns ``parent_state`` (unused).
         :returns: A CPP tasklet replacing the lib node in place.
         """
         widths = list(node.widths)
+        inputs = {c: None for c in node.extra_inputs}
+        if all(w == 1 for w in widths):
+            expr = node.expr
+            # Substitute lane vars with 0 (single lane).
+            for p in range(len(widths)):
+                expr = expr.replace(f"__l{p}", "0")
+            # ``_idx[0]`` / ``_src[0]`` indexing on a (1,)-collapsed
+            # scalar connector becomes the bare connector name.
+            for conn in node.extra_inputs:
+                expr = expr.replace(f"{conn}[0]", conn)
+            body = f"_dst = {expr};"
+            return nodes.Tasklet(
+                label=f"{node.label}_pure",
+                inputs=inputs,
+                outputs={"_dst": None},
+                code=body,
+                language=dace.dtypes.Language.CPP,
+            )
         off = tile_offset(widths)
         body = f"_dst[{off}] = {node.expr};"
         code = nested_loops(widths, body)
-        inputs = {c: None for c in node.extra_inputs}
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs=inputs,

@@ -175,5 +175,115 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
+// =========================== VLEN=1 overloads ============================
+// DaCe codegen collapses a ``Register Array(shape=(1,))`` transient to a
+// plain ``T`` variable for the K=0 / W=1 postamble — but other operands
+// at the SAME call site may stay as ``T[1]`` arrays (which decay to
+// ``T*``). The reference-only overloads above don't bind to that mix.
+// Each VLEN=1 wrapper below uses ``tile_addr`` to accept any combination
+// of ``T``, ``T&``, ``T*``, or ``T[N]`` arguments and normalise them to
+// ``T*`` before forwarding to the canonical pointer-shape body. Mask
+// always stays ``const bool*`` (DaCe routes the mask through a tile
+// transient even at VLEN=1).
+
+// ``tile_load_value`` extracts the single element from any kind of
+// VLEN=1 tile operand:
+//   * ``T``       — scalar value: return as-is.
+//   * ``T&``      — reference: return the referenced value.
+//   * ``T*``      — pointer to a 1-element buffer: return ``*p``.
+//   * ``T[N]``    — array of N (always 1 here): return ``arr[0]``.
+// Const-correctness is handled by the by-value return type. The output
+// (``dst``) side uses ``tile_store_value`` which writes back through
+// either a scalar reference or a pointer.
+
+template <typename T>
+inline T tile_load_value(const T& x) noexcept { return x; }
+template <typename T>
+inline T tile_load_value(const T* x) noexcept { return *x; }
+template <typename T, std::size_t N>
+inline T tile_load_value(const T (&x)[N]) noexcept { return x[0]; }
+
+template <typename T, typename V>
+inline void tile_store_value(T& dst, V v) noexcept { dst = static_cast<T>(v); }
+template <typename T, typename V>
+inline void tile_store_value(T* dst, V v) noexcept { *dst = static_cast<T>(v); }
+template <typename T, std::size_t N, typename V>
+inline void tile_store_value(T (&dst)[N], V v) noexcept { dst[0] = static_cast<T>(v); }
+
+// VLEN=1 tile_binop.
+template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked,
+          typename Out, typename A, typename B>
+inline std::enable_if_t<VLEN == 1, void>
+tile_binop(Out&& out, A&& a, B&& b, const bool* __restrict__ mask) {
+  const T av = tile_load_value<T>(a);
+  const T bv = tile_load_value<T>(b);
+  T rv = tile_apply<T, Op>(av, bv);
+  if constexpr (Masked) tile_store_value<T>(out, mask[0] ? rv : T(0));
+  else tile_store_value<T>(out, rv);
+}
+
+// VLEN=1 tile_unop.
+template <typename T, int VLEN, char Op, bool Broadcast, bool Masked,
+          typename Out, typename A>
+inline std::enable_if_t<VLEN == 1, void>
+tile_unop(Out&& out, A&& a, const bool* __restrict__ mask) {
+  const T av = tile_load_value<T>(a);
+  T rv = tile_unop_apply<T, Op>(av);
+  if constexpr (Masked) tile_store_value<T>(out, mask[0] ? rv : T(0));
+  else tile_store_value<T>(out, rv);
+}
+
+// VLEN=1 tile_merge.
+template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked,
+          typename Out, typename C, typename TThen, typename EElse>
+inline std::enable_if_t<VLEN == 1, void>
+tile_merge(Out&& out, C&& cond, TThen&& t, EElse&& e, const bool* __restrict__ mask) {
+  const CondT cv = tile_load_value<CondT>(cond);
+  const T tv = tile_load_value<T>(t);
+  const T ev = tile_load_value<T>(e);
+  T rv = cv ? tv : ev;
+  if constexpr (Masked) tile_store_value<T>(out, mask[0] ? rv : T(0));
+  else tile_store_value<T>(out, rv);
+}
+
+// VLEN=1 tile_load. ``stride`` is irrelevant (one lane).
+template <typename T, int VLEN, bool Masked, typename Dst, typename Src>
+inline std::enable_if_t<VLEN == 1, void>
+tile_load(Dst&& dst, Src&& src, const bool* __restrict__ mask, std::int64_t /*stride*/ = 1) {
+  const T sv = tile_load_value<T>(src);
+  if constexpr (Masked) tile_store_value<T>(dst, mask[0] ? sv : T(0));
+  else tile_store_value<T>(dst, sv);
+}
+
+// VLEN=1 tile_store.
+template <typename T, int VLEN, bool Masked, typename Dst, typename Src>
+inline std::enable_if_t<VLEN == 1, void>
+tile_store(Dst&& dst, Src&& src, const bool* __restrict__ mask, std::int64_t /*stride*/ = 1) {
+  const T sv = tile_load_value<T>(src);
+  if constexpr (Masked) { if (mask[0]) tile_store_value<T>(dst, sv); }
+  else tile_store_value<T>(dst, sv);
+}
+
+// VLEN=1 tile_gather: ``src`` array stays a pointer (the gather indexes
+// into the outer buffer); ``dst`` and the index value may be scalars.
+template <typename T, typename IdxT, int VLEN, bool Masked, typename Dst, typename Idx>
+inline std::enable_if_t<VLEN == 1, void>
+tile_gather(Dst&& dst, const T* __restrict__ src, Idx&& idx, const bool* __restrict__ mask) {
+  const IdxT iv = tile_load_value<IdxT>(idx);
+  if constexpr (Masked) tile_store_value<T>(dst, mask[0] ? src[iv] : T(0));
+  else tile_store_value<T>(dst, src[iv]);
+}
+
+// VLEN=1 tile_scatter: ``dst`` stays a pointer; ``src``/``idx`` may be
+// scalars.
+template <typename T, typename IdxT, int VLEN, bool Masked, typename Src, typename Idx>
+inline std::enable_if_t<VLEN == 1, void>
+tile_scatter(T* __restrict__ dst, Src&& src, Idx&& idx, const bool* __restrict__ mask) {
+  const T sv = tile_load_value<T>(src);
+  const IdxT iv = tile_load_value<IdxT>(idx);
+  if constexpr (Masked) { if (mask[0]) dst[iv] = sv; }
+  else dst[iv] = sv;
+}
+
 }  // namespace tileops
 }  // namespace dace
