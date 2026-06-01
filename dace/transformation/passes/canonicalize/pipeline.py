@@ -34,7 +34,7 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
@@ -44,7 +44,6 @@ from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInduct
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
-from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
@@ -171,8 +170,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # NormalizeNegativeStride runs first so every downstream matcher
     # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
     # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
-    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq),
-          ('clean', SplitTasklets()), ('clean', SimplifyPass())]
+    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq), ('clean', SplitTasklets()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
@@ -264,10 +262,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # under a fresh ``_loop_exit_<sym>_<N>`` symbol and rewrites every downstream
     # reader so the "loop-defined symbol used after the loop" refusal disappears.
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
-          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()),
-          ('reduce', SimplifyPass()), ('reduce', LoopToReduce()), ('reduce', LoopToScan()),
-          ('reduce', ArgMaxLift()), ('reduce', EarlyExitToFindIndex()),
-          ('reduce', LoopToConditionalReduce())]
+          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()),
+          ('reduce', LoopToReduce()), ('reduce', LoopToScan()), ('reduce', ArgMaxLift()),
+          ('reduce', EarlyExitToFindIndex()), ('reduce', LoopToConditionalReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -383,10 +380,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # downstream WCR codegen can lower to a clean OMP ``reduction(op:scalar)``
     # clause. Folded into one stage because the four steps (AugWCR, L2M,
     # inline+fuse, privatize) form an atomic logical transformation.
-    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([AugAssignToWCR()])),
-          ('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
+    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
     s += _structural_cleanup('reduction_to_wcr_map')
-    s += [('reduction_to_wcr_map', PrivatizeReductionAccumulator())]
 
     # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
     # adjacent-equal collision count + post-region trap`` guard on each scatter

@@ -93,8 +93,14 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             state.remove_edge(edge)
             state.add_edge(src_an, edge.src_conn, tasklet, "_in",
                            Memlet(data=src_an.data, subset=copy.deepcopy(src_subset)))
+            # Preserve the original edge's WCR on the OUTPUT side. The split
+            # turns ``AccessNode -[wcr]-> AccessNode`` into ``... -> tasklet
+            # -[wcr]-> AccessNode``; the WCR semantics still apply at the
+            # write into ``dst_an``. Dropping the WCR here corrupts reductions
+            # (LoopToReduce's wcr-scalar emit lands the WCR on the
+            # AccessNode-to-AccessNode edge that this method splits).
             state.add_edge(tasklet, "_out", dst_an, edge.dst_conn,
-                           Memlet(data=dst_an.data, subset=copy.deepcopy(dst_subset)))
+                           Memlet(data=dst_an.data, subset=copy.deepcopy(dst_subset), wcr=mem.wcr))
             count += 1
         return count
 
@@ -153,7 +159,14 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 scope_node = edge.dst  # innermost MapExit
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
-                outer_copy = Memlet(data=outer_memlet.data, subset=copy.deepcopy(outer_memlet.subset))
+                # Preserve the original stage-out edge's WCR on the output
+                # side. The split turns ``AccessNode -[wcr]-> MapExit`` into
+                # ``... -> tasklet -[wcr]-> MapExit``; dropping the WCR here
+                # corrupts reductions whose privatised scalar reaches the map
+                # exit via an AccessNode-to-MapExit edge with WCR.
+                outer_copy = Memlet(data=outer_memlet.data,
+                                    subset=copy.deepcopy(outer_memlet.subset),
+                                    wcr=outer_memlet.wcr)
                 tasklet = state.add_tasklet(name=f"_assign_out_{local_an.data}_to_{outer_an.data}",
                                             inputs={"_in"},
                                             outputs={"_out"},

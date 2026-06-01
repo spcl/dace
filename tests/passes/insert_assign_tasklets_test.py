@@ -200,5 +200,83 @@ def test_map_boundary_other_subset_an_edge_is_split():
     assert np.allclose(post, exp)
 
 
+def test_an_to_an_with_other_subset_preserves_wcr():
+    """``AccessNode -[wcr]-> AccessNode`` with ``other_subset`` set must keep
+    its WCR semantics across the split: the inserted tasklet's output edge
+    carries the WCR so the write into the destination still accumulates.
+
+    Regression: dropping the WCR here turned a sequential reduction
+    accumulator into a plain overwrite -- LoopToReduce(wcr-scalar) emits
+    exactly this shape (privatised ``_priv_X`` source -> ``_priv_X``
+    AccessNode WCR write) and the lost WCR corrupted ``c[0] = sum(a*b)``
+    style canonicalize-pipeline kernels.
+    """
+    sdfg = dace.SDFG("wcr_an_to_an")
+    sdfg.add_array("S", [4], dace.float64, transient=False)
+    sdfg.add_scalar("acc", dace.float64, transient=True)
+    state = sdfg.add_state()
+    src = state.add_access("S")
+    dst = state.add_access("acc")
+    state.add_edge(src, None, dst, None, dace.Memlet(data="S", subset="2", other_subset="0", wcr="lambda a, b: a + b"))
+    sdfg.validate()
+
+    changed = InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    assert changed == 1
+    sdfg.validate()
+    assert not _an_to_an_edges(sdfg)
+
+    # Exactly one WCR edge must remain -- on the OUTPUT side of the inserted
+    # tasklet (tasklet -> dst_an), preserving the accumulator semantics.
+    wcr_edges = [e for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert len(wcr_edges) == 1, f'expected one preserved WCR edge, got {len(wcr_edges)}'
+    (we, ) = wcr_edges
+    assert isinstance(we.src, nodes.Tasklet), 'WCR must move to the tasklet output side'
+    assert isinstance(we.dst, nodes.AccessNode) and we.dst.data == "acc"
+
+
+def test_map_exit_stage_out_preserves_wcr():
+    """``AccessNode -[wcr]-> MapExit`` stage-out edge must keep its WCR
+    after the split: the inserted tasklet's output edge to the MapExit
+    carries the WCR, so each thread's contribution still accumulates at
+    the outer write target.
+
+    Regression: this is the shape ``LoopToReduce(prefer='wcr-scalar')``
+    followed by ``LoopToMap`` lands at the canonicalize pipeline boundary
+    -- the wcr-scalar emit's WCR write to ``_priv_X`` ends up as
+    ``_priv_X -[wcr]-> MapExit -> outer _priv_X`` after parallelisation,
+    and ``InsertAssignTaskletsAtMapBoundary`` previously stripped the WCR
+    from the stage-out path.
+    """
+    sdfg = dace.SDFG("wcr_stage_out")
+    sdfg.add_array("A", [16], dace.float64, transient=False)
+    sdfg.add_scalar("acc", dace.float64, transient=True)
+    sdfg.add_array("_priv_acc", [1], dace.float64, transient=True)
+    state = sdfg.add_state()
+    a_an = state.add_access("A")
+    priv_an = state.add_access("_priv_acc")
+    me, mx = state.add_map("m", {"i": "0:16"})
+    t = state.add_tasklet("compute", {"_in"}, {"_out"}, "_out = _in")
+    state.add_memlet_path(a_an, me, t, dst_conn="_in", memlet=dace.Memlet("A[i]"))
+    # The local scalar accumulator inside the map.
+    acc_local = state.add_access("acc")
+    state.add_edge(t, "_out", acc_local, None, dace.Memlet("acc[0]"))
+    # Stage-out edge with WCR -- this is what must survive the split.
+    state.add_memlet_path(acc_local, mx, priv_an, memlet=dace.Memlet("_priv_acc[0]", wcr="lambda a, b: a + b"))
+    sdfg.validate()
+
+    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # WCR must be preserved on the tasklet -> MapExit output side.
+    wcr_to_map_exit = [
+        e for st in sdfg.states() for e in st.edges()
+        if e.data is not None and e.data.wcr is not None and isinstance(e.dst, nodes.MapExit)
+    ]
+    assert len(wcr_to_map_exit) == 1, (f'stage-out split must keep exactly one WCR edge into MapExit; '
+                                       f'got {len(wcr_to_map_exit)}')
+    we = wcr_to_map_exit[0]
+    assert isinstance(we.src, nodes.Tasklet), 'WCR must move to the tasklet output side of the split'
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

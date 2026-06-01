@@ -141,7 +141,14 @@ class LoopToReduce(ppl.Pass):
             # 5-node ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape)
             # actually sees a clean pattern.
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-            sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=True)
+            # NB: ``permissive=False`` is required. ``AugAssignToWCR``'s
+            # permissive mode matches scan-shape bodies (TSVC recurrence_down:
+            # ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as if they were
+            # reductions, and rewrites them into WCR writes that subsequent
+            # passes parallelise -- the carried dependence is lost and values
+            # come out off-by-one-iteration. Pinned by the descending-recurrence
+            # canonicalize value-preservation test.
+            sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=False)
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue

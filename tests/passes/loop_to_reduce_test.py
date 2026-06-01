@@ -972,6 +972,70 @@ def test_split_two_strided_loops_both_lift(prefer):
     assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
 
 
+def test_wcr_scalar_refuses_scan_shape_recurrence():
+    """``LoopToReduce(prefer='wcr-scalar')`` must NOT lift a loop-carried
+    recurrence (``b[i] = b[i+1] + a[i]``) to a WCR write, even after
+    ``LoopToScan`` has rewritten the body into a scan shape with a
+    similar-looking ``out = in_carry + in_value`` tasklet.
+
+    Regression: a previous version called ``AugAssignToWCR`` with
+    ``permissive=True`` from inside ``LoopToReduce.apply_pass`` to catch
+    multi-tasklet ``compute then accumulate`` shapes (s313/s4115). The
+    permissive matcher cannot tell a scan from a reduction and rewrote the
+    recurrence body into a WCR write; the downstream parallelisation then
+    lost the carried dependence and produced an off-by-one-iteration
+    answer (``b[0]`` = ``sum(a)`` instead of ``1.0 + sum(a)``).
+
+    Pinning this test means the matcher stays strict
+    (``permissive=False``) for the inner ``AugAssignToWCR`` step.
+    """
+    import numpy as np
+    from dace.transformation.passes.canonicalize.pipeline import _build_stages
+    NN = dace.symbol("NN")
+
+    @dace.program
+    def _recurrence_down(a: dace.float64[NN], b: dace.float64[NN]):
+        for i in range(NN - 2, -1, -1):
+            b[i] = b[i + 1] + a[i]
+
+    sdfg = _recurrence_down.to_sdfg(simplify=True)
+    # Run the canonicalize pre-stages so LoopToScan rewrites the body before
+    # LoopToReduce(wcr-scalar) sees it -- the exact shape the regression
+    # surfaced under.
+    for label, pass_obj in _build_stages():
+        if label == 'reduction_to_wcr_map':
+            break
+        if hasattr(pass_obj, 'apply_pass'):
+            try:
+                pass_obj.apply_pass(sdfg, {})
+            except Exception:
+                pass
+
+    # Now run LoopToReduce(wcr-scalar). It must NOT create any WCR-bearing
+    # write on ``b`` (the recurrence target).
+    LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    sdfg.validate()
+    bad_wcr = [
+        e for st in sdfg.all_states() for e in st.edges()
+        if e.data is not None and e.data.wcr is not None and e.data.data == 'b'
+    ]
+    assert not bad_wcr, (f'LoopToReduce(wcr-scalar) wrongly placed a WCR write on the recurrence '
+                         f'accumulator ``b``: {bad_wcr}')
+
+    n = 21
+    rng = np.random.default_rng(7)
+    a_arr = rng.random(n)
+    expected = np.zeros(n)
+    expected[n - 1] = 1.0
+    for i in range(n - 2, -1, -1):
+        expected[i] = expected[i + 1] + a_arr[i]
+
+    out = np.zeros(n)
+    out[n - 1] = 1.0
+    sdfg(a=a_arr.copy(), b=out, NN=n)
+    assert np.allclose(out, expected), f'recurrence value-preservation broke: got {out[:3]}, expected {expected[:3]}'
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
