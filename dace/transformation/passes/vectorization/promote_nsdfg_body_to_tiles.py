@@ -47,7 +47,6 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.libraries.tileops import (TileBinop, TileGather, TileIota, TileLoad, TileMerge, TileScatter, TileStore,
                                     TileUnop)
-from dace.libraries.tileops._pure_codegen import tile_offset
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
     _classify_unop_tasklet_body,
@@ -558,6 +557,14 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     if ed.data is None or ed.data.data != conn:
                         continue
                     old = ed.data.subset
+                    # Preserve ``other_subset`` (the gather/scatter index expression
+                    # on the SOURCE side of an AN->AN copy edge) across the widen;
+                    # the K=2 col/row-gather pattern's ``c[jk, jc] = a[idx[jk]]``
+                    # arrives here as ``data=c subset=(0,0) other=idx_index`` and the
+                    # downstream gather descent needs ``idx_index`` to remain. We
+                    # only ever rewrite the THIS-side subset.
+                    other = ed.data.other_subset
+                    wcr = ed.data.wcr
                     # Offset-preserving rewrite: an inner read at point ``k`` in a
                     # tiled dim becomes the W-subset ``[k : k+w-1]`` of the widened
                     # window (so a stencil's ``A[0]``/``A[1]``/``A[2]`` reads become
@@ -567,9 +574,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     # to the full tile (the point-read shape, unchanged behaviour).
                     if old is not None and len(old) == len(tile_w_per_dim):
                         shifted = [(kb, kb + tile_w_per_dim[dp] - 1, 1) for dp, (kb, _ke, _ks) in enumerate(old)]
-                        ed.data = dace.Memlet(data=conn, subset=subsets.Range(shifted))
+                        ed.data = dace.Memlet(data=conn, subset=subsets.Range(shifted), other_subset=other, wcr=wcr)
                     else:
-                        ed.data = dace.Memlet(data=conn, subset=subsets.Range(list(full.ranges)))
+                        ed.data = dace.Memlet(data=conn,
+                                              subset=subsets.Range(list(full.ranges)),
+                                              other_subset=other,
+                                              wcr=wcr)
 
     def _box_classification(self,
                             subset: subsets.Range,
@@ -819,7 +829,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         inner = nsdfg_node.sdfg
         W = tuple(spec.widths)
         out_subset = ", ".join(f"0:{w}" for w in W)
-        off = tile_offset(list(W))
         for oe in list(parent_state.in_edges(nsdfg_node)):
             conn = oe.dst_conn
             if conn is None or conn not in inner.arrays or conn == _INNER_MASK:
@@ -1183,7 +1192,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # uninitialised memory — segfault on the gathered ``c[...]``).
                 agidx_access_by_dim: Dict[int, dace.nodes.AccessNode] = {}
                 if affine_dims or gather_affine_dims or multidim_gather_dims:
-                    off = tile_offset(list(W))
                     # Thread every symbol the affine expressions reference
                     # into the NSDFG (the lane fill tasklets reference the
                     # tile vars plus any shape / divisor symbols, and for the
@@ -1498,7 +1506,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             if unresolved:
                 continue
             # Build the agidx tiles for affine + multi-dim-scatter dest dims.
-            off = tile_offset(list(W))
             agidx_access_by_dim: Dict[int, dace.nodes.AccessNode] = {}
             if affine_dims or multidim_scatter_dims:
                 # Thread every symbol the affine + multidim expressions
@@ -2292,7 +2299,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         inner = istate.sdfg
         W = tuple(spec.widths)
         subset = ", ".join(f"0:{w}" for w in W)
-        off = tile_offset(list(W))
         const_stores = []
         for t in istate.nodes():
             if not isinstance(t, dace.nodes.Tasklet) or _is_assign_tasklet(t):
@@ -2443,7 +2449,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 to_remove_node = assign
             elif isinstance(ed.src, dace.nodes.AccessNode):
                 src_access = ed.src
-                src_subset = ed.data.subset
+                # The memlet's ``data`` is the dst side (``c``) for a direct
+                # AN->AN copy where src and dst differ; the ``other_subset``
+                # then describes the read on the src array (a gather index
+                # ``idx_index`` for ``c[..] = a[idx_index]``-style copies).
+                # Use ``other_subset`` when present, else fall back to subset
+                # (uniform-shape self-copy).
+                src_subset = ed.data.other_subset if ed.data.other_subset is not None else ed.data.subset
                 to_remove_node = None
             else:
                 raise NotImplementedError(
