@@ -475,7 +475,23 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('normalize_wcr', NormalizeWCRSource())]
 
     # end: the final SimplifyPass.
-    s += [('end', SimplifyPass())]
+    #
+    # ``ArrayElimination`` is intentionally skipped: its source-merge
+    # (``merge_access_nodes`` with the ``in_degree == 0`` predicate) collapses
+    # two distinct source AccessNodes for the same data into one with
+    # ``out_degree >= 2``. When the body of a loop carries a *different*
+    # transient scalar via a read-AN-at-top / write-AN-at-bottom pair, the
+    # implicit codegen ordering between those two roots is what kept the
+    # carrier's RAW order intact -- merging the source breaks that ordering
+    # and the carrier reads the *new* value instead of the previous one.
+    # TSVC s254 / s255 (single- / two-step scalar lookback) divergence comes
+    # from this exact mechanism. The Phase 2.4a guard refuses the merge when
+    # the merged data itself has writes in the state, but s254's ``b`` is
+    # read-only -- the carrier (``x``) is the affected transient. Until the
+    # guard is widened to account for sibling carrier transients, the safer
+    # disposition is to skip the pass at end-of-canonicalize. Other Simplify
+    # sub-passes still run.
+    s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
     return s
 
 

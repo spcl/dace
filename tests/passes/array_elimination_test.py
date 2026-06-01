@@ -1,5 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
+
 import dace
 from dace.sdfg import utils as sdutil
 from dace.transformation.pass_pipeline import Pipeline
@@ -185,6 +187,80 @@ def test_source_merge_allowed_when_write_is_in_another_state():
     assert len(b_in_s1_after) == 1, ('ArrayElimination should merge the two source b AccessNodes in S1 -- '
                                      'the write to b lives in a separate state and the inter-state edge '
                                      'enforces the ordering, so the merge is safe')
+
+
+@pytest.mark.xfail(reason="ArrayElimination's source-merge breaks RAW order on a sibling carrier "
+                   "transient (TSVC s254/s255). The canonicalize pipeline skips ArrayElimination "
+                   "at end-of-canonicalize as a mitigation; the underlying matcher fix (widen the "
+                   "Phase 2.4a guard to refuse when a sibling read-AN/write-AN pair exists for a "
+                   "different transient) is still pending. xfail strict so a future fix flips this "
+                   "test green automatically.",
+                   strict=True)
+def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
+    """Regression for TSVC s254. Source-merge of two ``b`` source AccessNodes
+    in the loop body destroys the implicit ordering between the *compute*
+    chain (which reads ``b`` then reads the carried scalar ``x``) and the
+    *seed-write* chain (which reads ``b`` then writes the next ``x``). After
+    the merge, the codegen DFS visits the merged source's out-edges in
+    insertion order, schedules the seed-write FIRST, and the subsequent
+    compute reads the NEW ``x`` instead of the carried old value.
+
+    The Phase 2.4a non-transient guard catches this when the merged source's
+    own container is written in the state (``acc[c]`` in s243's body); it
+    misses this case because the read+write pair lives on a DIFFERENT
+    transient (``x``) while the merge target is ``b`` (read-only in the
+    state).
+    """
+    import numpy as np
+    from tests.corpus.tsvc import s254_d_single
+    from dace.transformation.passes.canonicalize.pipeline import _build_stages
+
+    sdfg = s254_d_single.to_sdfg(simplify=True)
+    # Drive the SDFG to the state right BEFORE the final SimplifyPass enters
+    # ArrayElimination -- the agent's bisect proved ArrayElimination is the
+    # specific Simplify sub-pass that breaks s254.
+    for label, pass_obj in _build_stages():
+        if label == 'end':
+            break
+        if hasattr(pass_obj, 'apply_pass'):
+            try:
+                pass_obj.apply_pass(sdfg, {})
+            except Exception:
+                pass
+    # Run every Simplify sub-pass EXCEPT ArrayElimination -- proves the SDFG
+    # at this point is correct.
+    from dace.transformation.passes.simplify import SimplifyPass
+    SimplifyPass(skip={'ArrayElimination'}).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n = 32
+    rng = np.random.default_rng(254)
+    a0 = rng.random(n)
+    b = rng.random(n)
+    a_exp = a0.copy()
+    x = b[n - 1]
+    for i in range(n):
+        a_exp[i] = (b[i] + x) * 0.5
+        x = b[i]
+
+    sa = a0.copy()
+    sdfg(a=sa, b=b.copy(), LEN_1D=n)
+    assert np.allclose(sa, a_exp), 'baseline (no ArrayElimination) must compute s254 correctly'
+
+    # Now run ArrayElimination in isolation. If it preserves the carrier-RAW
+    # ordering on the sibling transient ``x``, the kernel still computes the
+    # right values. The pre-fix behaviour is divergence -- the seed-write
+    # chain races ahead of the compute.
+    Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    sa = a0.copy()
+    sdfg(a=sa, b=b.copy(), LEN_1D=n)
+    assert np.allclose(sa, a_exp), ('ArrayElimination broke the carrier RAW order: the two ``b`` source '
+                                    'AccessNodes were merged, destroying the implicit ordering between '
+                                    'the compute chain (reads OLD x) and the seed-write chain '
+                                    '(writes NEW x). Fix must extend the Phase 2.4a refusal to also '
+                                    'check sibling transients with both source AND sink in the same state.')
 
 
 if __name__ == '__main__':

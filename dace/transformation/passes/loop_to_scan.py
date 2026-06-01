@@ -426,45 +426,45 @@ def _descend_to_content_state_candidates(loop: LoopRegion):
 
 
 def _fuse_body_states(loop: LoopRegion) -> int:
-    """Body-local state fusion: merge adjacent SDFGStates inside ``loop`` when the
-    iedge between them is trivial (no assignments, ``condition`` unconditional).
+    """Body-local state fusion: merge adjacent SDFGStates inside ``loop`` when
+    the existing ``StateFusionExtended`` transformation would accept the fuse.
 
     Whole-SDFG ``StateFusion`` doesn't reach into LoopRegion bodies via
     ``match_patterns`` (it's a top-level ``MultiStateTransformation``); this
-    helper does the same merge directly on the body. Required for the v5 case --
-    the cloudsc ``pfsqrf`` inner loop's body has two content states joined by a
-    no-op iedge that the single-content-state matcher otherwise refuses.
+    helper does the same merge directly on the body. Required for the v5 case
+    -- the cloudsc ``pfsqrf`` inner loop's body has two content states joined
+    by a no-op iedge that the single-content-state matcher otherwise refuses.
 
-    Per-iteration semantics: the iedge orders state 1's writes before state 2's
-    reads. After fusion the two states become one, and the merging step glues
-    each pair of access nodes with the same ``data`` (state 1's write node ->
-    state 2's read node, etc.) so the dataflow read-after-write order is
-    preserved by an explicit edge.
-
-    Conservatively refuses when:
-
-    * any iedge in the body carries an assignment or a condition,
-    * any of the body's blocks is not an SDFGState (refuse on nested LoopRegion /
-      ConditionalBlock).
+    The safety check delegates to ``StateFusionExtended.can_be_applied``
+    rather than re-implementing a hand-rolled subset of its analysis. The
+    extended variant already understands RAW / WAW hazards between the two
+    states' read/write sets and refuses when the merge would race a sibling
+    carried scalar (TSVC s252 ``t = s`` carry after ``a[i] = s + t`` -- the
+    s1-reads-``t`` / s2-writes-``t`` pattern collapses into one state with
+    no ordering edge between the two ``t`` AccessNodes, and codegen
+    schedules the write before the read, breaking the carry).
 
     :param loop: The LoopRegion to mutate in place.
     :returns: The number of fusions performed.
     """
+    from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+    owner_sdfg = loop.sdfg
     n_fused = 0
     while True:
         blocks = loop.nodes()
         if not all(isinstance(b, SDFGState) for b in blocks):
             return n_fused
-        # Find a fusion candidate: a pair (s1, s2) with one s1->s2 edge, both states
-        # non-empty (we already pass-through empty wrappers in the matcher), and a
-        # trivial iedge between them.
+        # Find a fusion candidate: a pair (s1, s2) with one s1->s2 edge, both
+        # states non-empty, and the ``StateFusionExtended`` matcher's checks
+        # all green. The matcher takes the parent CFG region as ``graph`` and
+        # the owning SDFG separately.
         cand = None
         for s1 in blocks:
             outs = loop.out_edges(s1)
             if len(outs) != 1:
                 continue
             e = outs[0]
-            if e.data is None or e.data.assignments or not e.data.is_unconditional():
+            if e.data is None:
                 continue
             s2 = e.dst
             if not isinstance(s2, SDFGState):
@@ -473,13 +473,21 @@ def _fuse_body_states(loop: LoopRegion) -> int:
                 continue
             if s1.is_empty() or s2.is_empty():
                 continue
+            xform = StateFusionExtended()
+            xform.first_state = s1
+            xform.second_state = s2
+            try:
+                accepts = xform.can_be_applied(loop, expr_index=0, sdfg=owner_sdfg)
+            except Exception:
+                accepts = False
+            if not accepts:
+                continue
             cand = (s1, s2, e)
             break
         if cand is None:
             return n_fused
         s1, s2, iedge = cand
         _merge_state_into(s1, s2)
-        # Reroute s2's out-edges to s1, then drop s2.
         for oe in list(loop.out_edges(s2)):
             loop.add_edge(s1, oe.dst, oe.data)
             loop.remove_edge(oe)

@@ -1432,6 +1432,47 @@ def test_refuses_multi_step_recurrence_with_multiple_carrier_reads():
     assert np.allclose(b, expected), f'value mismatch: max diff {np.abs(b - expected).max():.2e}'
 
 
+def test_fuse_body_states_refuses_carry_through_state_boundary():
+    """``_fuse_body_states`` must NOT merge two adjacent body states when the
+    first reads a scalar that the second writes (the TSVC s252 pattern
+    ``a[i] = s + t`` in state 1 then ``t = s`` in state 2). The inter-state
+    edge orders the carry's read before its write; collapsing the two
+    states into one removes that ordering and codegen schedules the write
+    (``t = s``) before the read (``s + t``), so the addition sees the NEW
+    ``t`` instead of the previous iteration's value -- carrier RAW order
+    lost.
+
+    Delegating the safety check to ``StateFusionExtended.can_be_applied``
+    (which understands cross-state RAW / WAW hazards) is the disposition
+    landed in slice 2.4b-B. Pinned with the actual TSVC s252 kernel and
+    verified end-to-end against the sequential reference.
+    """
+    from tests.corpus.tsvc import s252_d_single
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = s252_d_single.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+
+    n = 32
+    rng = np.random.default_rng(252)
+    a0 = rng.random(n)
+    b = rng.random(n)
+    c = rng.random(n)
+    a_exp = a0.copy()
+    t = 0.0
+    for i in range(n):
+        s = b[i] * c[i]
+        a_exp[i] = s + t
+        t = s
+
+    sa = a0.copy()
+    sdfg(a=sa, b=b.copy(), c=c.copy(), LEN_1D=n)
+    assert np.allclose(sa, a_exp), ('s252 carry broke after canonicalize: ``_fuse_body_states`` must '
+                                    'refuse the body merge when the inter-state edge orders a carrier '
+                                    'read before its write')
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
