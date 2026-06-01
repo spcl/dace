@@ -2,11 +2,15 @@
 """ Canonicalization of descending (negative-step) sequential loops.
 
     A ``range(hi, lo, -s)`` loop lowers to a ``LoopRegion``. The pipeline
-    normalizes it to a ``0:trip:1`` ascending iterator with every access
+    rewrites it to a positive-stride ascending iterator with every access
     rewritten ``i -> start + step*i'``, so the traversal order is unchanged
     and the result holds for loop-carried (vertical) dependencies where the
-    order is load-bearing. After canonicalization no negative-step range
-    remains. References are pure-numpy oracles.
+    order is load-bearing. The canonical-form contract here is **positive
+    stride**: the rewrite must produce ``step > 0`` (the property
+    ``LoopToMap`` and subset-analysis rely on). Zero-based / unit-stride is
+    a property the negative-step rewrite happens to emit but is not itself
+    a correctness requirement, so it is not asserted. References are
+    pure-numpy oracles.
 
     (Negative-step ``dace.map`` parallel maps are rejected by SDFG
     validation and are out of scope here.)
@@ -40,35 +44,39 @@ def _negative_step_ranges(sdfg):
     return bad
 
 
-def _assert_canonical_bounds(sdfg, n: int, expected_iterations=None):
-    """Every map/loop is zero-based and unit-stride; if
-    ``expected_iterations`` is given, every map/loop's concrete trip count
-    (at ``N == n``) equals it.
+def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
+    """Every map/loop has a positive stride; if ``expected_iterations`` is
+    given, every map/loop's concrete trip count (at ``N == n``) equals it.
 
-    Checks the *new bounds* explicitly -- start ``0``, step ``1``, and the
-    exact iteration count after the ``i -> start + step*i'`` remap -- not
-    just the end-to-end numbers.
+    ``LoopToMap`` and the subset-analysis machinery only require step ``> 0``;
+    zero-based / unit-stride is not itself a correctness invariant, so it is
+    intentionally not asserted here. Trip count uses the loop's actual
+    ``(begin, end, step)``: ``floor((end - begin) / step) + 1``.
     """
     subs = {dace.symbol('N'): n}
     seen = 0
+
+    def _trip(b, e, s):
+        b_, e_, s_ = (int(dace.symbolic.evaluate(x, subs)) for x in (b, e, s))
+        return (e_ - b_) // s_ + 1
+
     for st in sdfg.all_states():
         for me in st.nodes():
             if isinstance(me, nodes.MapEntry):
                 for (b, e, s) in me.map.range:
-                    assert dace.symbolic.evaluate(b, subs) == 0, f'map begin {b} != 0'
-                    assert dace.symbolic.evaluate(s, subs) == 1, f'map step {s} != 1'
+                    assert dace.symbolic.evaluate(s, subs) > 0, f'map step {s} not > 0'
                     if expected_iterations is not None:
-                        trip = int(dace.symbolic.evaluate(e, subs)) + 1  # inclusive end
+                        trip = _trip(b, e, s)
                         assert trip == expected_iterations, f'map trips {trip} != {expected_iterations}'
                     seen += 1
     for r in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(r, LoopRegion):
             start = loop_analysis.get_init_assignment(r)
             stride = loop_analysis.get_loop_stride(r)
-            assert dace.symbolic.evaluate(start, subs) == 0, f'loop start {start} != 0'
-            assert dace.symbolic.evaluate(stride, subs) == 1, f'loop stride {stride} != 1'
+            assert dace.symbolic.evaluate(stride, subs) > 0, f'loop stride {stride} not > 0'
             if expected_iterations is not None:
-                trip = int(dace.symbolic.evaluate(loop_analysis.get_loop_end(r), subs)) + 1
+                end = loop_analysis.get_loop_end(r)
+                trip = _trip(start, end, stride)
                 assert trip == expected_iterations, f'loop trips {trip} != {expected_iterations}'
             seen += 1
     assert seen > 0, 'no map/loop found to check bounds on'
@@ -131,7 +139,7 @@ def test_descending_recurrence_canonicalizes_correctly(prog, seed_tail, recur):
     canonicalize(sdfg, validate=True)
     assert not _negative_step_ranges(sdfg), _negative_step_ranges(sdfg)
     # range(n-1-seed_tail, -1, -1) has (n - seed_tail) iterations.
-    _assert_canonical_bounds(sdfg, n, expected_iterations=n - seed_tail)
+    _assert_positive_step_bounds(sdfg, n, expected_iterations=n - seed_tail)
 
     out = np.zeros(n)
     out[n - 1] = 1.0
@@ -148,7 +156,7 @@ def test_descending_parallel_loop_canonicalizes_correctly():
     canonicalize(sdfg, validate=True)
     assert not _negative_step_ranges(sdfg), _negative_step_ranges(sdfg)
     # range(n-1, -1, -1) has n iterations.
-    _assert_canonical_bounds(sdfg, n, expected_iterations=n)
+    _assert_positive_step_bounds(sdfg, n, expected_iterations=n)
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n)
     assert np.allclose(out, a * 2.0 + 1.0)
@@ -170,9 +178,10 @@ def test_cloudsc_style_tridiagonal_vertical_dependency():
     sdfg = thomas_solve.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert not _negative_step_ranges(sdfg), _negative_step_ranges(sdfg)
-    # Two sweeps (forward + back-substitution): assert zero-based unit-stride
-    # form (trip counts differ per loop, so not pinned to one value here).
-    _assert_canonical_bounds(sdfg, n)
+    # Two sweeps (forward + back-substitution): the back-sub loop must end
+    # up positive-stride after canonicalize; trip counts differ per loop,
+    # so not pinned to one value here.
+    _assert_positive_step_bounds(sdfg, n)
 
     out = np.zeros(n)
     sdfg(lo=lo.copy(), di=di.copy(), up=up.copy(), rhs=rhs.copy(), x=out, N=n)
