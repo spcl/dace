@@ -23,16 +23,12 @@ Design choices (decided in conversation -- see [[project_scatter_conflict_guard]
   (a sequential scatter) lives outside the SDFG entirely -- it's the caller's
   recovery path, not part of the generated kernel.
 """
-import copy
 from typing import Iterable, Optional, Set
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets
-from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-
 
 #: Prefix for the sorted-index transient the guard allocates.
 _SORTED_PREFIX = '_scatter_guard_sorted_'
@@ -102,11 +98,20 @@ class GuardScatterConflicts(ppl.Pass):
         return emitted or None
 
 
-def insert_scatter_guard(sdfg: SDFG, idx_name: str) -> None:
+def insert_scatter_guard(sdfg: SDFG, idx_name: str, emit_trap: bool = True) -> Optional[str]:
     """Emit a sort+compare+abort guard for ``idx_name`` at the earliest legal CFG point.
 
     :param sdfg: The SDFG to mutate in place.
     :param idx_name: The integer array whose runtime values must be all distinct.
+    :param emit_trap: When ``True`` (default), the chain ends in a state whose
+        tasklet calls ``__builtin_trap()`` if the duplicate count is positive.
+        When ``False``, the trap state is omitted and the duplicate-count
+        symbol is returned for the caller to thread into its own runtime
+        check (e.g. a ``ConditionalBlock`` selecting between a parallel and
+        a fallback sequential branch).
+    :returns: ``None`` when ``emit_trap=True``; the duplicate-count symbol
+              name (``__scatter_guard_check_<count>``) when ``emit_trap=False``.
+              Callers in the latter mode dispatch on ``sym > 0``.
     :raises ValueError: If ``idx_name`` is not a 1-D integer Array in ``sdfg.arrays``,
         or if a guard already exists for it (presence of a ``_scatter_guard_sorted_``
         transient with the same suffix).
@@ -135,25 +140,30 @@ def insert_scatter_guard(sdfg: SDFG, idx_name: str) -> None:
     original_start = sdfg.start_block if def_states else sdfg.start_block
 
     sdfg.add_transient(sorted_name, desc.shape, desc.dtype)
-    init_state, sort_state, compare_state, trap_state, count_name, trap_sym = _build_guard_states(
-        sdfg, idx_name, sorted_name)
+    init_state, sort_state, compare_state, trap_state, count_name, trap_sym = _build_guard_states(sdfg,
+                                                                                                  idx_name,
+                                                                                                  sorted_name,
+                                                                                                  emit_trap=emit_trap)
     _splice_guard_into_cfg(sdfg, idx_name, init_state, sort_state, compare_state, trap_state, count_name, trap_sym,
                            def_states, original_start)
     sdfg.reset_cfg_list()
+    return None if emit_trap else trap_sym
 
 
 def _find_definition_states(sdfg: SDFG, idx_name: str) -> Set[SDFGState]:
     """Return every state that has an in-degree-positive AccessNode for ``idx_name``."""
     return {
         st
-        for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states()
-        if any(n.data == idx_name and st.in_degree(n) > 0 for n in st.data_nodes())
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.all_states() if any(n.data == idx_name and st.in_degree(n) > 0 for n in st.data_nodes())
     }
 
 
 def _build_guard_states(
-    sdfg: SDFG, idx_name: str,
-    sorted_name: str) -> tuple[SDFGState, SDFGState, SDFGState, SDFGState, str, str]:
+        sdfg: SDFG,
+        idx_name: str,
+        sorted_name: str,
+        emit_trap: bool = True) -> tuple[SDFGState, SDFGState, SDFGState, Optional[SDFGState], str, str]:
     """Build (but do not splice) the four guard states: init, sort, compare, trap.
 
     The compare map writes per-iteration ``0`` or ``1`` (collision indicator) under a
@@ -177,10 +187,7 @@ def _build_guard_states(
     n_expr = desc.shape[0]
 
     # Length-1 collision counter; WCR-summed by the compare map.
-    count_name, _ = sdfg.add_scalar(f"{_COUNT_PREFIX}{idx_name}",
-                                    dtypes.int64,
-                                    transient=True,
-                                    find_new_name=True)
+    count_name, _ = sdfg.add_scalar(f"{_COUNT_PREFIX}{idx_name}", dtypes.int64, transient=True, find_new_name=True)
     trap_sym = f"__scatter_guard_check_{count_name}"
     sdfg.add_symbol(trap_sym, dtypes.int64)
 
@@ -232,45 +239,58 @@ def _build_guard_states(
     # bound to the symbol ``trap_sym`` on the incoming interstate edge, so the
     # tasklet has no connectors (DaCe convention: tasklets that read only symbols
     # may have no in-connectors).
-    trap_state = sdfg.add_state(f"_scatter_guard_trap_{idx_name}")
-    trap_state.add_tasklet(f"trap_{idx_name}", {}, {},
-                           f"if ({trap_sym} > 0) {{ __builtin_trap(); }}",
-                           language=dtypes.Language.CPP)
+    trap_state: Optional[SDFGState] = None
+    if emit_trap:
+        trap_state = sdfg.add_state(f"_scatter_guard_trap_{idx_name}")
+        trap_state.add_tasklet(f"trap_{idx_name}", {}, {},
+                               f"if ({trap_sym} > 0) {{ __builtin_trap(); }}",
+                               language=dtypes.Language.CPP)
 
     return init_state, sort_state, compare_state, trap_state, count_name, trap_sym
 
 
 def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, init_state: SDFGState, sort_state: SDFGState,
-                           compare_state: SDFGState, trap_state: SDFGState, count_name: str, trap_sym: str,
+                           compare_state: SDFGState, trap_state: Optional[SDFGState], count_name: str, trap_sym: str,
                            def_states: Set[SDFGState], original_start) -> None:
-    """Splice the four guard states in at the earliest legal CFG point.
+    """Splice the guard states in at the earliest legal CFG point.
 
-    Internal chain: ``init -> sort -> compare -> trap`` (plain interstate edges,
-    except ``compare -> trap`` which binds the count value to the symbol used by
-    the trap tasklet).
+    Internal chain: ``init -> sort -> compare -> [trap] -> downstream`` (plain
+    interstate edges, except the edge OUT of ``compare`` which binds the count
+    value to ``trap_sym``). When ``trap_state`` is ``None``, the chain ends at
+    ``compare`` and the count symbol propagates directly to downstream code
+    (the caller is responsible for routing on it, e.g. a ``ConditionalBlock``).
 
     - If ``def_states`` is empty (``idx_name`` has no internal writes), the chain
-      becomes the new start: ``init -> sort -> compare -> trap -> original_start``.
+      becomes the new start.
     - Otherwise, the chain is inserted right after the topologically-latest
-      top-level definer state: every out-edge of that state is redirected to
-      ``trap_state``'s downstream, and a fresh edge from the definer to ``init_state``
-      is added.
+      top-level definer state.
     """
     sdfg.add_edge(init_state, sort_state, dace.InterstateEdge())
     sdfg.add_edge(sort_state, compare_state, dace.InterstateEdge())
-    sdfg.add_edge(compare_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
+    if trap_state is not None:
+        sdfg.add_edge(compare_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
+        chain_tail = trap_state
+        downstream_iedge_assignments = None
+    else:
+        chain_tail = compare_state
+        # When the trap is absent, the count value must be bound on the edge
+        # leaving the chain (the caller will dispatch on the symbol downstream).
+        downstream_iedge_assignments = {trap_sym: count_name}
 
     if def_states:
-        # Topological order of the ORIGINAL CFG (the guard states aren't reachable yet).
         topo_order = list(sdfg.bfs_nodes(original_start))
         last_def = max(def_states, key=topo_order.index)
         for e in list(sdfg.out_edges(last_def)):
             sdfg.remove_edge(e)
-            sdfg.add_edge(trap_state, e.dst, e.data)
+            if downstream_iedge_assignments is not None:
+                merged = dict(e.data.assignments or {})
+                merged.update(downstream_iedge_assignments)
+                sdfg.add_edge(chain_tail, e.dst, dace.InterstateEdge(condition=e.data.condition, assignments=merged))
+            else:
+                sdfg.add_edge(chain_tail, e.dst, e.data)
         sdfg.add_edge(last_def, init_state, dace.InterstateEdge())
     else:
-        # No internal definers: the guard runs at SDFG entry.
-        sdfg.add_edge(trap_state, original_start, dace.InterstateEdge())
+        sdfg.add_edge(chain_tail, original_start, dace.InterstateEdge(assignments=downstream_iedge_assignments))
         sdfg.start_block = sdfg.node_id(init_state)
 
 

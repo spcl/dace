@@ -27,7 +27,7 @@ The ordering is intentional: guards are emitted *before* permissive lifts, so on
 collision the abort fires before any consumer reads the corrupted output.
 """
 import ast
-from typing import Iterable, Optional, Set
+from typing import Optional, Set
 
 from dace import SDFG, properties
 from dace.sdfg.state import LoopRegion
@@ -41,6 +41,19 @@ from dace.transformation.passes.scatter_conflict_guard import insert_scatter_gua
 class ScatterToGuardedMaps(ppl.Pass):
     """Detect scatter loops, insert per-array runtime guards, then permissively lift to maps.
 
+    Two collision policies are supported via :attr:`emit_unparallelized_else_branch`:
+
+    - ``False`` (default): the guard's check tasklet calls ``__builtin_trap()``
+      whenever a duplicate is detected; the parallelised Map runs unconditionally
+      afterwards. The contract is "permutation or abort" -- callers committed to
+      that contract get the simpler CFG.
+    - ``True``: the guard emits only the sort + duplicate-count steps (no trap)
+      and the scatter loop is wrapped in a ``ConditionalBlock`` keyed on the
+      duplicate-count symbol. The ``True`` branch keeps a deep copy of the
+      original sequential ``LoopRegion``; the ``False`` branch holds the
+      ``LoopToMap``-lifted parallel Map. The check tasklet routes at runtime,
+      so collisions degrade to sequential execution rather than aborting.
+
     Idempotence: the underlying guard utility refuses to emit a second guard for the
     same ``idx`` array (the ``_scatter_guard_sorted_<name>`` transient acts as the
     presence marker). Re-running this pass on an SDFG it has already guarded is a
@@ -49,6 +62,20 @@ class ScatterToGuardedMaps(ppl.Pass):
     """
 
     CATEGORY: str = 'Optimization Preparation'
+
+    emit_unparallelized_else_branch = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="When True, emit a ``ConditionalBlock`` dispatching at runtime on "
+        "the duplicate-count symbol: the True branch runs a sequential clone "
+        "of the original scatter loop; the False branch runs the parallel "
+        "Map lift. The duplicate-trap is suppressed; collisions degrade to "
+        "sequential execution instead of ``__builtin_trap()``.",
+    )
+
+    def __init__(self, emit_unparallelized_else_branch: bool = False):
+        super().__init__()
+        self.emit_unparallelized_else_branch = emit_unparallelized_else_branch
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -66,36 +93,43 @@ class ScatterToGuardedMaps(ppl.Pass):
         from dace.transformation.interstate.loop_to_map import LoopToMap
 
         scatter_loops, idx_arrays = detect_scatter_loops_and_idx_arrays(sdfg)
+
+        # Track each idx_array's duplicate-count symbol so the else-branch
+        # dispatcher knows which symbol to gate on per scatter loop. None when
+        # the trap mode is on.
+        dup_count_syms: dict = {}
         for idx_name in sorted(idx_arrays):
-            # ``insert_scatter_guard`` refuses to double-emit; swallow that one case so
-            # re-running the pass on an already-guarded SDFG is a no-op.
             try:
-                insert_scatter_guard(sdfg, idx_name)
+                trap_sym = insert_scatter_guard(sdfg, idx_name, emit_trap=not self.emit_unparallelized_else_branch)
+                if trap_sym is not None:
+                    dup_count_syms[idx_name] = trap_sym
             except ValueError as exc:
                 if 'already exists' not in str(exc):
                     raise
 
-        # Convert each scatter loop directly via ``LoopToMap.apply`` -- the
-        # post-guard contract (idx is a permutation) makes the lift sound, so
-        # the ``can_be_applied`` write-write-race refusal does not apply.
-        # The previous implementation called ``apply_transformations_repeated``
-        # with ``permissive=True`` *globally*, which incorrectly lifted
-        # unrelated carry loops (TSVC ``s2111`` / ``s1119`` after WavefrontSkew
-        # left genuine carried deps on the outer ``t`` axis). Calling the
-        # underlying ``apply`` utility on each detected scatter loop scopes the
-        # lift to exactly the loops the guard makes safe.
         for loop in scatter_loops:
             parent = loop.parent_graph
             if parent is None or loop not in parent.nodes():
                 continue  # already removed by a sibling lift
             owner_sdfg = _owning_sdfg(sdfg, loop)
+
+            if self.emit_unparallelized_else_branch and dup_count_syms:
+                # Find the dup-count symbol for any idx array this loop
+                # scatters into. Loops with multiple idx arrays would need ALL
+                # of them to be conflict-free for the parallel branch to be
+                # safe; we OR the counts together so any positive count routes
+                # to the sequential branch.
+                loop_idx_syms = [dup_count_syms[i] for i in _loop_idx_arrays(loop) if i in dup_count_syms]
+                if loop_idx_syms:
+                    cond = ' + '.join(loop_idx_syms) + ' > 0'
+                    _wrap_loop_in_dispatcher(parent, loop, cond, LoopToMap)
+                    continue
+
             instance = LoopToMap()
             instance.loop = loop
             try:
                 instance.apply(parent, owner_sdfg)
             except Exception:
-                # Direct ``apply`` is best-effort -- skip a loop the converter
-                # can't handle rather than abort the whole pass.
                 pass
         return len(idx_arrays) or None
 
@@ -206,6 +240,99 @@ def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optiona
     if not (isinstance(idx, ast.Name) and idx.id == loop_var):
         return None
     return arr
+
+
+def _loop_idx_arrays(loop: LoopRegion) -> Set[str]:
+    """Return the idx-array names referenced by ``loop``'s scatter pattern.
+
+    Re-scans this single ``LoopRegion``'s interstate edges for
+    ``sym := arr[loop_var]`` bindings (the per-loop subset of the global
+    detector). The else-branch dispatcher needs to know WHICH idx arrays
+    govern THIS loop so it can build the right conditional guard.
+    """
+    if not loop.loop_variable:
+        return set()
+    arrays: Set[str] = set()
+    for ie in loop.all_interstate_edges():
+        if ie.data is None or not ie.data.assignments:
+            continue
+        for rhs in ie.data.assignments.values():
+            if not rhs:
+                continue
+            try:
+                tree = ast.parse(rhs, mode='eval').body
+            except SyntaxError:
+                continue
+            if (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name)
+                    and isinstance(tree.slice, ast.Name) and tree.slice.id == loop.loop_variable):
+                arrays.add(tree.value.id)
+    return arrays
+
+
+def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop_to_map_cls) -> None:
+    """Replace ``loop`` in ``parent`` with a ``ConditionalBlock`` that picks
+    between a sequential clone (taken when ``condition_expr`` is true -- the
+    "collision detected, fall back" branch) and a parallelised lift of the
+    original loop (taken otherwise).
+
+    The clone is a deep copy of the LoopRegion so the sequential branch keeps
+    the original semantics regardless of what ``LoopToMap`` does on the other
+    branch. The ConditionalBlock is spliced in at ``loop``'s former position;
+    the parent's edges to/from ``loop`` are redirected to the new block.
+
+    :param parent: The ``ControlFlowRegion`` that holds ``loop`` as one of its
+        nodes. Must support ``add_node``/``remove_node``/``add_edge``.
+    :param loop: The scatter loop to wrap. Must be in ``parent.nodes()``.
+    :param condition_expr: The guard expression (e.g. ``"__dup_count > 0"``)
+        for the ``True`` branch (sequential clone). The ``False`` branch is
+        unguarded.
+    :param loop_to_map_cls: ``LoopToMap`` class (injected to avoid a top-level
+        import cycle through ``dace.transformation.interstate``).
+    """
+    import copy as _copy
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+    if loop not in parent.nodes():
+        return
+
+    in_edges = list(parent.in_edges(loop))
+    out_edges = list(parent.out_edges(loop))
+    was_start = getattr(parent, 'start_block', None) is loop
+
+    sequential_clone = _copy.deepcopy(loop)
+    sequential_clone.label = loop.label + '_seq_fallback'
+
+    cb = ConditionalBlock(loop.label + '_dispatch')
+    parent.add_node(cb, is_start_block=was_start)
+
+    seq_branch = ControlFlowRegion(loop.label + '_seq_branch', sdfg=parent.sdfg)
+    seq_branch.add_node(sequential_clone, is_start_block=True)
+
+    par_branch = ControlFlowRegion(loop.label + '_par_branch', sdfg=parent.sdfg)
+    par_branch.add_node(loop, is_start_block=True)
+    parent.remove_node(loop)
+
+    cb.add_branch(condition_expr, seq_branch)
+    cb.add_branch(None, par_branch)
+
+    for e in in_edges:
+        parent.add_edge(e.src, cb, e.data)
+    for e in out_edges:
+        parent.add_edge(cb, e.dst, e.data)
+
+    # Lift the loop inside the False branch to a Map.
+    owner_sdfg = parent.sdfg
+    while owner_sdfg.parent_sdfg is not None:
+        owner_sdfg = owner_sdfg.parent_sdfg
+    instance = loop_to_map_cls()
+    instance.loop = loop
+    try:
+        instance.apply(par_branch, owner_sdfg)
+    except Exception:
+        # If the lift fails on the parallel branch the sequential clone in the
+        # other branch still produces the right result; codegen will compile
+        # both arms unchanged.
+        pass
 
 
 __all__ = ['ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays']
