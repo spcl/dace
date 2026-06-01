@@ -772,6 +772,170 @@ def test_outer_axis_reduction_per_column_is_lifted(prefer):
                          f'1-D reduction along i; got {lifted}.')
 
 
+# ---- masked compound update with gather (multi-state, wcr-scalar only) ------
+
+
+@dace.program
+def _masked_compound_gather(a: dace.float64[N], idx: dace.int32[N], cond: dace.int32[N], sum_out: dace.float64[1]):
+    s = 0.0
+    for i in range(N):
+        if cond[i] != 0:
+            s = s + a[idx[i]]
+    sum_out[0] = s
+
+
+def test_masked_compound_gather_is_lifted(prefer):
+    """``for i: if cond[i]: s += a[idx[i]]`` — a non-idempotent (``+``)
+    masked reduction with an in-body gather.
+
+    ``reduce-libnode`` mode refuses: the libnode shape cannot express the
+    in-body mask or the gather indirection. ``wcr-scalar`` lifts via the
+    chain matcher; the conditional sits inside the privatised body and the
+    WCR write fires only when the guard is true.
+    """
+    import numpy as np
+    sdfg = _masked_compound_gather.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg, prefer)
+    if prefer == 'reduce-libnode':
+        assert lifted == 0
+    else:
+        assert lifted >= 1
+    sdfg.validate()
+    n = 16
+    rng = np.random.default_rng(0)
+    a_arr = rng.standard_normal(n)
+    idx_arr = rng.permutation(n).astype(np.int32)
+    cond_arr = rng.integers(0, 2, size=n).astype(np.int32)
+    expected = float(sum(a_arr[idx_arr[i]] for i in range(n) if cond_arr[i] != 0))
+    sum_out = np.zeros(1)
+    sdfg(a=a_arr.copy(), idx=idx_arr.copy(), cond=cond_arr.copy(), sum_out=sum_out, N=n)
+    assert np.isclose(sum_out[0], expected), f'got {sum_out[0]}, expected {expected}'
+
+
+# ---- interleaved two-accumulator single loop --------------------------------
+
+
+@dace.program
+def _interleaved_two_accum(A: dace.float64[N], evens_out: dace.float64[1], odds_out: dace.float64[1]):
+    evens = 0.0
+    odds = 0.0
+    for i in range(N // 2):
+        evens = evens + A[2 * i]
+        odds = odds + A[2 * i + 1]
+    evens_out[0] = evens
+    odds_out[0] = odds
+
+
+def test_interleaved_two_accumulator_partial_lift(prefer):
+    """Single loop with two independent accumulators
+    (``evens += A[2*i]; odds += A[2*i+1]``).
+
+    LoopToReduce's matchers are single-accumulator by design (the
+    canonical reduction shape is one fold target). The matcher lifts at
+    most one of the two; the other stays in the sequential body.
+    Numerical correctness is preserved because the partial privatisation
+    is semantics-preserving — both accumulators end up with the right
+    value. Parallelising both requires ``LoopFission`` to split the
+    interleaved loop into two single-accumulator loops first (covered by
+    ``test_interleaved_two_accumulator_lifts_both_after_loop_fission``).
+    """
+    import numpy as np
+    sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg, prefer)
+    if prefer == 'reduce-libnode':
+        assert lifted == 0
+    else:
+        # At least one accumulator lifted; the matcher is single-accumulator
+        # so it returns after the first chain match.
+        assert lifted >= 1
+    sdfg.validate()
+    n = 16
+    rng = np.random.default_rng(0)
+    A_arr = rng.standard_normal(n)
+    evens_out = np.zeros(1)
+    odds_out = np.zeros(1)
+    sdfg(A=A_arr.copy(), evens_out=evens_out, odds_out=odds_out, N=n)
+    assert np.isclose(evens_out[0], float(A_arr[::2].sum()))
+    assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
+
+
+def test_interleaved_two_accumulator_lifts_both_after_loop_fission():
+    """``LoopFission`` splits the interleaved 2-accumulator loop into two
+    single-accumulator loops; ``LoopToReduce`` then handles each
+    independently.
+
+    Canonicalization round-trip: this is the user-decided pipeline order
+    for the interleaved case (interleaved -> fission -> reduce). The lift
+    target shape after the fission is two parallel WCR-scalar loops the
+    downstream ``LoopToMap`` can independently parallelise into Maps
+    with ``reduction(+:_priv_X)`` clauses.
+    """
+    import numpy as np
+    from dace.transformation.passes.loop_fission import LoopFission
+    sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
+    sdfg.validate()
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    fissioned = LoopFission().apply_pass(sdfg, {})
+    assert fissioned, 'LoopFission must split the interleaved 2-accumulator loop'
+    n_loops_after_fission = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
+    assert n_loops_after_fission >= 2, f'expected >= 2 loops after fission, got {n_loops_after_fission}'
+    lifted = LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    assert lifted == 2, f'both fissioned loops must lift; got {lifted}'
+    sdfg.validate()
+    rng = np.random.default_rng(0)
+    A_arr = rng.standard_normal(n_loops_after_fission * 8)
+    n_run = A_arr.size
+    evens_out = np.zeros(1)
+    odds_out = np.zeros(1)
+    sdfg(A=A_arr.copy(), evens_out=evens_out, odds_out=odds_out, N=n_run)
+    assert np.isclose(evens_out[0], float(A_arr[::2].sum()))
+    assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
+
+
+# ---- split two strided loops (independent reductions) -----------------------
+
+
+@dace.program
+def _split_two_strided(A: dace.float64[N], evens_out: dace.float64[1], odds_out: dace.float64[1]):
+    evens = 0.0
+    odds = 0.0
+    for i in range(N // 2):
+        evens = evens + A[2 * i]
+    for i in range(N // 2):
+        odds = odds + A[2 * i + 1]
+    evens_out[0] = odds  # intentionally swapped to catch fixture mistakes
+    odds_out[0] = odds
+    evens_out[0] = evens
+
+
+def test_split_two_strided_loops_both_lift(prefer):
+    """Two strided reductions (``evens += A[2*i]``, ``odds += A[2*i+1]``)
+    in two separate loops. Each is a single-accumulator loop with a
+    stride-2 array access. ``wcr-scalar`` lifts both; ``reduce-libnode``
+    refuses because the strided per-iter subset is not the canonical
+    full-array reduction shape the libnode targets.
+    """
+    import numpy as np
+    sdfg = _split_two_strided.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg, prefer)
+    if prefer == 'reduce-libnode':
+        assert lifted == 0
+    else:
+        assert lifted == 2, f'wcr-scalar must lift both strided loops; got {lifted}'
+    sdfg.validate()
+    n = 16
+    rng = np.random.default_rng(0)
+    A_arr = rng.standard_normal(n)
+    evens_out = np.zeros(1)
+    odds_out = np.zeros(1)
+    sdfg(A=A_arr.copy(), evens_out=evens_out, odds_out=odds_out, N=n)
+    assert np.isclose(evens_out[0], float(A_arr[::2].sum()))
+    assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
