@@ -477,6 +477,19 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         write_subset = write_edge.data.subset
         if _one_elem(write_subset) != 1 or _uses(write_subset, loop_var_sym):
             return None
+        # Also refuse when the write subset uses a symbol that is REASSIGNED
+        # on one of the loop's interstate edges (e.g. ``k = k + j + 1`` inside
+        # the body): such a symbol's value changes every iteration, so each
+        # iteration writes a different array element -- this is N independent
+        # writes, not a reduction onto a single accumulator slot. Pinned by
+        # TSVC s141 (``flat_2d_array[k] = flat_2d_array[k] + bb[j, i]`` with
+        # ``k`` incremented per iteration).
+        loop_iedge_assignees = set()
+        for e in loop.edges():
+            loop_iedge_assignees.update(e.data.assignments.keys())
+        for free_sym in write_subset.free_symbols:
+            if str(free_sym) in loop_iedge_assignees:
+                return None
         # Chase forward through any copy chain (``compute -> tmp -> assign-copy ->
         # accumulator``) so the carry-input check below can match an accumulator
         # whose descriptor is not scalar-like (e.g. ``sum_out: float64[N]`` written
@@ -991,6 +1004,13 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
     if not loop.loop_variable:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    # Same per-iteration-mutated-symbol guard as ``_extract``: the write subset
+    # must not reference a symbol reassigned on the loop's interstate edges
+    # (e.g. TSVC s141's ``k = k + j + 1``), or each iteration writes a
+    # different slot and the loop is not a single-accumulator reduction.
+    loop_iedge_assignees = set()
+    for e in loop.edges():
+        loop_iedge_assignees.update(e.data.assignments.keys())
     candidates = []
     for state in loop.all_states():
         for e in state.edges():
@@ -1004,6 +1024,8 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
             if e.data.subset is None or _uses(e.data.subset, loop_var_sym):
                 continue
             if _one_elem(e.data.subset) != 1:
+                continue
+            if any(str(s) in loop_iedge_assignees for s in e.data.subset.free_symbols):
                 continue
             candidates.append((state, e, e.dst.data, copy.deepcopy(e.data.subset)))
     if len(candidates) != 1:
