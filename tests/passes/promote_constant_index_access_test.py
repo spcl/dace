@@ -599,5 +599,85 @@ def test_refuses_reduction_accumulator_rmw():
     assert np.isclose(sum_out[0], a.sum()), (f'value mismatch: got {sum_out[0]}, expected {a.sum()}')
 
 
+def test_refuses_multi_state_rmw_through_transient():
+    """PCIA must refuse an RMW recurrence whose read-to-write dataflow path
+    threads through a TRANSIENT intermediate across TWO body states.
+
+    Shape: state A reads ``acc[0]`` into transient ``t``; state B reads ``t``
+    and writes ``acc[0]``. The slot's value crosses iterations via ``t``.
+    The earlier Phase 2.2 intra-state check missed this -- its BFS was
+    confined to a single state -- and PCIA would promote, dropping the
+    accumulation. The multi-state check follows the data through ``t``.
+    """
+    sdfg = dace.SDFG('multi_state_rmw')
+    sdfg.add_array('a', [16], dace.float64)
+    sdfg.add_array('acc', [1], dace.float64)
+    sdfg.add_transient('t', [1], dace.float64)
+
+    loop = LoopRegion('outer', condition_expr='i < 16', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(sdfg.add_state('entry', is_start_block=True), loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, sdfg.add_state('exit'), dace.InterstateEdge())
+
+    # State A: t = acc[0]
+    sa = loop.add_state('read_into_t', is_start_block=True)
+    acc_r1 = sa.add_read('acc')
+    t_w1 = sa.add_write('t')
+    tr1 = sa.add_tasklet('passthrough', {'x'}, {'y'}, 'y = x')
+    sa.add_edge(acc_r1, None, tr1, 'x', dace.Memlet('acc[0]'))
+    sa.add_edge(tr1, 'y', t_w1, None, dace.Memlet('t[0]'))
+
+    # State B: acc[0] = t + a[i]
+    sb = loop.add_state('write_back')
+    t_r2 = sb.add_read('t')
+    a_r2 = sb.add_read('a')
+    acc_w2 = sb.add_write('acc')
+    tr2 = sb.add_tasklet('accumulate', {'p', 'q'}, {'r'}, 'r = p + q')
+    sb.add_edge(t_r2, None, tr2, 'p', dace.Memlet('t[0]'))
+    sb.add_edge(a_r2, None, tr2, 'q', dace.Memlet('a[i]'))
+    sb.add_edge(tr2, 'r', acc_w2, None, dace.Memlet('acc[0]'))
+
+    loop.add_edge(sa, sb, dace.InterstateEdge())
+    sdfg.validate()
+
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, (f'PCIA must refuse a multi-state RMW recurrence; got promotions: {res}')
+
+
+def test_refuses_iedge_mediated_rmw():
+    """PCIA must refuse when an interstate-edge assignment inside the loop
+    body reads ``arr[c]`` and propagates the value into a downstream write
+    of the same slot.
+
+    Shape: an iedge in the body has ``{sym: arr[0] + 1.0}``; a later state
+    writes ``arr[0]`` using ``sym`` as a source. The accumulation crosses
+    iterations through the iedge's LHS symbol. A purely in-state BFS would
+    miss the iedge's RHS reference; the iedge-aware analysis catches it.
+    """
+    sdfg = dace.SDFG('iedge_mediated_rmw')
+    sdfg.add_array('arr', [1], dace.float64)
+    sdfg.add_symbol('sym', dace.float64)
+
+    loop = LoopRegion('outer', condition_expr='i < 16', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(sdfg.add_state('entry', is_start_block=True), loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, sdfg.add_state('exit'), dace.InterstateEdge())
+
+    # State A is empty; the iedge A -> B reads arr[0] in its RHS and assigns sym.
+    sa = loop.add_state('iedge_src', is_start_block=True)
+    sb = loop.add_state('iedge_dst')
+    loop.add_edge(sa, sb, dace.InterstateEdge(assignments={'sym': 'arr[0] + 1.0'}))
+
+    # State B: arr[0] = sym (write the slot using the iedge-derived symbol).
+    sym_to_arr = sb.add_tasklet('use_sym', {}, {'y'}, 'y = sym')
+    arr_w = sb.add_write('arr')
+    sb.add_edge(sym_to_arr, 'y', arr_w, None, dace.Memlet('arr[0]'))
+
+    sdfg.validate()
+
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, (f'PCIA must refuse iedge-mediated RMW; got promotions: {res}')
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__]))

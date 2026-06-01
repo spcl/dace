@@ -354,48 +354,172 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # caller-visible final value -- the assertions only check a
                 # secondary output. Leaving as-is and TODO: either add an
                 # epilogue writeback or tighten those tests + refuse here.
-                if self._slot_has_intra_state_rmw(loop, name, point):
+                if self._slot_has_in_body_rmw(loop, name, point):
                     continue
                 if not self._not_live_out(loop, name, slot=point):
                     continue
                 results.append((name, point))
         return results
 
-    def _slot_has_intra_state_rmw(self, loop: LoopRegion, name: str, slot: subsets.Range) -> bool:
-        """``True`` iff some state in ``loop`` has a dataflow path from a READ
-        of ``name[slot]`` to a WRITE of ``name[slot]``. That path -- usually a
-        ``read AccessNode -> tasklet -> write AccessNode`` chain -- carries
-        the slot's value across iterations and is the reduction-accumulator
-        / running-state shape that is NOT privatizable."""
-        for state in loop.all_states():
-            reads: List[nodes.AccessNode] = []
-            writes: List[nodes.AccessNode] = []
+    def _slot_has_in_body_rmw(self, loop: LoopRegion, name: str, slot: subsets.Range) -> bool:
+        """``True`` iff some write of ``name[slot]`` inside the loop body has a
+        dataflow ancestor that read ``name[slot]`` -- i.e. the slot's value
+        feeds back into a write of the same slot. This is the reduction /
+        running-state shape and is NOT privatizable by PCIA.
+
+        The write-buffer shape (``arr[c] = f(i); ... = arr[c] * g(i)``) is
+        intentionally accepted: both a read and a write of ``arr[c]`` exist,
+        but the write has no dataflow ancestor that read the slot.
+
+        Tracks taint may-flow across:
+
+        - Intra-state memlet edges (read AccessNode -> tasklet -> ... ->
+          write AccessNode).
+        - Cross-state continuation: an AccessNode for data ``X`` reached
+          inside the taint set in state A taints every AccessNode for the
+          same ``X`` in any state B reachable from A inside the loop body.
+          Conservative may-flow: a fully-overwriting intermediate state
+          would block must-flow, but is not modeled.
+        - Interstate-edge mediation: an iedge in the loop body whose
+          condition or any assignment RHS references ``name`` is treated
+          as a read of ``name[slot]`` (the assignment LHS symbol and the
+          successor state's reads of that symbol become tainted). Errs on
+          the side of refusing when the same array name appears in iedge
+          expressions; a precise per-slot iedge analysis would parse the
+          expression and require an exact slot match, but the array-name
+          granularity already covers every TSVC / cloudsc shape we hit
+          and is cheaper to reason about.
+        """
+        body_states = list(loop.all_states())
+        if not body_states:
+            return False
+
+        # Collect read/write events of name[slot]
+        reads: List[Tuple[SDFGState, nodes.AccessNode]] = []
+        writes: List[Tuple[SDFGState, nodes.AccessNode]] = []
+        for state in body_states:
             for n in state.nodes():
                 if not isinstance(n, nodes.AccessNode) or n.data != name:
                     continue
                 if any(e.data is not None and e.data.data == name and e.data.subset is not None
                        and self._point_subsets_equal(e.data.subset, slot) for e in state.out_edges(n)):
-                    reads.append(n)
+                    reads.append((state, n))
                 if any(e.data is not None and e.data.data == name and e.data.subset is not None
                        and self._point_subsets_equal(e.data.subset, slot) for e in state.in_edges(n)):
-                    writes.append(n)
-            if not reads or not writes:
+                    writes.append((state, n))
+        writes_set = set(writes)
+
+        # Successor map for states reachable inside the loop body.
+        succ_states = self._loop_state_successors(loop, body_states)
+
+        # Iedge-derived seed: any iedge in the body whose RHS/condition
+        # references ``name`` taints the iedge's LHS symbols. Subsequent
+        # state code (tasklet bodies, memlet index expressions) that uses
+        # the tainted symbol is treated as a taint source.
+        iedge_seed_symbols: Set[str] = set()
+        body_state_set = set(body_states)
+        for edge in loop.all_interstate_edges():
+            if edge.src not in body_state_set and edge.dst not in body_state_set:
                 continue
-            # BFS forward from each read; if any write of the same slot is
-            # reached, this is an RMW.
-            writes_set = set(writes)
-            for r in reads:
-                seen = {r}
-                stack = [r]
-                while stack:
-                    cur = stack.pop()
-                    if cur in writes_set and cur is not r:
-                        return True
-                    for e in state.out_edges(cur):
-                        if e.dst not in seen:
-                            seen.add(e.dst)
-                            stack.append(e.dst)
+            ied = edge.data
+            if ied is None:
+                continue
+            refs_name = False
+            for rhs in ied.assignments.values():
+                if rhs and self._expr_references_name(rhs, name):
+                    refs_name = True
+                    break
+            if not refs_name and ied.condition is not None:
+                if self._expr_references_name(ied.condition.as_string, name):
+                    refs_name = True
+            if refs_name:
+                iedge_seed_symbols.update(ied.assignments.keys())
+
+        # If iedge-derived taint exists AND any write of name[slot] is in the
+        # body, treat as RMW (conservative). A precise check would propagate
+        # the symbol taint through subsequent state code; an over-eager
+        # refusal here only loses an optimization, not correctness.
+        if iedge_seed_symbols and writes_set:
+            return True
+        if not reads or not writes_set:
+            return False
+
+        # Multi-state taint BFS from each read AccessNode of name[slot].
+        # A reached write of name[slot] (other than the seed) signals RMW.
+        # Cross-state continuation uses the data name as the persistence key.
+        for seed in reads:
+            visited: Set[Tuple[SDFGState, Any]] = {seed}
+            stack: List[Tuple[SDFGState, Any]] = [seed]
+            seed_node = seed[1]
+            while stack:
+                state, node = stack.pop()
+                if (state, node) in writes_set and node is not seed_node:
+                    return True
+                # Forward through intra-state memlet edges.
+                for e in state.out_edges(node):
+                    new = (state, e.dst)
+                    if new not in visited:
+                        visited.add(new)
+                        stack.append(new)
+                # Cross-state continuation: a tainted AccessNode of data X at
+                # this state's frontier propagates the taint into every
+                # AccessNode of the same X in any reachable successor state.
+                if isinstance(node, nodes.AccessNode):
+                    data_name = node.data
+                    for next_state in succ_states.get(state, ()):
+                        for n2 in next_state.nodes():
+                            if isinstance(n2, nodes.AccessNode) and n2.data == data_name:
+                                new = (next_state, n2)
+                                if new not in visited:
+                                    visited.add(new)
+                                    stack.append(new)
         return False
+
+    @staticmethod
+    def _loop_state_successors(loop: LoopRegion, body_states: List[SDFGState]) -> Dict[SDFGState, Set[SDFGState]]:
+        """For each state in ``body_states``, the transitive set of body
+        states reachable via interstate edges inside ``loop``.
+        """
+        body_set = set(body_states)
+        adj: Dict[SDFGState, Set[SDFGState]] = {s: set() for s in body_states}
+        for edge in loop.all_interstate_edges():
+            if edge.src in body_set and edge.dst in body_set:
+                adj[edge.src].add(edge.dst)
+        # Transitive closure (small body sizes; Floyd-Warshall-style is fine).
+        for s in body_states:
+            stack = list(adj[s])
+            seen: Set[SDFGState] = set(stack)
+            while stack:
+                cur = stack.pop()
+                for nxt in adj.get(cur, ()):
+                    if nxt not in seen:
+                        seen.add(nxt)
+                        stack.append(nxt)
+            adj[s] = seen
+        return adj
+
+    @staticmethod
+    def _expr_references_name(expr_str: Any, name: str) -> bool:
+        """Whether ``expr_str`` (an iedge RHS or condition string / sympy)
+        references the array ``name`` as a data identifier.
+        """
+        if expr_str is None:
+            return False
+        s = str(expr_str)
+        # Whole-word match: avoid spurious matches like ``arr_other`` when
+        # looking for ``arr``. Simple boundary check; iedge expressions are
+        # small so a regex import is overkill.
+        idx = 0
+        while True:
+            idx = s.find(name, idx)
+            if idx < 0:
+                return False
+            before_ok = idx == 0 or not (s[idx - 1].isalnum() or s[idx - 1] == '_')
+            after = idx + len(name)
+            after_ok = after >= len(s) or not (s[after].isalnum() or s[after] == '_')
+            if before_ok and after_ok:
+                return True
+            idx = after
 
     @staticmethod
     def _is_constant_point_subset(sub) -> bool:
