@@ -301,28 +301,20 @@ def test_same_named_writer_transient_does_not_collapse():
 import pytest
 
 
-@pytest.mark.xfail(
-    reason="Reproduces the loop-peeling shape: two peeled states each write a "
-    "boundary slice of ``A`` (``A[N-1] += 1`` then ``A[N-2] += 1``), then a "
-    "remainder Map writes ``A[i] = B[i]*2`` over ``0:N``. The peeled-write "
-    "subsets overlap the Map's write range, so the un-fused interstate "
-    "ordering (peeled0 -> peeled1 -> remainder) is load-bearing. After "
-    "``StateFusionExtended`` collapses all three into one state, only some "
-    "of the cross-chain happens-before empty-memlet edges are emitted via "
-    "``connections_to_make``: the *second* peeled write chain's tail is "
-    "not wired to the remainder's source, so the scheduler is free to run "
-    "the remainder Map BEFORE the second peeled ``+= 1`` lands -- yielding "
-    "``A[N-2] = (B[N-2]*2) + 1`` instead of ``B[N-2]*2``. Marked strict so "
-    "a fix flips it on automatically; integration pin in "
-    "tests/canonicalize/canonicalize_parallelization_knobs_test.py.",
-    strict=True,
-)
 def test_peeled_iterations_then_remainder_map_keep_ordering():
     """Two peeled iterations + a remainder Map: the un-fused interstate
     ordering is load-bearing because the peeled writes alias the Map's
-    write range. ``StateFusionExtended`` must preserve the ordering by
-    emitting happens-before edges between every peeled-chain tail and the
-    remainder's source."""
+    write range. The first SFE fusion (peeled0 + peeled1) is safe -- their
+    writes hit disjoint A subsets, and SFE adds a happens-before empty
+    memlet from peeled0's A write to peeled1's B-side source. The second
+    SFE fusion (merged + remainder) must be REFUSED: the remainder writes
+    ``A[0:N]`` which overlaps the merged state's reads ``A[N-1]`` and
+    ``A[N-2]``, and the remainder's write value does not flow from real
+    first-state data. Earlier the empty-memlet edge to ``B`` fooled the
+    ``flows_from_first`` exemption (``B`` was being counted as a producer
+    of first state); the fix excludes empty-edge-only AccessNodes from
+    ``first_out_data``. After the fix the merged + remainder fusion is
+    refused, leaving the interstate edge to enforce the ordering."""
     N_SYM = 8
     sdfg = SDFG('peel_then_remainder')
     sdfg.add_array('A', [N_SYM], dtypes.float64)
@@ -361,7 +353,8 @@ def test_peeled_iterations_then_remainder_map_keep_ordering():
 
     a = np.zeros(N_SYM, dtype=np.float64)
     b = np.arange(N_SYM, dtype=np.float64) + 0.5
-    _assert_fusion_preserves_semantics(sdfg, 1, A=a, B=b)
+    # peeled0+peeled1 fuses; merged+remainder is correctly refused -> 2 states left.
+    _assert_fusion_preserves_semantics(sdfg, 2, A=a, B=b)
 
 
 if __name__ == '__main__':
