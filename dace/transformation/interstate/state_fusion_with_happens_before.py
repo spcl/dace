@@ -427,12 +427,34 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                 # second writes it, ``d`` not a first output.
                                 # Safe fusion would need a dependency edge to
                                 # every first-state sink reading ``d``; refuse
-                                # instead and keep the two states separate.
+                                # in the unsafe case.
+                                #
+                                # Exemption: if the second-state write's value
+                                # flows from real data the first state produced
+                                # (a ``read -> ... transient ... -> write``
+                                # chain via ``first_out_data``), the existing
+                                # dataflow already orders first's read of ``d``
+                                # before second's write of ``d``. This is what
+                                # makes base ``StateFusion`` accept the
+                                # scan-fission shape ``T = f(B); B = g(T)`` --
+                                # mirror that here so ``StateFusionExtended``
+                                # is a true superset.
                                 if d in fused_cc.first_inputs:
                                     nodes_first_read = [n for n in first_input if n.data == d]
                                     if StateFusionExtended.memlets_intersect(first_state, nodes_first_read, True,
                                                                              second_state, nodes_second, False):
-                                        return False
+                                        flows_from_first = False
+                                        for n2 in nodes_second:
+                                            for we in second_state.in_edges(n2):
+                                                anc = nx.ancestors(second_state._nx, we.src) | {we.src}
+                                                if any(isinstance(a, nodes.AccessNode) and a.data in first_out_data
+                                                       for a in anc):
+                                                    flows_from_first = True
+                                                    break
+                                            if flows_from_first:
+                                                break
+                                        if not flows_from_first:
+                                            return False
 
                         continue
                     # If an input/output of a connected component in the first
