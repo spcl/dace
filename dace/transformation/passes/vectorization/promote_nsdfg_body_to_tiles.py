@@ -1208,10 +1208,41 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         # (``_agidx[off] = sym_expr``). This is the K-aware
                         # generalisation of the K=1 "Scalar broadcast" fall-back.
                         if len(W) > 1:
-                            raise NotImplementedError(
-                                f"PromoteNSDFGBodyToTiles: gather on {src_name!r} dim {k} reads 1-D index "
-                                f"tile {idx_arr!r} but K={len(W)}; the K-shape index fan-out is a separate "
-                                f"slice — use a multi-dim index source ({idx_arr}[i, j, ...]) at K>=2.")
+                            # K>=2 with a 1-D index source (e.g. col_gather
+                            # ``c[jk, jc] = a[idx[jk]]``): after
+                            # ``fan_out_tile_gather_index_symbols_kd`` widened
+                            # ``idx`` from (NK,) to (W_jk,), the per-lane read
+                            # is ``idx[__l<bound_dim>]`` and the un-bound tile
+                            # dim broadcasts the same value across every lane
+                            # in that dim. Route through the existing
+                            # multi-dim gather path with a single-entry
+                            # ``tile_var_dim_per_iter`` so the downstream
+                            # TileIota fill substitutes the bound iter-var's
+                            # lane index into dim 0 of the idx access.
+                            outer_sub = outer_subsets_by_conn.get(idx_arr)
+                            if outer_sub is None or len(outer_sub.ranges) != 1:
+                                unresolved = True
+                                break
+                            bound_iter_idx: Optional[int] = None
+                            ob, _ob_e, _ob_s = outer_sub.ranges[0]
+                            ob_syms = ob.free_symbols if hasattr(ob, 'free_symbols') else set()
+                            for p, tv_name in enumerate(spec.iter_vars):
+                                if dace.symbolic.pystr_to_symbolic(tv_name) in ob_syms:
+                                    bound_iter_idx = p
+                                    break
+                            if bound_iter_idx is None:
+                                unresolved = True
+                                break
+                            idx_expr_str = self._index_expr_for_symbol(inner, sym)
+                            if idx_expr_str is None:
+                                unresolved = True
+                                break
+                            multidim_gather_dims.append(
+                                (k, sym, idx_arr, idx_expr_str, {
+                                    bound_iter_idx: 0
+                                }))
+                            idx_info.append((k, None, None, W[0], 1))
+                            continue
                         if str(b) == sym:
                             # Bare-symbol form ``src[k]`` — use idx_arr directly.
                             window = idx_arr_shape[0]

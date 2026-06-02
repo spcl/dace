@@ -236,7 +236,6 @@ def test_full_2d_baseline_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_col_gather_descent_to_tile_only():
     """Per-row data-dep gather (a[idx[jk]]) broadcast across jc.
 
@@ -261,7 +260,6 @@ def test_col_structured_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_row_gather_descent_to_tile_only():
     """Per-column data-dep gather (a[idx[jc]]) broadcast across jk."""
     sdfg = _row_gather.to_sdfg()
@@ -293,7 +291,6 @@ def test_fully_structured_2d_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_fully_unstructured_separable_descent_to_tile_only():
     """``a[idx_k[jk], idx_j[jc]]`` — every source dim data-dependent.
 
