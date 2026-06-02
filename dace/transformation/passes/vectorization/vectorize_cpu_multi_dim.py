@@ -308,11 +308,20 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         #   * RemoveMathCall — drop the ``math.`` prefix the power expansion emits
         #     so ``math.exp``/``math.log`` match TileUnop's ``exp``/``log``.
         # (``WCRToAugAssign``, ``LoopToMap``, ``RefineNestedAccess`` and
-        # ``MapCollapse`` run in ``apply_pass``. ``InlineSDFGs`` and
-        # ``InsertAssignTaskletsAtMapBoundary`` are intentionally NOT run:
-        # InlineSDFGs would flatten the body NSDFGs ``PromoteNSDFGBodyToTiles``
-        # descends into; InsertAssignTaskletsAtMapBoundary perturbs the gather /
-        # strided staging edges.)
+        # ``MapCollapse`` run in ``apply_pass``. ``InlineSDFGs`` is
+        # intentionally NOT run: it would flatten the body NSDFGs
+        # ``PromoteNSDFGBodyToTiles`` descends into.)
+        # TODO: ``InsertAssignTaskletsAtMapBoundary`` is intentionally NOT
+        # wired here yet (per user directive it MUST be wired). The pass emits
+        # semantically-transparent ``_out = _in`` staging tasklets at map
+        # boundaries — they are correct in principle, but ``EmitTileOps``'
+        # operand resolution currently misroutes the merge-tasklet ``_e``
+        # operand on branch-normalised same-write-set kernels (cloudsc-snippet-
+        # one merge+tile_nodes) through the stage-in load of the OUTPUT array
+        # instead of the per-arm ``__bn_*`` transient. The follow-up slice
+        # lifts the staging assign-tasklet into a tile lib node (TileAssign,
+        # masked when in a remainder body) and tightens ``_resolve_operand`` /
+        # ``_walk_through_assigns`` to consume those pass-throughs correctly.
         passes += [
             RemoveRedundantAssignmentTasklets(),
             RemoveFPTypeCasts(),

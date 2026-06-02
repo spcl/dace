@@ -286,12 +286,13 @@ inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, cons
     sve_st1(pg, out + i, res);
   }
 }
-// Per-lane unary op (op codes: n neg, a abs, e exp, l log, s sqrt, S sin,
-// C cos, f floor, c ceil, t tanh). The transcendentals have no portable SIMD
-// intrinsic, so this shares scalar.h's lane-loop form in every backend.
+// Per-lane unary op (op codes: n neg, ! not, a abs, e exp, l log, s sqrt,
+// S sin, C cos, f floor, c ceil, t tanh). The transcendentals have no portable
+// SIMD intrinsic, so this shares scalar.h's lane-loop form in every backend.
 template <typename T, char Op>
 inline T tile_unop_apply(T a) {
   if constexpr (Op == 'n') return -a;
+  else if constexpr (Op == '!') return T(!a);
   else if constexpr (Op == 'a') return std::abs(a);
   else if constexpr (Op == 'e') return std::exp(a);
   else if constexpr (Op == 'l') return std::log(a);

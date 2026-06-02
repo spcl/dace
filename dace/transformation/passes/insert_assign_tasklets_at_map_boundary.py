@@ -126,6 +126,16 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 direction = 'out'
             else:
                 continue
+            # WCR is reduction semantics on the WRITE side and is only valid on
+            # stage-out edges (``... -> MapExit``). A WCR-carrying stage-in
+            # edge (``MapEntry -> AccessNode``) has no defined meaning — fail
+            # loudly rather than silently strip the WCR.
+            if direction == 'in' and e.data.wcr is not None:
+                raise ValueError(
+                    f"InsertAssignTaskletsAtMapBoundary: stage-in edge "
+                    f"{e.src} -> {e.dst} (data {e.data.data!r}) carries WCR "
+                    f"{e.data.wcr!r}; WCR is only valid on stage-out edges "
+                    f"into MapExit.")
 
             mpath = state.memlet_path(e)
             outer_an = mpath[0].src if direction == 'in' else mpath[-1].dst

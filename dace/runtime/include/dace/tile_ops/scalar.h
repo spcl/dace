@@ -83,7 +83,7 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 }
 
 // Per-lane unary op. Op codes (single char):
-//   ``n`` neg(-a)  ``a`` abs  ``e`` exp  ``l`` log  ``s`` sqrt
+//   ``n`` neg(-a)  ``!`` not(!a)  ``a`` abs  ``e`` exp  ``l`` log  ``s`` sqrt
 //   ``S`` sin      ``C`` cos  ``f`` floor ``c`` ceil ``t`` tanh
 // Transcendentals have no portable SIMD intrinsic, so every backend shares this
 // vectorize-hinted lane loop (the compiler auto-vectorises neg/abs/sqrt and
@@ -91,6 +91,7 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 template <typename T, char Op>
 inline T tile_unop_apply(T a) {
   if constexpr (Op == 'n') return -a;
+  else if constexpr (Op == '!') return T(!a);
   else if constexpr (Op == 'a') return std::abs(a);
   else if constexpr (Op == 'e') return std::exp(a);
   else if constexpr (Op == 'l') return std::log(a);

@@ -45,6 +45,7 @@ _SCALAR = "Scalar"
 # templates on (legend in scalar.h: n neg, a abs, e exp, l log, s sqrt, ...).
 _UNOP_TO_CHAR = {
     "neg": "n",
+    "not": "!",
     "abs": "a",
     "exp": "e",
     "log": "l",
