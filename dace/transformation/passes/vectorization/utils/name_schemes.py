@@ -4,14 +4,15 @@
 A single owner for each class of minted identifier avoids the silent
 mismatch where one site composes a name and another parses it differently:
 
-- ``LaneIdScheme`` — per-lane symbols ``<base>_laneid_<i>`` (1D path).
+- ``LaneIdScheme`` — per-tile-lane symbols under one unified scheme. The
+  canonical (Option B) form is a chain of per-dim chunks
+  ``<base>_lane<d>id_<n>`` (one chunk per tile dim, source order); the
+  legacy 1D form ``<base>_laneid_<n>`` (no dim index) is parsed for
+  back-compat as if it were ``<base>_lane0id_<n>``. Covers the 1D
+  ``VectorizeCPU`` path AND the v2 K-dim ``VectorizeCPUMultiDim`` path.
 - ``VecNameScheme`` — vector buffers ``<base>_vec`` / ``<base>_vec_<i>`` /
   ``<base>_vec_k``.
 - ``PackedNameScheme`` — scatter / gather buffers ``<base>_packed``.
-- ``TileLaneScheme`` — multi-dim per-tile-lane recognizer
-  ``<base>_tilelane_<i_0>x<i_1>x..._<i_{K-1}>`` (v2 audit-only); the
-  K=1 legacy ``LaneIdScheme`` form is also accepted by
-  :meth:`TileLaneScheme.is_tilelane` so a single helper covers both.
 - ``TileNameScheme`` — v2 tile-transient names (``<base>_tile``,
   ``<base>_tile_idx``, ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
 - ``CORE_MAP_PARAM_PREFIX`` — prefix marking outer map parameters minted
@@ -25,7 +26,7 @@ connectors must use the same suffix on both directions, so callers
 classify by access kind, not by direction.
 """
 import re
-from typing import Iterable, Iterator, Optional, Tuple
+from typing import Iterable, Iterator, List, Optional, Tuple
 
 import dace
 from dace.sdfg import SDFG
@@ -34,48 +35,201 @@ CORE_MAP_PARAM_PREFIX = "core"
 
 
 class LaneIdScheme:
-    """Owner of the per-lane symbol scheme ``<base>_laneid_<i>``.
+    """Owner of the unified per-tile-lane symbol scheme.
 
-    A symbol that already encodes its lane (parses non-trivially) is treated
-    as fixed, which keeps the lane-expansion passes idempotent.
+    Canonical (Option B) form: ``<base>_lane<d>id_<n>`` per tile dimension
+    ``d``, chained for K>=2 (one chunk per dim, source order):
+
+    - K=1 dim 0 lane 3: ``a_lane0id_3``.
+    - K=2 dim 0 lane 3, dim 1 lane 5: ``a_lane0id_3_lane1id_5``.
+
+    The legacy 1D form ``<base>_laneid_<n>`` (without the dim index) is
+    accepted by every parser as if it were ``<base>_lane0id_<n>``, so
+    callers minted under either scheme classify uniformly. New names should
+    be emitted via :meth:`make_dim` / :meth:`make_multi`; :meth:`make`
+    keeps the single-arg legacy emit form for back-compat with existing
+    1D callers (A.1: infra only; emitters switch in A.2).
+
+    :cvar LEGACY_SUFFIX: Legacy 1D infix ``_laneid_``. Reserved for substring
+        searches in callers that pre-date Option B; new code should use
+        :meth:`is_lane_fanned` or :meth:`parse` instead.
+    :cvar SUFFIX: Alias of :attr:`LEGACY_SUFFIX` (kept for back-compat with
+        callers that read ``LaneIdScheme.SUFFIX`` directly).
     """
 
-    SUFFIX = "_laneid_"
-    _PARSE_RE = re.compile(r"^(.*)_laneid_(\d+)$")
+    LEGACY_SUFFIX = "_laneid_"
+    SUFFIX = LEGACY_SUFFIX
+
+    # Trailing-chunk matcher anchored to end of string (chunked form).
+    _CHUNK_TAIL_RE = re.compile(r"_lane(\d+)id_(\d+)$")
+    # Legacy 1D form, full name.
+    _LEGACY_RE = re.compile(r"^(.*)_laneid_(\d+)$")
 
     @staticmethod
     def make(base: str, lane: int) -> str:
-        """Build the lane-encoded name ``<base>_laneid_<lane>``.
+        """Build the legacy 1D lane-encoded name ``<base>_laneid_<lane>``.
+
+        Single-int back-compat shape used by every 1D emitter today. New
+        callers should use :meth:`make_dim` / :meth:`make_multi` so the
+        emitted name carries the dim index. A.2 switches the legacy
+        emitters over.
 
         :param base: Un-encoded symbol base.
-        :param lane: Lane index.
-        :returns: The lane-encoded name.
+        :param lane: Lane index in the single (innermost) tile dim.
+        :returns: ``<base>_laneid_<lane>``.
         """
-        return f"{base}{LaneIdScheme.SUFFIX}{lane}"
+        return f"{base}{LaneIdScheme.LEGACY_SUFFIX}{lane}"
+
+    @staticmethod
+    def make_dim(base: str, dim: int, lane: int) -> str:
+        """Build a single Option B chunk ``<base>_lane<dim>id_<lane>``.
+
+        :param base: Un-encoded symbol base.
+        :param dim: Tile-dim index (0 is outermost, increasing toward
+            the innermost).
+        :param lane: Lane index in dim ``dim``.
+        :returns: ``<base>_lane<dim>id_<lane>``.
+        """
+        return f"{base}_lane{dim}id_{lane}"
+
+    @staticmethod
+    def make_multi(base: str, chunks: Iterable[Tuple[int, int]]) -> str:
+        """Build a multi-dim lane-encoded name with one chunk per dim.
+
+        :param base: Un-encoded symbol base.
+        :param chunks: Iterable of ``(dim, lane)`` pairs in source (chain)
+            order. Empty chunks yield ``base`` unchanged.
+        :returns: ``<base>_lane<d_0>id_<n_0>_lane<d_1>id_<n_1>...``.
+        """
+        return base + "".join(f"_lane{d}id_{n}" for d, n in chunks)
 
     @staticmethod
     def parse(name: str) -> Optional[Tuple[str, int]]:
-        """Peel the trailing lane off a lane-encoded name.
+        """Peel one trailing lane chunk off ``name`` (legacy 1D shape).
+
+        Accepts both the canonical chunked form ``<base>_lane<d>id_<n>``
+        AND the legacy 1D form ``<base>_laneid_<n>``; in both cases the
+        return is ``(base_without_the_chunk, lane)``. Nested forms peel
+        one level only — callers that want the full base should use
+        :meth:`base_of`.
 
         :param name: Name to parse.
-        :returns: ``(base, lane)`` if ``name`` ends with ``_laneid_<digits>``,
-            else ``None``. Nested forms peel one level only
-            (``foo_laneid_3_laneid_0`` -> ``("foo_laneid_3", 0)``); call
-            repeatedly until ``None`` for the original base.
+        :returns: ``(base_without_last_chunk, lane)`` if ``name`` ends with
+            a recognised chunk; else ``None``.
         """
-        m = LaneIdScheme._PARSE_RE.match(name)
-        if m is None:
+        m = LaneIdScheme._CHUNK_TAIL_RE.search(name)
+        if m is not None and m.end() == len(name):
+            return name[:m.start()], int(m.group(2))
+        lm = LaneIdScheme._LEGACY_RE.match(name)
+        if lm is not None:
+            return lm.group(1), int(lm.group(2))
+        return None
+
+    @staticmethod
+    def parse_chunks(name: str) -> Optional[Tuple[str, Tuple[Tuple[int, int], ...]]]:
+        """Strip every trailing lane chunk off ``name``.
+
+        Walks the trailing-chunk shape repeatedly so a multi-dim chained
+        name ``a_lane0id_3_lane1id_5`` decomposes to ``("a", ((0, 3),
+        (1, 5)))``. The legacy 1D form is treated as one ``(0, n)`` chunk.
+
+        :param name: Name to parse.
+        :returns: ``(base, chunks)`` where ``chunks`` is the per-dim
+            ``(dim, lane)`` tuple in source order; ``None`` if ``name``
+            carries no recognised chunk.
+        """
+        peeled: List[Tuple[int, int]] = []
+        remaining = name
+        while True:
+            m = LaneIdScheme._CHUNK_TAIL_RE.search(remaining)
+            if m is not None and m.end() == len(remaining):
+                peeled.append((int(m.group(1)), int(m.group(2))))
+                remaining = remaining[:m.start()]
+                continue
+            lm = LaneIdScheme._LEGACY_RE.match(remaining)
+            if lm is not None:
+                peeled.append((0, int(lm.group(2))))
+                remaining = lm.group(1)
+                continue
+            break
+        if not peeled:
             return None
-        return m.group(1), int(m.group(2))
+        peeled.reverse()
+        return remaining, tuple(peeled)
 
     @staticmethod
     def is_laneid(name: str) -> bool:
-        """Check whether ``name`` is lane-encoded.
+        """Check whether ``name`` carries any lane chunk.
+
+        Back-compat alias of :meth:`is_lane_fanned` used by 1D callers.
 
         :param name: Name to test.
-        :returns: True iff ``name`` matches ``<base>_laneid_<digits>``.
+        :returns: True iff ``name`` matches either the canonical chunked
+            form or the legacy ``_laneid_<digits>`` form.
         """
         return LaneIdScheme.parse(name) is not None
+
+    @staticmethod
+    def is_lane_fanned(name: str) -> bool:
+        """Whether ``name`` carries any per-tile-lane chunk.
+
+        Audit-pass entrypoint covering both the canonical chunked form
+        and the legacy 1D form. Replaces the deleted
+        ``TileLaneScheme.is_tilelane``.
+
+        :param name: Name to test.
+        :returns: True iff at least one ``_lane<d>id_<n>`` chunk (or the
+            legacy ``_laneid_<n>`` form) is present.
+        """
+        return LaneIdScheme.parse(name) is not None
+
+    @staticmethod
+    def base_of(name: str) -> str:
+        """Strip every trailing lane chunk and return the bare base.
+
+        :param name: Name to strip.
+        :returns: ``name`` with every recognised trailing chunk removed
+            (or ``name`` itself if no chunk is present).
+        """
+        parsed = LaneIdScheme.parse_chunks(name)
+        return parsed[0] if parsed is not None else name
+
+    @staticmethod
+    def peel_dim(name: str, dim: int) -> Optional[str]:
+        """Drop the chunk for tile dim ``dim`` from ``name``.
+
+        Reassembles the remaining chunks in source order under the
+        canonical form. Useful when a downstream pass collapses one tile
+        dim (e.g., partial collapse, mask projection) and the leftover
+        lane chunks must keep agreeing with the survived dim indices.
+
+        :param name: Lane-encoded name.
+        :param dim: Tile-dim index to drop.
+        :returns: The peeled name (canonical form), or ``None`` when
+            ``name`` does not carry a chunk for ``dim``.
+        """
+        parsed = LaneIdScheme.parse_chunks(name)
+        if parsed is None:
+            return None
+        base, chunks = parsed
+        kept = [(d, n) for d, n in chunks if d != dim]
+        if len(kept) == len(chunks):
+            return None
+        return LaneIdScheme.make_multi(base, kept)
+
+    @staticmethod
+    def varies_with_dim(name: str, dim: int) -> bool:
+        """Whether ``name`` carries a chunk for tile dim ``dim``.
+
+        :param name: Lane-encoded name.
+        :param dim: Tile-dim index to test.
+        :returns: True iff at least one ``_lane<dim>id_<...>`` chunk is
+            present (the legacy 1D form counts as dim 0).
+        """
+        parsed = LaneIdScheme.parse_chunks(name)
+        if parsed is None:
+            return False
+        return any(d == dim for d, _ in parsed[1])
 
 
 class VecNameScheme:
@@ -166,62 +320,6 @@ class PackedNameScheme:
         :returns: True iff ``name`` ends with ``_packed``.
         """
         return name.endswith(PackedNameScheme.SUFFIX)
-
-
-class TileLaneScheme:
-    """Recognizer for multi-dim per-tile-lane names.
-
-    The v2 K-dim path **never mints** per-lane scalars — tile lib nodes
-    carry the lane offset implicitly. This scheme exists only so the
-    audit pass :func:`assert_no_laneid_in_tile_path` can flag any leak
-    from a buggy prep pass. K=1 form (the legacy ``LaneIdScheme``) is
-    also recognized via :meth:`is_tilelane` so one helper covers both.
-
-    :cvar SUFFIX: The infix used between the base and the per-dim lane
-        indices.
-    """
-
-    SUFFIX = "_tilelane_"
-    _PARSE_RE = re.compile(r"^(.*)_tilelane_((?:\d+x)*\d+)$")
-
-    @staticmethod
-    def make(base: str, indices: Tuple[int, ...]) -> str:
-        """Build the multi-dim lane-encoded name.
-
-        :param base: Un-encoded symbol base.
-        :param indices: Per-dim lane indices, innermost-last.
-        :returns: ``<base>_tilelane_<i_0>x<i_1>x..._<i_{K-1}>``.
-        :raises ValueError: If ``indices`` is empty.
-        """
-        if not indices:
-            raise ValueError("TileLaneScheme.make: indices must be non-empty")
-        return f"{base}{TileLaneScheme.SUFFIX}{'x'.join(str(i) for i in indices)}"
-
-    @staticmethod
-    def parse(name: str) -> Optional[Tuple[str, Tuple[int, ...]]]:
-        """Peel the trailing multi-dim lane coordinate off ``name``.
-
-        :param name: Name to parse.
-        :returns: ``(base, indices)`` if ``name`` matches
-            ``<base>_tilelane_<digits>(x<digits>)*``; else ``None``.
-        """
-        m = TileLaneScheme._PARSE_RE.match(name)
-        if m is None:
-            return None
-        return m.group(1), tuple(int(s) for s in m.group(2).split("x"))
-
-    @staticmethod
-    def is_tilelane(name: str) -> bool:
-        """Check whether ``name`` is per-lane encoded under any K.
-
-        Returns True for the v2 multi-dim form ``<base>_tilelane_<...>``
-        and for the legacy 1D ``<base>_laneid_<i>`` form, so a single
-        check covers both.
-
-        :param name: Name to test.
-        :returns: True iff ``name`` is a per-lane name in either scheme.
-        """
-        return (TileLaneScheme.parse(name) is not None or LaneIdScheme.is_laneid(name))
 
 
 class TileNameScheme:
@@ -386,17 +484,17 @@ def assert_no_laneid_in_tile_path(sdfg: SDFG) -> None:
     """Audit-only: refuse any per-lane encoded name in the K-dim path.
 
     The v2 multi-dim track relies on lib-node emission carrying lane
-    offsets implicitly; a leaked ``<base>_laneid_<i>`` or
-    ``<base>_tilelane_<...>`` is a sign that some prep pass accidentally
-    fanned out to per-lane scalars. Loud failure here keeps the design
-    invariant honest. Runs at orchestrator exit.
+    offsets implicitly; a leaked ``<base>_lane<d>id_<n>`` (canonical Option
+    B) or ``<base>_laneid_<n>`` (legacy 1D) is a sign that some prep pass
+    accidentally fanned out to per-lane scalars. Loud failure here keeps
+    the design invariant honest. Runs at orchestrator exit.
 
     :param sdfg: SDFG to audit (walked recursively, including nested
         SDFGs and interstate-edge assignments).
-    :raises AssertionError: If any classified name matches
-        :meth:`TileLaneScheme.is_tilelane`.
+    :raises AssertionError: If any classified name is lane-fanned per
+        :meth:`LaneIdScheme.is_lane_fanned`.
     """
-    leaks = sorted({n for n in _iter_all_symbol_strings(sdfg) if TileLaneScheme.is_tilelane(n)})
+    leaks = sorted({n for n in _iter_all_symbol_strings(sdfg) if LaneIdScheme.is_lane_fanned(n)})
     if leaks:
         raise AssertionError(f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
                              f"Lib-node emission must carry lane offsets implicitly — check the prep passes.")

@@ -71,3 +71,89 @@ def test_make_with_str_base_and_int_lane_only():
     # Round-trip even when the base contains underscores or starts with `_laneid_`.
     assert LaneIdScheme.parse(LaneIdScheme.make("foo_bar", 4)) == ("foo_bar", 4)
     assert LaneIdScheme.parse(LaneIdScheme.make("_laneid_5", 2)) == ("_laneid_5", 2)
+
+
+# --- Option B chunked-form API (A.1 infra) --------------------------------
+
+
+def test_make_dim_emits_canonical_chunk():
+    assert LaneIdScheme.make_dim("a", 0, 3) == "a_lane0id_3"
+    assert LaneIdScheme.make_dim("a", 1, 5) == "a_lane1id_5"
+    assert LaneIdScheme.make_dim("foo_bar", 2, 7) == "foo_bar_lane2id_7"
+
+
+def test_make_multi_chains_chunks():
+    assert LaneIdScheme.make_multi("a", []) == "a"
+    assert LaneIdScheme.make_multi("a", [(0, 3)]) == "a_lane0id_3"
+    assert LaneIdScheme.make_multi("a", [(0, 3), (1, 5)]) == "a_lane0id_3_lane1id_5"
+    assert LaneIdScheme.make_multi("a", [(0, 3), (1, 5), (2, 7)]) == "a_lane0id_3_lane1id_5_lane2id_7"
+
+
+def test_parse_accepts_chunked_form():
+    """``parse`` peels one trailing chunk in canonical form."""
+    assert LaneIdScheme.parse("a_lane0id_3") == ("a", 3)
+    assert LaneIdScheme.parse("a_lane2id_7") == ("a", 7)
+    # Multi-dim: peels innermost chunk only; remaining base still encodes
+    # the outer dim.
+    assert LaneIdScheme.parse("a_lane0id_3_lane1id_5") == ("a_lane0id_3", 5)
+
+
+def test_parse_chunks_decomposes_full_chain():
+    assert LaneIdScheme.parse_chunks("a") is None
+    assert LaneIdScheme.parse_chunks("a_lane0id_3") == ("a", ((0, 3), ))
+    assert LaneIdScheme.parse_chunks("a_lane0id_3_lane1id_5") == ("a", ((0, 3), (1, 5)))
+    # Mixed chunked-and-legacy chain: legacy treated as dim 0 chunk.
+    assert LaneIdScheme.parse_chunks("a_laneid_3") == ("a", ((0, 3), ))
+
+
+def test_is_lane_fanned_covers_both_forms():
+    cases = [
+        ("idx", False),
+        ("idx_laneid_0", True),
+        ("idx_lane0id_0", True),
+        ("idx_lane1id_3", True),
+        ("idx_lane0id_3_lane1id_5", True),
+        ("foo_lane0id_x", False),
+        ("foo_lane0id_", False),
+    ]
+    for name, expected in cases:
+        assert LaneIdScheme.is_lane_fanned(name) is expected, name
+
+
+def test_base_of_strips_every_chunk():
+    assert LaneIdScheme.base_of("a") == "a"
+    assert LaneIdScheme.base_of("a_lane0id_3") == "a"
+    assert LaneIdScheme.base_of("a_lane0id_3_lane1id_5") == "a"
+    assert LaneIdScheme.base_of("foo_lane0id_3_lane1id_5_lane2id_7") == "foo"
+    # Legacy form: stripped too.
+    assert LaneIdScheme.base_of("a_laneid_3") == "a"
+
+
+def test_peel_dim_removes_only_that_dim():
+    assert LaneIdScheme.peel_dim("a", 0) is None
+    assert LaneIdScheme.peel_dim("a_lane0id_3", 0) == "a"
+    assert LaneIdScheme.peel_dim("a_lane0id_3", 1) is None
+    assert LaneIdScheme.peel_dim("a_lane0id_3_lane1id_5", 0) == "a_lane1id_5"
+    assert LaneIdScheme.peel_dim("a_lane0id_3_lane1id_5", 1) == "a_lane0id_3"
+    # Legacy form parses as dim 0:
+    assert LaneIdScheme.peel_dim("a_laneid_3", 0) == "a"
+
+
+def test_varies_with_dim():
+    assert LaneIdScheme.varies_with_dim("a", 0) is False
+    assert LaneIdScheme.varies_with_dim("a_lane0id_3", 0) is True
+    assert LaneIdScheme.varies_with_dim("a_lane0id_3", 1) is False
+    assert LaneIdScheme.varies_with_dim("a_lane0id_3_lane1id_5", 0) is True
+    assert LaneIdScheme.varies_with_dim("a_lane0id_3_lane1id_5", 1) is True
+    assert LaneIdScheme.varies_with_dim("a_lane0id_3_lane1id_5", 2) is False
+    # Legacy form is dim 0:
+    assert LaneIdScheme.varies_with_dim("a_laneid_3", 0) is True
+    assert LaneIdScheme.varies_with_dim("a_laneid_3", 1) is False
+
+
+def test_round_trip_make_multi_parse_chunks():
+    """``make_multi`` -> ``parse_chunks`` is the identity."""
+    chunks = ((0, 3), (1, 5), (2, 7))
+    name = LaneIdScheme.make_multi("foo", chunks)
+    parsed = LaneIdScheme.parse_chunks(name)
+    assert parsed == ("foo", chunks)
