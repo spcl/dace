@@ -61,9 +61,27 @@ class ExpandTileGatherPure(ExpandTransformation):
         src_strides = [symstr(s) for s in src_arr.strides[-src_ndim:]]
         off = tile_offset(widths)
         idx_strides = node.index_strides or [1] * src_ndim
+
+        # Per-idx subscripting rule (matches DaCe's auto pointer-type
+        # selection): a Scalar source (or anything DaCe will pass by
+        # value) takes no subscript; a tile-shaped Array pointer takes
+        # ``_idx_<k>[lane]``; an Array passed as a pointer but accessed
+        # at a single element takes ``_idx_<k>[0]``.
+        def _idx_subscript(k: int) -> str:
+            ie = next(e for e in parent_state.in_edges(node) if e.dst_conn == f"_idx_{k}")
+            src_desc = parent_sdfg.arrays.get(ie.data.data) if ie.data is not None else None
+            if isinstance(src_desc, dace.data.Scalar):
+                return ""
+            try:
+                lane_count = ie.data.subset.num_elements_exact() if ie.data and ie.data.subset else None
+            except Exception:
+                lane_count = None
+            if lane_count == 1:
+                return "[0]"
+            return f"[{_strided_lane(idx_strides[k], off)}]"
+
         flat_offset = " + ".join(
-            f"((std::ptrdiff_t)_idx_{k}[{_strided_lane(idx_strides[k], off)}] * ({src_strides[k]}))"
-            for k in range(src_ndim))
+            f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({src_strides[k]}))" for k in range(src_ndim))
         dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_dst").data.data].dtype.ctype
         if node.has_mask:

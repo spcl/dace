@@ -138,35 +138,21 @@ def test_tile_reduce_pure_smoke_2d_axis_1():
     np.testing.assert_allclose(DST, SRC.sum(axis=1), rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Length-1 ``_idx_<k>`` source: ExpandTileGatherPure emits ``_idx_<k>[__l0]`` "
-                   "(OOB on length-1 allocation, garbage indices walk off the source allocation at runtime) "
-                   "instead of detecting the broadcast intent and emitting ``_idx_<k>[0]`` (or just "
-                   "``_idx_<k>`` when DaCe passes the connector as a scalar by-value). Compounded "
-                   "upstream: PromoteNSDFGBodyToTiles Phase 2 widening (``_reshape_transients``, line "
-                   "~324 of promote_nsdfg_body_to_tiles.py) converts every transient (1,) to (W,), "
-                   "defeating the broadcast intent before the codegen sees the (1,) shape. Per the "
-                   "user directive the right policy is: (a) skip widening for loop-invariant scalars "
-                   "(transients whose every upstream write reads a non-transient source at a "
-                   "tile-var-free subset, e.g. cloudsc ``z1_lc`` from ``z1[0]``); (b) skip expansion "
-                   "of loop-invariant symbols. Direct application of (a) breaks downstream "
-                   "``_promote_binops``/``_promote_loads``/``_collapse_tile_gathers`` which assume "
-                   "every (1,) transient is widened; the broadcast signal needs to thread through "
-                   "those too (or be marked on the transient via a property the descent reads). "
-                   "Captures the cloudsc-snippet-one merge+tile_nodes runtime segfault end-to-end.")
-def test_tile_gather_scalar_idx_emits_subscript_zero():
-    """A length-1 ``_idx_<k>`` source (loop-invariant scalar like cloudsc
-    ``z1``) must produce ``_idx_<k>[0]`` in the gather body — NOT
-    ``_idx_<k>[lane]``, which would read OOB on the length-1
-    allocation and feed garbage indices to the source-array lookup."""
+def test_tile_gather_scalar_idx_no_subscript():
+    """A ``Scalar`` ``_idx_<k>`` source (loop-invariant index — the
+    canonical form after ``ConvertLengthOneArraysToScalars`` runs early
+    in the K-dim orchestrator) must produce ``_idx_<k>`` without any
+    subscript: DaCe passes Scalars by value, so ``_idx_<k>[0]`` would
+    be a compile error (can't subscript a non-array). Reading the
+    scalar directly broadcasts it across every lane."""
     import dace
     import numpy as np
     from dace.libraries.tileops import TileGather
 
-    sdfg = dace.SDFG("gather_scalar_idx")
+    sdfg = dace.SDFG("gather_scalar_idx_by_value")
     sdfg.add_array("SRC", (10, ), dace.float64)
     sdfg.add_array("DST", (8, ), dace.float64)
-    sdfg.add_array("IDX", (1, ), dace.int64)
+    sdfg.add_scalar("IDX", dace.int64)
     state = sdfg.add_state("main")
     s, d, ix = state.add_access("SRC"), state.add_access("DST"), state.add_access("IDX")
     g = TileGather(name="g", widths=(8, ), source_ndim=1)
@@ -178,12 +164,10 @@ def test_tile_gather_scalar_idx_emits_subscript_zero():
     tasklet_bodies = [
         n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)
     ]
-    assert any("_idx_0[0]" in b for b in tasklet_bodies), tasklet_bodies
-    assert not any("_idx_0[__l0]" in b for b in tasklet_bodies), tasklet_bodies
+    assert not any("_idx_0[" in b for b in tasklet_bodies), tasklet_bodies
 
-    # End-to-end: every lane reads SRC[IDX[0]].
+    # End-to-end: every lane reads SRC[IDX].
     SRC = np.arange(10, dtype=np.float64)
     DST = np.zeros(8)
-    IDX = np.array([3], dtype=np.int64)
-    sdfg(SRC=SRC, DST=DST, IDX=IDX)
+    sdfg(SRC=SRC, DST=DST, IDX=np.int64(3))
     np.testing.assert_array_equal(DST, np.full(8, SRC[3]))

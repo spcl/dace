@@ -29,6 +29,7 @@ from dace import properties
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern, )
+from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
@@ -252,7 +253,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # original tile-dependent array access directly, not a length-1 scalar
         # slice (which ``EmitTileOps`` would mis-classify as a Scalar broadcast).
         # Mirrors the run-at-front placement on the 1D path.
-        passes = [NormalizeWCRSource(), CleanAccessNodeToScalarSliceToTaskletPattern()]
+        # Run ``ConvertLengthOneArraysToScalars`` early so any length-1
+        # boundary array (e.g. cloudsc ``z1`` minted by the python frontend
+        # with shape ``(1,)``) becomes a true ``Scalar``. The K-dim descent
+        # then has a clean signal — ``Scalar`` source ⇒ loop-invariant
+        # broadcast, NOT to be widened — instead of a heuristic over the
+        # parent array shape. Recursive (transient-only on nested SDFGs
+        # so the body-NSDFG signature is unchanged).
+        passes = [
+            ConvertLengthOneArraysToScalars(recursive=True, transient_only=False),
+            NormalizeWCRSource(),
+            CleanAccessNodeToScalarSliceToTaskletPattern(),
+        ]
         if branch_mode == "fp_factor":
             # FP-factor branch lowering (the legacy front): collapse a
             # same-write-set if/else to ``a = c*x + (1-c)*y`` arithmetic,

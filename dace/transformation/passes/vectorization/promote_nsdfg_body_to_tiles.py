@@ -319,10 +319,30 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 inner.remove_data(name, validate=False)
                 inner.add_scalar(name, dtype, storage=dace.dtypes.StorageType.Register, transient=True)
         # Phase 2: native widening for every ``(1,)`` transient (now also
-        # covers the narrowed ones from Phase 1).
+        # covers the narrowed ones from Phase 1). EXCEPT for the
+        # materialised loop-invariant idx transients (``*_lc`` /
+        # ``*_lc_<n>`` minted by ``_materialize_loop_invariant_idx``) —
+        # those mirror a Scalar / literal-``(1,)`` boundary source and
+        # MUST stay length-1 so the downstream ``TileGather`` codegen
+        # picks the broadcast subscript (``_idx_<k>[0]`` for pointer-
+        # to-single, or no subscript for a Scalar by-value). Widening
+        # them defeats the broadcast intent and OOB-reads through the
+        # length-1 backing storage at runtime (cloudsc-snippet-one).
+        def _is_materialised_loop_invariant(name: str) -> bool:
+            if not name.endswith("_lc"):
+                # Possibly ``<base>_lc_<n>`` from the dedup loop.
+                if "_lc_" not in name:
+                    return False
+                tail = name.rsplit("_lc_", 1)[-1]
+                if not tail.isdigit():
+                    return False
+            return True
+
         reshaped: Set[str] = set()
         for name, arr in list(inner.arrays.items()):
             if arr.transient and (isinstance(arr, dace.data.Scalar) or tuple(arr.shape) == (1, )):
+                if _is_materialised_loop_invariant(name):
+                    continue
                 dtype = arr.dtype
                 inner.remove_data(name, validate=False)
                 inner.add_array(name, list(widths), dtype, storage=dace.dtypes.StorageType.Register, transient=True)
@@ -1031,7 +1051,18 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             caller then handles ``idx_arr`` directly as before).
         """
         desc = inner.arrays.get(idx_arr)
-        if desc is None or desc.transient or tuple(desc.shape) != (1, ):
+        # ``ConvertLengthOneArraysToScalars`` (run early in the K-dim
+        # orchestrator's prep) collapses every length-1 array to a true
+        # ``Scalar``, so a loop-invariant boundary index can now reach us
+        # as EITHER a ``(1,)`` Array (pre-conversion) or a ``Scalar``
+        # (post-conversion). Handle both: the materialised transient
+        # mirrors the source's shape so downstream consumers see a clean
+        # ``Scalar`` / ``(1,)`` distinction.
+        if desc is None or desc.transient:
+            return idx_arr, None
+        is_unit = tuple(desc.shape) == (1, )
+        is_scalar = isinstance(desc, dace.data.Scalar)
+        if not (is_unit or is_scalar):
             return idx_arr, None
         if idx_arr not in nsdfg_node.in_connectors:
             return idx_arr, None
