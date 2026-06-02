@@ -112,9 +112,17 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
     x_subs = ", ".join([f"__i{d}" for d in range(rank)])
 
-    cmp_strict = "<" if func == "max" else ">"
-    cmp_tie = "<=" if func == "max" else ">="
-    cmp_op = cmp_tie if node.back else cmp_strict
+    # WCR x/y convention in DaCe codegen: ``x`` is the incoming value
+    # and ``y`` is the accumulator.  For ``back=False`` (first
+    # occurrence) the accumulator wins on ties; for ``back=True`` the
+    # incoming wins.  When the WCR is scheduled sequentially, the
+    # strict ``<`` (for min) keeps the accumulator on ties (only
+    # taking incoming when strictly smaller) -- first occurrence.
+    # ``back=True`` needs the parallel pair to break ties toward the
+    # higher SCAN INDEX, not the accumulator-vs-incoming role:
+    # compare the indices to disambiguate.
+    cmp_strict = ">" if func == "max" else "<"  # "x is strictly better than y"
+    cmp_op = cmp_strict
 
     if flat:
         scan_idx_expr = " + ".join([(f"__i{d}" if d == rank - 1 else f"(__i{d} * " +
@@ -126,10 +134,16 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
         out_pair_subs = ", ".join([f"__i{d}" for d in range(rank) if d != dim_zero])
 
     one_offset = 1 if node.one_based else 0
+    # On tie (``x.val == y.val``), pick the larger or smaller of the
+    # two scan indices depending on ``back``: ``back=True`` keeps the
+    # larger index (last occurrence), ``back=False`` keeps the smaller
+    # (first occurrence).  Three-way pick: x strictly better -> x;
+    # y strictly better -> y; tied -> index comparison decides.
+    tie_idx = "max(x.idx, y.idx)" if node.back else "min(x.idx, y.idx)"
     wcr = ("lambda x, y: "
            f"_val_and_idx_{func}("
            f"val={func}(x.val, y.val), "
-           f"idx=(y.idx if x.val {cmp_op} y.val else x.idx))")
+           f"idx=(x.idx if x.val {cmp_op} y.val else (y.idx if y.val {cmp_op} x.val else {tie_idx})))")
     reduce_code = f"__out = _val_and_idx_{func}(val=__in, idx=({scan_idx_expr}) + {one_offset})"
     reduce_state.add_mapped_tasklet(
         name=f"_arg{func}_reduce",
