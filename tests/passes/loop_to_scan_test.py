@@ -764,14 +764,20 @@ def test_cloudsc_for_1133_shape_nested_inner_loopregion():
 
 
 @pytest.mark.xfail(
-    reason="Same cloudsc ``for_1133`` shape after the inner column loop has been "
-    "lifted to a Map by LoopToMap, isolating blocker (2): Map-exit memlet "
-    "propagation widens the state-level ``pfsqrf`` subset to the full array "
-    "extent (``[0:KLEV, 0:KLON]``) so ``_find_carried_arrays`` no longer sees "
-    "the outer scan-axis ``jk`` dependence. Same root cause as the for_430 "
-    "over-approximation follow-up. Fix paths: (A) descend into Map scopes when "
-    "searching for carriers and emit a vector-Scan; (B) tighten Map-exit "
-    "memlet propagation to preserve outer-loop-var indices (touches core dace).",
+    reason="cloudsc ``for_1133`` shape after the inner column loop has been "
+    "lifted to a Map by LoopToMap. Path A (transformation-layer) was split "
+    "across two halves: (A1) ``_find_carried_arrays`` now descends into "
+    "NestedSDFG scopes via ``_find_carried_arrays_via_nested`` and lifts inner "
+    "memlets through ``symbol_mapping`` to detect the outer scan-axis "
+    "dependence -- this half landed in commit 4db20affe. (A2) the downstream "
+    "matcher / rewriter (``_match_one_carrier`` + the Scan emission) still "
+    "operates on state-level edges with widened subsets and cannot read the "
+    "scan-update tasklet from inside the NestedSDFG. Completing A2 requires "
+    "extending ``_collect_candidates`` to recognise Map-wrapped bodies, "
+    "rerouting the candidate state to the inner NSDFG state, and adapting "
+    "the rewrite to keep the outer Map as a 'free axis' of the vector-Scan "
+    "(multi-day refactor). Path B (tighten Map-exit propagation) is core "
+    "DaCe and remains the alternative.",
     strict=True,
 )
 def test_cloudsc_for_1133_shape_after_inner_l2m():
