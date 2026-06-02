@@ -291,6 +291,15 @@ class LoopToScan(ppl.Pass):
         PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
         PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
+        # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied
+        # here. LoopToScan's matcher already handles the frontend's scalar-
+        # slice intermediates via ``_chase_forward_to_accum`` and friends;
+        # the existing WCR/TrivialTasklet preprocess above is sufficient.
+        # Running the clean folds in addition (in either order vs WCR) is
+        # redundant work and previously regressed the
+        # ``for_1133_shape_reverse_engineered`` case by stripping
+        # intermediates the matcher relies on.
+
         # Normalise backward-iterating loops (``range(N, 0, -1)`` shape; cloudsc
         # ``for_1079`` is the canonical case) to forward iteration. ``LoopToScan``'s
         # matcher only handles ``stride == 1``; rather than build sign-flip handling
