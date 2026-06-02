@@ -1,28 +1,43 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``ArgMin`` / ``ArgMax`` library nodes -- Fortran ``MINLOC`` / ``MAXLOC``.
 
-Mirrors the ``numpy.argmin`` / ``numpy.argmax`` replacement pattern in
-``dace/frontend/python/replacements/reduction.py`` (the
-``_argminmax`` helper): a single Map writes a ``(val, idx)`` struct
-into a per-slice transient via WCR; a second Map extracts the index
-field into the user-facing result.
+Architecture: a multi-state pipeline that keeps every WCR a pure
+``min`` / ``max`` over a scalar.  No ``(val, idx)`` struct WCR with
+nested if/else for index disambiguation -- the index selection is a
+separate filtered-min/-max reduction.
 
-Configurable:
+Pipeline (whole-array ``dim is None``):
 
-* ``one_based`` (default ``True``) -- offset added to the raw scan
-  index before writing.  ``True`` matches Fortran's ``MINLOC`` /
-  ``MAXLOC`` convention; set ``False`` for a 0-based result.
-* ``back`` (default ``False``) -- tie-break direction.  ``False``
-  keeps the first occurrence; ``True`` keeps the last.
-* ``dim`` (default ``None``) -- 1-based reduction axis (Fortran
-  convention).  ``None`` flattens to a scalar.
-* ``mask`` constructor flag adds a ``_mask`` input connector.  Mask
-  semantics are intentionally NOT yet wired in the pure expansion --
-  the validate step accepts the connector for downstream bridge
-  patterns, and an explicit ``NotImplementedError`` is raised at
-  expansion time.
+1. ``init_best_val``: write the identity (``+inf`` / ``-inf``) into a
+   scalar transient ``__best_val``.
+2. ``reduce_best_val``: ``Map`` over the input with ``__out = __in``
+   feeding a ``WCR=min`` / ``WCR=max`` into ``__best_val[0]``.
+3. ``init_best_idx``: write the index-identity sentinel into
+   ``__best_idx`` (``num_elements`` for ``back=False``, ``-1`` for
+   ``back=True``).
+4. ``reduce_best_idx``: ``Map`` over the input emitting the matching
+   flat index when the element equals ``__best_val``, else the
+   sentinel; the WCR ``min`` (``back=False``) / ``max`` (``back=True``)
+   picks the first / last occurrence.
+5. ``extract``: decode the flat index to per-dim subscripts and apply
+   the Fortran 1-based offset.
+
+For ``dim is not None`` the same five states run with a Map whose
+outer iterators are the dim-reduced output coordinates.
+
+Future backends (not yet implemented; ``pure`` is the only registered
+implementation):
+
+* ``CUB``: ``cub::DeviceReduce::ArgMax`` / ``cub::DeviceReduce::ArgMin``
+  return a ``cub::KeyValuePair<int, T>``.  Sequential schedule on GPU.
+* ``OpenMP``: a user-defined reduction
+  (``#pragma omp declare reduction``) over a ``pair<val, idx>`` struct
+  with a custom combiner.  Lets the OpenMP 5.0 runtime own the parallel
+  scan.
+* ``stdpar``: ``std::min_element`` / ``std::max_element`` with
+  ``std::execution::par`` (or sequential, when the SDFG schedule is
+  sequential).  Index = iterator distance.
 """
-
 import dace
 import dace.dtypes as dtypes
 import dace.library
@@ -33,14 +48,46 @@ from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 
 
+def _flat_size(shape) -> int:
+    """Return the product of the static-int extents in ``shape``.
+
+    :raises ValueError: if any extent isn't a literal int (the flat-decode
+        path needs a static total size).
+    """
+    total = 1
+    for s in shape:
+        total *= int(s)
+    return total
+
+
+def _flat_index_expr(rank: int, shape) -> str:
+    """Build the row-major flat-index expression for ``__i0, __i1, ...``.
+
+    ``flat = i0 * (s1 * s2 * .. * s_{R-1}) + i1 * (s2 * .. * s_{R-1}) + .. + i_{R-1}``.
+    """
+    if rank == 1:
+        return "__i0"
+    terms = []
+    for d in range(rank):
+        if d == rank - 1:
+            terms.append(f"__i{d}")
+        else:
+            mult = 1
+            for k in range(d + 1, rank):
+                mult *= int(shape[k])
+            terms.append(f"(__i{d} * {mult})")
+    return " + ".join(terms)
+
+
 def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     """Shared pure expansion for :class:`ArgMin` / :class:`ArgMax`.
 
-    Builds a nested SDFG with two states: ``init`` seeds the
-    per-output-slice ``(val, idx)`` struct transient with a sentinel,
-    and ``reduce`` runs a Map with a min-/max-of-pair WCR over the
-    input slice.  A trailing Map extracts the ``.idx`` field into the
-    user-facing index array.
+    Multi-state pipeline (see module docstring); every WCR is a pure
+    ``min`` / ``max`` over a scalar.  Tasklet bodies are
+    single-statement: state init = ``__out = <literal>``, value reduce
+    = ``__out = __in``, idx reduce = ``__out = flat if (__in == bv) else sentinel``,
+    extract = one ``__o<d> = (__flat // stride) % extent + offset``
+    per dim.
 
     :param node: ``ArgMin`` or ``ArgMax`` instance being expanded.
     :param parent_state: enclosing state.
@@ -59,144 +106,144 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     idx_dtype = desc_idx.dtype.base_type
     shape = list(desc_x.shape)
     rank = len(shape)
-    # Whole-array form (``dim is None``) reduces over every element and
-    # returns a rank-1 array of length ``rank(input)`` holding the
-    # multi-dim subscript -- Fortran ``MINLOC`` / ``MAXLOC`` semantics
-    # (F2018 13.7.110 / 13.7.111).  ``flat`` selects between this
-    # "decode flat index back to subscripts" path and the per-axis
-    # reduction path that returns rank-(R-1).
     flat = dim_zero is None
 
     sdfg = dace.SDFG(node.label + "_sdfg")
     sdfg.add_array("_x", shape, dtype)
     if flat:
         sdfg.add_array("_idx", [rank], idx_dtype)
-        # Internal pair transient is a singleton -- holds the running
-        # (best val, flat idx) for the whole-array scan; the trailing
-        # ``extract`` state decodes the flat idx into per-dim
-        # subscripts and fans out to the rank-1 ``_idx`` output.
-        out_shape = [1]
+        per_slice_shape = [1]
     else:
-        out_shape = [s for d, s in enumerate(shape) if d != dim_zero]
-        if not out_shape:
-            out_shape = [1]
-        sdfg.add_array("_idx", out_shape, idx_dtype)
+        per_slice_shape = [s for d, s in enumerate(shape) if d != dim_zero]
+        if not per_slice_shape:
+            per_slice_shape = [1]
+        sdfg.add_array("_idx", per_slice_shape, idx_dtype)
+    sdfg.add_transient("__best_val", per_slice_shape, dtype)
+    sdfg.add_transient("__best_idx", per_slice_shape, idx_dtype)
 
-    pair = dtypes.struct(f"_val_and_idx_{func}", idx=idx_dtype, val=dtype)
-    _, pair_arr = sdfg.add_transient("_pair", out_shape, pair)
-
-    init_code_val = (str(dtypes.min_value(dtype)) if func == "max" else str(dtypes.max_value(dtype)))
-    init_state = sdfg.add_state(node.label + "_init")
+    val_identity = str(dtypes.max_value(dtype)) if func == "min" else str(dtypes.min_value(dtype))
+    # Sentinel for the idx reduction: ``num_elements`` is larger than any
+    # valid flat idx, so a final WCR=min gives "no match" -> num_elements
+    # which the extract step ignores.  For ``back=True`` we want the LAST
+    # occurrence so the sentinel is ``-1`` and the WCR is ``max``.
     if flat:
-        init_state.add_mapped_tasklet(
-            name=f"_arg{func}_init",
-            map_ranges={"__i0": "0:1"},
-            inputs={},
-            code=f"__init = _val_and_idx_{func}(val={init_code_val}, idx=-1)",
-            outputs={"__init": dace.Memlet("_pair[0]")},
-            external_edges=True,
-        )
+        total = _flat_size(shape)
     else:
-        init_rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
-        out_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
-        init_state.add_mapped_tasklet(
-            name=f"_arg{func}_init",
-            map_ranges=init_rng,
-            inputs={},
-            code=f"__init = _val_and_idx_{func}(val={init_code_val}, idx=-1)",
-            outputs={"__init": dace.Memlet(f"_pair[{out_subs}]")},
-            external_edges=True,
-        )
-
-    reduce_state = sdfg.add_state_after(init_state, node.label + "_reduce")
-    map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
-    x_subs = ", ".join([f"__i{d}" for d in range(rank)])
-
-    # WCR x/y convention in DaCe codegen: ``x`` is the incoming value
-    # and ``y`` is the accumulator.  For ``back=False`` (first
-    # occurrence) the accumulator wins on ties; for ``back=True`` the
-    # incoming wins.  When the WCR is scheduled sequentially, the
-    # strict ``<`` (for min) keeps the accumulator on ties (only
-    # taking incoming when strictly smaller) -- first occurrence.
-    # ``back=True`` needs the parallel pair to break ties toward the
-    # higher SCAN INDEX, not the accumulator-vs-incoming role:
-    # compare the indices to disambiguate.
-    cmp_strict = ">" if func == "max" else "<"  # "x is strictly better than y"
-    cmp_op = cmp_strict
-
-    if flat:
-        scan_idx_expr = " + ".join([(f"__i{d}" if d == rank - 1 else f"(__i{d} * " +
-                                     " * ".join([str(int(s)) for s in shape[d + 1:]]) + ")")
-                                    for d in range(rank)]) if rank > 1 else "__i0"
-        out_pair_subs = "0"
-    else:
-        scan_idx_expr = f"__i{dim_zero}"
-        out_pair_subs = ", ".join([f"__i{d}" for d in range(rank) if d != dim_zero])
+        total = int(shape[dim_zero])
+    idx_sentinel = -1 if node.back else total
+    idx_wcr_op = "max" if node.back else "min"
 
     one_offset = 1 if node.one_based else 0
-    # On tie (``x.val == y.val``), pick the larger or smaller of the
-    # two scan indices depending on ``back``: ``back=True`` keeps the
-    # larger index (last occurrence), ``back=False`` keeps the smaller
-    # (first occurrence).  Three-way pick: x strictly better -> x;
-    # y strictly better -> y; tied -> index comparison decides.
-    tie_idx = "max(x.idx, y.idx)" if node.back else "min(x.idx, y.idx)"
-    wcr = ("lambda x, y: "
-           f"_val_and_idx_{func}("
-           f"val={func}(x.val, y.val), "
-           f"idx=(x.idx if x.val {cmp_op} y.val else (y.idx if y.val {cmp_op} x.val else {tie_idx})))")
-    reduce_code = f"__out = _val_and_idx_{func}(val=__in, idx=({scan_idx_expr}) + {one_offset})"
-    reduce_state.add_mapped_tasklet(
-        name=f"_arg{func}_reduce",
+
+    # ---- state 1: init __best_val to identity ----
+    init_val = sdfg.add_state(node.label + "_init_val")
+    if flat:
+        init_val.add_mapped_tasklet(
+            name="init_best_val",
+            map_ranges={"__t": "0:1"},
+            inputs={},
+            code=f"__out = {val_identity}",
+            outputs={"__out": dace.Memlet("__best_val[0]")},
+            external_edges=True,
+        )
+    else:
+        rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
+        out_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
+        init_val.add_mapped_tasklet(
+            name="init_best_val",
+            map_ranges=rng,
+            inputs={},
+            code=f"__out = {val_identity}",
+            outputs={"__out": dace.Memlet(f"__best_val[{out_subs}]")},
+            external_edges=True,
+        )
+
+    # ---- state 2: reduce __best_val ----
+    reduce_val = sdfg.add_state_after(init_val, node.label + "_reduce_val")
+    map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
+    x_subs = ", ".join([f"__i{d}" for d in range(rank)])
+    bv_subs = "0" if flat else ", ".join([f"__i{d}" for d in range(rank) if d != dim_zero])
+    reduce_val.add_mapped_tasklet(
+        name="reduce_best_val",
         map_ranges=map_rng,
         inputs={"__in": dace.Memlet(f"_x[{x_subs}]")},
-        code=reduce_code,
-        outputs={"__out": dace.Memlet(f"_pair[{out_pair_subs}]", wcr=wcr)},
+        code="__out = __in",
+        outputs={"__out": dace.Memlet(f"__best_val[{bv_subs}]", wcr=f"lambda a, b: {func}(a, b)")},
         external_edges=True,
     )
 
-    extract_state = sdfg.add_state_after(reduce_state, node.label + "_extract")
+    # ---- state 3: init __best_idx to sentinel ----
+    init_idx = sdfg.add_state_after(reduce_val, node.label + "_init_idx")
     if flat:
-        # Decode flat idx -> per-dim subscripts.  Each subscript lives
-        # in its own ``_idx[d]`` slot; the tasklet recovers them with
-        # the Horner-style divide/mod ladder that matches the encoding
-        # in ``scan_idx_expr`` above.  The +1 (Fortran 1-based) is
-        # already baked into the stored flat idx -- subtract it once
-        # before decoding, then re-add per-dim if ``one_based``.
-        flat_zero = f"(__in.idx - {one_offset})"
-        decode_lines = ["__flat = " + flat_zero]
-        # Strides per dim from rightmost (== 1) toward leftmost.
+        init_idx.add_mapped_tasklet(
+            name="init_best_idx",
+            map_ranges={"__t": "0:1"},
+            inputs={},
+            code=f"__out = {idx_sentinel}",
+            outputs={"__out": dace.Memlet("__best_idx[0]")},
+            external_edges=True,
+        )
+    else:
+        rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
+        out_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
+        init_idx.add_mapped_tasklet(
+            name="init_best_idx",
+            map_ranges=rng,
+            inputs={},
+            code=f"__out = {idx_sentinel}",
+            outputs={"__out": dace.Memlet(f"__best_idx[{out_subs}]")},
+            external_edges=True,
+        )
+
+    # ---- state 4: reduce __best_idx (filtered min/max over flat indices) ----
+    reduce_idx = sdfg.add_state_after(init_idx, node.label + "_reduce_idx")
+    if flat:
+        flat_idx = _flat_index_expr(rank, shape)
+    else:
+        flat_idx = f"__i{dim_zero}"
+    # Single-statement Python tasklet: emit the flat index for matches,
+    # the sentinel otherwise.  Conditional expression in a tasklet body
+    # transpiles cleanly via astutils.
+    code = f"__out = ({flat_idx}) if (__in == __bv) else {idx_sentinel}"
+    reduce_idx.add_mapped_tasklet(
+        name="reduce_best_idx",
+        map_ranges=map_rng,
+        inputs={
+            "__in": dace.Memlet(f"_x[{x_subs}]"),
+            "__bv": dace.Memlet(f"__best_val[{bv_subs}]"),
+        },
+        code=code,
+        outputs={"__out": dace.Memlet(f"__best_idx[{bv_subs}]", wcr=f"lambda a, b: {idx_wcr_op}(a, b)")},
+        external_edges=True,
+    )
+
+    # ---- state 5: extract / decode ----
+    extract = sdfg.add_state_after(reduce_idx, node.label + "_extract")
+    if flat:
+        # Decode flat -> per-dim subscripts.  One tasklet per dim,
+        # single statement each: ``__o<d> = (__in // stride) % extent + offset``.
         strides = [1]
         for d in range(rank - 1, 0, -1):
             strides.insert(0, strides[0] * int(shape[d]))
         for d in range(rank):
             stride_d = strides[d]
-            if d < rank - 1:
-                decode_lines.append(f"__i{d} = (__flat // {stride_d}) % {int(shape[d])}")
-            else:
-                decode_lines.append(f"__i{d} = __flat % {int(shape[d])}")
-        body = "\n".join(decode_lines)
-        outputs = {}
-        out_lines = []
-        for d in range(rank):
-            out_lines.append(f"__o{d} = __i{d} + {one_offset}")
-            outputs[f"__o{d}"] = dace.Memlet(f"_idx[{d}]")
-        body += "\n" + "\n".join(out_lines)
-        extract_state.add_mapped_tasklet(
-            name=f"_arg{func}_extract",
-            map_ranges={"__t": "0:1"},
-            inputs={"__in": dace.Memlet("_pair[0]")},
-            code=body,
-            outputs=outputs,
-            external_edges=True,
-        )
+            extent_d = int(shape[d])
+            extract.add_mapped_tasklet(
+                name=f"decode_dim_{d}",
+                map_ranges={"__t": "0:1"},
+                inputs={"__in": dace.Memlet("__best_idx[0]")},
+                code=f"__out = (__in // {stride_d}) % {extent_d} + {one_offset}",
+                outputs={"__out": dace.Memlet(f"_idx[{d}]")},
+                external_edges=True,
+            )
     else:
-        out_rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
+        rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
         out_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
-        extract_state.add_mapped_tasklet(
-            name=f"_arg{func}_extract",
-            map_ranges=out_rng,
-            inputs={"__in": dace.Memlet(f"_pair[{out_subs}]")},
-            code="__out = __in.idx",
+        extract.add_mapped_tasklet(
+            name="extract_idx",
+            map_ranges=rng,
+            inputs={"__in": dace.Memlet(f"__best_idx[{out_subs}]")},
+            code=f"__out = __in + {one_offset}",
             outputs={"__out": dace.Memlet(f"_idx[{out_subs}]")},
             external_edges=True,
         )
@@ -206,7 +253,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 
 @dace.library.expansion
 class ExpandArgMinPure(ExpandTransformation):
-    """Pure expansion of :class:`ArgMin` -- WCR over a ``(val, idx)`` struct."""
+    """Pure expansion of :class:`ArgMin` -- multi-state min/min pipeline."""
     environments = []
 
     @staticmethod
@@ -216,7 +263,7 @@ class ExpandArgMinPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandArgMaxPure(ExpandTransformation):
-    """Pure expansion of :class:`ArgMax` -- WCR over a ``(val, idx)`` struct."""
+    """Pure expansion of :class:`ArgMax` -- multi-state max/min pipeline."""
     environments = []
 
     @staticmethod
@@ -271,11 +318,12 @@ class ArgMin(dace.sdfg.nodes.LibraryNode):
     back = dace.properties.Property(
         dtype=bool,
         default=False,
-        desc="Tie-break direction. ``False`` keeps the first occurrence; ``True`` keeps the last.")
-    dim = dace.properties.Property(dtype=int,
-                                   default=None,
-                                   allow_none=True,
-                                   desc="Fortran 1-based reduction axis. ``None`` reduces the whole array to a scalar.")
+        desc="Tie-break direction.  ``False`` keeps the first occurrence; ``True`` keeps the last.")
+    dim = dace.properties.Property(
+        dtype=int,
+        default=None,
+        allow_none=True,
+        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array to a scalar.")
 
     def __init__(self, name, *, one_based=True, back=False, dim=None, mask=False, **kwargs):
         """:param mask: if ``True``, expose an optional ``_mask`` input connector."""
@@ -303,11 +351,12 @@ class ArgMax(dace.sdfg.nodes.LibraryNode):
     back = dace.properties.Property(
         dtype=bool,
         default=False,
-        desc="Tie-break direction. ``False`` keeps the first occurrence; ``True`` keeps the last.")
-    dim = dace.properties.Property(dtype=int,
-                                   default=None,
-                                   allow_none=True,
-                                   desc="Fortran 1-based reduction axis. ``None`` reduces the whole array to a scalar.")
+        desc="Tie-break direction.  ``False`` keeps the first occurrence; ``True`` keeps the last.")
+    dim = dace.properties.Property(
+        dtype=int,
+        default=None,
+        allow_none=True,
+        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array to a scalar.")
 
     def __init__(self, name, *, one_based=True, back=False, dim=None, mask=False, **kwargs):
         """:param mask: if ``True``, expose an optional ``_mask`` input connector."""
