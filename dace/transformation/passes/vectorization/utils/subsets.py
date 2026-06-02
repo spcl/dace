@@ -22,6 +22,7 @@ from dace import SDFGState, typeclass
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge
 from dace.transformation.passes.vectorization.utils.lane_access import classify_lane_access
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -73,10 +74,10 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
 
     free_syms = subset.free_symbols
 
+    offset_lane = int(symbol_offset)
     repl_dict = {
-        str(free_sym):
-        str(free_sym) + "_laneid_" + str(symbol_offset) if str(free_sym) != vector_map_param else "(" + str(free_sym) +
-        " + " + str(symbol_offset) + ")"
+        str(free_sym): (LaneIdScheme.make_dim(str(free_sym), 0, offset_lane)
+                        if str(free_sym) != vector_map_param else f"({str(free_sym)} + {symbol_offset})")
         for free_sym in free_syms
     }
 
@@ -86,7 +87,7 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
         else:
             stype = dace.int64
         if str(free_sym) != vector_map_param:
-            offset_symbol_name = str(free_sym) + "_laneid_" + str(symbol_offset)
+            offset_symbol_name = LaneIdScheme.make_dim(str(free_sym), 0, offset_lane)
             if offset_symbol_name not in sdfg.symbols:
                 sdfg.add_symbol(offset_symbol_name, stype)
 

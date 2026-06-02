@@ -15,6 +15,7 @@ import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import DaceSympyPrinter
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
 def extract_bracket_contents(expr: str, name: str):
@@ -287,7 +288,7 @@ def use_laneid_symbol_in_expression(expr_str: str,
     if vector_map_param is not None and str(sym_to_change) == vector_map_param:
         offsetted_expr = f"({sym_to_change} + {offset})"
     else:
-        offsetted_expr = f"({sym_to_change}_laneid_{offset})"
+        offsetted_expr = f"({LaneIdScheme.make_dim(str(sym_to_change), 0, int(offset))})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
     # See ``offset_symbol_in_expression`` for the ``arrays`` argument
     # rationale (callers with an SDFG in scope pass its array names so

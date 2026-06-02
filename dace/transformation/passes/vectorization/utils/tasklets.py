@@ -21,7 +21,7 @@ from dace.transformation.passes.vectorization.utils.code_rewrite import (
     offset_symbol_in_expression,
     use_laneid_symbol_in_expression,
 )
-from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme, VecNameScheme
+from dace.transformation.passes.vectorization.utils.name_schemes import (LaneIdScheme, PackedNameScheme, VecNameScheme)
 
 
 def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict:
@@ -493,8 +493,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
             # and codegen references an undeclared symbol. CPP lowering is reserved for
             # the intrinsic ops; the matching ``SCALAR_SYMBOL`` / ``SYMBOL_SYMBOL`` /
             # ``SCALAR_SCALAR`` per-lane assignments stay Python for the same reason.
-            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i}"
-                                                                  for i in range(vw)]) + "\n",
+            node.code = dace.properties.CodeBlock(code="\n".join(
+                [f"{lhs}[{i}] = {LaneIdScheme.make_dim(c1, 0, i)}" for i in range(vw)]) + "\n",
                                                   language=dace.Language.Python)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         # A binop operand whose connector reads a single (non-vectorized)
@@ -577,7 +577,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
                 elif r_op == c:
                     expr = _binary_expr(l_op, op, r_op)
                 else:
-                    expr = _binary_expr(l_op, op, f"{r_op}_laneid_{i}")
+                    expr = _binary_expr(l_op, op, LaneIdScheme.make_dim(r_op, 0, i))
             code_lines.append(f"{lhs}[{i}] = {expr}")
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.Python)
     elif ttype == tutil.TaskletType.SCALAR_SCALAR:

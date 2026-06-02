@@ -34,17 +34,10 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
     :raises AssertionError: If a symbol is not found in the loop scopes.
     """
 
-    def validate_and_strip(strings):
-        valid = []
-        for s in strings:
-            match = re.fullmatch(r'([A-Za-z_]\w*?)(\d+)$', s)
-            assert match, f"No match in {strings} for a variable name"
-            name, num = match.groups()
-            valid.append((name, int(num)))
-        return valid
-
-    stripped_symbols = validate_and_strip(missing_symbols)
-    loop_vars = {var for var, int_id in stripped_symbols}
+    # Peel every lane chunk via the canonical helper so legacy
+    # ``<base>_laneid_<n>`` and Option B ``<base>_lane<d>id_<n>`` names
+    # both reduce to the bare base.
+    loop_vars = {LaneIdScheme.base_of(s) for s in missing_symbols}
 
     sdict = state.scope_dict()
     first_parent_map = sdict[nsdfg]
@@ -62,7 +55,6 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
             loop_symbols.add(map_or_loop.loop_variable)
 
     for loop_var in loop_vars:
-        loop_var = loop_var[:-len("_laneid_")] if loop_var.endswith("_laneid_") else loop_var
         assert loop_var in loop_symbols or loop_var in nsdfg.symbol_mapping, (
             f"{loop_var} not in parent-scope loop_symbols={loop_symbols} and not in "
             f"nsdfg.symbol_mapping={set(nsdfg.symbol_mapping.keys())}")
@@ -176,7 +168,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
         for k, v in plain_assignments.items():
             original_v_expr = dace.symbolic.SymExpr(v)
             for i in range(vector_width):
-                new_k = LaneIdScheme.make(k, i)
+                new_k = LaneIdScheme.make_dim(k, 0, i)
                 v_expr = dace.symbolic.SymExpr(v)
 
                 # Lane-variance is carried by the free symbols of the assignment
@@ -218,7 +210,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                             raise AssertionError(
                                 f"vector_map_param {vector_map_param!r} appeared in non_map_free_syms; "
                                 f"upstream filtering is broken")
-                        lane_sym = LaneIdScheme.make(free_sym_str, i)
+                        lane_sym = LaneIdScheme.make_dim(free_sym_str, 0, i)
                         v_expr = v_expr.subs(free_sym, lane_sym)
                         if lane_sym not in inner_sdfg.symbols:
                             inner_sdfg.add_symbol(lane_sym, inner_sdfg.symbols.get(free_sym_str, dace.float64))
@@ -438,7 +430,7 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
                         # Bare symbol form: substitute the symbol with ``c(lane)``.
                         lane_expr = lane_expr.subs(sympy.Symbol(c), dace.symbolic.SymExpr(f"{c}({lane})"))
                 lane_v = DaceSympyPrinter(set(inner_sdfg.arrays.keys())).doprint(lane_expr)
-                new_assignments[LaneIdScheme.make(k, lane)] = lane_v
+                new_assignments[LaneIdScheme.make_dim(k, 0, lane)] = lane_v
                 if lane == 0:
                     new_assignments[k] = lane_v
         edge.data.assignments = new_assignments

@@ -1336,7 +1336,7 @@ class Vectorize(ppl.Pass):
                                 find_new_name=False,
                             )
                         nv = tutil.token_replace_dict(nv, {ca: f"{ca}[{i}]"})
-                    new_assignments[LaneIdScheme.make(k, i)] = nv
+                    new_assignments[LaneIdScheme.make_dim(k, 0, i)] = nv
                     if i == 0:
                         new_assignments[k] = nv
                 duplicated_symbols.add(k)

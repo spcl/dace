@@ -474,7 +474,7 @@ def _recognize_laneid_index_slice(
     idx_exprs: List[dace.symbolic.SymbolicType] = []
     laneid_syms: List[str] = []
     for k in range(vector_length):
-        sym = LaneIdScheme.make(base_name, k)
+        sym = LaneIdScheme.make_dim(base_name, 0, k)
         rhs_set = asg.get(sym)
         # The laneid symbol must be bound by exactly one RHS reading
         # ``<idxarr>[<expr_k>]`` with the same array across all lanes.

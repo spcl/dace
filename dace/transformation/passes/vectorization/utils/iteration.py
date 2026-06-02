@@ -48,7 +48,7 @@ def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
             if e.data.data is None:
                 continue
             subset_str = str(e.data.subset)
-            if LaneIdScheme.SUFFIX in subset_str:
+            if LaneIdScheme.contains_lane_chunk(subset_str):
                 raise RuntimeError(f"assert_no_lane_memlet_reads: map with _iter_mask in scope "
                                    f"({state.label}) still has a per-lane memlet on '{e.data.data}' "
                                    f"with subset {subset_str}. Lane fanout failed to collapse to "
@@ -68,7 +68,7 @@ def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
                 if e.data.data is None:
                     continue
                 subset_str = str(e.data.subset)
-                if LaneIdScheme.SUFFIX in subset_str:
+                if LaneIdScheme.contains_lane_chunk(subset_str):
                     raise RuntimeError(f"assert_no_lane_memlet_reads: nested SDFG '{s.name}' with "
                                        f"_iter_mask in scope still has a per-lane memlet on "
                                        f"'{e.data.data}' in state '{state.label}' with subset "

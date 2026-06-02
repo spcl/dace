@@ -64,6 +64,12 @@ class LaneIdScheme:
     _CHUNK_TAIL_RE = re.compile(r"_lane(\d+)id_(\d+)$")
     # Legacy 1D form, full name.
     _LEGACY_RE = re.compile(r"^(.*)_laneid_(\d+)$")
+    # Substring scanner: matches a lane chunk anywhere in a string. Covers
+    # both the canonical ``_lane<d>id_<n>`` form and the legacy
+    # ``_laneid_<n>`` form. Used by audit passes that scan memlet subset
+    # strings / interstate expressions for accidentally-fanned-out lanes
+    # without parsing the whole symbol.
+    LANE_INFIX_RE = re.compile(r"_lane(?:\d+id|id)_\d+")
 
     @staticmethod
     def make(base: str, lane: int) -> str:
@@ -216,6 +222,21 @@ class LaneIdScheme:
         if len(kept) == len(chunks):
             return None
         return LaneIdScheme.make_multi(base, kept)
+
+    @staticmethod
+    def contains_lane_chunk(text: str) -> bool:
+        """Whether ``text`` contains any lane-chunk substring.
+
+        Substring-only scanner used by audit passes that classify memlet
+        subset strings / interstate expressions without parsing the whole
+        symbol. Matches both the canonical ``_lane<d>id_<n>`` and the
+        legacy ``_laneid_<n>`` forms.
+
+        :param text: Free-form text (e.g., ``str(memlet.subset)``).
+        :returns: True iff at least one lane-chunk is present somewhere
+            in ``text``.
+        """
+        return LaneIdScheme.LANE_INFIX_RE.search(text) is not None
 
     @staticmethod
     def varies_with_dim(name: str, dim: int) -> bool:

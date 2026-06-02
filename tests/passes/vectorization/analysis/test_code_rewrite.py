@@ -80,13 +80,14 @@ def test_offset_symbol_in_expression(expr, sym, offset, arrays, expected):
 @pytest.mark.parametrize(
     "expr,sym,offset,vp,expected",
     [
-        # Generic symbol: gets the ``_laneid_<offset>`` suffix.
-        ("idx + 0", "idx", 3, None, "idx_laneid_3"),
+        # Generic symbol: gets the canonical ``_lane0id_<offset>`` chunk
+        # (Option B; the legacy ``_laneid_<offset>`` form parses back-compat).
+        ("idx + 0", "idx", 3, None, "idx_lane0id_3"),
         # Symbol IS the vector_map_param: offset rather than suffix.
         ("i + 0", "i", 3, "i", "i + 3"),
         # Generic symbol with vector_map_param set to a DIFFERENT name:
         # still lane-suffixed (only matches when sym == vector_map_param).
-        ("idx + 0", "idx", 5, "i", "idx_laneid_5"),
+        ("idx + 0", "idx", 5, "i", "idx_lane0id_5"),
     ])
 def test_use_laneid_symbol_in_expression(expr, sym, offset, vp, expected):
     assert use_laneid_symbol_in_expression(expr, sym, offset, vector_map_param=vp) == expected
