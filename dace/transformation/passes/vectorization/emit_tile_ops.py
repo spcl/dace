@@ -972,6 +972,13 @@ class EmitTileOps(ppl.Pass):
             # the scatter/affine-index shape for K>=2 is not yet wired.
             expr = _lane_index_expr(token, spec.iter_vars) or token
             return "Symbol", expr
+        if len(in_edges) == 0:
+            # Loop-invariant SDFG symbol read as a free symbol (no in-edge
+            # connector): the tasklet body references ``S`` directly via
+            # the surrounding scope's symbol_mapping. Broadcast it inline
+            # the same way numeric literals are handled — every lane sees
+            # the same kernel-level value. Covers TSVC ``a[i] = a[i] + b[i] * S``.
+            return "Symbol", token
         if len(in_edges) != 1:
             raise NotImplementedError(f"EmitTileOps: tasklet {tasklet.label!r} operand {token!r} has "
                                       f"{len(in_edges)} in-edges")
