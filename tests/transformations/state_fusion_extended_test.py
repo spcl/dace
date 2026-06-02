@@ -451,6 +451,85 @@ def test_peeled_maps_then_remainder_map_fuse_or_refuse_correctly():
     assert np.allclose(refA, gotA), f'peeled-Map + remainder-Map diverges: ref={refA} got={gotA}'
 
 
+def test_post_apply_structural_check_raises_on_orphaned_memlet():
+    """The post-apply structural check on ``StateFusionExtended`` must
+    raise ``InvalidSDFGEdgeError`` if the merger somehow leaves an edge
+    whose ``memlet.data`` does not match either endpoint's AccessNode
+    data. Construct a valid 2-state SDFG, fuse it (the apply runs
+    cleanly), then PROACTIVELY corrupt a post-fusion edge to simulate
+    the historical s118-class bug class, and assert the helper raises."""
+    from dace.transformation.interstate import StateFusionExtended as _SFE
+    sdfg = SDFG('post_apply_check')
+    sdfg.add_array('A', [8], dtypes.float64)
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    aw = s1.add_write('A')
+    t1 = s1.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s1.add_edge(t1, 'o', aw, None, Memlet('A[k]'))
+    bw = s2.add_write('B')
+    t2 = s2.add_tasklet('w2', {}, {'o'}, 'o = 5.0')
+    s2.add_edge(t2, 'o', bw, None, Memlet('B[k]'))
+    sdfg.validate()
+
+    # Run the fusion -- this is a clean case, no real bug.
+    sdfg.apply_transformations_repeated(_SFE)
+    fused = next(iter(sdfg.states()))
+
+    # Now PROACTIVELY corrupt: pick an A-write edge and overwrite its
+    # ``memlet.data`` with a name that matches neither endpoint. The
+    # post-apply check would have raised on this kind of damage if the
+    # merger had produced it -- we verify the check helper catches it
+    # synthetically.
+    target = next((e for e in fused.edges() if e.data and e.data.data == 'A'), None)
+    assert target is not None
+    target.data.data = 'B'  # Now memlet says ``B`` but dst is ``A``.
+
+    xform = _SFE()
+    xform.first_state = fused
+    xform.second_state = fused
+    try:
+        xform._post_apply_check(fused, sdfg)
+    except Exception as ex:
+        assert 'invalid edge' in str(ex).lower() or 'memlet.data' in str(ex).lower(), \
+            f'unexpected exception text: {ex}'
+        return
+    raise AssertionError('post-apply check failed to flag a mismatched memlet.data')
+
+
+def test_post_apply_strict_validate_runs_full_sdfg_validate():
+    """The ``strict_validate`` knob runs ``sdfg.validate()`` after every
+    apply. On a clean fusion this is a no-op; this test pins that the
+    knob is wired and a clean fusion still passes when strict is on."""
+    from dace.transformation.interstate import StateFusionExtended as _SFE
+    sdfg = SDFG('strict_validate_clean')
+    sdfg.add_array('A', [8], dtypes.float64)
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    aw = s1.add_write('A')
+    t1 = s1.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s1.add_edge(t1, 'o', aw, None, Memlet('A[k]'))
+    ar = s2.add_read('A')
+    bw = s2.add_write('B')
+    tr = s2.add_tasklet('r', {'i'}, {'o'}, 'o = i')
+    s2.add_edge(ar, None, tr, 'i', Memlet('A[k]'))
+    s2.add_edge(tr, 'o', bw, None, Memlet('B[k]'))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(_SFE, options={'strict_validate': True})
+    sdfg.validate()
+    assert sdfg.number_of_nodes() == 1, 'clean RAW fusion under strict_validate should still produce 1 state'
+
+
 if __name__ == '__main__':
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
@@ -462,3 +541,5 @@ if __name__ == '__main__':
     test_peeled_iterations_then_remainder_map_keep_ordering()
     test_same_cc_war_exempted_when_value_flows_from_first()
     test_peeled_maps_then_remainder_map_fuse_or_refuse_correctly()
+    test_post_apply_structural_check_raises_on_orphaned_memlet()
+    test_post_apply_strict_validate_runs_full_sdfg_validate()
