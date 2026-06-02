@@ -33,7 +33,7 @@ value-preserving even if zero iterations of the map run.
 """
 from typing import Optional
 
-from dace import SDFG, data, dtypes, memlet as mm, properties, subsets
+from dace import SDFG, data, memlet as mm, properties, subsets
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
@@ -55,23 +55,35 @@ class PrivatizeReductionAccumulator(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         count = 0
         for state in list(sdfg.all_states()):
-            for map_entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
-                map_exit = state.exit_node(map_entry)
+            for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
                 # WCR writes are on the MapExit's IN-edges (tasklet -> MapExit
                 # IN_<name> connector); the matching OUT-edge then forwards the
                 # value out of the scope to the eventual array AccessNode.
                 for iedge in list(state.in_edges(map_exit)):
-                    if _privatize_if_eligible(sdfg, state, map_entry, map_exit, iedge):
+                    if privatize_reduction_accumulator(state, map_exit, iedge):
                         count += 1
         return count or None
 
 
-def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
-                           iedge) -> bool:
-    """Return True if the WCR was rewritten to target a scalar accumulator."""
-    if iedge.data is None or iedge.data.wcr is None:
+def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, wcr_edge) -> bool:
+    """Rewrite a single Map's WCR-on-array-element write into WCR-on-scalar
+    plus init + writeback.
+
+    Targeted helper: caller supplies the exact MapExit and the specific
+    WCR-bearing in-edge to privatize. The helper validates eligibility and
+    either applies the rewrite (returning ``True``) or leaves the SDFG
+    unchanged (returning ``False``).
+
+    :param state: The state containing ``map_exit``.
+    :param map_exit: The MapExit whose WCR out-write should be privatized.
+    :param wcr_edge: An IN-edge of ``map_exit`` whose memlet carries a WCR
+        annotation and writes a single-element subset of an array.
+    :returns: ``True`` if the rewrite landed, ``False`` if the edge does
+        not match the eligibility criteria.
+    """
+    if wcr_edge.data is None or wcr_edge.data.wcr is None:
         return False
-    in_conn = iedge.dst_conn
+    in_conn = wcr_edge.dst_conn
     if not in_conn or not in_conn.startswith("IN_"):
         return False
     out_conn = "OUT_" + in_conn[3:]
@@ -82,6 +94,7 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
     arr_node = oedge.dst
     if not isinstance(arr_node, nodes.AccessNode):
         return False
+    sdfg = state.sdfg
     desc = sdfg.arrays.get(arr_node.data)
     if desc is None or isinstance(desc, data.Scalar):
         # Already a scalar -- nothing to do.
@@ -90,13 +103,14 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
     # subset -- the slot the reduction actually touches each iter. The OUT-edge
     # carries the union-over-iterations subset (often the whole array range),
     # which is not what we want for the writeback shape.
-    write_subset = iedge.data.subset
+    write_subset = wcr_edge.data.subset
     if write_subset is None or write_subset.num_elements() != 1:
         return False
     # The slot must not depend on the map's parameters: it has to be the same
     # slot for every iteration. (We're aggregating into a single accumulator;
     # if the slot were a function of the map parameter this wouldn't be a
     # reduction.)
+    map_entry = state.entry_node(map_exit)
     map_param_set = set(map_entry.map.params)
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
         return False
@@ -129,10 +143,10 @@ def _privatize_if_eligible(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEnt
 
     # --- Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
     # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
-    wcr = iedge.data.wcr
-    iedge.data.data = scalar_name
-    iedge.data.subset = subsets.Range([(0, 0, 1)])
-    iedge.data.wcr = wcr  # keep
+    wcr = wcr_edge.data.wcr
+    wcr_edge.data.data = scalar_name
+    wcr_edge.data.subset = subsets.Range([(0, 0, 1)])
+    wcr_edge.data.wcr = wcr  # keep
 
     if in_state_init_an is not None:
         # In-state pattern: seed _priv_dot from the in-state init AN; emit the

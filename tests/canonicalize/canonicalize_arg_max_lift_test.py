@@ -12,7 +12,6 @@ from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 
-
 N = dace.symbol('N')
 
 
@@ -27,6 +26,7 @@ def _num_reduces(sdfg):
 # -----------------------------------------------------------------------------
 # Positive: TSVC s314 (max) and s316 (min).
 # -----------------------------------------------------------------------------
+
 
 def test_tsvc_s314_max_value_only():
     """``x = a[0]; for i in range(1, N): if a[i] > x: x = a[i]`` lifts to a
@@ -108,6 +108,7 @@ def test_max_corner_first_element_is_max():
 # Refusals: v1 out-of-scope shapes.
 # -----------------------------------------------------------------------------
 
+
 def test_refuses_unary_transform_on_gather_s3113():
     """TSVC s3113: ``av = abs(a[i]); if av > maxv: maxv = av``. The gather is
     transformed by ``abs`` before the comparison; v1 only recognises direct
@@ -174,7 +175,7 @@ def test_refuses_subtraction_op():
     def kernel(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
-            if a[i] != x:    # ``!=`` not in the set
+            if a[i] != x:  # ``!=`` not in the set
                 x = a[i]
         result[0] = x
 
@@ -187,6 +188,7 @@ def test_refuses_subtraction_op():
 # Look-alike refusals: shapes that pattern-match argmax superficially but
 # don't actually compute argmax. The matcher must refuse all of these.
 # -----------------------------------------------------------------------------
+
 
 def test_lookalike_refuses_non_unit_stride():
     """``for i in range(0, N, 2)`` -- stride > 1 means the reduce would only
@@ -271,7 +273,7 @@ def test_lookalike_refuses_body_after_conditional():
         for i in range(1, N):
             if a[i] > x:
                 x = a[i]
-            b[i] = x   # extra unconditional body work
+            b[i] = x  # extra unconditional body work
         result[0] = x
 
     res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
@@ -312,6 +314,7 @@ def test_lookalike_refuses_carrier_constant_init():
 # the wrong pass.
 # -----------------------------------------------------------------------------
 
+
 def test_argmax_doesnt_lift_a_plain_reduction_loop():
     """``for i: s = s + a[i]`` -- this is a Reduce shape (handled by
     ``LoopToReduce`` / ``AccumulatorToMapAndReduce``), NOT an argmax. The
@@ -342,21 +345,40 @@ def test_argmax_doesnt_lift_a_scan_loop():
 
 
 def test_loop_to_reduce_doesnt_lift_an_argmax_loop():
-    """The reverse direction: a real argmax loop (TSVC s314) must NOT be
-    lifted by ``LoopToReduce``. The accumulator pattern there is conditional;
-    LoopToReduce expects an unconditional ``s = s OP a[i]`` body."""
+    """A real argmax loop (track BOTH the max value AND its index) must NOT
+    be lifted by ``LoopToReduce``. The branch body writes TWO accumulators
+    inside the conditional (``x = a[i]`` AND ``idx = i``); a single
+    ``Reduce`` libnode can carry only one fold, and the wcr-scalar emit
+    refuses on the two-write contract its branched-min/max matcher
+    enforces. ``ArgMaxLift`` is the right handler for this shape -- it
+    materialises the index/value pair into a paired libnode that the
+    standard ``Reduce`` cannot express.
+
+    Note: the prior version of this test used the TSVC s314 ``max`` kernel
+    (no index tracking); the slice 2a branched-min/max extension to
+    ``_extract`` deliberately lifts that shape because ``max(x, a[i])`` is
+    idempotent. The intent of THIS test is the argmax contract -- two
+    accumulators inside the guard -- so the kernel updated to actually
+    exercise that.
+    """
     from dace.transformation.passes.loop_to_reduce import LoopToReduce
 
     @dace.program
-    def s314(a: dace.float64[N], result: dace.float64[1]):
+    def argmax_kernel(a: dace.float64[N], val_out: dace.float64[1], idx_out: dace.int64[1]):
         x = a[0]
+        idx = 0
         for i in range(1, N):
             if a[i] > x:
                 x = a[i]
-        result[0] = x
+                idx = i
+        val_out[0] = x
+        idx_out[0] = idx
 
-    res = LoopToReduce().apply_pass(s314.to_sdfg(simplify=True), {})
-    assert res is None, "LoopToReduce must not lift conditional argmax loops"
+    sdfg = argmax_kernel.to_sdfg(simplify=True)
+    res = LoopToReduce().apply_pass(sdfg, {})
+    assert res is None, "LoopToReduce must not lift conditional argmax loops (two accumulators in the branch)"
+    res_wcr = LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    assert res_wcr is None, "LoopToReduce(wcr-scalar) must also refuse argmax: branch body has two accumulator writes"
 
 
 def test_loop_to_scan_doesnt_lift_an_argmax_loop():
@@ -411,6 +433,7 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
 # symbol is the cloudsc / ICON shape (e.g. iter counters bound via iedges).
 # -----------------------------------------------------------------------------
 
+
 def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str):
     """Construct an SDFG where the argmax carrier ``x`` is a symbol.
 
@@ -454,8 +477,11 @@ def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str):
 
     init_state = sdfg.add_state('init', is_start_block=True)
 
-    loop = LoopRegion(label + '_loop', initialize_expr='i = 1', condition_expr='i < N',
-                      update_expr='i = i + 1', loop_var='i')
+    loop = LoopRegion(label + '_loop',
+                      initialize_expr='i = 1',
+                      condition_expr='i < N',
+                      update_expr='i = i + 1',
+                      loop_var='i')
     sdfg.add_node(loop)
     # Pre-loop iedge seeds the symbol from ``a[0]``.
     sdfg.add_edge(init_state, loop, dace.InterstateEdge(assignments={'x': 'a[0]'}))
@@ -480,8 +506,7 @@ def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str):
     post = sdfg.add_state('post')
     sdfg.add_edge(loop, post, dace.InterstateEdge())
     w = post.add_write('result')
-    t = post.add_tasklet('write_result', {}, {'__out'}, '__out = x',
-                         language=dace.dtypes.Language.Python)
+    t = post.add_tasklet('write_result', {}, {'__out'}, '__out = x', language=dace.dtypes.Language.Python)
     post.add_edge(t, '__out', w, None, dace.Memlet(data='result', subset='0'))
 
     return sdfg

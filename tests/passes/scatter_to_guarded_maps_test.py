@@ -13,12 +13,9 @@ import dace
 from dace.libraries.sort.nodes.integer_sort import IntegerSort
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.scatter_to_guarded_maps import (ScatterToGuardedMaps,
-                                                                       detect_scatter_idx_arrays)
-
+from dace.transformation.passes.scatter_to_guarded_maps import (ScatterToGuardedMaps, detect_scatter_idx_arrays)
 
 N = dace.symbol('N')
-
 
 # -- TSVC scatter kernels -----------------------------------------------------
 
@@ -43,7 +40,7 @@ def tsvc_vas(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N]):
 
 @dace.program
 def two_distinct_scatters(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N],
-                           ip: dace.int32[N], jp: dace.int32[N]):
+                          ip: dace.int32[N], jp: dace.int32[N]):
     """Two scatter loops, each using a different ``idx`` array (``ip`` and ``jp``).
 
     Tests that the pass detects both ``idx`` arrays and guards each one separately.
@@ -116,7 +113,9 @@ def test_detect_returns_empty_for_elementwise():
         'c': np.random.default_rng(21).random(n),
         'd': np.random.default_rng(22).random(n),
     }),
-    (tsvc_vas, lambda n: {'b': np.random.default_rng(30).random(n)}),
+    (tsvc_vas, lambda n: {
+        'b': np.random.default_rng(30).random(n)
+    }),
 ])
 def test_scatter_kernel_guarded_and_parallelized(kernel, inputs_fn):
     """Each TSVC scatter is guarded (1 IntegerSort node) and parallelized (>=1 MapEntry)."""
@@ -262,8 +261,94 @@ def test_idempotent_on_already_guarded_sdfg():
     ScatterToGuardedMaps().apply_pass(sdfg, {})
     sort_after_first = _count_integer_sort_nodes(sdfg)
     ScatterToGuardedMaps().apply_pass(sdfg, {})
-    assert _count_integer_sort_nodes(sdfg) == sort_after_first, (
-        "Re-running the pass must not duplicate the guard.")
+    assert _count_integer_sort_nodes(sdfg) == sort_after_first, ("Re-running the pass must not duplicate the guard.")
+
+
+# -- emit_unparallelized_else_branch=True: runtime dispatcher tests ------------
+
+
+def _vas_sequential(b: np.ndarray, ip: np.ndarray, n: int) -> np.ndarray:
+    """Sequential reference for ``tsvc_vas``: ``a[ip[i]] = b[i]``. With
+    duplicates in ``ip`` the last write wins -- this is the semantics the
+    else-branch (collision fallback) must preserve."""
+    a = np.zeros(n)
+    for i in range(n):
+        a[ip[i]] = b[i]
+    return a
+
+
+def test_else_branch_permutation_takes_parallel_path():
+    """``emit_unparallelized_else_branch=True`` + ``ip`` is a permutation:
+    the dup-count is 0, the conditional routes to the parallel branch, and
+    the result matches the sequential reference (because no collision means
+    sequential and parallel produce the same values).
+    """
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n = 32
+    b = np.random.default_rng(0).random(n)
+    ip = _make_permutation(n, seed=42)
+    a = np.zeros(n)
+    sdfg(a=a, ip=ip.astype(np.int32), b=b, N=n)
+    assert np.allclose(a, _vas_sequential(b, ip, n)), (f'parallel branch must compute the same values as the '
+                                                       f'sequential reference for a permutation idx')
+
+
+def test_else_branch_duplicate_idx_takes_sequential_path():
+    """``emit_unparallelized_else_branch=True`` + ``ip`` has duplicates: the
+    dup-count is positive, the conditional routes to the sequential clone,
+    and the result matches the deterministic last-write-wins semantics.
+
+    Without the else-branch (default trap mode) this same input would invoke
+    ``__builtin_trap()`` and abort the process; the dispatcher mode degrades
+    to a correct sequential run instead.
+    """
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n = 32
+    b = np.random.default_rng(1).random(n)
+    # Intentional collisions: two distinct ``i`` map to the same destination.
+    ip = np.arange(n, dtype=np.int32)
+    ip[5] = ip[10]  # duplicate destination -- the parallel write would race
+    ip[20] = ip[10]  # another duplicate at the same destination
+    a = np.zeros(n)
+    sdfg(a=a, ip=ip, b=b, N=n)
+    assert np.allclose(a, _vas_sequential(b, ip, n)), (f'sequential fallback must produce the last-write-wins '
+                                                       f'result on duplicated idx')
+
+
+def test_else_branch_dispatcher_emits_both_branches():
+    """Structural pin: after ``emit_unparallelized_else_branch=True``, the
+    SDFG contains a ``ConditionalBlock`` with BOTH a sequential branch
+    (carrying a clone of the original ``LoopRegion``) and a parallel branch
+    (where ``LoopToMap`` has lifted the loop to a Map).
+    """
+    from dace.sdfg.state import ConditionalBlock
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    cond_blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+    assert len(cond_blocks) == 1, f'expected one ConditionalBlock dispatcher, got {len(cond_blocks)}'
+    cb = cond_blocks[0]
+    assert len(cb.branches) == 2, f'dispatcher must have both branches (seq + par), got {len(cb.branches)}'
+    seq_cond, seq_body = cb.branches[0]
+    par_cond, par_body = cb.branches[1]
+    assert seq_cond is not None and '> 0' in seq_cond.as_string, (f'sequential branch guard must dispatch on '
+                                                                  f'``dup_count > 0``; got {seq_cond}')
+    assert par_cond is None, 'parallel branch must be the unconditional ``else``'
+    # Sequential branch keeps a LoopRegion (the clone).
+    seq_loops = [n for n in seq_body.nodes() if isinstance(n, LoopRegion)]
+    assert seq_loops, 'sequential branch must contain the cloned LoopRegion'
+    # Parallel branch's loop has been lifted (no LoopRegion left, at least one MapEntry).
+    par_loops = [n for n in par_body.nodes() if isinstance(n, LoopRegion)]
+    par_maps = sum(1 for n, _ in par_body.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert not par_loops and par_maps >= 1, (f'parallel branch must have been lifted to a Map; '
+                                             f'got loops={len(par_loops)}, maps={par_maps}')
 
 
 if __name__ == '__main__':

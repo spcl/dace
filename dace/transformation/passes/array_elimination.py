@@ -121,6 +121,26 @@ class ArrayElimination(ppl.Pass):
                 if first_node is None:
                     continue
 
+                # For non-transient data containers, refuse to fold separate
+                # source AccessNodes (``in_degree == 0``) when the same
+                # container is ALSO written in this state (some AccessNode
+                # with ``in_degree > 0``). The topological ordering that
+                # keeps each source's downstream reader after the in-state
+                # write is only enforced by the presence of distinct
+                # predecessor-less nodes; folding the sources frees codegen
+                # to reorder a downstream read past the write, and for
+                # non-transient externally-observable storage that reorder
+                # produces a stale value. Symmetric refusal for sink-merge
+                # of a container that is also read in the state. Transients
+                # are skipped because the frontend keeps their reads/writes
+                # threaded through proper dataflow edges.
+                desc = state.sdfg.arrays.get(data_container)
+                if desc is not None and not desc.transient:
+                    if state.in_degree(first_node) == 0 and any(state.in_degree(n) > 0 for n in nodeset):
+                        continue
+                    if state.out_degree(first_node) == 0 and any(state.out_degree(n) > 0 for n in nodeset):
+                        continue
+
                 for node in nodeset[first_node_idx + 1:]:
                     if not condition(node):
                         continue

@@ -88,10 +88,11 @@ class NormalizeWCRSource(ppl.Pass):
         forced to ``transient=True`` + Scope lifetime so the codegen allocates it inside
         the Map body.
         """
-        is_scalar = (isinstance(inner, data.Scalar)
-                     or (isinstance(inner, data.Array) and tuple(inner.shape) == (1, )))
+        is_scalar = (isinstance(inner, data.Scalar) or (isinstance(inner, data.Array) and tuple(inner.shape) == (1, )))
         if is_scalar:
-            return data.Scalar(inner.dtype, transient=True, storage=dtypes.StorageType.Default,
+            return data.Scalar(inner.dtype,
+                               transient=True,
+                               storage=dtypes.StorageType.Default,
                                lifetime=dtypes.AllocationLifetime.Scope)
         new = copy.deepcopy(inner)
         new.transient = True
@@ -109,25 +110,32 @@ class NormalizeWCRSource(ppl.Pass):
         """Rewrite WCR edges whose source is a Tasklet or NestedSDFG; returns count."""
         rewritten = 0
         # Snapshot first; we mutate the edge set inside the loop.
-        targets = [e for e in state.edges()
-                   if e.data is not None and e.data.wcr is not None
-                   and isinstance(e.src, (nodes.Tasklet, nodes.NestedSDFG))]
+        targets = [
+            e for e in state.edges()
+            if e.data is not None and e.data.wcr is not None and isinstance(e.src, (nodes.Tasklet, nodes.NestedSDFG))
+        ]
         for e in targets:
             src = e.src
             src_conn = e.src_conn
             if src_conn is None:
+                continue
+            # InOut connector on a NestedSDFG: splitting only the OUT side onto
+            # ``_wcr_priv_<src>_<conn>`` would break the InOut invariant
+            # (validation rejects an in/out pair on the same connector name
+            # pointing at two different external arrays). Skip the rewrite for
+            # such edges -- the WCR stays on the direct NestedSDFG-output edge
+            # and codegen falls back to its atomic-add path.
+            if isinstance(src, nodes.NestedSDFG) and src_conn in src.in_connectors:
                 continue
             target_desc = sdfg.arrays.get(e.data.data) if e.data.data else None
             inner = self._output_descriptor(src, src_conn, target_desc)
             if inner is None:
                 continue
             priv_desc = self._make_private_desc(inner)
-            priv_name = sdfg.add_datadesc(f'_wcr_priv_{src.label}_{src_conn}', priv_desc,
-                                          find_new_name=True)
+            priv_name = sdfg.add_datadesc(f'_wcr_priv_{src.label}_{src_conn}', priv_desc, find_new_name=True)
             priv_node = state.add_access(priv_name)
 
-            state.add_edge(src, src_conn, priv_node, None,
-                           Memlet(data=priv_name, subset=self._priv_subset(priv_desc)))
+            state.add_edge(src, src_conn, priv_node, None, Memlet(data=priv_name, subset=self._priv_subset(priv_desc)))
             state.add_edge(priv_node, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
             state.remove_edge(e)
             rewritten += 1

@@ -10,7 +10,6 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -202,8 +201,97 @@ def test_idempotent_no_double_privatize():
     assert set(sdfg.arrays.keys()) == arrays_after_first
 
 
+def test_targeted_helper_rewrites_single_wcr_edge():
+    """The targeted helper ``privatize_reduction_accumulator(state, map_exit,
+    wcr_edge)`` rewrites the one edge it is handed, with no SDFG-wide scan.
+
+    Callers that already know which WCR edge they want to privatize (e.g.,
+    ``LoopToReduce`` after emitting a Map+WCR in ``prefer='wcr-scalar'``
+    mode) should not have to run a whole-SDFG pass to apply the rewrite to
+    one specific edge.
+    """
+    from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
+        privatize_reduction_accumulator, )
+
+    sdfg = _build_wcr_map(_array_slot_dot)
+
+    # Locate THE WCR-bearing MapExit IN-edge by walking the SDFG.
+    target_state = None
+    target_map_exit = None
+    target_edge = None
+    for state in sdfg.all_states():
+        for n in state.nodes():
+            if not isinstance(n, nodes.MapExit):
+                continue
+            for e in state.in_edges(n):
+                if e.data is not None and e.data.wcr is not None:
+                    target_state = state
+                    target_map_exit = n
+                    target_edge = e
+                    break
+            if target_edge is not None:
+                break
+        if target_edge is not None:
+            break
+    assert target_edge is not None, "test setup must produce a WCR-bearing MapExit IN-edge"
+
+    arrays_before = set(sdfg.arrays.keys())
+    ok = privatize_reduction_accumulator(target_state, target_map_exit, target_edge)
+    assert ok is True, "the helper must report the rewrite landed"
+    sdfg.validate()
+    # The rewrite added a transient scalar; the original array's descriptor stays.
+    new_arrays = set(sdfg.arrays.keys()) - arrays_before
+    assert any(n.startswith("_priv_")
+               for n in new_arrays), (f"expected a ``_priv_*`` scalar descriptor to appear; new arrays: {new_arrays}")
+
+    # Numerical sanity: re-run the SDFG and confirm the dot product still matches.
+    n = 64
+    rng = np.random.default_rng(0)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    dot = np.zeros(n)
+    sdfg(a=a.copy(), b=b.copy(), dot=dot, N=n)
+    assert np.isclose(dot[0], float((a * b).sum()))
+
+
+def test_targeted_helper_refuses_non_wcr_edge():
+    """When the helper is handed an edge without a WCR annotation, it must
+    return ``False`` and leave the SDFG untouched -- the caller may probe
+    several candidate edges and the helper must be safe to call on
+    non-matches.
+    """
+    from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
+        privatize_reduction_accumulator, )
+
+    sdfg = _build_wcr_map(_array_slot_dot)
+    # Pick a MapExit and an OUT-edge of it -- not a WCR IN-edge, so the
+    # helper must reject.
+    target_state = None
+    target_map_exit = None
+    non_wcr_edge = None
+    for state in sdfg.all_states():
+        for n in state.nodes():
+            if not isinstance(n, nodes.MapExit):
+                continue
+            outs = list(state.out_edges(n))
+            if outs:
+                target_state = state
+                target_map_exit = n
+                non_wcr_edge = outs[0]
+                break
+        if non_wcr_edge is not None:
+            break
+    assert non_wcr_edge is not None
+    arrays_before = set(sdfg.arrays.keys())
+    ok = privatize_reduction_accumulator(target_state, target_map_exit, non_wcr_edge)
+    assert ok is False, "the helper must reject a non-WCR edge"
+    assert set(sdfg.arrays.keys()) == arrays_before
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()
     test_two_reductions_same_array_get_unique_names()
     test_idempotent_no_double_privatize()
+    test_targeted_helper_rewrites_single_wcr_edge()
+    test_targeted_helper_refuses_non_wcr_edge()

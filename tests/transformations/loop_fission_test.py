@@ -271,8 +271,7 @@ def test_loop_fission_offset_strided():
 
 def test_loop_fission_symbolic_strided():
     a = np.random.rand(64)
-    _run(loop_symbolic_strided, dict(a=a, A=np.full(64, -1.0), B=np.full(64, -1.0)),
-         dict(START=0, STOP=64, STEP=5), 2)
+    _run(loop_symbolic_strided, dict(a=a, A=np.full(64, -1.0), B=np.full(64, -1.0)), dict(START=0, STOP=64, STEP=5), 2)
 
 
 def test_loop_fission_many_set_cpy():
@@ -357,14 +356,16 @@ def _assert_noop_numeric(prog, args, n):
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
 
-@pytest.mark.parametrize("prog,arrs", [
-    (tsvc_s211, "abcde"),
-    (tsvc_s1213, "abcd"),
-    # ``tsvc_s221`` previously listed here under the old "carried-dep cannot
-    # split" contract -- its multi-statement body is now fissioned per the
-    # per-iter-shared-container relaxation; see test_loop_fission_tsvc_s221_*.
-    (tsvc_s111, "ab"),
-])
+@pytest.mark.parametrize(
+    "prog,arrs",
+    [
+        (tsvc_s211, "abcde"),
+        (tsvc_s1213, "abcd"),
+        # ``tsvc_s221`` previously listed here under the old "carried-dep cannot
+        # split" contract -- its multi-statement body is now fissioned per the
+        # per-iter-shared-container relaxation; see test_loop_fission_tsvc_s221_*.
+        (tsvc_s111, "ab"),
+    ])
 def test_loop_fission_tsvc_carried_dep_not_split(prog, arrs):
     """TSVC s21*/s22* kernels with a genuine cross-statement (or single-
     statement recurrence) dependence: distributing is illegal -- LoopFission
@@ -408,10 +409,8 @@ def test_loop_fission_tsvc_s222_correct_split():
     # Partition check: exactly one loop's body is the ``e`` recurrence; the
     # remaining loops touch only a/b/c.
     def touched(loop):
-        return {
-            nd.data
-            for st in loop.all_states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode)
-        }
+        return {nd.data for st in loop.all_states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode)}
+
     e_loops = [L for L in loops if 'e' in touched(L)]
     a_loops = [L for L in loops if 'a' in touched(L)]
     assert len(e_loops) == 1, "expected one e-recurrence loop"
@@ -442,8 +441,7 @@ def test_loop_fission_tsvc_s221_splits_per_iter_a_chain():
     Numerically identical to the un-fissioned form."""
     n = 12
     rng = np.random.default_rng(221)
-    args = dict(a=rng.standard_normal(n), b=rng.standard_normal(n),
-                c=rng.standard_normal(n), d=rng.standard_normal(n))
+    args = dict(a=rng.standard_normal(n), b=rng.standard_normal(n), c=rng.standard_normal(n), d=rng.standard_normal(n))
 
     base = tsvc_s221.to_sdfg(simplify=True)
     ref = {k: v.copy() for k, v in args.items()}
@@ -569,8 +567,8 @@ def test_loop_fission_per_iter_rmw_kept_together():
 
 
 @dace.program
-def loop_three_independent_writes(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-                                   x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
+def loop_three_independent_writes(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], x: dace.float64[N],
+                                  y: dace.float64[N], z: dace.float64[N]):
     """Three completely independent per-iter writes to three different arrays.
     Each touches its own container with no cross-array reads -- the maximally-
     fissioned shape is 3 sibling loops."""
@@ -585,14 +583,18 @@ def test_loop_fission_three_independent_writes():
     fission produces 3 sibling loops."""
     n = 20
     rng = np.random.default_rng(7)
-    args = dict(A=np.zeros(n), B=np.zeros(n), C=np.zeros(n),
-                x=rng.standard_normal(n), y=rng.standard_normal(n), z=rng.standard_normal(n))
+    args = dict(A=np.zeros(n),
+                B=np.zeros(n),
+                C=np.zeros(n),
+                x=rng.standard_normal(n),
+                y=rng.standard_normal(n),
+                z=rng.standard_normal(n))
     _run(loop_three_independent_writes, args, dict(N=n), 3)
 
 
 @dace.program
-def loop_mixed_partition(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-                          a: dace.float64[N], b: dace.float64[N]):
+def loop_mixed_partition(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], a: dace.float64[N],
+                         b: dace.float64[N]):
     """One sibling is data-dependent (``A → B`` per-iter chain), the other is
     independent (``C`` from ``b``). Fission partitions into the A+B pair and
     the C-only sibling: 2 sibling loops."""
@@ -610,8 +612,7 @@ def test_loop_fission_mixed_dep_and_independent_partitions():
     ``test_loop_fission_dependent_kept_together_modified_splits_per_iter``)."""
     n = 15
     rng = np.random.default_rng(99)
-    args = dict(A=np.zeros(n), B=np.zeros(n), C=np.zeros(n),
-                a=rng.standard_normal(n), b=rng.standard_normal(n))
+    args = dict(A=np.zeros(n), B=np.zeros(n), C=np.zeros(n), a=rng.standard_normal(n), b=rng.standard_normal(n))
     _run(loop_mixed_partition, args, dict(N=n), 3)
 
 
@@ -649,14 +650,14 @@ def test_loop_fission_reverse_iteration_splits():
 
 
 @dace.program
-def loop_two_indep_with_one_recurrence(out_a: dace.float64[N], out_b: dace.float64[N],
-                                         x: dace.float64[N], y: dace.float64[N]):
+def loop_two_indep_with_one_recurrence(out_a: dace.float64[N], out_b: dace.float64[N], x: dace.float64[N],
+                                       y: dace.float64[N]):
     """One pointwise sibling and one carried recurrence on a different array.
     Fission must split them: pointwise becomes parallelizable, recurrence
     stays sequential. (Mirrors TSVC s221 shape with a different access pattern.)"""
     for i in range(1, N):
-        out_a[i] = x[i] * y[i] + 1.0           # pointwise
-        out_b[i] = out_b[i - 1] + y[i]         # carried recurrence on out_b
+        out_a[i] = x[i] * y[i] + 1.0  # pointwise
+        out_b[i] = out_b[i - 1] + y[i]  # carried recurrence on out_b
 
 
 def test_loop_fission_pointwise_and_carried_recurrence_split():
@@ -664,14 +665,13 @@ def test_loop_fission_pointwise_and_carried_recurrence_split():
     loop. Final loop count is 2."""
     n = 24
     rng = np.random.default_rng(221)
-    args = dict(out_a=np.zeros(n), out_b=rng.standard_normal(n),
-                x=rng.standard_normal(n), y=rng.standard_normal(n))
+    args = dict(out_a=np.zeros(n), out_b=rng.standard_normal(n), x=rng.standard_normal(n), y=rng.standard_normal(n))
     _run(loop_two_indep_with_one_recurrence, args, dict(N=n), 2)
 
 
 @dace.program
 def loop_eight_independent(s0: dace.float64[N], s1: dace.float64[N], s2: dace.float64[N], s3: dace.float64[N],
-                            s4: dace.float64[N], s5: dace.float64[N], s6: dace.float64[N], s7: dace.float64[N]):
+                           s4: dace.float64[N], s5: dace.float64[N], s6: dace.float64[N], s7: dace.float64[N]):
     """Eight independent fills with constant values -- stresses the maximal-
     fission path on a wider body than ``loop_five_set_five_cpy``."""
     for i in range(N):
@@ -710,8 +710,8 @@ def test_loop_fission_eight_independent_writes_max_fission():
                 if isinstance(nd, nodes.AccessNode) and st.in_degree(nd) > 0:
                     wset.add(nd.data)
         sibling_writes.append(wset)
-    assert all(len(w) == 1 for w in sibling_writes), (
-        f"each sibling loop must write exactly one array; got {sibling_writes}")
+    assert all(len(w) == 1
+               for w in sibling_writes), (f"each sibling loop must write exactly one array; got {sibling_writes}")
     written_arrays = set().union(*sibling_writes)
     assert written_arrays == {f's{k}' for k in range(8)}, "all 8 arrays must be partitioned"
 
@@ -732,7 +732,7 @@ def loop_cross_shared_array_kept_together(A: dace.float64[N], x: dace.float64[N]
     breaks per-iter independence -- fission must keep them together."""
     for i in range(1, N):
         A[i] = x[i] + 2.0
-        A[i] = A[i - 1] * y[i]   # depends on previous-iter's write to A
+        A[i] = A[i - 1] * y[i]  # depends on previous-iter's write to A
 
 
 def test_loop_fission_cross_iter_same_array_kept_together():
@@ -749,12 +749,60 @@ def test_loop_fission_cross_iter_same_array_kept_together():
     sdfg = loop_cross_shared_array_kept_together.to_sdfg(simplify=True)
     LoopFission().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _loop_count(sdfg) == 1, (
-        f"cross-iter A[i-1] dep must keep loop intact; got {_loop_count(sdfg)} loops")
+    assert _loop_count(sdfg) == 1, (f"cross-iter A[i-1] dep must keep loop intact; got {_loop_count(sdfg)} loops")
     out = {k: v.copy() for k, v in args.items()}
     sdfg(**out, N=n)
     for k in args:
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+def test_loop_fission_refuses_constant_slot_intra_iter_carry():
+    """Regression for TSVC s257 ``a[i] = aa[j,i] - a[i-1]; aa[j,i] = a[i] + bb[j,i]``
+    fissioned over the inner ``j`` loop.
+
+    The two statements share ``a[i]`` -- stmt1 writes, stmt2 reads, both at
+    the constant slot ``i`` (the OUTER loop variable, not ``j``). Within
+    ONE ``j``-iteration the read sees the just-written value. Fissioning
+    into two separate ``j``-loops would let stmt1 overwrite ``a[i]`` ``N``
+    times and stmt2 then read the LAST value for every iteration --
+    breaking the per-iteration interleave.
+
+    ``_is_per_iter_subset`` previously returned ``True`` for a subset that
+    never referenced the loop variable (treating any constant slot as
+    "safely sequenceable"). Fix: a per-iter subset must actually USE the
+    loop variable; constant slots stay grouped with their producers.
+    """
+    from dace.transformation.passes.loop_fission import LoopFission
+
+    LEN_2D = dace.symbol("LEN_2D")
+
+    @dace.program
+    def s257(a: dace.float64[LEN_2D], aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
+        for i in range(8, LEN_2D):
+            for j in range(LEN_2D):
+                a[i] = aa[j, i] - a[i - 1]
+                aa[j, i] = a[i] + bb[j, i]
+
+    sdfg = s257.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n = 12
+    rng = np.random.default_rng(257)
+    a = rng.random(n)
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    ra = a.copy()
+    raa = aa.copy()
+    for i in range(8, n):
+        for j in range(n):
+            ra[i] = raa[j, i] - ra[i - 1]
+            raa[j, i] = ra[i] + bb[j, i]
+
+    sa, saa = a.copy(), aa.copy()
+    sdfg(a=sa, aa=saa, bb=bb.copy(), LEN_2D=n)
+    assert np.allclose(sa, ra), 'a diverges -- LoopFission split the intra-iter constant-slot carry'
+    assert np.allclose(saa, raa), 'aa diverges -- LoopFission split the intra-iter constant-slot carry'
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
         loop_sym = sp.Symbol(loop_var)
     except Exception:
         return False
+    saw_loop_var = False
     for rb, re_, _ in subset.ndrange():
         if rb != re_:
             return False
@@ -50,7 +51,16 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
             offset = sp.simplify(expr - loop_sym)
             if not (getattr(offset, 'is_number', False) and offset == 0):
                 return False
-    return True
+            saw_loop_var = True
+    # A subset that NEVER references the loop variable is a constant slot in
+    # this loop's scope (e.g. ``a[i]`` inside an inner ``for j``). Constant
+    # slots are NOT per-iteration: a write-then-read in the body forms an
+    # intra-iteration dependence (stmt2 reads the value stmt1 wrote in the
+    # SAME iteration), and fissioning the loop would let the consumer see
+    # only the final write instead of the per-iter intermediates. TSVC s257
+    # ``a[i] = aa[j,i] - a[i-1]; aa[j,i] = a[i] + bb[j,i]`` inside the
+    # inner ``j`` loop is the canonical regression.
+    return saw_loop_var
 
 
 def _container_per_iter_only(state: SDFGState, data: str, loop_var: Optional[str]) -> bool:
@@ -94,8 +104,8 @@ def _rewrite_per_iter_bridges(state: SDFGState, loop_var: Optional[str]):
             continue
         # Find writer-side AccessNodes with downstream consumers.
         for n in list(state.nodes()):
-            if not (isinstance(n, nodes.AccessNode) and n.data == data
-                    and state.in_degree(n) > 0 and state.out_degree(n) > 0):
+            if not (isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0
+                    and state.out_degree(n) > 0):
                 continue
             out_edges = list(state.out_edges(n))
             if not out_edges:

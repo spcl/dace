@@ -34,7 +34,7 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
@@ -44,7 +44,6 @@ from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInduct
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
-from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
@@ -82,6 +81,11 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     ``MoveIfIntoLoop`` and cross-nest fusion cannot see them. ``EmptyStateElimination``
     then removes the empty states fusion/inlining leave behind. None of these
     changes the computation; they only normalize structure.
+
+    Long-term goal: drop the non-extended ``StateFusion`` entirely and run only
+    the extended variant. Currently kept because the extended variant misses a
+    few independent-Map shapes that the base variant catches (TODO: make the
+    extended variant a true strict superset).
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
@@ -171,8 +175,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # NormalizeNegativeStride runs first so every downstream matcher
     # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
     # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
-    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq),
-          ('clean', SplitTasklets()), ('clean', SimplifyPass())]
+    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq), ('clean', SplitTasklets()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
@@ -264,10 +267,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # under a fresh ``_loop_exit_<sym>_<N>`` symbol and rewrites every downstream
     # reader so the "loop-defined symbol used after the loop" refusal disappears.
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
-          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()),
-          ('reduce', SimplifyPass()), ('reduce', LoopToReduce()), ('reduce', LoopToScan()),
-          ('reduce', ArgMaxLift()), ('reduce', EarlyExitToFindIndex()),
-          ('reduce', LoopToConditionalReduce())]
+          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()),
+          ('reduce', LoopToReduce()), ('reduce', LoopToScan()), ('reduce', ArgMaxLift()),
+          ('reduce', EarlyExitToFindIndex()), ('reduce', LoopToConditionalReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -383,10 +385,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # downstream WCR codegen can lower to a clean OMP ``reduction(op:scalar)``
     # clause. Folded into one stage because the four steps (AugWCR, L2M,
     # inline+fuse, privatize) form an atomic logical transformation.
-    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([AugAssignToWCR()])),
-          ('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
+    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
     s += _structural_cleanup('reduction_to_wcr_map')
-    s += [('reduction_to_wcr_map', PrivatizeReductionAccumulator())]
 
     # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
     # adjacent-equal collision count + post-region trap`` guard on each scatter
@@ -479,7 +480,23 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('normalize_wcr', NormalizeWCRSource())]
 
     # end: the final SimplifyPass.
-    s += [('end', SimplifyPass())]
+    #
+    # ``ArrayElimination`` is intentionally skipped: its source-merge
+    # (``merge_access_nodes`` with the ``in_degree == 0`` predicate) collapses
+    # two distinct source AccessNodes for the same data into one with
+    # ``out_degree >= 2``. When the body of a loop carries a *different*
+    # transient scalar via a read-AN-at-top / write-AN-at-bottom pair, the
+    # implicit codegen ordering between those two roots is what kept the
+    # carrier's RAW order intact -- merging the source breaks that ordering
+    # and the carrier reads the *new* value instead of the previous one.
+    # TSVC s254 / s255 (single- / two-step scalar lookback) divergence comes
+    # from this exact mechanism. The Phase 2.4a guard refuses the merge when
+    # the merged data itself has writes in the state, but s254's ``b`` is
+    # read-only -- the carrier (``x``) is the affected transient. Until the
+    # guard is widened to account for sibling carrier transients, the safer
+    # disposition is to skip the pass at end-of-canonicalize. Other Simplify
+    # sub-passes still run.
+    s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
     return s
 
 

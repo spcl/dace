@@ -29,7 +29,16 @@ def _nmaps(sdfg):
 
 
 def _nloops(sdfg):
-    return len([r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)])
+    """Count carried/sequential structures: ``LoopRegion`` plus ``Scan``
+    library nodes. ``LoopToScan`` lifts shape ``b[i] = f(b[i-1], a[i])``
+    into a ``Scan`` libnode (sequential along the carry axis), which is the
+    canonical sequential-carrier representation -- counting it as a loop
+    keeps the carried-recurrence-stays-sequential assertions correct on
+    the kernels that LoopToScan now reaches."""
+    from dace.libraries.standard.nodes.scan import Scan
+    nloop_regions = sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+    nscan = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
+    return nloop_regions + nscan
 
 
 @dace.program

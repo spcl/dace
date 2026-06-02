@@ -5,7 +5,6 @@ import numpy as np
 
 from dace import SDFG, InterstateEdge, Memlet
 from dace import dtypes
-from dace.sdfg import nodes
 from dace.transformation.interstate import StateFusionExtended
 
 # ---------------------------------------------------------------------------
@@ -249,6 +248,115 @@ def test_extended_fusion_refuses_unsafe_write_after_read():
     assert sdfg.number_of_nodes() == 2, 'the two states must remain separate'
 
 
+def test_same_named_writer_transient_does_not_collapse():
+    """Two states each have an intermediate scalar transient ``T`` written from
+    a *different* source subset and read by a per-state tasklet. After fusion,
+    the matcher must not merge the two ``T`` AccessNodes into one node (last-
+    writer-wins would alias both readers to the same value); the empty memlet
+    inserted via ``connections_to_make`` orders the two chains, and the second
+    chain's reader sees the second chain's writer.
+
+    Reproduces the compound-nest sibling-write shape (TSVC-style augassigns
+    over a shared per-iteration intermediate buffer)."""
+    sdfg = SDFG('fuse_same_named_writer_transient')
+    sdfg.add_array('arr', [8], dtypes.float64)
+    sdfg.add_array('out1', [1], dtypes.float64)
+    sdfg.add_array('out2', [1], dtypes.float64)
+    sdfg.add_transient('t', [1], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    # state1: arr[k] -> t -> out1
+    ar1 = s1.add_read('arr')
+    tw1 = s1.add_access('t')
+    ow1 = s1.add_write('out1')
+    cp1 = s1.add_tasklet('cp1', {'i'}, {'o'}, 'o = i')
+    rd1 = s1.add_tasklet('rd1', {'i'}, {'o'}, 'o = i')
+    s1.add_edge(ar1, None, cp1, 'i', Memlet('arr[k]'))
+    s1.add_edge(cp1, 'o', tw1, None, Memlet('t[0]'))
+    s1.add_edge(tw1, None, rd1, 'i', Memlet('t[0]'))
+    s1.add_edge(rd1, 'o', ow1, None, Memlet('out1[0]'))
+
+    # state2: arr[k+1] -> t -> out2
+    ar2 = s2.add_read('arr')
+    tw2 = s2.add_access('t')
+    ow2 = s2.add_write('out2')
+    cp2 = s2.add_tasklet('cp2', {'i'}, {'o'}, 'o = i')
+    rd2 = s2.add_tasklet('rd2', {'i'}, {'o'}, 'o = i')
+    s2.add_edge(ar2, None, cp2, 'i', Memlet('arr[k+1]'))
+    s2.add_edge(cp2, 'o', tw2, None, Memlet('t[0]'))
+    s2.add_edge(tw2, None, rd2, 'i', Memlet('t[0]'))
+    s2.add_edge(rd2, 'o', ow2, None, Memlet('out2[0]'))
+    sdfg.validate()
+
+    arr = np.arange(8, dtype=np.float64) * 1.0  # arr[k] = k
+    out1 = np.zeros(1, dtype=np.float64)
+    out2 = np.zeros(1, dtype=np.float64)
+    _assert_fusion_preserves_semantics(sdfg, 1, arr=arr, out1=out1, out2=out2)
+
+
+import pytest
+
+
+def test_peeled_iterations_then_remainder_map_keep_ordering():
+    """Two peeled iterations + a remainder Map: the un-fused interstate
+    ordering is load-bearing because the peeled writes alias the Map's
+    write range. The first SFE fusion (peeled0 + peeled1) is safe -- their
+    writes hit disjoint A subsets, and SFE adds a happens-before empty
+    memlet from peeled0's A write to peeled1's B-side source. The second
+    SFE fusion (merged + remainder) must be REFUSED: the remainder writes
+    ``A[0:N]`` which overlaps the merged state's reads ``A[N-1]`` and
+    ``A[N-2]``, and the remainder's write value does not flow from real
+    first-state data. Earlier the empty-memlet edge to ``B`` fooled the
+    ``flows_from_first`` exemption (``B`` was being counted as a producer
+    of first state); the fix excludes empty-edge-only AccessNodes from
+    ``first_out_data``. After the fix the merged + remainder fusion is
+    refused, leaving the interstate edge to enforce the ordering."""
+    N_SYM = 8
+    sdfg = SDFG('peel_then_remainder')
+    sdfg.add_array('A', [N_SYM], dtypes.float64)
+    sdfg.add_array('B', [N_SYM], dtypes.float64)
+    sdfg.add_transient('acc0', [1], dtypes.float64)
+    sdfg.add_transient('acc1', [1], dtypes.float64)
+
+    s_peel0 = sdfg.add_state('peeled_iter_0', is_start_block=True)
+    s_peel1 = sdfg.add_state('peeled_iter_1')
+    s_rem = sdfg.add_state('remainder_map')
+    sdfg.add_edge(s_peel0, s_peel1, InterstateEdge())
+    sdfg.add_edge(s_peel1, s_rem, InterstateEdge())
+
+    def add_peel(state, dst_idx: str, acc_name: str):
+        ar = state.add_access('A')
+        acc_in = state.add_access(acc_name)
+        acc_out = state.add_access(acc_name)
+        aw = state.add_access('A')
+        plus1 = state.add_tasklet(f'plus1_{dst_idx}', {'_in'}, {'_out'}, '_out = _in + 1.0')
+        state.add_edge(ar, None, acc_in, None, Memlet(f'A[{dst_idx}] -> [0]'))
+        state.add_edge(acc_in, None, plus1, '_in', Memlet(f'{acc_name}[0]'))
+        state.add_edge(plus1, '_out', acc_out, None, Memlet(f'{acc_name}[0]'))
+        state.add_edge(acc_out, None, aw, None, Memlet(f'{acc_name}[0] -> [{dst_idx}]'))
+
+    add_peel(s_peel0, f'{N_SYM - 1}', 'acc0')  # A[N-1] += 1
+    add_peel(s_peel1, f'{N_SYM - 2}', 'acc1')  # A[N-2] += 1
+
+    # Remainder map: A[i] = B[i] * 2 for i in 0:N (overlaps A[N-1] and A[N-2]).
+    br = s_rem.add_access('B')
+    aw = s_rem.add_access('A')
+    me, mx = s_rem.add_map('rem', {'i': f'0:{N_SYM}'})
+    times2 = s_rem.add_tasklet('times2', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    s_rem.add_memlet_path(br, me, times2, dst_conn='_in', memlet=Memlet('B[i]'))
+    s_rem.add_memlet_path(times2, mx, aw, src_conn='_out', memlet=Memlet('A[i]'))
+    sdfg.validate()
+
+    a = np.zeros(N_SYM, dtype=np.float64)
+    b = np.arange(N_SYM, dtype=np.float64) + 0.5
+    # peeled0+peeled1 fuses; merged+remainder is correctly refused -> 2 states left.
+    _assert_fusion_preserves_semantics(sdfg, 2, A=a, B=b)
+
+
 if __name__ == '__main__':
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
@@ -256,3 +364,5 @@ if __name__ == '__main__':
     test_waw_write_after_write()
     test_war_write_after_read()
     test_rar_read_after_read_no_hazard()
+    test_same_named_writer_transient_does_not_collapse()
+    test_peeled_iterations_then_remainder_map_keep_ordering()

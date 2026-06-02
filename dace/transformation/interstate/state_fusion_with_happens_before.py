@@ -290,7 +290,21 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # target the read), so it is refused for now -- per write edge, and
             # exempting writes whose value flows from data the first state produced (a
             # ``read -> ... -> write`` path orders them safely).
-            first_out_data = {n.data for n in first_output}
+            #
+            # ``first_out_data`` for the ``flows_from_first`` exemption must
+            # only include AccessNodes whose in-edges are REAL data writes.
+            # Empty-memlet edges added by a PRIOR fusion's ``connections_to_make``
+            # encode happens-before, not data flow, so an empty-edge-only
+            # AccessNode is a happens-before sink, not a producer; counting it
+            # in ``first_out_data`` falsely exempts a downstream WAR. Pinned by
+            # the peeled-pattern test (peeled chain's empty edge to remainder's
+            # ``B`` source previously fooled the check into accepting the
+            # racy merged+remainder fusion).
+            def _has_data_write(n):
+                ies = first_state.in_edges(n)
+                return any(e.data is not None and not e.data.is_empty() for e in ies)
+
+            first_out_data = {n.data for n in first_output if _has_data_write(n)}
             first_read_subsets: Dict[str, List] = {}
             for rn in first_state.data_nodes():
                 for re in first_state.out_edges(rn):
@@ -602,7 +616,20 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # If not source node, try to connect every memlet-intersecting candidate
             if not source_node:
+                # WAW guard: refuse the same-name merge when ``can_be_applied``
+                # flagged a write-write hazard for this (cand, node) data via
+                # ``connections_to_make`` (cross-CC sibling writes that need
+                # happens-before ordering, not last-writer-wins collapse). The
+                # empty memlet added above wires the ordering; leaving both
+                # AccessNodes distinct is what preserves correctness when the two
+                # chains write different source data to the same shared scalar.
+                # Pinned by compound_nest's per-iteration ``arr_index`` (TSVC-
+                # shape sibling tasklets where both writers feed disjoint ``arr``
+                # subsets).
+                node_waw_flagged = any(node in conn[1] for conn in self.connections_to_make)
                 for cand in candidates:
+                    if node_waw_flagged and first_state.in_degree(cand) > 0:
+                        continue
                     if StateFusionExtended.memlets_intersect(first_state, [cand], False, second_state, [node], True):
                         if nx.has_path(first_state._nx, cand, node):  # Do not create cycles
                             continue
