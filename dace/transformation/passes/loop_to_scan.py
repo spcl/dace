@@ -1752,12 +1752,19 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[st
     Multi-carrier loops (cloudsc ``pfsqrf``: 5 parallel prefix sums in one body)
     return a multi-element list; v1/v2 single-carrier loops return a one-element list.
 
-    Scans ALL edges in the state -- top-level edges plus any inside Map scopes -- for
-    memlets whose data is a non-transient and whose subset depends on ``loop_var``.
-    Walking edges rather than only AccessNode-incident memlets catches carriers whose
-    state-level memlets have been widened by Map-exit propagation (defensive: the
-    Map-wrapped path isn't reached by the nested-LoopRegion rewrite, but the edge-walk
-    is also what makes the v1-v5 flat case robust to the slice-copy intermediates).
+    Scans ALL edges in the state -- top-level edges plus any inside Map scopes --
+    for memlets whose data is a non-transient and whose subset depends on
+    ``loop_var``. Additionally descends into ``NestedSDFG`` scopes (the post-
+    ``LoopToMap`` shape: outer carry-loop -> body state with a Map -> NestedSDFG
+    holding the actual prefix-scan tasklet). State-level edges around the Map
+    have widened subsets that no longer reference ``loop_var`` (Map-exit
+    propagation), so we look inside the NestedSDFG, find the inner memlets that
+    DO carry the carrier subset, and lift them back through the NSDFG's
+    ``symbol_mapping`` to detect that the outer-loop-var appears in the
+    underlying access. This is the for_1133 / cloudsc descend-into-Map path.
+    Walking edges rather than only AccessNode-incident memlets catches
+    carriers whose state-level memlets are intermediates of slice copies in
+    the flat (v1-v5) case.
     """
     arrays_with_carrier_subset: set = set()
     for e in state.edges():
@@ -1769,6 +1776,11 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[st
             continue
         if _subset_uses(m.subset, loop_var):
             arrays_with_carrier_subset.add(m.data)
+
+    # Descend into NestedSDFG scopes within this state (Map bodies after L2M).
+    # An inner memlet ``pfsqrf[jk, jl]`` whose inner symbol ``jk`` is bound via
+    # ``symbol_mapping`` to the outer ``loop_var`` flags ``pfsqrf`` as a carrier.
+    arrays_with_carrier_subset.update(_find_carried_arrays_via_nested(state, sdfg, loop_var))
 
     reads: set = set()
     writes: set = set()
@@ -1783,6 +1795,68 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[st
         if state.out_degree(n) > 0:
             reads.add(n.data)
     return sorted(reads & writes)
+
+
+def _find_carried_arrays_via_nested(state: SDFGState, sdfg: SDFG, loop_var: str) -> set:
+    """Walk ``state``'s NestedSDFG nodes; for each, look at inner memlets and
+    lift them through ``symbol_mapping`` to see whether the outer ``loop_var``
+    appears in the underlying access. Returns the set of OUTER array names
+    (the names of the NSDFG's outer-side connectors) flagged as carriers.
+
+    Caveat: the lookup only follows one level of nesting at a time, but
+    recurses if the inner SDFG itself contains a NestedSDFG.
+    """
+    flagged: set = set()
+    for n in state.nodes():
+        if not isinstance(n, nodes.NestedSDFG):
+            continue
+        # Build the connector -> outer-array map by looking at the cross edges.
+        conn_to_outer: Dict[str, str] = {}
+        for e in state.in_edges(n):
+            if e.dst_conn and e.data is not None and e.data.data is not None:
+                conn_to_outer[e.dst_conn] = e.data.data
+        for e in state.out_edges(n):
+            if e.src_conn and e.data is not None and e.data.data is not None:
+                conn_to_outer[e.src_conn] = e.data.data
+        # Inner symbols that bind to the outer ``loop_var``. ``symbol_mapping``
+        # is ``{inner_sym: outer_expr}``: collect inner_sym keys whose mapped
+        # outer expression has ``loop_var`` as a free symbol.
+        inner_syms_carrying: set = set()
+        for inner_sym, outer_expr in n.symbol_mapping.items():
+            try:
+                outer_sym_strs = {str(s) for s in symbolic.pystr_to_symbolic(str(outer_expr)).free_symbols}
+            except Exception:
+                outer_sym_strs = {str(outer_expr)}
+            if loop_var in outer_sym_strs:
+                inner_syms_carrying.add(inner_sym)
+        # Walk inner SDFG memlets; for each that uses one of those inner
+        # symbols, flag the corresponding outer array.
+        for inner_state in n.sdfg.states():
+            for e in inner_state.edges():
+                m = e.data
+                if m is None or m.data is None or m.subset is None:
+                    continue
+                inner_desc = n.sdfg.arrays.get(m.data)
+                if inner_desc is None:
+                    continue
+                # The inner-side data name == the connector name (DaCe binds
+                # connector -> inner descriptor by name). Map back to outer.
+                outer_name = conn_to_outer.get(m.data)
+                if outer_name is None:
+                    continue
+                outer_desc = sdfg.arrays.get(outer_name)
+                if outer_desc is None or getattr(outer_desc, 'transient', False):
+                    continue
+                # The subset uses ``loop_var`` (after mapping) if any of the
+                # inner symbols carrying ``loop_var`` appears in the subset's
+                # free symbols.
+                inner_subset_syms = {str(s) for s in m.subset.free_symbols}
+                if inner_subset_syms & inner_syms_carrying:
+                    flagged.add(outer_name)
+        # Recurse one more level for safety (NSDFG inside NSDFG).
+        for inner_state in n.sdfg.states():
+            flagged.update(_find_carried_arrays_via_nested(inner_state, n.sdfg, loop_var))
+    return flagged
 
 
 def _find_carried_array(state: SDFGState, sdfg: SDFG, loop_var: str) -> Optional[str]:
