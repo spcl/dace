@@ -1,10 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import warnings
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace import data as dt, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers
+from .. import environments
 
 
 @dace.library.expansion
@@ -80,6 +85,105 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return axpy_sdfg
 
 
+def _axpy_strides(node, parent_sdfg, parent_state):
+    """Extract the leading-dim strides from the ``_x`` and ``_y`` memlets."""
+    sx = sy = None
+    for e in parent_state.in_edges(node):
+        sq = copy.deepcopy(e.data.subset)
+        dims = sq.squeeze()
+        desc = parent_sdfg.arrays[e.data.data]
+        if e.dst_conn == '_x':
+            sx = desc.strides[dims[0]]
+        elif e.dst_conn == '_y':
+            sy = desc.strides[dims[0]]
+    return sx, sy
+
+
+@dace.library.expansion
+class ExpandAxpyOpenBLAS(ExpandTransformation):
+    """``cblas_?axpy(N, alpha, X, incX, Y, incY)`` -- writes the result back into ``_res``.
+
+    Because cBLAS ``?axpy`` updates ``Y`` in-place but the DaCe node has a
+    separate ``_res`` output, the expansion emits a ``cblas_?copy`` from
+    ``_y`` into ``_res`` first, then calls ``?axpy`` with ``_res`` in the
+    ``Y`` position. This preserves the node's three-buffer convention.
+    """
+
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
+        dtype = x_outer.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
+        sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
+        prefix = func.lower()
+        n = node.n
+        a = node.a
+        if dtype in (dace.complex64, dace.complex128):
+            code = f"""
+            {dtype.ctype} __alpha = {dtype.ctype}({a});
+            cblas_{prefix}copy({n}, _y, {sy}, _res, {sy});
+            cblas_{prefix}axpy({n}, &__alpha, _x, {sx}, _res, {sy});
+            """
+        else:
+            code = f"""
+            cblas_{prefix}copy({n}, _y, {sy}, _res, {sy});
+            cblas_{prefix}axpy({n}, ({dtype.ctype})({a}), _x, {sx}, _res, {sy});
+            """
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP)
+
+
+@dace.library.expansion
+class ExpandAxpyMKL(ExpandTransformation):
+
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandAxpyOpenBLAS.expansion(*args, **kwargs)
+
+
+@dace.library.expansion
+class ExpandAxpyCuBLAS(ExpandTransformation):
+    """cuBLAS ``cublas?axpy(handle, n, &alpha, X, incX, Y, incY)`` with a prior ``copy`` into ``_res``."""
+
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
+        dtype = x_outer.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
+        sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
+        n, a = node.n, node.a
+        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code += f"""
+        {dtype.ctype} __alpha = {dtype.ctype}({a});
+        cublas{func}copy(__dace_cublas_handle, {n}, _y, {sy}, _res, {sy});
+        cublas{func}axpy(__dace_cublas_handle, {n}, &__alpha, _x, {sx}, _res, {sy});
+        """
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP)
+
+
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
@@ -91,6 +195,9 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
+        "OpenBLAS": ExpandAxpyOpenBLAS,
+        "MKL": ExpandAxpyMKL,
+        "cuBLAS": ExpandAxpyCuBLAS,
     }
     default_implementation = None
 
