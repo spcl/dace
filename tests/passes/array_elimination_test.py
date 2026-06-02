@@ -189,13 +189,6 @@ def test_source_merge_allowed_when_write_is_in_another_state():
                                      'enforces the ordering, so the merge is safe')
 
 
-@pytest.mark.xfail(reason="ArrayElimination's source-merge breaks RAW order on a sibling carrier "
-                   "transient (TSVC s254/s255). The canonicalize pipeline skips ArrayElimination "
-                   "at end-of-canonicalize as a mitigation; the underlying matcher fix (widen the "
-                   "Phase 2.4a guard to refuse when a sibling read-AN/write-AN pair exists for a "
-                   "different transient) is still pending. xfail strict so a future fix flips this "
-                   "test green automatically.",
-                   strict=True)
 def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
     """Regression for TSVC s254. Source-merge of two ``b`` source AccessNodes
     in the loop body destroys the implicit ordering between the *compute*

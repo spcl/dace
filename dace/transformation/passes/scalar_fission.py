@@ -79,6 +79,7 @@ class ScalarFission(ppl.Pass):
                             oeade.data.data = newname
 
                     # Replace all dominated reads and connected memlets.
+                    affected_states: Set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
                     for read in shadowed_reads:
                         if isinstance(read[1], nd.AccessNode):
                             read_node = read[1]
@@ -89,9 +90,15 @@ class ScalarFission(ppl.Pass):
                             for oeade in read[0].out_edges(read_node):
                                 if oeade.data.data == name:
                                     oeade.data.data = newname
+                            if isinstance(read[0], SDFGState):
+                                affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
                             read[1].replace_dict({name: newname})
 
+                    # Propagate the rename across every NestedSDFG boundary
+                    # touched by the renamed accesses: connector names, inner
+                    # arrays catalog, inner accesses + memlets, symbol_mapping.
+                    self._propagate_rename_into_nsdfgs(affected_states, name, newname)
                     results[name].add(newname)
         return results
 
@@ -136,6 +143,7 @@ class ScalarFission(ppl.Pass):
             if not self._no_upward_exposed_use(loop, name, defined_on_entry=False):
                 continue
             newname = sdfg.add_datadesc(name, sdfg.arrays[name].clone(), find_new_name=True)
+            affected_states: Set[SDFGState] = set()
             for block, node in loop_accesses:
                 if isinstance(node, nd.AccessNode):
                     node.data = newname
@@ -145,9 +153,98 @@ class ScalarFission(ppl.Pass):
                     for e in block.out_edges(node):
                         if e.data.data == name:
                             e.data.data = newname
+                    if isinstance(block, SDFGState):
+                        affected_states.add(block)
                 elif isinstance(node, InterstateEdge):
                     node.replace_dict({name: newname})
+            self._propagate_rename_into_nsdfgs(affected_states, name, newname)
             results[name].add(newname)
+
+    @staticmethod
+    def _propagate_rename_into_nsdfgs(states, old_name: str, new_name: str) -> None:
+        """Propagate a scalar rename across every ``NestedSDFG`` boundary
+        whose input/output connector matches ``old_name``.
+
+        The outer-side rename (``AccessNode.data``, surrounding memlets) is
+        not enough when the renamed scalar crosses into a ``NestedSDFG``:
+        the inner SDFG references the scalar by connector name, which
+        binds to its own arrays catalog entry of the same name. Without
+        propagation the inner SDFG ends up dangling (inner descriptor
+        keyed on the old name, outer side rewired to the new name).
+
+        For every NSDFG in ``states`` that has a connector named
+        ``old_name``, this helper:
+
+        * renames the IN / OUT connector ``old_name -> new_name``
+        * updates the connecting outer memlet's ``data`` if it still
+          references ``old_name``
+        * runs ``SDFG.replace_dict({old_name: new_name})`` on the inner
+          SDFG, which renames the inner arrays catalog entry, every
+          inner ``AccessNode.data``, every inner memlet, and any
+          symbol references including ``symbol_mapping`` values
+        * updates the ``symbol_mapping`` itself if ``old_name`` appears
+          as a KEY (the inner symbol name binding)
+
+        :param states: The set of outer ``SDFGState`` instances where
+                       the rename happened. Only NSDFGs reachable from
+                       these states get the propagation.
+        :param old_name: The original scalar name.
+        :param new_name: The renamed scalar name.
+        """
+        if not states or old_name == new_name:
+            return
+        for state in states:
+            for n in state.nodes():
+                if not isinstance(n, nd.NestedSDFG):
+                    continue
+                in_match = old_name in n.in_connectors
+                out_match = old_name in n.out_connectors
+                if not (in_match or out_match or old_name in n.symbol_mapping):
+                    continue
+                # 1. Rename the connector.
+                if in_match:
+                    n.in_connectors[new_name] = n.in_connectors.pop(old_name)
+                if out_match:
+                    n.out_connectors[new_name] = n.out_connectors.pop(old_name)
+                # 2. Update the outer-side memlet on edges that connect to
+                #    the renamed connector.
+                for e in state.in_edges(n):
+                    if e.dst_conn == old_name:
+                        e.dst_conn = new_name
+                    if e.data is not None and e.data.data == old_name:
+                        e.data.data = new_name
+                for e in state.out_edges(n):
+                    if e.src_conn == old_name:
+                        e.src_conn = new_name
+                    if e.data is not None and e.data.data == old_name:
+                        e.data.data = new_name
+                # 3. Propagate INSIDE the NestedSDFG. We do this manually
+                #    (no ``SDFG.replace_dict``) to avoid its symbolic-
+                #    replacement pathway tripping on the scalar's free-
+                #    symbol typeclass coercion.
+                inner = n.sdfg
+                if old_name in inner.arrays:
+                    inner.arrays[new_name] = inner.arrays.pop(old_name)
+                    for inner_state in inner.states():
+                        for inn in inner_state.data_nodes():
+                            if inn.data == old_name:
+                                inn.data = new_name
+                        for ie in inner_state.edges():
+                            if ie.data is not None and ie.data.data == old_name:
+                                ie.data.data = new_name
+                # Interstate edges in the inner SDFG (rare for a scalar-
+                # carrier shape but cheap to cover).
+                for ise in inner.all_interstate_edges():
+                    if any(str(s) == old_name for s in ise.data.free_symbols):
+                        ise.data.replace_dict({old_name: new_name})
+                # 4. Symbol_mapping uses inner-side symbol names as keys
+                #    (when the scalar appears as a symbol there). If the
+                #    inner symbol was named ``old_name``, update the key.
+                if old_name in n.symbol_mapping:
+                    n.symbol_mapping[new_name] = n.symbol_mapping.pop(old_name)
+                # Recurse: inner NestedSDFGs may themselves carry the
+                #    scalar across another boundary.
+                ScalarFission._propagate_rename_into_nsdfgs(set(inner.states()), old_name, new_name)
 
     @staticmethod
     def _innermost_loop(block) -> Optional[LoopRegion]:

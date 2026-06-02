@@ -15,6 +15,39 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
 
+def _state_has_read_write_sibling_transient(state: SDFGState, exclude_data: str) -> bool:
+    """Return whether ``state`` contains a TRANSIENT container (other than
+    ``exclude_data``) with both a read-only source AccessNode (``in_degree
+    == 0`` and ``out_degree > 0``) AND a write-only sink AccessNode
+    (``in_degree > 0`` and ``out_degree == 0``). Such a container is a
+    per-iteration carrier whose read-before-write ordering is enforced
+    implicitly by the dataflow surrounding it; folding sibling AccessNodes
+    of other containers can break that ordering.
+
+    :param state: The state to scan.
+    :param exclude_data: The data name currently being considered for merge
+                         -- skipped because we want to check OTHER containers.
+    :returns: ``True`` if such a sibling carrier exists.
+    """
+    # Group AccessNodes by data; only consider transients.
+    by_name: Dict[str, List[nodes.AccessNode]] = defaultdict(list)
+    for n in state.nodes():
+        if not isinstance(n, nodes.AccessNode):
+            continue
+        if n.data == exclude_data:
+            continue
+        desc = state.sdfg.arrays.get(n.data)
+        if desc is None or not desc.transient:
+            continue
+        by_name[n.data].append(n)
+    for ans in by_name.values():
+        has_read_only = any(state.in_degree(n) == 0 and state.out_degree(n) > 0 for n in ans)
+        has_write_only = any(state.in_degree(n) > 0 and state.out_degree(n) == 0 for n in ans)
+        if has_read_only and has_write_only:
+            return True
+    return False
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ArrayElimination(ppl.Pass):
@@ -139,6 +172,34 @@ class ArrayElimination(ppl.Pass):
                     if state.in_degree(first_node) == 0 and any(state.in_degree(n) > 0 for n in nodeset):
                         continue
                     if state.out_degree(first_node) == 0 and any(state.out_degree(n) > 0 for n in nodeset):
+                        continue
+
+                # Sibling-carrier guard: source-merging a read-only container
+                # ``X`` collapses the topological order that kept ``X``'s
+                # distinct source AccessNodes in separate dataflow chains.
+                # When a SIBLING transient ``Y`` has both a read-only source
+                # (``in_degree == 0``) AND a write-only sink (``out_degree
+                # == 0``) in the same state -- i.e. ``Y`` is a per-iteration
+                # carrier with a compute chain reading it and a seed-write
+                # chain writing the next iteration's value -- the
+                # implicit ordering between ``X``'s readers is what kept
+                # ``Y``'s read in the compute chain BEFORE the seed-write.
+                # Folding ``X``'s sources frees codegen to schedule ``Y``'s
+                # seed-write before the compute's read, so the compute reads
+                # the NEW value of ``Y`` instead of the carried old value.
+                # Pinned by TSVC s254/s255 (``a[i] = (b[i] + x) * 0.5; x =
+                # b[i]`` where ``b`` is read-only, ``x`` is the carried
+                # scalar). Symmetric guard for sink-merge.
+                #
+                # The non-transient guard above catches the case where the
+                # CARRIER is the same container as the one being merged
+                # (``acc[c]`` in s243); this guard catches the orthogonal
+                # case where the carrier is a DIFFERENT transient.
+                if state.in_degree(first_node) == 0 and len(nodeset) >= 2:
+                    if _state_has_read_write_sibling_transient(state, data_container):
+                        continue
+                if state.out_degree(first_node) == 0 and len(nodeset) >= 2:
+                    if _state_has_read_write_sibling_transient(state, data_container):
                         continue
 
                 for node in nodeset[first_node_idx + 1:]:

@@ -389,21 +389,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # inline+fuse, privatize) form an atomic logical transformation.
     s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
-    # NOTE: ``_PrivatizeScalarsStage`` MUST NOT run here. ``LoopToReduce``'s
-    # ``wcr-scalar`` retarget creates a transient ``_priv_<accum>`` whose
-    # lifetime spans the surrounding ``priv_init -> loop -> priv_wb`` state
-    # chain. The accesses are split across the parent SDFG (init/wb) and
-    # an inlined NestedSDFG (the loop body's compute), so the cross-SDFG
-    # rename in ``ScalarFission._privatize_loop_local_undominated`` updates
-    # the parent's accesses to ``_priv_<accum>_0`` while the inner NestedSDFG
-    # still references the old name -- the resulting SDFG is invalid
-    # (memlet.data does not match endpoint AccessNode data), caught by
-    # ``StateFusionExtended``'s post-apply check on TSVC s118 the moment a
-    # downstream fusion touches the broken state. The privatization stays in
-    # the ``reduce`` and ``peel`` stages, where the WCR-scalar init/wb shape
-    # does not exist. Integration pin:
-    # ``tests/canonicalize/tsvc_corpus_test.py`` (s118 passes ONLY because
-    # this stage skip is in place).
+    # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
+    # states whose intermediate scalar transients share names across
+    # siblings. Running ``PrivatizeScalars`` here renames each scope's
+    # transient so the downstream structural cleanup's same-name candidate
+    # list is short -- defence-in-depth for the StateFusionExtended same-
+    # name writer-merge guard.
+    s += [('reduction_to_wcr_map', _PrivatizeScalarsStage())]
     s += _structural_cleanup('reduction_to_wcr_map')
 
     # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
