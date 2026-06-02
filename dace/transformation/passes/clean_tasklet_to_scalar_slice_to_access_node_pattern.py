@@ -152,6 +152,43 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
         assert isinstance(sink_node, dace.nodes.AccessNode) and oe.data.other_subset is not None
         return sink_node.data, copy.deepcopy(oe.data.other_subset)
 
+    def _safe_to_fold(self, state: dace.SDFGState, an_slice: dace.nodes.AccessNode, dest_data: str,
+                      sink_node) -> bool:
+        """In-state safety check: refuse the fold when the destination's
+        data is ALSO read in this state through a different AccessNode
+        with ``out_degree > 0``.
+
+        The matcher would otherwise expose ``AugAssignToWCR``'s
+        ``expr_index == 0`` latent hole: that shape requires
+        ``out_degree(input) == 1``, and folding the
+        ``tasklet -> A_slice -> A`` chain into ``tasklet -> A`` exposes
+        that ``A`` is read through a different chain (e.g. TSVC s3112's
+        ``sum += a[i]; b[i] = sum`` where ``sum`` is read both by the
+        RMW Add and by ``b_i_assign``). Refuse the fold here so AAW
+        never sees the unsafe shape.
+
+        The destination's own AccessNode (``sink_node`` when it's an
+        AccessNode) is excluded from the check: it's the legitimate
+        target of the fold, not a sibling reader.
+
+        :param state: The state to scan.
+        :param an_slice: The intermediate slice AccessNode being folded.
+        :param dest_data: The destination array's data name.
+        :param sink_node: The sink endpoint (AccessNode or MapExit) of
+                          the fold; excluded from the scan.
+        :returns: ``False`` to refuse the fold.
+        """
+        for n in state.nodes():
+            if not isinstance(n, dace.nodes.AccessNode):
+                continue
+            if n.data != dest_data:
+                continue
+            if n is sink_node or n is an_slice:
+                continue
+            if state.out_degree(n) > 0:
+                return False
+        return True
+
     def _apply_recursive(self, sdfg: dace.SDFG):
         for state in list(sdfg.all_states()):
             pre_transform_state_nodes = list(state.nodes())
@@ -170,6 +207,9 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
                     oe = state.out_edges(an_slice)[0]
                     assert ie.src == tasklet
                     array_name, write_subset = self._slice_write(oe, an_slice, sink)
+
+                    if not self._safe_to_fold(state, an_slice, array_name, sink):
+                        continue
 
                     reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an_slice.data, state)
 

@@ -93,6 +93,16 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
+    # NOTE: the input/output scalar-slice fold passes
+    # (``CleanAccessNodeToScalarSliceToTaskletPattern`` /
+    # ``CleanTaskletToScalarSliceToAccessNodePattern``) are deliberately NOT
+    # wired here yet -- a previous attempt regressed ~13 TSVC kernels
+    # (branched min/max s314-s316, gather-sum s4115/s4116, multi-state-chain
+    # s3111/s31111/s352, etc.) because the fold strips an intermediate scalar
+    # whose presence is load-bearing for the downstream
+    # ``LoopToReduce`` / ``LoopToScan`` matchers. The folds run per-pass via
+    # the D4 wiring (apply-time pre-normalization in each loop2X pass), so
+    # canonicalize's structural cleanup does not need to perform them.
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
             (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, EmptyStateElimination())]
