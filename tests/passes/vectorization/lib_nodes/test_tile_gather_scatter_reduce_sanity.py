@@ -143,12 +143,17 @@ def test_tile_reduce_pure_smoke_2d_axis_1():
                    "(OOB on length-1 allocation, garbage indices walk off the source allocation at runtime) "
                    "instead of detecting the broadcast intent and emitting ``_idx_<k>[0]`` (or just "
                    "``_idx_<k>`` when DaCe passes the connector as a scalar by-value). Compounded "
-                   "upstream: PromoteNSDFGBodyToTiles Phase 2 widening converts every transient (1,) "
-                   "to (W,) (line ~324 of promote_nsdfg_body_to_tiles.py), defeating the broadcast "
-                   "intent before the codegen sees the (1,) shape. Fix needs to thread the "
-                   "by-value/by-pointer distinction through to the expansion AND skip widening for "
-                   "loop-invariant scalar idx sources. Captures the cloudsc-snippet-one merge+tile_nodes "
-                   "runtime segfault.")
+                   "upstream: PromoteNSDFGBodyToTiles Phase 2 widening (``_reshape_transients``, line "
+                   "~324 of promote_nsdfg_body_to_tiles.py) converts every transient (1,) to (W,), "
+                   "defeating the broadcast intent before the codegen sees the (1,) shape. Per the "
+                   "user directive the right policy is: (a) skip widening for loop-invariant scalars "
+                   "(transients whose every upstream write reads a non-transient source at a "
+                   "tile-var-free subset, e.g. cloudsc ``z1_lc`` from ``z1[0]``); (b) skip expansion "
+                   "of loop-invariant symbols. Direct application of (a) breaks downstream "
+                   "``_promote_binops``/``_promote_loads``/``_collapse_tile_gathers`` which assume "
+                   "every (1,) transient is widened; the broadcast signal needs to thread through "
+                   "those too (or be marked on the transient via a property the descent reads). "
+                   "Captures the cloudsc-snippet-one merge+tile_nodes runtime segfault end-to-end.")
 def test_tile_gather_scalar_idx_emits_subscript_zero():
     """A length-1 ``_idx_<k>`` source (loop-invariant scalar like cloudsc
     ``z1``) must produce ``_idx_<k>[0]`` in the gather body — NOT
