@@ -61,35 +61,6 @@ static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
     return value % modulus;
 }
 
-// Fortran CSHIFT source index -- ``((i + shift) mod n + n) mod n``.
-// Wrapping with this helper collapses the modulo arithmetic into a
-// single C++ call so the Python tasklet body stays one statement:
-// ``__out = __in[cshift_idx(__i, shift, n)]``.  The ``+ n) % n``
-// correction keeps the result well-defined for negative shifts under
-// C's truncating-modulo convention.
-template <typename I, typename S, typename N>
-DACE_CONSTEXPR DACE_HDFI typename std::common_type<I, S, N>::type
-cshift_idx(const I& i, const S& shift, const N& n) {
-    return (((i + shift) % n) + n) % n;
-}
-
-// Fortran EOSHIFT value -- ``arr[i + shift]`` when ``i + shift`` is in
-// ``[0, n)``, else the ``boundary`` value cast to the element type.
-// Single C++ call so the tasklet body lowering EOSHIFT collapses to
-// ``__out = eoshift_value(__in, __i, shift, n, boundary)`` (one op).
-// Indexes ``arr`` only on the in-range path so out-of-bounds reads
-// never happen.
-template <typename Arr, typename I, typename S, typename N, typename B>
-DACE_HDFI typename std::remove_cv<typename std::remove_reference<decltype(std::declval<const Arr*>()[0])>::type>::type
-eoshift_value(const Arr* arr, const I& i, const S& shift,
-              const N& n, const B& boundary) {
-    using ElemT = typename std::remove_cv<
-        typename std::remove_reference<decltype(arr[0])>::type>::type;
-    const auto src = i + shift;
-    if (src >= 0 && src < n) return arr[src];
-    return static_cast<ElemT>(boundary);
-}
-
 // Fortran implements MOD for floating-point values as well
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {

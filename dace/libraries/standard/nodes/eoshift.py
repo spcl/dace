@@ -24,61 +24,25 @@ from dace.transformation.transformation import ExpandTransformation
 
 @dace.library.expansion
 class ExpandEOShiftPure(ExpandTransformation):
-    """Pure expansion -- per-element branch on shifted-index range."""
+    """Pure expansion of :class:`EOShift` -- not yet implemented.
 
+    :raises NotImplementedError: always.  The lib node validates its
+        connector wiring but does not produce a body until a target
+        workload exercises ``EOSHIFT`` (none do today).
+    """
     environments = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        desc_x, desc_out, dim_zero = node.validate(parent_sdfg, parent_state)
-        dtype = desc_x.dtype.base_type
-        shape = list(desc_x.shape)
-        rank = len(shape)
-        shift_expr = node.shift if node.shift is not None else dace.symbolic.symbol("__shift")
-        boundary_expr = node.boundary if node.boundary is not None else 0
-
-        sdfg = dace.SDFG(node.label + "_sdfg")
-        sdfg.add_array("_x", shape, dtype)
-        sdfg.add_array("_out", shape, dtype)
-        if node.shift is None:
-            sdfg.add_symbol("__shift", dace.int64)
-        else:
-            for sym in node.shift.free_symbols:
-                name = str(sym)
-                if name not in sdfg.symbols:
-                    sdfg.add_symbol(name, dace.int64)
-        if node.boundary is not None:
-            for sym in node.boundary.free_symbols:
-                name = str(sym)
-                if name not in sdfg.symbols:
-                    sdfg.add_symbol(name, dtype)
-
-        state = sdfg.add_state()
-        map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
-        n_axis = shape[dim_zero]
-        src_parts = []
-        for d in range(rank):
-            if d == dim_zero:
-                src_parts.append(f"0:{shape[d]}")
-            else:
-                src_parts.append(f"__i{d}")
-        src_sub = ", ".join(src_parts)
-        out_sub = ", ".join([f"__i{d}" for d in range(rank)])
-        # Single-statement Python tasklet body -- the range check and
-        # bounded read live in ``eoshift_value`` (declared in
-        # ``dace/runtime/include/dace/math.h``), so the body collapses
-        # to one call.
-        code = (f"__out = eoshift_value(__in, __i{dim_zero}, ({shift_expr}), "
-                f"{n_axis}, ({boundary_expr}))")
-        state.add_mapped_tasklet(
-            name="_eoshift",
-            map_ranges=map_rng,
-            inputs={"__in": dace.Memlet(f"_x[{src_sub}]")},
-            code=code,
-            outputs={"__out": dace.Memlet(f"_out[{out_sub}]")},
-            external_edges=True,
-        )
-        return sdfg
+        raise NotImplementedError("EOShift pure expansion is not yet implemented.  EOSHIFT does not "
+                                  "appear in any current target Fortran workload (ICON / ECRAD / "
+                                  "cloudsc / QE / Graupel); the lib node is reserved as a typed "
+                                  "bridge target.  When a workload starts using EOSHIFT, the boundary "
+                                  "fill rules out a pure memlet-subset expression -- implement the "
+                                  "expansion as a single Map whose tasklet body picks between the "
+                                  "clamped read and the boundary value, e.g. via a Python conditional "
+                                  "expression ``__out = __in if (0 <= i + shift) and (i + shift < n) "
+                                  "else boundary`` over a memlet ``_x[max(0, min(n-1, i + shift))]``.")
 
 
 @dace.library.node

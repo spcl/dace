@@ -3,16 +3,20 @@
 
 Fortran ``CSHIFT(arr, shift [, dim])`` produces an array of the same
 shape as ``arr`` whose element along ``dim`` (default 1) at position
-``i`` is ``arr(MODULO(i - 1 + shift, n) + 1)``.  The shift can be
-positive (rotate elements toward the start) or negative (rotate
-toward the end); higher-rank inputs rotate each slice along ``dim``
-independently.
+``i`` is ``arr(MODULO(i - 1 + shift, n) + 1)``.  Operates on the
+whole array: a rank-R input rotates each (R-1)-cross-section
+perpendicular to ``dim`` independently.
 
-Pure expansion: a single Map writes the rotated layout in parallel.
-The shift is a runtime symbol so the same expansion handles compile-
-time-constant shifts and Fortran-dummy-scaled shifts alike.  DaCe's
-scheduler picks the right OpenMP / GPU lowering for the Map based on
-the storage of the data.
+CSHIFT does not currently appear in any kernel in our target
+workloads (ICON, ECRAD, cloudsc, QE, Graupel) -- the lib node is
+kept as a typed bridge target so the HLFIR frontend can route
+``hlfir.cshift`` here without falling through to an
+``unrecognised intrinsic`` error, but the pure expansion is a TODO
+stub.  Implement the expansion (and any backend variants -- OpenMP
+5.0 user-defined reduction, CUB / stdpar) when a workload requires
+it; the recommended shape is a single Map whose memlet subset is
+``Mod(Mod(i + shift, n) + n, n)`` so the tasklet body collapses to
+``__out = __in`` (no helper required).
 """
 import dace
 import dace.library
@@ -25,82 +29,38 @@ from dace.transformation.transformation import ExpandTransformation
 
 @dace.library.expansion
 class ExpandCShiftPure(ExpandTransformation):
-    """Pure expansion of :class:`CShift` -- a parallel Map of mod-indexed reads."""
+    """Pure expansion of :class:`CShift` -- not yet implemented.
 
+    :raises NotImplementedError: always.  The lib node validates its
+        connector wiring but does not produce a body until a target
+        workload exercises ``CSHIFT`` (none do today).
+    """
     environments = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        desc_x, desc_out, dim_zero = node.validate(parent_sdfg, parent_state)
-        shape = list(desc_x.shape)
-        rank = len(shape)
-        dtype = desc_x.dtype.base_type
-        # ``shift`` is symbolic so a single expansion handles every
-        # call site without re-baking; ``node.shift`` may be a
-        # constant, an SDFG symbol, or any sympy expression resolved
-        # in the parent's scope at codegen time.
-        shift_expr = node.shift if node.shift is not None else dace.symbolic.symbol("__shift")
-
-        sdfg = dace.SDFG(node.label + "_sdfg")
-        sdfg.add_array("_x", shape, dtype)
-        sdfg.add_array("_out", shape, dtype)
-        if node.shift is None:
-            sdfg.add_symbol("__shift", dace.int64)
-        else:
-            # Register every free symbol the shift expression depends
-            # on, so the expanded nested SDFG advertises them as
-            # parent-supplied symbols.  The Fortran-bridge runs scalar
-            # INTENT(IN) args through ``_promote_scalar_args`` and the
-            # outer SDFG carries the matching symbol; without this
-            # ``add_symbol`` the inner reference dead-ends with an
-            # ``unresolved free symbol`` error.
-            for sym in node.shift.free_symbols:
-                name = str(sym)
-                if name not in sdfg.symbols:
-                    sdfg.add_symbol(name, dace.int64)
-
-        state = sdfg.add_state()
-        map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
-        n_axis = shape[dim_zero]
-        # Source memlet: stream the whole ``dim_zero`` axis into the
-        # tasklet (the cshift permutation can land on any index for
-        # negative shifts -- a single-element memlet with a computed
-        # index would let DaCe's symbolic bounds-analysis miscount the
-        # read range).  Off-dim entries stay element-wise.
-        src_parts = []
-        for d in range(rank):
-            if d == dim_zero:
-                src_parts.append(f"0:{shape[d]}")
-            else:
-                src_parts.append(f"__i{d}")
-        src_sub = ", ".join(src_parts)
-        out_sub = ", ".join([f"__i{d}" for d in range(rank)])
-        # Single-statement Python tasklet body -- the modulo arithmetic
-        # lives in ``cshift_idx`` (declared in
-        # ``dace/runtime/include/dace/math.h``); the read stays a plain
-        # subscript so DaCe's memlet bounds analyser still sees a
-        # data access on ``__in``.
-        code = f"__out = __in[cshift_idx(__i{dim_zero}, ({shift_expr}), {n_axis})]"
-        state.add_mapped_tasklet(
-            name="_cshift",
-            map_ranges=map_rng,
-            inputs={"__in": dace.Memlet(f"_x[{src_sub}]")},
-            code=code,
-            outputs={"__out": dace.Memlet(f"_out[{out_sub}]")},
-            external_edges=True,
-        )
-        return sdfg
+        raise NotImplementedError("CShift pure expansion is not yet implemented.  CSHIFT does not "
+                                  "appear in any current target Fortran workload (ICON / ECRAD / "
+                                  "cloudsc / QE / Graupel); the lib node is reserved as a typed "
+                                  "bridge target.  When a workload starts using CSHIFT, implement "
+                                  "the expansion as a single Map whose source memlet's subset is "
+                                  "``Mod(Mod(i + shift, n) + n, n)`` -- the tasklet body collapses "
+                                  "to ``__out = __in`` (no runtime helper required).")
 
 
 @dace.library.node
 class CShift(dace.sdfg.nodes.LibraryNode):
     """Fortran ``CSHIFT(arr, shift [, dim])`` -- circular shift along ``dim``.
 
+    Whole-array operation: a rank-R input rotates every
+    (R-1)-cross-section perpendicular to ``dim`` by ``shift``
+    positions, with elements falling off one end wrapping around to
+    the other.
+
     ``shift`` is symbolic so a single library-node instance handles
     any combination of compile-time-constant shifts and runtime
-    symbols.  ``None`` (the default) makes the expansion fall back
-    on a freshly-symbol-named ``__shift`` so the test suite can drive
-    the node without a wrapper.
+    symbols.  ``None`` (the default) leaves the lib node ready for a
+    bridge-supplied shift expression at lowering time.
     """
 
     implementations = {"pure": ExpandCShiftPure}
