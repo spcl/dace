@@ -1132,10 +1132,10 @@ def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> bo
     # outer side of the transient.
     delta_buf_name, _ = sdfg.add_array(f'_interchange_delta_{outer_delta_name}', shape=[trip],
                                        dtype=carrier_desc.dtype, transient=True,
-                                       storage=dtypes.StorageType.Register, find_new_name=True)
+                                       storage=dtypes.StorageType.Default, find_new_name=True)
     scan_buf_name, _ = sdfg.add_array(f'_interchange_scan_{outer_carrier_name}', shape=[trip],
                                       dtype=carrier_desc.dtype, transient=True,
-                                      storage=dtypes.StorageType.Register, find_new_name=True)
+                                      storage=dtypes.StorageType.Default, find_new_name=True)
     delta_buf_an_in = new_state.add_access(delta_buf_name)
     scan_buf_an = new_state.add_access(scan_buf_name)
 
