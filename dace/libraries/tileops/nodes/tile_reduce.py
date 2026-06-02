@@ -135,17 +135,33 @@ class ExpandTileReducePure(ExpandTransformation):
             ax = node.axis
             if not (0 <= ax < K):
                 raise ValueError(f"TileReduce: axis {ax} out of range for K={K}")
-            # Kept-dims flat offset (row-major over the dims != ax).
+            # Kept-dims flat offset.
+            # The reduce loop iterates over ALL widths with ``nested_loops``,
+            # so its loop variables are ``__l0..__l{K-1}`` matching the
+            # original tile-dim indices. ``reduce_kept_off`` uses those.
             kept_widths = [(d, w) for d, w in enumerate(widths) if d != ax]
-            kept_off_terms = []
+            reduce_kept_terms = []
             kept_stride = 1
             for d, w in reversed(kept_widths):
-                kept_off_terms.append(f"__l{d}" if kept_stride == 1 else f"(__l{d} * {kept_stride})")
+                reduce_kept_terms.append(f"__l{d}" if kept_stride == 1 else f"(__l{d} * {kept_stride})")
                 kept_stride *= w
-            kept_off = " + ".join(reversed(kept_off_terms)) if kept_widths else "0"
-            init_body = f"_dst[{kept_off}] = {init};"
-            combine_dst = _combine_expr(op, f"_dst[{kept_off}]", f"_src[{src_off}]")
-            reduce_body = f"{lane_gate}_dst[{kept_off}] = {combine_dst};"
+            reduce_kept_off = " + ".join(reversed(reduce_kept_terms)) if kept_widths else "0"
+            # The init loop is wrapped separately by ``nested_loops`` over
+            # ``init_widths = [w for _, w in kept_widths]``, which renumbers
+            # the loop variables sequentially as ``__l0..__l{Kept-1}`` — the
+            # original dim indices don't survive. ``init_kept_off`` must use
+            # the sequential names; reaching for ``__l{d}`` with the original
+            # index would name an undeclared variable (e.g. ``__l1`` when
+            # the only loop is ``__l0``).
+            init_kept_terms = []
+            kept_stride = 1
+            for new_idx, w in reversed(list(enumerate(w for _, w in kept_widths))):
+                init_kept_terms.append(f"__l{new_idx}" if kept_stride == 1 else f"(__l{new_idx} * {kept_stride})")
+                kept_stride *= w
+            init_kept_off = " + ".join(reversed(init_kept_terms)) if kept_widths else "0"
+            init_body = f"_dst[{init_kept_off}] = {init};"
+            combine_dst = _combine_expr(op, f"_dst[{reduce_kept_off}]", f"_src[{src_off}]")
+            reduce_body = f"{lane_gate}_dst[{reduce_kept_off}] = {combine_dst};"
             init_widths = [w for _, w in kept_widths]
             code = (f"{nested_loops(init_widths, init_body)}\n"
                     f"{nested_loops(widths, reduce_body)}")
