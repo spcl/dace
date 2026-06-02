@@ -136,3 +136,49 @@ def test_tile_reduce_pure_smoke_2d_axis_1():
     DST = np.zeros(W0)
     sdfg(SRC=SRC, DST=DST)
     np.testing.assert_allclose(DST, SRC.sum(axis=1), rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.xfail(strict=True,
+                   reason="Length-1 ``_idx_<k>`` source: ExpandTileGatherPure emits ``_idx_<k>[__l0]`` "
+                   "(OOB on length-1 allocation, garbage indices walk off the source allocation at runtime) "
+                   "instead of detecting the broadcast intent and emitting ``_idx_<k>[0]`` (or just "
+                   "``_idx_<k>`` when DaCe passes the connector as a scalar by-value). Compounded "
+                   "upstream: PromoteNSDFGBodyToTiles Phase 2 widening converts every transient (1,) "
+                   "to (W,) (line ~324 of promote_nsdfg_body_to_tiles.py), defeating the broadcast "
+                   "intent before the codegen sees the (1,) shape. Fix needs to thread the "
+                   "by-value/by-pointer distinction through to the expansion AND skip widening for "
+                   "loop-invariant scalar idx sources. Captures the cloudsc-snippet-one merge+tile_nodes "
+                   "runtime segfault.")
+def test_tile_gather_scalar_idx_emits_subscript_zero():
+    """A length-1 ``_idx_<k>`` source (loop-invariant scalar like cloudsc
+    ``z1``) must produce ``_idx_<k>[0]`` in the gather body — NOT
+    ``_idx_<k>[lane]``, which would read OOB on the length-1
+    allocation and feed garbage indices to the source-array lookup."""
+    import dace
+    import numpy as np
+    from dace.libraries.tileops import TileGather
+
+    sdfg = dace.SDFG("gather_scalar_idx")
+    sdfg.add_array("SRC", (10, ), dace.float64)
+    sdfg.add_array("DST", (8, ), dace.float64)
+    sdfg.add_array("IDX", (1, ), dace.int64)
+    state = sdfg.add_state("main")
+    s, d, ix = state.add_access("SRC"), state.add_access("DST"), state.add_access("IDX")
+    g = TileGather(name="g", widths=(8, ), source_ndim=1)
+    state.add_node(g)
+    state.add_edge(s, None, g, "_src", dace.Memlet("SRC[0:10]"))
+    state.add_edge(ix, None, g, "_idx_0", dace.Memlet("IDX[0]"))
+    state.add_edge(g, "_dst", d, None, dace.Memlet("DST[0:8]"))
+    sdfg.expand_library_nodes()
+    tasklet_bodies = [
+        n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)
+    ]
+    assert any("_idx_0[0]" in b for b in tasklet_bodies), tasklet_bodies
+    assert not any("_idx_0[__l0]" in b for b in tasklet_bodies), tasklet_bodies
+
+    # End-to-end: every lane reads SRC[IDX[0]].
+    SRC = np.arange(10, dtype=np.float64)
+    DST = np.zeros(8)
+    IDX = np.array([3], dtype=np.int64)
+    sdfg(SRC=SRC, DST=DST, IDX=IDX)
+    np.testing.assert_array_equal(DST, np.full(8, SRC[3]))
