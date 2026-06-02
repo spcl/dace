@@ -160,13 +160,15 @@ def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
     np.testing.assert_allclose(c_vec, c_ref, rtol=1e-12, atol=1e-12)
 
 
-def test_vectorize_cpu_multi_dim_refuses_spmv():
-    """SpMV (gather + reduction accumulator via wcr) raises
-    ``NotImplementedError`` — covered by future TileGather + TileReduce
-    slices."""
+def test_vectorize_cpu_multi_dim_accepts_spmv():
+    """SpMV (gather + reduction accumulator via wcr): the orchestrator's
+    ``InsertAssignTaskletsAtMapBoundary`` + ``NormalizeWCRSource`` +
+    ``EmitTileOps`` reduction emission now lower the shape without
+    refusal (prior contract was the inverse). Asserts the pipeline runs
+    end-to-end — numerical equivalence is covered by the broader
+    matches_reference tests in this file."""
     sdfg = _build_spmv()
-    with pytest.raises(NotImplementedError):
-        VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(sdfg, {})
 
 
 @pytest.mark.parametrize("widths", [(8, ), (4, 8)])

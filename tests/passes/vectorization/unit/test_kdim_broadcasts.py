@@ -308,7 +308,6 @@ def test_fully_unstructured_separable_descent_to_tile_only():
     assert _count_lib_nodes_by_type(sdfg, TileGather) >= 1
 
 
-@pytest.mark.xfail(strict=True, reason=_BROADCAST_GAP_REASON)
 def test_fully_unstructured_2d_index_descent_to_tile_only():
     """``a[idx[jk, jc]]`` — 1-D source addressed by a 2-D index tile.
 

@@ -824,6 +824,19 @@ class EmitTileOps(ppl.Pass):
                 # the outer scalar (acc) and drop the reduction.
                 if nxt[0].data is not None and nxt[0].data.wcr is not None:
                     return edge, intermediates
+                # Same reduction signal one assign-tasklet removed:
+                # ``AccessNode -> assign_tasklet -[wcr]-> MapExit``. After
+                # ``InsertAssignTaskletsAtMapBoundary`` splits the stage-out
+                # edge, the WCR rides on the post-tasklet edge instead of
+                # the pre-tasklet one — stop here so the caller's WCR
+                # detector still sees the Scalar AccessNode as the
+                # reduction target.
+                two_hop = nxt[0].dst
+                if (isinstance(two_hop, dace.nodes.Tasklet) and two_hop in assign_set):
+                    two_hop_out = list(state.out_edges(two_hop))
+                    if (len(two_hop_out) == 1 and two_hop_out[0].data is not None
+                            and two_hop_out[0].data.wcr is not None):
+                        return edge, intermediates
                 intermediates.append(dst)
                 edge = nxt[0]
                 continue

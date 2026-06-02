@@ -54,6 +54,7 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 )
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.remove_redundant_assignment_tasklets import RemoveRedundantAssignmentTasklets
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
@@ -311,23 +312,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``MapCollapse`` run in ``apply_pass``. ``InlineSDFGs`` is
         # intentionally NOT run: it would flatten the body NSDFGs
         # ``PromoteNSDFGBodyToTiles`` descends into.)
-        # TODO: ``InsertAssignTaskletsAtMapBoundary`` is intentionally NOT
-        # wired here yet (per user directive it MUST be wired). The pass emits
-        # semantically-transparent ``_out = _in`` staging tasklets at map
-        # boundaries — they are correct in principle, but ``EmitTileOps``'
-        # operand resolution currently misroutes the merge-tasklet ``_e``
-        # operand on branch-normalised same-write-set kernels (cloudsc-snippet-
-        # one merge+tile_nodes) through the stage-in load of the OUTPUT array
-        # instead of the per-arm ``__bn_*`` transient. The follow-up slice
-        # lifts the staging assign-tasklet into a tile lib node (TileAssign,
-        # masked when in a remainder body) and tightens ``_resolve_operand`` /
-        # ``_walk_through_assigns`` to consume those pass-throughs correctly.
+        # ``InsertAssignTaskletsAtMapBoundary`` emits semantically-transparent
+        # ``_out = _in`` staging tasklets at map boundaries; ``EmitTileOps``
+        # lifts each into a ``TileLoad`` (stage-in direction) or ``TileStore``
+        # (stage-out direction). Runs AFTER ``SplitTasklets`` so the staged
+        # tasklets are single-op.
         passes += [
             RemoveRedundantAssignmentTasklets(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
             PowerOperatorExpansion(),
             SplitTasklets(),
+            InsertAssignTaskletsAtMapBoundary(),
             RemoveMathCall(),
             # Stage every ``Tasklet -> global-array -> Tasklet`` hop through
             # transient scalars (the cloudsc zsolqa / zqlhs reuse). A global
