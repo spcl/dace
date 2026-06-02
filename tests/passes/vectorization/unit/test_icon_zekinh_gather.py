@@ -50,11 +50,18 @@ def _count_tile_gathers(sdfg: dace.SDFG) -> int:
 
 
 @pytest.mark.xfail(strict=True,
-                   reason=("ICON zekinh exercises K=2 + mixed-gather + 1-D source broadcast "
-                           "(``e_bln_slice[0, 0]`` jk-independent lookup). Same descent gap as "
-                           "the K=2 broadcast/gather composition in test_kdim_broadcasts.py. "
-                           "Tracked as the next slice — needs partial-binding TileLoad + "
-                           "TileGather composition."))
+                   reason=("ICON zekinh exercises a different K=2 gap from the partial-binding "
+                           "1-D idx pattern (now handled): the source ``z_kin_hor_e[edge_blk[jb, "
+                           "jc, m], jk, edge_idx[jb, jc, m]]`` has TWO data-dependent gather dims "
+                           "(0 and 2) with a tile-var-bound middle dim (1 = jk). The boundary "
+                           "memlet for ``z_kin_hor_e`` carries dim 0 as ``0:NB-1`` (full-source "
+                           "multi-slice — needed because the gather can hit any block) and the "
+                           "descent's boundary-connector classifier refuses with ``non-tiled "
+                           "dim 0 of extent > 1 — a multi-slice access; not supported in the "
+                           "descent yet``. Routing this through TileGather requires the descent "
+                           "to recognise the multi-gather-dim boundary pattern and emit per-dim "
+                           "index tiles + a multi-source-dim TileGather — a separate slice from "
+                           "the partial-binding 1-D idx fix."))
 def test_icon_zekinh_descent_to_tile_only():
     """The mixed-gather ICON kernel lowers to zero raw Tasklets at K=2.
 
