@@ -279,10 +279,18 @@ class BranchNormalization(ppl.Pass):
                 continue
             for ie in in_edges:
                 ie.data.assignments.update(assigns)
-            # The empty state stays as a pure pass-through (now no
-            # assignments); the multi-state normalization lifts it
-            # harmlessly.
-            e.data.assignments.clear()
+            # Drop the now-purposeless empty pass-through entry state and
+            # promote its single successor as the new arm start_block so
+            # M3.1b's single-state guard accepts the reduced arm. Leaving
+            # the empty state in place was preventing
+            # ``SameWriteSetIfElseToMergeCFG._matches`` from recognising
+            # two-arm same-write-set kernels whose Python-frontend SDFG
+            # begins each arm with a symbol-binding empty state (the
+            # cloudsc-snippet-one ``__sym_z1 = z1`` pattern).
+            successor = e.dst
+            br.remove_edge(e)
+            br.remove_node(sb)
+            br.start_block = br.node_id(successor)
             hoisted = True
         return hoisted
 
@@ -815,6 +823,22 @@ class BranchNormalizationPipeline(ppl.Pass):
             before = _count_conditional_blocks(sdfg)
             if before == 0:
                 break
+            # Hoist branch-invariant interstate symbol bindings out of
+            # each ConditionalBlock arm BEFORE the same-write-set detector
+            # runs. The python frontend emits an empty entry state with
+            # an assignment edge (e.g. ``__sym_z1 = z1``) at the head of
+            # each arm; without hoisting those empty states out, M3.1b's
+            # single-state guard refuses two-arm same-write-set kernels
+            # like cloudsc-snippet-one, and BranchNormalization then
+            # splits them into two sequential single-arm if's whose
+            # ``merge(cond, new, old)`` shapes wire ``_old`` to the same
+            # stage-in load of the OUTPUT array (the second merge never
+            # chains through the first's output — wrong dataflow).
+            bn = BranchNormalization()
+            for cfg in sdfg.all_control_flow_regions(recursive=True):
+                for blk in list(cfg.nodes()):
+                    if isinstance(blk, ConditionalBlock):
+                        bn._hoist_branch_invariant_assignments(blk)
             SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, results)
             BranchNormalization().apply_pass(sdfg, results)
             # Collapse the multi-state arms the 3-CFG split produced so the

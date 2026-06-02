@@ -116,6 +116,21 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         :param sdfg: SDFG to transform in place.
         :returns: number of blocks rewritten, or ``None`` if none.
         """
+        # The python frontend often emits an empty entry state inside an
+        # arm whose only effect is an interstate symbol binding
+        # (``__sym_<x> = <x>``). That extra state bumps the arm node count
+        # past the single-state guard below, so the kernel falls through
+        # to the broken sequential-single-arm path in
+        # ``BranchNormalization``. Hoist those bindings out of every
+        # ConditionalBlock arm first; they then become invisible to the
+        # match check.
+        from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
+            BranchNormalization, )
+        _bn = BranchNormalization()
+        for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
+            for block in list(cfg.nodes()):
+                if isinstance(block, ConditionalBlock):
+                    _bn._hoist_branch_invariant_assignments(block)
         rewritten = 0
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             for block in list(cfg.nodes()):
