@@ -64,14 +64,12 @@ class ExpandEOShiftPure(ExpandTransformation):
                 src_parts.append(f"__i{d}")
         src_sub = ", ".join(src_parts)
         out_sub = ", ".join([f"__i{d}" for d in range(rank)])
-        # Single-statement Python tasklet -- conditional expression
-        # selects ``__in[i+shift]`` when in range, else the boundary
-        # value.  The read index is clamped via ``max(0, min(n-1, i+s))``
-        # so the array access is always inside bounds before the
-        # conditional picks which value to commit.
-        code = (f"__out = __in[max(0, min({n_axis} - 1, __i{dim_zero} + ({shift_expr})))] "
-                f"if (0 <= __i{dim_zero} + ({shift_expr})) and (__i{dim_zero} + ({shift_expr}) < {n_axis}) "
-                f"else ({boundary_expr})")
+        # Single-statement Python tasklet body -- the range check and
+        # bounded read live in ``eoshift_value`` (declared in
+        # ``dace/runtime/include/dace/math.h``), so the body collapses
+        # to one call.
+        code = (f"__out = eoshift_value(__in, __i{dim_zero}, ({shift_expr}), "
+                f"{n_axis}, ({boundary_expr}))")
         state.add_mapped_tasklet(
             name="_eoshift",
             map_ranges=map_rng,

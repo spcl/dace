@@ -75,12 +75,12 @@ class ExpandCShiftPure(ExpandTransformation):
                 src_parts.append(f"__i{d}")
         src_sub = ", ".join(src_parts)
         out_sub = ", ".join([f"__i{d}" for d in range(rank)])
-        # Tasklet does the mod-indexed read.  ``__in`` is a 1-D view
-        # along ``dim_zero``; the inner index is ``(i + shift) mod n``
-        # with the ``+ n) % n`` correction for negative shifts under
-        # the C truncating-modulo convention.
-        code = (f"__src = ((__i{dim_zero} + ({shift_expr})) % {n_axis} + {n_axis}) % {n_axis}\n"
-                f"__out = __in[__src]")
+        # Single-statement Python tasklet body -- the modulo arithmetic
+        # lives in ``cshift_idx`` (declared in
+        # ``dace/runtime/include/dace/math.h``); the read stays a plain
+        # subscript so DaCe's memlet bounds analyser still sees a
+        # data access on ``__in``.
+        code = f"__out = __in[cshift_idx(__i{dim_zero}, ({shift_expr}), {n_axis})]"
         state.add_mapped_tasklet(
             name="_cshift",
             map_ranges=map_rng,
