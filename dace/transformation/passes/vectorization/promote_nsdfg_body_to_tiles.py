@@ -997,8 +997,9 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 return ie.data.assignments[sym]
         return None
 
-    def _materialize_loop_invariant_idx(self, inner: dace.SDFG, istate: SDFGState, idx_arr: str,
-                                        nsdfg_node: dace.nodes.NestedSDFG) -> str:
+    def _materialize_loop_invariant_idx(
+            self, inner: dace.SDFG, istate: SDFGState, idx_arr: str,
+            nsdfg_node: dace.nodes.NestedSDFG) -> Tuple[str, Optional[dace.nodes.AccessNode]]:
         """Copy a const non-transient ``(1,)`` boundary connector into a fresh transient.
 
         A loop-invariant scalar gather/scatter index sourced from an outer
@@ -1007,23 +1008,33 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         directly as a ``TileGather`` / ``TileScatter`` ``_idx_<k>`` input
         (the inner tasklet codegen redeclares the pointer with another
         ``__restrict__``, which gcc rejects). Materialize it into a fresh
-        ``(1,)`` transient via a CPP copy tasklet so the lib-node connector
-        is fed by a non-const transient and codegen emits a single
+        ``(1,)`` transient via a Python copy tasklet so the lib-node
+        connector is fed by a non-const transient and codegen emits a single
         ``__restrict__``. Idempotent: if ``idx_arr`` is already transient
         or not a ``(1,)`` const, returns it unchanged.
+
+        The caller MUST reuse the returned :class:`AccessNode` for the
+        gather/scatter index wiring rather than minting a fresh one via
+        ``state.add_access(name)`` — a separate AN for the materialized
+        transient leaves a disjoint write-only / read-only pair in the same
+        state, and DaCe's codegen topological sort then emits the read
+        block (gather) before the write block (the copy tasklet),
+        producing ``int _idx_0 = ip_lc[0]`` reads from uninitialized
+        memory at runtime.
 
         :param inner: The body SDFG.
         :param istate: The state in which the gather/scatter is being emitted.
         :param idx_arr: Candidate index source array name.
         :param nsdfg_node: The body NestedSDFG node (to check connector-ness).
-        :returns: Either ``idx_arr`` (no materialization needed) or the name
-            of a fresh transient holding the same scalar value.
+        :returns: ``(name, an)`` — the materialized transient's name and its
+            AccessNode (``None`` when no materialization was needed; the
+            caller then handles ``idx_arr`` directly as before).
         """
         desc = inner.arrays.get(idx_arr)
         if desc is None or desc.transient or tuple(desc.shape) != (1, ):
-            return idx_arr
+            return idx_arr, None
         if idx_arr not in nsdfg_node.in_connectors:
-            return idx_arr
+            return idx_arr, None
         # Mint a fresh transient of the same dtype + (1,) shape.
         mat_name = f"{idx_arr}_lc"
         suffix = 0
@@ -1046,7 +1057,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         out_acc = istate.add_access(mat_name)
         istate.add_edge(in_acc, None, copy_t, "_in", dace.Memlet(f"{idx_arr}[0]"))
         istate.add_edge(copy_t, "_out", out_acc, None, dace.Memlet(f"{mat_name}[0]"))
-        return mat_name
+        return mat_name, out_acc
 
     def _collapse_tile_gathers(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> set:
@@ -1361,8 +1372,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         src_acc = agidx_access_by_dim[k]
                         idx_arr_wire = idx_arr
                     else:
-                        idx_arr_wire = self._materialize_loop_invariant_idx(inner, istate, idx_arr, nsdfg_node)
-                        src_acc = istate.add_access(idx_arr_wire)
+                        idx_arr_wire, mat_acc = self._materialize_loop_invariant_idx(inner, istate, idx_arr, nsdfg_node)
+                        # Reuse the AccessNode the helper minted (when it
+                        # materialized a fresh transient); fall back to a new
+                        # ``add_access`` when no materialization happened.
+                        src_acc = mat_acc if mat_acc is not None else istate.add_access(idx_arr_wire)
                     istate.add_edge(src_acc, None, gather, TileConnectors.idx(k),
                                     dace.Memlet(f"{idx_arr_wire}[{idx_subset}]"))
                     if sym is not None:
@@ -1610,8 +1624,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     src_acc = agidx_access_by_dim[k]
                     idx_arr_wire = idx_arr
                 else:
-                    idx_arr_wire = self._materialize_loop_invariant_idx(inner, istate, idx_arr, nsdfg_node)
-                    src_acc = istate.add_access(idx_arr_wire)
+                    idx_arr_wire, mat_acc = self._materialize_loop_invariant_idx(inner, istate, idx_arr, nsdfg_node)
+                    # Reuse the AccessNode the helper minted (when it
+                    # materialized a fresh transient); fall back to a new
+                    # ``add_access`` when no materialization happened.
+                    src_acc = mat_acc if mat_acc is not None else istate.add_access(idx_arr_wire)
                 istate.add_edge(src_acc, None, scatter, TileConnectors.idx(k),
                                 dace.Memlet(f"{idx_arr_wire}[{idx_subset}]"))
                 if sym is not None:
@@ -1691,12 +1708,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 for post_an in list(ans):
                     if istate.in_degree(post_an) == 0 or istate.out_degree(post_an) == 0:
                         continue
-                    # Pick the producer's source — the transient feeding the
-                    # post-write AN. ``fp_factor`` emits a transient (e.g.
-                    # ``a_slice_plus_d_slice_e_slice``) plus an explicit
-                    # ``_assign_<transient>_to_<arr>`` tasklet that copies
-                    # it into ``arr``. Walk back through the assign Tasklet
-                    # (one extra hop) to reach the transient AccessNode.
                     in_e = list(istate.in_edges(post_an))
                     if len(in_e) != 1:
                         continue
@@ -1713,10 +1724,6 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     src_desc = inner.arrays.get(new_val_an.data)
                     if src_desc is None or not src_desc.transient:
                         continue
-                    # Redirect every consumer of post_an to read from
-                    # new_val_an instead. The post_an still receives the
-                    # write (so the array is updated for downstream states),
-                    # but in-state consumers no longer pull through it.
                     for out_e in list(istate.out_edges(post_an)):
                         old_mem = out_e.data
                         new_mem = dace.Memlet(data=new_val_an.data,
