@@ -275,9 +275,19 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         else_writes = self._collect_write_subsets(else_state) if else_state is not None else {}
 
         def _alloc(prefix: str, arr_name: str) -> str:
+            # Element-wise writes (every escaping arm-write has subset size
+            # 1, enforced by ``_collect_write_subsets``) only need a 1-
+            # element scratch transient — not the full base shape. The
+            # full-shape allocation was forcing a heap-allocated variable
+            # length array for symbol-shaped bases (e.g. cloudsc-snippet-
+            # one's ``zliqfrac[kfdia, klev]``), which the K-dim tile path
+            # cannot register-promote and which left the outer scope
+            # carrying ``new[]`` allocations the inner loop body never
+            # touched. Shape (1,) keeps the temp Register-allocable on
+            # every backend.
             base = local_sdfg.arrays[arr_name]
             name, _ = local_sdfg.add_array(name=f"{prefix}_{arr_name}",
-                                           shape=base.shape,
+                                           shape=(1, ),
                                            dtype=base.dtype,
                                            storage=dace.dtypes.StorageType.Register,
                                            transient=True,
@@ -381,9 +391,12 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 redirected_nodes.add(new)
         for e in dst.edges():
             if (e.src in redirected_nodes or e.dst in redirected_nodes) and e.data.data in rename:
-                # Rebind memlet to the new array name; keep subset (writes are
-                # element-wise per the slice's restriction).
+                # Rebind memlet to the (1,)-shaped temp: rename the data
+                # AND replace the subset with ``[0]`` (the temps are
+                # length-1 by construction since every escaping write is
+                # element-wise; see ``_alloc``).
                 e.data.data = rename[e.data.data]
+                e.data.subset = dace.subsets.Range([(0, 0, 1)])
 
     def _emit_merge_tasklet(self,
                             sdfg: dace.SDFG,
@@ -427,8 +440,19 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 outputs={"_o"},
                 code=f"_o = merge({cond_text}, _t, _e)",
             )
-        state.add_edge(access_then, None, t, "_t", dace.Memlet(expr=f"{then_name}[{subset_str}]"))
-        state.add_edge(access_else, None, t, "_e", dace.Memlet(expr=f"{else_name}[{subset_str}]"))
+        # When ``then_name`` / ``else_name`` denotes the (1,)-shaped per-arm
+        # temp allocated by ``_alloc``, read it at ``[0]`` regardless of the
+        # original write subset. The temp itself is overwritten on every
+        # iteration with the per-element computed value, so position 0 is
+        # the just-written value. When the operand is NOT a temp (the
+        # absent-else fallback in single-arm normalization), it names the
+        # original array and reads at the original subset.
+        then_arr = sdfg.arrays.get(then_name)
+        else_arr = sdfg.arrays.get(else_name)
+        then_subset = "0" if then_arr is not None and tuple(then_arr.shape) == (1, ) else subset_str
+        else_subset = "0" if else_arr is not None and tuple(else_arr.shape) == (1, ) else subset_str
+        state.add_edge(access_then, None, t, "_t", dace.Memlet(expr=f"{then_name}[{then_subset}]"))
+        state.add_edge(access_else, None, t, "_e", dace.Memlet(expr=f"{else_name}[{else_subset}]"))
         state.add_edge(t, "_o", access_out, None, dace.Memlet(expr=f"{arr_name}[{subset_str}]"))
 
     def _resolve_cond_to_array(self,

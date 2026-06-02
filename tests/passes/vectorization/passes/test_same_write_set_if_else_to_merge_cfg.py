@@ -82,7 +82,9 @@ def test_pass_removes_conditional_block_and_inserts_three_states():
     assert any(l.startswith("apply_merge_") for l in labels)
 
 
-def test_pass_creates_then_else_transients_with_matching_dtype_and_shape():
+def test_pass_creates_then_else_transients_with_matching_dtype():
+    """The per-arm temps inherit the base array's dtype but are always
+    shape ``(1,)`` (element-wise writes only need one scratch element)."""
     sdfg = _build_same_write_if_else_sdfg()
     SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
     base = sdfg.arrays["A"]
@@ -93,7 +95,8 @@ def test_pass_creates_then_else_transients_with_matching_dtype_and_shape():
     for n in (then_names[0], else_names[0]):
         arr = sdfg.arrays[n]
         assert arr.dtype == base.dtype
-        assert tuple(arr.shape) == tuple(base.shape)
+        assert tuple(arr.shape) == (1, ), (
+            f"per-arm temp {n!r} shape must be (1,) (element-wise scratch); got {arr.shape}")
         assert arr.transient is True
         assert arr.storage == dace.dtypes.StorageType.Register
 
@@ -356,6 +359,78 @@ def test_two_writes_per_arm_uses_per_arm_temps():
     merge_tasklets = [n for state in sdfg.states() for n in state.nodes()
                       if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("merge_")]
     assert len(merge_tasklets) == 2, f"expected 2 merges (one per written array), got {len(merge_tasklets)}"
+
+
+def _build_2d_base_array_sdfg():
+    """Build the cloudsc-snippet-one shape: per-arm temps for arrays with
+    symbolic 2D shape ``(N, M)`` and per-element writes ``arr[j, i]``.
+    Pre-shape-fix this allocated each temp as a kernel-sized symbolic
+    array (which the codegen would heap-allocate, defeating the
+    Register storage hint). The (1,)-shape fix keeps the temp Register-
+    allocable on every backend even when the BASE array is symbolic."""
+    sdfg = dace.SDFG("if_else_2d_base")
+    N = dace.symbol("N", dace.int64)
+    M = dace.symbol("M", dace.int64)
+    sdfg.add_array("A", shape=(N, M), dtype=dace.float64)
+    sdfg.add_array("B", shape=(N, M), dtype=dace.float64)
+    sdfg.add_symbol("c", dace.bool_)
+    sdfg.add_symbol("j", dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge())
+
+    then_cfr = ControlFlowRegion("then_cfr", sdfg=sdfg)
+    ts = then_cfr.add_state("ts", is_start_block=True)
+    rB = ts.add_access("B")
+    wA = ts.add_access("A")
+    tt = ts.add_tasklet("plus", {"_b"}, {"_a"}, "_a = _b + 1.0")
+    ts.add_edge(rB, None, tt, "_b", dace.Memlet("B[j, i]"))
+    ts.add_edge(tt, "_a", wA, None, dace.Memlet("A[j, i]"))
+    cb.add_branch(CodeBlock("c"), then_cfr)
+
+    else_cfr = ControlFlowRegion("else_cfr", sdfg=sdfg)
+    es = else_cfr.add_state("es", is_start_block=True)
+    rB2 = es.add_access("B")
+    wA2 = es.add_access("A")
+    te = es.add_tasklet("minus", {"_b"}, {"_a"}, "_a = _b - 1.0")
+    es.add_edge(rB2, None, te, "_b", dace.Memlet("B[j, i]"))
+    es.add_edge(te, "_a", wA2, None, dace.Memlet("A[j, i]"))
+    cb.add_branch(None, else_cfr)
+
+    return sdfg
+
+
+def test_2d_base_array_yields_scalar_per_arm_temps():
+    """Per-arm temps for a symbolic-2D-shaped base ``A[N, M]`` must STILL
+    be (1,)-shaped — otherwise codegen would heap-allocate them and the
+    K-dim tile path could not register-promote the scratch."""
+    sdfg = _build_2d_base_array_sdfg()
+    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    for prefix in ("_then_A", "_else_A"):
+        names = [n for n in sdfg.arrays if n.startswith(prefix)]
+        assert len(names) == 1, f"expected one {prefix} transient, got {names}"
+        arr = sdfg.arrays[names[0]]
+        assert tuple(arr.shape) == (1, ), (
+            f"per-arm temp for 2D base must remain (1,) (Register-allocable); got {arr.shape}")
+
+
+def test_2d_base_array_memlets_subset_zero_on_temps():
+    """The cloned arm writes ``A[j, i]`` and the merge reads ``A[j, i]``
+    before redirect; after redirect the writes/reads target the (1,)-shaped
+    temps, so the subsets must become ``[0]`` — otherwise the codegen
+    would emit out-of-bounds ``temp[j, i]`` accesses."""
+    sdfg = _build_2d_base_array_sdfg()
+    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    for state in sdfg.states():
+        for e in state.edges():
+            if e.data.data is None:
+                continue
+            if e.data.data.startswith("_then_") or e.data.data.startswith("_else_"):
+                assert str(e.data.subset) == "0", (
+                    f"per-arm temp memlet must read/write ``[0]``; got {e.data.subset} on {e.data.data}")
 
 
 def test_two_writes_per_arm_numerical_correctness():
