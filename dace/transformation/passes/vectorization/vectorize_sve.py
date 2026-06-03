@@ -49,6 +49,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
+from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import CleanTaskletToScalarSliceToAccessNodePattern
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.passes.vectorization.generate_iteration_mask import GenerateIterationMask
 from dace.transformation.passes.vectorization.for_loop_to_masked_while import ForLoopToMaskedWhile
@@ -257,6 +259,9 @@ class SveStyleFinalize(ppl.Pass):
                                       f"the first-cut SVE chain threads a single captured global_ub. Split the kernel "
                                       f"or restrict via apply_on_maps.")
         global_ub = gubs.pop()
+
+        CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+        CleanTaskletToScalarSliceToAccessNodePattern().apply_pass(sdfg, {})
 
         # 1. Tile only TRUE 1D maps (no MapEntry scope-parent) into
         #    a clean divisible per-core block. Multi-dim maps from
