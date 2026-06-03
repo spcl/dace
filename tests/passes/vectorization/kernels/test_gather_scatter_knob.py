@@ -179,14 +179,14 @@ def test_scatter_intrinsic_emission(kernel_name, scatter_intrinsic, remainder_st
 @pytest.mark.parametrize("len_1d", [64, 65])
 def test_gather_scatter_numeric(kernel_name, gather_intrinsic, scatter_intrinsic, remainder_strategy, len_1d):
     prog, argnames = _NUMERIC_KERNELS[kernel_name]
-    try:
-        sdfg, vsdfg, ref_args, vec_args = _vectorize(prog,
-                                                     argnames,
-                                                     len_1d,
-                                                     gather_intrinsic=gather_intrinsic,
-                                                     scatter_intrinsic=scatter_intrinsic,
-                                                     remainder_strategy=remainder_strategy,
-                                                     name_prefix="num_")
-    except NotImplementedError as ex:
-        pytest.skip(f"vectorize NotImplementedError on {kernel_name}: {ex}")
+    # NotImplementedError propagates as a real test failure (per design
+    # directive: an unsupported pattern surfaces as a failure, never silently
+    # skip).
+    sdfg, vsdfg, ref_args, vec_args = _vectorize(prog,
+                                                 argnames,
+                                                 len_1d,
+                                                 gather_intrinsic=gather_intrinsic,
+                                                 scatter_intrinsic=scatter_intrinsic,
+                                                 remainder_strategy=remainder_strategy,
+                                                 name_prefix="num_")
     _check_numeric(sdfg, vsdfg, ref_args, vec_args, argnames, len_1d, kernel_name)

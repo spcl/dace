@@ -76,13 +76,14 @@ def test_tsvc_vectorization(program, kernel, remainder_strategy, branch_mode, le
     else:
         branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
 
-    try:
-        VectorizeCPU(vector_width=8,
-                     fail_on_unvectorizable=False,
-                     remainder_strategy=remainder_strategy,
-                     **branch_kwargs).apply_pass(vsdfg, {})
-    except NotImplementedError as ex:
-        pytest.skip(f"vectorize NotImplementedError on {kernel.name}: {ex}")
+    # NotImplementedError propagates as a real test failure (per design
+    # directive: an unsupported kernel pattern must surface, never silently
+    # skip). Configuration-mismatch skips happen UPSTREAM in the
+    # parametrize matrix.
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=False,
+                 remainder_strategy=remainder_strategy,
+                 **branch_kwargs).apply_pass(vsdfg, {})
 
     c_ref = sdfg.compile()
     c_vec = vsdfg.compile()
