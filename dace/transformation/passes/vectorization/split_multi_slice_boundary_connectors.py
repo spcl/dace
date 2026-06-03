@@ -23,6 +23,7 @@ from dace import properties, subsets
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.nodes import MapEntry
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 
 
 @properties.make_properties
@@ -100,7 +101,7 @@ class SplitMultiSliceBoundaryConnectors(ppl.Pass):
         multi_slice_dim: Optional[int] = None
         for d, (b, e, _s) in enumerate(subset):
             # Tiled dim: the begin contains a tile iter-var.
-            b_syms = {str(x) for x in getattr(b, "free_symbols", set())}
+            b_syms = free_symbol_names(b)
             if b_syms & tile_vars:
                 continue
             try:

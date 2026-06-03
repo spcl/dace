@@ -23,6 +23,7 @@ from dace.memlet import Memlet
 from dace.sdfg.graph import Edge
 from dace.transformation.passes.vectorization.utils.lane_access import classify_lane_access
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import subs
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -115,16 +116,7 @@ def repl_subset_to_use_with_int_offset(sdfg: dace.SDFG, subset: dace.subsets.Ran
     new_range_list = []
     repl_dict = {str(free_sym): "(" + str(free_sym) + " + " + str(int_offset) + ")" for free_sym in symbols_to_offset}
     for (b, e, s) in subset:
-        if hasattr(b, "subs"):
-            nb = b.subs(repl_dict)
-        else:
-            nb = b
-        if hasattr(e, "subs"):
-            ne = e.subs(repl_dict)
-        else:
-            ne = e
-        ns = 1
-        new_range_list.append((nb, ne, ns))
+        new_range_list.append((subs(b, repl_dict), subs(e, repl_dict), 1))
 
     new_subset = dace.subsets.Range(new_range_list)
     _assert_no_new_free_symbols(sdfg, prev_sdfg_free_syms, free_syms, "repl_subset_to_use_with_int_offset")
@@ -376,20 +368,16 @@ def use_previous_subsets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, 
 
         for (begin, end, stride) in orig_subset:
             # Rewrite begin expression
-            if hasattr(begin, "subs"):
-                begin_str = str(begin.subs({outer_param: inner_param}))
-                new_begin = dace.symbolic.SymExpr(begin_str).simplify()
-            else:
-                new_begin = begin
+            new_begin_expr = subs(begin, {outer_param: inner_param})
+            new_begin = (dace.symbolic.SymExpr(str(new_begin_expr)).simplify()
+                         if new_begin_expr is not begin else begin)
 
-            # Rewrite end expression
-            if hasattr(end, "subs"):
-                # Subset extent length
+            # Rewrite end expression (only the symbolic case adjusts volume).
+            new_end_expr = subs(end, {outer_param: inner_param})
+            if new_end_expr is not end:
                 extent = (end + 1 - begin) // stride
-                # If exact vector access, shrink by vector_width - 1
                 tail_adjust = vector_width - 1 if extent == vector_width else 0
-                end_str = f"{end.subs({outer_param: inner_param})} - {tail_adjust}"
-                new_end = dace.symbolic.SymExpr(end_str).simplify()
+                new_end = dace.symbolic.SymExpr(f"{new_end_expr} - {tail_adjust}").simplify()
                 volume *= extent
             else:
                 new_end = end

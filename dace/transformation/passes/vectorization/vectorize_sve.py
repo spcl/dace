@@ -125,7 +125,7 @@ class SveStyleFinalize(ppl.Pass):
                 if e.data.data not in state.sdfg.arrays:
                     continue
                 arr = state.sdfg.arrays[e.data.data]
-                strides = getattr(arr, "strides", None)
+                strides = arr.strides
                 if not strides:
                     continue
                 try:

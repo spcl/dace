@@ -33,6 +33,7 @@ import dace
 import pytest
 
 from dace.libraries.tileops import TileGather, TileLoad, TileStore
+from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NK = dace.symbol("NK")
@@ -40,8 +41,16 @@ NJ = dace.symbol("NJ")
 
 
 def _count_tasklets(sdfg: dace.SDFG) -> int:
-    """Number of raw ``Tasklet`` nodes anywhere in ``sdfg``."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    """Number of NON-assign raw ``Tasklet`` nodes anywhere in ``sdfg``.
+
+    Trivial ``_out = _in`` assigns are LEFT in place by the descent
+    (``_promote_internal_assigns`` is a no-op per user directive --
+    collapsing them into AN -> AN would silently drop the source-side
+    coordinates). They are semantically fine and lower to a one-element
+    copy at codegen, so the K-dim tile-only contract is preserved as
+    "no NON-assign raw tasklets" rather than "zero tasklets total"."""
+    return sum(1 for n, _ in sdfg.all_nodes_recursive()
+               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
 
 
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:

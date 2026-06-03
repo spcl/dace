@@ -75,11 +75,10 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                 # [int_floor(i, D) : int_floor(i + W - 1, D)] inclusive.
                 for (b, e, s) in edge.data.subset:
                     nb = b
-                    if not hasattr(nb, "subs"):
+                    if not isinstance(nb, sympy.Basic):
                         raise NotImplementedError(f"detect_halve_index expected symbolic begin, got {type(nb)}: {nb}")
                     ne = nb.subs(detected_param, f"({detected_param}+{vector_length - 1})")
-                    ns = 1
-                    new_range_list.append((nb, ne, ns))
+                    new_range_list.append((nb, ne, 1))
                 e1 = state.add_edge(edge.src, edge.src_conn, t, "_in",
                                     dace.memlet.Memlet(data=edge.data.data, subset=dace.subsets.Range(new_range_list)))
                 access = state.add_access(arr_name)

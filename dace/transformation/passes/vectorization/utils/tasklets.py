@@ -328,38 +328,107 @@ def _binary_expr(l_op: str, op: str, r_op: str) -> str:
 
 def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str,
                                        vector_map_param: str) -> bool:
-    """Whether input connector ``conn`` reads a single lane-invariant element.
+    """Whether input connector ``conn`` reads a lane-invariant value.
 
-    Inside an already-vectorized inner map, an operand whose memlet covers
-    one element and does not depend on the vectorized map parameter is
-    constant across the W lanes — a scalar value at the C level (a ``T``,
-    not a ``T*``). A binop using it must take the ``vector_*_w_scalar``
-    (broadcast) template rather than the vector-vector one. The motivating
-    case is a loop-invariant array read inside a vectorized map (TSVC s176:
-    ``b[i+m-j-1] * c[j]``, where ``c[j]`` is invariant in the vectorized
-    param and stays a single element).
+    A subset that does NOT mention the vectorized map parameter is by
+    definition constant across the W lanes -- every lane reads the same
+    memory. Two shapes:
 
-    The lane-invariance check is required, not incidental: a single-element
-    operand that *does* depend on ``vector_map_param`` would be a vector
-    operand the widening step failed to expand, and broadcasting it would
-    silently corrupt the result — such a case must fall through to the
-    vector path and fail loudly instead.
+    * Unwidened length-1 read (TSVC s176 ``b[i+m-j-1] * c[j]``: outer
+      ``j`` is constant inside the inner ``i`` loop -- subset stays
+      ``[j:j+1]``).
+    * Inner subset widened to ``[0:W]`` while the original outer-side
+      access was a constant index (TSVC s113 ``a[i] = a[0] + b[i]``:
+      inner widening inflates ``a[0:1]`` to ``a[0:8]`` over the full
+      ``a`` array but no ``i`` ever enters the subset -- the lanes still
+      see the same value).
+
+    Both shapes route through the ``vector_*_w_scalar`` (broadcast)
+    template; the dispatcher dereferences pointer-typed operands at the
+    callsite via :func:`_scalar_operand_expr`.
 
     :param state: State containing the tasklet.
     :param node: Tasklet whose input edges are inspected.
     :param conn: Input connector name.
     :param vector_map_param: The vectorized map parameter.
-    :return: ``True`` if the connector reads one lane-invariant element.
+    :return: ``True`` when the connector reads a lane-invariant value.
+    """
+    # The inner subset alone is not enough: the legacy widening rewrites
+    # the inner view's index to ``[0:W]`` for every connector, so neither
+    # ``a[0]`` (intended broadcast) nor ``b[i]`` (intended sliding window)
+    # mentions ``vector_map_param`` inside the body. The OUTER NSDFG-
+    # boundary memlet's BEGIN is what differentiates them:
+    #
+    #   * ``b[i:i+8]``  -- begin == i  -> base pointer slides per
+    #                                      iteration -> vector read
+    #   * ``a[0:i+8]``  -- begin == 0 -> base pointer is constant ->
+    #                                      every lane reads ``a[0]`` ->
+    #                                      broadcast
+    nsdfg_node = state.sdfg.parent_nsdfg_node
+    parent_state = nsdfg_node.sdfg.parent if nsdfg_node is not None else None
+    if nsdfg_node is None or parent_state is None:
+        # Top-level vectorize: fall back to the inner subset for the
+        # single-element-broadcast case (TSVC s176-shape).
+        for ie in state.in_edges(node):
+            if ie.dst_conn == conn and ie.data.data is not None:
+                return vector_map_param not in {str(s) for s in ie.data.subset.free_symbols}
+        return False
+    # Match the outer in-edge whose dst_conn equals our connector name --
+    # NSDFG connector names mirror the inner data names.
+    for ie in state.in_edges(node):
+        if ie.dst_conn != conn or ie.data.data is None:
+            continue
+        outer_conn = ie.data.data
+        for outer_ie in parent_state.in_edges(nsdfg_node):
+            if outer_ie.dst_conn != outer_conn or outer_ie.data.data is None:
+                continue
+            outer_sub = outer_ie.data.subset
+            # ALL dims' begins must be lane-invariant for a clean broadcast.
+            for (b, _e, _s) in outer_sub:
+                if vector_map_param in {str(s) for s in b.free_symbols}:
+                    return False
+            return True
+        return False
+    return False
+
+
+def _scalar_operand_expr(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str) -> str:
+    """C++ expression that reads the lane-invariant scalar through ``conn``.
+
+    DaCe codegen materialises a tasklet's input connector either as a
+    by-value ``T`` (Scalar, or Array shape ``(1,)`` whose memlet covers
+    one element -- the read collapses to a scalar at the C++ boundary)
+    or as a ``T*`` pointer (Array whose memlet covers >1 elements, e.g.
+    the inner-widened ``a[0:W]`` of TSVC s113). The broadcast template
+    wants the scalar VALUE: emit ``conn`` directly when it is a value, or
+    ``conn[0]`` to dereference a pointer.
+
+    :param state: State containing the tasklet.
+    :param node: Tasklet whose input edges are inspected.
+    :param conn: Input connector name (already classified as
+        lane-invariant by :func:`_connector_reads_invariant_scalar`).
+    :returns: A C++ rvalue expression for the scalar.
     """
     for ie in state.in_edges(node):
-        if ie.dst_conn == conn and ie.data.data is not None:
-            try:
-                if int(ie.data.subset.num_elements()) != 1:
-                    return False
-            except (TypeError, ValueError):
-                return False
-            return vector_map_param not in {str(s) for s in ie.data.subset.free_symbols}
-    return False
+        if ie.dst_conn != conn or ie.data.data is None:
+            continue
+        desc = state.sdfg.arrays.get(ie.data.data)
+        if isinstance(desc, dace.data.Scalar):
+            return conn
+        # Array shape (1,) + 1-element memlet: codegen emits the connector
+        # as a by-value scalar (TSVC s176: ``double __in2 = c[0];``).
+        # Subscripting it would be invalid C++.
+        try:
+            shape_is_one = (isinstance(desc, dace.data.Array) and len(desc.shape) == 1
+                            and bool(dace.symbolic.simplify(desc.shape[0] - 1) == 0))
+            ne_is_one = int(ie.data.subset.num_elements()) == 1
+        except (TypeError, ValueError):
+            shape_is_one = False
+            ne_is_one = False
+        if shape_is_one and ne_is_one:
+            return conn
+        return f"{conn}[0]"
+    return conn
 
 
 def instantiate_tasklet_from_info(state: dace.SDFGState,
@@ -508,9 +577,11 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
             rhs1_is_scalar = _connector_reads_invariant_scalar(state, node, rhs1, vector_map_param)
             rhs2_is_scalar = _connector_reads_invariant_scalar(state, node, rhs2, vector_map_param)
         if rhs2_is_scalar and not rhs1_is_scalar:
-            _set_template(ctx, rhs1, None, None, rhs2, lhs, op)
+            # rhs2 is the lane-invariant operand; route it through the const2
+            # slot, dereferenced if its connector is a pointer (Array).
+            _set_template(ctx, rhs1, None, None, _scalar_operand_expr(state, node, rhs2), lhs, op)
         elif rhs1_is_scalar and not rhs2_is_scalar:
-            _set_template(ctx, None, rhs2, rhs1, None, lhs, op)
+            _set_template(ctx, None, rhs2, _scalar_operand_expr(state, node, rhs1), None, lhs, op)
         else:
             _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
     elif ttype == tutil.TaskletType.TERNARY_ARRAY:

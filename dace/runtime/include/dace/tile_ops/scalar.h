@@ -140,6 +140,31 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
   }
 }
 
+// Forward-declare ``tile_load_value`` (defined further down with the
+// VLEN==1 polymorphism block) so the by-value ``Src`` overload below can
+// reference it. Definitions are visible at instantiation time.
+template <typename T> inline T tile_load_value(const T& x) noexcept;
+template <typename T> inline T tile_load_value(const T* x) noexcept;
+template <typename T, std::size_t N> inline T tile_load_value(const T (&x)[N]) noexcept;
+
+// VLEN>1 ``tile_load`` with a by-value ``src`` (Scalar / Symbol operand
+// codegen materialises as ``T _src = expr;``). SFINAE keeps this binding
+// off the contiguous ``T* src`` overload above; ``Src&&`` accepts any of
+// ``T``, ``T&``, ``T[N]``. ``stride`` is unused for a broadcast but kept
+// in the signature for call-site uniformity with the pointer form -- the
+// caller emits one ``tile_load<T, VLEN, Masked>(_dst, _src, mask, stride)``
+// for every tile load and the runtime picks pointer-strided vs by-value
+// broadcast through overload resolution.
+template <typename T, int VLEN, bool Masked, typename Src>
+inline std::enable_if_t<(VLEN > 1) && !std::is_pointer_v<std::remove_reference_t<Src>>, void>
+tile_load(T* __restrict__ dst, Src&& src, const bool* __restrict__ mask, std::int64_t /*stride*/ = 1) {
+  const T sv = tile_load_value<T>(src);
+  _dace_tile_vectorize(VLEN) for (int i = 0; i < VLEN; ++i) {
+    if constexpr (Masked) dst[i] = mask[i] ? sv : T(0);
+    else dst[i] = sv;
+  }
+}
+
 // ----------------------------- tile_store -----------------------------
 // dst[i * stride] = src[i] ; RMW skip-inactive (inactive lane not written, so
 // the destination array / OOB tail is never touched).

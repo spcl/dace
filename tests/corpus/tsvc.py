@@ -1817,9 +1817,14 @@ def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> 
         np_dtype = desc.dtype.as_numpy_dtype()
         if np.issubdtype(np_dtype, np.integer):
             # Gather index: 0..n-1 in registration order is a valid in-bounds set.
-            arrays[name] = (np.arange(int(np.prod(shape))) % max(shape)).astype(np_dtype).reshape(shape)
+            # ``.reshape`` returns a view (``arr.base is not None``); DaCe rejects
+            # numpy view inputs at call time, so force a fresh standalone array
+            # via ``np.array(..., copy=True)`` (``ascontiguousarray`` is a no-op
+            # on an already-contiguous view, leaving ``.base`` set).
+            arrays[name] = np.array((np.arange(int(np.prod(shape))) % max(shape)).astype(np_dtype).reshape(shape),
+                                    copy=True)
         else:
-            arrays[name] = rng.random(shape).astype(np_dtype)
+            arrays[name] = np.array(rng.random(shape).astype(np_dtype), copy=True)
     return arrays
 
 

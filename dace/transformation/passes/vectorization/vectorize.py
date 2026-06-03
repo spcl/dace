@@ -23,7 +23,11 @@ from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
     _setup_multi_element_strided_inside_nsdfg,
     emit_staging_copy,
 )
+from dace.transformation.passes.vectorization.utils.post_descent_invariants import (assert_post_descent_invariants,
+                                                                                     cleanup_an_to_an_edges)
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 import dace.sdfg.tasklet_utils as tutil
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names, free_symbols
 
 
 @properties.make_properties
@@ -129,6 +133,14 @@ class Vectorize(ppl.Pass):
 
         # Before anything try to clean other subset going from map entry
         try_clean_other_subset_going_out_from_map_entry(state, inner_map_entry)
+
+        # Normalize every body NSDFG's AN -> AN edges to the canonical
+        # ``AN -> [_out=_in] -> AN`` form BEFORE any widening. The post-
+        # descent audit refuses surviving AN -> AN edges; running cleanup
+        # here keeps the legacy path in lock-step with the K-dim descent.
+        for n in state.scope_subgraph(inner_map_entry).nodes():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                cleanup_an_to_an_edges(n.sdfg)
 
         tile_sizes = [1 for _ in inner_map_entry.map.range]
         tile_sizes[-1] = self.vector_width
@@ -260,6 +272,17 @@ class Vectorize(ppl.Pass):
                                                                          fuse_overlapping_loads=self.
                                                                          fuse_overlapping_loads)
 
+        # Post-vectorization invariants shared with the K-dim descent: no
+        # residual ``other_subset`` (codegen would emit a wrong-stride
+        # ``CopyND``) and at most one WCR per map terminating at the map
+        # exit (multiple chains race, mid-chain WCR breaks accumulator
+        # atomicity). See
+        # :mod:`dace.transformation.passes.vectorization.utils.post_descent_invariants`.
+        body_sdfgs = [
+            n.sdfg for n in state.scope_subgraph(new_inner_map).nodes() if isinstance(n, dace.nodes.NestedSDFG)
+        ]
+        assert_post_descent_invariants(state, new_inner_map, body_sdfgs)
+
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
         """Return whether an NSDFG connector is backed by a Scalar in the parent.
@@ -314,7 +337,7 @@ class Vectorize(ppl.Pass):
                 any_param_dims = []
                 map_sym = dace.symbolic.symbol(map_param)
                 for d, (b, ee, s) in enumerate(e.data.subset):
-                    if not hasattr(b, "free_symbols"):
+                    if not free_symbols(b):
                         continue
                     if map_param not in {str(sym) for sym in b.free_symbols}:
                         continue
@@ -587,7 +610,7 @@ class Vectorize(ppl.Pass):
             boundary_subset = edge.data.subset
             param_dims = []
             for d, (b, _e, _s) in enumerate(boundary_subset):
-                if hasattr(b, "free_symbols") and vector_map_param in {str(fs) for fs in b.free_symbols}:
+                if vector_map_param in free_symbol_names(b):
                     param_dims.append(d)
             if len(param_dims) != 1:
                 continue
@@ -670,7 +693,6 @@ class Vectorize(ppl.Pass):
 
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg, vector_width=int(self.vector_width))
-        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
         ConvertLengthOneArraysToScalars(recursive=True, transient_only=True).apply_pass(inner_sdfg, {})
 
         # 1.1.2
@@ -1481,10 +1503,7 @@ class Vectorize(ppl.Pass):
 
                 param_dims = []
                 for d, (b, e, _) in enumerate(new_range_list):
-                    free_syms = set()
-                    for expr in (b, e):
-                        if hasattr(expr, "free_symbols"):
-                            free_syms |= {str(fs) for fs in expr.free_symbols}
+                    free_syms = free_symbol_names(b) | free_symbol_names(e)
                     if used_param in free_syms:
                         param_dims.append(d)
 
@@ -2231,7 +2250,6 @@ class Vectorize(ppl.Pass):
             current_global_code = current_global_code.as_string
         if self.global_code not in current_global_code:
             sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
-
         # Set zero for all transients
         # Vectorization requires all transient to be 0 to not accidentally read trash data
         # All access nodes of the same array need to be setzero=True so the first node that triggers allocation

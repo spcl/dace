@@ -260,11 +260,12 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     The K=1 tile-dim linear stride into the source array is passed as the
     ``stride`` argument; the header SIMD-loads when it is 1 and falls back to a
     scalar gathered read otherwise.
+
     """
     vlen = _require_k1(node)
     src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
     dst_dtype = _out_ctype(node, parent_state, parent_sdfg, "_dst")
-    stride = _k1_array_stride(node, parent_sdfg, src_edge, getattr(node, "src_dims", None))
+    stride = _k1_array_stride(node, parent_sdfg, src_edge, node.src_dims)
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
     call = f"dace::tileops::tile_load<{dst_dtype}, {vlen}, {masked}>(_dst, _src, {mask_arg}, {stride});"
@@ -288,13 +289,13 @@ def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     pointer, so the pure expansion's per-lane store is the right
     lowering for those shapes. Delegate to it instead.
     """
-    if getattr(node, "src_kind", "Tile") != "Tile":
+    if node.src_kind != "Tile":
         from dace.libraries.tileops.nodes.tile_store import ExpandTileStorePure
         return ExpandTileStorePure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
     dst_dtype = parent_sdfg.arrays[dst_edge.data.data].dtype.ctype
-    stride = _k1_array_stride(node, parent_sdfg, dst_edge, getattr(node, "dst_dims", None))
+    stride = _k1_array_stride(node, parent_sdfg, dst_edge, node.dst_dims)
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
     call = f"dace::tileops::tile_store<{dst_dtype}, {vlen}, {masked}>(_dst, _src, {mask_arg}, {stride});"
@@ -355,6 +356,24 @@ def make_gather_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.T
     # contiguous-source fast path only applies to a unit-stride index tile;
     # a ``c``-strided index window (``b[idx[c*i]]``) falls to the explicit
     # per-lane form reading ``_idx_0[c*lane]``.
+    # Per-idx subscripting rule (mirror of ``tile_gather.ExpandTileGatherPure``
+    # ``_idx_subscript``): a Scalar source / single-element memlet lowers to a
+    # by-value scalar connector that CANNOT be subscripted (``int64_t _idx_0 =
+    # z1_lc[0];``); emit the bare name. Cloudsc snippet-one's
+    # ``zqx[z1, j+1, i+1]`` lands here (z1 is a loop-invariant scalar param).
+    def _idx_subscript(k: int) -> str:
+        ie = next(e for e in parent_state.in_edges(node) if e.dst_conn == f"_idx_{k}")
+        src_desc = parent_sdfg.arrays.get(ie.data.data) if ie.data is not None else None
+        if isinstance(src_desc, dace.data.Scalar):
+            return ""
+        try:
+            lane_count = ie.data.subset.num_elements_exact() if ie.data and ie.data.subset else None
+        except Exception:
+            lane_count = None
+        if lane_count == 1:
+            return ""
+        return f"[{_strided_lane(idx_strides[k], off)}]"
+
     if src_ndim == 1 and _stride_is_one(src_strides[0]) and idx_strides[0] == 1:
         idx_dtype = _in_ctype(node, parent_state, parent_sdfg, "_idx_0")
         mask_arg = "_mask" if node.has_mask else "nullptr"
@@ -362,7 +381,7 @@ def make_gather_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.T
                 f"(_dst, _src, _idx_0, {mask_arg});")
     else:
         soff = " + ".join(
-            f"((std::ptrdiff_t)_idx_{k}[{_strided_lane(idx_strides[k], off)}] * ({symstr(src_strides[k])}))"
+            f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({symstr(src_strides[k])}))"
             for k in range(src_ndim))
         if node.has_mask:
             code = nested_loops([vlen], f"_dst[{off}] = _mask[{off}] ? _src[{soff}] : {dst_dtype}(0);")
@@ -390,13 +409,28 @@ def make_scatter_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.
     masked = "true" if node.has_mask else "false"
     inputs = ({"_src"} | {f"_idx_{k}" for k in range(dst_ndim)} | ({"_mask"} if node.has_mask else set()))
     off = tile_offset([vlen])
+    # Same Scalar / single-element broadcast rule as the gather.
+    def _idx_subscript(k: int) -> str:
+        ie = next(e for e in parent_state.in_edges(node) if e.dst_conn == f"_idx_{k}")
+        src_desc = parent_sdfg.arrays.get(ie.data.data) if ie.data is not None else None
+        if isinstance(src_desc, dace.data.Scalar):
+            return ""
+        try:
+            lane_count = ie.data.subset.num_elements_exact() if ie.data and ie.data.subset else None
+        except Exception:
+            lane_count = None
+        if lane_count == 1:
+            return ""
+        return f"[{off}]"
+
     if dst_ndim == 1 and _stride_is_one(dst_strides[0]):
         idx_dtype = _in_ctype(node, parent_state, parent_sdfg, "_idx_0")
         mask_arg = "_mask" if node.has_mask else "nullptr"
         code = (f"dace::tileops::tile_scatter<{dst_dtype}, {idx_dtype}, {vlen}, {masked}>"
                 f"(_dst, _src, _idx_0, {mask_arg});")
     else:
-        doff = " + ".join(f"((std::ptrdiff_t)_idx_{k}[{off}] * ({symstr(dst_strides[k])}))" for k in range(dst_ndim))
+        doff = " + ".join(f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({symstr(dst_strides[k])}))"
+                          for k in range(dst_ndim))
         if node.has_mask:
             code = nested_loops([vlen], f"if (_mask[{off}]) _dst[{doff}] = _src[{off}];")
         else:

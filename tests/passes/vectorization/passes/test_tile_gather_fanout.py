@@ -57,11 +57,13 @@ def test_fan_out_widens_index_connector_and_fans_symbol():
     assert str(outer_edge.data.subset) == f"i:i + {W}"
 
     # The symbol fans out into one per-lane variant indexing the array,
-    # plus the original symbol bound to lane 0.
+    # plus the original symbol bound to lane 0. Per-lane names follow the
+    # Option B chunk scheme ``<base>_lane<dim>id_<lane>``; the K=1 fan-out
+    # emits dim 0.
     iedge = next(e for e in inner.all_interstate_edges() if e.data.assignments)
     a = iedge.data.assignments
     for lane in range(W):
-        assert a[f"__sym_laneid_{lane}"] == f"idxc[{lane}]"
+        assert a[f"__sym_lane0id_{lane}"] == f"idxc[{lane}]"
     assert a["__sym"] == "idxc[0]"
 
 

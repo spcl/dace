@@ -19,6 +19,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme, PackedNameScheme
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import is_integer
 
 _ASSIGN_LABEL_RE = re.compile(r"^(?:assign|a)_(\d+)$")
 
@@ -407,14 +408,14 @@ def outside_index_param_coeff(inner_sdfg: SDFG, idxarr: str, vector_length: int)
         if dace.symbolic.simplify(s - 1) != 0:
             return None
         c_expr = b_sym.coeff(param_sym)
-        if not getattr(c_expr, "is_Integer", False) or int(c_expr) < 1:
+        if not is_integer(c_expr) or int(c_expr) < 1:
             return None
         c = int(c_expr)
         # The window must hold every touched element ``begin + c*k``,
         # k=0..W-1 (over-coverage is safe; the strided read only hits
         # positions 0, c, ..., c*(W-1)).
         span = dace.symbolic.simplify(e_sym - b_sym + 1 - (c * (vector_length - 1) + 1))
-        if not (getattr(span, "is_Integer", False) and int(span) >= 0):
+        if not (is_integer(span) and int(span) >= 0):
             return None
         coeff = c
     return coeff
@@ -509,7 +510,7 @@ def _recognize_laneid_index_slice(
         stride = 1
     else:
         delta = dace.symbolic.simplify(idx_exprs[1] - begin_expr)
-        if not (getattr(delta, "is_Integer", False) and int(delta) >= 1):
+        if not (is_integer(delta) and int(delta) >= 1):
             return None
         stride = int(delta)
         for k in range(vector_length):

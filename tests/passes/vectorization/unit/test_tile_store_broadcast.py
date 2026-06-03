@@ -25,6 +25,7 @@ constant store is now a ``TileStore`` lib node.
 import dace
 import pytest
 
+from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
@@ -72,7 +73,16 @@ def _tile_lib_node_count(sdfg: dace.SDFG) -> int:
 
 
 def _tasklet_count(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    """Number of NON-assign raw ``Tasklet`` nodes anywhere in ``sdfg``.
+
+    Trivial ``_out = _in`` assigns are LEFT in place by the descent
+    (``_promote_internal_assigns`` is a no-op per user directive --
+    collapsing them into AN -> AN would silently drop source-side
+    coordinates). They are semantically fine and lower to a one-element
+    copy at codegen, so the K-dim tile-only contract is preserved as
+    "no NON-assign raw tasklets" rather than "zero tasklets total"."""
+    return sum(1 for n, _ in sdfg.all_nodes_recursive()
+               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
 
 
 def test_tilestore_symbol_broadcast_minimal():

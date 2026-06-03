@@ -581,7 +581,17 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             state.add_edge(lifted_access, None, t, conn, dace.Memlet(expr=f"{lifted_name}[{lifted_subset}]"))
 
         cond_access = state.add_access(cond_name)
-        cond_subset = "0" if shape == (1, ) else subset_str
+        # The lifted transient is 1-D (flat ``(N,)`` extent) when sized
+        # from the subset count; index ``[0]`` for single-element conds,
+        # ``[0:N]`` for vector ones. ``subset_str`` (which may be multi-
+        # dim, e.g. ``"j, i"``) was used only for the legacy
+        # full-source-shape transient.
+        if shape == (1, ):
+            cond_subset = "0"
+        elif len(shape) == 1:
+            cond_subset = f"0:{shape[0]}"
+        else:
+            cond_subset = subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access
 
@@ -646,8 +656,23 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # (the final boolean) stays ``bool`` separately.
         if arr_reads:
             template = sdfg.arrays[arr_reads[0]]
-            shape = template.shape
             cond_dtype = template.dtype
+            # Size the lifted transient to the cond range's TOTAL element
+            # count rather than the full source-array shape. TSVC s343
+            # (``if bb[j, i] > 0.0``) reads a single element; using
+            # ``bb``'s full ``(LEN_2D, LEN_2D)`` shape leaves the downstream
+            # merge memlet (a 1-D ``[k]`` from the inner ``flat_2d_array[k]``
+            # writeback) at a dim mismatch with the 2-D transient and
+            # ``StateFusionExtended`` validation refuses it with
+            # "expected 2, got 1". Stick to a flat 1-D extent that matches
+            # what the cond actually holds; the codegen broadcast logic
+            # treats a length-1 transient as a scalar value automatically.
+            try:
+                subset_obj = dace.subsets.Range.from_string(subset_str)
+                total = subset_obj.num_elements_exact()
+                shape = (int(total), ) if int(total) > 0 else (1, )
+            except Exception:
+                shape = template.shape
         else:
             shape = (1, )
             cond_dtype = dace.bool_
@@ -695,6 +720,16 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 arr_subset = subset_str
             state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
         cond_access = state.add_access(cond_name)
-        cond_subset = "0" if shape == (1, ) else subset_str
+        # The lifted transient is 1-D (flat ``(N,)`` extent) when sized
+        # from the subset count; index ``[0]`` for single-element conds,
+        # ``[0:N]`` for vector ones. ``subset_str`` (which may be multi-
+        # dim, e.g. ``"j, i"``) was used only for the legacy
+        # full-source-shape transient.
+        if shape == (1, ):
+            cond_subset = "0"
+        elif len(shape) == 1:
+            cond_subset = f"0:{shape[0]}"
+        else:
+            cond_subset = subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access

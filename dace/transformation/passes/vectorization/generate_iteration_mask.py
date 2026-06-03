@@ -21,6 +21,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names, free_symbols
 
 
 @properties.make_properties
@@ -217,18 +218,18 @@ class GenerateIterationMask(ppl.Pass):
         arrays = set(inner_sdfg.arrays)
 
         def _reads_array_with_iter(expr) -> bool:
-            if not hasattr(expr, "free_symbols"):
+            fsyms = free_symbol_names(expr)
+            if not fsyms:
                 return False
             # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names come
             # from ``arrays`` (a bare-name scalar would be a free symbol instead).
             arr_reads = dace.symbolic.arrays(expr)
-            fsyms = {str(s) for s in expr.free_symbols}
             return bool((arr_reads | fsyms) & arrays) and (iter_var in fsyms)
 
         count = 0
         for dim in sub:
             b = dim[0]
-            if not hasattr(b, "free_symbols"):
+            if not free_symbols(b):
                 continue
             dim_is_lane_indirect = False
             # Direct nested array subscript in the begin expression.
@@ -281,7 +282,7 @@ class GenerateIterationMask(ppl.Pass):
             if e.data.data is None or e.data.data not in state.sdfg.arrays:
                 continue
             arr = state.sdfg.arrays[e.data.data]
-            if cls._subset_fans_out(e.data.subset, getattr(arr, "strides", None), iter_var):
+            if cls._subset_fans_out(e.data.subset, arr.strides, iter_var):
                 return True
         inner = nsdfg_node.sdfg
         for st in inner.all_states():
@@ -289,7 +290,7 @@ class GenerateIterationMask(ppl.Pass):
                 if e.data.data is None or e.data.data not in inner.arrays:
                     continue
                 arr = inner.arrays[e.data.data]
-                if cls._subset_fans_out(e.data.subset, getattr(arr, "strides", None), iter_var):
+                if cls._subset_fans_out(e.data.subset, arr.strides, iter_var):
                     return True
                 # Multi-variable indirect gather: >=2 lane-variant
                 # gathered index components in one access -> no gather

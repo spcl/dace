@@ -17,6 +17,7 @@ from typing import Optional, Tuple
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
+from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
@@ -53,7 +54,6 @@ class ExpandTileGatherPure(ExpandTransformation):
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A CPP tasklet replacing the lib node in place.
         """
-        from dace.symbolic import symstr
         widths = list(node.widths)
         src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
         src_arr = parent_sdfg.arrays[src_edge.data.data]
@@ -63,10 +63,12 @@ class ExpandTileGatherPure(ExpandTransformation):
         idx_strides = node.index_strides or [1] * src_ndim
 
         # Per-idx subscripting rule (matches DaCe's auto pointer-type
-        # selection): a Scalar source (or anything DaCe will pass by
-        # value) takes no subscript; a tile-shaped Array pointer takes
-        # ``_idx_<k>[lane]``; an Array passed as a pointer but accessed
-        # at a single element takes ``_idx_<k>[0]``.
+        # selection from the wired memlet's element count): a Scalar source
+        # OR a single-element memlet (``z1_lc[0]`` for cloudsc's z1 scalar
+        # param) lowers to a by-value scalar connector (``int64_t _idx_0 =
+        # z1_lc[0];``) which CANNOT be subscripted — emit the bare name.
+        # A multi-element memlet (``idx[0:W]``) lowers to a pointer the
+        # lib node walks per-lane via ``_idx_<k>[stride*lane]``.
         def _idx_subscript(k: int) -> str:
             ie = next(e for e in parent_state.in_edges(node) if e.dst_conn == f"_idx_{k}")
             src_desc = parent_sdfg.arrays.get(ie.data.data) if ie.data is not None else None
@@ -77,7 +79,7 @@ class ExpandTileGatherPure(ExpandTransformation):
             except Exception:
                 lane_count = None
             if lane_count == 1:
-                return "[0]"
+                return ""
             return f"[{_strided_lane(idx_strides[k], off)}]"
 
         flat_offset = " + ".join(

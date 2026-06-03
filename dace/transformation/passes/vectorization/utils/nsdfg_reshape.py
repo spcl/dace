@@ -22,6 +22,7 @@ from dace import SDFGState
 
 from dace.transformation.passes.vectorization.utils.code_rewrite import drop_dims
 from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme, VecNameScheme
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbols
 
 _ITER_MASK_PREFIX = "_iter_mask"
 
@@ -463,7 +464,9 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str,
         per_dim_growth = []
         for orig_d, new_d in zip(original_shape, new_shape):
             orig_int = _int_or_none(orig_d)
-            diff = _int_or_none(new_d - orig_d) if hasattr(new_d, "__sub__") else None
+            # ``shape`` entries are always int or sympy Expr -- both expose
+            # ``__sub__``; no defensive guard required.
+            diff = _int_or_none(new_d - orig_d)
             per_dim_growth.append(diff)
             if diff is not None and diff > 0 and (orig_int is None or orig_int > 1):
                 expands_real_dim = True
@@ -904,7 +907,7 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
     inner_sdfg.add_array(name=inner_conn,
                          shape=tuple(bbox_shape),
                          dtype=orig_arr.dtype,
-                         storage=getattr(prev_arr, "storage", orig_arr.storage),
+                         storage=prev_arr.storage,
                          transient=False,
                          find_new_name=False,
                          may_alias=False)
@@ -1099,7 +1102,7 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
     inner_sdfg.add_array(name=inner_conn,
                          shape=tuple(bbox_shape),
                          dtype=orig_arr.dtype,
-                         storage=getattr(prev_arr, "storage", orig_arr.storage),
+                         storage=prev_arr.storage,
                          transient=False,
                          find_new_name=False,
                          may_alias=False)
@@ -1400,11 +1403,12 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                     begins = [e.data.subset[d][0] for d, _ in wide_dims]
                     sym_by_name = {}
                     for beg in begins:
-                        if not hasattr(beg, "free_symbols"):
+                        beg_syms = free_symbols(beg)
+                        if not beg_syms:
                             shared_syms_by_name = set()
                             break
                         bnames = set()
-                        for sym in beg.free_symbols:
+                        for sym in beg_syms:
                             sym_by_name.setdefault(str(sym), sym)
                             bnames.add(str(sym))
                         shared_syms_by_name = bnames if shared_syms_by_name is None else shared_syms_by_name & bnames

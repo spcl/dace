@@ -20,6 +20,8 @@ from dace.symbolic import DaceSympyPrinter
 
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.lane_fanout import outside_index_param_coeff
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import (atoms_of, free_symbol_names,
+                                                                                  free_symbols, is_integer)
 
 
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
@@ -245,7 +247,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                                 need = c * (vector_width - 1) + 1
                                 total = inner_desc.total_size
                                 total_simpl = dace.symbolic.simplify(total - need)
-                                if getattr(total_simpl, "is_Integer", False) and int(total_simpl) < 0:
+                                if is_integer(total_simpl) and int(total_simpl) < 0:
                                     raise RuntimeError(f"Lane fan-out for '{free_sym_str}': inner connector size "
                                                        f"{total} < required strided span {need} (stride c={c}, "
                                                        f"W={vector_width}); the NSDFG-input window and the inner "
@@ -314,7 +316,7 @@ def _widen_index_connector_to_tile(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes
             continue
         new_ranges = []
         for (b, e, s) in oe.data.subset:
-            b_syms = b.free_symbols if hasattr(b, "free_symbols") else set()
+            b_syms = free_symbols(b)
             if sym in b_syms:
                 coeff = b.coeff(sym)
                 affine = sym not in (b - coeff * sym).free_symbols
@@ -377,6 +379,8 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
         # where the outer is 3-dim, num_elements 1; widening to ``(W,)``
         # would invalidate downstream multi-dim gather emission).
         outer_extent_one = {}
+        outer_has_tile_var = {}
+        iter_var_sym = dace.symbolic.pystr_to_symbolic(tile_iter_var)
         for oe in parent_state.in_edges(nsdfg_node):
             if oe.dst_conn is None or oe.data is None or oe.data.subset is None:
                 continue
@@ -387,6 +391,20 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
                 outer_extent_one[oe.dst_conn] = one_elem and one_dim
             except (TypeError, AttributeError):
                 outer_extent_one[oe.dst_conn] = False
+            # Tile-var-dep guard (mirror of :func:`fan_out_tile_gather_index_symbols_kd`):
+            # a length-1 outer subset whose begin has NO tile-var dependency is
+            # a loop-invariant scalar (cloudsc's ``zqx[z1, j+1, i+1]`` z1 — a
+            # scalar parameter passed via a single-element boundary). Widening
+            # it to a ``(W,)`` tile would create per-lane reads ``z1[0..W-1]``
+            # past the 1-element source → OOB / segfault. Skip widening so the
+            # downstream gather/scatter classifier treats it as a Scalar
+            # broadcast.
+            any_tv = False
+            for (b, _e, _s) in oe.data.subset:
+                if iter_var_sym in free_symbols(b):
+                    any_tv = True
+                    break
+            outer_has_tile_var[oe.dst_conn] = any_tv
         for k, v in plain.items():
             v_expr = dace.symbolic.SymExpr(v)
             # The assignment reaches the connector either as a bare symbol
@@ -400,7 +418,7 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
             idx_conns = sorted({
                 s
                 for s in referenced if s in nsdfg_node.in_connectors and not inner_sdfg.arrays[s].transient
-                and outer_extent_one.get(s, False)
+                and outer_extent_one.get(s, False) and outer_has_tile_var.get(s, False)
             })
             if not idx_conns:
                 new_assignments[k] = v
@@ -417,7 +435,7 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
             # subscript index ``0`` -> ``lane`` substitution is what produces
             # the per-lane read ``c[lane]``. Detect each case per connector.
             from dace.symbolic import Subscript
-            subscript_bases = {str(node.args[0]) for node in v_expr.atoms(Subscript) if hasattr(v_expr, 'atoms')}
+            subscript_bases = {str(node.args[0]) for node in atoms_of(v_expr, Subscript)}
             for lane in range(vector_width):
                 lane_expr = v_expr
                 for c in idx_conns:
@@ -482,7 +500,7 @@ def _widen_index_connector_to_tile_kd(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
         inner_shape = []
         inner_strides = []
         for d, (b, e, s) in enumerate(oe.data.subset):
-            b_syms = b.free_symbols if hasattr(b, "free_symbols") else set()
+            b_syms = free_symbols(b)
             iv_match_idx = None
             for p, isym in enumerate(iter_syms):
                 if isym in b_syms:
@@ -569,7 +587,7 @@ def fan_out_tile_gather_index_symbols_kd(inner_sdfg: dace.SDFG, nsdfg_node: dace
             continue
         any_tv = False
         for (b, _e, _s) in oe.data.subset:
-            fs = {str(x) for x in getattr(b, "free_symbols", set())}
+            fs = free_symbol_names(b)
             if fs & iter_var_set:
                 any_tv = True
                 break
@@ -607,8 +625,7 @@ def fan_out_tile_gather_index_symbols_kd(inner_sdfg: dace.SDFG, nsdfg_node: dace
             # ``__sym = c[0, 0, ..., 0]``; subscript-form ``__sym = c[0]``
             # gets its single index extended to K zeros.
             from dace.symbolic import Subscript
-            subscript_bases = {str(node.args[0])
-                               for node in v_expr.atoms(Subscript)} if hasattr(v_expr, 'atoms') else set()
+            subscript_bases = {str(node.args[0]) for node in atoms_of(v_expr, Subscript)}
             base_expr = v_expr
             for c in idx_conns:
                 arr_shape = inner_sdfg.arrays[c].shape

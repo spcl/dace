@@ -15,6 +15,7 @@ from typing import Optional, Tuple
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
+from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
@@ -39,14 +40,32 @@ class ExpandTileScatterPure(ExpandTransformation):
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A CPP tasklet replacing the lib node in place.
         """
-        from dace.symbolic import symstr
         widths = list(node.widths)
         dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
         dst_arr = parent_sdfg.arrays[dst_edge.data.data]
         dst_ndim = node.dest_ndim
         dst_strides = [symstr(s) for s in dst_arr.strides[-dst_ndim:]]
         off = tile_offset(widths)
-        flat_offset = " + ".join(f"((std::ptrdiff_t)_idx_{k}[{off}] * ({dst_strides[k]}))" for k in range(dst_ndim))
+
+        # Mirror of :func:`tile_gather.ExpandTileGatherPure._idx_subscript`:
+        # a Scalar source or a single-element memlet lowers to a by-value
+        # scalar connector that cannot be subscripted; emit the bare name.
+        # A multi-element memlet stays per-lane indexed.
+        def _idx_subscript(k: int) -> str:
+            ie = next(e for e in parent_state.in_edges(node) if e.dst_conn == f"_idx_{k}")
+            src_desc = parent_sdfg.arrays.get(ie.data.data) if ie.data is not None else None
+            if isinstance(src_desc, dace.data.Scalar):
+                return ""
+            try:
+                lane_count = ie.data.subset.num_elements_exact() if ie.data and ie.data.subset else None
+            except Exception:
+                lane_count = None
+            if lane_count == 1:
+                return ""
+            return f"[{off}]"
+
+        flat_offset = " + ".join(f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({dst_strides[k]}))"
+                                 for k in range(dst_ndim))
         if node.has_mask:
             body = f"if (_mask[{off}]) {{ _dst[{flat_offset}] = _src[{off}]; }}"
         else:

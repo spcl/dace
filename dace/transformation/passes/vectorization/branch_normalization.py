@@ -20,6 +20,7 @@ from dace.sdfg.construction_utils import (
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 
 
 def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:
@@ -126,7 +127,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
             if arr not in local_sdfg.arrays:
                 continue
             desc = local_sdfg.arrays[arr]
-            non_transient = not getattr(desc, "transient", False)
+            non_transient = not desc.transient
             if non_transient or arr in outside_reads or arr in other_arms_reads:
                 escaping.add(arr)
         result[i] = escaping
@@ -515,7 +516,7 @@ class BranchNormalization(ppl.Pass):
                                 for elem in r:
                                     if elem is None:
                                         continue
-                                    fs = {str(x) for x in getattr(elem, "free_symbols", set())}
+                                    fs = free_symbol_names(elem)
                                     if sym in fs:
                                         return False
         return True

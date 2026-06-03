@@ -13,6 +13,7 @@ import sympy
 import dace
 from dace import SDFGState
 from dace.sdfg.state import BreakBlock, ConditionalBlock
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbols
 
 
 def has_maps(sdfg: dace.SDFG) -> bool:
@@ -211,11 +212,11 @@ def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dac
             continue
         stride_one_idx = [i for i, s in enumerate(state.sdfg.arrays[edge.data.data].strides) if s == 1][0]
         b, e, s = memlet.subset[stride_one_idx]
-        b_free_syms = b.free_symbols if hasattr(b, "free_symbols") else set()
-        e_free_syms = e.free_symbols if hasattr(e, "free_symbols") else set()
-        free_symbols = {str(s) for s in b_free_syms.union(e_free_syms)}
+        b_free_syms = free_symbols(b)
+        e_free_syms = free_symbols(e)
+        all_syms = {str(s) for s in b_free_syms.union(e_free_syms)}
         last_param = str(list(map_entry.map.params)[-1])
-        if last_param not in free_symbols and free_symbols != set():
+        if last_param not in all_syms and all_syms != set():
             return False
     return True
 
@@ -274,7 +275,7 @@ def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: d
         if memlet.subset is not None:
             subset_appearances = 0
             for (b, e, s) in memlet.subset:
-                if hasattr(b, "free_symbols"):
+                if free_symbols(b):
                     subset_appearances += count_param_in_expr(b, last_param)
 
             if subset_appearances >= 2:
@@ -306,7 +307,7 @@ def is_linear_in_param(expr, param_str: str) -> bool:
         return False
     # Coefficients must not themselves contain ``param_sym``.
     for c in poly.all_coeffs():
-        if param_sym in getattr(c, "free_symbols", set()):
+        if param_sym in free_symbols(c):
             return False
     return True
 
@@ -333,9 +334,8 @@ def map_param_dim_usage_is_linear_combo(state: dace.SDFGState, map_entry: dace.n
             continue
         dims_with_param = []
         for d, (b, e, _) in enumerate(memlet.subset):
-            if hasattr(b, "free_symbols"):
-                if count_param_in_expr(b, last_param) > 0:
-                    dims_with_param.append((d, b, e))
+            if free_symbols(b) and count_param_in_expr(b, last_param) > 0:
+                dims_with_param.append((d, b, e))
         if len(dims_with_param) < 2:
             continue
         for _, b, e in dims_with_param:

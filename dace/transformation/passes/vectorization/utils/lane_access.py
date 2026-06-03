@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
 import dace
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 
 
 class LaneAccessKind(enum.Enum):
@@ -98,7 +99,7 @@ class LaneAccess:
 
 
 def _has_param(expr, lane_param: str) -> bool:
-    return hasattr(expr, "free_symbols") and any(str(s) == lane_param for s in expr.free_symbols)
+    return lane_param in free_symbol_names(expr)
 
 
 def _index_step(begin, lane_param: str) -> Optional[int]:
