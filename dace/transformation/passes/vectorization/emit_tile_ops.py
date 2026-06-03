@@ -1275,6 +1275,21 @@ class EmitTileOps(ppl.Pass):
                 out_data, out_access = self._emit_one_binop(state, t, spec, tile_map, mask_name)
             tile_map[out_data] = (out_access.data, out_access)
             final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+            # Alias every AccessNode crossed while walking forward through
+            # assign tasklets onto the source tile. The chain shape is
+            # ``binop_out -> AN -> assign -> AN -> ... -> [non-assign|MapExit]``;
+            # downstream consumers (e.g. a ``combine_branch_values`` binop
+            # that reads the renamed downstream AccessNode) then resolve via
+            # :meth:`_resolve_operand` to the existing tile instead of
+            # emitting a fresh ``TileLoad`` against an AccessNode whose only
+            # producer is the in-arm ``_out = _in`` assign -- whose codegen
+            # against tile-shaped pointer connectors is a pointer
+            # reassignment of a local, leaving the destination array at its
+            # initial ``{0}`` (cloud_fraction ``ZICEFRAC`` 99%-wrong-rate
+            # regression).
+            for an_inter in inters:
+                if isinstance(an_inter, dace.nodes.AccessNode):
+                    tile_map[an_inter.data] = (out_access.data, out_access)
             all_intermediates |= set(inters)
             if isinstance(final_edge.dst, dace.nodes.MapExit):
                 stores.append((out_access, final_edge))
