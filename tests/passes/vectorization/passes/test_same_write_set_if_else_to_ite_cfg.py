@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Pass-level tests for ``SameWriteSetIfElseToMergeCFG``.
+Pass-level tests for ``SameWriteSetIfElseToITECFG``.
 
 After running, an SDFG that originally contained a same-write-set ``if/else``
 must:
@@ -20,8 +20,8 @@ import numpy as np
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
-    SameWriteSetIfElseToMergeCFG,
+from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
+    SameWriteSetIfElseToITECFG,
     _symbol_has_external_consumer,
 )
 
@@ -71,7 +71,7 @@ def _build_same_write_if_else_sdfg():
 
 def test_pass_removes_conditional_block_and_inserts_three_states():
     sdfg = _build_same_write_if_else_sdfg()
-    rewritten = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert rewritten == 1
 
     blocks = list(sdfg.all_control_flow_blocks())
@@ -86,7 +86,7 @@ def test_pass_creates_then_else_transients_with_matching_dtype():
     """The per-arm temps inherit the base array's dtype but are always
     shape ``(1,)`` (element-wise writes only need one scratch element)."""
     sdfg = _build_same_write_if_else_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     base = sdfg.arrays["A"]
     then_names = [n for n in sdfg.arrays if n.startswith("_then_A")]
     else_names = [n for n in sdfg.arrays if n.startswith("_else_A")]
@@ -130,14 +130,14 @@ def test_pass_does_not_match_disjoint_write_set():
     es.add_edge(te, "_a", w2, None, dace.Memlet("B[0]"))
     cb.add_branch(None, else_cfr)
 
-    rewritten = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert rewritten is None
     assert any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
 
 
 def test_pass_emits_merge_tasklet_with_cond_in_code():
     sdfg = _build_same_write_if_else_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     found = False
     for state in sdfg.states():
         for n in state.nodes():
@@ -151,7 +151,7 @@ def test_pass_numerical_correctness():
     """End-to-end compile-run. Reference is the scalar branch expressed in
     plain Python — not another SDFG."""
     sdfg = _build_same_write_if_else_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
 
     def reference(c: bool, B: np.ndarray) -> np.ndarray:
         return np.array([B[0] + 1.0 if c else B[0] - 1.0], dtype=np.float64)
@@ -168,8 +168,8 @@ def test_pass_numerical_correctness():
 
 def test_pass_is_idempotent_after_first_run():
     sdfg = _build_same_write_if_else_sdfg()
-    first = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
-    second = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    first = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+    second = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert first == 1
     assert second is None
 
@@ -238,7 +238,7 @@ def test_empty_entry_state_pre_hoist_blocks_match():
     sdfg = _build_same_write_if_else_with_empty_entry_states_sdfg()
     cbs = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
     assert len(cbs) == 1
-    matches = SameWriteSetIfElseToMergeCFG()._matches(cbs[0])
+    matches = SameWriteSetIfElseToITECFG()._matches(cbs[0])
     assert matches is False, "raw _matches must reject multi-state arms"
 
 
@@ -248,7 +248,7 @@ def test_apply_pass_hoists_empty_entry_state_and_matches():
     accepts the kernel, and M3.1b rewrites it into the per-arm temp +
     merge shape."""
     sdfg = _build_same_write_if_else_with_empty_entry_states_sdfg()
-    rewritten = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert rewritten == 1
     assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
     labels = {s.label for s in sdfg.states()}
@@ -268,7 +268,7 @@ def test_empty_entry_state_hoists_assignment_to_pre_cb_edge():
     it became), not inside the arm. Otherwise it would still be a per-arm
     binding the merge dataflow can't honour."""
     sdfg = _build_same_write_if_else_with_empty_entry_states_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     # After rewrite, the cb is gone — collect every assignment on every
     # interstate edge that survived. The hoisted ``__sym_z = z`` must
     # appear somewhere in the SDFG's interstate-edge assignments.
@@ -284,7 +284,7 @@ def test_empty_entry_state_numerical_correctness():
     """End-to-end compile-run on the multi-state-arm shape; reference is
     plain Python."""
     sdfg = _build_same_write_if_else_with_empty_entry_states_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
 
     def reference(c: bool, B: np.ndarray) -> np.ndarray:
         return np.array([B[0] + 1.0 if c else B[0] - 1.0], dtype=np.float64)
@@ -352,7 +352,7 @@ def test_two_writes_per_arm_uses_per_arm_temps():
     broken sequential single-arm chain that would write through the
     original arrays back-to-back."""
     sdfg = _build_two_writes_per_arm_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     for arr in ("A", "C"):
         assert any(n.startswith(f"_then_{arr}") for n in sdfg.arrays), f"missing _then_{arr}"
         assert any(n.startswith(f"_else_{arr}") for n in sdfg.arrays), f"missing _else_{arr}"
@@ -408,7 +408,7 @@ def test_2d_base_array_yields_scalar_per_arm_temps():
     be (1,)-shaped — otherwise codegen would heap-allocate them and the
     K-dim tile path could not register-promote the scratch."""
     sdfg = _build_2d_base_array_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     for prefix in ("_then_A", "_else_A"):
         names = [n for n in sdfg.arrays if n.startswith(prefix)]
         assert len(names) == 1, f"expected one {prefix} transient, got {names}"
@@ -423,7 +423,7 @@ def test_2d_base_array_memlets_subset_zero_on_temps():
     temps, so the subsets must become ``[0]`` — otherwise the codegen
     would emit out-of-bounds ``temp[j, i]`` accesses."""
     sdfg = _build_2d_base_array_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     for state in sdfg.states():
         for e in state.edges():
             if e.data.data is None:
@@ -438,7 +438,7 @@ def test_two_writes_per_arm_numerical_correctness():
     Each arm's writes flow through their per-arm temps and combine in the
     merge — verifying the second merge does not clobber the first."""
     sdfg = _build_two_writes_per_arm_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     csdfg = sdfg.compile()
 
     def reference(c: bool, B: np.ndarray):

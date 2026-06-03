@@ -284,7 +284,7 @@ class BranchNormalization(ppl.Pass):
             # promote its single successor as the new arm start_block so
             # M3.1b's single-state guard accepts the reduced arm. Leaving
             # the empty state in place was preventing
-            # ``SameWriteSetIfElseToMergeCFG._matches`` from recognising
+            # ``SameWriteSetIfElseToITECFG._matches`` from recognising
             # two-arm same-write-set kernels whose Python-frontend SDFG
             # begins each arm with a symbol-binding empty state (the
             # cloudsc-snippet-one ``__sym_z1 = z1`` pattern).
