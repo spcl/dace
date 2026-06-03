@@ -816,26 +816,6 @@ def isolate_nested_sdfg(
             return False
         raise ValueError(f'Cannot isolate NestedSDFG "{nsdfg_node}" because it is within a scope.')
 
-    # These are the nodes that will be moved to the Pre State, they are found through
-    #  a backwards search starting from the nodes that serves as input to the nested
-    #  SDFG. It is important that these nodes, that serves as input to the nested
-    #  SDFG are also belonging to this set. But they are only added if they needed.
-    pre_nodes: Set[nodes.Node] = set()
-    to_visit: List[nodes.Node] = []
-    for iedge in state.in_edges(nsdfg_node):
-        input_node: nodes.AccessNode = iedge.src
-        assert isinstance(input_node, nodes.AccessNode)
-        if state.in_degree(input_node) != 0:
-            to_visit.append(input_node)
-    visited: Set[nodes.Node] = set()
-    while len(to_visit) > 0:
-        node_to_process = to_visit.pop()
-        if node_to_process in visited:
-            continue
-        visited.add(node_to_process)
-        pre_nodes.add(node_to_process)
-        to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
-
     # These are the nodes of the middle state. Which are all access nodes that serves
     #  as input to the nested SDFG and the nested SDFG itself.
     #  Note that the AccessNodes serving as input and output of the nested SDFG
@@ -861,6 +841,43 @@ def isolate_nested_sdfg(
                 "Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG."
             )
         middle_nodes.add(oedge.dst)
+
+    # These are the nodes that will be moved to the Pre State, they are found through
+    #  a backwards search starting from the nodes that serve as input to the nested
+    #  SDFG. We extend the classic edge-only walk with *data-name ordering*: when we
+    #  visit (or start from) an AccessNode for data ``D`` and another AccessNode in
+    #  the same state also writes ``D`` via a disjoint subgraph (separate Python
+    #  object, no edge between them), that other writer is a predecessor of the
+    #  NSDFG via the array memory itself and must also land in the pre state.
+    #  Writers that belong to ``middle_nodes`` (the NSDFG's own output AccessNodes)
+    #  are excluded so we never put a successor on the wrong side of the split.
+    data_writers: Dict[str, Set[nodes.AccessNode]] = {}
+    for n in state.nodes():
+        if isinstance(n, nodes.AccessNode) and state.in_degree(n) != 0 and n not in middle_nodes:
+            data_writers.setdefault(n.data, set()).add(n)
+
+    pre_nodes: Set[nodes.Node] = set()
+    to_visit: List[nodes.Node] = []
+    for iedge in state.in_edges(nsdfg_node):
+        input_node: nodes.AccessNode = iedge.src
+        assert isinstance(input_node, nodes.AccessNode)
+        if state.in_degree(input_node) != 0:
+            to_visit.append(input_node)
+        for other_writer in data_writers.get(input_node.data, ()):
+            if other_writer is not input_node:
+                to_visit.append(other_writer)
+    visited: Set[nodes.Node] = set()
+    while len(to_visit) > 0:
+        node_to_process = to_visit.pop()
+        if node_to_process in visited:
+            continue
+        visited.add(node_to_process)
+        pre_nodes.add(node_to_process)
+        to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
+        if isinstance(node_to_process, nodes.AccessNode):
+            for other_writer in data_writers.get(node_to_process.data, ()):
+                if other_writer is not node_to_process and other_writer not in visited:
+                    to_visit.append(other_writer)
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
@@ -2177,9 +2194,9 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
     graph.remove_node(if_block)
 
 
-def get_parent_map_and_loop_scopes(
-        root_sdfg: SDFG, node: Union[nodes.MapEntry, ControlFlowRegion, nodes.Tasklet, ConditionalBlock],
-        parent_state: Union[SDFGState, None]):
+def get_parent_map_and_loop_scopes(root_sdfg: SDFG, node: Union[nodes.MapEntry, ControlFlowRegion, nodes.Tasklet,
+                                                                ConditionalBlock], parent_state: Union[SDFGState,
+                                                                                                       None]):
     """Collect parent ``MapEntry`` / ``LoopRegion`` scopes enclosing
     ``node``, walking scope dicts, control-flow regions and nested-SDFG
     boundaries up to the root SDFG.  ``SDFG.parent`` (O(1)) finds the
