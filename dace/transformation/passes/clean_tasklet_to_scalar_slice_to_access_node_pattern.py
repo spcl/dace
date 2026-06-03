@@ -105,6 +105,18 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
         if e1.data.subset != dace.subsets.Range([(0, 0, 1)]):
             return None, None, None
 
+        # Refuse if the tasklet->A_slice edge carries WCR. Folding
+        # would collapse ``tasklet -> A_slice -> sink`` to a single
+        # ``tasklet -> sink`` edge whose memlet comes from the
+        # outgoing side, dropping any atomic / reduction-style
+        # semantics on the inbound write. (TSVC s141 exposes this: a
+        # triangular ``flat_2d_array[k] += bb[j, i]`` with a
+        # carried-scalar update produces an SDFG where this fold can
+        # otherwise misclassify a scattered update as a single-cell
+        # reduction once ``LoopToReduce`` sees the collapsed shape.)
+        if e1.data.wcr is not None:
+            return None, None, None
+
         return tasklet, an_slice, sink_node
 
     def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, this_state: dace.SDFGState) -> bool:
@@ -132,9 +144,9 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
                 return True
         return False
 
-    def _slice_write(self, oe: MultiConnectorEdge[dace.Memlet], an_slice: dace.nodes.AccessNode,
-                     sink_node):
-        """Recover ``(array_name, slice_subset)`` for the write out of the scalar.
+    def _slice_write(self, oe: MultiConnectorEdge[dace.Memlet], an_slice: dace.nodes.AccessNode, sink_node):
+        """Recover ``(array_name, slice_subset)`` for the write out of
+        the scalar.
 
         The edge carries the destination array slice either as ``subset``
         (memlet data == array, the usual ``A[slice]`` / ``A[i, j]`` form,
@@ -145,15 +157,20 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
         :param oe: The ``an_slice -> sink_node`` copy edge.
         :param an_slice: Scalar transient AccessNode.
         :param sink_node: Sink node (AccessNode or MapExit).
-        :returns: ``(array_name, deep-copied slice subset)``.
+        :returns: ``(array_name, deep-copied slice subset)``, or
+                  ``(None, None)`` when the write subset cannot be
+                  recovered (memlet data is the scalar name but
+                  ``other_subset`` is unset, and the sink is not a
+                  plain AccessNode whose own data we can use). The
+                  caller skips the fold in that case.
         """
         if oe.data.data != an_slice.data:
             return oe.data.data, copy.deepcopy(oe.data.subset)
-        assert isinstance(sink_node, dace.nodes.AccessNode) and oe.data.other_subset is not None
+        if not isinstance(sink_node, dace.nodes.AccessNode) or oe.data.other_subset is None:
+            return None, None
         return sink_node.data, copy.deepcopy(oe.data.other_subset)
 
-    def _safe_to_fold(self, state: dace.SDFGState, an_slice: dace.nodes.AccessNode, dest_data: str,
-                      sink_node) -> bool:
+    def _safe_to_fold(self, state: dace.SDFGState, an_slice: dace.nodes.AccessNode, dest_data: str, sink_node) -> bool:
         """In-state safety check: refuse the fold when the destination's
         data is ALSO read in this state through a different AccessNode
         with ``out_degree > 0``.
@@ -207,6 +224,13 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
                     oe = state.out_edges(an_slice)[0]
                     assert ie.src == tasklet
                     array_name, write_subset = self._slice_write(oe, an_slice, sink)
+                    if array_name is None:
+                        # _slice_write could not recover the write
+                        # subset (memlet data == scalar name but
+                        # ``other_subset`` is None and the sink is
+                        # not a plain AccessNode); skip rather than
+                        # synthesise an incorrect subscript.
+                        continue
 
                     if not self._safe_to_fold(state, an_slice, array_name, sink):
                         continue

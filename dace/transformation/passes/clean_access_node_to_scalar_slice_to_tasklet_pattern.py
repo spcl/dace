@@ -100,6 +100,14 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         if e2.data.subset != dace.subsets.Range([(0, 0, 1)]):
             return None, None, None
 
+        # Refuse if the A_slice->tasklet edge carries WCR. Folding
+        # this chain would replace the WCR-bearing scalar-read edge
+        # with a plain array memlet, dropping any atomic / reduction
+        # semantics. Symmetric with the inbound-WCR refusal in the
+        # inverse pass.
+        if e2.data.wcr is not None:
+            return None, None, None
+
         return access_node, an2, tasklet
 
     def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, this_state: dace.SDFGState) -> bool:
@@ -128,7 +136,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         return False
 
     def _slice_read(self, ie: MultiConnectorEdge[dace.Memlet], an1, an2: dace.nodes.AccessNode):
-        """Recover ``(array_name, slice_subset)`` for the read into the scalar.
+        """Recover ``(array_name, slice_subset)`` for the read into the
+        scalar.
 
         The edge carries the array slice either as ``subset`` (memlet
         data == array, the usual ``A[slice]`` / ``A[i, j]`` form, valid
@@ -139,11 +148,17 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         :param ie: The ``src -> an2`` copy edge.
         :param an1: Source node (AccessNode or MapEntry).
         :param an2: Scalar transient AccessNode.
-        :returns: ``(array_name, deep-copied slice subset)``.
+        :returns: ``(array_name, deep-copied slice subset)``, or
+                  ``(None, None)`` when the read subset cannot be
+                  recovered (memlet data is the scalar name but
+                  ``other_subset`` is unset, and the source is not a
+                  plain AccessNode whose own data we can use). The
+                  caller skips the fold in that case.
         """
         if ie.data.data != an2.data:
             return ie.data.data, copy.deepcopy(ie.data.subset)
-        assert isinstance(an1, dace.nodes.AccessNode) and ie.data.other_subset is not None
+        if not isinstance(an1, dace.nodes.AccessNode) or ie.data.other_subset is None:
+            return None, None
         return an1.data, copy.deepcopy(ie.data.other_subset)
 
     def _apply_recursive(self, sdfg: dace.SDFG):
@@ -164,6 +179,34 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                     oe = state.out_edges(an2)[0]
                     assert oe.dst == tasklet
                     array_name, read_subset = self._slice_read(ie, an1, an2)
+                    if array_name is None:
+                        # _slice_read could not recover the read subset
+                        # (memlet data == scalar name but
+                        # ``other_subset`` is None and the source is
+                        # not a plain AccessNode); skip rather than
+                        # synthesise an incorrect subscript.
+                        continue
+
+                    # Refuse if ``array_name`` is also WRITTEN anywhere
+                    # in this state (any AccessNode with ``in_degree >
+                    # 0``). The intermediate scalar makes a gather +
+                    # update sequence explicit; once folded, the body
+                    # reads as ``arr[k] = arr[k] + ...`` which
+                    # ``LoopToReduce`` mis-classifies as a single-cell
+                    # reduction (TSVC s141's triangular
+                    # ``flat_2d_array[k] += bb[j, i]`` with carried-scalar
+                    # ``k`` is exactly this trap). Same-state read+write
+                    # of ``array_name`` is the signal that the scalar
+                    # gather + add + write-back is load-bearing for
+                    # downstream matchers and the fold must not collapse
+                    # it.
+                    src_array_written_here = False
+                    for n in state.data_nodes():
+                        if n.data == array_name and state.in_degree(n) > 0 and n is not an1:
+                            src_array_written_here = True
+                            break
+                    if src_array_written_here:
+                        continue
 
                     reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, state)
 

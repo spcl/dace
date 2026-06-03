@@ -14,8 +14,7 @@ import dace
 import numpy as np
 
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern,
-)
+    CleanAccessNodeToScalarSliceToTaskletPattern, )
 
 
 def test_scalar_slice_removed():
@@ -88,8 +87,9 @@ def test_scalar_reused_gets_assign_tasklet():
 
     # tmp kept; the copy is now a `_out = _in` assign tasklet feeding tmp.
     assert any(n.data == 'tmp' for n in s0.data_nodes())
-    cast = next((n for n in s0.nodes()
-                 if isinstance(n, dace.nodes.Tasklet) and n.label.startswith('_assign_in_A_to_tmp')), None)
+    cast = next(
+        (n for n in s0.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label.startswith('_assign_in_A_to_tmp')),
+        None)
     assert cast is not None, "expected an assignment tasklet on the A -> tmp copy"
     # No map was introduced.
     assert not any(isinstance(n, dace.nodes.MapEntry) for n in s0.nodes())
@@ -205,6 +205,135 @@ def test_scalar_reused_in_interstate_edge_is_kept():
     assert any(n.data == 'tmp' for n in s0.data_nodes()), "scalar used in interstate edge must be kept"
 
 
+def test_refuses_when_slice_read_edge_has_wcr():
+    """The fold must refuse when the ``A_slice -> tasklet`` edge
+    carries WCR (atomic / reduction semantics). Folding would replace
+    the WCR-bearing scalar-read edge with a plain array memlet and
+    drop the atomic semantics. Symmetric with the inverse-fold WCR
+    guard on the tasklet -> scalar edge."""
+    sdfg = dace.SDFG('rmw_wcr')
+    sdfg.add_array('A', (16, ), dace.float64)
+    sdfg.add_array('B', (16, ), dace.float64)
+    sdfg.add_scalar('A_slice', dace.float64, transient=True)
+    sdfg.add_symbol('k', dace.int64)
+
+    s = sdfg.add_state('rmw', is_start_block=True)
+    a_read = s.add_access('A')
+    a_slice = s.add_access('A_slice')
+    s.add_edge(a_read, None, a_slice, None, dace.Memlet('A[k]'))
+    t = s.add_tasklet('dbl', {'_in'}, {'_o'}, '_o = _in * 2.0')
+    # Outbound WCR on the A_slice -> tasklet edge -- this is the case
+    # the guard protects.
+    wcr_memlet = dace.Memlet('A_slice[0]')
+    wcr_memlet.wcr = 'lambda old, new: old + new'
+    s.add_edge(a_slice, None, t, '_in', wcr_memlet)
+    b_write = s.add_access('B')
+    s.add_edge(t, '_o', b_write, None, dace.Memlet('B[k]'))
+
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, None)
+    assert any(n.data == 'A_slice' for n in s.data_nodes()), \
+        'A_slice must survive when the A_slice->tasklet edge carries WCR'
+
+
+def test_refuses_when_other_subset_missing_and_source_is_not_an_accessnode():
+    """``_slice_read`` cannot recover the read subset when the memlet
+    is named after the scalar (``data == an2.data``), ``other_subset``
+    is unset, AND the source is not a plain AccessNode whose own
+    ``data`` we can fall back on. The fold must refuse rather than
+    synthesise an incorrect subscript (the original code asserted and
+    aborted the whole canonicalize call).
+
+    We reproduce by attaching a MapEntry source -- not an AccessNode --
+    with a memlet whose ``data`` matches the scalar and ``other_subset
+    is None``.
+    """
+    sdfg = dace.SDFG('rmw_other_subset_none')
+    sdfg.add_array('A', (16, ), dace.float64)
+    sdfg.add_array('B', (16, ), dace.float64)
+    sdfg.add_scalar('A_slice', dace.float64, transient=True)
+
+    s = sdfg.add_state('rmw', is_start_block=True)
+    a_read = s.add_read('A')
+    me, mx = s.add_map('m', dict(i='0:16'))
+    a_slice = s.add_access('A_slice')
+    # The MapEntry -> A_slice edge has ``data='A_slice'`` (matches
+    # scalar) and no ``other_subset`` -- the case ``_slice_read``
+    # cannot recover from.
+    bad_memlet = dace.Memlet('A_slice[0]')
+    s.add_edge(a_read, None, me, 'IN_A', dace.Memlet('A[0:16]'))
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    s.add_edge(me, 'OUT_A', a_slice, None, bad_memlet)
+    t = s.add_tasklet('dbl', {'_in'}, {'_o'}, '_o = _in * 2.0')
+    s.add_edge(a_slice, None, t, '_in', dace.Memlet('A_slice[0]'))
+    b_w = s.add_access('B')
+    s.add_edge(t, '_o', mx, 'IN_B', dace.Memlet('B[i]'))
+    mx.add_in_connector('IN_B')
+    mx.add_out_connector('OUT_B')
+    s.add_edge(mx, 'OUT_B', b_w, None, dace.Memlet('B[0:16]'))
+
+    # The fold must not raise; it must simply leave A_slice alone.
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, None)
+    assert any(n.data == 'A_slice' for n in s.data_nodes()), \
+        'A_slice must survive when the read subset cannot be recovered'
+
+
+def test_refuses_when_source_array_also_written_in_same_state():
+    """The fold must NOT collapse ``A -> A_slice -> tasklet`` when the
+    source array ``A`` is ALSO written somewhere in the same state.
+    The intermediate scalar is load-bearing: it makes the gather +
+    update sequence explicit, and folding it exposes a self-RMW
+    pattern (``A[k] = A[k] + ...``) that downstream matchers (e.g.
+    ``LoopToReduce``) then mis-classify as a single-cell reduction.
+
+    TSVC ``s141`` is the canonical case: a triangular
+    ``flat_2d_array[k] += bb[j, i]`` with a carried-scalar ``k``
+    update. Without this guard, ``LoopToReduce`` mis-fires on the
+    folded form and the canonicalised SDFG diverges from the numpy
+    reference (regression seen end-to-end on ``s141_d_single``).
+    """
+    sdfg = dace.SDFG('rmw_same_state')
+    sdfg.add_array('A', (16, ), dace.float64)
+    sdfg.add_array('B', (16, ), dace.float64)
+    sdfg.add_scalar('A_slice', dace.float64, transient=True)
+    sdfg.add_scalar('B_slice', dace.float64, transient=True)
+    sdfg.add_scalar('add_out', dace.float64, transient=True)
+    sdfg.add_symbol('k', dace.int64)
+
+    s = sdfg.add_state('rmw', is_start_block=True)
+    # Gather A[k] -> A_slice (the fold's target).
+    a_read = s.add_access('A')
+    a_slice = s.add_access('A_slice')
+    s.add_edge(a_read, None, a_slice, None, dace.Memlet('A[k]'))
+    # Gather B[k] -> B_slice (a sibling gather, not the fold's
+    # target -- only here to make the body realistic).
+    b_read = s.add_access('B')
+    b_slice = s.add_access('B_slice')
+    s.add_edge(b_read, None, b_slice, None, dace.Memlet('B[k]'))
+    # Tasklet adds them into a scratch transient.
+    t = s.add_tasklet('add', {'_a', '_b'}, {'_o'}, '_o = _a + _b')
+    s.add_edge(a_slice, None, t, '_a', dace.Memlet('A_slice[0]'))
+    s.add_edge(b_slice, None, t, '_b', dace.Memlet('B_slice[0]'))
+    out = s.add_access('add_out')
+    s.add_edge(t, '_o', out, None, dace.Memlet('add_out[0]'))
+    # And finally write back into ``A[k]`` -- the same-state write
+    # of the source array that the guard must detect.
+    a_write = s.add_access('A')
+    s.add_edge(out, None, a_write, None, dace.Memlet('A[k]'))
+
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, None)
+    # The fold must have refused: ``A_slice`` is still present in
+    # the state because the source array ``A`` is also written
+    # somewhere in the same state.
+    assert any(n.data == 'A_slice' for n in s.data_nodes()), \
+        ('A_slice must survive when A is read+written in the same state '
+         '(self-RMW exposes load-bearing intermediate scalar)')
+    # ``B_slice``, in contrast, has no same-state write of its
+    # source array ``B`` -- the fold IS allowed to drop it.
+    assert not any(n.data == 'B_slice' for n in s.data_nodes()), \
+        'B_slice should fold normally; only A_slice is protected by the same-state-write guard'
+
+
 if __name__ == '__main__':
     test_scalar_slice_removed()
     test_scalar_reused_gets_assign_tasklet()
@@ -212,3 +341,6 @@ if __name__ == '__main__':
     test_dtype_mismatch_not_reused_compiles()
     test_dtype_mismatch_reused_compiles()
     test_scalar_reused_in_interstate_edge_is_kept()
+    test_refuses_when_slice_read_edge_has_wcr()
+    test_refuses_when_other_subset_missing_and_source_is_not_an_accessnode()
+    test_refuses_when_source_array_also_written_in_same_state()

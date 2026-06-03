@@ -734,8 +734,21 @@ class ScalarToSymbolPromotion(passes.Pass):
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
                     memlet: mm.Memlet = in_edge.data
-                    if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
-                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
+                    # The read subset may live on ``src_subset`` (when the
+                    # memlet distinguishes src/dst) or on ``subset`` (the
+                    # common case for an AccessNode -> AccessNode copy
+                    # after canonicalize's scalar-slice fold). The Scalar
+                    # check must look at the SOURCE descriptor
+                    # (``input.data``), not the write-side descriptor
+                    # (``memlet.data`` -- often the scalar being
+                    # promoted): an array source like ``a[i]`` whose
+                    # write target is the scalar ``x`` must keep its
+                    # subscript ``[i]``, otherwise the resulting
+                    # interstate assignment ``x = a`` references the
+                    # whole array.
+                    read_subset = memlet.src_subset if memlet.src_subset is not None else memlet.subset
+                    if (read_subset is not None and not isinstance(sdfg.arrays[input.data], dt.Scalar)):
+                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, read_subset)
                     else:
                         new_isedge.data.assignments[node.data] = input.data
 
