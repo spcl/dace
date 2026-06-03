@@ -55,7 +55,7 @@ def autoregister(cls: Type, **kwargs):
     # Only the CUDA implementation selected in Config is registered
     if name in {'cuda', 'experimental_cuda'}:
         if (impl == 'experimental' and name == 'cuda') or (impl == 'legacy' and name == 'experimental_cuda'):
-            return
+            return cls
 
     registered = False
     for base in cls.__bases__:
