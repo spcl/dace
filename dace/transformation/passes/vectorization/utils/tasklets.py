@@ -442,10 +442,21 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
     nsdfg_node = state.sdfg.parent_nsdfg_node
     parent_state = nsdfg_node.sdfg.parent if nsdfg_node is not None else None
     if nsdfg_node is None or parent_state is None:
-        # Top-level vectorize: fall back to the inner subset for the
-        # single-element-broadcast case (TSVC s176-shape).
+        # Top-level vectorize: there is no outer memlet to consult, so
+        # restrict the lane-invariant classification to the unambiguous
+        # case -- a length-1 subset that does not depend on the lane
+        # parameter (TSVC s176-shape). A multi-element subset like
+        # ``[0:W]`` over a tile-local transient (e.g. ``B_slice_times_2``)
+        # is per-lane data, not a broadcast -- treating it as a scalar
+        # collapses W lane values to one and miscompiles
+        # ``test_knob_only_apply_vectorization_pass_bypass``.
         for ie in state.in_edges(node):
             if ie.dst_conn == conn and ie.data.data is not None:
+                try:
+                    if int(ie.data.subset.num_elements()) != 1:
+                        return False
+                except (TypeError, ValueError):
+                    return False
                 return vector_map_param not in {str(s) for s in ie.data.subset.free_symbols}
         return False
     # Match the outer in-edge whose dst_conn equals our connector name --

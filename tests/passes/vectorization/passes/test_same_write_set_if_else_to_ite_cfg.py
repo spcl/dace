@@ -135,16 +135,16 @@ def test_pass_does_not_match_disjoint_write_set():
     assert any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
 
 
-def test_pass_emits_merge_tasklet_with_cond_in_code():
+def test_pass_emits_ITE_tasklet_with_cond_in_code():
     sdfg = _build_same_write_if_else_sdfg()
     SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     found = False
     for state in sdfg.states():
         for n in state.nodes():
-            if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("merge_"):
-                assert "merge(c," in n.code.as_string.replace(" ", "")
+            if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("ITE_"):
+                assert "ITE(c," in n.code.as_string.replace(" ", "")
                 found = True
-    assert found, "no merge_ tasklet emitted"
+    assert found, "no ITE_ tasklet emitted"
 
 
 def test_pass_numerical_correctness():
@@ -348,7 +348,7 @@ def _build_two_writes_per_arm_sdfg():
 
 def test_two_writes_per_arm_uses_per_arm_temps():
     """Two arms each writing TWO arrays must produce TWO per-arm temp
-    pairs and TWO merge tasklets — the proper per-arm-temp path, not the
+    pairs and TWO ITE tasklets — the proper per-arm-temp path, not the
     broken sequential single-arm chain that would write through the
     original arrays back-to-back."""
     sdfg = _build_two_writes_per_arm_sdfg()
@@ -356,9 +356,9 @@ def test_two_writes_per_arm_uses_per_arm_temps():
     for arr in ("A", "C"):
         assert any(n.startswith(f"_then_{arr}") for n in sdfg.arrays), f"missing _then_{arr}"
         assert any(n.startswith(f"_else_{arr}") for n in sdfg.arrays), f"missing _else_{arr}"
-    merge_tasklets = [n for state in sdfg.states() for n in state.nodes()
-                      if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("merge_")]
-    assert len(merge_tasklets) == 2, f"expected 2 merges (one per written array), got {len(merge_tasklets)}"
+    ITE_tasklets = [n for state in sdfg.states() for n in state.nodes()
+                      if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("ITE_")]
+    assert len(ITE_tasklets) == 2, f"expected 2 ITEs (one per written array), got {len(ITE_tasklets)}"
 
 
 def _build_2d_base_array_sdfg():
