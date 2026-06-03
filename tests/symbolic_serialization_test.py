@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import threading
 import pytest
 
 import dace
@@ -416,6 +417,43 @@ def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonica
     second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
     assert first == second
 
+
+
+
+def test_serialization_symbol_dtypes_isolation_multi_thread():
+    entered_first = threading.Event()
+    entered_second = threading.Event()
+    first_serialized = threading.Event()
+    second_serialized = threading.Event()
+    failures = []
+    lock = threading.Lock()
+
+    def worker(native_dtype, override_dtype, wait_for_enter, wait_for_serialize, signal_enter, signal_serialize):
+        try:
+            sym = symbolic.symbol('N', dtype=native_dtype)
+            with symbolic.serialization_symbol_dtypes({'N': override_dtype}):
+                signal_enter.set()
+                assert wait_for_enter.wait(timeout=10)
+                assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{override_dtype.to_string()})'
+                signal_serialize.set()
+                assert wait_for_serialize.wait(timeout=10)
+            assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{native_dtype.to_string()})'
+        except BaseException as ex:
+            with lock:
+                failures.append(ex)
+
+    thread1 = threading.Thread(target=worker,
+                               args=(dace.int64, dace.int16, entered_second, second_serialized, entered_first, first_serialized))
+    thread2 = threading.Thread(target=worker,
+                               args=(dace.uint64, dace.uint32, entered_first, first_serialized, entered_second, second_serialized))
+
+    thread1.start()
+    thread2.start()
+    thread1.join()
+    thread2.join()
+
+    if failures:
+        raise failures[0]
 
 if __name__ == '__main__':
     pytest.main([__file__])
