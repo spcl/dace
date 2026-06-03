@@ -211,13 +211,13 @@ def test_serialization_symbol_dtypes_isolation_multi_thread():
     failures = []
     lock = threading.Lock()
 
-    def worker(name, dtype, wait_for_enter, wait_for_serialize, signal_enter, signal_serialize):
+    def worker(override_dtype, wait_for_enter, wait_for_serialize, signal_enter, signal_serialize):
         try:
             sym = symbolic.symbol('N', dtype=dace.uint64)
-            with symbolic.serialization_symbol_dtypes({'N': dtype}):
+            with symbolic.serialization_symbol_dtypes({'N': override_dtype}):
                 signal_enter.set()
                 assert wait_for_enter.wait(timeout=10)
-                assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{dtype.to_string()})'
+                assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{override_dtype.to_string()})'
                 signal_serialize.set()
                 assert wait_for_serialize.wait(timeout=10)
             assert symbolic.serialize_symbolic(sym) == 'symbol($N, dtype=dace.uint64)'
@@ -226,11 +226,9 @@ def test_serialization_symbol_dtypes_isolation_multi_thread():
                 failures.append(ex)
 
     thread1 = threading.Thread(target=worker,
-                               args=('thread1', dace.int16, entered_second, second_serialized, entered_first,
-                                     first_serialized))
+                               args=(dace.int16, entered_second, second_serialized, entered_first, first_serialized))
     thread2 = threading.Thread(target=worker,
-                               args=('thread2', dace.uint32, entered_first, first_serialized, entered_second,
-                                     second_serialized))
+                               args=(dace.uint32, entered_first, first_serialized, entered_second, second_serialized))
 
     thread1.start()
     thread2.start()
