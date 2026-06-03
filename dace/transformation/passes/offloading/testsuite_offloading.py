@@ -26,6 +26,7 @@ from copy import deepcopy
 pytest.mark.basic = pytest.mark.basic
 pytest.mark.copy_analysis = pytest.mark.copy_analysis
 pytest.mark.gpu_offload = pytest.mark.gpu_offload
+pytest.mark.current = pytest.mark.current
 
 # ============================================================================
 # SDFGS (reused ones)
@@ -367,11 +368,11 @@ s2 => _SDFG_tail:                 cpu = ['A', 'in', 'out'], gpu = []\n"
     assert rep == f"{IR}"
 
         
-#@pytest.mark.copy_analysis
+@pytest.mark.copy_analysis
 def test_manual_loop():
     # Q: not a line graph -> support or not?
     sdfg = scalar_to_gpu_within_loop_sdfg()
-    sdfg.view()
+    #sdfg.view()
 
     IR = OtA().get_IR(sdfg)
     print(IR)
@@ -404,6 +405,7 @@ def test_branch_with_cpu_else_gpu():
     sdfg = conditional_branch_map_sdfg()
     IR = OtA().get_IR(sdfg)
     print(IR)
+    #sdfg.view()
 
 def test_nested_state():
     pass
@@ -417,6 +419,7 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # note: all parameters can be modified by this function
     # deepcopy before passing if previous state needs to be retained
     sdfg.validate()
+    sdfg.view()
 
     # compile and run sdfg without offloading (all on CPU)
     input1 = deepcopy(param_dict)
@@ -426,11 +429,14 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # offload sdfg (in place)
     OtA().apply_pass(sdfg, {})
     sdfg.validate()
+    sdfg.view()
 
     # compile and run offloaded sdfg (part may be on GPU, necessary copies were added)
     sdfg._recompile = True
     input2 = param_dict
     input2[result_name] = result_array2
+
+    #print("PARAMS:", sdfg.arglist())
     sdfg(**input2)
     
     # assert the results are equal
@@ -468,20 +474,21 @@ def test_cpu_scalars_no_copies():
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-#@pytest.mark.gpu_offload
+@pytest.mark.gpu_offload
 def test_copy_scalar_to_gpu_and_back():
     sdfg = scalar_to_gpu_sdfg()
     """
     must copy out & A to GPU before the 2nd state
     must copy out and & A back to CPU after the last state
     NOTE: possible optimization: first copy of A and out not necessary: write only
-    NOTE: possible optimization: last copy of A not necessary, not needed anymore after
     """
     
     input = -5678.0
     orig_output = np.array([0.0])
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
+
+    #sdfg.view()
 
 @pytest.mark.gpu_offload
 def test_loopregion_offload():
@@ -496,7 +503,34 @@ def test_loopregion_offload():
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-    #sdfg.view()
+@pytest.mark.gpu_offload
+@pytest.mark.current
+def test_conditional_offload_if():
+    sdfg = conditional_branch_map_sdfg()
+
+    orig_output = np.zeros(5, dtype=np.float64)
+    new_output = np.zeros(5, dtype=np.float64)
+    run_numerical_offloading_test(
+        sdfg,
+        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(0)}, # run with flag == 0
+        orig_output,
+        new_output,
+    )
+
+@pytest.mark.gpu_offload
+@pytest.mark.current
+def test_conditional_offload_else():
+    sdfg = conditional_branch_map_sdfg()
+    
+    orig_output = np.zeros(5, dtype=np.float64)
+    new_output = np.zeros(5, dtype=np.float64)
+    run_numerical_offloading_test(
+        sdfg,
+        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(1)}, # run with flag == 1
+        orig_output,
+        new_output,
+    )
+
 
 # ============================================================================
 # Fixtures and Helpers
@@ -519,8 +553,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "basic: mark test as part of basic SDFG suite")
     config.addinivalue_line("markers", "copy_analysis: mark test as copy analysis suite")
     config.addinivalue_line("markers", "gpu_offload: mark test as GPU offload suite")
+    config.addinivalue_line("markers", "current: tests off current interest")
 
 
 if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
-    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "copy_analysis"])
+    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])

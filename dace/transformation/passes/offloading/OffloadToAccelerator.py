@@ -12,7 +12,7 @@ from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
 class OffloadingIRNode:
 
-    def __init__(self, block, cpu_set=set(), gpu_set=set(), next=set()):
+    def __init__(self, block, cpu_set, gpu_set, next):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"
         self.block : ControlFlowBlock = block
         self.cpu_set : set[str] = cpu_set
@@ -509,6 +509,9 @@ class OffloadToAccelerator(ppl.Pass):
     
     # TODO: only add inputs and outputs of map to use set if they are actually used in map (not in nested map)
     
+
+
+
     ### STEP 3: Intermediate Representation ###
 
     """
@@ -556,12 +559,18 @@ class OffloadToAccelerator(ppl.Pass):
 
         # create IR
         self._parse_to_IR(sdfg, sdfg, IR)
-
+        print("--- early IR ---\n", IR, "\n\n")
+        
         # all arrays which aren't used by this state retain their previous status
         self._propagate_arrays(IR)
 
         # clean up
         #self._remove_empty_nodes(IR)
+
+        self._correct_branch_connectors(IR)
+
+        # rename all GPU arrays
+        self._create_gpu_arrays_from(sdfg, IR)
 
         # add final node where all arrays must be on CPU again
         final = OffloadingIRNode.make_empty("_SDFG_tail")
@@ -604,7 +613,7 @@ class OffloadToAccelerator(ppl.Pass):
                 # connect current node to new node reprenting the branching condition
                 # find all array accesses in condition and add to cpu set
                 # if condition necessitates copies, they will be added before the block
-                branch_condition = OffloadingIRNode(block)
+                branch_condition = OffloadingIRNode(block, cpu_set=set(), gpu_set=set(), next=set())
                 for memlet in block.get_meta_read_memlets():
                     if memlet.data in sdfg.arrays:
                         branch_condition.cpu_set.add(memlet.data)
@@ -660,15 +669,37 @@ class OffloadToAccelerator(ppl.Pass):
                 raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
 
         return curr_node
-
-    def _propagate_arrays(self, node):
-        # all arrays which aren't used by this state retain their previous status
-        # ASSUMPTION: arrays are either gpu or cpu within a state
+    
+    def __traverse_IR(self, IR:OffloadingIRNode, method):
         def recursion(node, visited_set):
             if node in visited_set:
                 return
             visited_set.add(node)
+
+            method(node)
             
+            for next in node.next:
+                recursion(next, visited_set)
+
+        return recursion(IR, set())
+    
+    def __traverse_IR_bottomup(self, IR:OffloadingIRNode, method):
+        def recursion(node, visited_set):
+            if node in visited_set:
+                return
+            visited_set.add(node)
+
+            for next in node.next:
+                recursion(next, visited_set)
+
+            method(node)
+
+        return recursion(IR, set())
+
+    def _propagate_arrays(self, IR:OffloadingIRNode):
+        # all arrays which aren't used by this state retain their previous status
+        # ASSUMPTION: arrays are either gpu or cpu within a state
+        def propagate(node):        
             for next in node.next:
                 next_arrays = next.cpu_set | next.gpu_set
                 
@@ -678,20 +709,12 @@ class OffloadToAccelerator(ppl.Pass):
                 for array in node.gpu_set:
                     if not array in next_arrays:
                         next.gpu_set.add(array)
-                recursion(next, visited_set)
 
-        return recursion(node, set())
+        self.__traverse_IR(IR, propagate)
     
-    def _remove_empty_nodes(self, node:OffloadingIRNode):
+    def _remove_empty_nodes(self, IR:OffloadingIRNode):
         # NOTE: if given node is empty, it won't be removed - only children are checked
-        def recursion(node, visited_set):
-            if node in visited_set:
-                return
-            visited_set.add(node)
-
-            for next in node.next:
-                recursion(next, visited_set)
-
+        def remove_empty(node:OffloadingIRNode):
             empties = {next for next in node.next if next.is_empty()}
             
             for empty in empties:
@@ -699,95 +722,189 @@ class OffloadToAccelerator(ppl.Pass):
                 for nextnext in empty.next:
                     node.append_node(nextnext)
 
-        return recursion(node, set())
+        self.__traverse_IR_bottomup(IR, remove_empty)
+    
+    def _correct_branch_connectors(self, IR:OffloadingIRNode):
+        def branch_connectors(node:OffloadingIRNode):
+            if node.debug_name == "_branch_connector":
+                assert len(node.next) == 1
+                next_node : OffloadingIRNode
+                for n in node.next:
+                    next_node = n
+                
+                node.cpu_set = next_node.cpu_set
+                node.gpu_set = next_node.gpu_set
+                #print(f"\n\nBRANCH {node.debug_name} -> {next_node.debug_name}")
+                #print(f"{node.debug_name}: cpu = {node.cpu_set}, gpu = {node.gpu_set} -> {next_node.debug_name}: cpu = {next_node.cpu_set}, gpu = {next_node.gpu_set}\n\n")
+
+        self.__traverse_IR(IR, branch_connectors)
+    
+    def _create_gpu_arrays_from(self, sdfg, IR:OffloadingIRNode):
+        def gpu_arrays(node:OffloadingIRNode):
+            if node.block:
+                rename_dict = {array : array + "_gpu" for array in node.gpu_set}
+                self._rename_arrays_in_block(node.block, rename_dict)
+                for cpu_name, gpu_name in rename_dict.items():
+                    if gpu_name in sdfg.arrays: # gpu array exists
+                        sdfg.arrays[gpu_name].storage = dtypes.StorageType.GPU_Global
+                        sdfg.arrays[gpu_name].transient = True
+                    
+                    elif cpu_name in sdfg.arrays: # gpu array does not exist
+                        cpu_array = sdfg.arrays[cpu_name]
+                        sdfg.add_array(gpu_name, cpu_array.shape, cpu_array.dtype, storage = dtypes.StorageType.GPU_Global, transient=True)
+                    
+                    else:
+                        assert False, f"{cpu_name} -> {gpu_name} neither is known!"
+                
+        self.__traverse_IR(IR, gpu_arrays)
+    
+    def _rename_arrays_in_block(self, block:ControlFlowBlock, rename_dict:dict):
+        if isinstance(block, SDFGState):
+            self._rename_arrays_in_state(block, rename_dict)
+        
+        elif isinstance(block, ControlFlowBlock):
+            # rename meta accesses (control-flow metadata like loop bounds or conditions)
+            block.replace_meta_accesses(rename_dict)
+            # NOTE: internal states / blocks have their own IRNode and don't need to be handled recursively here
+        else:
+            raise NotImplementedError(f"in _rename_all_gpu_arrays: IR.block unhandled type: {IR.block} is {IR.block.__class__.__name__}")
+
+    def _rename_arrays_in_state(self, state : SDFGState, rename_dict:dict):
+        # rename access nodes
+        for access in state.data_nodes():
+            if access.data in rename_dict:
+                access.data = rename_dict[access.data]
+
+        # rename edge conditions
+        for edge in state.edges():
+            for e in state.memlet_tree(edge):
+                memlet = e.data
+                if memlet is not None and not memlet.is_empty() and memlet.data in rename_dict:
+                    memlet.data = rename_dict[memlet.data]
+        
+
+    def eval_IR1(self, sdfg, IR:OffloadingIRNode):
+        # modifies SDFG in place & inserts all necessary copies
+        def eval(node:OffloadingIRNode):
+            for next in node.next:
+
+                if node.cpu_set & node.gpu_set:
+                    print(f"insert intrastate copy for {node}")
+                    assert False
+
+                gpu_copies = node.cpu_set & next.gpu_set
+                if gpu_copies:
+                    print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
+                    self.create_interstate_copy(sdfg, node.block, next.block, gpu_copies, to_gpu=True)
+                    
+                cpu_copies = node.gpu_set & next.cpu_set
+                if cpu_copies:
+                    print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
+                    self.create_interstate_copy(sdfg, node.block, next.block, cpu_copies, to_gpu=False)
+
+        self.__traverse_IR(IR, eval)
 
     def eval_IR(self, sdfg, IR:OffloadingIRNode):
         # modifies SDFG in place & inserts all necessary copies
-        def recursion(sdfg, IR:OffloadingIRNode, visited_set:set):
-            if IR in visited_set:
-                return
-            visited_set.add(IR)
 
-            for next in IR.next:
+        # USE ANALYSIS
+        first_use : dict = {} # array -> IR node with first use
+        final_use : dict = {} # array -> IR node with last use
 
-                if IR.cpu_set & IR.gpu_set:
-                    updated_c, updated_g = print(f"insert intrastate copy for {IR}")
-                    IR.cpu_set = updated_c
-                    IR.gpu_set = updated_g
+        def first_use_analysis(node:OffloadingIRNode):
+            for array in node.gpu_set | node.cpu_set:
+                if not array in first_use:
+                    first_use[array] = node
+        self.__traverse_IR(IR, first_use_analysis)
 
-                gpu_copies = IR.cpu_set & next.gpu_set
+        def final_use_analysis(node:OffloadingIRNode):
+            for array in node.gpu_set | node.cpu_set:
+                if not array in final_use:
+                    final_use[array] = node
+        self.__traverse_IR_bottomup(IR, final_use_analysis)
+
+
+        print("first_use:", {array:node.debug_name for array,node in first_use.items()})
+        print("final_use:", {array:node.debug_name for array,node in final_use.items()})
+
+        # EVAL
+        active_set = set() # contains all arrays which are after first and before final use
+        
+        def eval(node:OffloadingIRNode):
+            # update active set (final)
+            for array,final_node in final_use.items():
+                if final_node == node:
+                    active_set.remove(array)
+
+            # insert copies
+            for next in node.next:
+                if node.cpu_set & node.gpu_set:
+                    raise NotImplementedError(f"This pass does not support copies within a single state. State {node.debug_name} uses arrays {node.cpu_set & node.gpu_set} on both cpu and gpu.")
+
+                gpu_copies = node.cpu_set & next.gpu_set & active_set
                 if gpu_copies:
-                    print(f"insert gpu copy for {gpu_copies} between {IR.debug_name} and {next.debug_name}")
-                    self.create_interstate_copy(sdfg, IR.block, next.block, gpu_copies, to_gpu=True)
+                    print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
+                    self.create_interstate_copy(sdfg, node.block, next.block, gpu_copies, to_gpu=True)
                     
-                cpu_copies = IR.gpu_set & next.cpu_set
+                cpu_copies = node.gpu_set & next.cpu_set & active_set
                 if cpu_copies:
-                    print(f"insert cpu copy for {cpu_copies} between {IR.debug_name} and {next.debug_name}")
-                    self.create_interstate_copy(sdfg, IR.block, next.block, cpu_copies, to_gpu=False)
-                    
-            for next in IR.next:
-                recursion(sdfg, next, visited_set)
+                    print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
+                    self.create_interstate_copy(sdfg, node.block, next.block, cpu_copies, to_gpu=False)
 
-        return recursion(sdfg, IR, set())
+            # update active set (first)
+            for array,first_node in first_use.items():
+                if first_node == node:
+                    active_set.add(array)
+
+        self.__traverse_IR(IR, eval)
     
     ### Step 4: Copy Insertion ###
     def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu:bool):
+        # create ONE copy state for all arrays in array_names
+
         assert state1 is not None or state2 is not None, "invalid: both states are None"
         assert isinstance(array_names, set), f"array_names must be a set[str], got {type(array_names).__name__}"
         if not array_names: return
 
-        # get name and storage location of new arrays
-        location = dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default
-        rename_map = {(name if to_gpu else name + "_gpu"): (name + "_gpu" if to_gpu else name) for name in array_names}
-
-        # create ONE copy state for all arrays in array_names
-        target_graph = state1.parent_graph if state1 is not None else state2.parent_graph
-        assert target_graph is not None, "copy insertion requires a parent control-flow graph"
-
-        joined = "_".join(sorted(array_names))
-        copy_state = target_graph.add_state(f"copy_{joined}_{'to_gpu' if to_gpu else 'to_cpu'}")
-
-        if state1 is None: # copy state becomes new start block, connect to head
-            assert state2 is target_graph.start_block
-            target_graph.start_block = target_graph.node_id(copy_state)
-            target_graph.add_edge(copy_state, state2, dace.InterstateEdge())
-
-        elif state2 is None: # connect copy state to last state of graph
-            target_graph.add_edge(state1, copy_state, dace.InterstateEdge())
-
-        else:
-            outedges = target_graph.out_edges(state1)
-            assert len(outedges) == 1 # assert that it's a line graph
-            assert outedges[0].dst == state2 or state1 == state2, f"state1 {state1} has outedges {outedges[0].dst} and doesn't connect to state2 {state2}" # assert state1 & state2 are really connected
-            self._insert_state_on_interstate_edge(target_graph, outedges[0], copy_state)
-
-        # build all copies inside the same inserted state
-        for old_name, new_name in rename_map.items():
-            if new_name not in sdfg.arrays:
-                sdfg.add_transient(new_name, [1], dace.float64, storage=location)
-            a_copy_in = copy_state.add_access(old_name)
-            a_gpu_copy_out = copy_state.add_access(new_name)
-            copy_state.add_edge(a_copy_in, None, a_gpu_copy_out, None, dace.Memlet(f"{old_name} -> {new_name}"))
-            
+        # insert new state
+        copy_state : SDFGState
+        label = f"copy_{"_".join(sorted(array_names))}_{'to_gpu' if to_gpu else 'to_cpu'}"
         
         if state2:
-            # rename data nodes in successor state
-            for node in state2.data_nodes():
-                if node.data in rename_map:
-                    node.data = rename_map[node.data]
+            print("INSERT COPY BEFORE ", state2)
+            target_graph = state2.parent_graph
+            assert target_graph is not None, "copy insertion requires a parent control-flow graph (s2)"
 
-            # rename memlets in successor state
-            for edge in state2.edges():
-                for e in state2.memlet_tree(edge):
-                    memlet = e.data
-                    if memlet is not None and not memlet.is_empty() and memlet.data in rename_map:
-                        memlet.data = rename_map[memlet.data]
-            
-            # NOTE: map connector names are purely symbolic and are thus do not need renaming
+            copy_state = target_graph.add_state_before(state2, label = label)
+            if state1 is None and state2 is target_graph.start_block: 
+                target_graph.start_block = target_graph.node_id(copy_state) # copy state becomes new start block
+        
+        else:
+            print("INSERT COPY AFTER ", state1)
+            target_graph = state1.parent_graph
+            assert target_graph is not None, "copy insertion requires a parent control-flow graph (s1)"
 
-            
-    def _insert_state_on_interstate_edge(self, graph, edge, new_state):
-        """Insert new_state on an interstate edge (between two control-flow blocks)."""
-        graph.add_edge(edge.src, new_state, edge.data)              # src -> new_state (keep condition/assignments)
-        graph.add_edge(new_state, edge.dst, dace.InterstateEdge())  # new_state -> dst (unconditional)
-        graph.remove_edge(edge)  # del original edge
+            copy_state = target_graph.add_state_after(state1, label = label)
+        
+        # get name and storage location of new arrays
+        location = dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default
+        copy_map = {(name if to_gpu else name + "_gpu"): (name + "_gpu" if to_gpu else name) for name in array_names}
+
+        # build all copies inside the new state
+        for old_name, new_name in copy_map.items():
+            if new_name not in sdfg.arrays:
+                assert False # TODO
+                sdfg.add_transient(new_name, [1], dace.float64, storage=location)
+                # this is a new transient, which can be allocated to ts correct location immediately -> no copy needed
+
+            elif old_name not in sdfg.arrays:
+                assert False # TODO
+                assert to_gpu # this is a non-transient array whose first use is on gpu -> no copy needed
+
+            else:
+                copy_in = copy_state.add_access(old_name)
+                copy_out = copy_state.add_access(new_name)
+                copy_state.add_edge(copy_in, None, copy_out, None, dace.Memlet(f"{old_name} -> {new_name}"))
+                
+        
+# A -> A_gpu, A -> A_host
