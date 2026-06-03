@@ -63,7 +63,6 @@ from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvar
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
-from dace.transformation.interstate.state_fusion import StateFusion
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
@@ -72,26 +71,39 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     fuse adjacent states, flatten nested SDFGs, then drop empty states, so each
     phase starts from a tidy state machine.
 
-    Order: ``StateFusion`` then ``StateFusionExtended`` (the latter also fuses
-    across happens-before dependencies) collapse adjacent states; both inliners
-    flatten nestings -- ``InlineSDFG`` a single-``SDFGState`` NestedSDFG,
-    ``InlineMultistateSDFG`` the control-flow-bearing NestedSDFGs that map->loop
-    lowering produces (a NestedSDFG wrapping a ``LoopRegion``/``ConditionalBlock``);
-    without the latter those nestings are permanent, burying loops so
-    ``MoveIfIntoLoop`` and cross-nest fusion cannot see them. ``EmptyStateElimination``
-    then removes the empty states fusion/inlining leave behind. None of these
-    changes the computation; they only normalize structure.
+    Order: ``StateFusionExtended`` (a strict superset of ``StateFusion``;
+    accepts everything the base accepts and additionally fuses across
+    happens-before dependencies, emitting empty-memlet ordering edges as
+    needed) collapses adjacent states; both inliners flatten nestings --
+    ``InlineSDFG`` a single-``SDFGState`` NestedSDFG, ``InlineMultistateSDFG``
+    the control-flow-bearing NestedSDFGs that map->loop lowering produces
+    (a NestedSDFG wrapping a ``LoopRegion``/``ConditionalBlock``); without
+    the latter those nestings are permanent, burying loops so
+    ``MoveIfIntoLoop`` and cross-nest fusion cannot see them.
+    ``EmptyStateElimination`` then removes the empty states fusion/inlining
+    leave behind. None of these changes the computation; they only normalize
+    structure.
 
-    Long-term goal: drop the non-extended ``StateFusion`` entirely and run only
-    the extended variant. Currently kept because the extended variant misses a
-    few independent-Map shapes that the base variant catches (TODO: make the
-    extended variant a true strict superset).
+    The non-extended ``StateFusion`` is intentionally NOT called here -- it
+    only runs inside ``SimplifyPass`` (the end-of-canonicalize Simplify
+    invocation and any caller-driven Simplify). Every shape it can fuse, the
+    extended variant can fuse; running both back-to-back used to mask gaps
+    in the extended matcher.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
-    return [(label, PatternMatchAndApplyRepeated([StateFusion()])),
-            (label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
+    # NOTE: the input/output scalar-slice fold passes
+    # (``CleanAccessNodeToScalarSliceToTaskletPattern`` /
+    # ``CleanTaskletToScalarSliceToAccessNodePattern``) are deliberately NOT
+    # wired here yet -- a previous attempt regressed ~13 TSVC kernels
+    # (branched min/max s314-s316, gather-sum s4115/s4116, multi-state-chain
+    # s3111/s31111/s352, etc.) because the fold strips an intermediate scalar
+    # whose presence is load-bearing for the downstream
+    # ``LoopToReduce`` / ``LoopToScan`` matchers. The folds run per-pass via
+    # the D4 wiring (apply-time pre-normalization in each loop2X pass), so
+    # canonicalize's structural cleanup does not need to perform them.
+    return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
             (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, EmptyStateElimination())]
 
@@ -387,6 +399,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # inline+fuse, privatize) form an atomic logical transformation.
     s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
+    # states whose intermediate scalar transients share names across
+    # siblings. Running ``PrivatizeScalars`` here renames each scope's
+    # transient so the downstream structural cleanup's same-name candidate
+    # list is short -- defence-in-depth for the StateFusionExtended same-
+    # name writer-merge guard.
+    s += [('reduction_to_wcr_map', _PrivatizeScalarsStage())]
     s += _structural_cleanup('reduction_to_wcr_map')
 
     # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed

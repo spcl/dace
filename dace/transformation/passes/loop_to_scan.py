@@ -268,6 +268,24 @@ class LoopToScan(ppl.Pass):
 
     CATEGORY: str = 'Optimization Preparation'
 
+    interchange_carry_with_map = properties.Property(
+        dtype=bool,
+        default=False,
+        desc=("If True, also detect the Map-wrapped carry shape (outer carry-axis "
+              "``LoopRegion`` whose body is a single state containing exactly one "
+              "Map -- the post-``LoopToMap`` form of the cloudsc ``for_1133`` "
+              "kernel) and lift it via loop interchange: the outer ``LoopRegion`` "
+              "becomes the new outer parallel ``Map``, and a per-column 1-D "
+              "``Scan`` libnode replaces the carry loop inside. Off by default; "
+              "opt in for A/B perf comparison against the unchanged "
+              "post-``LoopToMap`` shape (outer carry-``LoopRegion`` + inner "
+              "parallel Map)."),
+    )
+
+    def __init__(self, interchange_carry_with_map: bool = False):
+        super().__init__()
+        self.interchange_carry_with_map = interchange_carry_with_map
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
@@ -291,6 +309,15 @@ class LoopToScan(ppl.Pass):
         PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
         PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
+        # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied
+        # here. LoopToScan's matcher already handles the frontend's scalar-
+        # slice intermediates via ``_chase_forward_to_accum`` and friends;
+        # the existing WCR/TrivialTasklet preprocess above is sufficient.
+        # Running the clean folds in addition (in either order vs WCR) is
+        # redundant work and previously regressed the
+        # ``for_1133_shape_reverse_engineered`` case by stripping
+        # intermediates the matcher relies on.
+
         # Normalise backward-iterating loops (``range(N, 0, -1)`` shape; cloudsc
         # ``for_1079`` is the canonical case) to forward iteration. ``LoopToScan``'s
         # matcher only handles ``stride == 1``; rather than build sign-flip handling
@@ -313,6 +340,18 @@ class LoopToScan(ppl.Pass):
             _fuse_body_states(loop)
 
         count = 0
+        # Optional first pass: interchange the Map-wrapped carry shape.
+        # Done up-front so subsequent matchers see the new ``Map[parallel] {
+        # Scan[carry] }`` structure rather than the original ``LoopRegion[carry]
+        # { Map[parallel] }``.
+        if self.interchange_carry_with_map:
+            for loop, parent in list(_collect_loops(sdfg)):
+                shape = _detect_carry_loop_with_inner_map(loop, sdfg)
+                if shape is None:
+                    continue
+                if _rewrite_interchange_carry_with_map(shape, sdfg):
+                    count += 1
+
         for loop, parent in _collect_loops(sdfg):
             infos = _match_all(loop, sdfg)
             if infos:
@@ -850,6 +889,297 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     if len(infos) != 1:
         return None
     return infos[0]
+
+
+# ---------------------------------------------------------------------------
+# Loop-interchange path for the Map-wrapped carry shape (cloudsc for_1133).
+# Gated by the ``LoopToScan.interchange_carry_with_map`` Property.
+# ---------------------------------------------------------------------------
+
+
+class _CarryMapShape(NamedTuple):
+    """Description of an outer carry-``LoopRegion`` whose body is a single
+    state containing exactly one parallel ``Map``, the post-``LoopToMap``
+    shape of the cloudsc ``for_1133`` kernel."""
+
+    loop: LoopRegion  # outer carry-axis LoopRegion (e.g. jk in 1:KLEV)
+    parent: ControlFlowRegion  # parent of ``loop`` (insertion site for the rewrite)
+    body_state: SDFGState  # the single state inside ``loop``
+    map_entry: nodes.MapEntry  # the inner Map's entry (e.g. jl in 0:KLON)
+    map_exit: nodes.MapExit
+    nsdfg: nodes.NestedSDFG  # the NestedSDFG node inside the Map's scope
+    inner_state: SDFGState  # the single state inside ``nsdfg.sdfg``
+    inner_scan: _Scan  # the scan-update info derived from inner memlets
+
+
+def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[_CarryMapShape]:
+    """Recognise the Map-wrapped carry shape.
+
+    Required structure:
+      - ``loop`` is a ``LoopRegion`` with a unit-stride loop variable (the
+        carry axis, e.g. ``jk``).
+      - ``loop`` body contains exactly one ``SDFGState`` with computation.
+      - That state contains exactly one ``MapEntry``/``MapExit`` pair (the
+        parallel axis, e.g. ``jl``) and exactly one ``NestedSDFG`` whose
+        outer connections route through that Map.
+      - The NestedSDFG body is a single ``SDFGState`` whose memlets refer
+        to the carry axis via ``symbol_mapping``.
+      - The inner state matches the single-carrier scan-update pattern
+        (re-uses :func:`_match_one_carrier`).
+
+    Returns the shape description, or ``None`` if any condition fails.
+    """
+    # 1. Unit-stride loop variable.
+    if not loop.loop_variable:
+        return None
+    stride = loop_analysis.get_loop_stride(loop)
+    if stride is None or stride != 1:
+        return None
+    iter_start = loop_analysis.get_init_assignment(loop)
+    iter_end = loop_analysis.get_loop_end(loop)
+    if iter_start is None or iter_end is None:
+        return None
+    parent = loop.parent_graph
+    if parent is None:
+        return None
+    # 2. Single content state in the body.
+    body_blocks = [b for b in loop.nodes() if isinstance(b, SDFGState)]
+    if len(body_blocks) != 1 or any(not isinstance(b, SDFGState) for b in loop.nodes()):
+        return None
+    body_state: SDFGState = body_blocks[0]
+    # 3. Exactly one MapEntry, one matching MapExit, and one NestedSDFG.
+    map_entries = [n for n in body_state.nodes() if isinstance(n, nodes.MapEntry)]
+    map_exits = [n for n in body_state.nodes() if isinstance(n, nodes.MapExit)]
+    nsdfgs = [n for n in body_state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    if len(map_entries) != 1 or len(map_exits) != 1 or len(nsdfgs) != 1:
+        return None
+    map_entry, map_exit, nsdfg = map_entries[0], map_exits[0], nsdfgs[0]
+    if map_exit.map is not map_entry.map:
+        return None
+    # The Map must be data-parallel (single iteration variable; symbolic
+    # bounds are fine), and the NSDFG must live inside its scope (every
+    # path NSDFG -> MapExit and MapEntry -> NSDFG).
+    if not any(e.src is map_entry for e in body_state.in_edges(nsdfg)):
+        return None
+    if not any(e.dst is map_exit for e in body_state.out_edges(nsdfg)):
+        return None
+    # 4. NSDFG body has a single state.
+    inner_sdfg = nsdfg.sdfg
+    inner_states = list(inner_sdfg.states())
+    if len(inner_states) != 1:
+        return None
+    inner_state = inner_states[0]
+    # 5. Find the single-carrier scan-update pattern inside the inner state.
+    # The inner state references the outer carry variable through the NSDFG
+    # ``symbol_mapping``. Build a copy of the symbol_mapping inverse so the
+    # matcher can look for the outer name's inner alias.
+    inner_carry_name = None
+    for inner_sym, outer_expr in nsdfg.symbol_mapping.items():
+        try:
+            outer_syms = {str(s) for s in symbolic.pystr_to_symbolic(str(outer_expr)).free_symbols}
+        except Exception:
+            outer_syms = {str(outer_expr)}
+        if loop.loop_variable in outer_syms:
+            inner_carry_name = inner_sym
+            break
+    if inner_carry_name is None:
+        return None
+    # 6. Find the single carrier inside the inner state via the inner alias.
+    inner_carriers = _find_carried_arrays(inner_state, inner_sdfg, inner_carry_name)
+    # ``_find_carried_arrays`` returns the inner descriptor names; map back to
+    # outer-side names via the NSDFG's connectors. The matcher restricts to
+    # connector-named arrays anyway.
+    if len(inner_carriers) != 1:
+        return None
+    inner_carrier_name = inner_carriers[0]
+    # 7. Match the scan-update pattern on the inner state using the inner alias.
+    inner_match = _match_one_carrier(_InterchangeFakeLoop(inner_carry_name, iter_start, iter_end), inner_sdfg,
+                                     inner_state, inner_carrier_name, iter_start, iter_end)
+    if inner_match is None:
+        return None
+    return _CarryMapShape(loop=loop, parent=parent, body_state=body_state, map_entry=map_entry, map_exit=map_exit,
+                          nsdfg=nsdfg, inner_state=inner_state, inner_scan=inner_match)
+
+
+class _InterchangeFakeLoop:
+    """Thin shim so :func:`_match_one_carrier` can be called on the inner
+    state without instantiating a real LoopRegion -- only the ``loop_variable``
+    attribute is read from the loop parameter inside the matcher path used."""
+
+    def __init__(self, loop_variable: str, iter_start, iter_end):
+        self.loop_variable = loop_variable
+        self._iter_start = iter_start
+        self._iter_end = iter_end
+
+
+def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> bool:
+    """Replace the outer carry ``LoopRegion`` + inner parallel ``Map`` with
+    a new state containing ``Map[jl] { Scan[jk] }``: the outer becomes the
+    parallel axis, and a per-column 1-D ``Scan`` libnode runs along the
+    carry axis with the seed wired through the libnode's init connector.
+
+    No transient buffers, no delta copy, no stride trickery -- the Scan
+    reads ``delta[jk_range, jl]`` directly out of memory for each ``jl``.
+    """
+    parent = shape.parent
+    loop = shape.loop
+    info: _Scan = shape.inner_scan
+    map_var = shape.map_entry.map.params[0] if len(shape.map_entry.map.params) == 1 else None
+    if map_var is None:
+        return False  # Multi-dim Map: not in scope for this rewrite
+    map_range = shape.map_entry.map.range[0]
+    map_lo, map_hi, map_step = map_range
+    if map_step != 1:
+        return False
+
+    out_name = info.out_name
+    # The inner state's memlets reference the inner connector-aliased
+    # names. Recover the OUTER-side array name for the carrier through the
+    # NSDFG connector binding.
+    inner_to_outer = {}
+    for e in shape.body_state.in_edges(shape.nsdfg):
+        if e.dst_conn and e.data is not None and e.data.data:
+            inner_to_outer[e.dst_conn] = e.data.data
+    for e in shape.body_state.out_edges(shape.nsdfg):
+        if e.src_conn and e.data is not None and e.data.data:
+            inner_to_outer[e.src_conn] = e.data.data
+    outer_carrier_name = inner_to_outer.get(out_name, out_name)
+    if outer_carrier_name not in sdfg.arrays:
+        return False
+    carrier_desc = sdfg.arrays[outer_carrier_name]
+    if not isinstance(carrier_desc, data.Array) or len(carrier_desc.shape) < 2:
+        return False
+    # Identify the delta input. The single-carrier match guarantees one
+    # delta access in the inner state.
+    delta_inner_name = None
+    delta_inner_subset = None
+    for e in shape.inner_state.edges():
+        if e.data is None or e.data.data is None:
+            continue
+        if e.data.data == out_name:
+            continue
+        inner_desc = shape.nsdfg.sdfg.arrays.get(e.data.data)
+        if inner_desc is None or getattr(inner_desc, 'transient', False):
+            continue
+        # Best-effort: pick the first non-carrier, non-transient access.
+        if delta_inner_name is None:
+            delta_inner_name = e.data.data
+            delta_inner_subset = e.data.subset
+    if delta_inner_name is None:
+        return False
+    outer_delta_name = inner_to_outer.get(delta_inner_name, delta_inner_name)
+    if outer_delta_name not in sdfg.arrays:
+        return False
+
+    # Locate the carry-axis position in the carrier descriptor: it is the axis
+    # whose write subset uses the loop variable (info.scan_axis).
+    carry_axis = info.scan_axis
+    if carry_axis >= len(carrier_desc.shape):
+        return False
+    # The "other" axis of carrier_desc is whatever axis lines up with the Map
+    # variable. For a 2-D carrier this is the unique non-carry axis. For
+    # higher-rank carriers we'd need to know which axis the Map varies; for
+    # now restrict to 2-D carriers.
+    if len(carrier_desc.shape) != 2:
+        return False
+    map_axis = 1 - carry_axis
+
+    # Build the SDFG-level replacement: a new state containing the
+    # Map[map_var] -> Scan[carry] body.
+    new_state = parent.add_state(label=f'{loop.label}_interchange', is_start_block=(parent.start_block is loop))
+    # Wire interstate edges around the original loop to the new state.
+    in_edges = list(parent.in_edges(loop))
+    out_edges = list(parent.out_edges(loop))
+    for ie in in_edges:
+        parent.add_edge(ie.src, new_state, ie.data)
+        parent.remove_edge(ie)
+    for oe in out_edges:
+        parent.add_edge(new_state, oe.dst, oe.data)
+        parent.remove_edge(oe)
+    parent.remove_node(loop)
+    if parent.start_block is loop:
+        parent.start_block = parent.node_id(new_state)
+
+    # Populate the new state.
+    carrier_read = new_state.add_read(outer_carrier_name)
+    carrier_write = new_state.add_write(outer_carrier_name)
+    delta_read = new_state.add_read(outer_delta_name)
+
+    # DaCe ``Range`` is inclusive on both ends. Construct it directly so we
+    # don't risk the string-form ``Memlet`` parser using Python-range
+    # exclusive-end semantics.
+    map_lo_sym = symbolic.pystr_to_symbolic(str(map_lo))
+    map_hi_sym = symbolic.pystr_to_symbolic(str(map_hi))
+    new_map_entry, new_map_exit = new_state.add_map(name=f'{loop.label}_map',
+                                                    ndrange={map_var: subsets.Range([(map_lo_sym, map_hi_sym, 1)])})
+
+    iter_lo = symbolic.pystr_to_symbolic(str(info.iter_start))
+    iter_hi = symbolic.pystr_to_symbolic(str(info.iter_end))
+    map_var_sym = symbolic.pystr_to_symbolic(map_var)
+    seed_lo = iter_lo - 1
+    trip = iter_hi - iter_lo + 1
+    if carry_axis == 0:
+        carry_range = subsets.Range([(iter_lo, iter_hi, 1), (map_var_sym, map_var_sym, 1)])
+        seed_subset_obj = subsets.Range([(seed_lo, seed_lo, 1), (map_var_sym, map_var_sym, 1)])
+    else:
+        carry_range = subsets.Range([(map_var_sym, map_var_sym, 1), (iter_lo, iter_hi, 1)])
+        seed_subset_obj = subsets.Range([(map_var_sym, map_var_sym, 1), (seed_lo, seed_lo, 1)])
+
+    # The ``Scan`` libnode requires a 1-D CONTIGUOUS input/output buffer; the
+    # per-column slice ``delta[iter_lo:iter_hi, jl]`` is stride-KLON in
+    # row-major memory. Stage it through small 1-D transients within the Map
+    # scope. The stride is handled by DaCe's memlet copy machinery on the
+    # outer side of the transient.
+    delta_buf_name, _ = sdfg.add_array(f'_interchange_delta_{outer_delta_name}', shape=[trip],
+                                       dtype=carrier_desc.dtype, transient=True,
+                                       storage=dtypes.StorageType.Default, find_new_name=True)
+    scan_buf_name, _ = sdfg.add_array(f'_interchange_scan_{outer_carrier_name}', shape=[trip],
+                                      dtype=carrier_desc.dtype, transient=True,
+                                      storage=dtypes.StorageType.Default, find_new_name=True)
+    delta_buf_an_in = new_state.add_access(delta_buf_name)
+    scan_buf_an = new_state.add_access(scan_buf_name)
+
+    # Add Scan libnode inside the map scope.
+    scan_node = Scan(name=f'{loop.label}_scan_op', op=_op_to_scan_op(info.op), exclusive=False)
+    new_state.add_node(scan_node)
+    import copy as _copy
+    # delta_outer -> MapEntry -> delta_buf (1-D, contiguous): DaCe will emit a
+    # strided gather copy here.
+    new_state.add_memlet_path(delta_read, new_map_entry, delta_buf_an_in,
+                              memlet=mm.Memlet(data=outer_delta_name, subset=_copy.deepcopy(carry_range),
+                                               other_subset=subsets.Range([(0, trip - 1, 1)])))
+    # delta_buf -> Scan input (1-D contiguous).
+    new_state.add_edge(delta_buf_an_in, None, scan_node, _SCAN_IN,
+                       mm.Memlet(data=delta_buf_name, subset=subsets.Range([(0, trip - 1, 1)])))
+    # Carrier seed -> MapEntry -> Scan init (a single element).
+    new_state.add_memlet_path(carrier_read, new_map_entry, scan_node, dst_conn=_SCAN_INIT,
+                              memlet=mm.Memlet(data=outer_carrier_name, subset=_copy.deepcopy(seed_subset_obj)))
+    # Scan output -> scan_buf (1-D).
+    new_state.add_edge(scan_node, _SCAN_OUT, scan_buf_an, None,
+                       mm.Memlet(data=scan_buf_name, subset=subsets.Range([(0, trip - 1, 1)])))
+    # scan_buf -> MapExit -> carrier_write (strided scatter).
+    new_state.add_memlet_path(scan_buf_an, new_map_exit, carrier_write,
+                              memlet=mm.Memlet(data=outer_carrier_name, subset=_copy.deepcopy(carry_range),
+                                               other_subset=subsets.Range([(0, trip - 1, 1)])))
+    return True
+
+
+def _op_to_scan_op(op_str: str) -> ScanOp:
+    """Map the matcher's WCR op string (``'lambda a, b: a + b'``-style or
+    a bare op label) to the corresponding :class:`ScanOp`."""
+    if isinstance(op_str, str):
+        s = op_str
+        if 'a + b' in s or s == '+':
+            return ScanOp.SUM
+        if 'a * b' in s or s == '*':
+            return ScanOp.PRODUCT
+        if 'max' in s:
+            return ScanOp.MAX
+        if 'min' in s:
+            return ScanOp.MIN
+    return ScanOp.SUM
+
+
 
 
 def _walk_back_to_computation(state: SDFGState, sdfg: SDFG, src_node, carrier: str):
@@ -1752,12 +2082,19 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[st
     Multi-carrier loops (cloudsc ``pfsqrf``: 5 parallel prefix sums in one body)
     return a multi-element list; v1/v2 single-carrier loops return a one-element list.
 
-    Scans ALL edges in the state -- top-level edges plus any inside Map scopes -- for
-    memlets whose data is a non-transient and whose subset depends on ``loop_var``.
-    Walking edges rather than only AccessNode-incident memlets catches carriers whose
-    state-level memlets have been widened by Map-exit propagation (defensive: the
-    Map-wrapped path isn't reached by the nested-LoopRegion rewrite, but the edge-walk
-    is also what makes the v1-v5 flat case robust to the slice-copy intermediates).
+    Scans ALL edges in the state -- top-level edges plus any inside Map scopes --
+    for memlets whose data is a non-transient and whose subset depends on
+    ``loop_var``. Additionally descends into ``NestedSDFG`` scopes (the post-
+    ``LoopToMap`` shape: outer carry-loop -> body state with a Map -> NestedSDFG
+    holding the actual prefix-scan tasklet). State-level edges around the Map
+    have widened subsets that no longer reference ``loop_var`` (Map-exit
+    propagation), so we look inside the NestedSDFG, find the inner memlets that
+    DO carry the carrier subset, and lift them back through the NSDFG's
+    ``symbol_mapping`` to detect that the outer-loop-var appears in the
+    underlying access. This is the for_1133 / cloudsc descend-into-Map path.
+    Walking edges rather than only AccessNode-incident memlets catches
+    carriers whose state-level memlets are intermediates of slice copies in
+    the flat (v1-v5) case.
     """
     arrays_with_carrier_subset: set = set()
     for e in state.edges():
@@ -1769,6 +2106,11 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[st
             continue
         if _subset_uses(m.subset, loop_var):
             arrays_with_carrier_subset.add(m.data)
+
+    # Descend into NestedSDFG scopes within this state (Map bodies after L2M).
+    # An inner memlet ``pfsqrf[jk, jl]`` whose inner symbol ``jk`` is bound via
+    # ``symbol_mapping`` to the outer ``loop_var`` flags ``pfsqrf`` as a carrier.
+    arrays_with_carrier_subset.update(_find_carried_arrays_via_nested(state, sdfg, loop_var))
 
     reads: set = set()
     writes: set = set()
@@ -1783,6 +2125,68 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> List[st
         if state.out_degree(n) > 0:
             reads.add(n.data)
     return sorted(reads & writes)
+
+
+def _find_carried_arrays_via_nested(state: SDFGState, sdfg: SDFG, loop_var: str) -> set:
+    """Walk ``state``'s NestedSDFG nodes; for each, look at inner memlets and
+    lift them through ``symbol_mapping`` to see whether the outer ``loop_var``
+    appears in the underlying access. Returns the set of OUTER array names
+    (the names of the NSDFG's outer-side connectors) flagged as carriers.
+
+    Caveat: the lookup only follows one level of nesting at a time, but
+    recurses if the inner SDFG itself contains a NestedSDFG.
+    """
+    flagged: set = set()
+    for n in state.nodes():
+        if not isinstance(n, nodes.NestedSDFG):
+            continue
+        # Build the connector -> outer-array map by looking at the cross edges.
+        conn_to_outer: Dict[str, str] = {}
+        for e in state.in_edges(n):
+            if e.dst_conn and e.data is not None and e.data.data is not None:
+                conn_to_outer[e.dst_conn] = e.data.data
+        for e in state.out_edges(n):
+            if e.src_conn and e.data is not None and e.data.data is not None:
+                conn_to_outer[e.src_conn] = e.data.data
+        # Inner symbols that bind to the outer ``loop_var``. ``symbol_mapping``
+        # is ``{inner_sym: outer_expr}``: collect inner_sym keys whose mapped
+        # outer expression has ``loop_var`` as a free symbol.
+        inner_syms_carrying: set = set()
+        for inner_sym, outer_expr in n.symbol_mapping.items():
+            try:
+                outer_sym_strs = {str(s) for s in symbolic.pystr_to_symbolic(str(outer_expr)).free_symbols}
+            except Exception:
+                outer_sym_strs = {str(outer_expr)}
+            if loop_var in outer_sym_strs:
+                inner_syms_carrying.add(inner_sym)
+        # Walk inner SDFG memlets; for each that uses one of those inner
+        # symbols, flag the corresponding outer array.
+        for inner_state in n.sdfg.states():
+            for e in inner_state.edges():
+                m = e.data
+                if m is None or m.data is None or m.subset is None:
+                    continue
+                inner_desc = n.sdfg.arrays.get(m.data)
+                if inner_desc is None:
+                    continue
+                # The inner-side data name == the connector name (DaCe binds
+                # connector -> inner descriptor by name). Map back to outer.
+                outer_name = conn_to_outer.get(m.data)
+                if outer_name is None:
+                    continue
+                outer_desc = sdfg.arrays.get(outer_name)
+                if outer_desc is None or getattr(outer_desc, 'transient', False):
+                    continue
+                # The subset uses ``loop_var`` (after mapping) if any of the
+                # inner symbols carrying ``loop_var`` appears in the subset's
+                # free symbols.
+                inner_subset_syms = {str(s) for s in m.subset.free_symbols}
+                if inner_subset_syms & inner_syms_carrying:
+                    flagged.add(outer_name)
+        # Recurse one more level for safety (NSDFG inside NSDFG).
+        for inner_state in n.sdfg.states():
+            flagged.update(_find_carried_arrays_via_nested(inner_state, n.sdfg, loop_var))
+    return flagged
 
 
 def _find_carried_array(state: SDFGState, sdfg: SDFG, loop_var: str) -> Optional[str]:

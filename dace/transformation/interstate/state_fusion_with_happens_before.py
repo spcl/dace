@@ -5,11 +5,12 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import data as dt, sdfg, subsets, memlet
+from dace import data as dt, properties, sdfg, subsets, memlet
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.transformation import transformation
 
 
@@ -33,6 +34,7 @@ def top_level_nodes(state: SDFGState):
 
 
 @transformation.explicit_cf_compatible
+@properties.make_properties
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
@@ -47,6 +49,15 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
+    strict_validate = properties.Property(
+        dtype=bool,
+        default=False,
+        desc=("Run ``sdfg.validate()`` after ``apply`` (paranoid debug mode). When ``False`` (the default in hot "
+              "paths), only a cheap structural check on the fused state runs -- catches the historical bug class "
+              "(orphan nodes, mismatched ``memlet.data``) without paying the full-SDFG-validate cost. The cheap "
+              "check is *always* on; this knob only adds the full validate on top."),
+    )
+
     @staticmethod
     def annotates_memlets():
         return False
@@ -57,7 +68,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.connections_to_make = []
+        self._connections_to_make = []
+
+    @property
+    def connections_to_make(self):
+        return self._connections_to_make
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
@@ -427,12 +442,34 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                 # second writes it, ``d`` not a first output.
                                 # Safe fusion would need a dependency edge to
                                 # every first-state sink reading ``d``; refuse
-                                # instead and keep the two states separate.
+                                # in the unsafe case.
+                                #
+                                # Exemption: if the second-state write's value
+                                # flows from real data the first state produced
+                                # (a ``read -> ... transient ... -> write``
+                                # chain via ``first_out_data``), the existing
+                                # dataflow already orders first's read of ``d``
+                                # before second's write of ``d``. This is what
+                                # makes base ``StateFusion`` accept the
+                                # scan-fission shape ``T = f(B); B = g(T)`` --
+                                # mirror that here so ``StateFusionExtended``
+                                # is a true superset.
                                 if d in fused_cc.first_inputs:
                                     nodes_first_read = [n for n in first_input if n.data == d]
                                     if StateFusionExtended.memlets_intersect(first_state, nodes_first_read, True,
                                                                              second_state, nodes_second, False):
-                                        return False
+                                        flows_from_first = False
+                                        for n2 in nodes_second:
+                                            for we in second_state.in_edges(n2):
+                                                anc = nx.ancestors(second_state._nx, we.src) | {we.src}
+                                                if any(isinstance(a, nodes.AccessNode) and a.data in first_out_data
+                                                       for a in anc):
+                                                    flows_from_first = True
+                                                    break
+                                            if flows_from_first:
+                                                break
+                                        if not flows_from_first:
+                                            return False
 
                         continue
                     # If an input/output of a connected component in the first
@@ -665,3 +702,67 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Technically unneeded, but better to keep track.
         self.connections_to_make.clear()
+
+        # Post-apply structural check: never let a buggy merge leave an
+        # invalid SDFG behind. Always run the cheap focused check; the
+        # ``strict_validate`` knob additionally runs full ``sdfg.validate()``
+        # for paranoid debug runs. Pinned by the s118-class regression where
+        # the merger left an edge whose ``memlet.data`` referenced a node
+        # that was no longer in the fused state's data flow.
+        self._post_apply_check(first_state, sdfg)
+
+    def _post_apply_check(self, fused_state: SDFGState, owner_sdfg) -> None:
+        """Cheap structural validation focused on the failure modes the
+        merger historically produced.
+
+        For every edge in ``fused_state`` whose memlet carries a data
+        reference, require that ``memlet.data`` match either ``src.data``
+        or ``dst.data`` when those endpoints are ``AccessNode`` instances.
+        Mirror the rule the SDFG validator at ``validation.py:750`` uses,
+        but evaluated on this one fused state -- O(|edges|) instead of
+        a full-SDFG walk.
+
+        Tasklet/MapEntry/MapExit/NestedSDFG endpoints are skipped: the
+        connector-name vs memlet-data alignment for those is enforced by
+        higher-level passes (codegen, schedule inference) and is not the
+        bug class this check is hunting.
+
+        :raises InvalidSDFGEdgeError: when an offending edge is found.
+        """
+        ssdfg = fused_state.sdfg
+        state_id = ssdfg.node_id(fused_state) if fused_state in ssdfg.nodes() else 0
+        for eid, e in enumerate(fused_state.edges()):
+            if e.data is None or e.data.is_empty() or e.data.data is None:
+                continue
+            name = e.data.data
+            src_an = e.src if isinstance(e.src, nodes.AccessNode) else None
+            dst_an = e.dst if isinstance(e.dst, nodes.AccessNode) else None
+            # Structures: memlet.data is the structure's root, member access
+            # via connector. The full SDFG validator special-cases this; we
+            # skip rather than risk a false positive.
+            for an in (src_an, dst_an):
+                if an is not None and isinstance(ssdfg.arrays.get(an.data), dt.Structure):
+                    break
+            else:
+                if src_an is None and dst_an is None:
+                    continue
+                # Mirror the SDFG validator's edge rule (validation.py:750):
+                # memlet.data must match SRC's AccessNode data/conn, or
+                # DST's. A copy between two AccessNodes ``A[i] -> B[0]`` is
+                # recorded with ``memlet.data == 'A'`` (one side); the other
+                # side lives in ``other_subset``. So the check is a logical
+                # OR across the two endpoints, not an AND.
+                src_match = (src_an is not None and (name == src_an.data or name == e.src_conn))
+                dst_match = (dst_an is not None and (name == dst_an.data or name == e.dst_conn))
+                if not (src_match or dst_match):
+                    raise InvalidSDFGEdgeError(
+                        f"StateFusionExtended produced an invalid edge: memlet.data={name!r} "
+                        f"does not match src={getattr(src_an, 'data', None)!r} or "
+                        f"dst={getattr(dst_an, 'data', None)!r}",
+                        ssdfg,
+                        state_id,
+                        eid,
+                    )
+
+        if self.strict_validate:
+            ssdfg.validate()

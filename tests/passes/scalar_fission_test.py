@@ -298,6 +298,159 @@ def test_branch_subscopes_fission(with_raising):
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C', 'B_0', 'B_1'}
 
 
+def _build_outer_inner_scalar_sdfg():
+    """Build a minimal SDFG that ``ScalarFission`` would rename, with the
+    scalar carried across a NestedSDFG boundary.
+
+    Shape:
+      outer SDFG
+        state s_init: A[0]   -> seed -> X (transient scalar, OUTER)
+        state s_use:  X (read) -> NestedSDFG(in_conn='X', body reads inner X
+                                              and writes inner Y)
+                                  -> Y (transient scalar, OUTER)
+                                  -> consumer tasklet -> B[0]
+        state s_wb:   X (read) -> writeback into B[1]
+
+    Plus the NestedSDFG carries ``X`` as a symbol_mapping entry to test the
+    fifth requirement (symbol_mapping update on rename).
+    """
+    sdfg = dace.SDFG('cross_nsdfg_scalar')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    sdfg.add_scalar('X', dace.float64, transient=True)
+    sdfg.add_scalar('Y', dace.float64, transient=True)
+    sdfg.add_symbol('xsym', dace.int64)
+
+    # s_init: write X from A[0]
+    s_init = sdfg.add_state('s_init', is_start_block=True)
+    a_r = s_init.add_read('A')
+    x_w = s_init.add_write('X')
+    seed = s_init.add_tasklet('seed', {'_in'}, {'_out'}, '_out = _in')
+    s_init.add_edge(a_r, None, seed, '_in', dace.Memlet('A[0]'))
+    s_init.add_edge(seed, '_out', x_w, None, dace.Memlet('X[0]'))
+
+    # NestedSDFG body: read X, write Y = X * 2.0
+    body = dace.SDFG('body')
+    body.add_scalar('X', dace.float64)
+    body.add_scalar('Y', dace.float64)
+    body.add_symbol('xsym', dace.int64)
+    bs = body.add_state('only', is_start_block=True)
+    bx = bs.add_read('X')
+    by = bs.add_write('Y')
+    bt = bs.add_tasklet('mul', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    bs.add_edge(bx, None, bt, '_in', dace.Memlet('X[0]'))
+    bs.add_edge(bt, '_out', by, None, dace.Memlet('Y[0]'))
+
+    # s_use: X -> NestedSDFG -> Y -> consume -> B[0]
+    s_use = s_init.parent.add_state('s_use')
+    sdfg.add_edge(s_init, s_use, dace.InterstateEdge())
+    x_r = s_use.add_read('X')
+    y_w = s_use.add_access('Y')
+    nsdfg = s_use.add_nested_sdfg(body, inputs={'X'}, outputs={'Y'},
+                                  symbol_mapping={'xsym': 'xsym'})
+    s_use.add_edge(x_r, None, nsdfg, 'X', dace.Memlet('X[0]'))
+    s_use.add_edge(nsdfg, 'Y', y_w, None, dace.Memlet('Y[0]'))
+    b_w0 = s_use.add_write('B')
+    consume = s_use.add_tasklet('consume', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s_use.add_edge(y_w, None, consume, '_in', dace.Memlet('Y[0]'))
+    s_use.add_edge(consume, '_out', b_w0, None, dace.Memlet('B[0]'))
+
+    # s_wb: write X back into B[1]
+    s_wb = sdfg.add_state('s_wb')
+    sdfg.add_edge(s_use, s_wb, dace.InterstateEdge())
+    x_r2 = s_wb.add_read('X')
+    b_w1 = s_wb.add_write('B')
+    wb = s_wb.add_tasklet('wb', {'_in'}, {'_out'}, '_out = _in')
+    s_wb.add_edge(x_r2, None, wb, '_in', dace.Memlet('X[0]'))
+    s_wb.add_edge(wb, '_out', b_w1, None, dace.Memlet('B[1]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_scalar_fission_propagates_rename_into_nsdfg():
+    """Pin the cross-SDFG-rename bug in ``ScalarFission`` /
+    ``PrivatizeScalars``: when the matcher renames a scalar that
+    crosses a ``NestedSDFG`` boundary, it must update on EVERY side:
+
+    * outer ``AccessNode.data``
+    * outer arrays catalog
+    * outer memlets referencing the scalar
+    * NestedSDFG input/output **connector name** matching the scalar
+    * NestedSDFG inner **arrays catalog** entry for the scalar
+    * NestedSDFG inner ``AccessNode.data`` for every inner access
+    * NestedSDFG inner memlets referencing the scalar
+    * NestedSDFG ``symbol_mapping`` (both as key and value expression
+      if the scalar appears there)
+
+    Without all six updates the SDFG fails ``validate()``.
+
+    This test forces an actual rename by inserting a SECOND dominating
+    write to ``X`` (in ``s_use``), which makes ``ScalarFission`` split
+    ``X`` into per-scope copies.
+    """
+    import copy as _copy
+    sdfg = _build_outer_inner_scalar_sdfg()
+    # Force a non-trivial fission: add a second write to X inside s_use
+    # AFTER the NestedSDFG reads it, so X has TWO dominating-write scopes
+    # (s_init's write and s_use's write). The first dominating write's
+    # shadowed reads + s_use's write trigger the rename path.
+    s_use = next(s for s in sdfg.states() if s.label == 's_use')
+    a_node = next(s for s in sdfg.states() if s.label == 's_init').nodes()
+    # Take the last node in s_use (the B-write) and chain a second X write
+    # off the consume tasklet so X gets written twice (once in init, once
+    # in use), forcing the dominating-write split.
+    y_an = next(n for n in s_use.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == 'Y')
+    x_w2 = s_use.add_access('X')
+    set_one = s_use.add_tasklet('set_one', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s_use.add_edge(y_an, None, set_one, '_in', dace.Memlet('Y[0]'))
+    s_use.add_edge(set_one, '_out', x_w2, None, dace.Memlet('X[0]'))
+    sdfg.validate()
+
+    PrivatizeScalars = __import__(
+        'dace.transformation.passes.scalar_fission', fromlist=['PrivatizeScalars']).PrivatizeScalars
+
+    pre_arrays_outer = set(sdfg.arrays.keys())
+    nsdfg_node = next(n for n in s_use.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    pre_arrays_inner = set(nsdfg_node.sdfg.arrays.keys())
+
+    PrivatizeScalars().apply_pass(sdfg, {})
+
+    # ScalarFission must rename X under the dominating-write shape.
+    post_arrays_outer = set(sdfg.arrays.keys())
+    new_arrays = post_arrays_outer - pre_arrays_outer
+    assert new_arrays, ('ScalarFission must rename X under a second-dominating-write shape; '
+                        f'no new arrays created (have {post_arrays_outer}).')
+    assert all(n.startswith('X') for n in new_arrays), f'unexpected new arrays {new_arrays}'
+
+    # Cross-NSDFG contract: every cross edge into or out of the NSDFG
+    # must (a) reference an outer AccessNode whose data exists in the
+    # outer arrays catalog, and (b) the connector name on the NSDFG side
+    # must EQUAL the outer AccessNode's data (DaCe binds connector -> inner
+    # descriptor by name), and (c) the inner arrays catalog must contain
+    # that name (no dangling descriptor).
+    for e in s_use.in_edges(nsdfg_node):
+        if not isinstance(e.src, dace.nodes.AccessNode):
+            continue
+        if e.src.data == 'A':  # cross edges from the unrelated A array don't apply
+            continue
+        outer_name = e.src.data
+        conn_name = e.dst_conn
+        assert outer_name in sdfg.arrays, f'outer array {outer_name!r} not in catalog'
+        assert conn_name == outer_name, (f'NestedSDFG input connector {conn_name!r} does not match outer '
+                                         f'AccessNode data {outer_name!r}; cross-NSDFG rename failed')
+        assert conn_name in nsdfg_node.sdfg.arrays, (f'inner arrays catalog missing {conn_name!r}; '
+                                                     f'cross-NSDFG rename did not propagate the descriptor')
+    # The inner SDFG must contain NO dangling AccessNode whose data was
+    # removed from its arrays catalog.
+    for st in nsdfg_node.sdfg.states():
+        for an in st.data_nodes():
+            assert an.data in nsdfg_node.sdfg.arrays, (f'inner AccessNode {an.data!r} not in inner '
+                                                      f'arrays catalog')
+    # Final invariant: the SDFG must validate end-to-end.
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_scalar_fission(False)
     test_branch_subscopes_nofission(False)
@@ -305,3 +458,4 @@ if __name__ == '__main__':
     test_scalar_fission(True)
     test_branch_subscopes_nofission(True)
     test_branch_subscopes_fission(True)
+    test_scalar_fission_propagates_rename_into_nsdfg()

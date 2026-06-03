@@ -108,6 +108,12 @@ class LoopToReduce(ppl.Pass):
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
 
+        # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied
+        # here. The body matcher already handles the frontend's scalar-slice
+        # intermediates; the existing WCRToAugAssign preprocess above takes
+        # care of WCR -> augassign normalization. Running the clean folds is
+        # redundant and risks the same ordering pitfalls seen in LoopToScan.
+
         count = 0
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):

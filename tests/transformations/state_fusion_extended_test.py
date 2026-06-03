@@ -357,6 +357,179 @@ def test_peeled_iterations_then_remainder_map_keep_ordering():
     _assert_fusion_preserves_semantics(sdfg, 2, A=a, B=b)
 
 
+def test_same_cc_war_exempted_when_value_flows_from_first():
+    """A WAR within one connected component is safely fusable when the
+    second state's write VALUE flows from data the first state produced.
+    Shape (cloudsc/TSVC scan-fission style): first state reads ``B`` and
+    writes a transient ``T``; second state reads ``T`` and writes ``B``.
+    The second's write to ``B`` is topologically downstream of the second's
+    read of ``T``, which is downstream of the first's write of ``T``, so
+    the read of ``B`` in first state is naturally ordered before the write
+    of ``B`` in second state. Base ``StateFusion`` already accepts this
+    shape; ``StateFusionExtended`` previously refused it because its
+    extra same-CC WAR check lacked the ``flows_from_first`` exemption."""
+    sdfg = SDFG('fuse_same_cc_war_flows_through_transient')
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_transient('T', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('produce_T_read_B', is_start_block=True)
+    s2 = sdfg.add_state('consume_T_write_B')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    # state1: T[k] = B[k] * 2
+    b_in = s1.add_read('B')
+    t_out = s1.add_write('T')
+    t1 = s1.add_tasklet('produce', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    s1.add_edge(b_in, None, t1, '_in', Memlet('B[k]'))
+    s1.add_edge(t1, '_out', t_out, None, Memlet('T[k]'))
+
+    # state2: B[k] = T[k] + 1
+    t_in = s2.add_read('T')
+    b_out = s2.add_write('B')
+    t2 = s2.add_tasklet('consume', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s2.add_edge(t_in, None, t2, '_in', Memlet('T[k]'))
+    s2.add_edge(t2, '_out', b_out, None, Memlet('B[k]'))
+    sdfg.validate()
+
+    b = np.arange(8, dtype=np.float64)
+    _assert_fusion_preserves_semantics(sdfg, 1, B=b)
+
+
+def test_peeled_maps_then_remainder_map_fuse_or_refuse_correctly():
+    """Each peeled iter contains a parallel Map writing a boundary row of
+    ``A`` (``A[0,:] = B[0,:]*2`` then ``A[1,:] = B[1,:]*2``), followed by a
+    remainder Map over ``A[i,:] = B[i,:]*2`` for ``i in 2:N``. All writes
+    are to disjoint rows of ``A``; the only shared data are reads of
+    ``B``. ``StateFusionExtended`` must keep this value-preserving --
+    either fusing the chain into one state (the disjoint writes are safe)
+    or leaving the interstate edges to order them."""
+    N_SYM, M_SYM = 6, 4
+    sdfg = SDFG('peel_maps_then_rem')
+    sdfg.add_array('A', [N_SYM, M_SYM], dtypes.float64)
+    sdfg.add_array('B', [N_SYM, M_SYM], dtypes.float64)
+
+    s_peel0 = sdfg.add_state('peeled_iter_0', is_start_block=True)
+    s_peel1 = sdfg.add_state('peeled_iter_1')
+    s_rem = sdfg.add_state('remainder_map')
+    sdfg.add_edge(s_peel0, s_peel1, InterstateEdge())
+    sdfg.add_edge(s_peel1, s_rem, InterstateEdge())
+
+    def add_row_map(state, row_idx: str, j_range: str):
+        b_in = state.add_access('B')
+        a_out = state.add_access('A')
+        me, mx = state.add_map(f'm_{row_idx}', {'j': j_range})
+        t = state.add_tasklet(f't_{row_idx}', {'_in'}, {'_out'}, '_out = _in * 2.0')
+        state.add_memlet_path(b_in, me, t, dst_conn='_in', memlet=Memlet(f'B[{row_idx}, j]'))
+        state.add_memlet_path(t, mx, a_out, src_conn='_out', memlet=Memlet(f'A[{row_idx}, j]'))
+
+    add_row_map(s_peel0, '0', f'0:{M_SYM}')  # peeled iter 0: full row 0
+    add_row_map(s_peel1, '1', f'0:{M_SYM}')  # peeled iter 1: full row 1
+
+    b_in = s_rem.add_access('B')
+    a_out = s_rem.add_access('A')
+    me, mx = s_rem.add_map('rem', {'i': f'2:{N_SYM}', 'j': f'0:{M_SYM}'})
+    t = s_rem.add_tasklet('t_rem', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    s_rem.add_memlet_path(b_in, me, t, dst_conn='_in', memlet=Memlet('B[i, j]'))
+    s_rem.add_memlet_path(t, mx, a_out, src_conn='_out', memlet=Memlet('A[i, j]'))
+    sdfg.validate()
+
+    A = np.zeros((N_SYM, M_SYM), dtype=np.float64)
+    B = np.arange(N_SYM * M_SYM, dtype=np.float64).reshape(N_SYM, M_SYM) + 0.5
+    # Disjoint writes -> fusing to 1 state is the cleanest outcome, but
+    # refusing (keeping interstate ordering) would also be value-preserving.
+    # Pin value preservation regardless of the topology choice.
+    ref_sdfg = copy.deepcopy(sdfg)
+    refA = A.copy()
+    ref_sdfg(A=refA, B=B.copy())
+
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended)
+    fused.validate()
+    gotA = A.copy()
+    fused(A=gotA, B=B.copy())
+    assert np.allclose(refA, gotA), f'peeled-Map + remainder-Map diverges: ref={refA} got={gotA}'
+
+
+def test_post_apply_structural_check_raises_on_orphaned_memlet():
+    """The post-apply structural check on ``StateFusionExtended`` must
+    raise ``InvalidSDFGEdgeError`` if the merger somehow leaves an edge
+    whose ``memlet.data`` does not match either endpoint's AccessNode
+    data. Construct a valid 2-state SDFG, fuse it (the apply runs
+    cleanly), then PROACTIVELY corrupt a post-fusion edge to simulate
+    the historical s118-class bug class, and assert the helper raises."""
+    from dace.transformation.interstate import StateFusionExtended as _SFE
+    sdfg = SDFG('post_apply_check')
+    sdfg.add_array('A', [8], dtypes.float64)
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    aw = s1.add_write('A')
+    t1 = s1.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s1.add_edge(t1, 'o', aw, None, Memlet('A[k]'))
+    bw = s2.add_write('B')
+    t2 = s2.add_tasklet('w2', {}, {'o'}, 'o = 5.0')
+    s2.add_edge(t2, 'o', bw, None, Memlet('B[k]'))
+    sdfg.validate()
+
+    # Run the fusion -- this is a clean case, no real bug.
+    sdfg.apply_transformations_repeated(_SFE)
+    fused = next(iter(sdfg.states()))
+
+    # Now PROACTIVELY corrupt: pick an A-write edge and overwrite its
+    # ``memlet.data`` with a name that matches neither endpoint. The
+    # post-apply check would have raised on this kind of damage if the
+    # merger had produced it -- we verify the check helper catches it
+    # synthetically.
+    target = next((e for e in fused.edges() if e.data and e.data.data == 'A'), None)
+    assert target is not None
+    target.data.data = 'B'  # Now memlet says ``B`` but dst is ``A``.
+
+    xform = _SFE()
+    xform.first_state = fused
+    xform.second_state = fused
+    try:
+        xform._post_apply_check(fused, sdfg)
+    except Exception as ex:
+        assert 'invalid edge' in str(ex).lower() or 'memlet.data' in str(ex).lower(), \
+            f'unexpected exception text: {ex}'
+        return
+    raise AssertionError('post-apply check failed to flag a mismatched memlet.data')
+
+
+def test_post_apply_strict_validate_runs_full_sdfg_validate():
+    """The ``strict_validate`` knob runs ``sdfg.validate()`` after every
+    apply. On a clean fusion this is a no-op; this test pins that the
+    knob is wired and a clean fusion still passes when strict is on."""
+    from dace.transformation.interstate import StateFusionExtended as _SFE
+    sdfg = SDFG('strict_validate_clean')
+    sdfg.add_array('A', [8], dtypes.float64)
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    aw = s1.add_write('A')
+    t1 = s1.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s1.add_edge(t1, 'o', aw, None, Memlet('A[k]'))
+    ar = s2.add_read('A')
+    bw = s2.add_write('B')
+    tr = s2.add_tasklet('r', {'i'}, {'o'}, 'o = i')
+    s2.add_edge(ar, None, tr, 'i', Memlet('A[k]'))
+    s2.add_edge(tr, 'o', bw, None, Memlet('B[k]'))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(_SFE, options={'strict_validate': True})
+    sdfg.validate()
+    assert sdfg.number_of_nodes() == 1, 'clean RAW fusion under strict_validate should still produce 1 state'
+
+
 if __name__ == '__main__':
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
@@ -366,3 +539,7 @@ if __name__ == '__main__':
     test_rar_read_after_read_no_hazard()
     test_same_named_writer_transient_does_not_collapse()
     test_peeled_iterations_then_remainder_map_keep_ordering()
+    test_same_cc_war_exempted_when_value_flows_from_first()
+    test_peeled_maps_then_remainder_map_fuse_or_refuse_correctly()
+    test_post_apply_structural_check_raises_on_orphaned_memlet()
+    test_post_apply_strict_validate_runs_full_sdfg_validate()
