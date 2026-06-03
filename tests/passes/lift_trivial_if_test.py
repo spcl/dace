@@ -270,8 +270,11 @@ def test_simplify_pipeline_includes_lift_trivial_if():
 from dace.sdfg.state import LoopRegion
 
 
-def _get_loop_with_conditional(branch_cond: str, with_else: bool = False, init: str = "i = 2",
-                               cond: str = "i < 10", update: str = "i = i + 1"):
+def _get_loop_with_conditional(branch_cond: str,
+                               with_else: bool = False,
+                               init: str = "i = 2",
+                               cond: str = "i < 10",
+                               update: str = "i = i + 1"):
     """Build ``for i in [init..cond): if (branch_cond) [else ...]`` with real
     dataflow on the live arm, so the conditional sits inside a ``LoopRegion`` whose
     iteration range governs whether ``branch_cond`` is a range tautology/contradiction.
@@ -284,8 +287,12 @@ def _get_loop_with_conditional(branch_cond: str, with_else: bool = False, init: 
     sdfg = dace.SDFG("loopcond")
     _, A = sdfg.add_array("A", [10], dace.float64)
     sdfg.add_array("B", [10], dace.float64)
-    loop = LoopRegion(label="myloop", condition_expr=cond, loop_var="i", initialize_expr=init,
-                      update_expr=update, sdfg=sdfg)
+    loop = LoopRegion(label="myloop",
+                      condition_expr=cond,
+                      loop_var="i",
+                      initialize_expr=init,
+                      update_expr=update,
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     cb = ConditionalBlock(label="cfb", sdfg=sdfg, parent=loop)
     loop.add_node(cb, is_start_block=True)

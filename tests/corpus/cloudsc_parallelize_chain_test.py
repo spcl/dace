@@ -20,10 +20,31 @@ parallel, so a small relative error is allowed there.
 Two build regimes (see :mod:`tests.corpus.generate_data_for_cloudsc`):
 
 * ``ieee``    -- ``-O0``, no fast-math, no FP contraction, sequential schedules.
-* ``release`` -- the configured ``-O3 -ffast-math`` flags, parallel schedules.
+* ``o3``      -- ``-O3``, no fast-math, no FP contraction, parallel schedules.
+
+We deliberately do NOT exercise ``-ffast-math`` on cloudsc: with fast-math the
+compiler reassociates flux prefix-sums and rewrites transcendentals, which
+produces drifts the per-stage tolerance cannot bound -- correctness can only
+be evaluated against IEEE-respecting builds.
 
 This is a slow integration test: it builds the full CloudSC SDFG once
 (``simplify=False`` parse is minutes) and compiles it once per step.
+
+Manual run::
+
+    pytest tests/corpus/cloudsc_parallelize_chain_test.py -v -s -m integration
+
+    # restrict to one regime:
+    pytest tests/corpus/cloudsc_parallelize_chain_test.py -v -s -m integration \\
+        -k '[ieee]'
+
+    # dump every per-stage SDFG into ``/tmp/cloudsc_dump`` (created if missing)
+    # so each step can be reloaded and post-mortemed without rerunning the chain:
+    pytest tests/corpus/cloudsc_parallelize_chain_test.py -v -s -m integration \\
+        --cloudsc-dump-dir=/tmp/cloudsc_dump
+
+    # files land as ``<regime>_<stage_index>_<stage_name>.sdfgz`` --
+    # e.g. ``ieee_03_simplify.sdfgz``, ``ieee_13_loop_to_map.sdfgz``.
 """
 import contextlib
 import copy
@@ -50,15 +71,25 @@ from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-from tests.corpus.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
+from tests.corpus.generate_data_for_cloudsc import (IEEE_CPU_ARGS, O3_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
                                                     generate_cloudsc_inputs, make_sequential)
 
-#: (ieee_build, sequential, strict_tol, relaxed_tol) per regime. ``strict_tol``
+#: (cpu_args, sequential, strict_tol, relaxed_tol) per regime. ``strict_tol``
 #: gates the value-preserving steps; ``relaxed_tol`` gates the reassociating
 #: reduce/loop-to-map steps where a small parallel-reduction error is expected.
+#:
+#: ``ieee``: ``-O0`` deterministic IEEE build, sequential. Value-preserving stages
+#: stay bit-identical to the un-transformed reference (``1e-16`` tolerance is below
+#: ``DBL_EPSILON ~ 2.22e-16`` -- effectively bit-for-bit). Reassociating stages
+#: get ``1e-15`` (~ 4x ULP).
+#:
+#: ``o3``: ``-O3`` with the same ``-fno-fast-math -ffp-contract=off`` flags as
+#: ieee, parallel schedules. The compiler is free to vectorise / unroll but
+#: cannot reassociate FP ops; bit-identical to the IEEE build for non-reducing
+#: stages. Reducing stages get a small tolerance bump for parallel-OMP order.
 _REGIMES = {
-    'ieee': (True, True, 1e-15, 1e-10),
-    'release': (False, False, 1e-10, 1e-10),
+    'ieee': (IEEE_CPU_ARGS, True, 1e-16, 1e-15),
+    'o3': (O3_CPU_ARGS, False, 1e-16, 1e-12),
 }
 
 #: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
@@ -70,7 +101,7 @@ _RELAXED_STEPS = {'loop_to_map', 'loop_to_scan', 'loop_to_reduce'}
 #: roundtrip bugs surface; ``loop_to_map`` is the final transformed shape. Per-stage
 #: roundtrip on every label roughly doubles wall-clock for no new bug coverage --
 #: these two bracket every transform-induced descriptor / memlet / region mutation.
-_ROUNDTRIP_CHECKPOINTS = {'simplify', 'loop_to_map'}
+_ROUNDTRIP_CHECKPOINTS = {'simplify', 'loop_to_scan'}
 
 #: Index symbols whose ``<sym> + 1`` bound expression must not survive symbol
 #: propagation as an interstate-edge assignment value.
@@ -268,25 +299,32 @@ def _chain():
         # + 1)`` bound-symbol aliases as it renames each iterator. ``SymbolPropagation``
         # folds them back out so ``LoopToScan`` / ``LoopToMap`` see clean conditions.
         ('symbol_propagation', lambda sdfg: SymbolPropagation().apply_pass(sdfg, {})),
-        # ``LoopToScan`` lifts prefix-sum / running-min/max loops to a Scan libnode call.
-        # The pfsqXf vertical-flux prefix-sum and the composite-body shape
-        # (carry-copy state + sibling accumulate state(s) on the same carrier) both
-        # match here. Must run BEFORE ``LoopToMap`` -- the three matchers carve out
-        # non-overlapping cases of loop-carried writes.
-        ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
-        # Re-WCR the augmented assignments that PCIA privatisation + LoopToScan
-        # left behind so the subsequent ``LoopToMap`` lifts them as reductions
-        # (OMP ``reduction(...)`` / atomic write) rather than a serial RMW.
-        # Actually FIRES on cloudsc (356 WCR edges).
+        # Re-WCR the augmented assignments that PCIA privatisation left behind so
+        # the subsequent ``LoopToMap`` lifts them as reductions (OMP
+        # ``reduction(...)`` / atomic write) rather than a serial RMW. Actually
+        # FIRES on cloudsc (356 WCR edges).
         ('aug_assign_to_wcr', _pmar(AugAssignToWCR)),
+        # ``LoopToMap`` parallelises every column-loop body that has no
+        # loop-carried writes. After this, the cloudsc ``for_1133`` body is
+        # outer ``LoopRegion[jk]`` + inner parallel ``Map[jl]`` -- the
+        # post-L2M shape that ``LoopToScan``'s composite-body matcher (with
+        # the ``_find_carried_arrays_via_nested`` descent) is designed for.
         ('loop_to_map', _pmar(LoopToMap)),
+        # ``LoopToScan`` runs AFTER ``LoopToMap`` in this pipeline: the only
+        # loops left after L2M are the genuinely-sequential ones (scan
+        # recurrences, multi-carrier prefix sums, etc.), and the composite-
+        # body matcher descends through the inner ``Map[jl]``'s NestedSDFG
+        # to find the per-(jk, jl) carrier-update tasklet.
+        ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
     ]
 
 
-def _run(sdfg: dace.SDFG, inputs, ieee_build: bool, sequential: bool, tag: str):
+def _run(sdfg: dace.SDFG, inputs, cpu_args: str, sequential: bool, tag: str):
     """Run ``sdfg`` once on a private copy of ``inputs`` under the given build
     regime, returning the mutated buffers. ``sdfg`` is renamed (fresh build dir)
-    and run in place; the prior ``compiler.cpu.args`` is restored afterwards."""
+    and run in place; the prior ``compiler.cpu.args`` is restored afterwards.
+    ``cpu_args`` is the regime's full ``compiler.cpu.args`` string (see
+    ``_REGIMES``)."""
     sdfg.name = f'cloudsc_parallelize_{tag}'
     if sequential:
         make_sequential(sdfg)
@@ -295,8 +333,7 @@ def _run(sdfg: dace.SDFG, inputs, ieee_build: bool, sequential: bool, tag: str):
     args = {k: v for k, v in copy.deepcopy(inputs).items() if k in needed}
     saved_args = dace.Config.get('compiler', 'cpu', 'args')
     try:
-        if ieee_build:
-            dace.Config.set('compiler', 'cpu', 'args', value=IEEE_CPU_ARGS)
+        dace.Config.set('compiler', 'cpu', 'args', value=cpu_args)
         sdfg(**args)
     finally:
         dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
@@ -325,12 +362,12 @@ def reference_sdfg_file(tmp_path_factory):
 
 @pytest.mark.integration
 @pytest.mark.parametrize('regime', list(_REGIMES))
-def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
-    ieee_build, sequential, strict_tol, relaxed_tol = _REGIMES[regime]
+def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path, cloudsc_dump_dir):
+    cpu_args, sequential, strict_tol, relaxed_tol = _REGIMES[regime]
 
     ref = dace.SDFG.from_file(reference_sdfg_file)
     inputs = generate_cloudsc_inputs(ref, seed=0)
-    reference_out = _run(ref, inputs, ieee_build, sequential, tag=f'{regime}_ref')
+    reference_out = _run(ref, inputs, cpu_args, sequential, tag=f'{regime}_ref')
     del ref
     gc.collect()
 
@@ -338,11 +375,16 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
     rt_dir = str(tmp_path / 'roundtrips')
     os.makedirs(rt_dir, exist_ok=True)
 
-    for label, apply_fn in _chain():
+    for stage_idx, (label, apply_fn) in enumerate(_chain(), start=1):
         # The loop transforms log every refused loop; keep the test output readable.
         with contextlib.redirect_stdout(open(os.devnull, 'w')):
             apply_fn(candidate)
         candidate.validate()
+
+        # Optional per-stage SDFG dump for manual post-mortems.
+        if cloudsc_dump_dir:
+            dump_path = os.path.join(cloudsc_dump_dir, f'{regime}_{stage_idx:02d}_{label}.sdfgz')
+            candidate.save(dump_path, compress=True)
 
         # Per-stage structural invariants of the chain.
         n_wcr, n_red = len(_wcr_edges(candidate)), len(_reduce_nodes(candidate))
@@ -356,18 +398,20 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
         if label == 'symbol_propagation':
             assert not bad_assigns, (f'{regime}/{label}: bound symbol assignments survived symbol propagation: '
                                      f'{bad_assigns}')
-        # Pin the map/loop counts at the final parallelization step (the single L2M
-        # sweep that follows PCIA). PCIA unblocks the ICE ``for_767`` slot, dropping
-        # the loop count by 1; LoopToScan handles ``pfsqrf`` once the multi-state
-        # matcher relaxation catches its 3-block shape.
-        if label == 'loop_to_map':
+        # Pin the map/loop counts at the FINAL parallelisation stage (now
+        # ``loop_to_scan``, since the chain runs L2M then L2S). PCIA unblocks
+        # the ICE ``for_767`` slot, L2M parallelises every data-parallel
+        # column loop, then L2S converts the surviving genuinely-sequential
+        # prefix-sum loops to Scan libnodes -- so the pinned counts reflect
+        # the post-L2S state.
+        if label == 'loop_to_scan':
             n_maps, n_loops = len(_map_entries(candidate)), len(_loop_regions(candidate))
             print(f'{regime}/{label}: maps={n_maps} sequential_loops={n_loops}')
             assert n_maps == _EXPECTED_MAPS, f'{regime}/{label}: {n_maps} maps, expected {_EXPECTED_MAPS}'
             assert n_loops == _EXPECTED_SEQUENTIAL_LOOPS, (
                 f'{regime}/{label}: {n_loops} loops stayed sequential, expected {_EXPECTED_SEQUENTIAL_LOOPS}')
 
-        out = _run(candidate, inputs, ieee_build, sequential, tag=f'{regime}_{label}')
+        out = _run(candidate, inputs, cpu_args, sequential, tag=f'{regime}_{label}')
         tol = relaxed_tol if label in _RELAXED_STEPS else strict_tol
         report = compare_outputs(out, reference_out, rtol=tol, atol=tol)
         worst = max(((ma, mr) for ma, mr, _ in report.values()), default=(0.0, 0.0))
@@ -386,12 +430,11 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
         # the pipeline can introduce.
         if label in _ROUNDTRIP_CHECKPOINTS:
             rt = _roundtrip(candidate, rt_dir, f'{regime}_{label}')
-            rt_out = _run(rt, inputs, ieee_build, sequential, tag=f'{regime}_{label}_rt')
+            rt_out = _run(rt, inputs, cpu_args, sequential, tag=f'{regime}_{label}_rt')
             rt_report = compare_outputs(rt_out, out, rtol=strict_tol, atol=strict_tol)
             rt_bad = {name: (ma, mr) for name, (ma, mr, ok) in rt_report.items() if not ok}
-            assert not rt_bad, (
-                f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
-                f'(strict_tol={strict_tol:.0e}): {rt_bad}')
+            assert not rt_bad, (f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
+                                f'(strict_tol={strict_tol:.0e}): {rt_bad}')
 
 
 if __name__ == '__main__':

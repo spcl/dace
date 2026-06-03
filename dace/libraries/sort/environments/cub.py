@@ -27,13 +27,23 @@ class CUB:
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
-    cmake_includes = []
+    # Surface the CUDA Toolkit include directories on the CXX (g++) side too.
+    # CUB libnodes' host-side wrappers (e.g. ``cub::DeviceScan::InclusiveScan``
+    # in ``Scan.ExpandCUDA``) land in the SDFG's host ``.cpp`` translation
+    # unit; ``enable_language(CUDA)`` only adjusts nvcc's include path, so g++
+    # cannot otherwise find ``cub/cub.cuh``.
+    #
+    # CUDA Toolkit 13+ relocated CUB under ``cccl/`` -- nvcc auto-resolves both
+    # paths, g++ needs them explicit. Listing both is safe: the 12.x cccl
+    # subdir typically does not exist and CMake silently ignores missing
+    # entries when added via ``include_directories``.
+    cmake_includes = ['${CUDAToolkit_INCLUDE_DIRS}', '${CUDAToolkit_INCLUDE_DIRS}/cccl']
     cmake_libraries = []
     cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ['cub/cub.cuh', 'dace/cub_scratch.cuh']}
+    headers = {'frame': ['cub/cub.cuh', 'dace/cub_scratch.cuh', 'dace/cub_compat.cuh']}
     state_fields = []
     init_code = ""
     finalize_code = ""

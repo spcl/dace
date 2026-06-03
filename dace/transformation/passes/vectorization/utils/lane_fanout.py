@@ -699,8 +699,7 @@ def detect_lane_fanout_apply(sdfg: SDFG,
             # through an ``_idx`` connector instead of W interstate-edge
             # symbols.
             idxarr_match: Optional[Tuple[str, dace.symbolic.SymbolicType, int, List[str]]] = None
-            if (pattern == "contiguous" and collapse_laneid_index_loads
-                    and intrinsic_template_idxarr is not None):
+            if (pattern == "contiguous" and collapse_laneid_index_loads and intrinsic_template_idxarr is not None):
                 idxarr_match = _recognize_laneid_index_slice(state, idx_data_and_subset, vector_length)
 
             if pattern == "contiguous" and idxarr_match is not None:
@@ -780,8 +779,7 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                     # the intrinsic strides into it via ``_idx[l*stride]``).
                     # ``stride == 1`` reduces to the W-wide window.
                     idx_end = begin_expr + idx_stride * (vector_length - 1)
-                    idx_memlet = dace.memlet.Memlet(data=idxarr,
-                                                    subset=dace.subsets.Range([(begin_expr, idx_end, 1)]))
+                    idx_memlet = dace.memlet.Memlet(data=idxarr, subset=dace.subsets.Range([(begin_expr, idx_end, 1)]))
                     state.add_edge(idx_an, None, t1, "_idx", idx_memlet)
                     # The fan tasklets that read the laneid symbols were
                     # just removed; drop those now-dead symbols and their
@@ -821,16 +819,17 @@ def detect_lane_fanout_apply(sdfg: SDFG,
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                found += detect_lane_fanout_apply(node.sdfg,
-                                                  direction=direction,
-                                                  pattern=pattern,
-                                                  intrinsic_template=intrinsic_template,
-                                                  intrinsic_tasklet_name=intrinsic_tasklet_name,
-                                                  intrinsic_template_masked=intrinsic_template_masked,
-                                                  skip_unmasked=skip_unmasked,
-                                                  collapse_laneid_index_loads=collapse_laneid_index_loads,
-                                                  intrinsic_template_idxarr=intrinsic_template_idxarr,
-                                                  intrinsic_template_idxarr_masked=intrinsic_template_idxarr_masked,
-                                                  intrinsic_template_idxarr_conv=intrinsic_template_idxarr_conv,
-                                                  intrinsic_template_idxarr_conv_masked=intrinsic_template_idxarr_conv_masked)
+                found += detect_lane_fanout_apply(
+                    node.sdfg,
+                    direction=direction,
+                    pattern=pattern,
+                    intrinsic_template=intrinsic_template,
+                    intrinsic_tasklet_name=intrinsic_tasklet_name,
+                    intrinsic_template_masked=intrinsic_template_masked,
+                    skip_unmasked=skip_unmasked,
+                    collapse_laneid_index_loads=collapse_laneid_index_loads,
+                    intrinsic_template_idxarr=intrinsic_template_idxarr,
+                    intrinsic_template_idxarr_masked=intrinsic_template_idxarr_masked,
+                    intrinsic_template_idxarr_conv=intrinsic_template_idxarr_conv,
+                    intrinsic_template_idxarr_conv_masked=intrinsic_template_idxarr_conv_masked)
     return found

@@ -5,7 +5,6 @@ import contextlib
 import os
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
@@ -237,8 +236,7 @@ def test_break_anti_dependence_post_normalize_negative_stride_reverse_scan():
     assert bad == 1, "BAD must recognise the reverse-scan WAR post-NNS"
     _l2m(sdfg)
     sdfg.validate()
-    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, (
-        "after NNS + BAD + L2M the reverse scan must be lifted")
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, ("after NNS + BAD + L2M the reverse scan must be lifted")
 
     # Numerics: reverse-iteration scan produces a SPECIFIC value pattern
     # (different from the forward-iteration scan because of the WAR).
@@ -247,7 +245,7 @@ def test_break_anti_dependence_post_normalize_negative_stride_reverse_scan():
     b = np.arange(n, dtype=np.float64) * 0.5
     ref = a.copy()
     for i in range(n - 2, -1, -1):
-        ref[i + 1] = ref[i] + b[i]   # reads ORIGINAL a[i] thanks to reverse iteration
+        ref[i + 1] = ref[i] + b[i]  # reads ORIGINAL a[i] thanks to reverse iteration
     out = a.copy()
     sdfg(a=out, b=b.copy(), N=n)
     assert np.allclose(out, ref), f"got {out}, expected {ref}"

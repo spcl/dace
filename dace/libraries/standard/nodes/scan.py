@@ -39,7 +39,6 @@ For supported binary ops, see :data:`_OP_TO_STD_CPP` and :data:`_OP_TO_CUB`. The
 op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
-from typing import Tuple
 
 import dace
 from dace import library, nodes, symbolic
@@ -52,7 +51,6 @@ import enum
 # ``dace.libraries.standard.nodes.scan`` ↔ ``dace.libraries.sort.environments.cub``
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
-
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
@@ -90,21 +88,29 @@ _OP_TO_OMP_SUFFIX = {
 }
 
 #: Map op enum to the CUB-side binary functor for ``cub::DeviceScan::InclusiveScan``.
+#: Routed through the ``DACE_CUB_*_OP`` macros from ``dace/cub_compat.cuh`` so the
+#: same SDFG source builds against CUDA Toolkit 12 (CUB <= 2.x has ``cub::Sum`` /
+#: ``cub::Min`` / ``cub::Max``) and 13 (CCCL 3.x dropped those in favour of
+#: ``cuda::std::plus`` + device lambdas).
 _OP_TO_CUB = {
-    ScanOp.SUM: 'cub::Sum()',
-    ScanOp.PRODUCT: '[] __device__(auto a, auto b){ return a * b; }',
-    ScanOp.MIN: 'cub::Min()',
-    ScanOp.MAX: 'cub::Max()',
+    ScanOp.SUM: 'DACE_CUB_SUM_OP',
+    ScanOp.PRODUCT: 'DACE_CUB_MUL_OP',
+    ScanOp.MIN: 'DACE_CUB_MIN_OP',
+    ScanOp.MAX: 'DACE_CUB_MAX_OP',
 }
 
 #: Default identity literal for ``exclusive`` scans, per op.
 _OP_TO_IDENTITY_CPP = {
-    ScanOp.SUM: '0',
-    ScanOp.PRODUCT: '1',
+    ScanOp.SUM:
+    '0',
+    ScanOp.PRODUCT:
+    '1',
     # ``min``/``max`` have no universal identity in C++ literal form -- callers must
     # supply ``identity`` explicitly for exclusive ``min``/``max`` scans.
-    ScanOp.MIN: None,
-    ScanOp.MAX: None,
+    ScanOp.MIN:
+    None,
+    ScanOp.MAX:
+    None,
 }
 
 
@@ -170,14 +176,17 @@ def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
     if node.exclusive:
         # Treat the identity as a Python literal; the codegen casts via the connector
         # type (a scalar of ``in_desc.dtype``).
-        seed_py = node.identity if node.identity is not None else (0 if node.op is ScanOp.SUM
-                                                                    else (1 if node.op is ScanOp.PRODUCT else None))
+        seed_py = node.identity if node.identity is not None else (0 if node.op is ScanOp.SUM else
+                                                                   (1 if node.op is ScanOp.PRODUCT else None))
         if seed_py is None:
             raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
         code = f"{OUTPUT_CONNECTOR_NAME} = {seed_py}"
     else:
         code = f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}"
-    return nodes.Tasklet(node.name, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, code=code,
+    return nodes.Tasklet(node.name,
+                         inputs={INPUT_CONNECTOR_NAME},
+                         outputs={OUTPUT_CONNECTOR_NAME},
+                         code=code,
                          language=dace.Language.Python)
 
 
@@ -357,6 +366,19 @@ class ExpandCUDA(ExpandTransformation):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         op_cub = _OP_TO_CUB[node.op]
+        stride_expr = sym2cpp(node.stride)
+        is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
+
+        if not is_stride_one:
+            # ``cub::DeviceScan`` only handles a single contiguous scan; the
+            # strided / residue-class shape has its own implementation
+            # (``ExpandCUDAStrided``). Direct the user to the right knob
+            # rather than silently mis-dispatch through a unit-stride cub
+            # call that would walk past each residue's boundary.
+            raise NotImplementedError("Scan(CUDA, unit-stride only): set ``implementation = 'CUDA_strided'`` on this "
+                                      "Scan libnode (or use the AUTO selector in LoopToScan); stride > 1 dispatches "
+                                      "to a separate expansion that calls ``dace::cuda_scan::strided_inclusive_<op>`` "
+                                      "via the ``dace/cuda/scan_strided.cu`` auxiliary translation unit.")
 
         if node.exclusive:
             seed = _identity_expr(node, in_desc)
@@ -401,6 +423,73 @@ class ExpandCUDA(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandCUDAStrided(ExpandTransformation):
+    """Strided GPU scan: ``s`` independent residue-class scans, one device
+    thread per class.
+
+    Uses the ``::dace::cuda_scan::strided_inclusive_<op>`` kernels declared in
+    :file:`dace/runtime/include/dace/cuda/scan.cuh` and called via the
+    ``extern "C"`` wrappers in
+    :file:`dace/runtime/include/dace/cuda/scan_strided.cu`. The wrappers are
+    nvcc-compiled and linked into the SDFG library through the new
+    ``library.environment`` ``auxiliary_sources`` field on
+    :class:`ScanStrided`. The host ``.cpp`` translation unit therefore only
+    sees a regular C function call -- no ``<<<>>>`` syntax, no ``__global__``
+    symbols, no ``cub/cub.cuh`` dependency.
+
+    Only inclusive scans are supported (mirroring the runtime header). Use
+    ``ExpandCUDA`` (cub-based) for unit-stride scans.
+    """
+
+    # Populated lazily to avoid a load-order cycle with the env module.
+    environments = []
+
+    @staticmethod
+    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        if not ExpandCUDAStrided.environments:
+            from dace.libraries.standard.environments.scan_strided import ScanStrided
+            ExpandCUDAStrided.environments = [ScanStrided]
+        in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if _is_length_one(node, state):
+            return _degenerate_single_element_tasklet(node, in_desc)
+        n_expr = _resolve_length(node, state, sdfg)
+        stride_expr = sym2cpp(node.stride)
+        if node.exclusive:
+            raise NotImplementedError("Scan(CUDA_strided): ``exclusive=True`` is not yet supported.")
+        if _has_init(node):
+            raise NotImplementedError("Scan(CUDA_strided): ``_scan_init`` is not yet supported.")
+        dtype = in_desc.dtype
+        # The wrapper set in ``scan_strided.cu`` is pre-instantiated for these
+        # dtypes. Extending it is mechanical -- add a ``_DACE_DEFINE_STRIDED_SCAN``
+        # macro instantiation in the .cu and a matching ``_DACE_DECL_STRIDED_SCAN``
+        # in the .h header.
+        if dtype == dace.float64:
+            dtype_suffix = 'f64'
+        elif dtype == dace.float32:
+            dtype_suffix = 'f32'
+        elif dtype == dace.int64:
+            dtype_suffix = 'i64'
+        elif dtype == dace.int32:
+            dtype_suffix = 'i32'
+        else:
+            raise NotImplementedError(
+                f"Scan(CUDA_strided): dtype {dtype} not in the pre-instantiated wrapper set "
+                f"(f64 / f32 / i64 / i32). Extend ``dace/runtime/include/dace/cuda/scan_strided.cu`` "
+                f"and ``...decls.h``.")
+        suffix = _OP_TO_OMP_SUFFIX[node.op]
+        code = (f"dace_cuda_strided_inclusive_{suffix}_{dtype_suffix}("
+                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, "
+                f"(long)({n_expr}), (long)({stride_expr}), __dace_current_stream);")
+        return nodes.Tasklet(
+            node.name,
+            inputs={INPUT_CONNECTOR_NAME},
+            outputs={OUTPUT_CONNECTOR_NAME},
+            code=code,
+            language=dace.Language.CPP,
+        )
+
+
 @library.node
 class Scan(nodes.LibraryNode):
     """Per-position prefix reduction over a 1-D array.
@@ -436,11 +525,14 @@ class Scan(nodes.LibraryNode):
     INIT_CONNECTOR_NAME = INIT_CONNECTOR_NAME
 
     op = EnumProperty(dtype=ScanOp, default=ScanOp.SUM, desc="Associative binary op for the scan.")
-    exclusive = Property(dtype=bool, default=False,
-                         desc="If True, output an exclusive scan (out[0] = identity).")
-    identity = Property(dtype=object, default=None, allow_none=True,
+    exclusive = Property(dtype=bool, default=False, desc="If True, output an exclusive scan (out[0] = identity).")
+    identity = Property(dtype=object,
+                        default=None,
+                        allow_none=True,
                         desc="Exclusive-scan identity element. Required for MIN/MAX exclusive scans.")
-    stride = Property(dtype=object, default=1, allow_none=False,
+    stride = Property(dtype=object,
+                      default=1,
+                      allow_none=False,
                       desc="Per-element stride for the scan recurrence. Default ``1`` is the "
                       "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
                       "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
@@ -450,11 +542,21 @@ class Scan(nodes.LibraryNode):
                       "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
                       "are not yet supported.")
 
-    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
+    implementations = {
+        "CPU": ExpandCPU,
+        "CUDA": ExpandCUDA,
+        "CUDA_strided": ExpandCUDAStrided,
+        "pure": ExpandPure,
+    }
     default_implementation = 'CPU'
 
-    def __init__(self, name: str = 'Scan', op: ScanOp = ScanOp.SUM, exclusive: bool = False,
-                 identity=None, *args, **kwargs):
+    def __init__(self,
+                 name: str = 'Scan',
+                 op: ScanOp = ScanOp.SUM,
+                 exclusive: bool = False,
+                 identity=None,
+                 *args,
+                 **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.op = op
         self.exclusive = exclusive

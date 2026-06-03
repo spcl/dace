@@ -48,8 +48,8 @@ def scatter_two(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: d
 
 
 @dace.program
-def semi_indirect_two(a: dace.float64[N, M], col: dace.int32[M], b: dace.float64[N, M],
-                      c: dace.float64[N, M], e: dace.float64[N, M]):
+def semi_indirect_two(a: dace.float64[N, M], col: dace.int32[M], b: dace.float64[N, M], c: dace.float64[N, M],
+                      e: dace.float64[N, M]):
     # dim 0 structured, dim 1 gathered through ``col``.
     for i, j in dace.map[0:N, 0:M]:
         b[i, j] = a[i, col[j]]

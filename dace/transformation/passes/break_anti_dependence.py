@@ -17,7 +17,7 @@ and at least one is WAR.
 It trades an extra array + an O(N) copy for parallelism, so it is meant to run
 **optionally** (a tuning knob), not as part of the default pipeline.
 """
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from dace import data, properties, symbolic, Memlet
 from dace.sdfg import SDFG
@@ -174,15 +174,25 @@ class BreakAntiDependence(ppl.Pass):
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):
         """Find ``sym_name := expr`` on any interstate edge in the loop body.
-        Returns the RHS string, or ``None``."""
+        Returns the RHS string, or ``None``.
+
+        ``loop.all_states()`` recurses into nested control-flow regions
+        (LoopRegion / ConditionalBlock / etc.); a state inside a nested
+        region is NOT in ``loop._nodes`` directly, so asking
+        ``loop.in_edges(st)`` for such a state raises ``KeyError``. Use
+        ``st.parent_graph`` instead -- each state's parent CFR knows
+        about that state.
+        """
         for st in loop.all_states():
-            for e in loop.in_edges(st):
+            parent = st.parent_graph
+            if parent is None:
+                continue
+            for e in parent.in_edges(st):
                 if e.data is not None and sym_name in (e.data.assignments or {}):
                     return e.data.assignments[sym_name]
         return None
 
-    def _collect_iedge_substitutions(self, loop: LoopRegion,
-                                     isym=None, sdfg: Optional[SDFG] = None):
+    def _collect_iedge_substitutions(self, loop: LoopRegion, isym=None, sdfg: Optional[SDFG] = None):
         """Build ``{sym: rhs_expr}`` for every iedge assignment in the loop
         body whose RHS is a *pure* symbolic expression (loop iterator +
         loop-invariant symbols, no array reads anywhere in the dependency
@@ -264,8 +274,7 @@ class BreakAntiDependence(ppl.Pass):
                 continue
             if symbolic.pystr_to_symbolic(lhs) in expr.free_symbols:
                 continue
-            unknown = [s for s in expr.free_symbols
-                       if str(s) not in in_scope and str(s) not in all_binding_names]
+            unknown = [s for s in expr.free_symbols if str(s) not in in_scope and str(s) not in all_binding_names]
             if unknown:
                 continue
             # Only inline when the RHS references the loop iterator; otherwise

@@ -18,9 +18,7 @@ import dace
 from dace.libraries.sort.nodes.integer_sort import IntegerSort
 from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard)
 
-
 N = dace.symbol('N')
-
 
 # -- TSVC scatter kernels (1-D, integer index ``ip``) ------------------------
 
@@ -191,7 +189,6 @@ def test_guard_refuses_double_emit():
 
 # -- Abort-on-duplicate (subprocess; SIGABRT/SIGILL is expected) --------------
 
-
 _DUPLICATE_ABORT_SCRIPT = textwrap.dedent(f"""
     import sys
     sys.path.insert(0, {repr(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))})
@@ -229,13 +226,11 @@ def test_duplicate_idx_aborts_the_process():
     a marker only if the abort *didn't* fire; we check the marker is absent
     AND the subprocess exited abnormally (non-zero return / signal).
     """
-    proc = subprocess.run([sys.executable, '-c', _DUPLICATE_ABORT_SCRIPT],
-                          capture_output=True, text=True, timeout=120)
+    proc = subprocess.run([sys.executable, '-c', _DUPLICATE_ABORT_SCRIPT], capture_output=True, text=True, timeout=120)
     assert 'UNEXPECTEDLY_SURVIVED' not in proc.stdout, (
         f"Guard failed to abort on duplicate idx. stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}")
-    assert proc.returncode != 0, (
-        f"Expected non-zero exit on trap; got returncode={proc.returncode}. "
-        f"stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}")
+    assert proc.returncode != 0, (f"Expected non-zero exit on trap; got returncode={proc.returncode}. "
+                                  f"stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}")
 
 
 if __name__ == '__main__':

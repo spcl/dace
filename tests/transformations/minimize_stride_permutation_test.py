@@ -236,8 +236,7 @@ def test_mixed_dims_3d_outer_symbolic_is_safe_noop():
 
 def test_mixed_dims_3d_two_symbolic_is_safe_noop():
     """Strides (5*M, M, 1): two symbolic, one concrete -> no-op."""
-    _assert_mixed_safe_noop(transposed_3d_mixed_inner_symbolic, (7, 5, 13), dict(M=13),
-                            ['i', 'j', 'k'])
+    _assert_mixed_safe_noop(transposed_3d_mixed_inner_symbolic, (7, 5, 13), dict(M=13), ['i', 'j', 'k'])
 
 
 def test_all_concrete_mixed_magnitudes_still_reorders():

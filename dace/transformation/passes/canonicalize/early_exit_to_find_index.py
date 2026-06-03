@@ -68,7 +68,7 @@ import copy as _copy
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import dace
-from dace import SDFG, data, dtypes, properties, subsets, symbolic
+from dace import SDFG, data, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.properties import CodeBlock
 from dace.sdfg import nodes

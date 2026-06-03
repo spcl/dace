@@ -199,4 +199,5 @@ _all_tests/
 /*.onnx
 /*.bin
 latex-tools/
+.claude/
 _session_scratch/

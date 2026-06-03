@@ -27,7 +27,6 @@ array. A 1-D array's packing is ambiguous (its single stride is ``1`` in both or
 follows the majority packing of the SDFG's multi-dimensional arrays.
 """
 import contextlib
-import copy
 import functools
 import io
 import operator

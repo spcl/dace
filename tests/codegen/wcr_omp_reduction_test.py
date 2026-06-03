@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
 
 N = dace.symbol("N")
 
@@ -216,27 +215,25 @@ PER_OP_CASES = [
     ("sum", "lambda a, b: a + b", "+", dace.float64, "o = 0.0", _f64_rand, lambda x: float(x.sum()), np.isclose),
     ("product", "lambda a, b: a * b", "*", dace.float64, "o = 1.0", _f64_rand, lambda x: float(x.prod()), np.isclose),
     ("min", "lambda a, b: min(a, b)", "min", dace.float64, "o = 1e9", _f64_rand, lambda x: float(x.min()), np.isclose),
-    ("max", "lambda a, b: max(a, b)", "max", dace.float64, "o = -1e9", _f64_rand, lambda x: float(x.max()),
-     np.isclose),
-    ("band", "lambda a, b: a & b", "&", dace.int32, "o = -1", _i32_rand,
-     lambda x: int(np.bitwise_and.reduce(x)), lambda a, b: int(a) == int(b)),
-    ("bor", "lambda a, b: a | b", "|", dace.int32, "o = 0", _i32_rand,
-     lambda x: int(np.bitwise_or.reduce(x)), lambda a, b: int(a) == int(b)),
-    ("bxor", "lambda a, b: a ^ b", "^", dace.int32, "o = 0", _i32_rand,
-     lambda x: int(np.bitwise_xor.reduce(x)), lambda a, b: int(a) == int(b)),
-    ("land", "lambda a, b: a and b", "&&", dace.int32, "o = 1",
-     lambda n: _bool_rand_mostly_true(n).astype(np.int32),
+    ("max", "lambda a, b: max(a, b)", "max", dace.float64, "o = -1e9", _f64_rand, lambda x: float(x.max()), np.isclose),
+    ("band", "lambda a, b: a & b", "&", dace.int32, "o = -1", _i32_rand, lambda x: int(np.bitwise_and.reduce(x)),
+     lambda a, b: int(a) == int(b)),
+    ("bor", "lambda a, b: a | b", "|", dace.int32, "o = 0", _i32_rand, lambda x: int(np.bitwise_or.reduce(x)),
+     lambda a, b: int(a) == int(b)),
+    ("bxor", "lambda a, b: a ^ b", "^", dace.int32, "o = 0", _i32_rand, lambda x: int(np.bitwise_xor.reduce(x)),
+     lambda a, b: int(a) == int(b)),
+    ("land", "lambda a, b: a and b", "&&", dace.int32, "o = 1", lambda n: _bool_rand_mostly_true(n).astype(np.int32),
      lambda x: int(bool(np.all(x))), lambda a, b: bool(int(a)) == bool(int(b))),
-    ("lor", "lambda a, b: a or b", "||", dace.int32, "o = 0",
-     lambda n: _bool_rand_mostly_false(n).astype(np.int32),
+    ("lor", "lambda a, b: a or b", "||", dace.int32, "o = 0", lambda n: _bool_rand_mostly_false(n).astype(np.int32),
      lambda x: int(bool(np.any(x))), lambda a, b: bool(int(a)) == bool(int(b))),
 ]
 
 
-@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES,
+@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare",
+                         PER_OP_CASES,
                          ids=[c[0] for c in PER_OP_CASES])
 def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
-                                                        compare):
+                                                         compare):
     """Each supported WCR op must produce the matching ``reduction(<op>:acc)``
     clause AND compute the right numerical result. Pins three things at once:
 
@@ -251,8 +248,10 @@ def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_
 
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
     target_clause = f"reduction({expected_op}:"
-    assert any(target_clause in l for l in pragma_lines), (
-        f"expected '{target_clause}' clause for op '{op_name}' (wcr={wcr!r}); got pragmas:\n" + "\n".join(pragma_lines))
+    assert any(
+        target_clause in l
+        for l in pragma_lines), (f"expected '{target_clause}' clause for op '{op_name}' (wcr={wcr!r}); got pragmas:\n" +
+                                 "\n".join(pragma_lines))
 
     n = 1024
     src_arr = gen_input(n)
@@ -262,10 +261,11 @@ def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_
     assert compare(out[0], expected), f"{op_name}: got {out[0]}, expected {expected}"
 
 
-@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES,
+@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare",
+                         PER_OP_CASES,
                          ids=[c[0] for c in PER_OP_CASES])
 def test_per_operator_suppresses_atomic_on_covered_target(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
-                                                         compare):
+                                                          compare):
     """For each supported op, the per-edge ``reduce_atomic`` must be skipped
     on the OMP-reduction-covered target: the runtime's per-thread copy + final
     tree-reduce makes an extra atomic on top strictly wasted work (and would
@@ -285,8 +285,9 @@ def test_unsupported_op_falls_back_to_atomic():
     sdfg = _build_op_sdfg("sub", "lambda a, b: a - b", dace.float64, "o = 0.0")
     _, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(" in l for l in pragma_lines), (
-        "expected NO reduction clause for an unsupported op; got:\n" + "\n".join(pragma_lines))
+    assert not any("reduction(" in l
+                   for l in pragma_lines), ("expected NO reduction clause for an unsupported op; got:\n" +
+                                            "\n".join(pragma_lines))
     assert any("reduce_atomic" in l and "acc" in l for l in src.splitlines()), \
         "expected reduce_atomic on 'acc' as fallback when no reduction clause is emitted"
 
@@ -312,8 +313,7 @@ def test_length_one_array_target_falls_back_to_atomic():
     me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
     t = ms.add_tasklet("acc", {"v"}, {"r"}, "r = v")
     ms.add_memlet_path(ms.add_read("src"), me, t, dst_conn="v", memlet=dace.Memlet("src[i]"))
-    ms.add_memlet_path(t, mx, ms.add_write("acc"), src_conn="r",
-                       memlet=dace.Memlet("acc[0]", wcr="lambda a, b: a + b"))
+    ms.add_memlet_path(t, mx, ms.add_write("acc"), src_conn="r", memlet=dace.Memlet("acc[0]", wcr="lambda a, b: a + b"))
 
     post = sdfg.add_state("post")
     sdfg.add_edge(ms, post, dace.InterstateEdge())
@@ -324,8 +324,9 @@ def test_length_one_array_target_falls_back_to_atomic():
 
     _, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(" in l for l in pragma_lines), (
-        "expected NO reduction clause for length-1 Array target; got:\n" + "\n".join(pragma_lines))
+    assert not any("reduction(" in l
+                   for l in pragma_lines), ("expected NO reduction clause for length-1 Array target; got:\n" +
+                                            "\n".join(pragma_lines))
 
 
 if __name__ == "__main__":

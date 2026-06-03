@@ -132,10 +132,7 @@ def test_jacobi2d_with_fuse_overlapping_loads():
             assert max(sizes) > vw, (f"{win} in {inner.label} has shape {tuple(str(s) for s in desc.shape)}; "
                                      f"expected a dim > vector_width={vw} (the union ``+halo`` window)")
             # 3. read at multiple distinct offsets from the one window.
-            read_subsets = {
-                str(e.data.subset)
-                for ist in inner.all_states() for e in ist.edges() if e.data.data == win
-            }
+            read_subsets = {str(e.data.subset) for ist in inner.all_states() for e in ist.edges() if e.data.data == win}
             assert len(read_subsets) >= 2, (f"{win} in {inner.label} read at only {read_subsets}; expected the "
                                             f"fused stencil to read the one window at multiple offsets")
     assert found_window, "no fused union-window buffer (>vector_width) found in any body NSDFG"
@@ -237,18 +234,18 @@ def test_jacobi1d_with_parameters(fuse_overlapping_loads, tile_emit_mode, branch
 def heat3d(A: dace.float64[S, S, S], B: dace.float64[S, S, S], tsteps: dace.int64):
     for t in range(tsteps):
         for i, j, k in dace.map[0:S - 2, 0:S - 2, 0:S - 2]:
-            B[i + 1, j + 1, k + 1] = (0.125 * (A[i + 2, j + 1, k + 1] - 2.0 * A[i + 1, j + 1, k + 1] +
-                                                A[i, j + 1, k + 1]) + 0.125 *
-                                      (A[i + 1, j + 2, k + 1] - 2.0 * A[i + 1, j + 1, k + 1] + A[i + 1, j, k + 1]) +
-                                      0.125 * (A[i + 1, j + 1, k + 2] - 2.0 * A[i + 1, j + 1, k + 1] +
-                                               A[i + 1, j + 1, k]) + A[i + 1, j + 1, k + 1])
+            B[i + 1, j + 1,
+              k + 1] = (0.125 * (A[i + 2, j + 1, k + 1] - 2.0 * A[i + 1, j + 1, k + 1] + A[i, j + 1, k + 1]) + 0.125 *
+                        (A[i + 1, j + 2, k + 1] - 2.0 * A[i + 1, j + 1, k + 1] + A[i + 1, j, k + 1]) + 0.125 *
+                        (A[i + 1, j + 1, k + 2] - 2.0 * A[i + 1, j + 1, k + 1] + A[i + 1, j + 1, k]) +
+                        A[i + 1, j + 1, k + 1])
 
         for i, j, k in dace.map[0:S - 2, 0:S - 2, 0:S - 2]:
-            A[i + 1, j + 1, k + 1] = (0.125 * (B[i + 2, j + 1, k + 1] - 2.0 * B[i + 1, j + 1, k + 1] +
-                                                B[i, j + 1, k + 1]) + 0.125 *
-                                      (B[i + 1, j + 2, k + 1] - 2.0 * B[i + 1, j + 1, k + 1] + B[i + 1, j, k + 1]) +
-                                      0.125 * (B[i + 1, j + 1, k + 2] - 2.0 * B[i + 1, j + 1, k + 1] +
-                                               B[i + 1, j + 1, k]) + B[i + 1, j + 1, k + 1])
+            A[i + 1, j + 1,
+              k + 1] = (0.125 * (B[i + 2, j + 1, k + 1] - 2.0 * B[i + 1, j + 1, k + 1] + B[i, j + 1, k + 1]) + 0.125 *
+                        (B[i + 1, j + 2, k + 1] - 2.0 * B[i + 1, j + 1, k + 1] + B[i + 1, j, k + 1]) + 0.125 *
+                        (B[i + 1, j + 1, k + 2] - 2.0 * B[i + 1, j + 1, k + 1] + B[i + 1, j + 1, k]) +
+                        B[i + 1, j + 1, k + 1])
 
 
 @pytest.mark.parametrize("fuse_overlapping_loads", [False, True])

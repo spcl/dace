@@ -10,7 +10,6 @@ loop" and the body can parallelise.
 import contextlib
 import os
 
-import numpy as np
 import pytest
 
 import dace

@@ -442,22 +442,36 @@ def test_cloudsc_klev_plus_1_shape_structure():
     * Both loops become Maps (clean parallelism), and -- being a
       fully-parallel ``jk``/``jl`` nest -- collapse into one ``map[jk,
       jl]``.
-    * The promoted ``klev_plus_1 = klev + 1`` iedge assignment lives at
-      the **SDFG root** (not inside any LoopRegion / NestedSDFG body).
-      This is the cascade-up contract: invariant promoted bounds are
-      lifted past every enclosing loop.
-    * The collapsed Map's ``jk`` range references the promoted symbol
-      cleanly: ``(0, klev_plus_1 - 1, 1)``.
+    * ``SymbolPropagation`` (read-only-Scalar relaxation) folds the
+      frontend-promoted ``klev_plus_1 = klev + 1`` alias directly into
+      its uses and the now-dead iedge is dropped. The cleaner post-state
+      thus has NO ``klev_plus_1`` symbol anywhere; ``klev`` appears
+      directly in the collapsed Map's ``jk`` range as ``(0, klev, 1)``
+      (i.e. ``klev_plus_1 - 1`` simplified once the alias is substituted).
+    * No surviving alias iedge clutters the root.
+
+    The cascade-up contract is preserved in spirit: invariant promoted
+    bounds reach the inner Map cleanly. The previous test wording
+    asserted the *symbol-indirection* artifact of the old SymProp
+    behavior (alias kept alive, lifted to root by cascade-up); SymProp's
+    read-only-Scalar relaxation eliminated that indirection entirely
+    (cf. ``tests/passes/symbol_propagation_test.py`` ::
+    ``test_cloudsc_kidia_kfdia_promote_then_propagate``).
     """
     sdfg = cloudsc_klev_plus_1_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     assert _nmaps(sdfg) == 1, f'expected one collapsed 2D map, got {_nmaps(sdfg)}'
     assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
-    # Promoted symbol must be at SDFG root.
+    # The alias is fully substituted: ``klev_plus_1`` MUST NOT survive as an
+    # iedge LHS, but ``klev`` MUST appear in the collapsed Map's range.
     root_keys = {lhs for e in sdfg.edges() for lhs in e.data.assignments}
-    assert any('klev_plus_1' in k or 'klev' in k for k in root_keys), \
-        f'klev_plus_1 promoted symbol not at SDFG root; root iedge keys: {root_keys}'
+    assert not any('klev_plus_1' in k for k in root_keys), \
+        f'klev_plus_1 alias should be folded and its iedge dropped; got {root_keys}'
+    map_entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    range_strs = {str(r) for r in map_entry.map.range}
+    assert any('klev' in s for s in range_strs), \
+        f'collapsed Map jk range should reference klev directly; got {range_strs}'
 
 
 def test_cloudsc_klev_plus_1_shape_e2e():

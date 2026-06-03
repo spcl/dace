@@ -19,7 +19,6 @@ over a symbolic length ``N``) document which shapes peeling can and cannot help:
 All cases are value-preserving regardless of whether a map is produced.
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion

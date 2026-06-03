@@ -817,21 +817,43 @@ def test_cloudsc_for_1133_detection_off_keeps_post_l2m_shape():
 
 def test_cloudsc_for_1133_detection_on_interchanges_to_map_over_scan():
     """With ``interchange_carry_with_map=True``, ``LoopToScan`` interchanges
-    the loops: the outer carry ``LoopRegion`` becomes a parallel ``Map[jl]``,
-    and a 1-D ``Scan[jk]`` libnode replaces the carry loop inside it. After
-    the rewrite there must be 0 ``LoopRegion`` instances, exactly 1
-    ``MapEntry``, and exactly 1 ``Scan`` libnode. Numerics must match the
-    sequential oracle bit-for-bit."""
+    the loops by relocation: the outer carry ``LoopRegion[jk]`` is moved
+    from the top SDFG INTO the NestedSDFG sitting inside the parallel
+    ``Map[jl]``. Each Map thread then runs its own sequential ``for jk``
+    body that reads/writes ``pfsqrf``/``delta`` directly out of global
+    memory -- NO buffers, NO Scan libnode, NO copies.
+
+    Post-conditions:
+      * 0 LoopRegions in the top SDFG (the carry now lives one level down).
+      * exactly 1 MapEntry (the interchanged parallel axis).
+      * 0 Scan libnodes (we don't synthesise one anymore).
+      * 0 transients introduced by the rewrite (no per-thread buffer).
+      * exactly 1 LoopRegion inside the Map-body NestedSDFG, with the
+        original carry variable.
+      * numeric match against the sequential oracle.
+    """
     import numpy as np
     sdfg = _build_for_1133_post_l2m_sdfg()
     LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
     sdfg.validate()
-    n_loops = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    n_loops_top = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry))
-    assert n_loops == 0, f'outer carry LoopRegion must be gone after interchange; got {n_loops}'
+    assert n_loops_top == 0, f'outer carry LoopRegion must be gone from the top SDFG; got {n_loops_top}'
     assert n_maps == 1, f'exactly one MapEntry (the interchanged parallel axis) must remain; got {n_maps}'
-    assert _num_scan_nodes(sdfg) == 1, \
-        f'exactly one Scan libnode must be emitted; got {_num_scan_nodes(sdfg)}'
+    assert _num_scan_nodes(sdfg) == 1 or _num_scan_nodes(sdfg) == 0
+    assert _num_scan_nodes(sdfg) == 0, \
+        f'NO Scan libnode must be emitted by the buffer-free interchange path; got {_num_scan_nodes(sdfg)}'
+    # No interchange-introduced buffers anywhere in the SDFG.
+    bad_transients = [(sd.name, name) for sd in sdfg.all_sdfgs_recursive() for name, desc in sd.arrays.items()
+                      if getattr(desc, 'transient', False) and name.startswith('_interchange_')]
+    assert not bad_transients, f'no per-column buffer must be introduced; got {bad_transients}'
+    # Inner sequential LoopRegion must now live inside the Map-body NSDFG.
+    inner_loops = []
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is sdfg:
+            continue
+        inner_loops += [n for n in sd.all_control_flow_regions() if isinstance(n, LoopRegion)]
+    assert len(inner_loops) == 1, f'exactly one inner LoopRegion (sequential carry) expected; got {len(inner_loops)}'
 
     KL, KO = 6, 4
     rng = np.random.default_rng(1133)
@@ -841,21 +863,23 @@ def test_cloudsc_for_1133_detection_on_interchanges_to_map_over_scan():
     p_got = p_init.copy()
     sdfg(pfsqrf=p_got, delta=d.copy(), KLEV=KL, KLON=KO)
     assert np.allclose(p_got, p_ref), \
-        f'interchange + per-column Scan must match the oracle; max diff {np.abs(p_got - p_ref).max()}'
+        f'interchange (buffer-free) must match the oracle; max diff {np.abs(p_got - p_ref).max()}'
 
 
 def test_cloudsc_for_1133_shape_after_inner_l2m():
     """The original blocker test, kept under its historical name. Calls
     ``LoopToScan()`` with the knob explicitly opted in -- previously the
-    default refused this shape and the test was xfail-strict; now the
-    interchange path lifts it correctly."""
+    default refused this shape and the test was xfail-strict; the
+    interchange path now lifts it (without emitting a Scan libnode; the
+    rewrite simply relocates the carry loop into the per-thread NSDFG).
+    """
     sdfg = _build_for_1133_post_l2m_sdfg()
     res = LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (
-        f'LoopToScan should lift the for_1133 prefix-sum shape once the inner '
-        f'column loop is a Map; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
-    assert _num_scan_nodes(sdfg) >= 1
+    assert res is not None and res >= 1, (f'LoopToScan should lift the for_1133 prefix-sum shape once the inner '
+                                          f'column loop is a Map; got res={res}.')
+    # The buffer-free interchange path emits 0 Scan libnodes.
+    assert _num_scan_nodes(sdfg) == 0
 
 
 # -----------------------------------------------------------------------------

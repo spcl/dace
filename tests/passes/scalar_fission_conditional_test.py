@@ -10,7 +10,6 @@ read, but a scalar written in *every branch* of a conditional and read *after th
 merge* has no single dominating write (a ``None`` write-scope), and is currently
 left un-privatized -- which is the cloudsc ``zcor``/``zfac``/``zqe`` pattern.
 """
-import copy
 
 import numpy as np
 import pytest

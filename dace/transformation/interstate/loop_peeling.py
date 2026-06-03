@@ -4,7 +4,7 @@
 import ast
 import copy
 import sympy as sp
-from typing import List, Optional, Union
+from typing import List, Optional
 
 from dace import sdfg as sd
 from dace import symbolic
@@ -153,8 +153,9 @@ class LoopPeeling(LoopUnroll):
         for n in block.all_nodes_recursive() if hasattr(block, 'all_nodes_recursive') else []:
             if isinstance(n, NestedSDFG):
                 if loop_var in n.symbol_mapping:
-                    n.symbol_mapping[loop_var] = ASTFindReplace({loop_var: str(value)
-                                                                 }).visit(n.symbol_mapping[loop_var])
+                    n.symbol_mapping[loop_var] = ASTFindReplace({
+                        loop_var: str(value)
+                    }).visit(n.symbol_mapping[loop_var])
                 if loop_var in n.symbol_mapping:
                     del n.symbol_mapping[loop_var]
 

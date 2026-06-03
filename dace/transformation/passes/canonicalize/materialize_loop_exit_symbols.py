@@ -53,7 +53,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
-
 #: Prefix for the materialised post-loop symbol; self-identifying in dumps and
 #: collision-free against frontend or user-chosen names.
 _POST_PREFIX = "_loop_exit_"
@@ -203,7 +202,7 @@ def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> Set[Contro
 
 
 def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Set[ControlFlowBlock], old_name: str,
-                                new_name: str, sdfg: SDFG):
+                               new_name: str, sdfg: SDFG):
     """Replace every reference to ``old_name`` with ``new_name`` in the
     post-loop blocks: interstate edges into / between them (when both endpoints
     are post-loop), and the blocks' own contents.
@@ -285,8 +284,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         # same affine recurrence, just emitted by ``loop.update_statement`` rather
         # than a body interstate edge. Treat it identically.
         loop_var = loop.loop_variable
-        if (loop_var and (loop_var in sdfg.symbols or loop_var in sdfg.free_symbols)
-                and loop_var not in iv_symbols):
+        if (loop_var and (loop_var in sdfg.symbols or loop_var in sdfg.free_symbols) and loop_var not in iv_symbols):
             stride = loop_analysis.get_loop_stride(loop)
             if stride is not None:
                 iv_symbols[loop_var] = (ast.Add, str(symbolic.symstr(stride)))

@@ -212,7 +212,6 @@ def test_map_wcr_via_aug_assign_pipeline():
     what creates the WCR shape from an explicit RMW. Run the two-step pipeline
     here to confirm composition with the existing transform.
     """
-    import dace.libraries.standard as stdlib
     from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 

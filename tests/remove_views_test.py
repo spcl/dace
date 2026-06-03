@@ -1,12 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import warnings
 import numpy as np
 
 import dace
 from dace import data, nodes, Memlet
 
-import sys, os
 from dace.transformation.passes.remove_views import RemoveViews
 
 

@@ -20,8 +20,7 @@ from dace import dtypes
 import dace.transformation.passes.vectorization  # noqa: F401
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.vectorization.reduce_expansion import (
-    ExpandReduceVectorized,
-)
+    ExpandReduceVectorized, )
 
 N = dace.symbol("N")
 
@@ -155,10 +154,7 @@ def test_symbolic_length_vectorized_reduction():
 def test_1d_full_reduction_takes_vectorized_path():
     sdfg = _reduce_sdfg("lambda a, b: a + b", 0.0, dace.float64, tag="path1d")
     sdfg.expand_library_nodes()
-    codes = [
-        n.code.as_string for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet)
-    ]
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert any("horizontal_reduce_add" in c for c in codes), \
         "1-D full reduction must use the vectorized horizontal_reduce kernel"
 
@@ -176,10 +172,7 @@ def test_2d_partial_reduction_falls_back_to_pure():
     st.add_edge(st.add_read("A"), None, rnode, None, dace.Memlet("A[0:M, 0:N]"))
     st.add_edge(rnode, None, st.add_write("out"), None, dace.Memlet("out[0:M]"))
     sdfg.expand_library_nodes()
-    codes = [
-        n.code.as_string for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet)
-    ]
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert not any("horizontal_reduce" in c for c in codes), \
         "partial 2-D reduction must fall back to ExpandReducePure (no horizontal_reduce)"
     a = np.random.rand(5, 9).astype(np.float64)

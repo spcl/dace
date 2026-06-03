@@ -40,9 +40,9 @@ _ZQTMST = 1.0 / _PTSPHY
 
 
 @dace.program
-def cloudsc_init_affine(pt: dace.float64[KLEV, KLON], pa: dace.float64[KLEV, KLON],
-                        ptend_t: dace.float64[KLEV, KLON], ptend_a: dace.float64[KLEV, KLON],
-                        ztp1: dace.float64[KLEV, KLON], za: dace.float64[KLEV, KLON]):
+def cloudsc_init_affine(pt: dace.float64[KLEV, KLON], pa: dace.float64[KLEV, KLON], ptend_t: dace.float64[KLEV, KLON],
+                        ptend_a: dace.float64[KLEV, KLON], ztp1: dace.float64[KLEV, KLON], za: dace.float64[KLEV,
+                                                                                                            KLON]):
     # cloudsc_bottom_lower.F90: "non CLV initialization" nest.
     for jk in range(KLEV):
         for jl in range(KLON):
@@ -60,9 +60,18 @@ def test_cloudsc_init_affine(remainder_strategy, branch_mode):
     za = numpy.zeros((klev, klon))
     run_vectorization_test(
         dace_func=cloudsc_init_affine,
-        arrays={"pt": pt, "pa": pa, "ptend_t": ptend_t, "ptend_a": ptend_a,
-                "ztp1": ztp1, "za": za},
-        params={"KLEV": klev, "KLON": klon},
+        arrays={
+            "pt": pt,
+            "pa": pa,
+            "ptend_t": ptend_t,
+            "ptend_a": ptend_a,
+            "ztp1": ztp1,
+            "za": za
+        },
+        params={
+            "KLEV": klev,
+            "KLON": klon
+        },
         sdfg_name="cloudsc_init_affine",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
@@ -70,8 +79,7 @@ def test_cloudsc_init_affine(remainder_strategy, branch_mode):
 
 
 @dace.program
-def cloudsc_species_init(pclv: dace.float64[NCLV, KLEV, KLON],
-                         ptend_cld: dace.float64[NCLV, KLEV, KLON],
+def cloudsc_species_init(pclv: dace.float64[NCLV, KLEV, KLON], ptend_cld: dace.float64[NCLV, KLEV, KLON],
                          zqx: dace.float64[NCLV, KLEV, KLON]):
     # cloudsc_bottom_lower.F90: "initialization for CLV family" 3-D nest.
     for jm in range(NCLV):
@@ -87,8 +95,16 @@ def test_cloudsc_species_init(remainder_strategy, branch_mode):
     zqx = numpy.zeros((nclv, klev, klon))
     run_vectorization_test(
         dace_func=cloudsc_species_init,
-        arrays={"pclv": pclv, "ptend_cld": ptend_cld, "zqx": zqx},
-        params={"NCLV": nclv, "KLEV": klev, "KLON": klon},
+        arrays={
+            "pclv": pclv,
+            "ptend_cld": ptend_cld,
+            "zqx": zqx
+        },
+        params={
+            "NCLV": nclv,
+            "KLEV": klev,
+            "KLON": klon
+        },
         sdfg_name="cloudsc_species_init",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
@@ -127,21 +143,30 @@ def test_cloudsc_tidy_branch(remainder_strategy, branch_mode, request):
     # removed; both lowering paths must now pass.
     klev, klon = 16, 64
     # Mix of tiny (trigger the guard) and normal magnitudes.
-    zqx_l = numpy.where(numpy.random.rand(klev, klon) < 0.5,
-                        numpy.random.rand(klev, klon) * 1e-12,
-                        numpy.random.rand(klev, klon))
+    zqx_l = numpy.where(
+        numpy.random.rand(klev, klon) < 0.5,
+        numpy.random.rand(klev, klon) * 1e-12, numpy.random.rand(klev, klon))
     zqx_i = numpy.random.rand(klev, klon) * 1e-12
     zqx_v = numpy.random.rand(klev, klon)
-    za = numpy.where(numpy.random.rand(klev, klon) < 0.5,
-                     numpy.random.rand(klev, klon) * 1e-12,
-                     numpy.random.rand(klev, klon))
+    za = numpy.where(
+        numpy.random.rand(klev, klon) < 0.5,
+        numpy.random.rand(klev, klon) * 1e-12, numpy.random.rand(klev, klon))
     ptend_q = numpy.random.rand(klev, klon)
     ptend_t = numpy.random.rand(klev, klon)
     run_vectorization_test(
         dace_func=cloudsc_tidy_branch,
-        arrays={"zqx_l": zqx_l, "zqx_i": zqx_i, "zqx_v": zqx_v, "za": za,
-                "ptend_q": ptend_q, "ptend_t": ptend_t},
-        params={"KLEV": klev, "KLON": klon},
+        arrays={
+            "zqx_l": zqx_l,
+            "zqx_i": zqx_i,
+            "zqx_v": zqx_v,
+            "za": za,
+            "ptend_q": ptend_q,
+            "ptend_t": ptend_t
+        },
+        params={
+            "KLEV": klev,
+            "KLON": klon
+        },
         sdfg_name="cloudsc_tidy_branch",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,

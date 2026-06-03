@@ -52,7 +52,6 @@ _SRC = textwrap.dedent("""
     }
     """)
 
-
 _AVX512_SRC = textwrap.dedent("""
     #define __DACE_USE_INTRINSICS 1
     #define __DACE_USE_AVX512 1
@@ -84,8 +83,7 @@ _AVX512_SRC = textwrap.dedent("""
 
 def _host_has_avx512():
     try:
-        out = subprocess.run(["g++", "-mavx512f", "-dM", "-E", "-xc++", "-"],
-                              input="", capture_output=True, text=True)
+        out = subprocess.run(["g++", "-mavx512f", "-dM", "-E", "-xc++", "-"], input="", capture_output=True, text=True)
         if out.returncode != 0:
             return False
         import pathlib
@@ -100,9 +98,10 @@ def test_scalar_horizontal_reduce_compiles_and_is_correct(tmp_path):
     src = tmp_path / "hreduce_check.cpp"
     src.write_text(_SRC)
     exe = tmp_path / "hreduce_check"
-    compile_res = subprocess.run(
-        ["g++", "-std=c++17", "-I", _INCLUDE, str(src), "-o", str(exe)],
-        capture_output=True, text=True)
+    compile_res = subprocess.run(["g++", "-std=c++17", "-I", _INCLUDE,
+                                  str(src), "-o", str(exe)],
+                                 capture_output=True,
+                                 text=True)
     assert compile_res.returncode == 0, f"compile failed:\n{compile_res.stderr}"
     run_res = subprocess.run([str(exe)], capture_output=True, text=True)
     assert run_res.returncode == 0, f"runtime check failed:\n{run_res.stdout}"
@@ -115,8 +114,8 @@ def test_avx512_horizontal_reduce_compiles_and_is_correct(tmp_path):
     src.write_text(_AVX512_SRC)
     exe = tmp_path / "hred_avx512"
     compile_res = subprocess.run(
-        ["g++", "-std=c++17", "-mavx512f", "-I", _INCLUDE, str(src), "-o", str(exe)],
-        capture_output=True, text=True)
+        ["g++", "-std=c++17", "-mavx512f", "-I", _INCLUDE,
+         str(src), "-o", str(exe)], capture_output=True, text=True)
     assert compile_res.returncode == 0, f"compile failed:\n{compile_res.stderr}"
     run_res = subprocess.run([str(exe)], capture_output=True, text=True)
     assert run_res.returncode == 0, f"runtime check failed:\n{run_res.stdout}"
@@ -156,14 +155,14 @@ def _aarch64_cxx():
 def _syntax_only_ok(driver, march_flags, tmp_path, name):
     src = tmp_path / f"{name}.cpp"
     src.write_text(_ARM_TU)
-    res = subprocess.run(
-        driver + ["-std=c++17", "-fsyntax-only"] + march_flags + ["-I", _INCLUDE, str(src)],
-        capture_output=True, text=True)
+    res = subprocess.run(driver + ["-std=c++17", "-fsyntax-only"] + march_flags +
+                         ["-I", _INCLUDE, str(src)],
+                         capture_output=True,
+                         text=True)
     return res.returncode == 0, res.stderr
 
 
-@pytest.mark.skipif(_aarch64_cxx() is None,
-                    reason="no aarch64 C++ cross toolchain (NEON/SVE syntax-test skipped)")
+@pytest.mark.skipif(_aarch64_cxx() is None, reason="no aarch64 C++ cross toolchain (NEON/SVE syntax-test skipped)")
 @pytest.mark.parametrize("variant,flags", [
     ("neon", ["-march=armv8-a"]),
     ("sve", ["-march=armv8-a+sve", "-D__DACE_USE_SVE=1"]),

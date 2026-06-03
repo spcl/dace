@@ -50,12 +50,15 @@ def _structure(sdfg) -> Tuple[List[str], List[str], List[str], List[str]]:
         f"loop {cfr.label} var={cfr.loop_variable!s} cond={cfr.loop_condition.as_string!s}"
         for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion)
     ]
-    maps = [f"map {n.map.label} dims={len(n.map.range)} range={n.map.range}"
-            for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
-    reduces = [f"reduce axes={n.axes} wcr={n.wcr}"
-               for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    scans = [f"scan {n.label} op={n.op} stride={getattr(n, 'stride', 1)}"
-             for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+    maps = [
+        f"map {n.map.label} dims={len(n.map.range)} range={n.map.range}" for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry)
+    ]
+    reduces = [f"reduce axes={n.axes} wcr={n.wcr}" for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    scans = [
+        f"scan {n.label} op={n.op} stride={getattr(n, 'stride', 1)}" for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, Scan)
+    ]
     return loops, maps, reduces, scans
 
 
@@ -119,8 +122,8 @@ def main() -> None:
     print(f"  peel_limit={_PEEL_LIMIT}  break_anti_dependence={_BREAK_ANTI_DEP}")
     print()
 
-    results = {}   # name -> (base_counts, l2m_counts, canon_counts)  where each is (L, M, R, S)
-    inspect = {}   # name -> (base_sdfg, l2m_sdfg, canon_sdfg) for kernels we want to dump
+    results = {}  # name -> (base_counts, l2m_counts, canon_counts)  where each is (L, M, R, S)
+    inspect = {}  # name -> (base_sdfg, l2m_sdfg, canon_sdfg) for kernels we want to dump
     errors = {}
     t0 = time.perf_counter()
     for i, k in enumerate(kernels, 1):
@@ -154,10 +157,13 @@ def main() -> None:
     print(f"  loops -> scan                    L2M={0:4d}   canon={agg_c[3]-agg_b[3]:4d}")
     print(f"  loops eliminated (any cause)     L2M={agg_b[0]-agg_l[0]:4d}   canon={agg_b[0]-agg_c[0]:4d}")
     par_canon = (agg_c[1] - agg_b[1]) + (agg_c[2] - agg_b[2]) + (agg_c[3] - agg_b[3])
-    print(f"  baseline loops parallelized      L2M={_pct(agg_l[1]-agg_b[1], agg_b[0])}  canon={_pct(par_canon, agg_b[0])}")
+    print(
+        f"  baseline loops parallelized      L2M={_pct(agg_l[1]-agg_b[1], agg_b[0])}  canon={_pct(par_canon, agg_b[0])}"
+    )
     final_total = agg_c[0] + agg_c[1] + agg_c[2] + agg_c[3]
-    print(f"  final iteration is parallel      L2M={_pct(agg_l[1]+agg_l[2]+agg_l[3], agg_l[0]+agg_l[1]+agg_l[2]+agg_l[3])}  "
-          f"canon={_pct(agg_c[1]+agg_c[2]+agg_c[3], final_total)}")
+    print(
+        f"  final iteration is parallel      L2M={_pct(agg_l[1]+agg_l[2]+agg_l[3], agg_l[0]+agg_l[1]+agg_l[2]+agg_l[3])}  "
+        f"canon={_pct(agg_c[1]+agg_c[2]+agg_c[3], final_total)}")
     print()
 
     # Per-kernel table (all 151)

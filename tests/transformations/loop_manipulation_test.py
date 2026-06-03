@@ -103,7 +103,11 @@ def test_peeling_end_no_loop_symbol_leak():
     LoopPeeling().apply_to(sdfg=sdfg,
                            loop=loop,
                            verify=False,
-                           options={'count': 2, 'begin': False, 'inline_iterations': False})
+                           options={
+                               'count': 2,
+                               'begin': False,
+                               'inline_iterations': False
+                           })
 
     # ``LoopPeeling`` now emits each peeled iter as either a ``ControlFlowRegion``
     # (multi-state body) or a flat ``SDFGState`` directly in the parent graph
@@ -161,9 +165,8 @@ def test_peeling_single_state_body_emits_flat_states():
     LoopPeeling().apply_to(sdfg=sdfg, loop=loop, verify=False, options={'count': 2, 'begin': True})
 
     peeled_states = [
-        n for n in sdfg.nodes()
-        if isinstance(n, dace.sdfg.state.SDFGState) and not isinstance(n, dace.sdfg.state.ControlFlowRegion)
-        and n.label.startswith(loop.label + '_')
+        n for n in sdfg.nodes() if isinstance(n, dace.sdfg.state.SDFGState)
+        and not isinstance(n, dace.sdfg.state.ControlFlowRegion) and n.label.startswith(loop.label + '_')
     ]
     assert len(peeled_states) == 2, f'expected 2 flat peeled SDFGStates, got {len(peeled_states)}'
 

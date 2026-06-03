@@ -441,7 +441,6 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, match: _Match):
     :param loop: The matched accumulator loop.
     :param match: The :class:`_Match` produced by :func:`_match`.
     """
-    import dace  # avoid an import cycle at module scope
     sdfg = _root_sdfg(parent)
 
     # Allocate the per-iteration buffer. Shape ``(trip,)``, dtype matches the
@@ -587,8 +586,7 @@ def _splice_reduce_state(parent: ControlFlowRegion, loop: LoopRegion, match: _Ma
     buf_an = red_state.add_read(buf_name)
     acc_an = red_state.add_write(match.accum)
     red = red_state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=None)
-    red_state.add_edge(buf_an, None, red, None,
-                       mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
+    red_state.add_edge(buf_an, None, red, None, mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
     red_state.add_edge(red, None, acc_an, None, mm.Memlet(data=match.accum, subset=match.accum_subset))
 
 
@@ -691,22 +689,22 @@ def _match_map_wcr(state: SDFGState, sdfg: SDFG) -> List[_MapWCRMatch]:
         map_entries = [state.entry_node(mx) for mx in map_exits]
         if any(me is None for me in map_entries):
             continue
-        matches.append(_MapWCRMatch(
-            map_entries=map_entries,
-            map_exits=map_exits,
-            wcr_edge=edge,
-            chain_edges=chain_edges,
-            accum_an=accum_an,
-            accum=accum_an.data,
-            accum_subset=accum_subset,
-            wcr=wcr_norm,
-        ))
+        matches.append(
+            _MapWCRMatch(
+                map_entries=map_entries,
+                map_exits=map_exits,
+                wcr_edge=edge,
+                chain_edges=chain_edges,
+                accum_an=accum_an,
+                accum=accum_an.data,
+                accum_subset=accum_subset,
+                wcr=wcr_norm,
+            ))
     return matches
 
 
-def _trace_wcr_chain(
-    state: SDFGState, wcr_edge, sdfg: SDFG
-) -> Optional[Tuple[nodes.AccessNode, subsets.Range, List[nodes.MapExit], List[Any]]]:
+def _trace_wcr_chain(state: SDFGState, wcr_edge,
+                     sdfg: SDFG) -> Optional[Tuple[nodes.AccessNode, subsets.Range, List[nodes.MapExit], List[Any]]]:
     """Walk forward from ``wcr_edge`` through MapExits to a final AccessNode.
 
     The walker allows the WCR edge to land on a MapExit directly, or on an
@@ -810,17 +808,17 @@ def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):
         axis_specs.append((rb, re_, symbolic.simplify(re_ - rb + 1)))
 
     buf_shape = [trip for _, _, trip in axis_specs]
-    buf_name, _ = sdfg.add_transient(_BUF_PREFIX + match.accum, buf_shape,
-                                     sdfg.arrays[match.accum].dtype, find_new_name=True)
+    buf_name, _ = sdfg.add_transient(_BUF_PREFIX + match.accum,
+                                     buf_shape,
+                                     sdfg.arrays[match.accum].dtype,
+                                     find_new_name=True)
     buf_desc = sdfg.arrays[buf_name]
 
     # The per-iteration write index uses each enclosing map's parameter offset to
     # its own start: ``buf[i - i_start, j - j_start, ...]``. For the outer/MapExit
     # edges, the corresponding axis collapses to the full extent of that axis.
-    point_subset = subsets.Range([
-        ((symbolic.pystr_to_symbolic(me.map.params[0]) - axis_specs[idx][0], ) * 2 + (1, ))
-        for idx, me in enumerate(match.map_entries)
-    ])
+    point_subset = subsets.Range([((symbolic.pystr_to_symbolic(me.map.params[0]) - axis_specs[idx][0], ) * 2 + (1, ))
+                                  for idx, me in enumerate(match.map_entries)])
 
     # Rewrite the chain edges (innermost-first walk order: wcr_edge, then each
     # MapExit-out edge). After ``axis_idx`` MapExits the corresponding axis collapses
@@ -870,8 +868,7 @@ def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):
     buf_read = red_state.add_read(buf_name)
     acc_write = red_state.add_write(match.accum)
     red = red_state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=None)
-    red_state.add_edge(buf_read, None, red, None,
-                       mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
+    red_state.add_edge(buf_read, None, red, None, mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
     red_state.add_edge(red, None, acc_write, None, mm.Memlet(data=match.accum, subset=match.accum_subset))
 
     sdfg.reset_cfg_list()

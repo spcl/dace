@@ -80,8 +80,7 @@ def _residue_class_scan_oracle(arr_in: np.ndarray, stride: int, op: ScanOp) -> n
 @pytest.mark.parametrize('n', [16, 33])
 @pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
 @pytest.mark.parametrize('implementation', ['CPU', 'pure'])
-def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: ScanOp,
-                                                   implementation: str):
+def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: ScanOp, implementation: str):
     """For each stride, dtype, and implementation, the libnode-produced output equals
     the per-residue-class sequential scan."""
     # For PRODUCT keep magnitudes ~1; for SUM/MIN/MAX use the unit interval.
@@ -95,9 +94,8 @@ def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: Scan
     sdfg = _build_scan_sdfg(n, stride, op, implementation)
     sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     expected = _residue_class_scan_oracle(arr_in, stride, op)
-    assert np.allclose(arr_out, expected), (
-        f'stride={stride} n={n} op={op.value} impl={implementation}: '
-        f'max abs diff {np.max(np.abs(arr_out - expected))}')
+    assert np.allclose(arr_out, expected), (f'stride={stride} n={n} op={op.value} impl={implementation}: '
+                                            f'max abs diff {np.max(np.abs(arr_out - expected))}')
 
 
 def test_strided_scan_stride_2_explicit():
@@ -160,13 +158,11 @@ _NEGATIVE_STRIDE_SCRIPT = textwrap.dedent("""
 def test_negative_stride_aborts_at_runtime():
     """A non-positive stride must abort the program before the scan runs. Spawned in
     a subprocess so the abort doesn't kill the test runner."""
-    proc = subprocess.run([sys.executable, '-c', _NEGATIVE_STRIDE_SCRIPT],
-                          capture_output=True, text=True, timeout=120)
+    proc = subprocess.run([sys.executable, '-c', _NEGATIVE_STRIDE_SCRIPT], capture_output=True, text=True, timeout=120)
     assert 'UNEXPECTEDLY_SURVIVED' not in proc.stdout, (
         f'Negative stride failed to abort. stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}')
-    assert proc.returncode != 0, (
-        f'Expected non-zero exit on abort; got returncode={proc.returncode}. '
-        f'stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}')
+    assert proc.returncode != 0, (f'Expected non-zero exit on abort; got returncode={proc.returncode}. '
+                                  f'stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}')
 
 
 if __name__ == '__main__':

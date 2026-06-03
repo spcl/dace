@@ -41,7 +41,7 @@ Out of scope (potential follow-ups):
 """
 import ast
 import copy
-from typing import List, Optional, Set, Tuple
+from typing import Optional, Set, Tuple
 
 import dace
 from dace import SDFG, dtypes, nodes, properties, symbolic

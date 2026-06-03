@@ -12,7 +12,6 @@ import pytest
 import dace
 from dace.libraries.sort.nodes.integer_sort import IntegerSort, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 
-
 _DTYPES = [
     (dace.int8, np.int8),
     (dace.int16, np.int16),
@@ -53,9 +52,8 @@ def test_integer_sort_matches_numpy(dace_dtype: dace.dtypes.typeclass, np_dtype,
     arr_out = np.zeros(n, dtype=np_dtype)
     sdfg = _build_sort_sdfg(dace_dtype, n, implementation)
     sdfg(arr_in=arr_in, arr_out=arr_out)
-    assert np.array_equal(arr_out, np.sort(arr_in)), (
-        f'Mismatch on {dace_dtype}/{implementation}; first diff at '
-        f'{np.argmax(arr_out != np.sort(arr_in))}.')
+    assert np.array_equal(arr_out, np.sort(arr_in)), (f'Mismatch on {dace_dtype}/{implementation}; first diff at '
+                                                      f'{np.argmax(arr_out != np.sort(arr_in))}.')
 
 
 @pytest.mark.parametrize('implementation', ['CPU', 'pure'])

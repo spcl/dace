@@ -120,8 +120,7 @@ def test_canonicalize_jacobi_2d():
     sdfg(a=a.copy(), b=out, N=n, M=m)
     assert np.allclose(out, ref)
     exp = np.zeros((n, m))
-    exp[1:n - 1, 1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] +
-                                    a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
+    exp[1:n - 1, 1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] + a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
     assert np.allclose(out, exp)
 
 

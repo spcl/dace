@@ -2,7 +2,6 @@
 """Tests for the single-shot ``parallelize`` pipeline (reduction-aware
 loop-to-map). SDFGs are produced through the DaCe Python frontend."""
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion

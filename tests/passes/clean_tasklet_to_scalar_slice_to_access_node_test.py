@@ -11,8 +11,7 @@ import dace
 import numpy as np
 
 from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
-    CleanTaskletToScalarSliceToAccessNodePattern,
-)
+    CleanTaskletToScalarSliceToAccessNodePattern, )
 
 
 def test_scalar_slice_removed_when_not_reused():
@@ -149,8 +148,83 @@ def test_d1_allows_fold_when_sibling_an_is_pure_sink():
         'sink-only sibling AccessNode of the destination must not block the fold'
 
 
+def test_refuses_when_tasklet_to_slice_edge_has_wcr():
+    """The inverse fold must refuse when the ``tasklet -> A_slice``
+    edge carries WCR. Folding the chain into a single ``tasklet ->
+    sink`` edge would lose the inbound atomic / reduction semantics
+    (the new edge inherits the outbound memlet, whose WCR is already
+    checked to be None)."""
+    sdfg = dace.SDFG('inv_rmw_wcr')
+    sdfg.add_array('A', (16, ), dace.float64)
+    sdfg.add_array('B', (16, ), dace.float64)
+    sdfg.add_scalar('A_slice', dace.float64, transient=True)
+    sdfg.add_symbol('k', dace.int64)
+
+    s = sdfg.add_state('rmw', is_start_block=True)
+    b_read = s.add_access('B')
+    t = s.add_tasklet('dbl', {'_in'}, {'_o'}, '_o = _in * 2.0')
+    s.add_edge(b_read, None, t, '_in', dace.Memlet('B[k]'))
+    a_slice = s.add_access('A_slice')
+    # Inbound WCR on the tasklet -> A_slice edge -- this is the case
+    # the guard protects.
+    wcr_in = dace.Memlet('A_slice[0]')
+    wcr_in.wcr = 'lambda old, new: old + new'
+    s.add_edge(t, '_o', a_slice, None, wcr_in)
+    a_write = s.add_access('A')
+    s.add_edge(a_slice, None, a_write, None, dace.Memlet('A[k]'))
+
+    from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
+        CleanTaskletToScalarSliceToAccessNodePattern)
+    CleanTaskletToScalarSliceToAccessNodePattern().apply_pass(sdfg, None)
+    assert any(n.data == 'A_slice' for n in s.data_nodes()), \
+        'A_slice must survive when the tasklet->A_slice edge carries WCR'
+
+
+def test_inverse_refuses_when_other_subset_missing_and_sink_is_not_an_accessnode():
+    """``_slice_write`` cannot recover the write subset when the
+    memlet is named after the scalar (``data == an_slice.data``),
+    ``other_subset`` is unset, AND the sink is not a plain AccessNode
+    whose own ``data`` we can use. The fold must refuse rather than
+    abort the canonicalize call."""
+    import dace
+    sdfg = dace.SDFG('inv_other_subset_none')
+    sdfg.add_array('A', (16, ), dace.float64)
+    sdfg.add_array('B', (16, ), dace.float64)
+    sdfg.add_scalar('A_slice', dace.float64, transient=True)
+
+    s = sdfg.add_state('rmw', is_start_block=True)
+    me, mx = s.add_map('m', dict(i='0:16'))
+    b_read = s.add_access('B')
+    s.add_edge(b_read, None, me, 'IN_B', dace.Memlet('B[0:16]'))
+    me.add_in_connector('IN_B')
+    me.add_out_connector('OUT_B')
+    t = s.add_tasklet('dbl', {'_in'}, {'_o'}, '_o = _in * 2.0')
+    s.add_edge(me, 'OUT_B', t, '_in', dace.Memlet('B[i]'))
+    a_slice = s.add_access('A_slice')
+    s.add_edge(t, '_o', a_slice, None, dace.Memlet('A_slice[0]'))
+    # Sink memlet: ``data='A_slice'`` (matches the scalar) and no
+    # ``other_subset`` -- the case ``_slice_write`` cannot recover
+    # from. Sink is a MapExit (not an AccessNode), so the fallback
+    # to ``sink_node.data`` is also unavailable.
+    bad_memlet = dace.Memlet('A_slice[0]')
+    s.add_edge(a_slice, None, mx, 'IN_A', bad_memlet)
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    a_write = s.add_access('A')
+    s.add_edge(mx, 'OUT_A', a_write, None, dace.Memlet('A[0:16]'))
+
+    from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
+        CleanTaskletToScalarSliceToAccessNodePattern)
+    # Must not raise; must simply leave A_slice alone.
+    CleanTaskletToScalarSliceToAccessNodePattern().apply_pass(sdfg, None)
+    assert any(n.data == 'A_slice' for n in s.data_nodes()), \
+        'A_slice must survive when the write subset cannot be recovered'
+
+
 if __name__ == '__main__':
     test_scalar_slice_removed_when_not_reused()
     test_scalar_reused_in_other_state_gets_assign_tasklet()
     test_d1_refuses_when_destination_is_also_read_through_other_an()
     test_d1_allows_fold_when_sibling_an_is_pure_sink()
+    test_refuses_when_tasklet_to_slice_edge_has_wcr()
+    test_inverse_refuses_when_other_subset_missing_and_sink_is_not_an_accessnode()

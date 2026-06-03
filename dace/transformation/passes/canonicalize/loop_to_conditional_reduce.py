@@ -69,7 +69,7 @@ Refusals leave the loop unmodified so downstream stages still see it.
 """
 import ast
 import copy as _copy_module
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional
 
 
 def _copy_ast(node: ast.AST) -> ast.AST:
@@ -78,13 +78,12 @@ def _copy_ast(node: ast.AST) -> ast.AST:
     same node and ``fix_missing_locations`` mishandles them)."""
     return _copy_module.deepcopy(node)
 
-import dace
-from dace import SDFG, data, dtypes, properties, symbolic
+
+from dace import SDFG, data, dtypes, properties
 from dace.sdfg import nodes
 from dace.sdfg.state import (LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-
 
 #: AST binop class -> ``(op_str, identity_literal)``. The identity is a Python
 #: literal suitable for embedding in a tasklet body's ternary expression.
@@ -93,7 +92,6 @@ _BINOP_TO_OP_IDENTITY: Dict[type, tuple] = {
     ast.Sub: ('-', '0.0'),
     ast.Mult: ('*', '1.0'),
 }
-
 
 #: OP -> WCR lambda string. Matches what :class:`AugAssignToWCR` emits for
 #: each op so downstream codegen (OpenMP ``reduction`` clause, CUDA atomics)
@@ -195,10 +193,14 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # Locate the unique accumulator: an AN that's a pure source AND another
         # AN with the same data name that's a pure sink.
-        sources = {n.data: n for n in true_state.data_nodes()
-                   if true_state.in_degree(n) == 0 and true_state.out_degree(n) > 0}
-        sinks = {n.data: n for n in true_state.data_nodes()
-                 if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0}
+        sources = {
+            n.data: n
+            for n in true_state.data_nodes() if true_state.in_degree(n) == 0 and true_state.out_degree(n) > 0
+        }
+        sinks = {
+            n.data: n
+            for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0
+        }
         acc_candidates = []
         for name in sources:
             if name not in sinks:
@@ -206,7 +208,7 @@ class LoopToConditionalReduce(ppl.Pass):
             desc = sdfg.arrays.get(name)
             if desc is None:
                 continue
-            if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,)):
+            if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1, )):
                 acc_candidates.append(name)
         if len(acc_candidates) != 1:
             return None
@@ -214,8 +216,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # The true-branch may have only ONE terminal AccessNode (the accumulator).
         # Multiple sinks => extra writes the rewrite would drop.
-        sink_ans = [n for n in true_state.data_nodes()
-                    if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0]
+        sink_ans = [n for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0]
         if len(sink_ans) != 1 or sink_ans[0].data != acc_name:
             return None
         # And no non-transient writes other than the accumulator.
@@ -255,8 +256,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # Identify which tasklet input is the accumulator vs the addend by
         # walking back from each input edge to its source AN.
-        in_edges = [e for e in true_state.in_edges(upd_tasklet)
-                    if e.data is not None and not e.data.is_empty()]
+        in_edges = [e for e in true_state.in_edges(upd_tasklet) if e.data is not None and not e.data.is_empty()]
         if len(in_edges) != 2:
             return None
         acc_in_conn = None
@@ -305,8 +305,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 return True
         return False
 
-    def _walk_back_to_update_tasklet(self, state: SDFGState,
-                                     sink_an: nodes.AccessNode) -> Optional[nodes.Tasklet]:
+    def _walk_back_to_update_tasklet(self, state: SDFGState, sink_an: nodes.AccessNode) -> Optional[nodes.Tasklet]:
         """Walk back from ``sink_an`` through intermediate transient
         AccessNodes and identity tasklets (``__out = __inp``) until the
         update tasklet (whose body is an associative binop on two inputs).
@@ -327,8 +326,8 @@ class LoopToConditionalReduce(ppl.Pass):
                 tree = ast.parse((upstream.code.as_string or '').strip())
             except SyntaxError:
                 return upstream  # treat as the update; downstream will refuse
-            if (len(tree.body) == 1 and isinstance(tree.body[0], ast.Assign) and
-                    isinstance(tree.body[0].value, ast.Name)):
+            if (len(tree.body) == 1 and isinstance(tree.body[0], ast.Assign)
+                    and isinstance(tree.body[0].value, ast.Name)):
                 # Identity tasklet -> step over.
                 t_ins = list(state.in_edges(upstream))
                 if len(t_ins) != 1:
@@ -385,11 +384,9 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # 1. Trace back to the addend's source array + subset (one transient
         #    hop through ``a_index_0``).
-        addend_edge = next(e for e in m.true_state.in_edges(m.upd_tasklet)
-                           if e.dst_conn == m.addend_in_conn)
+        addend_edge = next(e for e in m.true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn)
         addend_src_an = addend_edge.src
-        if (isinstance(addend_src_an, nodes.AccessNode)
-                and m.true_state.in_degree(addend_src_an) == 1):
+        if (isinstance(addend_src_an, nodes.AccessNode) and m.true_state.in_degree(addend_src_an) == 1):
             pred = m.true_state.in_edges(addend_src_an)[0]
             if isinstance(pred.src, nodes.AccessNode):
                 addend_src_name = pred.src.data
@@ -448,7 +445,6 @@ class LoopToConditionalReduce(ppl.Pass):
         self._collapse_empty_wrappers(loop)
         sdfg.reset_cfg_list()
 
-
     def _resolve_cond(self, m: _Match, sdfg: SDFG, addend_conn_name: str = '__addend') -> str:
         """Resolve the cond expression to use only tasklet input connectors.
 
@@ -485,8 +481,7 @@ class LoopToConditionalReduce(ppl.Pass):
         # mask tasklet's input connector name (not the original update
         # tasklet's, which doesn't survive the rewrite).
         connector_for_access: Dict[tuple, str] = {}
-        addend_edge = next((e for e in m.true_state.in_edges(m.upd_tasklet)
-                            if e.dst_conn == m.addend_in_conn), None)
+        addend_edge = next((e for e in m.true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn), None)
         if addend_edge is not None:
             src = addend_edge.src
             if isinstance(src, nodes.AccessNode) and m.true_state.in_degree(src) == 1:
@@ -525,7 +520,7 @@ class LoopToConditionalReduce(ppl.Pass):
                     idx_str = ast.unparse(idx) if hasattr(ast, 'unparse') else _ast_to_str(idx)
                 except Exception:
                     return node
-                key = (arr_name, (idx_str,))
+                key = (arr_name, (idx_str, ))
                 conn = connector_for_access.get(key)
                 if conn is None:
                     return node

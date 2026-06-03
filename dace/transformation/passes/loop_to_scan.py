@@ -341,18 +341,28 @@ class LoopToScan(ppl.Pass):
 
         count = 0
         # Optional first pass: interchange the Map-wrapped carry shape.
-        # Done up-front so subsequent matchers see the new ``Map[parallel] {
-        # Scan[carry] }`` structure rather than the original ``LoopRegion[carry]
-        # { Map[parallel] }``.
+        # Done up-front so the carry loop runs sequentially per-thread INSIDE
+        # the parallel Map (no buffers, no Scan libnode, just a per-thread
+        # sequential ``for jk`` reading/writing global memory directly).
+        # We track the relocated loops by id so the regular matcher pass below
+        # leaves them alone (they have already been rewritten to their final
+        # sequential-per-thread form).
+        interchanged_loop_ids = set()
         if self.interchange_carry_with_map:
             for loop, parent in list(_collect_loops(sdfg)):
                 shape = _detect_carry_loop_with_inner_map(loop, sdfg)
                 if shape is None:
                     continue
-                if _rewrite_interchange_carry_with_map(shape, sdfg):
-                    count += 1
+                relocated = _rewrite_interchange_carry_with_map(shape, sdfg)
+                if relocated is None:
+                    continue
+                if isinstance(relocated, LoopRegion):
+                    interchanged_loop_ids.add(id(relocated))
+                count += 1
 
         for loop, parent in _collect_loops(sdfg):
+            if id(loop) in interchanged_loop_ids:
+                continue
             infos = _match_all(loop, sdfg)
             if infos:
                 for info in infos:
@@ -997,8 +1007,14 @@ def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[
                                      inner_state, inner_carrier_name, iter_start, iter_end)
     if inner_match is None:
         return None
-    return _CarryMapShape(loop=loop, parent=parent, body_state=body_state, map_entry=map_entry, map_exit=map_exit,
-                          nsdfg=nsdfg, inner_state=inner_state, inner_scan=inner_match)
+    return _CarryMapShape(loop=loop,
+                          parent=parent,
+                          body_state=body_state,
+                          map_entry=map_entry,
+                          map_exit=map_exit,
+                          nsdfg=nsdfg,
+                          inner_state=inner_state,
+                          inner_scan=inner_match)
 
 
 class _InterchangeFakeLoop:
@@ -1012,174 +1028,104 @@ class _InterchangeFakeLoop:
         self._iter_end = iter_end
 
 
-def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> bool:
-    """Replace the outer carry ``LoopRegion`` + inner parallel ``Map`` with
-    a new state containing ``Map[jl] { Scan[jk] }``: the outer becomes the
-    parallel axis, and a per-column 1-D ``Scan`` libnode runs along the
-    carry axis with the seed wired through the libnode's init connector.
+def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> Optional[LoopRegion]:
+    """Loop-interchange rewrite: relocate the outer carry ``LoopRegion[jk]``
+    from outside the inner Map into the NestedSDFG, where it becomes a
+    sequential per-thread carry loop.
 
-    No transient buffers, no delta copy, no stride trickery -- the Scan
-    reads ``delta[jk_range, jl]`` directly out of memory for each ``jl``.
+    Before::
+
+        LoopRegion[jk]
+          state
+            MapEntry[jl]
+              NestedSDFG
+                state  -- carry tasklet:  out[jk, jl] = out[jk-1, jl] OP delta[jk, jl]
+              MapExit[jl]
+
+    After::
+
+        state                              <-- new parent-graph state
+          MapEntry[jl]                     <-- now parallel outer
+            NestedSDFG
+              LoopRegion[jk]               <-- relocated, runs sequentially per thread
+                state  -- same tasklet
+            MapExit[jl]
+
+    Zero new buffers, zero new tasklets, zero copies. The carry runs as
+    a plain sequential loop INSIDE the parallel Map on the host AND inside
+    the GPU kernel per thread; the accumulator lives in a register and the
+    array reads/writes go straight to ``pfsqrf`` / ``delta`` global memory.
     """
     parent = shape.parent
     loop = shape.loop
-    info: _Scan = shape.inner_scan
-    map_var = shape.map_entry.map.params[0] if len(shape.map_entry.map.params) == 1 else None
-    if map_var is None:
-        return False  # Multi-dim Map: not in scope for this rewrite
-    map_range = shape.map_entry.map.range[0]
-    map_lo, map_hi, map_step = map_range
-    if map_step != 1:
-        return False
+    nsdfg_node = shape.nsdfg
+    inner_state = shape.inner_state
 
-    out_name = info.out_name
-    # The inner state's memlets reference the inner connector-aliased
-    # names. Recover the OUTER-side array name for the carrier through the
-    # NSDFG connector binding.
-    inner_to_outer = {}
-    for e in shape.body_state.in_edges(shape.nsdfg):
-        if e.dst_conn and e.data is not None and e.data.data:
-            inner_to_outer[e.dst_conn] = e.data.data
-    for e in shape.body_state.out_edges(shape.nsdfg):
-        if e.src_conn and e.data is not None and e.data.data:
-            inner_to_outer[e.src_conn] = e.data.data
-    outer_carrier_name = inner_to_outer.get(out_name, out_name)
-    if outer_carrier_name not in sdfg.arrays:
-        return False
-    carrier_desc = sdfg.arrays[outer_carrier_name]
-    if not isinstance(carrier_desc, data.Array) or len(carrier_desc.shape) < 2:
-        return False
-    # Identify the delta input. The single-carrier match guarantees one
-    # delta access in the inner state.
-    delta_inner_name = None
-    delta_inner_subset = None
-    for e in shape.inner_state.edges():
-        if e.data is None or e.data.data is None:
-            continue
-        if e.data.data == out_name:
-            continue
-        inner_desc = shape.nsdfg.sdfg.arrays.get(e.data.data)
-        if inner_desc is None or getattr(inner_desc, 'transient', False):
-            continue
-        # Best-effort: pick the first non-carrier, non-transient access.
-        if delta_inner_name is None:
-            delta_inner_name = e.data.data
-            delta_inner_subset = e.data.subset
-    if delta_inner_name is None:
-        return False
-    outer_delta_name = inner_to_outer.get(delta_inner_name, delta_inner_name)
-    if outer_delta_name not in sdfg.arrays:
-        return False
-
-    # Locate the carry-axis position in the carrier descriptor: it is the axis
-    # whose write subset uses the loop variable (info.scan_axis).
-    carry_axis = info.scan_axis
-    if carry_axis >= len(carrier_desc.shape):
-        return False
-    # The "other" axis of carrier_desc is whatever axis lines up with the Map
-    # variable. For a 2-D carrier this is the unique non-carry axis. For
-    # higher-rank carriers we'd need to know which axis the Map varies; for
-    # now restrict to 2-D carriers.
-    if len(carrier_desc.shape) != 2:
-        return False
-    map_axis = 1 - carry_axis
-
-    # Build the SDFG-level replacement: a new state containing the
-    # Map[map_var] -> Scan[carry] body.
-    new_state = parent.add_state(label=f'{loop.label}_interchange', is_start_block=(parent.start_block is loop))
-    # Wire interstate edges around the original loop to the new state.
-    in_edges = list(parent.in_edges(loop))
-    out_edges = list(parent.out_edges(loop))
-    for ie in in_edges:
+    # 1. Create a fresh state in the parent graph that will replace ``loop``.
+    new_state = parent.add_state(label=f'{loop.label}_interchanged', is_start_block=(parent.start_block is loop))
+    # Rewire interstate edges of the parent around the old LoopRegion -> new state.
+    for ie in list(parent.in_edges(loop)):
         parent.add_edge(ie.src, new_state, ie.data)
         parent.remove_edge(ie)
-    for oe in out_edges:
+    for oe in list(parent.out_edges(loop)):
         parent.add_edge(new_state, oe.dst, oe.data)
         parent.remove_edge(oe)
     parent.remove_node(loop)
     if parent.start_block is loop:
         parent.start_block = parent.node_id(new_state)
 
-    # Populate the new state.
-    carrier_read = new_state.add_read(outer_carrier_name)
-    carrier_write = new_state.add_write(outer_carrier_name)
-    delta_read = new_state.add_read(outer_delta_name)
+    # 2. Move ALL nodes and edges of the original body state (which holds
+    #    the Map + AccessNodes + NSDFG) into ``new_state``.
+    body_state = shape.body_state
+    for n in list(body_state.nodes()):
+        new_state.add_node(n)
+    for e in list(body_state.edges()):
+        new_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
-    # DaCe ``Range`` is inclusive on both ends. Construct it directly so we
-    # don't risk the string-form ``Memlet`` parser using Python-range
-    # exclusive-end semantics.
-    map_lo_sym = symbolic.pystr_to_symbolic(str(map_lo))
-    map_hi_sym = symbolic.pystr_to_symbolic(str(map_hi))
-    new_map_entry, new_map_exit = new_state.add_map(name=f'{loop.label}_map',
-                                                    ndrange={map_var: subsets.Range([(map_lo_sym, map_hi_sym, 1)])})
-
-    iter_lo = symbolic.pystr_to_symbolic(str(info.iter_start))
-    iter_hi = symbolic.pystr_to_symbolic(str(info.iter_end))
-    map_var_sym = symbolic.pystr_to_symbolic(map_var)
-    seed_lo = iter_lo - 1
-    trip = iter_hi - iter_lo + 1
-    if carry_axis == 0:
-        carry_range = subsets.Range([(iter_lo, iter_hi, 1), (map_var_sym, map_var_sym, 1)])
-        seed_subset_obj = subsets.Range([(seed_lo, seed_lo, 1), (map_var_sym, map_var_sym, 1)])
-    else:
-        carry_range = subsets.Range([(map_var_sym, map_var_sym, 1), (iter_lo, iter_hi, 1)])
-        seed_subset_obj = subsets.Range([(map_var_sym, map_var_sym, 1), (seed_lo, seed_lo, 1)])
-
-    # The ``Scan`` libnode requires a 1-D CONTIGUOUS input/output buffer; the
-    # per-column slice ``delta[iter_lo:iter_hi, jl]`` is stride-KLON in
-    # row-major memory. Stage it through small 1-D transients within the Map
-    # scope. The stride is handled by DaCe's memlet copy machinery on the
-    # outer side of the transient.
-    delta_buf_name, _ = sdfg.add_array(f'_interchange_delta_{outer_delta_name}', shape=[trip],
-                                       dtype=carrier_desc.dtype, transient=True,
-                                       storage=dtypes.StorageType.Default, find_new_name=True)
-    scan_buf_name, _ = sdfg.add_array(f'_interchange_scan_{outer_carrier_name}', shape=[trip],
-                                      dtype=carrier_desc.dtype, transient=True,
-                                      storage=dtypes.StorageType.Default, find_new_name=True)
-    delta_buf_an_in = new_state.add_access(delta_buf_name)
-    scan_buf_an = new_state.add_access(scan_buf_name)
-
-    # Add Scan libnode inside the map scope.
-    scan_node = Scan(name=f'{loop.label}_scan_op', op=_op_to_scan_op(info.op), exclusive=False)
-    new_state.add_node(scan_node)
+    # 3. Inside the NestedSDFG, replace its single state with a new
+    #    LoopRegion[carry] whose body is that same single state. This is
+    #    the actual interchange: the outer carry-loop becomes the NSDFG's
+    #    new top-level CFR, executed per Map thread.
+    inner_sdfg = nsdfg_node.sdfg
+    carry_var = loop.loop_variable
+    # Materialise the loop's init / cond / update statements so they don't
+    # share Python objects with the soon-removed outer ``LoopRegion``.
     import copy as _copy
-    # delta_outer -> MapEntry -> delta_buf (1-D, contiguous): DaCe will emit a
-    # strided gather copy here.
-    new_state.add_memlet_path(delta_read, new_map_entry, delta_buf_an_in,
-                              memlet=mm.Memlet(data=outer_delta_name, subset=_copy.deepcopy(carry_range),
-                                               other_subset=subsets.Range([(0, trip - 1, 1)])))
-    # delta_buf -> Scan input (1-D contiguous).
-    new_state.add_edge(delta_buf_an_in, None, scan_node, _SCAN_IN,
-                       mm.Memlet(data=delta_buf_name, subset=subsets.Range([(0, trip - 1, 1)])))
-    # Carrier seed -> MapEntry -> Scan init (a single element).
-    new_state.add_memlet_path(carrier_read, new_map_entry, scan_node, dst_conn=_SCAN_INIT,
-                              memlet=mm.Memlet(data=outer_carrier_name, subset=_copy.deepcopy(seed_subset_obj)))
-    # Scan output -> scan_buf (1-D).
-    new_state.add_edge(scan_node, _SCAN_OUT, scan_buf_an, None,
-                       mm.Memlet(data=scan_buf_name, subset=subsets.Range([(0, trip - 1, 1)])))
-    # scan_buf -> MapExit -> carrier_write (strided scatter).
-    new_state.add_memlet_path(scan_buf_an, new_map_exit, carrier_write,
-                              memlet=mm.Memlet(data=outer_carrier_name, subset=_copy.deepcopy(carry_range),
-                                               other_subset=subsets.Range([(0, trip - 1, 1)])))
-    return True
+    new_inner_loop = LoopRegion(label=f'{carry_var}_inner_carry',
+                                condition_expr=_copy.deepcopy(loop.loop_condition),
+                                loop_var=carry_var,
+                                initialize_expr=_copy.deepcopy(loop.init_statement),
+                                update_expr=_copy.deepcopy(loop.update_statement),
+                                inverted=loop.inverted)
+    # Move ``inner_state`` (and any other blocks the inner SDFG had) into
+    # the new ``LoopRegion``. The inner SDFG already had ``inner_state`` as
+    # its only state; we relocate it.
+    old_inner_blocks = list(inner_sdfg.nodes())
+    old_start = inner_sdfg.start_block
+    # Remove inner SDFG -> add the new LoopRegion as its single block ->
+    # move the old blocks into the LoopRegion.
+    for blk in old_inner_blocks:
+        inner_sdfg.remove_node(blk)
+    inner_sdfg.add_node(new_inner_loop, is_start_block=True)
+    for blk in old_inner_blocks:
+        new_inner_loop.add_node(blk, is_start_block=(blk is old_start))
 
+    # 4. The inner SDFG previously had ``carry_var`` (= the outer loop var)
+    #    coming in via ``symbol_mapping``. Now ``carry_var`` is OWNED by
+    #    the new inner LoopRegion (it's the loop variable), so drop the
+    #    symbol_mapping entry to avoid a redundant binding.
+    if carry_var in nsdfg_node.symbol_mapping:
+        del nsdfg_node.symbol_mapping[carry_var]
+    if carry_var in inner_sdfg.symbols:
+        # The carry variable is now the loop's own iterator; remove it
+        # from the inner SDFG's external symbol set so codegen doesn't
+        # expect it as a kernel argument.
+        del inner_sdfg.symbols[carry_var]
 
-def _op_to_scan_op(op_str: str) -> ScanOp:
-    """Map the matcher's WCR op string (``'lambda a, b: a + b'``-style or
-    a bare op label) to the corresponding :class:`ScanOp`."""
-    if isinstance(op_str, str):
-        s = op_str
-        if 'a + b' in s or s == '+':
-            return ScanOp.SUM
-        if 'a * b' in s or s == '*':
-            return ScanOp.PRODUCT
-        if 'max' in s:
-            return ScanOp.MAX
-        if 'min' in s:
-            return ScanOp.MIN
-    return ScanOp.SUM
-
-
+    # 5. Clean up the (now empty) ``body_state``. We can't remove it from
+    #    its parent because it's the body of the original LoopRegion which
+    #    has just been removed; the orphaned reference is harmless.
+    return new_inner_loop
 
 
 def _walk_back_to_computation(state: SDFGState, sdfg: SDFG, src_node, carrier: str):
@@ -1601,6 +1547,20 @@ def _composite_replace_carry_copy(info: _CompositeBodyScan, delta_buf: str, oute
     state = info.carry_copy_state
     write_an = _find_carried_write_an(state, info.out_name)
     if write_an is None:
+        return False
+    # Shared-carrier-chain refusal: the cloudsc ``for_1133`` two-carrier
+    # shape chains ``pfsqlf[jk-1] -> pfsqlf_index -> pfsqlf[jk] (written) ->
+    # pfsqrf_slice -> pfsqrf[jk]``. The just-written carrier feeds the
+    # sibling carrier's slice via an outgoing edge. Removing ``write_an``
+    # via the prune walk below would sever the edge, leaving the sibling's
+    # slice transient with ``in_degree == 0`` while still read by the
+    # sibling write -- silent garbage on the second carrier. The
+    # carry-copy state should terminate at ``write_an`` with NO downstream
+    # consumers in the same state; downstream consumption happens in a
+    # subsequent state (e.g. the inner accumulate LoopRegion). Any
+    # outgoing edge from ``write_an`` here signals a sibling-chain hazard
+    # and we refuse the lift.
+    if state.out_degree(write_an) > 0:
         return False
     write_in_edges = list(state.in_edges(write_an))
     if len(write_in_edges) != 1:

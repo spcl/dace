@@ -47,7 +47,6 @@ Refusal criteria
 import copy
 from typing import List, Optional, Set
 
-import dace
 from dace import SDFG, dtypes, subsets, symbolic
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg import utils as sdutil

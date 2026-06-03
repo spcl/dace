@@ -1,9 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Canonicalize's optional parallelization knobs, exercised end-to-end through
-the pipeline: ``break_anti_dependence`` (snapshot-rename a read-ahead WAR) and
-``peel_limit`` (best-effort loop peeling). Both are off by default and target
-loops that ``LoopToMap`` would otherwise refuse; each test checks that the knob
-flips the loop from sequential to a parallel Map AND stays value-preserving."""
+"""Canonicalize's parallelization knobs, exercised end-to-end through the
+pipeline: ``break_anti_dependence`` (snapshot-rename a read-ahead WAR) and
+``peel_limit`` (best-effort loop peeling). Both target loops that ``LoopToMap``
+would otherwise refuse; the per-target presets (see
+``dace.transformation.passes.canonicalize.pipeline._CPU_DEFAULTS`` /
+``_GPU_DEFAULTS``) now turn both on by default. Each test pins the OFF
+baseline explicitly (``peel_limit=0, break_anti_dependence=False``) so the
+"without the knob the loop stays sequential" contract is robust against
+future default changes; the ON case enables the relevant knob and asserts
+the loop becomes a Map AND stays value-preserving."""
 import numpy as np
 import pytest
 
@@ -35,7 +40,7 @@ def test_break_anti_dependence_knob_parallelizes():
     conflict); with ``break_anti_dependence=True`` the array is snapshot-renamed
     so the loop becomes a Map, value-preserving."""
     off = _s121.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'WAR loop must stay sequential without the knob'
 
     on = _s121.to_sdfg(simplify=True)
@@ -67,7 +72,7 @@ def test_loop_peeling_front_conflict_knob_parallelizes():
     the now-dead guard pruned, leaving a disjoint-write remainder that maps,
     value-preserving."""
     off = _front_conflict.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'boundary-conflict loop must stay sequential without the knob'
 
     on = _front_conflict.to_sdfg(simplify=True)
@@ -100,7 +105,7 @@ def test_loop_peeling_back_conflict_knob_parallelizes():
     Exercises the back-peel path, which must substitute ``end - k*stride`` so no
     loop-defined symbol survives past the loop to block LoopToMap."""
     off = _back_conflict.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'boundary-conflict loop must stay sequential without the knob'
 
     on = _back_conflict.to_sdfg(simplify=True)
@@ -133,7 +138,7 @@ def test_loop_peeling_multi_front_iter_knob_parallelizes():
     nested conditionals) so the disjoint-write remainder maps. Exercises peeling at
     count>1 plus the multi-branch dead-guard collapse."""
     off = _multi_front.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'multi-iteration boundary conflict must stay sequential off'
 
     on = _multi_front.to_sdfg(simplify=True)
@@ -167,7 +172,7 @@ def test_loop_peeling_multi_front_else_iter_knob_parallelizes():
     ``A[i]=B[i]*2`` remainder that maps. Exercises tautology unwrapping of the else
     arm, not just dead-branch removal."""
     off = _multi_front_else.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'if/elif/else boundary conflict must stay sequential off'
 
     on = _multi_front_else.to_sdfg(simplify=True)
@@ -198,7 +203,7 @@ def test_loop_peeling_multi_back_iter_knob_parallelizes():
     take off the last *two* iterations (anchored on the loop end, no loop symbol
     leaking) and prune both dead guards so the remainder maps."""
     off = _multi_back.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'multi-iteration tail conflict must stay sequential off'
 
     on = _multi_back.to_sdfg(simplify=True)
@@ -230,7 +235,7 @@ def test_loop_peeling_fixed_read_first_iter_knob_parallelizes():
     fix (a loop-invariant read disjoint from the ranged write is not a conflict)
     plus the LICM map-scope fix (the read of a map-written array is not hoisted)."""
     off = _fixed_read.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'the carried fixed-read loop must stay sequential without the knob'
 
     on = _fixed_read.to_sdfg(simplify=True)
@@ -274,7 +279,7 @@ def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
     remainder and the peeled iterations affine, so the result never depends on C's
     truncated ``%`` (correct for any sign of ``k`` and symbolic ``N``)."""
     off = prog.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'wrap-around modulo write must stay sequential without the knob'
 
     on = prog.to_sdfg(simplify=True)
@@ -343,7 +348,7 @@ def test_index_set_split_interior_guard_knob_parallelizes():
     range segments (which map) and a tautology in the single middle iteration.
     Value-preserving."""
     off = _interior_guard.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'interior-guard loop must stay sequential without the knob'
 
     on = _interior_guard.to_sdfg(simplify=True)
@@ -362,10 +367,10 @@ def test_index_set_split_interior_guard_knob_parallelizes():
 @dace.program
 def _interior_guard_surrounded(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
-        A[i] = B[i] * 2.0          # body before the guard
+        A[i] = B[i] * 2.0  # body before the guard
         if i == 3:
             A[N - 1] = A[N - 1] + 5.0  # the special-iteration body
-        A[i] = A[i] + 1.0          # body after the guard
+        A[i] = A[i] + 1.0  # body after the guard
 
 
 def test_index_set_split_body_around_guard_knob_parallelizes():
@@ -374,7 +379,7 @@ def test_index_set_split_body_around_guard_knob_parallelizes():
     range segments (guard-free, mapping) and ``body1; body2; body3`` in the single
     middle iteration. Value-preserving."""
     off = _interior_guard_surrounded.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'surrounded interior-guard loop must stay sequential off'
 
     on = _interior_guard_surrounded.to_sdfg(simplify=True)
@@ -405,7 +410,7 @@ def test_loop_peeling_front_range_guard_knob_parallelizes():
     now-dead ``i < 2`` guard pruned (a range contradiction over the remainder), so
     the disjoint-write body maps. Value-preserving."""
     off = _front_range_guard.to_sdfg(simplify=True)
-    canonicalize(off, validate=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
     assert _nmaps(off) == 0 and _nloops(off) == 1, 'range-guard loop must stay sequential without the knob'
 
     on = _front_range_guard.to_sdfg(simplify=True)
