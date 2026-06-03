@@ -1105,159 +1105,45 @@ class EmitTileOps(ppl.Pass):
             state.add_edge(mask_access, None, reduce_node, "_mask", dace.Memlet(f"{mask_name}[{subset}]"))
         state.add_edge(reduce_node, "_dst", scalar_access, None, dace.Memlet(f"{scalar_access.data}[0]"))
 
+    def _emit_one_copy(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
+                       tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
+                       mask_name: Optional[str]) -> Optional[dace.nodes.AccessNode]:
+        """Emit a load for a pure-copy ``_out = _in`` body tasklet.
 
-    def _rewrite_one_map(self, state: dace.SDFGState, map_entry: MapEntry, spec: TileDimSpec) -> None:
-            """Replace the body of ``map_entry`` with a tile-op chain.
+        Used when the map scope contains only assign tasklets (no compute):
+        ``dst[i] = src[i//2]``-style kernels where the load itself (TileLoad
+        / TileGather, selected by the in-edge's classification) IS the tile
+        op. The returned tile transient access node feeds the stores phase
+        which then emits the matching TileStore back to the output array.
 
-            Walks the body's binop tasklets in dataflow order, emitting one
-            :class:`TileBinop` each (operands resolved against a running
-            ``tile_map`` of intermediate tiles), then a :class:`TileStore`
-            for each binop whose output flows — through trivial assigns — to
-            the ``MapExit``. Assign tasklets (``out = inp``) are also converted
-            to tile ops unconditionally: a :class:`TileLoad` / :class:`TileGather`
-            / broadcast load feeds the stores phase directly.
-
-            :param state: Parent state.
-            :param map_entry: Inner map being rewritten.
-            :param spec: Per-dim tile specification.
-            :raises NotImplementedError: For shapes T5 MVP doesn't handle.
-            """
-            tasklets = self._find_body_tasklets(state, map_entry)
-            assign_tasklets = [t for t in tasklets if _is_assign_tasklet(t)]
-            const_stores = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is not None]
-            binops = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is None]
-
-            mask_name = self._resolve_map_mask(state, map_entry)
-            subset = ", ".join(f"0:{w}" for w in spec.widths)
-            ordered = self._topo_order_binops(state, binops)
-
-            tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]] = {}
-            stores: List[Tuple[dace.nodes.AccessNode, object]] = []
-            reductions: List[Tuple[dace.nodes.AccessNode, object, Tuple[dace.nodes.AccessNode, str]]] = []
-            all_intermediates: set = set()
-
-            # --- binop / unop pass ---
-            for t in ordered:
-                out_e = list(state.out_edges(t))
-                if _classify_unop_tasklet_body(t) is not None:
-                    out_data, out_access = self._emit_one_unop(state, t, spec, tile_map, mask_name)
-                else:
-                    out_data, out_access = self._emit_one_binop(state, t, spec, tile_map, mask_name)
-                tile_map[out_data] = (out_access.data, out_access)
-                final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
-                for an_inter in inters:
-                    if isinstance(an_inter, dace.nodes.AccessNode):
-                        tile_map[an_inter.data] = (out_access.data, out_access)
-                all_intermediates |= set(inters)
-                if isinstance(final_edge.dst, dace.nodes.MapExit):
-                    stores.append((out_access, final_edge))
-                else:
-                    wcr_target = self._wcr_scalar_target(state, final_edge.dst)
-                    if wcr_target is not None:
-                        reductions.append((out_access, final_edge, wcr_target))
-
-            # --- assign tasklets: convert every one unconditionally ---
-            converted_assigns: set = set()
-            for t in assign_tasklets:
-                in_e = list(state.in_edges(t))
-                out_e = list(state.out_edges(t))
-                # If the source is already a binop output tile, reuse it directly.
-                if in_e and isinstance(in_e[0].src, dace.nodes.AccessNode) and in_e[0].src.data in tile_map:
-                    src_data = in_e[0].src.data
-                    _, src_tile_access = tile_map[src_data]
-                    if out_e:
-                        final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
-                        wcr_target = self._wcr_scalar_target(state, final_edge.dst)
-                        all_intermediates |= set(inters)
-                        if isinstance(final_edge.dst, dace.nodes.MapExit):
-                            if not any(s[0] is src_tile_access and s[1] is final_edge for s in stores):
-                                stores.append((src_tile_access, final_edge))
-                        elif wcr_target is not None:
-                            reductions.append((src_tile_access, final_edge, wcr_target))
-                    converted_assigns.add(t)
-                    continue
-                # Emit a fresh tile load (Tile / Gather / Scalar / Symbol).
-                tile_access = self._emit_one_copy(state, t, spec, tile_map, mask_name)
-                if tile_access is not None and out_e:
-                    out_data = out_e[0].data.data if out_e[0].data and out_e[0].data.data else None
-                    if out_data is not None:
-                        tile_map[out_data] = (tile_access.data, tile_access)
-                    final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
-                    wcr_target = self._wcr_scalar_target(state, final_edge.dst)
-                    all_intermediates |= set(inters)
-                    if isinstance(final_edge.dst, dace.nodes.MapExit):
-                        stores.append((tile_access, final_edge))
-                    elif wcr_target is not None:
-                        reductions.append((tile_access, final_edge, wcr_target))
-                converted_assigns.add(t)
-
-            # --- const-store pass ---
-            for t in const_stores:
-                out_e = list(state.out_edges(t))
-                out_data, out_access = self._emit_const_tile(state, map_entry, t, _constant_store_value(t), spec)
-                tile_map[out_data] = (out_access.data, out_access)
-                final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
-                all_intermediates |= set(inters)
-                if isinstance(final_edge.dst, dace.nodes.MapExit):
-                    stores.append((out_access, final_edge))
-
-            # --- emit TileStore for every queued store ---
-            for out_access, out_edge in stores:
-                out_dst_name = out_edge.data.data
-                out_arr = state.sdfg.arrays[out_dst_name]
-                out_cls = classify_tile_access(out_edge.data.subset, tuple(out_arr.strides), spec.iter_vars)
-                mask_access = self._mask_access_or_none(state, mask_name)
-                if out_cls.kind in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
-                    self._emit_scatter_store(state, map_entry, out_access, out_edge, spec, mask_access)
-                    continue
-                if out_cls.kind not in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
-                    raise NotImplementedError(f"EmitTileOps: output {out_dst_name!r} access is {out_cls.kind.value}; "
-                                            f"only perfect-box (strided) or gather stores are supported")
-                promoted = _tile_region_subset(out_edge.data.subset, spec.iter_vars, spec.widths)
-                store = TileStore(name=f"{out_access.data}_store",
-                                widths=spec.widths,
-                                dim_strides=out_cls.dim_strides,
-                                dst_dims=out_cls.match_dims,
-                                has_mask=mask_access is not None)
-                state.add_node(store)
-                state.add_edge(out_access, None, store, TileConnectors.SRC, dace.Memlet(f"{out_access.data}[{subset}]"))
-                if mask_access is not None:
-                    state.add_edge(mask_access, None, store, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
-                state.add_edge(store, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
-                            dace.Memlet(data=out_dst_name, subset=promoted))
-
-            # --- emit TileReduce for WCR reductions ---
-            for tile_acc, _orig_edge, (scalar_acc, op) in reductions:
-                self._emit_tile_reduce(state, tile_acc, scalar_acc, op, spec, mask_name)
-
-            # --- cleanup: remove original tasklets and intermediate AccessNodes ---
-            # Every tasklet in the map body must have been converted to a tile op;
-            # any unconverted tasklet means a bug in the emit logic above.
-            unconverted = set(tasklets) - set(binops) - set(const_stores) - converted_assigns
-            state.sdfg.save("m.sdfg")
-            assert not unconverted, (
-                f"EmitTileOps: map {map_entry.label!r} has unconverted tasklets after "
-                f"tile-op emission: {[t.label for t in unconverted]}"
-            )
-            for node in list(binops) + list(const_stores) + list(converted_assigns) + list(all_intermediates):
-                for e in list(state.in_edges(node)) + list(state.out_edges(node)):
-                    state.remove_edge(e)
-                if node in state.nodes():
-                    state.remove_node(node)
-
-            for n in list(state.nodes()):
-                if not isinstance(n, dace.nodes.AccessNode) or state.degree(n) != 0:
-                    continue
-                desc = state.sdfg.arrays.get(n.data)
-                if desc is None or not desc.transient:
-                    continue
-                is_scalar_storage = (isinstance(desc, dace.data.Scalar)
-                                    or (isinstance(desc, dace.data.Array) and desc.total_size == 1))
-                if is_scalar_storage:
-                    state.remove_node(n)
-
-            self._drop_dangling_scope_connectors(state, map_entry)
-            self._drop_mask_placeholder_edge(state, mask_name, map_entry)
+        :param state: Parent state.
+        :param tasklet: The assign tasklet.
+        :param spec: Per-dim tile specification.
+        :param tile_map: Intermediate-data-name -> ``(tile_name, tile_access)``.
+        :param mask_name: Iteration-mask transient name, or ``None``.
+        :returns: The loaded tile's access node, or ``None`` when the body
+            does not match the supported pure-copy shape.
+        """
+        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        m = _ASSIGN_RE.match(body)
+        if m is None:
+            return None
+        in_conn = m.group("inp")
+        kind, info = self._resolve_operand(state, tasklet, in_conn, tile_map, spec)
+        if kind == "Tile-existing":
+            return info
+        if kind == "Tile":
+            _, tacc = self._emit_tile_load(state, tasklet, in_conn.lstrip("_"), info[0], info[1], info[2], info[3],
+                                           info[4], spec, mask_name)
+            return tacc
+        if kind == "Gather":
+            _, tacc = self._emit_gather_load(state, tasklet, in_conn.lstrip("_"), info[0], info[1], info[2], spec,
+                                             mask_name)
+            return tacc
+        # Scalar / Symbol broadcast as a pure-copy body is unusual; the
+        # standard binop emit path supports it via a TileBinop wrapper. Fall
+        # through to the original "no binop" error so the gap is visible.
+        return None
 
     def _emit_one_binop(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, spec: TileDimSpec,
                         tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]],
@@ -1337,6 +1223,198 @@ class EmitTileOps(ppl.Pass):
         self._wire_operand(state, unop, TileConnectors.A, kind_a, info_a, tasklet, spec, mask_name, subset)
         return self._finish_tile_op(state, unop, tasklet, mask_name, spec, subset)
 
+    def _rewrite_one_map(self, state: dace.SDFGState, map_entry: MapEntry, spec: TileDimSpec) -> None:
+        """Replace the body of ``map_entry`` with a tile-op chain.
+
+        Walks the body's binop tasklets in dataflow order, emitting one
+        :class:`TileBinop` each (operands resolved against a running
+        ``tile_map`` of intermediate tiles), then a :class:`TileStore`
+        for each binop whose output flows — through trivial assigns — to
+        the ``MapExit``.
+
+        :param state: Parent state.
+        :param map_entry: Inner map being rewritten.
+        :param spec: Per-dim tile specification.
+        :raises NotImplementedError: For shapes T5 MVP doesn't handle.
+        """
+        tasklets = self._find_body_tasklets(state, map_entry)
+        assign_tasklets = [t for t in tasklets if _is_assign_tasklet(t)]
+        const_stores = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is not None]
+        binops = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is None]
+        # Pure-copy bodies (``dst[i] = src[i//2]`` style) reach here with only
+        # assign tasklets: there is no binop / unop / const-store to anchor on,
+        # but each assign IS the tile op — a load (possibly with a gather /
+        # strided index) directly feeding the output. Emit each assign as a
+        # standalone load whose tile transient becomes the store source; the
+        # stores phase below picks it up exactly like a binop's output tile.
+        copy_only_emit = (not binops and not const_stores)
+        if copy_only_emit and not assign_tasklets:
+            raise NotImplementedError(f"EmitTileOps: map {map_entry.label!r} body has no binop, constant-store, "
+                                      f"or assign tasklet")
+
+        mask_name = self._resolve_map_mask(state, map_entry)
+        subset = ", ".join(f"0:{w}" for w in spec.widths)
+        # Compute tasklets (binops + unops) share one dataflow order; each is
+        # dispatched to the right tile node by its body shape.
+        ordered = self._topo_order_binops(state, binops)
+
+        tile_map: Dict[str, Tuple[str, dace.nodes.AccessNode]] = {}
+        stores: List[Tuple[dace.nodes.AccessNode, object]] = []
+        # ``reductions`` carries the post-:class:`NormalizeWCRSource` pattern
+        # ``tile -> _wcr_src (Scalar) -[wcr]-> sink``: each entry is the source
+        # tile AccessNode, the (un-wired) tasklet-to-scalar edge, and the WCR
+        # target tuple ``(scalar_access, wcr_op_str)``. Lowered to a TileReduce
+        # in the post-walk emission below.
+        reductions: List[Tuple[dace.nodes.AccessNode, object, Tuple[dace.nodes.AccessNode, str]]] = []
+        all_intermediates: set = set()
+        for t in ordered:
+            out_e = list(state.out_edges(t))
+            if _classify_unop_tasklet_body(t) is not None:
+                out_data, out_access = self._emit_one_unop(state, t, spec, tile_map, mask_name)
+            else:
+                out_data, out_access = self._emit_one_binop(state, t, spec, tile_map, mask_name)
+            tile_map[out_data] = (out_access.data, out_access)
+            final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+            # Alias every AccessNode crossed while walking forward through
+            # assign tasklets onto the source tile. The chain shape is
+            # ``binop_out -> AN -> assign -> AN -> ... -> [non-assign|MapExit]``;
+            # downstream consumers (e.g. a ``combine_branch_values`` binop
+            # that reads the renamed downstream AccessNode) then resolve via
+            # :meth:`_resolve_operand` to the existing tile instead of
+            # emitting a fresh ``TileLoad`` against an AccessNode whose only
+            # producer is the in-arm ``_out = _in`` assign -- whose codegen
+            # against tile-shaped pointer connectors is a pointer
+            # reassignment of a local, leaving the destination array at its
+            # initial ``{0}`` (cloud_fraction ``ZICEFRAC`` 99%-wrong-rate
+            # regression).
+            for an_inter in inters:
+                if isinstance(an_inter, dace.nodes.AccessNode):
+                    tile_map[an_inter.data] = (out_access.data, out_access)
+            all_intermediates |= set(inters)
+            if isinstance(final_edge.dst, dace.nodes.MapExit):
+                stores.append((out_access, final_edge))
+            else:
+                wcr_target = self._wcr_scalar_target(state, final_edge.dst)
+                if wcr_target is not None:
+                    reductions.append((out_access, final_edge, wcr_target))
+        # Second pass: emit stores for reused-result patterns where a binop's
+        # output transient feeds MULTIPLE consumers (s1281 ``x = b*c + a*d + e;
+        # a = x - 1; b = x`` — ``x`` is read by both ``_Sub_`` and the assign
+        # that writes ``b``). The binop-loop walk stops at the multi-consumer
+        # AccessNode (``_walk_through_assigns`` refuses ``len(out_edges) != 1``)
+        # so the assign-tasklet -> output-array path is never queued for a
+        # ``TileStore``. Walk forward from every assign tasklet whose source
+        # is a tile already in ``tile_map``; if the chain reaches a
+        # ``MapExit``, add a store using the producer's tile as the source.
+        for at in assign_tasklets:
+            in_e = list(state.in_edges(at))
+            if not in_e or not isinstance(in_e[0].src, dace.nodes.AccessNode):
+                continue
+            src_data = in_e[0].src.data
+            if src_data not in tile_map:
+                continue
+            out_e = list(state.out_edges(at))
+            if not out_e:
+                continue
+            final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+            if not isinstance(final_edge.dst, dace.nodes.MapExit):
+                continue
+            _, src_tile_access = tile_map[src_data]
+            if any(s[0] is src_tile_access and s[1] is final_edge for s in stores):
+                continue
+            all_intermediates |= set(inters)
+            stores.append((src_tile_access, final_edge))
+        if copy_only_emit:
+            # Walk forward from each assign; if it lands on the MapExit, emit a
+            # load for its in-edge and queue the load's tile as the store source.
+            # An assign whose final dst is a Scalar AccessNode with a downstream
+            # WCR (the post-:class:`NormalizeWCRSource` shape ``tasklet ->
+            # _wcr_src (Scalar) -[wcr]-> sink``) lowers to a TileReduce instead.
+            for t in assign_tasklets:
+                out_e = list(state.out_edges(t))
+                if not out_e:
+                    continue
+                final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+                wcr_target = self._wcr_scalar_target(state, final_edge.dst)
+                if not (isinstance(final_edge.dst, dace.nodes.MapExit) or wcr_target is not None):
+                    continue
+                tile_access = self._emit_one_copy(state, t, spec, tile_map, mask_name)
+                if tile_access is None:
+                    continue
+                all_intermediates |= set(inters)
+                if wcr_target is not None:
+                    reductions.append((tile_access, final_edge, wcr_target))
+                else:
+                    stores.append((tile_access, final_edge))
+        for t in const_stores:
+            out_e = list(state.out_edges(t))
+            out_data, out_access = self._emit_const_tile(state, map_entry, t, _constant_store_value(t), spec)
+            tile_map[out_data] = (out_access.data, out_access)
+            final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+            all_intermediates |= set(inters)
+            if isinstance(final_edge.dst, dace.nodes.MapExit):
+                stores.append((out_access, final_edge))
+
+        for out_access, out_edge in stores:
+            out_dst_name = out_edge.data.data
+            out_arr = state.sdfg.arrays[out_dst_name]
+            out_cls = classify_tile_access(out_edge.data.subset, tuple(out_arr.strides), spec.iter_vars)
+            mask_access = self._mask_access_or_none(state, mask_name)
+            if out_cls.kind in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
+                # Non-box / structured write (``a[i,i]=…`` / ``a[i//2]=…``):
+                # scatter the tile back through the same per-dim index map.
+                self._emit_scatter_store(state, map_entry, out_access, out_edge, spec, mask_access)
+                continue
+            if out_cls.kind not in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
+                raise NotImplementedError(f"EmitTileOps: output {out_dst_name!r} access is {out_cls.kind.value}; "
+                                          f"only perfect-box (strided) or gather stores are supported")
+            promoted = _tile_region_subset(out_edge.data.subset, spec.iter_vars, spec.widths)
+            store = TileStore(name=f"{out_access.data}_store",
+                              widths=spec.widths,
+                              dim_strides=out_cls.dim_strides,
+                              dst_dims=out_cls.match_dims,
+                              has_mask=mask_access is not None)
+            state.add_node(store)
+            state.add_edge(out_access, None, store, TileConnectors.SRC, dace.Memlet(f"{out_access.data}[{subset}]"))
+            if mask_access is not None:
+                state.add_edge(mask_access, None, store, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
+            state.add_edge(store, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
+                           dace.Memlet(data=out_dst_name, subset=promoted))
+
+        for tile_acc, _orig_edge, (scalar_acc, op) in reductions:
+            self._emit_tile_reduce(state, tile_acc, scalar_acc, op, spec, mask_name)
+
+        # Remove the original body tasklets + the intermediate transients
+        # that only connected them — scoped, so no isolated node remains.
+        for node in list(binops) + list(const_stores) + list(assign_tasklets) + list(all_intermediates):
+            for e in list(state.in_edges(node)) + list(state.out_edges(node)):
+                state.remove_edge(e)
+            if node in state.nodes():
+                state.remove_node(node)
+        # Drop any scalar-transient AccessNode in this map's STATE that is
+        # now isolated — the binop emission rewrites consumers to read from
+        # the previous binop's TILE output rather than the original scalar
+        # transient, so reused-result patterns (s251 ``s = b + c*d; a = s*s``,
+        # s1281 ``x = ...; a = x - 1; b = x``) leave the named scalar (``s``,
+        # ``x``) dangling once its producer binop is removed above. The
+        # dangler may sit OUTSIDE the map scope when the body NSDFG's outer
+        # AccessNode is what carried the reused value (masked-remainder
+        # split: the same AccessNode existed once at state level and was
+        # cross-referenced by each map copy). Only touches scalars / length-1
+        # transients (point-storage stand-ins for binop outputs); arrays and
+        # non-transients stay.
+        for n in list(state.nodes()):
+            if not isinstance(n, dace.nodes.AccessNode) or state.degree(n) != 0:
+                continue
+            desc = state.sdfg.arrays.get(n.data)
+            if desc is None or not desc.transient:
+                continue
+            is_scalar_storage = (isinstance(desc, dace.data.Scalar)
+                                 or (isinstance(desc, dace.data.Array) and desc.total_size == 1))
+            if is_scalar_storage:
+                state.remove_node(n)
+        self._drop_dangling_scope_connectors(state, map_entry)
+        self._drop_mask_placeholder_edge(state, mask_name, map_entry)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
         """Walk every K-dim eligible inner map and emit the tile-op chain.

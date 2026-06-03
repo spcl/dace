@@ -45,6 +45,7 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.eliminate_branches import EliminateBranches
+from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
     LowerInterstateConditionalAssignmentsToTasklets, )
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
@@ -285,9 +286,23 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # branches, anything with ``if a[i] < 0`` etc.) is left with a
             # ``ConditionalBlock`` that ``PromoteNSDFGBodyToTiles`` now
             # refuses loudly.
+            # fp_factor lowering canonicalises every same-write-set
+            # ``ConditionalBlock`` to ``ITE(c, t, e)`` tasklets FIRST (same
+            # path the merge mode takes), then folds those ITE calls into
+            # the FP-factor arithmetic form ``c * t + (1 - c) * e`` via
+            # :class:`LowerITEToFpFactor`. Without this lowering, the
+            # descent later refuses every kernel that still carries a
+            # ``ConditionalBlock`` (cloudsc_one fp_factor regressions).
+            # ``EliminateBranches`` runs LAST as a safety net for the
+            # residual disjoint-write / single-arm shapes; ``permissive``
+            # is preserved because some kernels (e.g. cloudsc_tidy_branch)
+            # rely on it accepting map-param-conditional shapes.
             _eb = EliminateBranches()
             _eb.permissive = True
             passes += [
+                SameWriteSetIfElseToITECFG(),
+                BranchNormalization(),
+                LowerITEToFpFactor(),
                 _eb,
                 LowerInterstateConditionalAssignmentsToTasklets(),
             ]
