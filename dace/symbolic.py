@@ -48,7 +48,7 @@ class _SymbolDTypeContext(threading.local):
         self.ctx_stack.pop()
         return self
 
-    def get(self) -> types.MappingProxyType[str, 'dtypes.typeclass']:
+    def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
         if len(self.ctx_stack) == 0:
             raise IndexError("Symbol type stack is empty.")
