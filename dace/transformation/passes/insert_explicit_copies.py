@@ -398,16 +398,15 @@ class InsertExplicitCopies(ppl.Pass):
         except RuntimeError:
             return False
         outer_desc = sdfg.arrays[outer.data]
-        if (outer_desc.storage not in self._STANDARD_STORAGES
-                or inner_desc.storage not in self._STANDARD_STORAGES
+        if (outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES
                 or outer_desc.dtype != inner_desc.dtype):
             return False
 
         outer_memlet = edge.data
         inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
-        label = (f"copy_{outer_memlet.data}_to_{inner_node.data}" if stage_in
-                 else f"copy_{inner_node.data}_to_{outer_memlet.data}")
+        label = (f"copy_{outer_memlet.data}_to_{inner_node.data}"
+                 if stage_in else f"copy_{inner_node.data}_to_{outer_memlet.data}")
         libnode = CopyLibraryNode(name=label)
         state.add_node(libnode)
         if stage_in:

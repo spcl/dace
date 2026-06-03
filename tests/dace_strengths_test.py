@@ -15,14 +15,12 @@ import pytest
 import dace
 from dace import dtypes, subsets, symbolic
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
-from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 N = dace.symbol('N')
-
 
 # ---------------------------------------------------------------------------
 # 1. Library-node lifting -- LLVM can only SIMD-vectorize, never call cub::DeviceScan
@@ -100,8 +98,11 @@ def test_multiplicative_recurrence_collapses_to_closed_form():
     sdfg.add_array('acc', [1], dace.float64)
     sdfg.add_symbol('M', dace.int32)
     init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('mult_loop', initialize_expr='i = 0', condition_expr='i < M',
-                      update_expr='i = i + 1', loop_var='i')
+    loop = LoopRegion('mult_loop',
+                      initialize_expr='i = 0',
+                      condition_expr='i < M',
+                      update_expr='i = i + 1',
+                      loop_var='i')
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
     body = loop.add_state('body', is_start_block=True)
@@ -115,11 +116,9 @@ def test_multiplicative_recurrence_collapses_to_closed_form():
     InductionVariableSubstitution().apply_pass(sdfg, {})
     sdfg.validate()
 
-    surviving_loops = [r for r in sdfg.all_control_flow_regions()
-                       if isinstance(r, LoopRegion) and r.loop_variable]
-    assert len(surviving_loops) == 0, (
-        'IVSub should have collapsed the multiplicative recurrence to its closed form '
-        f'``acc *= 0.99 ** M``; {len(surviving_loops)} loops survived.')
+    surviving_loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(surviving_loops) == 0, ('IVSub should have collapsed the multiplicative recurrence to its closed form '
+                                       f'``acc *= 0.99 ** M``; {len(surviving_loops)} loops survived.')
 
 
 # ---------------------------------------------------------------------------
@@ -226,13 +225,14 @@ def test_wcr_explicit_no_reduction_pattern_match_needed():
                 _o = _a
 
     sdfg = reduce_sum.to_sdfg(simplify=True)
-    wcr_edges = [e for sd in sdfg.all_sdfgs_recursive()
-                 for st in sd.all_states()
-                 for e in st.edges()
-                 if e.data is not None and e.data.wcr is not None]
+    wcr_edges = [
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        if e.data is not None and e.data.wcr is not None
+    ]
     assert wcr_edges, 'expected at least one explicit WCR edge'
-    assert any('a + b' in e.data.wcr for e in wcr_edges), (
-        'reduction op should be explicit on the WCR edge string; codegen reads it directly.')
+    assert any(
+        'a + b' in e.data.wcr
+        for e in wcr_edges), ('reduction op should be explicit on the WCR edge string; codegen reads it directly.')
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +355,9 @@ def test_memlet_subset_is_explicit_no_aliasing_reconstruction():
             continue
         if isinstance(e.src, nodes.Tasklet) or isinstance(e.dst, nodes.Tasklet):
             inner_subsets.append(str(e.data.subset))
-    assert inner_subsets and all(s == 'i' for s in inner_subsets), (
-        f'per-iteration memlets should be the symbolic ``i`` verbatim; got {inner_subsets}')
+    assert inner_subsets and all(
+        s == 'i'
+        for s in inner_subsets), (f'per-iteration memlets should be the symbolic ``i`` verbatim; got {inner_subsets}')
 
     # Execute end-to-end.
     n = 16
@@ -391,8 +392,9 @@ def test_symbolic_shape_and_strides_in_descriptor():
     # expressions of the shape -- accessible without parsing a target-specific
     # datalayout string.
     stride_strs = {str(s) for s in desc.strides}
-    assert any('K' in s for s in stride_strs), (
-        f'expected row-major stride to reference the inner-dim symbol K; got {stride_strs}')
+    assert any(
+        'K' in s
+        for s in stride_strs), (f'expected row-major stride to reference the inner-dim symbol K; got {stride_strs}')
 
 
 if __name__ == '__main__':

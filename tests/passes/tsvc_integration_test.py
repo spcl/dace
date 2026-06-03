@@ -52,9 +52,10 @@ def test_tsvc_baseline_matches_numpy(kernel, simplify, request):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # gather indices are read-only inputs
-        assert _allclose(ref[name], got[name]), (
-            f"{kernel.name}/{name} (simplify={simplify}): SDFG baseline diverges from numpy "
-            f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(
+            ref[name],
+            got[name]), (f"{kernel.name}/{name} (simplify={simplify}): SDFG baseline diverges from numpy "
+                         f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
 
 
 if __name__ == "__main__":

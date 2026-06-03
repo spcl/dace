@@ -40,7 +40,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
-
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
 _POS_ITER_PREFIX = '_loop_pos_'
 

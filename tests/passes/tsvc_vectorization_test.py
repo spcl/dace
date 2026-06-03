@@ -39,8 +39,8 @@ def _matrix():
     ``@dace.program``), so each kernel is passed as ``(program, TSVCKernel)``;
     the kernel record travels through as ``kt[1]``. IDs use the short kernel name.
     """
-    params = (build_tsvc_matrix([(k.program, k) for k in _G1D], (64, 65))[0] +
-              build_tsvc_matrix([(k.program, k) for k in _G2D], (16, 17))[0])
+    params = (build_tsvc_matrix([(k.program, k) for k in _G1D],
+                                (64, 65))[0] + build_tsvc_matrix([(k.program, k) for k in _G2D], (16, 17))[0])
     # param = (program, kernel, remainder_strategy, branch_mode, LEN)
     ids = [f"{p[1].name}-{p[2]}-{p[3]}-{p[4]}" for p in params]
     return params, ids

@@ -13,7 +13,6 @@ import numpy as np
 
 import dace
 from dace.transformation.passes.vectorization.tile_map_by_num_cores import TileMapByNumCores
-from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 
 N = dace.symbol("N")
 
@@ -40,8 +39,8 @@ def _core_outer_maps(sdfg):
     :returns: List of ``(map_entry, state)`` for core-distribution maps.
     """
     return [(n, g) for n, g in sdfg.all_nodes_recursive()
-            if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)
-            and any(p.startswith("core") for p in n.map.params)]
+            if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and any(
+                p.startswith("core") for p in n.map.params)]
 
 
 def _run(prog, trip, num_cores):

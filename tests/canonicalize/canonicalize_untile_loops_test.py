@@ -19,6 +19,7 @@ def _loops(sdfg):
 # Case A -- inner is ``range(0, K)`` and body accesses via ``i + ii``.
 # -----------------------------------------------------------------------------
 
+
 def test_case_a_combined_access_K4_collapses_to_single_loop():
     """``for i in range(0, N, 4): for ii in range(4): a[i+ii] = b[i+ii]`` -- the
     canonical two-level tile that an unrolling pass would otherwise expand into
@@ -81,6 +82,7 @@ def test_case_a_with_arithmetic_combination_collapses():
 # -----------------------------------------------------------------------------
 # Case B -- inner is ``range(i, i+K)`` and body accesses via ``ii``.
 # -----------------------------------------------------------------------------
+
 
 def test_case_b_absolute_inner_collapses_to_single_loop():
     """``for i in range(0, N, 4): for ii in range(i, i+4): a[ii] = b[ii]``."""
@@ -198,6 +200,7 @@ def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
 # -----------------------------------------------------------------------------
 # Refusal contracts.
 # -----------------------------------------------------------------------------
+
 
 def test_refuses_when_outer_stride_is_not_concrete_int():
     """``for i in range(0, N, K)`` with ``K`` symbolic -- can't collapse without
@@ -359,9 +362,9 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
             for jj in range(0, M - 2, K):
                 for i in range(K):
                     for j in range(K):
-                        b[ii + i + 1, jj + j + 1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] +
-                                                           a[ii + i + 1, jj + j + 2] + a[ii + i, jj + j + 1] +
-                                                           a[ii + i + 2, jj + j + 1])
+                        b[ii + i + 1, jj + j +
+                          1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] + a[ii + i + 1, jj + j + 2] +
+                                      a[ii + i, jj + j + 1] + a[ii + i + 2, jj + j + 1])
 
     n, m = 10, 10
     rng = np.random.default_rng(0)
@@ -390,9 +393,9 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     def jacobi2d_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
         for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:
             for i, j in dace.map[0:K, 0:K]:
-                b[ii + i + 1, jj + j + 1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] +
-                                                   a[ii + i + 1, jj + j + 2] + a[ii + i, jj + j + 1] +
-                                                   a[ii + i + 2, jj + j + 1])
+                b[ii + i + 1,
+                  jj + j + 1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] + a[ii + i + 1, jj + j + 2] +
+                                       a[ii + i, jj + j + 1] + a[ii + i + 2, jj + j + 1])
 
     n, m = 10, 10
     rng = np.random.default_rng(1)
@@ -504,9 +507,9 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
                 I = ii + i + 1
                 J = jj + j + 1
                 Kk = kk + k + 1
-                b[I, J, Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] + a[I, J + 1, Kk] -
-                                       2.0 * a[I, J, Kk] + a[I, J - 1, Kk] + a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] +
-                                       a[I, J, Kk - 1])
+                b[I, J,
+                  Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] + a[I, J + 1, Kk] - 2.0 *
+                                 a[I, J, Kk] + a[I, J - 1, Kk] + a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
 
     n, m, p = 10, 10, 10
     rng = np.random.default_rng(4)
@@ -546,11 +549,10 @@ def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
                                             I = i2 + 1
                                             J = j2 + 1
                                             Kk = k2 + 1
-                                            b[I, J, Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] +
-                                                                   a[I - 1, J, Kk] + a[I, J + 1, Kk] -
-                                                                   2.0 * a[I, J, Kk] + a[I, J - 1, Kk] +
-                                                                   a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] +
-                                                                   a[I, J, Kk - 1])
+                                            b[I, J,
+                                              Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] +
+                                                             a[I, J + 1, Kk] - 2.0 * a[I, J, Kk] + a[I, J - 1, Kk] +
+                                                             a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
 
     n, m, p = 18, 18, 18
     rng = np.random.default_rng(5)

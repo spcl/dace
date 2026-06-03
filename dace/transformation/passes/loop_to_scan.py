@@ -1007,8 +1007,14 @@ def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[
                                      inner_state, inner_carrier_name, iter_start, iter_end)
     if inner_match is None:
         return None
-    return _CarryMapShape(loop=loop, parent=parent, body_state=body_state, map_entry=map_entry, map_exit=map_exit,
-                          nsdfg=nsdfg, inner_state=inner_state, inner_scan=inner_match)
+    return _CarryMapShape(loop=loop,
+                          parent=parent,
+                          body_state=body_state,
+                          map_entry=map_entry,
+                          map_exit=map_exit,
+                          nsdfg=nsdfg,
+                          inner_state=inner_state,
+                          inner_scan=inner_match)
 
 
 class _InterchangeFakeLoop:
@@ -1120,9 +1126,6 @@ def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> Op
     #    its parent because it's the body of the original LoopRegion which
     #    has just been removed; the orphaned reference is harmless.
     return new_inner_loop
-
-
-
 
 
 def _walk_back_to_computation(state: SDFGState, sdfg: SDFG, src_node, carrier: str):

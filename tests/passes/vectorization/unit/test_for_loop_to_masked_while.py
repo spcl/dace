@@ -23,7 +23,6 @@ import ast
 import numpy as np
 
 import dace
-from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.generate_iteration_mask import GenerateIterationMask
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG

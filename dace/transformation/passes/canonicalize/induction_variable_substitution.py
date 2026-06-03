@@ -72,8 +72,8 @@ class _UnwrapTypecasts(ast.NodeTransformer):
         self.generic_visit(node)
         # Match ``dace.<typeclass>(x)``: ``func`` is Attribute(value=Name('dace'), attr=typeclass)
         if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == 'dace' and node.func.attr in self._TYPECAST_NAMES
-                and len(node.args) == 1 and not node.keywords):
+                and node.func.value.id == 'dace' and node.func.attr in self._TYPECAST_NAMES and len(node.args) == 1
+                and not node.keywords):
             return node.args[0]
         return node
 
@@ -221,9 +221,8 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, str, type, 
                     return None
                 # Allow SDFG symbols / constants / known dtype-cast roots; reject
                 # any other name (which would imply a connector or loop-local var).
-                if (sub.id not in sdfg.symbols and sub.id not in sdfg.constants
-                        and sub.id not in sdfg.free_symbols and sub.id != 'dace'
-                        and not hasattr(__import__('builtins'), sub.id)):
+                if (sub.id not in sdfg.symbols and sub.id not in sdfg.constants and sub.id not in sdfg.free_symbols
+                        and sub.id != 'dace' and not hasattr(__import__('builtins'), sub.id)):
                     return None
                 if (sub.id in sdfg.symbols or sub.id in sdfg.constants
                         or sub.id in sdfg.free_symbols) and not _is_loop_invariant_symbol(sub.id, loop, sdfg):
@@ -288,7 +287,6 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, str, type, 
 def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, accum_name: str, accum_subset: str,
                                    closed_form: str, sdfg: SDFG) -> None:
     """Swap ``loop`` for a state whose tasklet writes the closed form back to ``accum_name[accum_subset]``."""
-    import dace
     from dace import memlet as mm
 
     was_start = parent.start_block is loop
@@ -408,8 +406,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         if lhs not in sdfg.symbols and lhs not in sdfg.free_symbols:
             continue
         # No other body iedge may also write ``lhs``.
-        other_writers = [oe for oe in loop.edges()
-                         if oe is not e and lhs in (oe.data.assignments or {})]
+        other_writers = [oe for oe in loop.edges() if oe is not e and lhs in (oe.data.assignments or {})]
         if other_writers:
             continue
         if iv_candidate is not None:

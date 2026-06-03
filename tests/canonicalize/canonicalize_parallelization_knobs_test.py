@@ -367,10 +367,10 @@ def test_index_set_split_interior_guard_knob_parallelizes():
 @dace.program
 def _interior_guard_surrounded(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
-        A[i] = B[i] * 2.0          # body before the guard
+        A[i] = B[i] * 2.0  # body before the guard
         if i == 3:
             A[N - 1] = A[N - 1] + 5.0  # the special-iteration body
-        A[i] = A[i] + 1.0          # body after the guard
+        A[i] = A[i] + 1.0  # body after the guard
 
 
 def test_index_set_split_body_around_guard_knob_parallelizes():

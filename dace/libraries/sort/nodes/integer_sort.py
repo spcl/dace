@@ -28,20 +28,17 @@ from typing import Tuple
 import dace
 from dace import library, nodes
 from dace.codegen.common import sym2cpp
-from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers  # local helper functions kept out of this file for readability
 from .. import environments
-
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_keys_in"
 OUTPUT_CONNECTOR_NAME = "_keys_out"
 
 
-def _validate_inputs_and_outputs(
-    node: "IntegerSort", state: dace.SDFGState, sdfg: dace.SDFG
-) -> Tuple[dace.data.Array, dace.data.Array, str, str]:
+def _validate_inputs_and_outputs(node: "IntegerSort", state: dace.SDFGState,
+                                 sdfg: dace.SDFG) -> Tuple[dace.data.Array, dace.data.Array, str, str]:
     """Resolve and validate the in/out edges; return ``(in_desc, out_desc, in_name, out_name)``.
 
     :param node: The IntegerSort node being expanded.

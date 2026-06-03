@@ -303,9 +303,8 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
     from dace.transformation.passes.vectorization import reduce_expansion  # noqa: F401
 
     if op not in _OP_TO_WCR:
-        raise NotImplementedError(
-            f"reduce_before_use: unsupported reduction op {op!r}; supported "
-            f"{sorted(_OP_TO_WCR)} (- / / and custom ops have no associative horizontal reduce)")
+        raise NotImplementedError(f"reduce_before_use: unsupported reduction op {op!r}; supported "
+                                  f"{sorted(_OP_TO_WCR)} (- / / and custom ops have no associative horizontal reduce)")
 
     for edge in list(state.edges()):
         dst = edge.dst

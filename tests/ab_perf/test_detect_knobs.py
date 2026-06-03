@@ -38,17 +38,15 @@ from typing import Dict
 import numpy as np
 import pytest
 
-import dace
-from dace.transformation.passes.canonicalize.pipeline import (CanonicalizationPipeline, _CPU_DEFAULTS, _GPU_DEFAULTS)
-from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
+from dace.transformation.passes.canonicalize.pipeline import (_CPU_DEFAULTS, _GPU_DEFAULTS)
 
-from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
-from tests.ab_perf.test_for_1133_ab import (_build_variant_a as _for1133_a, _build_variant_b as _for1133_b,
-                                            _to_gpu_sdfg as _for1133_to_gpu, _oracle as _for1133_oracle)
-from tests.ab_perf.test_canon_knobs_ab import (_anti_dep_kernel, _anti_dep_oracle, _build_canon_sdfg,
-                                                _to_gpu_sdfg as _canon_to_gpu)
-from tests.ab_perf.test_scatter_ab import (_scatter, _build_variant_a as _scatter_build_a,
-                                            _build_variant_b as _scatter_build_b, _to_gpu_sdfg as _scatter_to_gpu)
+from tests.ab_perf._harness import time_cpu, time_gpu, to_gpu
+from tests.ab_perf.test_for_1133_ab import (_build_variant_a as _for1133_a, _build_variant_b as _for1133_b, _to_gpu_sdfg
+                                            as _for1133_to_gpu, _oracle as _for1133_oracle)
+from tests.ab_perf.test_canon_knobs_ab import (_anti_dep_kernel, _anti_dep_oracle, _build_canon_sdfg, _to_gpu_sdfg as
+                                               _canon_to_gpu)
+from tests.ab_perf.test_scatter_ab import (_build_variant_a as _scatter_build_a, _build_variant_b as _scatter_build_b,
+                                           _to_gpu_sdfg as _scatter_to_gpu)
 
 
 def _pick(stats_a: Dict[str, float], stats_b: Dict[str, float], knob_off_label: str, knob_on_label: str) -> bool:

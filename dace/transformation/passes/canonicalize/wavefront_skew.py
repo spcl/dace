@@ -45,11 +45,10 @@ from typing import List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, properties, symbolic
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-
 
 #: Prefix for the synthesised skewed iterators.
 _SKEW_T_PREFIX = '_skew_t_'
@@ -104,7 +103,7 @@ def _try_extract_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
 
 
 def _extract_wavefront_offsets(inner: LoopRegion, outer_var: str, inner_var: str,
-                                sdfg: SDFG) -> Optional[Tuple[str, List[Tuple[object, object]]]]:
+                               sdfg: SDFG) -> Optional[Tuple[str, List[Tuple[object, object]]]]:
     """Look at the inner body for a write to a 2-D array at ``(outer_var, inner_var)``
     and reads from the same array. Returns ``(array_name, list_of_read_offsets)``
     where each ``(d_outer, d_inner)`` is the offset of a read relative to the

@@ -64,8 +64,8 @@ def scatter(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], cc: dace
 
 
 @dace.program
-def guarded_two_stencils(a: dace.float64[N], b: dace.float64[N], cc: dace.float64[N],
-                         d: dace.float64[N], act: dace.int32[1]):
+def guarded_two_stencils(a: dace.float64[N], b: dace.float64[N], cc: dace.float64[N], d: dace.float64[N],
+                         act: dace.int32[1]):
     if act[0] > 0:
         for i in dace.map[1:N - 1]:
             b[i] = a[i - 1] + a[i] + a[i + 1]
@@ -153,8 +153,12 @@ def test_canonicalize_guarded_two_stencils(av):
     n = 24
     a, cc = np.random.rand(n), np.random.rand(n)
     ref_b, ref_d = np.full(n, 5.0), np.full(n, 5.0)
-    copy.deepcopy(guarded_two_stencils.to_sdfg(simplify=True))(
-        a=a.copy(), b=ref_b, cc=cc.copy(), d=ref_d, act=np.array([av], np.int32), N=n)
+    copy.deepcopy(guarded_two_stencils.to_sdfg(simplify=True))(a=a.copy(),
+                                                               b=ref_b,
+                                                               cc=cc.copy(),
+                                                               d=ref_d,
+                                                               act=np.array([av], np.int32),
+                                                               N=n)
 
     sdfg = guarded_two_stencils.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)

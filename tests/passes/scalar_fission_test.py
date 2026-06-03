@@ -346,8 +346,7 @@ def _build_outer_inner_scalar_sdfg():
     sdfg.add_edge(s_init, s_use, dace.InterstateEdge())
     x_r = s_use.add_read('X')
     y_w = s_use.add_access('Y')
-    nsdfg = s_use.add_nested_sdfg(body, inputs={'X'}, outputs={'Y'},
-                                  symbol_mapping={'xsym': 'xsym'})
+    nsdfg = s_use.add_nested_sdfg(body, inputs={'X'}, outputs={'Y'}, symbol_mapping={'xsym': 'xsym'})
     s_use.add_edge(x_r, None, nsdfg, 'X', dace.Memlet('X[0]'))
     s_use.add_edge(nsdfg, 'Y', y_w, None, dace.Memlet('Y[0]'))
     b_w0 = s_use.add_write('B')
@@ -389,7 +388,6 @@ def test_scalar_fission_propagates_rename_into_nsdfg():
     write to ``X`` (in ``s_use``), which makes ``ScalarFission`` split
     ``X`` into per-scope copies.
     """
-    import copy as _copy
     sdfg = _build_outer_inner_scalar_sdfg()
     # Force a non-trivial fission: add a second write to X inside s_use
     # AFTER the NestedSDFG reads it, so X has TWO dominating-write scopes
@@ -407,8 +405,8 @@ def test_scalar_fission_propagates_rename_into_nsdfg():
     s_use.add_edge(set_one, '_out', x_w2, None, dace.Memlet('X[0]'))
     sdfg.validate()
 
-    PrivatizeScalars = __import__(
-        'dace.transformation.passes.scalar_fission', fromlist=['PrivatizeScalars']).PrivatizeScalars
+    PrivatizeScalars = __import__('dace.transformation.passes.scalar_fission',
+                                  fromlist=['PrivatizeScalars']).PrivatizeScalars
 
     pre_arrays_outer = set(sdfg.arrays.keys())
     nsdfg_node = next(n for n in s_use.nodes() if isinstance(n, dace.nodes.NestedSDFG))
@@ -446,7 +444,7 @@ def test_scalar_fission_propagates_rename_into_nsdfg():
     for st in nsdfg_node.sdfg.states():
         for an in st.data_nodes():
             assert an.data in nsdfg_node.sdfg.arrays, (f'inner AccessNode {an.data!r} not in inner '
-                                                      f'arrays catalog')
+                                                       f'arrays catalog')
     # Final invariant: the SDFG must validate end-to-end.
     sdfg.validate()
 

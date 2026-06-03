@@ -44,8 +44,8 @@ def two_gathers(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: d
 
 
 @dace.program
-def two_gather_stencils(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N],
-                        c: dace.float64[N], e: dace.float64[N]):
+def two_gather_stencils(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: dace.float64[N],
+                        e: dace.float64[N]):
     # Indirect *stencil*: gathered base with structured neighbour offsets.
     for i in dace.map[1:N - 1]:
         b[i] = a[idx[i] - 1] + a[idx[i]] + a[idx[i] + 1]
@@ -90,8 +90,7 @@ def test_horizontal_fusion_recombines_indirect_maps(prog, kind, interior):
     a = np.random.rand(n)
     c = np.random.rand(n)
     idx = (np.random.randint(1, n - 1, size=n) if interior else
-           np.random.permutation(n) if kind == 'scatter' else
-           np.random.randint(0, n, size=n)).astype(np.int32)
+           np.random.permutation(n) if kind == 'scatter' else np.random.randint(0, n, size=n)).astype(np.int32)
 
     base = prog.to_sdfg(simplify=True)
     assert _nmaps(base) == 1

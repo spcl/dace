@@ -86,5 +86,3 @@ def test_triad_parity_across_sve_styles(sve_style):
     expected = a + b + c
     assert np.allclose(d, expected, rtol=1e-12, atol=1e-12), \
         f"{sve_style}: max|d|={float(np.max(np.abs(d - expected)))}"
-
-

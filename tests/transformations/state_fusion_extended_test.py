@@ -298,9 +298,6 @@ def test_same_named_writer_transient_does_not_collapse():
     _assert_fusion_preserves_semantics(sdfg, 1, arr=arr, out1=out1, out2=out2)
 
 
-import pytest
-
-
 def test_peeled_iterations_then_remainder_map_keep_ordering():
     """Two peeled iterations + a remainder Map: the un-fused interstate
     ordering is load-bearing because the peeled writes alias the Map's

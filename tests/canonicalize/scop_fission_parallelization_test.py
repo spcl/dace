@@ -16,7 +16,6 @@ become one clean parallel map. After canonicalization (fission before
 loop-to-map) the independent statements should each become maximally parallel
 maps, while staying numerically identical.
 """
-import copy
 
 import numpy as np
 import pytest
@@ -88,9 +87,8 @@ def test_scop_fission_enables_more_parallelism():
     canon_maps = _num_map_entries(canon)
 
     assert canon_maps >= 1, "canonicalization produced no parallel map"
-    assert canon_maps >= baseline_maps, (
-        f"canonicalization parallelized less than the fused baseline "
-        f"({canon_maps} < {baseline_maps})")
+    assert canon_maps >= baseline_maps, (f"canonicalization parallelized less than the fused baseline "
+                                         f"({canon_maps} < {baseline_maps})")
 
 
 if __name__ == "__main__":

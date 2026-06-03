@@ -129,7 +129,8 @@ def _build_fuse_input_sdfg(num_inner: int):
     outer_dst = st.add_access("OUT")
     ome, omx = st.add_map("outer", {"o": "0:1"})
     ime, imx = st.add_map("body", {"i": "0:32"})
-    t = st.add_tasklet("nop", {f"_in{k}" for k in range(num_inner)}, {"_out"},
+    t = st.add_tasklet("nop", {f"_in{k}"
+                               for k in range(num_inner)}, {"_out"},
                        "_out = " + " + ".join(f"_in{k}" for k in range(num_inner)))
     inner_a_root = st.add_access("A")
     st.add_memlet_path(outer_src, ome, inner_a_root, memlet=dace.Memlet("A[0:64]"))
@@ -141,16 +142,18 @@ def _build_fuse_input_sdfg(num_inner: int):
     return sdfg
 
 
-@pytest.mark.parametrize("num_inner,threshold,expect_fused,expect_gated", [
-    # Strictly-above-threshold groups are fused.
-    (3, 1, 1, 0),
-    (3, 2, 1, 0),
-    (5, 4, 1, 0),
-    # At-or-below the per-group count: gated, not fused.
-    (3, 3, 0, 1),
-    (3, 5, 0, 1),
-    (5, 5, 0, 1),
-])
+@pytest.mark.parametrize(
+    "num_inner,threshold,expect_fused,expect_gated",
+    [
+        # Strictly-above-threshold groups are fused.
+        (3, 1, 1, 0),
+        (3, 2, 1, 0),
+        (5, 4, 1, 0),
+        # At-or-below the per-group count: gated, not fused.
+        (3, 3, 0, 1),
+        (3, 5, 0, 1),
+        (5, 5, 0, 1),
+    ])
 def test_fuse_threshold_gates_via_instrumentation(num_inner, threshold, expect_fused, expect_gated):
     """``FuseOverlappingLoads`` records in ``_last_groups_fused`` /
     ``_last_groups_gated`` how its ``len(v) <= threshold`` gate

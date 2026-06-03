@@ -65,7 +65,7 @@ def test_hoist_iv_updates_splits_compound_body():
     n_loops_after = _nloops(sdfg)
     n_tasklets_after = _ntasklets_in_loop_bodies(sdfg)
     assert res == n_loops_after - n_loops_before, (f"reported {res} hoists, but "
-                                                    f"loop count went {n_loops_before} -> {n_loops_after}")
+                                                   f"loop count went {n_loops_before} -> {n_loops_after}")
     if res:
         assert n_tasklets_after == n_tasklets_before, ("split should not duplicate or drop tasklets; "
                                                        f"{n_tasklets_before} -> {n_tasklets_after}")
@@ -96,7 +96,7 @@ def test_hoist_then_ivsub_collapses_iv_loop():
     n_subs = InductionVariableSubstitution().apply_pass(sdfg, {})
     sdfg.validate()
     assert n_subs is not None and n_subs >= 1, ("expected at least one IV-substituted loop after hoist; "
-                                                 "the hoisted single-statement loop should have collapsed")
+                                                "the hoisted single-statement loop should have collapsed")
 
 
 @dace.program
@@ -104,8 +104,8 @@ def coupled_iv_and_perelem(a: dace.float64[1], b: dace.float64[N]):
     """Refusal case: ``a[0]`` is both read by the per-element update AND IV-updated,
     so the IV statement is NOT independent of the rest -- the pass must leave it alone."""
     for i in range(N):
-        b[i] = b[i] + a[0]      # reads a[0]
-        a[0] = a[0] * 0.5       # IV update on the same slot the loop body reads
+        b[i] = b[i] + a[0]  # reads a[0]
+        a[0] = a[0] * 0.5  # IV update on the same slot the loop body reads
 
 
 def test_hoist_refuses_when_iv_slot_is_loop_dependency():

@@ -140,8 +140,7 @@ def _build_sve_variable_spmv_sdfg(NV: int) -> dace.SDFG:
     an_b = st.add_access("b")
     an_idx = st.add_access("idx")
     an_y = st.add_access("y")
-    t = st.add_tasklet("sve_spmv",
-                       {"_a", "_b", "_idx"}, {"_y"},
+    t = st.add_tasklet("sve_spmv", {"_a", "_b", "_idx"}, {"_y"},
                        _SVE_SPMV_REDUCE_BODY,
                        language=dace.dtypes.Language.CPP)
     st.add_edge(an_a, None, t, "_a", dace.Memlet(f"a[0:{NV}]"))

@@ -17,8 +17,12 @@ def _safe_label(s: str) -> str:
     return s.replace(':', '_').replace(' ', '_')
 
 
-def _build_scan_sdfg(dace_dtype: dace.dtypes.typeclass, n: int, op: ScanOp, exclusive: bool,
-                     implementation: str, identity=None) -> dace.SDFG:
+def _build_scan_sdfg(dace_dtype: dace.dtypes.typeclass,
+                     n: int,
+                     op: ScanOp,
+                     exclusive: bool,
+                     implementation: str,
+                     identity=None) -> dace.SDFG:
     """Build a single-state SDFG that scans ``arr_in[0:N]`` into ``arr_out[0:N]``."""
     name = f"scan_{op.value}_{int(exclusive)}_{implementation}_{_safe_label(dace_dtype.to_string())}_{n}"
     sdfg = dace.SDFG(name)
@@ -81,9 +85,8 @@ def test_scan_inclusive_matches_numpy(op: ScanOp, implementation: str):
     sdfg = _build_scan_sdfg(dace.float64, n, op, exclusive=False, implementation=implementation)
     sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     expected = _numpy_inclusive(arr_in, op).astype(np.float64)
-    assert np.allclose(arr_out, expected), (
-        f'{op.value} inclusive scan mismatch on {implementation}; '
-        f'max diff {np.max(np.abs(arr_out - expected))}.')
+    assert np.allclose(arr_out, expected), (f'{op.value} inclusive scan mismatch on {implementation}; '
+                                            f'max diff {np.max(np.abs(arr_out - expected))}.')
 
 
 @pytest.mark.parametrize('implementation', ['CPU', 'pure'])
@@ -104,8 +107,7 @@ def test_scan_exclusive_sum_with_seed(implementation: str):
     arr_in = np.arange(1, n + 1, dtype=np.float64)
     arr_out = np.zeros(n, dtype=np.float64)
     seed = 10.0
-    sdfg = _build_scan_sdfg(dace.float64, n, ScanOp.SUM, exclusive=True, implementation=implementation,
-                            identity=seed)
+    sdfg = _build_scan_sdfg(dace.float64, n, ScanOp.SUM, exclusive=True, implementation=implementation, identity=seed)
     sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     expected = _numpy_exclusive(arr_in, ScanOp.SUM, seed)
     assert np.allclose(arr_out, expected)
@@ -122,7 +124,11 @@ def test_scan_single_element(implementation: str):
     assert arr_out[0] == arr_in[0]
 
     arr_out = np.zeros(1, dtype=np.float64)
-    exc_sdfg = _build_scan_sdfg(dace.float64, 1, ScanOp.SUM, exclusive=True, implementation=implementation,
+    exc_sdfg = _build_scan_sdfg(dace.float64,
+                                1,
+                                ScanOp.SUM,
+                                exclusive=True,
+                                implementation=implementation,
                                 identity=7.0)
     exc_sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     assert arr_out[0] == 7.0
@@ -142,7 +148,11 @@ def test_scan_two_elements(implementation: str):
     assert np.allclose(arr_out, [3.5, 5.5])
 
     arr_out = np.zeros(2, dtype=np.float64)
-    exc_sdfg = _build_scan_sdfg(dace.float64, 2, ScanOp.SUM, exclusive=True, implementation=implementation,
+    exc_sdfg = _build_scan_sdfg(dace.float64,
+                                2,
+                                ScanOp.SUM,
+                                exclusive=True,
+                                implementation=implementation,
                                 identity=7.0)
     exc_sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     assert np.allclose(arr_out, [7.0, 10.5])

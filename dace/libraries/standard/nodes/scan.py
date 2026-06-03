@@ -39,7 +39,6 @@ For supported binary ops, see :data:`_OP_TO_STD_CPP` and :data:`_OP_TO_CUB`. The
 op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
-from typing import Tuple
 
 import dace
 from dace import library, nodes, symbolic
@@ -52,7 +51,6 @@ import enum
 # ``dace.libraries.standard.nodes.scan`` ↔ ``dace.libraries.sort.environments.cub``
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
-
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
@@ -103,12 +101,16 @@ _OP_TO_CUB = {
 
 #: Default identity literal for ``exclusive`` scans, per op.
 _OP_TO_IDENTITY_CPP = {
-    ScanOp.SUM: '0',
-    ScanOp.PRODUCT: '1',
+    ScanOp.SUM:
+    '0',
+    ScanOp.PRODUCT:
+    '1',
     # ``min``/``max`` have no universal identity in C++ literal form -- callers must
     # supply ``identity`` explicitly for exclusive ``min``/``max`` scans.
-    ScanOp.MIN: None,
-    ScanOp.MAX: None,
+    ScanOp.MIN:
+    None,
+    ScanOp.MAX:
+    None,
 }
 
 
@@ -174,14 +176,17 @@ def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
     if node.exclusive:
         # Treat the identity as a Python literal; the codegen casts via the connector
         # type (a scalar of ``in_desc.dtype``).
-        seed_py = node.identity if node.identity is not None else (0 if node.op is ScanOp.SUM
-                                                                    else (1 if node.op is ScanOp.PRODUCT else None))
+        seed_py = node.identity if node.identity is not None else (0 if node.op is ScanOp.SUM else
+                                                                   (1 if node.op is ScanOp.PRODUCT else None))
         if seed_py is None:
             raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
         code = f"{OUTPUT_CONNECTOR_NAME} = {seed_py}"
     else:
         code = f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}"
-    return nodes.Tasklet(node.name, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, code=code,
+    return nodes.Tasklet(node.name,
+                         inputs={INPUT_CONNECTOR_NAME},
+                         outputs={OUTPUT_CONNECTOR_NAME},
+                         code=code,
                          language=dace.Language.Python)
 
 
@@ -370,11 +375,10 @@ class ExpandCUDA(ExpandTransformation):
             # (``ExpandCUDAStrided``). Direct the user to the right knob
             # rather than silently mis-dispatch through a unit-stride cub
             # call that would walk past each residue's boundary.
-            raise NotImplementedError(
-                "Scan(CUDA, unit-stride only): set ``implementation = 'CUDA_strided'`` on this "
-                "Scan libnode (or use the AUTO selector in LoopToScan); stride > 1 dispatches "
-                "to a separate expansion that calls ``dace::cuda_scan::strided_inclusive_<op>`` "
-                "via the ``dace/cuda/scan_strided.cu`` auxiliary translation unit.")
+            raise NotImplementedError("Scan(CUDA, unit-stride only): set ``implementation = 'CUDA_strided'`` on this "
+                                      "Scan libnode (or use the AUTO selector in LoopToScan); stride > 1 dispatches "
+                                      "to a separate expansion that calls ``dace::cuda_scan::strided_inclusive_<op>`` "
+                                      "via the ``dace/cuda/scan_strided.cu`` auxiliary translation unit.")
 
         if node.exclusive:
             seed = _identity_expr(node, in_desc)
@@ -521,11 +525,14 @@ class Scan(nodes.LibraryNode):
     INIT_CONNECTOR_NAME = INIT_CONNECTOR_NAME
 
     op = EnumProperty(dtype=ScanOp, default=ScanOp.SUM, desc="Associative binary op for the scan.")
-    exclusive = Property(dtype=bool, default=False,
-                         desc="If True, output an exclusive scan (out[0] = identity).")
-    identity = Property(dtype=object, default=None, allow_none=True,
+    exclusive = Property(dtype=bool, default=False, desc="If True, output an exclusive scan (out[0] = identity).")
+    identity = Property(dtype=object,
+                        default=None,
+                        allow_none=True,
                         desc="Exclusive-scan identity element. Required for MIN/MAX exclusive scans.")
-    stride = Property(dtype=object, default=1, allow_none=False,
+    stride = Property(dtype=object,
+                      default=1,
+                      allow_none=False,
                       desc="Per-element stride for the scan recurrence. Default ``1`` is the "
                       "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
                       "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
@@ -543,8 +550,13 @@ class Scan(nodes.LibraryNode):
     }
     default_implementation = 'CPU'
 
-    def __init__(self, name: str = 'Scan', op: ScanOp = ScanOp.SUM, exclusive: bool = False,
-                 identity=None, *args, **kwargs):
+    def __init__(self,
+                 name: str = 'Scan',
+                 op: ScanOp = ScanOp.SUM,
+                 exclusive: bool = False,
+                 identity=None,
+                 *args,
+                 **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.op = op
         self.exclusive = exclusive

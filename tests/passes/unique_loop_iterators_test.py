@@ -808,7 +808,8 @@ def test_loop_and_map_coexist_no_collision_value_preserving():
     # Map already in unique ``_loop_it_0`` form (as LoopToMap would leave it).
     ms = sdfg.add_state('ms', is_start_block=True)
     ms.add_mapped_tasklet('themap', {'_loop_it_0': '0:8'}, {'_i': dace.Memlet('a[_loop_it_0]')},
-                          '_o = _i * 2.0', {'_o': dace.Memlet('a[_loop_it_0]')}, external_edges=True)
+                          '_o = _i * 2.0', {'_o': dace.Memlet('a[_loop_it_0]')},
+                          external_edges=True)
 
     # A separate loop writing a different array.
     loop = LoopRegion('loop', condition_expr='i < 8', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')

@@ -26,9 +26,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
 
-
 N = dace.symbol('N')
-
 
 # ---------------------------------------------------------------------------
 # Peel-limit A/B: multi-front conflict-write loop
@@ -124,8 +122,10 @@ def test_peel_limit_ab_cpu_gpu(peel_limits, ab_iters, ab_warmup, ab_gpu_enabled,
     stats_a_cpu = time_cpu(_make_cpu_fn(sdfg_a), iters=ab_iters, warmup=ab_warmup)
     stats_b_cpu = time_cpu(_make_cpu_fn(sdfg_b), iters=ab_iters, warmup=ab_warmup)
 
-    lines = ['', f'== peel_limit A/B  N={n}  iters={ab_iters} ==', 'CPU:',
-             format_ab(f'peel_limit={pl_a}', stats_a_cpu, f'peel_limit={pl_b}', stats_b_cpu)]
+    lines = [
+        '', f'== peel_limit A/B  N={n}  iters={ab_iters} ==', 'CPU:',
+        format_ab(f'peel_limit={pl_a}', stats_a_cpu, f'peel_limit={pl_b}', stats_b_cpu)
+    ]
 
     if ab_gpu_enabled:
         import cupy
@@ -210,8 +210,10 @@ def test_break_anti_dependence_ab_cpu_gpu(ab_iters, ab_warmup, ab_gpu_enabled, c
     stats_a_cpu = time_cpu(_make_cpu_fn(sdfg_a), iters=ab_iters, warmup=ab_warmup)
     stats_b_cpu = time_cpu(_make_cpu_fn(sdfg_b), iters=ab_iters, warmup=ab_warmup)
 
-    lines = ['', f'== break_anti_dependence A/B  N={n}  iters={ab_iters} ==', 'CPU:',
-             format_ab('off', stats_a_cpu, 'on', stats_b_cpu)]
+    lines = [
+        '', f'== break_anti_dependence A/B  N={n}  iters={ab_iters} ==', 'CPU:',
+        format_ab('off', stats_a_cpu, 'on', stats_b_cpu)
+    ]
 
     if ab_gpu_enabled:
         import cupy

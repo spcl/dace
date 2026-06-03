@@ -947,8 +947,8 @@ def test_mapfission_refuses_conditional_component_stays_valid():
                 continue
             has_cond = any(
                 isinstance(e.dst, nodes.NestedSDFG) and any(
-                    type(b).__name__ == 'ConditionalBlock'
-                    for b in e.dst.sdfg.all_control_flow_regions(recursive=True)) for e in st.out_edges(me))
+                    type(b).__name__ == 'ConditionalBlock' for b in e.dst.sdfg.all_control_flow_regions(recursive=True))
+                for e in st.out_edges(me))
             if has_cond:
                 assert MapFission.can_be_applied_to(sdfg, map_entry=me) is False
 
@@ -1031,8 +1031,7 @@ def test_conditional_component_fission_two():
     """if c: {A;B} -> two maps, each a conditional writing one output."""
     n = 16
     a = np.random.rand(n)
-    _run_branch_fission(_if_two_components,
-                        dict(a=a, A=np.zeros(n), B=np.zeros(n), c=np.array([1], np.int32)), n, 2)
+    _run_branch_fission(_if_two_components, dict(a=a, A=np.zeros(n), B=np.zeros(n), c=np.array([1], np.int32)), n, 2)
     # condition false: outputs stay zero (replicated condition still guards).
     s = _if_two_components.to_sdfg(simplify=True)
     from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
@@ -1048,9 +1047,8 @@ def test_conditional_component_fission_three():
     """if c: {A;B;C} -> three independent condition-replicated maps."""
     n = 12
     a = np.random.rand(n)
-    _run_branch_fission(
-        _if_three_components,
-        dict(a=a, A=np.zeros(n), B=np.zeros(n), C=np.zeros(n), c=np.array([1], np.int32)), n, 3)
+    _run_branch_fission(_if_three_components,
+                        dict(a=a, A=np.zeros(n), B=np.zeros(n), C=np.zeros(n), c=np.array([1], np.int32)), n, 3)
 
 
 def test_conditional_component_fission_single_is_noop():

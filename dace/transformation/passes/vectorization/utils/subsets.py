@@ -244,8 +244,7 @@ def expand_memlet_expression(state: SDFGState,
             # (DIAGONAL) cases, which both take the legacy path.
             ld = None
             if param_sym is not None:
-                ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides,
-                                          vector_map_param).lane_dim
+                ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides, vector_map_param).lane_dim
 
             new_subset_list = []
             if ld is not None:

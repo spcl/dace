@@ -73,7 +73,6 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes.reduce import Reduce
 
-
 #: Map AST comparison op class -> DaCe reduction type.
 _CMP_AST_TO_RTYPE = {
     ast.Gt: dtypes.ReductionType.Max,
@@ -210,8 +209,8 @@ class ArgMaxLift(ppl.Pass):
             true_state = self._extract_singleton_state(true_branch)
             if true_state is None:
                 return None
-            if not self._true_state_writes_carrier_from_array(true_state, carrier_name, input_array,
-                                                              loop.loop_variable, sdfg):
+            if not self._true_state_writes_carrier_from_array(true_state, carrier_name, input_array, loop.loop_variable,
+                                                              sdfg):
                 return None
         else:
             # Symbol-carrier path: the in-loop write is an iedge assignment
@@ -220,8 +219,8 @@ class ArgMaxLift(ppl.Pass):
             # true-branch. The true-branch states must be empty -- any tasklet
             # / AccessNode work would be a separate side effect the rewrite
             # cannot preserve.
-            if not self._symbol_true_branch_writes_carrier(true_branch, carrier_name, input_array,
-                                                           gather_sym_name, loop.loop_variable):
+            if not self._symbol_true_branch_writes_carrier(true_branch, carrier_name, input_array, gather_sym_name,
+                                                           loop.loop_variable):
                 return None
 
         return _Match(
@@ -248,8 +247,7 @@ class ArgMaxLift(ppl.Pass):
                 return True
         return False
 
-    def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock,
-                           tmp_sym: str):
+    def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, tmp_sym: str):
         """Walk in-edges of ``cond_block`` looking for one whose assignment binds
         ``tmp_sym`` to a comparison ``g OP c``. Returns ``(ast_op_cls, g_name,
         c_name)`` or ``(None, None, None)``."""
@@ -274,8 +272,8 @@ class ArgMaxLift(ppl.Pass):
             return op_cls, lhs_name, rhs_name
         return None, None, None
 
-    def _resolve_gather_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock,
-                              gather_sym: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
+    def _resolve_gather_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, gather_sym: str, loop_var: str,
+                              sdfg: SDFG) -> Optional[str]:
         """Walk back two levels to find an iedge binding ``gather_sym = arr[loop_var]``.
         Returns ``arr`` if found, else ``None``."""
         # Collect every iedge in the loop and try to find one binding ``gather_sym``.
@@ -316,14 +314,12 @@ class ArgMaxLift(ppl.Pass):
             return None
         return content_states[0]
 
-    def _true_state_writes_carrier_from_array(self, state: SDFGState, carrier: str,
-                                              array: str, loop_var: str,
+    def _true_state_writes_carrier_from_array(self, state: SDFGState, carrier: str, array: str, loop_var: str,
                                               sdfg: SDFG) -> bool:
         """Check the true-branch state has the shape ``arr -> arr_index_AN ->
         assign_tasklet -> carrier_AN`` writing ``carrier = arr[loop_var]``."""
         # Single write AccessNode for the carrier.
-        carrier_writes = [n for n in state.data_nodes()
-                          if n.data == carrier and state.in_degree(n) > 0]
+        carrier_writes = [n for n in state.data_nodes() if n.data == carrier and state.in_degree(n) > 0]
         if len(carrier_writes) != 1:
             return False
         carrier_an = carrier_writes[0]
@@ -333,8 +329,7 @@ class ArgMaxLift(ppl.Pass):
         # i``), and the v1 rewrite would silently drop it. Intermediate
         # transients in the carrier chain have ``out_degree > 0`` and are not
         # counted here.
-        terminal_outs = [n for n in state.data_nodes()
-                         if state.in_degree(n) > 0 and state.out_degree(n) == 0]
+        terminal_outs = [n for n in state.data_nodes() if state.in_degree(n) > 0 and state.out_degree(n) == 0]
         if len(terminal_outs) != 1 or terminal_outs[0] is not carrier_an:
             return False
         # Walk back through the chain (AN <- [Tasklet?] <- AN <- ... <- AN(array)).
@@ -388,7 +383,7 @@ class ArgMaxLift(ppl.Pass):
         if desc is not None:
             if isinstance(desc, data.Scalar):
                 return 'scalar', subsets.Range([(0, 0, 1)])
-            if isinstance(desc, data.Array) and tuple(desc.shape) == (1,):
+            if isinstance(desc, data.Array) and tuple(desc.shape) == (1, ):
                 return 'length_one_array', subsets.Range([(0, 0, 1)])
             return None, None
         # Symbol carrier: present in ``sdfg.symbols`` but not in ``sdfg.arrays``.
@@ -396,8 +391,8 @@ class ArgMaxLift(ppl.Pass):
             return 'symbol', None
         return None, None
 
-    def _symbol_true_branch_writes_carrier(self, true_branch, carrier: str, array: str,
-                                           gather_sym: str, loop_var: str) -> bool:
+    def _symbol_true_branch_writes_carrier(self, true_branch, carrier: str, array: str, gather_sym: str,
+                                           loop_var: str) -> bool:
         """For the symbol-carrier case, verify the true-branch contains exactly
         one iedge whose assignment binds ``carrier := array[loop_var]`` or
         ``carrier := gather_sym``, and that the true-branch's states are all
@@ -452,8 +447,10 @@ class ArgMaxLift(ppl.Pass):
         if m.carrier_kind == 'symbol':
             # Fresh transient scalar -> Reduce output -> iedge bind to the symbol.
             output_dtype = sdfg.symbols[m.carrier_name]
-            out_name, _ = sdfg.add_scalar(f'_arg_max_buf_{m.loop.label}', output_dtype,
-                                          transient=True, find_new_name=True)
+            out_name, _ = sdfg.add_scalar(f'_arg_max_buf_{m.loop.label}',
+                                          output_dtype,
+                                          transient=True,
+                                          find_new_name=True)
             output_subset = subsets.Range([(0, 0, 1)])
         else:
             out_name = m.carrier_name
@@ -477,8 +474,7 @@ class ArgMaxLift(ppl.Pass):
             # state references it. Scalars are bare names (no subscript) in
             # iedge assignment RHS expressions.
             bind_state = m.parent.add_state(m.loop.label + '_argmax_bind')
-            m.parent.add_edge(reduce_state, bind_state,
-                              dace.InterstateEdge(assignments={m.carrier_name: out_name}))
+            m.parent.add_edge(reduce_state, bind_state, dace.InterstateEdge(assignments={m.carrier_name: out_name}))
             for oe in list(m.parent.out_edges(m.loop)):
                 m.parent.add_edge(bind_state, oe.dst, oe.data)
                 m.parent.remove_edge(oe)
@@ -513,8 +509,7 @@ class ArgMaxLift(ppl.Pass):
                 slice_lo = symbolic.simplify(0)
         else:
             slice_lo = start
-        input_memlet = mm.Memlet(data=m.input_array,
-                                 subset=subsets.Range([(slice_lo, end, 1)]))
+        input_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(slice_lo, end, 1)]))
         reduce_state.add_edge(read, None, node, '_in', input_memlet)
         output_memlet = mm.Memlet(data=out_name, subset=output_subset)
         reduce_state.add_edge(node, '_out', write, None, output_memlet)

@@ -165,8 +165,7 @@ __out = _s;
     nstate = nsdfg.add_state()
     r = nstate.add_read("_in")
     w = nstate.add_write("_out")
-    t = nstate.add_tasklet("reduce_vectorized", {"__inp"}, {"__out"}, code,
-                           dace.dtypes.Language.CPP)
+    t = nstate.add_tasklet("reduce_vectorized", {"__inp"}, {"__out"}, code, dace.dtypes.Language.CPP)
     nstate.add_edge(r, None, t, "__inp", dace.Memlet(data="_in", subset=f"0:{m_expr}"))
     nstate.add_edge(t, "__out", w, None, dace.Memlet(data="_out", subset="0"))
     return nsdfg
@@ -217,11 +216,10 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
             # reduction clause; the per-thread chunk is the inner kernel.
             return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
-        raise NotImplementedError(
-            f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
-            f"vectorization pipeline (expected Sequential/Default or CPU_Multicore). "
-            f"A GPU/MPI/other-scheduled reduction must use its own implementation, "
-            f"not 'vectorized'.")
+        raise NotImplementedError(f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
+                                  f"vectorization pipeline (expected Sequential/Default or CPU_Multicore). "
+                                  f"A GPU/MPI/other-scheduled reduction must use its own implementation, "
+                                  f"not 'vectorized'.")
 
 
 Reduce.register_implementation("vectorized", ExpandReduceVectorized)

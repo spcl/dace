@@ -144,11 +144,11 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
 
     # A pre-state ``_skew_guard_*`` with a single zero-connector tasklet was
     # planted before the (now skewed) loop. Exactly one such tasklet exists.
-    guard_states = [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState)
-                    and s.label.startswith('_skew_guard_')]
+    guard_states = [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState) and s.label.startswith('_skew_guard_')]
     assert len(guard_states) == 1, f'expected 1 guard state, got {len(guard_states)}'
-    guards = [n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet)
-              and n.label.startswith('_skew_guard_')]
+    guards = [
+        n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet) and n.label.startswith('_skew_guard_')
+    ]
     assert len(guards) == 1
     assert '__builtin_trap' in guards[0].code.as_string
 
@@ -218,7 +218,8 @@ def test_wavefront_skew_runtime_guard_traps_on_violation():
         sdfg(aa=np.zeros((8, 8)), N=8, sym_unannot=-1)  # negative -> trap
     ''')
     res = subprocess.run(['/home/primrose/.pyenv/versions/py13/bin/python', '-c', src],
-                         capture_output=True, timeout=120)
+                         capture_output=True,
+                         timeout=120)
     # ``__builtin_trap`` -> SIGILL; the python interpreter exits with a non-zero
     # status (typically -SIGILL or similar). A normal exit means no guard fired.
     assert res.returncode != 0, ('runtime guard did not trap on a violating sym '

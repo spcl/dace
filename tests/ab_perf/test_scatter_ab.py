@@ -27,14 +27,12 @@ Run with::
 import functools
 
 import numpy as np
-import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 
 from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
-
 
 N = dace.symbol('N')
 
@@ -126,14 +124,17 @@ def test_scatter_ab(ab_iters, ab_warmup, ab_gpu_enabled, capsys):
     stats_a_cpu = time_cpu(_make_cpu(sdfg_a), iters=ab_iters, warmup=ab_warmup)
     stats_b_cpu = time_cpu(_make_cpu(sdfg_b), iters=ab_iters, warmup=ab_warmup)
 
-    lines = ['', f'== scatter A/B  N={n}  iters={ab_iters} ==', 'CPU:',
-             format_ab('A (seq scatter)', stats_a_cpu, 'B (guarded Map)', stats_b_cpu)]
+    lines = [
+        '', f'== scatter A/B  N={n}  iters={ab_iters} ==', 'CPU:',
+        format_ab('A (seq scatter)', stats_a_cpu, 'B (guarded Map)', stats_b_cpu)
+    ]
 
     if ab_gpu_enabled:
         import cupy
         sdfg_a_gpu = _to_gpu_sdfg(sdfg_a, 'gpu_A', device_resident_data=('A', 'idx', 'out'))
         sdfg_b_gpu = _to_gpu_sdfg(_build_variant_b('gpu', target='gpu'),
-                                  'gpu_B', device_resident_data=('A', 'idx', 'out'))
+                                  'gpu_B',
+                                  device_resident_data=('A', 'idx', 'out'))
 
         def _make_gpu(sdfg):
             A = to_gpu(A_init)

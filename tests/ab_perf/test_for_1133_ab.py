@@ -30,7 +30,6 @@ Run with::
   pytest tests/ab_perf/test_for_1133_ab.py --ab-perf --no-gpu -s
 """
 import functools
-from typing import Tuple
 
 import numpy as np
 import pytest
@@ -41,7 +40,6 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
-
 
 KLEV = dace.symbol('KLEV')
 KLON = dace.symbol('KLON')

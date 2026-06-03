@@ -14,7 +14,6 @@ from dace.sdfg import nodes as nd
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 
-
 N = dace.symbol('N')
 
 
@@ -29,6 +28,7 @@ def _num_maps(sdfg):
 # -----------------------------------------------------------------------------
 # Positive: TSVC s3111-style conditional accumulators.
 # -----------------------------------------------------------------------------
+
 
 def test_tsvc_s3111_conditional_sum():
     """``if a[i] > 0: sum += a[i]`` -- the canonical conditional reduction.
@@ -116,6 +116,7 @@ def test_all_positives_acts_like_unconditional_sum():
 # Refusal contracts.
 # -----------------------------------------------------------------------------
 
+
 def test_refuses_unconditional_accumulator():
     """``sum = sum + a[i]`` (no ConditionalBlock) is NOT in this pass's
     scope -- it's the plain reduction shape that ``LoopToReduce`` already
@@ -176,6 +177,7 @@ def test_refuses_else_branch_with_content():
 # -----------------------------------------------------------------------------
 # Cross-pass non-interference.
 # -----------------------------------------------------------------------------
+
 
 def test_doesnt_lift_an_argmax_loop():
     """Argmax conditional has a different shape (writes the array's value

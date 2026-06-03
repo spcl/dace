@@ -14,8 +14,7 @@ import os
 import dace.library
 from dace.libraries.standard.environments.cuda import CUDA
 
-_DACE_REPO_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_DACE_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _STRIDED_SCAN_CU = os.path.join(_DACE_REPO_ROOT, 'runtime', 'include', 'dace', 'cuda', 'scan_strided.cu')
 
 

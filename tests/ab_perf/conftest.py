@@ -19,17 +19,33 @@ import pytest
 
 
 def pytest_addoption(parser):
-    parser.addoption('--ab-perf', action='store_true', default=False,
+    parser.addoption('--ab-perf',
+                     action='store_true',
+                     default=False,
                      help='Enable A/B performance tests (skipped by default).')
-    parser.addoption('--ab-iters', action='store', type=int, default=5,
+    parser.addoption('--ab-iters',
+                     action='store',
+                     type=int,
+                     default=5,
                      help='Number of timed iterations per variant (default 5).')
-    parser.addoption('--ab-warmup', action='store', type=int, default=1,
+    parser.addoption('--ab-warmup',
+                     action='store',
+                     type=int,
+                     default=1,
                      help='Warmup iterations before timing (default 1).')
-    parser.addoption('--no-gpu', action='store_true', default=False,
+    parser.addoption('--no-gpu',
+                     action='store_true',
+                     default=False,
                      help='Skip GPU variants even if CUDA + cupy are available.')
-    parser.addoption('--ab-klev', action='store', type=int, default=96,
+    parser.addoption('--ab-klev',
+                     action='store',
+                     type=int,
+                     default=96,
                      help='Vertical levels for cloudsc-shape kernels (default 96).')
-    parser.addoption('--ab-klon', action='store', type=int, default=20480,
+    parser.addoption('--ab-klon',
+                     action='store',
+                     type=int,
+                     default=20480,
                      help='Horizontal columns (default 20480, must be a multiple of 32).')
 
 

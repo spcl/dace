@@ -462,8 +462,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                         for n2 in nodes_second:
                                             for we in second_state.in_edges(n2):
                                                 anc = nx.ancestors(second_state._nx, we.src) | {we.src}
-                                                if any(isinstance(a, nodes.AccessNode) and a.data in first_out_data
-                                                       for a in anc):
+                                                if any(
+                                                        isinstance(a, nodes.AccessNode) and a.data in first_out_data
+                                                        for a in anc):
                                                     flows_from_first = True
                                                     break
                                             if flows_from_first:

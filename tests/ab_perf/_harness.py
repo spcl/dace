@@ -7,12 +7,9 @@ Arrays are passed PRE-PLACED on the target device (CPU = numpy, GPU =
 cupy) so the timed window measures kernel execution only, not host->device
 transfer.
 """
-import contextlib
 import statistics
 import time
-from typing import Callable, Dict, List, Optional
-
-import numpy as np
+from typing import Callable, Dict, List
 
 
 def _gpu_sync():

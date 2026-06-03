@@ -45,16 +45,17 @@ def _build_wcr_nsdfg_sdfg(n: int) -> dace.SDFG:
     map_entry, map_exit = state.add_map('outer', {'i': f'0:{n}'})
     nnode = state.add_nested_sdfg(nsdfg, {'_in'}, {'_out'})
 
-    state.add_memlet_path(src_read, map_entry, nnode, dst_conn='_in',
-                          memlet=dace.Memlet(data='src', subset='i'))
+    state.add_memlet_path(src_read, map_entry, nnode, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
     # The WCR edges: from the NSDFG output, through MapExit, to the outer ``acc[0]``.
     # ``wcr='lambda a, b: a + b'`` should make the codegen emit a sum reduction --
     # set on BOTH the inner (NSDFG -> MapExit) and outer (MapExit -> AccessNode) edges
     # so propagation and codegen both see the WCR semantics regardless of where the
     # analysis picks the edge up.
-    state.add_memlet_path(nnode, map_exit, acc_write, src_conn='_out',
-                          memlet=dace.Memlet(data='acc', subset='0',
-                                              wcr='lambda a, b: a + b'))
+    state.add_memlet_path(nnode,
+                          map_exit,
+                          acc_write,
+                          src_conn='_out',
+                          memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
 
     sdfg.validate()
     return sdfg
@@ -80,8 +81,7 @@ def test_wcr_through_nested_sdfg_sum_reduction():
 
     sdfg = _build_wcr_nsdfg_sdfg(n)
     sdfg(src=src, acc=acc)
-    assert np.isclose(acc[0], src.sum()), (
-        f'WCR sum through NSDFG returned {acc[0]}, expected {src.sum()}.')
+    assert np.isclose(acc[0], src.sum()), (f'WCR sum through NSDFG returned {acc[0]}, expected {src.sum()}.')
 
 
 @pytest.mark.xfail(
@@ -140,16 +140,15 @@ def _build_wcr_via_private_scalar_sdfg(n: int) -> dace.SDFG:
     map_entry, map_exit = state.add_map('outer', {'i': f'0:{n}'})
     nnode = state.add_nested_sdfg(nsdfg, {'_in'}, {'_out'})
 
-    state.add_memlet_path(src_read, map_entry, nnode, dst_conn='_in',
-                          memlet=dace.Memlet(data='src', subset='i'))
+    state.add_memlet_path(src_read, map_entry, nnode, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
     # NSDFG output -> private scalar (no WCR; just a plain write of this iter's value).
-    state.add_edge(nnode, '_out', priv_write, None,
-                   dace.Memlet(data='_priv', subset='0'))
+    state.add_edge(nnode, '_out', priv_write, None, dace.Memlet(data='_priv', subset='0'))
     # Private scalar -> MapExit -> acc (WCR on the AccessNode->MapExit edge; the
     # codegen sees this as the canonical reduction shape).
-    state.add_memlet_path(priv_write, map_exit, acc_write,
-                          memlet=dace.Memlet(data='acc', subset='0',
-                                              wcr='lambda a, b: a + b'))
+    state.add_memlet_path(priv_write,
+                          map_exit,
+                          acc_write,
+                          memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
     sdfg.validate()
     return sdfg
 
@@ -240,17 +239,16 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
     me, mx = st.add_map('m', {'i': f'0:{n}'})
     t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
     st.add_memlet_path(src_read, me, t, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
-    st.add_memlet_path(t, mx, acc_write, src_conn='_out',
-                       memlet=dace.Memlet(data='acc', subset='0', wcr=wcr_str))
+    st.add_memlet_path(t, mx, acc_write, src_conn='_out', memlet=dace.Memlet(data='acc', subset='0', wcr=wcr_str))
 
     nest_state_subgraph(sdfg, st, SubgraphView(st, {t}), name='wrapped_body')
     sdfg.validate()
 
     # Structural: no NestedSDFG-source WCR edge survives anywhere in the SDFG.
-    wcr_sources = [type(e.src).__name__
-                   for sd in sdfg.all_sdfgs_recursive() for state in sd.all_states()
-                   for e in state.edges()
-                   if e.data is not None and e.data.wcr is not None]
+    wcr_sources = [
+        type(e.src).__name__ for sd in sdfg.all_sdfgs_recursive() for state in sd.all_states() for e in state.edges()
+        if e.data is not None and e.data.wcr is not None
+    ]
     assert wcr_sources, 'Expected at least one WCR edge.'
     assert 'NestedSDFG' not in wcr_sources, (
         f'WCR sources after helper wrapping: {wcr_sources}. None should be NestedSDFG; '
@@ -271,9 +269,8 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
     expected = functools.reduce(binop, src.tolist(), init)
     acc = np.array([init])
     sdfg(src=src, acc=acc)
-    assert np.isclose(acc[0], expected), (
-        f'helper-wrapped WCR ({wcr_str}) returned {acc[0]}, expected {expected}. '
-        'If wildly off, the codegen has stopped detecting the helper-emitted shape.')
+    assert np.isclose(acc[0], expected), (f'helper-wrapped WCR ({wcr_str}) returned {acc[0]}, expected {expected}. '
+                                          'If wildly off, the codegen has stopped detecting the helper-emitted shape.')
 
 
 @pytest.mark.xfail(
@@ -304,7 +301,10 @@ def test_nest_state_subgraph_wcr_placement():
     me, mx = st.add_map('m', {'i': f'0:{n}'})
     t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
     st.add_memlet_path(src_read, me, t, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
-    st.add_memlet_path(t, mx, acc_write, src_conn='_out',
+    st.add_memlet_path(t,
+                       mx,
+                       acc_write,
+                       src_conn='_out',
                        memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
 
     # Wrap the tasklet (and just the tasklet) in a NestedSDFG via the helper.
@@ -313,9 +313,7 @@ def test_nest_state_subgraph_wcr_placement():
     sdfg.validate()
 
     # Structural: WCR sources must be AccessNode or MapExit, not NestedSDFG.
-    nsdfg_wcr_sources = [type(e.src).__name__
-                         for e in st.edges()
-                         if e.data is not None and e.data.wcr is not None]
+    nsdfg_wcr_sources = [type(e.src).__name__ for e in st.edges() if e.data is not None and e.data.wcr is not None]
     assert nsdfg_wcr_sources, 'Expected at least one WCR edge after wrapping.'
     assert 'NestedSDFG' not in nsdfg_wcr_sources, (
         'After ``nest_state_subgraph``, no WCR edge should originate at a NestedSDFG; '
@@ -328,8 +326,7 @@ def test_nest_state_subgraph_wcr_placement():
     src = rng.uniform(-1.0, 1.0, size=n)
     acc = np.zeros(1)
     sdfg(src=src, acc=acc)
-    assert np.isclose(acc[0], src.sum()), (
-        f'WCR through helper-wrapped body returned {acc[0]}, expected {src.sum()}.')
+    assert np.isclose(acc[0], src.sum()), (f'WCR through helper-wrapped body returned {acc[0]}, expected {src.sum()}.')
 
 
 if __name__ == '__main__':

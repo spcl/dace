@@ -13,7 +13,6 @@ from typing import Set
 import sympy
 
 import dace
-import dace.sdfg.construction_utils as cutil
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 import dace.sdfg.utils as sdutil
 from dace.sdfg.state import LoopRegion
@@ -253,11 +252,10 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                                 total = inner_desc.total_size
                                 total_simpl = dace.symbolic.simplify(total - need)
                                 if getattr(total_simpl, "is_Integer", False) and int(total_simpl) < 0:
-                                    raise RuntimeError(
-                                        f"Lane fan-out for '{free_sym_str}': inner connector size "
-                                        f"{total} < required strided span {need} (stride c={c}, "
-                                        f"W={vector_width}); the NSDFG-input window and the inner "
-                                        f"connector disagree (reshape inconsistency).")
+                                    raise RuntimeError(f"Lane fan-out for '{free_sym_str}': inner connector size "
+                                                       f"{total} < required strided span {need} (stride c={c}, "
+                                                       f"W={vector_width}); the NSDFG-input window and the inner "
+                                                       f"connector disagree (reshape inconsistency).")
                                 v_expr = v_expr.subs(free_sym, f"{free_sym}({c} * {i})")
                             else:
                                 v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")

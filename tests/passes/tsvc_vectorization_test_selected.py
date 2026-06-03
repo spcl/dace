@@ -413,9 +413,15 @@ def test_s121(remainder_strategy, branch_mode):
     n = 64
     a = np.random.rand(n).astype(np.float64)
     b = np.random.rand(n).astype(np.float64)
-    run_vectorization_test(dace_func=dace_s121_inner, arrays={"a": a, "b": b},
-                           params={"LEN_1D": n}, sdfg_name="dace_s121_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+    run_vectorization_test(dace_func=dace_s121_inner,
+                           arrays={
+                               "a": a,
+                               "b": b
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s121_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)
 
 
@@ -433,9 +439,15 @@ def test_s311(remainder_strategy, branch_mode):
     n = 64
     a = np.random.rand(n).astype(np.float64)
     so = np.zeros(1, dtype=np.float64)
-    run_vectorization_test(dace_func=dace_s311_inner, arrays={"a": a, "sum_out": so},
-                           params={"LEN_1D": n}, sdfg_name="dace_s311_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+    run_vectorization_test(dace_func=dace_s311_inner,
+                           arrays={
+                               "a": a,
+                               "sum_out": so
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s311_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)
 
 
@@ -452,9 +464,15 @@ def test_s312(remainder_strategy, branch_mode):
     n = 64
     a = (np.random.rand(n) * 0.5 + 0.75).astype(np.float64)
     po = np.zeros(1, dtype=np.float64)
-    run_vectorization_test(dace_func=dace_s312_inner, arrays={"a": a, "prod_out": po},
-                           params={"LEN_1D": n}, sdfg_name="dace_s312_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+    run_vectorization_test(dace_func=dace_s312_inner,
+                           arrays={
+                               "a": a,
+                               "prod_out": po
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s312_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)
 
 
@@ -474,15 +492,22 @@ def test_s1244(remainder_strategy, branch_mode):
     c = np.random.rand(n).astype(np.float64)
     d = np.random.rand(n).astype(np.float64)
     run_vectorization_test(dace_func=dace_s1244_inner,
-                           arrays={"a": a, "b": b, "c": c, "d": d},
-                           params={"LEN_1D": n}, sdfg_name="dace_s1244_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "c": c,
+                               "d": d
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s1244_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)
 
 
 @dace.program
-def dace_s211_inner(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D],
-                    d: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
+def dace_s211_inner(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
+                    e: dace.float64[LEN_1D]):
     # Recurrence: b[i] depends on b[i-1]/b[i+1] — carried dependence,
     # must stay numerically correct (vectoriser must not reorder it).
     for i in range(1, LEN_1D - 1):
@@ -498,9 +523,17 @@ def test_s211(remainder_strategy, branch_mode):
     d = np.random.rand(n).astype(np.float64)
     e = np.random.rand(n).astype(np.float64)
     run_vectorization_test(dace_func=dace_s211_inner,
-                           arrays={"a": a, "b": b, "c": c, "d": d, "e": e},
-                           params={"LEN_1D": n}, sdfg_name="dace_s211_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "c": c,
+                               "d": d,
+                               "e": e
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s211_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)
 
 
@@ -521,15 +554,21 @@ def test_s4115(remainder_strategy, branch_mode):
     ip = np.random.permutation(n).astype(np.int32)
     so = np.zeros(1, dtype=np.float64)
     run_vectorization_test(dace_func=dace_s4115_inner,
-                           arrays={"a": a, "b": b, "ip": ip, "sum_out": so},
-                           params={"LEN_1D": n}, sdfg_name="dace_s4115_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "ip": ip,
+                               "sum_out": so
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s4115_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)
 
 
 @dace.program
-def dace_s271_inner(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D],
-                    d: dace.float64[LEN_1D]):
+def dace_s271_inner(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
     # Single-arm control flow: conditional update gated by c[i] > 0.
     for i in range(LEN_1D):
         if c[i] > 0.0:
@@ -543,7 +582,14 @@ def test_s271(remainder_strategy, branch_mode):
     c = (np.random.rand(n) - 0.5).astype(np.float64)
     d = np.random.rand(n).astype(np.float64)
     run_vectorization_test(dace_func=dace_s271_inner,
-                           arrays={"a": a, "b": b, "c": c, "d": d},
-                           params={"LEN_1D": n}, sdfg_name="dace_s271_inner",
-                           apply_loop_to_map=True, remainder_strategy=remainder_strategy,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "c": c,
+                               "d": d
+                           },
+                           params={"LEN_1D": n},
+                           sdfg_name="dace_s271_inner",
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
                            branch_mode=branch_mode)

@@ -106,12 +106,16 @@ class ParallelizePipeline(ppl.Pass):
         # enclosing-LoopRegion loop variables -- the fix that kept ``tendency_loc_cld``
         # from being widened to its full array extent in cloudsc).
         class _PropagateMemlets(ppl.Pass):
+
             def modifies(self_):
                 return ppl.Modifies.Memlets
+
             def should_reapply(self_, _modified):
                 return False
+
             def depends_on(self_):
                 return set()
+
             def apply_pass(self_, sdfg, _pipeline_results):
                 propagate_memlets_sdfg(sdfg)
                 return 1

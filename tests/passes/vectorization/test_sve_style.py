@@ -13,7 +13,6 @@ input, and asserts bit-exact equality (rtol=0, atol=0) of every output
 array. Bit-exactness — not approximate equality — is the contract the
 Min-swap + global mask were designed to preserve.
 """
-import copy
 
 import numpy as np
 import pytest

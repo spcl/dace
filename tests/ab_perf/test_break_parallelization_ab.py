@@ -36,7 +36,6 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
 
-
 N = dace.symbol('N')
 
 
@@ -127,14 +126,17 @@ def test_break_parallelization_ab(n_param, ab_iters, ab_warmup, ab_gpu_enabled, 
     stats_a_cpu = time_cpu(_make_cpu(sdfg_a), iters=ab_iters, warmup=ab_warmup)
     stats_b_cpu = time_cpu(_make_cpu(sdfg_b), iters=ab_iters, warmup=ab_warmup)
 
-    lines = ['', f'== break_parallelization A/B  N={n}  break={break_label} (k={k})  iters={ab_iters} ==', 'CPU:',
-             format_ab('A (seq break)', stats_a_cpu, 'B (parallel)', stats_b_cpu)]
+    lines = [
+        '', f'== break_parallelization A/B  N={n}  break={break_label} (k={k})  iters={ab_iters} ==', 'CPU:',
+        format_ab('A (seq break)', stats_a_cpu, 'B (parallel)', stats_b_cpu)
+    ]
 
     if ab_gpu_enabled:
         import cupy
         sdfg_a_gpu = _to_gpu_sdfg(sdfg_a, 'gpu_A', device_resident_data=('A', 'out'))
         sdfg_b_gpu = _to_gpu_sdfg(_build_parallel_sdfg(suffix, target='gpu'),
-                                  'gpu_B', device_resident_data=('A', 'out'))
+                                  'gpu_B',
+                                  device_resident_data=('A', 'out'))
 
         def _make_gpu(sdfg):
             A = to_gpu(A_init)

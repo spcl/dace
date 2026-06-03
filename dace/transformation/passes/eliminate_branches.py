@@ -6,7 +6,6 @@ from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from typing import Set, Tuple, Union
-import dace.sdfg.construction_utils as cutil
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
 
@@ -27,8 +26,8 @@ class EliminateBranches(ppl.Pass):
                                      node: ConditionalBlock) -> bool:
         parent_loops_and_maps = {
             m
-            for m in get_parent_map_and_loop_scopes(
-                parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None)
+            for m in get_parent_map_and_loop_scopes(parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg,
+                                                    node, None)
         }
         return len(parent_loops_and_maps) == 0
 

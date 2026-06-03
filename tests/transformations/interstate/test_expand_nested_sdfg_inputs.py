@@ -3,7 +3,6 @@ import copy
 
 import dace
 import numpy as np
-import pytest
 
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_expansion import MapExpansion

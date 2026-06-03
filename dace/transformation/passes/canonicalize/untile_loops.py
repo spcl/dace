@@ -65,7 +65,7 @@ The original ``i`` / ``ii`` symbols are removed from the SDFG symbol table
 still be referenced by interstate-edge assignments that the cascade-up pass
 hoisted; those are left alone.)
 """
-from typing import Dict, List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, properties, symbolic
@@ -73,7 +73,6 @@ from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 _UNTILE_PREFIX = '_untile_k_'
@@ -290,8 +289,7 @@ def _collect_body_subset_exprs(inner: LoopRegion) -> List[symbolic.SymbolicType]
     return exprs
 
 
-def _all_memlet_uses_only(inner: LoopRegion, allowed_atoms: Set[str],
-                          forbidden_atoms: Set[str]) -> bool:
+def _all_memlet_uses_only(inner: LoopRegion, allowed_atoms: Set[str], forbidden_atoms: Set[str]) -> bool:
     """``True`` iff every memlet-subset expression references at most symbols
     from ``allowed_atoms`` (any expression of them is fine) and references *no*
     symbol from ``forbidden_atoms``.
@@ -313,8 +311,7 @@ def _all_memlet_uses_only(inner: LoopRegion, allowed_atoms: Set[str],
     return True
 
 
-def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str,
-                           case: str) -> bool:
+def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, case: str) -> bool:
     """The structural safety check the docstring describes.
 
     Case A (``ii in range(0, K)``): the combined expression ``i + ii`` must be
@@ -383,12 +380,13 @@ class UntileLoops(ppl.Pass):
 
     CATEGORY: str = 'Canonicalization'
 
-    map_roundtrip = properties.Property(
-        dtype=bool, default=False, desc='Lower Maps to LoopRegions before untile and re-lift after, so '
-        'Map-tiled patterns are detected. Off by default: the canonicalize '
-        'pipeline runs the lift downstream and existing range-tile tests '
-        'assert on raw LoopRegion shape after untile. Test driver enables '
-        'when the kernel uses ``dace.map[...]`` tiles.')
+    map_roundtrip = properties.Property(dtype=bool,
+                                        default=False,
+                                        desc='Lower Maps to LoopRegions before untile and re-lift after, so '
+                                        'Map-tiled patterns are detected. Off by default: the canonicalize '
+                                        'pipeline runs the lift downstream and existing range-tile tests '
+                                        'assert on raw LoopRegion shape after untile. Test driver enables '
+                                        'when the kernel uses ``dace.map[...]`` tiles.')
 
     def __init__(self, map_roundtrip: bool = False):
         super().__init__()
@@ -431,7 +429,8 @@ class UntileLoops(ppl.Pass):
         # After all Maps are lifted they are no longer scoped, so a
         # fixpoint sweep flattens them.
         for _ in range(16):
-            before = sum(1 for n, _ in sdfg.all_nodes_recursive() if hasattr(n, "sdfg") and hasattr(n, "symbol_mapping"))
+            before = sum(1 for n, _ in sdfg.all_nodes_recursive()
+                         if hasattr(n, "sdfg") and hasattr(n, "symbol_mapping"))
             PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
             PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {})
             after = sum(1 for n, _ in sdfg.all_nodes_recursive() if hasattr(n, "sdfg") and hasattr(n, "symbol_mapping"))
@@ -463,8 +462,8 @@ class UntileLoops(ppl.Pass):
 
         total = 0
         # Safety cap: at most one rewrite per LoopRegion in the SDFG.
-        max_iters = 1 + sum(1 for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
-                            if isinstance(r, LoopRegion))
+        max_iters = 1 + sum(1 for sd in sdfg.all_sdfgs_recursive()
+                            for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion))
         for _ in range(max_iters):
             rewritten_this_pass = 0
             for sd in sdfg.all_sdfgs_recursive():

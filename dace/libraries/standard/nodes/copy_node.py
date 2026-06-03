@@ -120,8 +120,8 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # MappedTasklet at the end.
     gpu = dtypes.StorageType.GPU_Global
     allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
-    impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu)
-                               and inp.storage in allowed and out.storage in allowed) else None)
+    impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu) and inp.storage in allowed
+                               and out.storage in allowed) else None)
 
     # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
     # MappedTasklet for unsupported stride mixs).
@@ -303,10 +303,9 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         # walks past the smaller side (transposes / permutations belong to a
         # Transpose libnode, reshapes go through the rank-mismatch branch).
         if list(in_shape) != list(out_shape):
-            raise ValueError(
-                f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
-                f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
-                f"supported -- use a Transpose libnode. Reshapes must change rank.")
+            raise ValueError(f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
+                             f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
+                             f"supported -- use a Transpose libnode. Reshapes must change rank.")
         map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
         access_expr = ','.join(map_params)

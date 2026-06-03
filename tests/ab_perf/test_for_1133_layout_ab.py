@@ -40,7 +40,6 @@ The cost model the AB sweep is meant to settle::
                                               lives in registers)
 """
 import functools
-from typing import Tuple
 
 import numpy as np
 import pytest
@@ -50,8 +49,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
-from tests.ab_perf._harness import (ensure_gpu_heap, ensure_relaxed_constexpr_nvcc, format_ab, time_cpu, time_gpu,
-                                    to_gpu)
+from tests.ab_perf._harness import (ensure_gpu_heap, ensure_relaxed_constexpr_nvcc, time_cpu, time_gpu)
 
 KLEV = dace.symbol('KLEV')
 KLON = dace.symbol('KLON')

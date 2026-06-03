@@ -17,7 +17,7 @@ and at least one is WAR.
 It trades an extra array + an O(N) copy for parallelism, so it is meant to run
 **optionally** (a tuning knob), not as part of the default pipeline.
 """
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from dace import data, properties, symbolic, Memlet
 from dace.sdfg import SDFG
@@ -192,8 +192,7 @@ class BreakAntiDependence(ppl.Pass):
                     return e.data.assignments[sym_name]
         return None
 
-    def _collect_iedge_substitutions(self, loop: LoopRegion,
-                                     isym=None, sdfg: Optional[SDFG] = None):
+    def _collect_iedge_substitutions(self, loop: LoopRegion, isym=None, sdfg: Optional[SDFG] = None):
         """Build ``{sym: rhs_expr}`` for every iedge assignment in the loop
         body whose RHS is a *pure* symbolic expression (loop iterator +
         loop-invariant symbols, no array reads anywhere in the dependency
@@ -275,8 +274,7 @@ class BreakAntiDependence(ppl.Pass):
                 continue
             if symbolic.pystr_to_symbolic(lhs) in expr.free_symbols:
                 continue
-            unknown = [s for s in expr.free_symbols
-                       if str(s) not in in_scope and str(s) not in all_binding_names]
+            unknown = [s for s in expr.free_symbols if str(s) not in in_scope and str(s) not in all_binding_names]
             if unknown:
                 continue
             # Only inline when the RHS references the loop iterator; otherwise

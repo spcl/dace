@@ -202,8 +202,8 @@ def test_arithmetic_iv_symbolic_stride_collapses_to_closed_form():
 
 
 @dace.program
-def _iedge_iv_counter_in_inner_loop(flat: dace.float64[N * N],
-                                     a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N]):
+def _iedge_iv_counter_in_inner_loop(flat: dace.float64[N * N], a: dace.float64[N, N], b: dace.float64[N, N],
+                                    c: dace.float64[N, N]):
     """TSVC ``s125`` minimal repro: scalar counter ``k`` incremented each
     inner iter, indexing a flat output array. After IV substitution the
     inner-body reference to ``k`` becomes ``k + (loop_var - start + 1)``
