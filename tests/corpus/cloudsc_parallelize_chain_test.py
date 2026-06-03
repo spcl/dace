@@ -29,6 +29,22 @@ be evaluated against IEEE-respecting builds.
 
 This is a slow integration test: it builds the full CloudSC SDFG once
 (``simplify=False`` parse is minutes) and compiles it once per step.
+
+Manual run::
+
+    pytest tests/corpus/cloudsc_parallelize_chain_test.py -v -s -m integration
+
+    # restrict to one regime:
+    pytest tests/corpus/cloudsc_parallelize_chain_test.py -v -s -m integration \\
+        -k '[ieee]'
+
+    # dump every per-stage SDFG into ``/tmp/cloudsc_dump`` (created if missing)
+    # so each step can be reloaded and post-mortemed without rerunning the chain:
+    pytest tests/corpus/cloudsc_parallelize_chain_test.py -v -s -m integration \\
+        --cloudsc-dump-dir=/tmp/cloudsc_dump
+
+    # files land as ``<regime>_<stage_index>_<stage_name>.sdfgz`` --
+    # e.g. ``ieee_03_simplify.sdfgz``, ``ieee_13_loop_to_map.sdfgz``.
 """
 import contextlib
 import copy
@@ -346,7 +362,7 @@ def reference_sdfg_file(tmp_path_factory):
 
 @pytest.mark.integration
 @pytest.mark.parametrize('regime', list(_REGIMES))
-def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
+def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path, cloudsc_dump_dir):
     cpu_args, sequential, strict_tol, relaxed_tol = _REGIMES[regime]
 
     ref = dace.SDFG.from_file(reference_sdfg_file)
@@ -359,11 +375,16 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path):
     rt_dir = str(tmp_path / 'roundtrips')
     os.makedirs(rt_dir, exist_ok=True)
 
-    for label, apply_fn in _chain():
+    for stage_idx, (label, apply_fn) in enumerate(_chain(), start=1):
         # The loop transforms log every refused loop; keep the test output readable.
         with contextlib.redirect_stdout(open(os.devnull, 'w')):
             apply_fn(candidate)
         candidate.validate()
+
+        # Optional per-stage SDFG dump for manual post-mortems.
+        if cloudsc_dump_dir:
+            dump_path = os.path.join(cloudsc_dump_dir, f'{regime}_{stage_idx:02d}_{label}.sdfgz')
+            candidate.save(dump_path, compress=True)
 
         # Per-stage structural invariants of the chain.
         n_wcr, n_red = len(_wcr_edges(candidate)), len(_reduce_nodes(candidate))
