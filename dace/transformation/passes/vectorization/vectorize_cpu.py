@@ -3,8 +3,9 @@
 import dace
 from typing import Iterator, List, Optional, Set
 from dace.transformation import Pass, pass_pipeline as ppl
-from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
+from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import CleanTaskletToScalarSliceToAccessNodePattern
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
+from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall
 from dace.transformation.passes import InlineSDFGs
@@ -443,6 +444,7 @@ class VectorizeCPU(ppl.Pipeline):
             if branch_normalization:
                 passes = [
                     CleanAccessNodeToScalarSliceToTaskletPattern(),
+                    CleanTaskletToScalarSliceToAccessNodePattern(),
                     LowerInterstateConditionalAssignmentsToTasklets(),
                     BranchNormalizationPipeline(),
                     RemoveRedundantAssignments(),
@@ -450,6 +452,7 @@ class VectorizeCPU(ppl.Pipeline):
             else:
                 passes = [
                     CleanAccessNodeToScalarSliceToTaskletPattern(),
+                    CleanTaskletToScalarSliceToAccessNodePattern(),
                     EliminateBranches(),
                     RemoveRedundantAssignments(),
                     LowerInterstateConditionalAssignmentsToTasklets(),

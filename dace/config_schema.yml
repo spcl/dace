@@ -672,7 +672,7 @@ required:
 
     cache:
         type: str
-        default: name
+        default: unique
         title: Compiled cache entry naming policy
         description: >
             Determine the name of the generated ``.dacecache`` folder:
