@@ -1697,21 +1697,38 @@ class BranchElimination(transformation.MultiStateTransformation):
                           mode=self.eps_operator_type_for_log_and_div).visit(tree)
             return ast.unparse(tree).strip()
 
-        if precision == dace.float64:
-            eps = numpy.finfo(
-                numpy.float64
-            ).tiny * 2  # Having the min as the limit can still result with NaN due to how string stuff works
-            #eps = numpy.finfo(numpy.float64).eps
+        # Smallest positive normal of the target precision -- ``DBL_MIN`` for
+        # fp64, ``FLT_MIN`` for fp32. Earlier code used ``tiny * 2`` as a
+        # safety margin for stringification quirks; the literal is now
+        # serialized with full IEEE roundtrip precision (``repr`` for fp64,
+        # ``%.9g`` for fp32) so the doubling is no longer required and the
+        # eps stays as close to zero as possible without invoking denormal
+        # arithmetic. ``tiny`` is preferred over ``eps`` (machine epsilon
+        # ~1e-16 for fp64) because the addition is purely a NaN/inf guard
+        # for divide-by-zero -- adding the much larger machine-epsilon would
+        # shift the quotient by a measurable amount on every divisor near
+        # zero, breaking the unconditional execution's value equivalence
+        # for kernels whose else-arm sets the result to ``0.0`` (TSVC
+        # cloud-fraction-style guarded reciprocals).
+        if precision == dace.float32:
+            eps = numpy.finfo(numpy.float32).tiny
         else:
-            eps = numpy.finfo(numpy.float32).tiny * 2
-            #eps = numpy.finfo(numpy.float32).eps
+            # fp64 default. Any non-float32 precision (fp64 or wider) lands
+            # here -- ``finfo(fp64).tiny`` is the conservative safety net.
+            eps = numpy.finfo(numpy.float64).tiny
+        # ``repr(float(...))`` writes the IEEE roundtrip-exact literal --
+        # 17 significant digits for fp64, fewer suffice for fp32 (the value
+        # was widened to fp64 by ``float()`` first). Python parses it as
+        # fp64 in the rewritten tasklet; the implicit narrowing to fp32 at
+        # the C++ boundary preserves the tiny value.
+        eps_literal = repr(float(eps))
 
         has_division = False
         for tasklet in tasklets:
             tasklet_code_str = tasklet.code.as_string
             if tasklet.code.language != dace.dtypes.Language.Python:
                 continue
-            e = str(eps)
+            e = eps_literal
             new_code = _add_eps(tasklet_code_str, e)
             if new_code != tasklet.code.as_string:
                 tasklet_code_str = CodeBlock(new_code)
