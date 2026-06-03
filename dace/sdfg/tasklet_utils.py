@@ -573,6 +573,7 @@ _SUPPORTED = {
     'or',
     'not',
     'merge',
+    'ITE',
     'int_floor',
     'int_ceil',
 }
@@ -1016,25 +1017,27 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             info_dict.update({"type": TaskletType.SCALAR_SCALAR, "rhs1": rhs1, "rhs2": rhs2, "op": op})
             return info_dict
     elif n_in == 3:
-        # The only 3-input tasklet shape this classifier knows about is the
-        # ``merge(cond, t, e)`` ternary blend that branch-normalization
-        # emits, ``_o = merge(_c, _t, _e)`` with all three inputs wired as
-        # connectors. Same TaskletType as a binary ARRAY_ARRAY op because
-        # all operands and the output are arrays, only the op count differs,
-        # and that is carried in ``op``. The cond connector name lives in
-        # ``constant1`` so emission can pick it up without extending the
-        # info_dict schema.
+        # The 3-input tasklet shapes this classifier knows about are
+        # ``merge(cond, t, e)`` (branch-normalization output) and ``ITE(cond,
+        # t, e)`` (canonicalize ``EarlyExitToFindIndex`` phi tasklets). Both
+        # share semantics ("if cond then t else e"); ``ITE`` is the
+        # :mod:`dace.symbolic` alias of ``merge`` and the dispatcher folds
+        # them into the same ``TERNARY_ARRAY`` lowering (``vector_select``).
+        # Same TaskletType as a binary ARRAY_ARRAY op because all operands
+        # and the output are arrays, only the op count differs, and that is
+        # carried in ``op``.
         op = _extract_single_op(code_str)
-        if op != 'merge':
+        if op not in ('merge', 'ITE'):
             raise NotImplementedError(
-                f"classify_tasklet: only ``merge`` is supported as a 3-input tasklet shape, got {op!r}")
+                f"classify_tasklet: only ``merge`` / ``ITE`` are supported as 3-input "
+                f"tasklet shapes, got {op!r}")
         import ast as _ast
         rhs_tree = _ast.parse(code_str.split(" = ")[-1].strip(), mode='eval').body
         if not (isinstance(rhs_tree, _ast.Call) and len(rhs_tree.args) == 3):
-            raise NotImplementedError(f"classify_tasklet: merge call shape unexpected: {code_str!r}")
+            raise NotImplementedError(f"classify_tasklet: {op} call shape unexpected: {code_str!r}")
         arg_names = [a.id for a in rhs_tree.args if isinstance(a, _ast.Name)]
         if len(arg_names) != 3:
-            raise NotImplementedError(f"classify_tasklet: merge args must be simple connector names, got {code_str!r}")
+            raise NotImplementedError(f"classify_tasklet: {op} args must be simple connector names, got {code_str!r}")
         info_dict.update({
             "type": TaskletType.TERNARY_ARRAY,
             "rhs1": arg_names[0],

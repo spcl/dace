@@ -879,7 +879,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round', 'merge'
+    'pow', 'round', 'merge', 'ITE'
 }
 
 
@@ -1152,12 +1152,15 @@ class IfExpr(sympy.Function):
             return False
 
 
-class merge(sympy.Function):
-    """Ternary blend: ``merge(c, a, b)`` returns ``a`` when ``c`` is truthy,
-    ``b`` otherwise. Lowered to a one-line C++ helper in
-    ``dace/runtime/include/dace/merge.h`` and recognized by the vectorizer's
-    emission utility to produce a SIMD blend (``vector_select``,
-    ``_mm512_mask_blend_pd``, ``svsel_*``). Folds eagerly when ``c`` is a
+class ITE(sympy.Function):
+    """If-Then-Else ternary: ``ITE(c, a, b)`` returns ``a`` when ``c`` is
+    truthy, ``b`` otherwise. The canonical 3-input merge/blend primitive
+    across the pipeline -- canonicalize passes (``EarlyExitToFindIndex``)
+    and branch normalization both emit ``ITE(c, t, e)`` in tasklet bodies;
+    the vectorizer's ``classify_tasklet`` recognises it as a 3-input
+    ``TERNARY_ARRAY`` and lowers it to a SIMD blend (``vector_select``,
+    ``_mm512_mask_blend_pd``, ``svsel_*``). C++ runtime in
+    ``dace/runtime/include/dace/merge.h``. Folds eagerly when ``c`` is a
     SymPy boolean literal, matching :class:`IfExpr`."""
 
     nargs = 3
@@ -1168,6 +1171,13 @@ class merge(sympy.Function):
             return a
         if c is sympy.false:
             return b
+
+
+# ``merge`` is the legacy spelling of :class:`ITE` (same Python object). New
+# code should prefer ``ITE``; ``merge`` is retained for the existing C++
+# runtime helper in ``dace/runtime/include/dace/merge.h`` and any callers
+# that still reference the old name.
+merge = ITE
 
 
 class bitwise_and(sympy.Function):
@@ -1831,8 +1841,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
-        'merge': merge,
-        'Merge': merge,
+        'ITE': ITE,
+        'merge': ITE,  # legacy spelling, same Python object
+        'Merge': ITE,  # legacy spelling
         'id': sympy.Symbol('id'),
         'diag': sympy.Symbol('diag'),
         'jn': sympy.Symbol('jn'),

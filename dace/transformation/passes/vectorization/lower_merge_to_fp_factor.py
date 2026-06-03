@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Rewrites every ``merge(c, t, e)`` call in a tasklet body to the
+"""Rewrites every ``ITE(c, t, e)`` call in a tasklet body to the
 floating-point factor form ``c * t + (1 - c) * e``; only the code string
 changes (connectors and edges are untouched)."""
 import ast
@@ -13,20 +13,22 @@ from dace.transformation import pass_pipeline as ppl
 
 
 class _MergeToFpFactor(ast.NodeTransformer):
-    """Replaces every ``merge(c, t, e)`` call with ``(c)*(t) + (1 - c)*(e)``."""
+    """Replaces every ``ITE(c, t, e)`` call with ``(c)*(t) + (1 - c)*(e)``."""
 
     def __init__(self):
         self.changed = False
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
-        """Lower a ``merge(c, t, e)`` call to FP-factor arithmetic, recursing first.
+        """Lower a ``ITE(c, t, e)`` call to FP-factor arithmetic, recursing first.
 
         :param node: the call node being visited.
         :returns: the rewritten node, or the original if it is not a 3-arg merge.
         """
-        # Recurse first so nested ``merge(merge(...), ...)`` lowers inside-out.
+        # Recurse first so nested ``ITE(ITE(...), ...)`` lowers inside-out.
+        # Accept the legacy ``merge`` spelling too so older SDFGs / tasklets
+        # that still carry it continue to lower correctly.
         self.generic_visit(node)
-        if not (isinstance(node.func, ast.Name) and node.func.id == "merge" and len(node.args) == 3):
+        if not (isinstance(node.func, ast.Name) and node.func.id in ("ITE", "merge") and len(node.args) == 3):
             return node
         c, t, e = node.args
         c_copy = copy.deepcopy(c)
@@ -40,7 +42,7 @@ class _MergeToFpFactor(ast.NodeTransformer):
 
 @properties.make_properties
 class LowerMergeToFpFactor(ppl.Pass):
-    """Lower every ``merge(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``."""
+    """Lower every ``ITE(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``."""
 
     CATEGORY: str = "Vectorization Preparation"
 
@@ -51,7 +53,7 @@ class LowerMergeToFpFactor(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
-        """Rewrite all merge calls in Python tasklet bodies of ``sdfg``.
+        """Rewrite all ITE calls in Python tasklet bodies of ``sdfg``.
 
         :param sdfg: the SDFG whose tasklets are rewritten in place.
         :param _: unused pipeline results.

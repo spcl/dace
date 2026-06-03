@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Flatten residual ``ConditionalBlock`` s into ``merge``-tasklet form.
+"""Flatten residual ``ConditionalBlock`` s into ``ITE``-tasklet form.
 
 Runs after ``SameWriteSetIfElseToMergeCFG`` (which handles identical-write
 arms). Single-arm ``if`` becomes ``arr = merge(cond, expr, arr)``;
@@ -136,7 +136,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
 
 @properties.make_properties
 class BranchNormalization(ppl.Pass):
-    """Flatten residual ``ConditionalBlock``s into ``merge``-tasklet form.
+    """Flatten residual ``ConditionalBlock``s into ``ITE``-tasklet form.
 
     See module docstring for the contract.
     """
@@ -453,7 +453,7 @@ class BranchNormalization(ppl.Pass):
                 pr = (cname, cprod if s is resolver_state else None)
             else:
                 pr = None
-            self._rewrite_writes_to_merge(local_sdfg, s, ms, cond_text, skip_cb=cb, preresolved=pr)
+            self._rewrite_writes_to_ITE(local_sdfg, s, ms, cond_text, skip_cb=cb, preresolved=pr)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True
@@ -631,7 +631,7 @@ class BranchNormalization(ppl.Pass):
         cond stays an inline expression. Extracted so a multi-state arm
         can resolve **once** (the resolver has a one-shot symbol-lift
         side effect — re-resolving per state would bake stale cond text
-        into later merge tasklets).
+        into later ITE tasklets).
 
         :param sdfg: SDFG for name resolution.
         :param state: State whose scope the cond is resolved against
@@ -651,7 +651,7 @@ class BranchNormalization(ppl.Pass):
                                                                          skip_cb=skip_cb)
         return (None, None) if resolved is None else resolved
 
-    def _rewrite_writes_to_merge(self,
+    def _rewrite_writes_to_ITE(self,
                                  sdfg: dace.SDFG,
                                  state: dace.SDFGState,
                                  write_subsets: dict,
@@ -673,7 +673,7 @@ class BranchNormalization(ppl.Pass):
         # across all writes that share the same cond; resolving inside the
         # per-write loop would re-trigger the lift, find the assignment
         # gone after the first iteration, and silently bake the cond text
-        # into later merge tasklets. ``preresolved`` lets a multi-state
+        # into later ITE tasklets. ``preresolved`` lets a multi-state
         # caller resolve once (on the first substantive state) and feed
         # the same ``(cond_array, producer)`` to every state's rewrite —
         # passing ``producer=None`` for non-producer states forces a
@@ -751,7 +751,7 @@ class BranchNormalization(ppl.Pass):
                         name=f"bn_merge_{arr_name}",
                         inputs={"_c", "_new", "_old"},
                         outputs={"_o"},
-                        code="_o = merge(_c, _new, _old)",
+                        code="_o = ITE(_c, _new, _old)",
                     )
                     cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else write_subset
                     state.add_edge(cond_access, None, merge_t, "_c",
@@ -761,7 +761,7 @@ class BranchNormalization(ppl.Pass):
                         name=f"bn_merge_{arr_name}",
                         inputs={"_new", "_old"},
                         outputs={"_o"},
-                        code=f"_o = merge({cond_text}, _new, _old)",
+                        code=f"_o = ITE({cond_text}, _new, _old)",
                     )
                 state.add_edge(tmp_an, None, merge_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
                 state.add_edge(old_an, None, merge_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
@@ -788,7 +788,7 @@ class BranchNormalizationPipeline(ppl.Pass):
     guards in :meth:`SameWriteSetIfElseToMergeCFG._matches` and
     :class:`BranchNormalization` bail and the outer block never normalises.
     Flattening the inner block first explodes the arm into a 4-5 state
-    sequence (the 3-CFG ``compute_then``/``compute_else``/``apply_merge``
+    sequence (the 3-CFG ``compute_then``/``compute_else``/``apply_ITE``
     split); ``StateFusionExtended`` collapses that sequence back into one
     state *without* dropping tasklets, so the next iteration's single-state
     path normalises the now-shrunk outer block.
@@ -832,7 +832,7 @@ class BranchNormalizationPipeline(ppl.Pass):
             # single-state guard refuses two-arm same-write-set kernels
             # like cloudsc-snippet-one, and BranchNormalization then
             # splits them into two sequential single-arm if's whose
-            # ``merge(cond, new, old)`` shapes wire ``_old`` to the same
+            # ``ITE(cond, new, old)`` shapes wire ``_old`` to the same
             # stage-in load of the OUTPUT array (the second merge never
             # chains through the first's output — wrong dataflow).
             bn = BranchNormalization()

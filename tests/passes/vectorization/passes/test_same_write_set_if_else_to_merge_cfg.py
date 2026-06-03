@@ -5,7 +5,7 @@ Pass-level tests for ``SameWriteSetIfElseToMergeCFG``.
 After running, an SDFG that originally contained a same-write-set ``if/else``
 must:
 - have *no* remaining ``ConditionalBlock``,
-- have three new states ``compute_then`` / ``compute_else`` / ``apply_merge``
+- have three new states ``compute_then`` / ``compute_else`` / ``apply_ITE``
   wired in sequence,
 - produce numerically the same result as the original SDFG.
 
@@ -25,7 +25,7 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cf
     _symbol_has_external_consumer,
 )
 
-# This pass emits ``merge(...)`` tasklets which need ``dace/merge.h``.
+# This pass emits ``merge(...)`` tasklets which need ``dace/ITE.h``.
 os.environ.setdefault("DACE_compiler_cpu_args", "")
 
 
@@ -79,7 +79,7 @@ def test_pass_removes_conditional_block_and_inserts_three_states():
     labels = {s.label for s in sdfg.states()}
     assert any(l.startswith("compute_then_") for l in labels)
     assert any(l.startswith("compute_else_") for l in labels)
-    assert any(l.startswith("apply_merge_") for l in labels)
+    assert any(l.startswith("apply_ITE_") for l in labels)
 
 
 def test_pass_creates_then_else_transients_with_matching_dtype():
@@ -254,7 +254,7 @@ def test_apply_pass_hoists_empty_entry_state_and_matches():
     labels = {s.label for s in sdfg.states()}
     assert any(l.startswith("compute_then_") for l in labels)
     assert any(l.startswith("compute_else_") for l in labels)
-    assert any(l.startswith("apply_merge_") for l in labels)
+    assert any(l.startswith("apply_ITE_") for l in labels)
     # The per-arm temp transients must exist (single-arm fallback never
     # allocates ``_then_*`` / ``_else_*`` — its presence is what proves
     # the kernel took the right path).

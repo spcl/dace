@@ -438,7 +438,7 @@ def test_single_tasklet_symbol_only_split(id: int, expression_str: str, expected
 ])
 def test_split_does_not_treat_merge_as_variable(body: str, inputs: set):
     """``merge`` is a registered SymPy ``Function`` (the ternary blend the
-    branch-normalization passes emit, lowered to ``dace/merge.h``). It must
+    branch-normalization passes emit, lowered to ``dace/ITE.h``). It must
     be classified as a function, not a per-lane variable, by the tasklet
     splitter. The regression: ``split_tasklets._get_vars`` extracted
     ``merge`` as an RHS variable, so a sub-tasklet got an input connector

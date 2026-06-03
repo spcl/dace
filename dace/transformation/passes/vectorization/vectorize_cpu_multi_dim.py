@@ -294,12 +294,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         else:
             # Merge branch lowering: rewrite a same-write-set ``if/else`` into
             # compute-then / compute-else / apply-merge dataflow states carrying
-            # ``merge(c, t, e)`` tasklets. Flattens the ConditionalBlock so
-            # PromoteNSDFGBodyToTiles can descend; the merge tasklets lower to a
+            # ``ITE(c, t, e)`` tasklets. Flattens the ConditionalBlock so
+            # PromoteNSDFGBodyToTiles can descend; the ITE tasklets lower to a
             # per-lane TileMerge select (the K-dim analogue of the 1D
             # ``vector_select`` blend), gated by the tile map's iteration mask.
             # SameWriteSetIfElseToMergeCFG handles two-arm same-write-set
-            # if/else by emitting per-target merge tasklets; the residual
+            # if/else by emitting per-target ITE tasklets; the residual
             # BranchNormalization flattens any remaining single-arm /
             # disjoint-write two-arm ConditionalBlocks (and recurses through
             # nested ones via the fix-point loop) so the descent sees pure

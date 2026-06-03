@@ -105,7 +105,8 @@ def _index_lane_stride(window_size, tile_width) -> int:
 # A branch-normalized same-write-set ``if/else`` lowers to a per-target
 # ``_o = merge(_c, _t, _e)`` tasklet (see :mod:`dace.runtime.include.dace.merge`);
 # recognised here so the descent can lower it to a :class:`TileMerge` per-lane select.
-_MERGE_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*merge\(\s*(?P<c>\w+)\s*,\s*(?P<t>\w+)\s*,\s*(?P<e>\w+)\s*\)\s*;?\s*$")
+_ITE_RE = re.compile(
+    r"^\s*(?P<out>\w+)\s*=\s*(?:ITE|merge)\(\s*(?P<c>\w+)\s*,\s*(?P<t>\w+)\s*,\s*(?P<e>\w+)\s*\)\s*;?\s*$")
 
 
 @properties.make_properties
@@ -241,7 +242,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 raise NotImplementedError(f"PromoteNSDFGBodyToTiles: NSDFG body still carries a "
                                           f"ConditionalBlock {cfg.label!r} after branch "
                                           f"normalisation. Every conditional must be lowered to "
-                                          f"merge tasklets (branch_mode='merge') or FP-factor "
+                                          f"ITE tasklets (branch_mode='merge') or FP-factor "
                                           f"arithmetic (branch_mode='fp_factor') before the "
                                           f"descent — surface this kernel as a branch-norm gap.")
             return None
@@ -2811,7 +2812,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         for t in istate.nodes():
             if not isinstance(t, dace.nodes.Tasklet):
                 continue
-            m = _MERGE_RE.match(t.code.as_string.strip())
+            m = _ITE_RE.match(t.code.as_string.strip())
             if m is not None:
                 merges.append((t, m))
         for t, m in merges:

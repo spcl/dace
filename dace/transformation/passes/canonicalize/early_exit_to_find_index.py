@@ -607,10 +607,13 @@ class EarlyExitToFindIndex(ppl.Pass):
             new_expr = re.sub(rf'\b{re.escape(arr_name)}\b\[[^\]]*\]', in_conn, new_expr)
             rename_map[arr_name] = in_conn
 
-        tasklet_code = f'__out = {loop_var} - {symbolic.symstr(m.iter_start)} if ({new_expr}) else ({N_expr}) - {symbolic.symstr(m.iter_start)}'
-        # Actually we want phi to be the GLOBAL index (i) or N -- to make
-        # post-Reduce min directly give exit_i in the original index space.
-        tasklet_code = f'__out = {loop_var} if ({new_expr}) else ({N_expr})'
+        # ``ITE(cond, then, else)`` is the standard If-Then-Else form (alias
+        # for the ``merge`` sympy function in :mod:`dace.symbolic`). Use it
+        # in preference to Python ``then if cond else else`` syntax so the
+        # vectorizer's ``classify_tasklet`` recognises the 3-input ternary
+        # and lowers it to ``vector_select`` instead of mis-classifying the
+        # inner comparison op and silently dropping the arms.
+        tasklet_code = f'__out = ITE(({new_expr}), {loop_var}, ({N_expr}))'
 
         outputs_map = {'__out': mm.Memlet(data=phi_name,
                                           subset=subsets.Range([(symbolic.pystr_to_symbolic(loop_var) - m.iter_start,

@@ -7,7 +7,7 @@ Unit tests for the ``merge`` SymPy ``Function`` registered in
 branch-normalization passes (M3.1+). The vectorizer's emission utility lowers
 calls to ``merge`` into a SIMD blend (``vector_select`` / ``_mm512_mask_blend_pd``
 / ``svsel_*``); fallback codegen pulls the templated helper from
-``dace/runtime/include/dace/merge.h``.
+``dace/runtime/include/dace/ITE.h``.
 
 These tests pin the contracts the passes will rely on:
 - ``SymExpr("merge(c, a, b)")`` parses and round-trips through
@@ -94,7 +94,7 @@ def test_merge_nested():
 
 def test_merge_header_exists_and_declares_template():
     """The C++ runtime helper must exist and expose the expected signature."""
-    header = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "merge.h")
+    header = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "ITE.h")
     assert os.path.isfile(header), header
     with open(header) as f:
         text = f.read()
