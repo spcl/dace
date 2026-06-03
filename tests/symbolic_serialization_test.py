@@ -418,42 +418,66 @@ def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonica
     assert first == second
 
 
-
-
 def test_serialization_symbol_dtypes_isolation_multi_thread():
-    entered_first = threading.Event()
-    entered_second = threading.Event()
-    first_serialized = threading.Event()
-    second_serialized = threading.Event()
+    first_thread_waits_to_enter_context = threading.Event()
+    first_thread_has_entered_context = threading.Event()
+    second_thread_has_entered_context = threading.Event()
+    first_thread_has_serialized = threading.Event()
+    second_thread_has_serialized = threading.Event()
     failures = []
     lock = threading.Lock()
 
-    def worker(native_dtype, override_dtype, wait_for_enter, wait_for_serialize, signal_enter, signal_serialize):
+    def worker(native_dtype, override_dtype, wait_to_enter_context, sig_entered_context, do_serialize, sig_serialize,
+               do_non_scoped_serialize):
         try:
             sym = symbolic.symbol('N', dtype=native_dtype)
+            assert wait_to_enter_context.wait(timeout=10)
             with symbolic.serialization_symbol_dtypes({'N': override_dtype}):
-                signal_enter.set()
-                assert wait_for_enter.wait(timeout=10)
+                sig_entered_context.set()
+                assert do_serialize.wait(timeout=10)
                 assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{override_dtype.to_string()})'
-                signal_serialize.set()
-                assert wait_for_serialize.wait(timeout=10)
+                sig_serialize.set()
+            assert do_non_scoped_serialize.wait(timeout=10)
             assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{native_dtype.to_string()})'
         except BaseException as ex:
             with lock:
                 failures.append(ex)
 
-    thread1 = threading.Thread(target=worker,
-                               args=(dace.int64, dace.int16, entered_second, second_serialized, entered_first, first_serialized))
-    thread2 = threading.Thread(target=worker,
-                               args=(dace.uint64, dace.uint32, entered_first, first_serialized, entered_second, second_serialized))
+    thread1 = threading.Thread(
+        target=worker,
+        args=(
+            dace.int64,  # native_dtype
+            dace.int16,  # override_dtype
+            first_thread_waits_to_enter_context,  # wait_to_enter_context
+            first_thread_has_entered_context,  # sig_entered_context
+            second_thread_has_entered_context,  # do_serializing
+            first_thread_has_serialized,  # sig_serialize
+            second_thread_has_serialized,  # do_non_scoped_serialize
+        ))
+    thread2 = threading.Thread(
+        target=worker,
+        args=(
+            dace.uint64,  # native_dtype
+            dace.uint32,  # override_dtype
+            first_thread_has_entered_context,  # wait_to_enter_context
+            second_thread_has_entered_context,  # sig_entered_context
+            first_thread_has_serialized,  # do_serialize
+            second_thread_has_serialized,  # sig_serialize
+            second_thread_has_serialized,  # do_non_scoped_serialize
+        ))
 
     thread1.start()
     thread2.start()
+
+    # To set it in motion we must allow the first thread to enter the context.
+    first_thread_waits_to_enter_context.set()
+
     thread1.join()
     thread2.join()
 
     if failures:
         raise failures[0]
+
 
 if __name__ == '__main__':
     pytest.main([__file__])
