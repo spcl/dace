@@ -216,7 +216,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             del all_accesses_to_arrays[arr_name]
             continue
         # ``_cond_*`` bool transients are emitted by BranchNormalization /
-        # SameWriteSetIfElseToMergeCFG to carry per-lane condition results.
+        # SameWriteSetIfElseToITECFG to carry per-lane condition results.
         # After ``replace_arrays_with_new_shape`` reshapes them to ``(W,)``
         # and their memlets are rewritten to ``[0:W-1]``, the point-access
         # ``b == e`` assert below would trip — exclude them, same as the

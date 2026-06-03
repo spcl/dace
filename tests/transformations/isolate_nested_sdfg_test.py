@@ -551,3 +551,121 @@ def test_multi_path_islolation():
     assert {"A", "T3", "T2", "T4", "B"} == {n.data for n in post_ac_nodes}
     assert len(post_me_nodes) == 2
     assert all(me.map.label.startswith("comp_post") for me in post_me_nodes)
+
+
+def _make_data_name_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Build a state with TWO separate AccessNodes for transient ``T``:
+    one is written by a map that feeds an array name, the other is the
+    NestedSDFG's input AccessNode. There is no direct edge between them
+    - the chain exists only via the shared data name.
+    """
+    outer_sdfg = dace.SDFG("data_name_ordering")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    outer_sdfg.add_array("A", shape=(10, ), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("B", shape=(10, ), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("T", shape=(10, ), dtype=dace.float64, transient=True)
+
+    state.add_mapped_tasklet(
+        "comp_pre",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("A[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("T[__i]")},
+        external_edges=True,
+    )
+
+    inner_sdfg = _make_nested_sdfg_simple()
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
+    t_read = state.add_access("T")
+    b_write = state.add_access("B")
+    state.add_edge(t_read, None, nsdfg, "A", dace.Memlet("T[0:10]"))
+    state.add_edge(nsdfg, "B", b_write, None, dace.Memlet("B[0:10]"))
+
+    outer_sdfg.validate()
+    return outer_sdfg, state, nsdfg
+
+
+def test_isolate_data_name_ordering():
+    sdfg, state, nsdfg_node = _make_data_name_ordering_sdfg()
+
+    pre_state, middle_state, post_state = isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node)
+    sdfg.validate()
+
+    # Pre state must contain the pre-tasklet map + its T-writer AccessNode.
+    pre_ac = count_node(pre_state, dace_nodes.AccessNode, return_nodes=True)
+    assert {"A", "T"} == {n.data for n in pre_ac}
+    assert count_node(pre_state, dace_nodes.MapEntry) == 1
+
+    # Middle state holds the NSDFG and its input/output AccessNodes only.
+    middle_ac = count_node(middle_state, dace_nodes.AccessNode, return_nodes=True)
+    assert {"T", "B"} == {n.data for n in middle_ac}
+    assert count_node(middle_state, dace_nodes.NestedSDFG) == 1
+
+    # Post state stays empty: nothing reads from B in the original state.
+    assert post_state.number_of_nodes() == 0
+
+
+def _make_data_name_ordering_pre_and_post_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Extend the previous case with a post-tasklet that reads the NSDFG's
+    output ``B`` via a SEPARATE AccessNode and writes ``C``. The post
+    tasklet must land in post_state.
+    """
+    outer_sdfg = dace.SDFG("data_name_ordering_pre_and_post")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    outer_sdfg.add_array("A", shape=(10, ), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("B", shape=(10, ), dtype=dace.float64, transient=True)
+    outer_sdfg.add_array("C", shape=(10, ), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("T", shape=(10, ), dtype=dace.float64, transient=True)
+
+    state.add_mapped_tasklet(
+        "comp_pre",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("A[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("T[__i]")},
+        external_edges=True,
+    )
+
+    inner_sdfg = _make_nested_sdfg_simple()
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
+    t_read = state.add_access("T")
+    b_write = state.add_access("B")
+    state.add_edge(t_read, None, nsdfg, "A", dace.Memlet("T[0:10]"))
+    state.add_edge(nsdfg, "B", b_write, None, dace.Memlet("B[0:10]"))
+
+    state.add_mapped_tasklet(
+        "comp_post",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("B[__i]")},
+        code="__out = __in * __in",
+        outputs={"__out": dace.Memlet("C[__i]")},
+        external_edges=True,
+    )
+
+    outer_sdfg.validate()
+    return outer_sdfg, state, nsdfg
+
+
+def test_isolate_data_name_ordering_pre_and_post():
+    sdfg, state, nsdfg_node = _make_data_name_ordering_pre_and_post_sdfg()
+
+    pre_state, middle_state, post_state = isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node)
+    sdfg.validate()
+
+    pre_ac = count_node(pre_state, dace_nodes.AccessNode, return_nodes=True)
+    pre_me = count_node(pre_state, dace_nodes.MapEntry, return_nodes=True)
+    assert {"A", "T"} == {n.data for n in pre_ac}
+    assert len(pre_me) == 1
+    assert pre_me[0].map.label.startswith("comp_pre")
+
+    middle_ac = count_node(middle_state, dace_nodes.AccessNode, return_nodes=True)
+    assert {"T", "B"} == {n.data for n in middle_ac}
+    assert count_node(middle_state, dace_nodes.NestedSDFG) == 1
+
+    post_ac = count_node(post_state, dace_nodes.AccessNode, return_nodes=True)
+    post_me = count_node(post_state, dace_nodes.MapEntry, return_nodes=True)
+    assert {"B", "C"} == {n.data for n in post_ac}
+    assert len(post_me) == 1
+    assert post_me[0].map.label.startswith("comp_post")

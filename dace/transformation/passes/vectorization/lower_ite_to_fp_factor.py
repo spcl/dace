@@ -12,23 +12,21 @@ from dace.properties import CodeBlock
 from dace.transformation import pass_pipeline as ppl
 
 
-class _MergeToFpFactor(ast.NodeTransformer):
+class _ITEToFpFactor(ast.NodeTransformer):
     """Replaces every ``ITE(c, t, e)`` call with ``(c)*(t) + (1 - c)*(e)``."""
 
     def __init__(self):
         self.changed = False
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
-        """Lower a ``ITE(c, t, e)`` call to FP-factor arithmetic, recursing first.
+        """Lower an ``ITE(c, t, e)`` call to FP-factor arithmetic, recursing first.
 
         :param node: the call node being visited.
-        :returns: the rewritten node, or the original if it is not a 3-arg merge.
+        :returns: the rewritten node, or the original if it is not a 3-arg ITE.
         """
         # Recurse first so nested ``ITE(ITE(...), ...)`` lowers inside-out.
-        # Accept the legacy ``merge`` spelling too so older SDFGs / tasklets
-        # that still carry it continue to lower correctly.
         self.generic_visit(node)
-        if not (isinstance(node.func, ast.Name) and node.func.id in ("ITE", "merge") and len(node.args) == 3):
+        if not (isinstance(node.func, ast.Name) and node.func.id == "ITE" and len(node.args) == 3):
             return node
         c, t, e = node.args
         c_copy = copy.deepcopy(c)
@@ -41,7 +39,7 @@ class _MergeToFpFactor(ast.NodeTransformer):
 
 
 @properties.make_properties
-class LowerMergeToFpFactor(ppl.Pass):
+class LowerITEToFpFactor(ppl.Pass):
     """Lower every ``ITE(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``."""
 
     CATEGORY: str = "Vectorization Preparation"
@@ -65,7 +63,7 @@ class LowerMergeToFpFactor(ppl.Pass):
                 if not isinstance(node, dace.nodes.Tasklet):
                     continue
                 code = node.code.as_string if isinstance(node.code, CodeBlock) else str(node.code)
-                if "merge(" not in code:
+                if "ITE(" not in code:
                     continue
                 try:
                     tree = ast.parse(code, mode="exec")
@@ -74,7 +72,7 @@ class LowerMergeToFpFactor(ppl.Pass):
                     # path only sees Python tasklets emitted by M3.1b/M3.2;
                     # leave anything else alone.
                     continue
-                transformer = _MergeToFpFactor()
+                transformer = _ITEToFpFactor()
                 new_tree = transformer.visit(tree)
                 if not transformer.changed:
                     continue

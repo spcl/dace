@@ -879,7 +879,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round', 'merge', 'ITE'
+    'pow', 'round', 'ITE'
 }
 
 
@@ -888,7 +888,7 @@ def builtin_userfunctions() -> frozenset:
 
     Symbol-extraction utilities (:func:`symbols_in_code`,
     :func:`free_symbols_and_functions`, the tasklet splitter) consult this
-    set to avoid treating a call target such as ``int_floor`` or ``merge``
+    set to avoid treating a call target such as ``int_floor`` or ``ITE``
     as a per-lane variable. Prefer this accessor over reaching into the
     private module set so a single name (e.g. a newly registered SymPy
     ``Function``) is added in exactly one place.
@@ -1153,15 +1153,19 @@ class IfExpr(sympy.Function):
 
 
 class ITE(sympy.Function):
-    """If-Then-Else ternary: ``ITE(c, a, b)`` returns ``a`` when ``c`` is
-    truthy, ``b`` otherwise. The canonical 3-input merge/blend primitive
-    across the pipeline -- canonicalize passes (``EarlyExitToFindIndex``)
-    and branch normalization both emit ``ITE(c, t, e)`` in tasklet bodies;
-    the vectorizer's ``classify_tasklet`` recognises it as a 3-input
-    ``TERNARY_ARRAY`` and lowers it to a SIMD blend (``vector_select``,
-    ``_mm512_mask_blend_pd``, ``svsel_*``). C++ runtime in
-    ``dace/runtime/include/dace/merge.h``. Folds eagerly when ``c`` is a
-    SymPy boolean literal, matching :class:`IfExpr`."""
+    """Ternary blend: ``ITE(c, a, b)`` returns ``a`` when ``c`` is truthy,
+    ``b`` otherwise. Lowered to a one-line C++ helper in
+    ``dace/runtime/include/dace/ITE.h`` and recognized by the vectorizer's
+    emission utility to produce a SIMD blend (``vector_select``,
+    ``_mm512_mask_blend_pd``, ``svsel_*``). Folds eagerly when ``c`` is a
+    SymPy boolean literal, matching :class:`IfExpr`.
+
+    ``ITE`` is the unified canonical name for the 3-input ternary form
+    across the canonicalize / vectorization / branch-flattening passes;
+    ASTSplitter emits ``ITE(...)`` calls and
+    :class:`~dace.transformation.passes.vectorization.lower_ite_to_fp_factor.LowerITEToFpFactor`
+    rewrites them to the FP-factor form when the vectorizer asks.
+    """
 
     nargs = 3
 
@@ -1842,8 +1846,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
         'ITE': ITE,
-        'merge': ITE,  # legacy spelling, same Python object
-        'Merge': ITE,  # legacy spelling
+        'Mod': sympy.Mod,
+        'Attr': Attr,
         'id': sympy.Symbol('id'),
         'diag': sympy.Symbol('diag'),
         'jn': sympy.Symbol('jn'),
@@ -2201,6 +2205,7 @@ _PYSTR2SYM_locals = {
     '__int_floor': __int_floor,
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
+    'ITE': ITE,
     'Mod': sympy.Mod,
     'Attr': Attr,
     'Subscript': Subscript,

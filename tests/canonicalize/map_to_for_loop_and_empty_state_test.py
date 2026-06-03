@@ -294,6 +294,108 @@ def test_a5_start_block_edge_cases():
     assert np.allclose(b_post, oracle2), "not-start-block map produced wrong result"
 
 
+def _map_with_two_successor_branches_sdfg(n: int):
+    """Build a state machine where the map state has TWO unconditional
+    successor states (a malformed-ish but legal CFG shape that
+    ``simplify``'s ``control_flow_raising`` can produce mid-pipeline):
+    ``pred -> mapst -> tail_a`` and ``mapst -> tail_b``, both
+    interstate edges unconditional. With ``inline_after=True`` the
+    naive migration of ``mapst`` 's dataflow into a fresh successor
+    leaves the placeholder ``mapst`` with three out-edges (the new
+    ``mapst -> target`` plus the original two), giving the placeholder
+    multiple unconditional edges. ``control_flow_raising`` then lifts
+    these into a ``ConditionalBlock`` with an ``else`` branch that
+    isn't last and ``DeadStateElimination`` aborts. The fix reparents
+    the original successor edges onto ``target_state`` so the
+    placeholder has exactly one out-edge.
+    """
+    sdfg = dace.SDFG('map_two_successors')
+    sdfg.add_array('a', [n], dace.float64)
+    sdfg.add_array('b', [n], dace.float64)
+    sdfg.add_array('c', [n], dace.float64)
+
+    pred = sdfg.add_state('pred', is_start_block=True)
+    mapst = sdfg.add_state('mapst')
+    tail_a = sdfg.add_state('tail_a')
+    tail_b = sdfg.add_state('tail_b')
+
+    sdfg.add_edge(pred, mapst, dace.InterstateEdge())
+    sdfg.add_edge(mapst, tail_a, dace.InterstateEdge())
+    sdfg.add_edge(mapst, tail_b, dace.InterstateEdge())
+
+    ra = mapst.add_read('a')
+    wb = mapst.add_write('b')
+    me, mx = mapst.add_map('m', dict(i='0:%d' % n))
+    tk = mapst.add_tasklet('dbl', {'x'}, {'y'}, 'y = x * 2.0')
+    mapst.add_memlet_path(ra, me, tk, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    mapst.add_memlet_path(tk, mx, wb, src_conn='y', memlet=dace.Memlet('b[i]'))
+
+    # Tail states stay map-less so ``apply_transformations_repeated``
+    # only fires on the one map under test. Each tail just copies ``b``
+    # to ``c`` via an interstate-style direct edge between data nodes.
+    rb_a = tail_a.add_read('b')
+    wc_a = tail_a.add_write('c')
+    tail_a.add_nedge(rb_a, wc_a, dace.Memlet('b[0:%d]->c[0:%d]' % (n, n)))
+    rb_b = tail_b.add_read('b')
+    wc_b = tail_b.add_write('c')
+    tail_b.add_nedge(rb_b, wc_b, dace.Memlet('b[0:%d]->c[0:%d]' % (n, n)))
+    return sdfg, pred, mapst, tail_a, tail_b
+
+
+def test_a6_multi_successor_reparent_on_inline():
+    """Regression: ``inline_after=True`` must reparent the map state's
+    pre-existing successor edges onto the new ``target_state``, leaving
+    the original block with exactly one out-edge. Without the
+    reparent, the placeholder ends up with multiple unconditional
+    out-edges and the downstream ``control_flow_raising`` /
+    ``DeadStateElimination`` chain aborts with
+    ``InvalidSDFGNodeError(Conditional block ... else branch is not
+    the last branch)``."""
+    n = 8
+    sdfg, pred, mapst, tail_a, tail_b = _map_with_two_successor_branches_sdfg(n)
+
+    applied = sdfg.apply_transformations_repeated([MapToForLoop])
+    assert applied == 1
+    sdfg.validate()
+
+    # The placeholder map state must still be present (start-block
+    # invariant is unaffected here) and must have exactly ONE
+    # out-edge -- the freshly added migration edge. The pre-existing
+    # ``mapst -> tail_a`` and ``mapst -> tail_b`` edges must have been
+    # reparented to ``target_state``.
+    out_from_mapst = sdfg.out_edges(mapst)
+    assert len(out_from_mapst) == 1, (f'placeholder block must have one out-edge after migration, '
+                                      f'got {len(out_from_mapst)}: '
+                                      f'{[(e.dst.label, e.data.is_unconditional()) for e in out_from_mapst]}')
+    target = out_from_mapst[0].dst
+
+    # The reparented edges may pass through ``isolate_nested_sdfg`` 's
+    # pre/middle/post split before reaching the tails -- the contract
+    # is reachability, not edge identity. Confirm both tails are still
+    # reachable from the migration target via the state-machine
+    # forward closure (execution order preserved, no successor
+    # dropped).
+    reachable = set()
+    queue = [target]
+    while queue:
+        node = queue.pop()
+        if node in reachable:
+            continue
+        reachable.add(node)
+        queue.extend(e.dst for e in sdfg.out_edges(node) if e.dst not in reachable)
+    assert tail_a in reachable, 'tail_a unreachable from the migration target after inline'
+    assert tail_b in reachable, 'tail_b unreachable from the migration target after inline'
+
+    # No ConditionalBlock with a misplaced else branch must exist
+    # anywhere in the SDFG.
+    from dace.sdfg.state import ConditionalBlock
+    for cfg in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(cfg, ConditionalBlock):
+            for i, (cond, _) in enumerate(cfg.branches):
+                assert cond is not None or i == len(cfg.branches) - 1, \
+                    f'ConditionalBlock {cfg.label!r} has else at index {i}/{len(cfg.branches)}'
+
+
 # --------------------------------------------------------------------------- #
 # PART B -- EmptyStateElimination                                              #
 # --------------------------------------------------------------------------- #

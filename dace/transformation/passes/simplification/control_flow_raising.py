@@ -149,15 +149,25 @@ class ControlFlowRaising(ppl.Pass):
                     # Connect it.
                     graph.add_edge(block, conditional, InterstateEdge())
 
-                    # Populate branches.
+                    # Populate branches. ``ConditionalBlock`` requires the
+                    # ``else`` branch (the one with ``cond is None``) to be
+                    # the LAST entry (enforced by
+                    # ``DeadStateElimination._find_dead_branches``), so
+                    # iterate over the out-edges with unconditional edges
+                    # sorted to the tail. Stable sort preserves the original
+                    # order of the conditional edges, which is what the
+                    # cumulative ``full_cond_expression`` build below relies
+                    # on.
+                    ordered_oedges = sorted(oedges, key=lambda e: 1 if e.data.is_unconditional() else 0)
                     full_cond_expression: Optional[sympy.Basic] = None
                     uncond_generated = False
-                    for i, oe in enumerate(oedges):
+                    for i, oe in enumerate(ordered_oedges):
                         branch_name = 'branch_' + str(i) + '_' + block.label
                         branch = ControlFlowRegion(branch_name, sdfg)
 
                         if not oe.data.is_unconditional():
-                            if i == len(oedges) - 1 and oe.data.condition_sympy() == sympy.Not(full_cond_expression):
+                            if i == len(ordered_oedges) - 1 and oe.data.condition_sympy() == sympy.Not(
+                                    full_cond_expression):
                                 if uncond_generated:
                                     warnings.warn(
                                         f'Control flow raising: Found multiple unconditional branches in {block.label}')

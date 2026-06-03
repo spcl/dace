@@ -122,7 +122,7 @@ class VectorizeCPU(ppl.Pipeline):
         :param eliminate_trivial_vector_map: append ``RemoveVectorMaps``.
         :param user_skip_nsdfg_arrays: NSDFG array names to exclude from copy-in/out.
         :param use_fp_factor: branch lowering via ``c*x + (1-c)*y`` (mutually exclusive with ``branch_normalization``).
-        :param branch_normalization: branch lowering via the M3 ``merge`` normalization.
+        :param branch_normalization: branch lowering via the M3 ``ITE`` normalization.
         :param lower_to_intrinsics: also collapse strided / multi-dim-strided
             per-lane fans to intrinsics (gather/scatter collapse is always on
             — see ``gather_intrinsic``/``scatter_intrinsic``).
@@ -176,7 +176,7 @@ class VectorizeCPU(ppl.Pipeline):
             conflicting):**
 
             - *Forced on* (set internally; their default is fine, you do
-              not pass them): branch lowering forced to the merge path
+              not pass them): branch lowering forced to the ITE path
               (``use_fp_factor`` is ignored — the always-mask model
               requires SIMD blends, so ``branch_normalization`` is on),
               ``lower_to_intrinsics=True`` (locked Option B — masked
@@ -234,17 +234,16 @@ class VectorizeCPU(ppl.Pipeline):
                 # "whole map as CPP tasklet" approach (SpMV + axpy +
                 # triad recognisers implemented), but not user-reachable
                 # via this knob.
-                raise NotImplementedError(
-                    "VectorizeCPU: sve_style='variable' is deferred (open task). For SVE "
-                    "hardware use sve_style='fixed' with vector_width matched to the target "
-                    "SVE register width (W=8 for SVE-512, W=4 for SVE-256, etc.); the SVE "
-                    "arch header (cpu_vectorizable_math_arm_sve.h) already uses svwhilelt + "
-                    "svcntd per W-chunk internally. The variable-VL whole-map-to-CPP-tasklet "
-                    "approach is parked in SveStyleVariableFinalize as a prototype.")
-            # Branch lowering is forced to the merge path: ``use_fp_factor``
+                raise NotImplementedError("VectorizeCPU: sve_style='variable' is deferred (open task). For SVE "
+                                          "hardware use sve_style='fixed' with vector_width matched to the target "
+                                          "SVE register width (W=8 for SVE-512, W=4 for SVE-256, etc.); the SVE "
+                                          "arch header (cpu_vectorizable_math_arm_sve.h) already uses svwhilelt + "
+                                          "svcntd per W-chunk internally. The variable-VL whole-map-to-CPP-tasklet "
+                                          "approach is parked in SveStyleVariableFinalize as a prototype.")
+            # Branch lowering is forced to the ITE path: ``use_fp_factor``
             # defaults True (legacy), so rejecting it would force every
             # sve_style caller to also pass use_fp_factor=False. The
-            # always-mask model requires merge blends, so use_fp_factor is
+            # always-mask model requires ITE blends, so use_fp_factor is
             # ignored and branch_normalization is forced on (documented;
             # the forced assignment lands with the S-SVE5b pipeline).
             if only_apply_vectorization_pass:
@@ -265,9 +264,9 @@ class VectorizeCPU(ppl.Pipeline):
             if num_cores <= 1:
                 raise ValueError("VectorizeCPU: sve_style tiles the innermost map across "
                                  "num_cores contiguous core blocks; pass num_cores > 1")
-            # sve_style='fixed' forces the merge branch front and the
+            # sve_style='fixed' forces the ITE branch front and the
             # masked intrinsic path. ``use_fp_factor`` defaults True
-            # (legacy) — override silently to the merge front as
+            # (legacy) — override silently to the ITE front as
             # documented; force lower_to_intrinsics so masked gather/
             # scatter is safe (a per-lane scalar fan faults on inactive
             # lanes). The chain itself is the SveStyleFinalize
@@ -305,7 +304,7 @@ class VectorizeCPU(ppl.Pipeline):
             raise NotImplementedError("VectorizeCPU: remainder_strategy='full_loop_mask' is queued (R3); "
                                       "currently only 'scalar' and 'masked' are wired end-to-end.")
         # K1=fp_factor + K2=masked is rejected per the locked plan decision:
-        # the masked path emits canonical merge tasklets / iter_mask blends
+        # the masked path emits canonical ITE tasklets / iter_mask blends
         # that fp-factor lowering can't combine with cleanly (would need a
         # bool-to-float cast on every iteration). Use branch_normalization
         # for the masked path, or remainder_strategy="scalar" for fp_factor.
@@ -316,7 +315,7 @@ class VectorizeCPU(ppl.Pipeline):
         # ``force_autovec_ops`` / ``force_pscalar_ops`` (Option F overlay)
         # let callers override per-op which implementation the emitter
         # selects. Keys are templates-dict op identifiers (``"+"``,
-        # ``"merge"``, ``"+c"``, ``"c-"``, ``"log"``, ``"=c"`` etc.).
+        # ``"ITE"``, ``"+c"``, ``"c-"``, ``"log"``, ``"=c"`` etc.).
         #   force_pscalar_ops={"div"}  -> emit ``vector_div_pscalar``
         #                                  (pure scalar loop, no autovec hint)
         #   force_autovec_ops={"exp"}  -> emit ``vector_exp_av``
@@ -347,8 +346,8 @@ class VectorizeCPU(ppl.Pipeline):
             "<=": "vector_le<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
             "==": "vector_eq<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
             "!=": "vector_ne<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-            "merge": "vector_select<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm});",
-            "merge_masked":
+            "ITE": "vector_select<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm});",
+            "ITE_masked":
             "vector_select_av_masked<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm}, {mask});",
             # scalar variants type 1
             "*c": "vector_mult_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
@@ -433,13 +432,13 @@ class VectorizeCPU(ppl.Pipeline):
             # Pick the branch-lowering front of the pipeline. ``use_fp_factor``
             # keeps today's behaviour, ``EliminateBranches`` collapses if/else
             # to the FP-factor form ``a = c*x + (1-c)*y``. ``branch_normalization``
-            # opts into the new M3 pipeline, ``SameWriteSetIfElseToMergeCFG``
-            # rewrites same-write-set arms to a 3-CFG merge form, then
-            # ``BranchNormalization`` flattens the rest into merge tasklets.
-            # In merge mode, ``LowerInterstateConditionalAssignmentsToTasklets``
+            # opts into the new M3 pipeline, ``SameWriteSetIfElseToITECFG``
+            # rewrites same-write-set arms to a 3-CFG ITE form, then
+            # ``BranchNormalization`` flattens the rest into ITE tasklets.
+            # In ITE mode, ``LowerInterstateConditionalAssignmentsToTasklets``
             # runs before the M3 passes so the condition variable lives in a
             # tasklet plus a transient array (the vectorizer can then drive
-            # it per-lane through the merge tasklet's ``_c`` connector).
+            # it per-lane through the ITE tasklet's ``_c`` connector).
             # Fold the frontend ``A -> A_slice(scalar) -> tasklet`` reads up
             # front, while ``A -> A_slice`` is still a direct AccessNode edge.
             # After ``LoopToMap`` the MapEntry sits between ``A`` and its

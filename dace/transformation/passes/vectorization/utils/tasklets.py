@@ -537,7 +537,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
     ttype: tutil.TaskletType = info.get("type")
     lhs, rhs1, rhs2 = info.get("lhs"), info.get("rhs1"), info.get("rhs2")
     c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
-    # Semantic operands for ``TERNARY_ARRAY`` (merge), populated only for that case.
+    # Semantic operands for ``TERNARY_ARRAY`` (ITE), populated only for that case.
     cond_arg, then_arm, else_arm = info.get("cond"), info.get("then_arm"), info.get("else_arm")
     vw = vector_width
     is_commutative = op in {"+", "*", "==", "!="}
@@ -660,22 +660,22 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         else:
             _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
     elif ttype == tutil.TaskletType.TERNARY_ARRAY:
-        # ``_o = merge(_c, _t, _e)`` lowered to ``vector_select<{dtype}, {W}>``.
+        # ``_o = ITE(_c, _t, _e)`` lowered to ``vector_select<{dtype}, {W}>``.
         # All three operands are arrays, the classifier carries them as
         # semantic ``cond`` / ``then_arm`` / ``else_arm`` names.
         out_edges = state.out_edges(node)
         assert len(out_edges) == 1
         out_data = state.sdfg.arrays[out_edges[0].data.data]
         dtype_ = dace.dtypes.TYPECLASS_TO_STRING[out_data.dtype]
-        # In a masked remainder the merge must be iter-mask-gated: an
+        # In a masked remainder the ITE must be iter-mask-gated: an
         # active lane selects, an INACTIVE lane keeps ``else_arm`` (which
-        # branch-normalization always sets to the merge destination), so
+        # branch-normalization always sets to the ITE destination), so
         # the W-wide writeback over R<W lanes is a no-op on the trailing
         # inactive lanes instead of OOB-reading/writing past the array
-        # with an unfilled ``cond`` (the TSVC s1161 masked-merge-65 bug).
-        sel_op = "merge"
-        if ctx.mask_connector is not None and "merge_masked" in templates:
-            sel_op = "merge_masked"
+        # with an unfilled ``cond`` (the TSVC s1161 masked-ITE-65 bug).
+        sel_op = "ITE"
+        if ctx.mask_connector is not None and "ITE_masked" in templates:
+            sel_op = "ITE_masked"
         code = templates[sel_op].format(lhs=lhs,
                                         cond=cond_arg,
                                         then_arm=then_arm,

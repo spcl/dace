@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Flatten residual ``ConditionalBlock`` s into ``ITE``-tasklet form.
 
-Runs after ``SameWriteSetIfElseToMergeCFG`` (which handles identical-write
-arms). Single-arm ``if`` becomes ``arr = merge(cond, expr, arr)``;
+Runs after ``SameWriteSetIfElseToITECFG`` (which handles identical-write
+arms). Single-arm ``if`` becomes ``arr = ITE(cond, expr, arr)``;
 disjoint two-arm ``if/else`` is split into two sequential single-arm
 conditionals and re-normalized; overlapping-but-not-identical write sets
 are unsupported (``NotImplementedError``). No ``ConditionalBlock`` remains
@@ -186,7 +186,7 @@ class BranchNormalization(ppl.Pass):
         # python-frontend ``__sym_z1 = z1`` alias state) out of the arms
         # first, so an arm that is only "empty-assign state -> compute
         # state" reduces to its single substantive state and the existing
-        # single-state merge path applies. Genuinely branch-variant
+        # single-state ITE path applies. Genuinely branch-variant
         # assignments are left in place and refused loudly downstream.
         self._hoist_branch_invariant_assignments(cb)
 
@@ -229,7 +229,7 @@ class BranchNormalization(ppl.Pass):
         different expression on an edge entering ``cb``. It then has the
         same value whichever arm runs, so moving it onto the edges
         entering ``cb`` is value-preserving and reduces the arm to its
-        substantive compute (which the single-state merge normalization
+        substantive compute (which the single-state ITE normalization
         handles). Genuinely branch-variant assignments are left in place
         and refused loudly by :meth:`_normalize_single_arm`.
 
@@ -347,7 +347,7 @@ class BranchNormalization(ppl.Pass):
 
     def _normalize_single_arm(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock,
                               body: ControlFlowRegion) -> bool:
-        """Lower ``if cond: body`` to ``arr = merge(cond, expr, arr)`` writes.
+        """Lower ``if cond: body`` to ``arr = ITE(cond, expr, arr)`` writes.
 
         :param sdfg: SDFG used for name resolution.
         :param cb: the single-arm conditional block (removed in place).
@@ -366,14 +366,11 @@ class BranchNormalization(ppl.Pass):
         # python frontend emits an ``if_<n>`` state) followed by one
         # substantive compute state. The wholesale lift preserves the
         # region's structure and gates only the escaping writes via
-        # ``merge``; the side-effect-free compute runs unconditionally and
-        # the merge selects. An interstate *assignment* inside the arm is
-        # a conditional symbol binding — lifting it makes it unconditional,
-        # which silently corrupts any out-of-arm consumer of that symbol.
-        # We allow arm-local symbol bindings (the symbol is only read
-        # inside the same arm — e.g. ``__sym = __tmp[0]`` immediately
-        # consumed by a sibling memlet within the same body) since lifting
-        # them is value-preserving.
+        # ``ITE``; the side-effect-free compute runs unconditionally and
+        # the ITE selects. But an interstate *assignment* inside the arm
+        # is a conditional symbol binding — lifting it makes it
+        # unconditional, which silently corrupts any out-of-arm consumer of
+        # that symbol. We don't prove arm-locality, so refuse.
         states = [n for n in body.nodes() if isinstance(n, dace.SDFGState)]
         if len(states) != len(body.nodes()):
             return False
@@ -407,8 +404,8 @@ class BranchNormalization(ppl.Pass):
         # b` — into several sequential compute states; StateFusion-
         # Extended correctly refuses to fuse them since they carry a
         # genuine WAR/RAW hazard). Lifting the whole chain and applying
-        # the per-state merge rewrite to *every* substantive state is
-        # value-preserving: when ``cond`` is false each state's merge
+        # the per-state ITE rewrite to *every* substantive state is
+        # value-preserving: when ``cond`` is false each state's ITE
         # picks its running input, so the original propagates unchanged
         # through the chain; when true each increment is applied. Only a
         # straight-line chain is supported (no branching inside the arm).
@@ -424,7 +421,7 @@ class BranchNormalization(ppl.Pass):
         escaping = compute_arm_escape_writes(local_sdfg, cb).get(0, set())
 
         # Per-state escaping-write subsets, in execution order. Only
-        # escaping writes get the merge gate; arm-internal scratch stays
+        # escaping writes get the ITE gate; arm-internal scratch stays
         # inline (nothing outside the arm observes it).
         per_state = []
         for s in ordered_subst:
@@ -453,7 +450,7 @@ class BranchNormalization(ppl.Pass):
                 pr = (cname, cprod if s is resolver_state else None)
             else:
                 pr = None
-            self._rewrite_writes_to_ITE(local_sdfg, s, ms, cond_text, skip_cb=cb, preresolved=pr)
+            self._rewrite_writes_to_ite(local_sdfg, s, ms, cond_text, skip_cb=cb, preresolved=pr)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True
@@ -528,7 +525,7 @@ class BranchNormalization(ppl.Pass):
         :param body: The arm region.
         :returns: Blocks in execution order, or ``None`` if ``body``
             branches, cycles, or has unreachable blocks (only a linear
-            chain is liftable by the per-state merge composition).
+            chain is liftable by the per-state ITE composition).
         """
         start = body.start_block
         if start is None:
@@ -626,7 +623,7 @@ class BranchNormalization(ppl.Pass):
         """Resolve the arm condition to ``(cond_array_name, cond_producer)``.
 
         Materialises the boolean arm condition into an array (the
-        ``SameWriteSetIfElseToMergeCFG`` resolver) and returns the array
+        ``SameWriteSetIfElseToITECFG`` resolver) and returns the array
         name + the producing access node, or ``(None, None)`` if the
         cond stays an inline expression. Extracted so a multi-state arm
         can resolve **once** (the resolver has a one-shot symbol-lift
@@ -642,24 +639,24 @@ class BranchNormalization(ppl.Pass):
         :param skip_cb: Conditional block whose conditions to exclude.
         :returns: ``(cond_array_name, cond_producer)``.
         """
-        from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
-            SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
-        resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(sdfg,
-                                                                         state,
-                                                                         cond_text,
-                                                                         any_subset_str,
-                                                                         skip_cb=skip_cb)
+        from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
+            SameWriteSetIfElseToITECFG, )  # noqa: avoid import cycle at module load
+        resolved = SameWriteSetIfElseToITECFG()._resolve_cond_to_array(sdfg,
+                                                                       state,
+                                                                       cond_text,
+                                                                       any_subset_str,
+                                                                       skip_cb=skip_cb)
         return (None, None) if resolved is None else resolved
 
-    def _rewrite_writes_to_ITE(self,
-                                 sdfg: dace.SDFG,
-                                 state: dace.SDFGState,
-                                 write_subsets: dict,
-                                 cond_text: str,
-                                 *,
-                                 skip_cb=None,
-                                 preresolved=None):
-        """Redirect each write in ``state`` through ``arr = merge(cond, expr, arr)``.
+    def _rewrite_writes_to_ite(self,
+                               sdfg: dace.SDFG,
+                               state: dace.SDFGState,
+                               write_subsets: dict,
+                               cond_text: str,
+                               *,
+                               skip_cb=None,
+                               preresolved=None):
+        """Redirect each write in ``state`` through ``arr = ITE(cond, expr, arr)``.
 
         :param sdfg: SDFG used for name resolution.
         :param state: the lifted arm-body state.
@@ -718,7 +715,7 @@ class BranchNormalization(ppl.Pass):
                                              find_new_name=True)
                 tmp_an = state.add_access(tmp_name)
 
-                # The "old value" for the merge must be the value ``arr_name``
+                # The "old value" for the ITE must be the value ``arr_name``
                 # held BEFORE the tasklet that wrote ``write_an`` ran. For
                 # cloudsc-style chained RMW patterns (``arr[s] = expr + arr[s]``)
                 # that is exactly the access node the tasklet was reading from
@@ -744,28 +741,28 @@ class BranchNormalization(ppl.Pass):
                 if cond_array_name is not None:
                     # Reuse the producing access node (see
                     # ``_resolve_cond_to_array``): a fresh read node would
-                    # disconnect the lift from this merge and let codegen
-                    # emit the merge before the cond is computed.
+                    # disconnect the lift from this ITE and let codegen
+                    # emit the ITE before the cond is computed.
                     cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
-                    merge_t = state.add_tasklet(
-                        name=f"bn_merge_{arr_name}",
+                    ite_t = state.add_tasklet(
+                        name=f"bn_ite_{arr_name}",
                         inputs={"_c", "_new", "_old"},
                         outputs={"_o"},
                         code="_o = ITE(_c, _new, _old)",
                     )
                     cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else write_subset
-                    state.add_edge(cond_access, None, merge_t, "_c",
+                    state.add_edge(cond_access, None, ite_t, "_c",
                                    dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
                 else:
-                    merge_t = state.add_tasklet(
-                        name=f"bn_merge_{arr_name}",
+                    ite_t = state.add_tasklet(
+                        name=f"bn_ite_{arr_name}",
                         inputs={"_new", "_old"},
                         outputs={"_o"},
                         code=f"_o = ITE({cond_text}, _new, _old)",
                     )
-                state.add_edge(tmp_an, None, merge_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
-                state.add_edge(old_an, None, merge_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
-                state.add_edge(merge_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
+                state.add_edge(tmp_an, None, ite_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
+                state.add_edge(old_an, None, ite_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
+                state.add_edge(ite_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
 
 
 def _count_conditional_blocks(sdfg: dace.SDFG) -> int:
@@ -785,7 +782,7 @@ class BranchNormalizationPipeline(ppl.Pass):
 
     A ``ConditionalBlock`` whose arm body itself holds a
     ``ConditionalBlock`` (TSVC s2710) is *multi-state*, so the single-state
-    guards in :meth:`SameWriteSetIfElseToMergeCFG._matches` and
+    guards in :meth:`SameWriteSetIfElseToITECFG._matches` and
     :class:`BranchNormalization` bail and the outer block never normalises.
     Flattening the inner block first explodes the arm into a 4-5 state
     sequence (the 3-CFG ``compute_then``/``compute_else``/``apply_ITE``
@@ -814,8 +811,8 @@ class BranchNormalizationPipeline(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
-        from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (  # avoid import cycle
-            SameWriteSetIfElseToMergeCFG, )
+        from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (  # avoid import cycle
+            SameWriteSetIfElseToITECFG, )
         from dace.transformation.interstate import StateFusionExtended
 
         results = pipeline_results if pipeline_results is not None else {}
@@ -824,23 +821,7 @@ class BranchNormalizationPipeline(ppl.Pass):
             before = _count_conditional_blocks(sdfg)
             if before == 0:
                 break
-            # Hoist branch-invariant interstate symbol bindings out of
-            # each ConditionalBlock arm BEFORE the same-write-set detector
-            # runs. The python frontend emits an empty entry state with
-            # an assignment edge (e.g. ``__sym_z1 = z1``) at the head of
-            # each arm; without hoisting those empty states out, M3.1b's
-            # single-state guard refuses two-arm same-write-set kernels
-            # like cloudsc-snippet-one, and BranchNormalization then
-            # splits them into two sequential single-arm if's whose
-            # ``ITE(cond, new, old)`` shapes wire ``_old`` to the same
-            # stage-in load of the OUTPUT array (the second merge never
-            # chains through the first's output — wrong dataflow).
-            bn = BranchNormalization()
-            for cfg in sdfg.all_control_flow_regions(recursive=True):
-                for blk in list(cfg.nodes()):
-                    if isinstance(blk, ConditionalBlock):
-                        bn._hoist_branch_invariant_assignments(blk)
-            SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, results)
+            SameWriteSetIfElseToITECFG().apply_pass(sdfg, results)
             BranchNormalization().apply_pass(sdfg, results)
             # Collapse the multi-state arms the 3-CFG split produced so the
             # next cycle's single-state guards can match the outer block.

@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Rewrite a same-write-set ``if/else`` into compute-then/compute-else/merge CFGs.
+"""Rewrite a same-write-set ``if/else`` into compute-then/compute-else/apply-ITE CFGs.
 
 The two arms become sequential states producing ``_then_<arr>`` /
 ``_else_<arr>`` temporaries; a final state folds them with the symbolic
-``merge`` (see :mod:`dace.runtime.include.dace.merge`) which the
+``ITE`` (see :mod:`dace.runtime.include.dace.ITE`) which the
 vectorizer lowers to a SIMD blend. Only handles a two-branch
 ``if/else`` with single-state arms whose shared writes are matching
 element subsets and whose bodies are tasklets/access nodes; anything
@@ -96,8 +96,8 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
 
 
 @properties.make_properties
-class SameWriteSetIfElseToMergeCFG(ppl.Pass):
-    """Rewrite same-write-set ``if/else`` blocks into 3-CFG merge form.
+class SameWriteSetIfElseToITECFG(ppl.Pass):
+    """Rewrite same-write-set ``if/else`` blocks into 3-CFG ITE form.
 
     See module docstring for the pass contract.
     """
@@ -203,14 +203,14 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         :param state: arm state to inspect.
         :returns: ``{arr_name: subset}`` for every element-wise write.
         :raises NotImplementedError: if any write is not element-wise
-            (the merge rewrite cannot produce per-element tasklets then;
+            (the ITE rewrite cannot produce per-element tasklets then;
             ``_shared_writes`` swallows this and returns ``{}``).
         """
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
         out = collect_element_write_subsets(state)
         if out is None:
             raise NotImplementedError(
-                f"SameWriteSetIfElseToMergeCFG: non-element write subset found in state {state.label}")
+                f"SameWriteSetIfElseToITECFG: non-element write subset found in state {state.label}")
         return out
 
     def _shared_writes(self, s0: dace.SDFGState, s1: dace.SDFGState) -> dict:
@@ -234,14 +234,11 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return shared
 
     def _rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock):
-        """Replace ``cb`` with compute-then / compute-else / apply-merge states.
+        """Replace ``cb`` with compute-then / compute-else / apply-ITE states.
 
         Clones each arm (redirecting escaping writes to ``_then_<arr>`` /
-        ``_else_<arr>`` transients) and emits one ``merge`` tasklet per
-        escaping target; arm-local writes stay inline. The single-arm case
-        (``if c: ...`` with no ``else``) lowers the same way — the merge
-        tasklet's ``else_op`` reads the pre-cb value of the target (``arr``
-        itself), so an absent else arm reduces to a per-lane RMW select.
+        ``_else_<arr>`` transients) and emits one ``ITE`` tasklet per
+        escaping target; arm-local writes stay inline.
 
         :param sdfg: SDFG used for name resolution.
         :param cb: the conditional block to rewrite (removed in place).
@@ -268,9 +265,9 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         if not all_escapes:
             return
 
-        # We need the writing arm's subset to size the merge memlet, and we
+        # We need the writing arm's subset to size the ITE memlet, and we
         # only allocate ``_<arm>_<arr>`` for arms that actually write ``arr``;
-        # the other arm's merge operand is the pre-cb value of ``arr``.
+        # the other arm's ITE operand is the pre-cb value of ``arr``.
         then_writes = self._collect_write_subsets(then_state)
         else_writes = self._collect_write_subsets(else_state) if else_state is not None else {}
 
@@ -304,7 +301,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             t, e = then_writes.get(arr), else_writes.get(arr)
             if t is not None and e is not None and str(t) != str(e):
                 raise NotImplementedError(
-                    f"SameWriteSetIfElseToMergeCFG: arms write {arr!r} with different subsets ({t} vs {e})")
+                    f"SameWriteSetIfElseToITECFG: arms write {arr!r} with different subsets ({t} vs {e})")
             write_subsets[arr] = t if t is not None else e
 
         # New 3-CFG states in the parent graph. The compute-else state is
@@ -320,7 +317,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         if else_state is not None:
             self._clone_with_redirect(else_state, ce_state, temp_else)
 
-        # Merge tasklets. A non-writing arm contributes the pre-cb value
+        # ITE tasklets. A non-writing arm contributes the pre-cb value
         # (read the original ``arr``, which is intact because the writing
         # arm now targets its private temp).
         # Resolve cond once so the symbol-lifting side effect (deleting
@@ -336,15 +333,15 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         for arr, subset in write_subsets.items():
             then_op = temp_then.get(arr, arr)
             else_op = temp_else.get(arr, arr)
-            self._emit_ITE_tasklet(local_sdfg,
-                                     am_state,
-                                     arr,
-                                     subset,
-                                     then_op,
-                                     else_op,
-                                     cond_text,
-                                     cond_array_name=cond_array_name,
-                                     cond_producer=cond_producer)
+            self._emit_ite_tasklet(local_sdfg,
+                                   am_state,
+                                   arr,
+                                   subset,
+                                   then_op,
+                                   else_op,
+                                   cond_text,
+                                   cond_array_name=cond_array_name,
+                                   cond_producer=cond_producer)
 
         # Stitch in/out edges of the ConditionalBlock onto ct_state -> ce_state
         # -> am_state, then drop the original block.
@@ -377,7 +374,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         arms: ``a[i] = a[i] + b[i]*d[i]`` must clone as
         ``_then_a = a + b*d`` (RHS reads the *original* ``a``), not
         ``_then_a = _then_a + b*d`` (RHS would read the uninitialised temp
-        and propagate garbage through the merge — TSVC s2710). Memlets are
+        and propagate garbage through the ITE -- TSVC s2710). Memlets are
         rebound only on edges incident to a redirected write node, so the
         RHS read memlet keeps naming the original array.
         """
@@ -398,25 +395,25 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 e.data.data = rename[e.data.data]
                 e.data.subset = dace.subsets.Range([(0, 0, 1)])
 
-    def _emit_ITE_tasklet(self,
-                            sdfg: dace.SDFG,
-                            state: dace.SDFGState,
-                            arr_name: str,
-                            subset,
-                            then_name: str,
-                            else_name: str,
-                            cond_text: str,
-                            *,
-                            cond_array_name: Optional[str] = None,
-                            cond_producer: Optional[dace.nodes.AccessNode] = None):
-        """Emit ``arr[subset] = merge(_c, _t, _e)`` where ``_c``, ``_t``,
+    def _emit_ite_tasklet(self,
+                          sdfg: dace.SDFG,
+                          state: dace.SDFGState,
+                          arr_name: str,
+                          subset,
+                          then_name: str,
+                          else_name: str,
+                          cond_text: str,
+                          *,
+                          cond_array_name: Optional[str] = None,
+                          cond_producer: Optional[dace.nodes.AccessNode] = None):
+        """Emit ``arr[subset] = ITE(_c, _t, _e)`` where ``_c``, ``_t``,
         ``_e`` are wired as 3 in-connectors. ``cond_array_name`` is the
         bool transient already lifted for this cond; when ``None``, the
         cond stays as free-symbol text inside the ITE tasklet body.
         ``cond_producer`` is the access node the lift/combine tasklet wrote
-        the transient through; reusing it keeps the merge on the same
+        the transient through; reusing it keeps the ITE on the same
         connected dataflow path as the producer (else codegen may emit the
-        merge before the cond is computed). ``None`` falls back to a fresh
+        ITE before the cond is computed). ``None`` falls back to a fresh
         read node (recipe-1 array, produced elsewhere)."""
         access_then = state.add_access(then_name)
         access_else = state.add_access(else_name)
@@ -426,7 +423,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         if cond_array_name is not None:
             cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
             t = state.add_tasklet(
-                name=f"merge_{arr_name}",
+                name=f"ITE_{arr_name}",
                 inputs={"_c", "_t", "_e"},
                 outputs={"_o"},
                 code="_o = ITE(_c, _t, _e)",
@@ -435,7 +432,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             state.add_edge(cond_access, None, t, "_c", dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
         else:
             t = state.add_tasklet(
-                name=f"merge_{arr_name}",
+                name=f"ITE_{arr_name}",
                 inputs={"_t", "_e"},
                 outputs={"_o"},
                 code=f"_o = ITE({cond_text}, _t, _e)",
@@ -466,7 +463,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         ``_c`` source of the ITE tasklet.
 
         :returns: ``None`` when no transient can be produced (the caller
-            then keeps the cond as free-symbol text in the merge body), or
+            then keeps the cond as free-symbol text in the ITE body), or
             ``(array_name, producer_access)`` where ``producer_access`` is
             the access node the emitted lift/combine tasklet writes the
             transient through in *this* state — consumers must connect their
@@ -623,7 +620,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # Only delete the upstream assignment + drop the symbol when the
         # symbol has no other consumer in the SDFG. With other consumers
         # the kept assignment defines the symbol for them, while the
-        # per-lane lift tasklet supplies the vector form for the merge.
+        # per-lane lift tasklet supplies the vector form for the ITE.
         if not _symbol_has_external_consumer(sdfg, cond_sym, defining_edge, skip_cb=skip_cb):
             del defining_edge.data.assignments[cond_sym]
             if cond_sym in sdfg.symbols:
@@ -652,7 +649,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # (TSVC s271 ``if b[i] > 0.0`` -> all negative-b lanes wrongly
         # taken). Carry the RHS's actual dtype (the first array read's);
         # a genuine bool-valued RHS stored as ``0.0``/``1.0`` is still
-        # correct for the downstream comparison/merge. ``_cond_compound``
+        # correct for the downstream comparison/ITE. ``_cond_compound``
         # (the final boolean) stays ``bool`` separately.
         if arr_reads:
             template = sdfg.arrays[arr_reads[0]]

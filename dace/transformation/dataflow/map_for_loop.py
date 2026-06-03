@@ -3,7 +3,7 @@
 """
 
 import dace
-from dace import symbolic
+from dace import properties, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -12,16 +12,31 @@ from dace.transformation import transformation
 from typing import Tuple, Optional
 
 
+@properties.make_properties
 class MapToForLoop(transformation.SingleStateTransformation):
-    """ Implements the Map to for-loop transformation.
+    """Implements the Map to for-loop transformation.
 
-        Takes a map and enforces a sequential schedule by transforming it into a loop region. Creates a nested SDFG, if
-        necessary.
+    Takes a map and enforces a sequential schedule by transforming it
+    into a LoopRegion. The historical implementation wrapped the map's
+    body in a NestedSDFG and put the LoopRegion inside it; with
+    ``inline_after=True`` (default) the wrapping NSDFG is flattened
+    via :class:`~dace.transformation.interstate.expand_nested_sdfg_inputs.ExpandNestedSDFGInputs`
+    + :class:`~dace.transformation.interstate.multistate_inline.InlineMultistateSDFG`
+    so the LoopRegion lands directly at the parent CFR. Set
+    ``inline_after=False`` to keep the legacy wrapped form.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     loop_region: Optional[LoopRegion] = None
+
+    inline_after = properties.Property(dtype=bool,
+                                       default=True,
+                                       desc='Flatten the wrapping NestedSDFG via '
+                                       'ExpandNestedSDFGInputs + InlineMultistateSDFG so the resulting LoopRegion '
+                                       'lives at the parent CFR. On by default so canonicalization sees a clean '
+                                       'CFR nest without spurious NSDFG boundaries. Set to False to keep the '
+                                       'legacy wrapped form (e.g., when a downstream test asserts on the NSDFG).')
 
     @staticmethod
     def annotates_memlets():
@@ -113,5 +128,72 @@ class MapToForLoop(transformation.SingleStateTransformation):
         sdfg.reset_cfg_list()
         # Ensure the SDFG is marked as containing CFG regions
         sdfg.root_sdfg.using_explicit_control_flow = True
+
+        if self.inline_after:
+            # Flatten the wrapping NSDFG so the resulting LoopRegion
+            # ends up directly at the parent CFR. The widening step is
+            # the InlineMultistateSDFG prerequisite (its can_be_applied
+            # refuses narrowed in/out subsets); both run on the single
+            # NSDFG we just created (no SDFG-wide sweep).
+            #
+            # External-reference preservation: ``InlineMultistateSDFG``
+            # calls ``isolate_nested_sdfg`` which splits / renames /
+            # removes the state holding the NSDFG. Any external Python
+            # references to ``graph`` (the start_block of the parent
+            # CFR, predecessor->graph interstate edges, etc.) would
+            # become stale. We avoid that by proactively migrating
+            # ``graph``'s dataflow content into a fresh successor state
+            # ``target_state`` and running expand+inline against THAT
+            # state. ``graph`` stays in place as an empty placeholder;
+            # the parent CFR sees ``graph -> target_state`` and any
+            # external interstate references to ``graph`` remain valid.
+            from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+            from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+
+            parent_cfr = graph.parent_graph
+            target_state = graph
+            if parent_cfr is not None:
+                was_start = parent_cfr.start_block is graph
+                target_state = parent_cfr.add_state(label=f"{graph.label}_for_inline")
+                # Move ``graph``'s INTRA-state dataflow to ``target_state``.
+                nodes_to_move = list(graph.nodes())
+                edges_to_move = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in graph.edges()]
+                for n in nodes_to_move:
+                    graph.remove_node(n)
+                for n in nodes_to_move:
+                    target_state.add_node(n)
+                for src, sc, dst, dc, data in edges_to_move:
+                    target_state.add_edge(src, sc, dst, dc, data)
+                # Reparent every existing ``graph -> *`` INTERSTATE edge to
+                # ``target_state -> *``. Otherwise the placeholder ``graph``
+                # would end up with both the new ``graph -> target_state``
+                # edge AND the original successor edges, giving it multiple
+                # unconditional out-edges that later trip
+                # ``control_flow_raising`` (else-not-last) and
+                # ``DeadStateElimination`` validation.
+                successor_edges = list(parent_cfr.out_edges(graph))
+                for e in successor_edges:
+                    parent_cfr.remove_edge(e)
+                    parent_cfr.add_edge(target_state, e.dst, e.data)
+                parent_cfr.add_edge(graph, target_state, dace.InterstateEdge())
+                if was_start:
+                    parent_cfr.start_block = parent_cfr.node_id(graph)
+
+            expand = ExpandNestedSDFGInputs()
+            expand.nested_sdfg = node
+            expand.expr_index = 0
+            if expand.can_be_applied(target_state, 0, sdfg, permissive=False):
+                expand.apply(target_state, sdfg)
+            inline = InlineMultistateSDFG()
+            inline.nested_sdfg = node
+            inline.expr_index = 0
+            if inline.can_be_applied(target_state, 0, sdfg, permissive=False):
+                inline.apply(target_state, sdfg)
+                # After inline, the NSDFG node is gone and the LoopRegion
+                # has been hoisted into the parent CFR. Clear the stale
+                # nsdfg reference; ``self.loop_region`` is still valid
+                # (it was reparented, not destroyed).
+                self.nsdfg = None
+            sdfg.reset_cfg_list()
 
         return node, nstate

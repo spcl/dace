@@ -63,7 +63,8 @@ class TaskletType(Enum):
     UNARY_SCALAR = "unary_scalar"
     SCALAR_SCALAR = "scalar_scalar"
     SYMBOL_SYMBOL = "symbol_symbol"
-    TERNARY_ARRAY = "ternary_array"  # 3-input array merge, ``_o = merge(_c, _t, _e)``
+    TERNARY_ARRAY = "ternary_array"  # 3-input array ITE, ``_o = ITE(_c, _t, _e)``
+    UNKNOWN = "unknown"  # the classifier could not match a shape (unknown function call, unfamiliar pattern, etc.); callers fall back via ``ttype == TaskletType.UNKNOWN``.
 
 
 def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
@@ -572,10 +573,7 @@ _SUPPORTED = {
     'and',
     'or',
     'not',
-    'merge',
     'ITE',
-    'int_floor',
-    'int_ceil',
 }
 """Set of all supported operations including functions."""
 
@@ -890,9 +888,8 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         "constant2": None,
         "constant3": None,
         "op": None,
-        # Semantic aliases for ``TERNARY_ARRAY`` (merge): cond == rhs1,
-        # then_arm == rhs2, else_arm == rhs3. Kept for the legacy
-        # ``instantiate_tasklet_from_info`` consumer.
+        # Semantic operands for ``TERNARY_ARRAY`` (ITE). Populated only
+        # for that type, kept ``None`` for every other tasklet shape.
         "cond": None,
         "then_arm": None,
         "else_arm": None,
@@ -1017,27 +1014,31 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             info_dict.update({"type": TaskletType.SCALAR_SCALAR, "rhs1": rhs1, "rhs2": rhs2, "op": op})
             return info_dict
     elif n_in == 3:
-        # The 3-input tasklet shapes this classifier knows about are
-        # ``merge(cond, t, e)`` (branch-normalization output) and ``ITE(cond,
-        # t, e)`` (canonicalize ``EarlyExitToFindIndex`` phi tasklets). Both
-        # share semantics ("if cond then t else e"); ``ITE`` is the
-        # :mod:`dace.symbolic` alias of ``merge`` and the dispatcher folds
-        # them into the same ``TERNARY_ARRAY`` lowering (``vector_select``).
-        # Same TaskletType as a binary ARRAY_ARRAY op because all operands
-        # and the output are arrays, only the op count differs, and that is
-        # carried in ``op``.
+        # The only 3-input tasklet shape this classifier knows about is
+        # the ``ITE(cond, t, e)`` ternary blend that branch-normalization
+        # emits, ``_o = ITE(_c, _t, _e)`` with all three inputs wired as
+        # connectors. Same TaskletType bucket as the binary ARRAY_ARRAY
+        # op because all operands and the output are arrays, only the
+        # op count differs (carried in ``op``). The cond connector
+        # name lives in ``constant1`` so emission can pick it up
+        # without extending the info_dict schema. Any other 3-input
+        # call (an unknown function or a sympy function we haven't
+        # taught the classifier yet) reports
+        # :attr:`TaskletType.UNKNOWN` -- callers see an unclassified
+        # tasklet and leave it alone.
         op = _extract_single_op(code_str)
-        if op not in ('merge', 'ITE'):
-            raise NotImplementedError(
-                f"classify_tasklet: only ``merge`` / ``ITE`` are supported as 3-input "
-                f"tasklet shapes, got {op!r}")
+        if op != 'ITE':
+            info_dict["type"] = TaskletType.UNKNOWN
+            return info_dict
         import ast as _ast
         rhs_tree = _ast.parse(code_str.split(" = ")[-1].strip(), mode='eval').body
         if not (isinstance(rhs_tree, _ast.Call) and len(rhs_tree.args) == 3):
-            raise NotImplementedError(f"classify_tasklet: {op} call shape unexpected: {code_str!r}")
+            info_dict["type"] = TaskletType.UNKNOWN
+            return info_dict
         arg_names = [a.id for a in rhs_tree.args if isinstance(a, _ast.Name)]
         if len(arg_names) != 3:
-            raise NotImplementedError(f"classify_tasklet: {op} args must be simple connector names, got {code_str!r}")
+            info_dict["type"] = TaskletType.UNKNOWN
+            return info_dict
         info_dict.update({
             "type": TaskletType.TERNARY_ARRAY,
             "rhs1": arg_names[0],
@@ -1046,7 +1047,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             "cond": arg_names[0],
             "then_arm": arg_names[1],
             "else_arm": arg_names[2],
-            "op": "merge",
+            "op": "ITE",
         })
         return info_dict
     elif n_in == 0:
@@ -1130,7 +1131,15 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
                     info_dict.update({"type": ttype, "constant1": c1, "constant2": None, "op": op})
                     return info_dict
 
-    raise NotImplementedError("Unhandled case in detect tasklet type")
+    # Unknown / un-recognised shape: report :attr:`TaskletType.UNKNOWN`
+    # in the otherwise-populated info_dict (``lhs``, ``n_in``,
+    # ``n_out`` etc. are set). Callers fall back via ``ttype ==
+    # TaskletType.UNKNOWN`` and decide what to do with an
+    # unclassified tasklet (typically "leave it alone"). Raising
+    # would force every caller to guard with try/except for every
+    # unknown function the classifier hasn't been taught yet.
+    info_dict["type"] = TaskletType.UNKNOWN
+    return info_dict
 
 
 import ast

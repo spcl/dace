@@ -6,9 +6,11 @@ lowering paths the M3.2 work exposes on ``VectorizeCPU``:
 
 - ``"fp_factor"``: today's path, ``EliminateBranches`` collapses if/else
   to ``a = c*x + (1-c)*y``.
-- ``"merge"``: the new M3 path, ``SameWriteSetIfElseToMergeCFG`` plus
-  ``BranchNormalization`` rewrite arms into ``merge(cond, ..., ...)``
-  tasklets that the vectorizer will later lower to a SIMD blend.
+- ``"merge"``: the new M3 path, ``SameWriteSetIfElseToITECFG`` plus
+  ``BranchNormalization`` rewrite arms into ``ITE(cond, ..., ...)``
+  tasklets that the vectorizer will later lower to a SIMD blend. The
+  fixture name is kept as ``"merge"`` for now (the routing label used
+  by many downstream test files); the emitted ternary form is ``ITE``.
 
 Tests that exercise conditionals consume ``branch_mode`` and forward it
 to ``run_vectorization_test``. Tests with no branches do not need it.
