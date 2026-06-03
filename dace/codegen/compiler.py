@@ -544,6 +544,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     cmake_compile_flags = set()
     cmake_link_flags = set()
     cmake_files = set()
+    auxiliary_sources = set()
     cmake_module_paths = set()
     for env in environments:
         if (env.cmake_minimum_version is not None and len(env.cmake_minimum_version) > 0):
@@ -574,6 +575,14 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         cmake_files |= set(
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) + (".cmake" if not f.endswith(".cmake") else "")
             for f in _get_or_eval(env.cmake_files))
+        # Optional ``auxiliary_sources`` field (introduced for library nodes that
+        # need a nvcc-compiled ``.cu`` translation unit alongside the SDFG's
+        # ``.cpp`` host file -- e.g. the strided ``Scan`` libnode's GPU
+        # wrappers). Existing environments without the field continue to work
+        # via ``getattr``'s default. Paths are made absolute relative to the
+        # environment's file location, matching the ``cmake_files`` convention.
+        env_aux = _get_or_eval(getattr(env, 'auxiliary_sources', []))
+        auxiliary_sources |= set(s if os.path.isabs(s) else os.path.join(env_dir, s) for s in env_aux)
         headers = _get_or_eval(env.headers)
         if not isinstance(headers, dict):
             headers = {'frame': headers}
@@ -601,6 +610,10 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(" ".join(cmake_compile_flags)),
         # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
         "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(sorted(cmake_files))),
+        # Auxiliary source files (``.cu`` translation units, in current usage)
+        # to add to the SDFG library target so they are compiled with the right
+        # language (e.g. nvcc for ``.cu``) alongside the SDFG's own sources.
+        "-DDACE_ENV_AUXILIARY_SOURCES=\"{}\"".format(";".join(sorted(auxiliary_sources))),
     ]
     # Escape variable expansions to defer their evaluation
     environment_flags = [cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in sorted(environment_flags)]

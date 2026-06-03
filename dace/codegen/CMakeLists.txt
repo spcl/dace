@@ -251,7 +251,26 @@ if(DACE_ENABLE_HIP)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
-endif() # DACE_ENABLE_HIP
+endif()
+
+# Auxiliary source files contributed by library environments (e.g. nvcc-compiled
+# ``.cu`` wrappers for libnodes whose host-side tasklet cannot directly emit a
+# CUDA kernel launch). Anything ending in ``.cu`` here also implies the SDFG
+# wants CUDA enabled.
+string(REPLACE ";" " " DACE_ENV_AUXILIARY_SOURCES_NORMALISED "${DACE_ENV_AUXILIARY_SOURCES}")
+separate_arguments(DACE_ENV_AUXILIARY_SOURCES_LIST UNIX_COMMAND "${DACE_ENV_AUXILIARY_SOURCES_NORMALISED}")
+foreach(AUX_FILE ${DACE_ENV_AUXILIARY_SOURCES_LIST})
+  if(AUX_FILE STREQUAL "")
+    continue()
+  endif()
+  if(AUX_FILE MATCHES "\\.cu$")
+    if(NOT DACE_ENABLE_CUDA)
+      set(DACE_ENABLE_CUDA ON)
+    endif()
+    set_source_files_properties("${AUX_FILE}" PROPERTIES LANGUAGE CUDA)
+  endif()
+  list(APPEND DACE_CPP_FILES "${AUX_FILE}")
+endforeach()
 
 # Additional target-specific CMake files
 foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
