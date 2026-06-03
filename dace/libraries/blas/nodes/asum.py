@@ -4,7 +4,6 @@
 For complex inputs ``?ASUM`` returns ``sum(|Re(x_i)| + |Im(x_i)|)`` and
 the output dtype is real (``SCASUM`` / ``DZASUM``).
 """
-import copy
 import warnings
 
 import dace.library
@@ -145,22 +144,7 @@ class Asum(dace.sdfg.nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         """:return: ``((desc_x, stride_x), desc_res, n)``."""
-        in_edges = state.in_edges(self)
-        out_edges = state.out_edges(self)
-        if len(in_edges) != 1 or len(out_edges) != 1:
-            raise ValueError("ASUM expects one input and one output")
-        in_memlet = in_edges[0].data
-        desc_x = sdfg.arrays[in_memlet.data]
-        desc_res = sdfg.arrays[out_edges[0].data.data]
-        squeezed = copy.deepcopy(in_memlet.subset)
-        sqdims = squeezed.squeeze()
-        if len(squeezed.size()) != 1:
-            raise ValueError("ASUM only supported on 1-D arrays")
-        stride_x = desc_x.strides[sqdims[0]]
-        n = squeezed.num_elements()
-        if out_edges[0].data.subset.num_elements() != 1:
-            raise ValueError("Output of ASUM must be a single element")
-        return (desc_x, stride_x), desc_res, n
+        return blas_helpers.validate_level1_vector_to_scalar(self, sdfg, state, "ASUM")
 
 
 # Numpy replacement

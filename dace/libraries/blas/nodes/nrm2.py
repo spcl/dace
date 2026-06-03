@@ -6,7 +6,6 @@ inputs ``?NRM2`` returns a real value (``SCNRM2`` / ``DZNRM2``), so the
 output descriptor's dtype is allowed to be the real base type of a
 complex input.
 """
-import copy
 import warnings
 
 import dace.library
@@ -154,24 +153,7 @@ class Nrm2(dace.sdfg.nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         """:return: ``((desc_x, stride_x), desc_res, n)``."""
-        in_edges = state.in_edges(self)
-        out_edges = state.out_edges(self)
-        if len(in_edges) != 1 or len(out_edges) != 1:
-            raise ValueError("NRM2 expects one input and one output")
-
-        in_memlet = in_edges[0].data
-        desc_x = sdfg.arrays[in_memlet.data]
-        desc_res = sdfg.arrays[out_edges[0].data.data]
-
-        squeezed = copy.deepcopy(in_memlet.subset)
-        sqdims = squeezed.squeeze()
-        if len(squeezed.size()) != 1:
-            raise ValueError("NRM2 only supported on 1-D arrays")
-        stride_x = desc_x.strides[sqdims[0]]
-        n = squeezed.num_elements()
-        if out_edges[0].data.subset.num_elements() != 1:
-            raise ValueError("Output of NRM2 must be a single element")
-        return (desc_x, stride_x), desc_res, n
+        return blas_helpers.validate_level1_vector_to_scalar(self, sdfg, state, "NRM2")
 
 
 # Numpy replacement
