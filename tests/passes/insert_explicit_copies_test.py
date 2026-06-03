@@ -719,7 +719,6 @@ def test_iec_reinterpret_does_not_lift_view():
 # MapEntries / MapExits are followed via memlet_path. Generated code emits
 # no CopyND template instantiations.
 
-
 _CPU = dace.dtypes.StorageType.CPU_Heap
 _N_STAGE = 128
 _TILE = 32
@@ -842,8 +841,10 @@ def test_lift_stage_out_copy():
 
 
 def _view_an_names(sdfg, state):
-    return [n.data for n in state.nodes()
-            if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
+    return [
+        n.data for n in state.nodes()
+        if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)
+    ]
 
 
 def test_lift_stage_in_copy_through_view():

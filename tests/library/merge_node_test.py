@@ -55,10 +55,14 @@ def _build_merge_sdfg(name_tag: str, t_shape, f_shape, m_shape, out_shape):
     m_in = state.add_access("mask")
     out_w = state.add_access("out")
 
-    state.add_edge(t_in, None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME, dace.Memlet(f"t[{', '.join(f'0:{s}' for s in t_shape)}]"))
-    state.add_edge(f_in, None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME, dace.Memlet(f"f[{', '.join(f'0:{s}' for s in f_shape)}]"))
-    state.add_edge(m_in, None, node, MergeLibraryNode.MASK_CONNECTOR_NAME, dace.Memlet(f"mask[{', '.join(f'0:{s}' for s in m_shape)}]"))
-    state.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, out_w, None, dace.Memlet(f"out[{', '.join(f'0:{s}' for s in out_shape)}]"))
+    state.add_edge(t_in, None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME,
+                   dace.Memlet(f"t[{', '.join(f'0:{s}' for s in t_shape)}]"))
+    state.add_edge(f_in, None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME,
+                   dace.Memlet(f"f[{', '.join(f'0:{s}' for s in f_shape)}]"))
+    state.add_edge(m_in, None, node, MergeLibraryNode.MASK_CONNECTOR_NAME,
+                   dace.Memlet(f"mask[{', '.join(f'0:{s}' for s in m_shape)}]"))
+    state.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, out_w, None,
+                   dace.Memlet(f"out[{', '.join(f'0:{s}' for s in out_shape)}]"))
     sdfg.validate()
     return sdfg
 

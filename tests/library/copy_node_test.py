@@ -99,9 +99,8 @@ def _make_legacy_copy_sdfg(src: _ArraySpec,
     the :class:`CopyLibraryNode` path.
     """
     sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
-    sdfg.start_state.add_edge(
-        src_acc, None, dst_acc, None,
-        dace.memlet.Memlet(data=dst_name, subset=dst_subset, other_subset=src_subset))
+    sdfg.start_state.add_edge(src_acc, None, dst_acc, None,
+                              dace.memlet.Memlet(data=dst_name, subset=dst_subset, other_subset=src_subset))
     return sdfg
 
 
@@ -1057,10 +1056,7 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
                      storage=dace.dtypes.StorageType.CPU_Heap,
                      strides=(1, 2, 6, 24),
                      total_size=120)
-    dst = _ArraySpec(shape=(6, 20),
-                     storage=dace.dtypes.StorageType.CPU_Heap,
-                     strides=(1, 6),
-                     total_size=120)
+    dst = _ArraySpec(shape=(6, 20), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 6), total_size=120)
     sdfg_lib, _ = _make_copy_sdfg(src, dst, name="legacy_fortran_collapse_lib")
     sdfg_leg = _make_legacy_copy_sdfg(src, dst, name="legacy_fortran_collapse_leg")
 
@@ -1088,9 +1084,8 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
         exe(src=A, dst=out)
         return out
 
-    assert _legacy_fails(sdfg_leg, expected, run), (
-        "Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
-        "remove this test, the libnode advantage is gone.")
+    assert _legacy_fails(sdfg_leg, expected, run), ("Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
+                                                    "remove this test, the libnode advantage is gone.")
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
