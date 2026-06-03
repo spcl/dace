@@ -216,12 +216,17 @@ CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
 #: no FP contraction (FMA), so the compiler performs no floating-point
 #: reassociation. Under these flags the simplified and reference cloudsc SDFGs
 #: agree **bit-for-bit**, which is why the correctness check (see
-#: :func:`run_and_compare`) uses this build with a ``1e-15`` tolerance. A release
-#: build (``-O3 -ffast-math``, run in parallel) instead approximates the many
-#: transcendental intrinsics (``exp``/``log``/``sqrt``/...) and reorders both the
-#: flux prefix sums and the parallel reductions, so the error compounds to
-#: ~``1e-10`` and the release comparison uses a correspondingly looser tolerance.
+#: :func:`run_and_compare`) uses this build with a ``1e-15`` tolerance.
 IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off'
+
+#: Compiler flags for an ``-O3`` build that still preserves IEEE semantics:
+#: same ``-fno-fast-math -ffp-contract=off`` flags as the IEEE build, so the
+#: compiler is free to schedule / unroll / vectorise but cannot reassociate
+#: or fuse FP ops. This is the regime we actually want to validate cloudsc
+#: under: fast-math (``-ffast-math``) lets the compiler rewrite transcendentals
+#: and reorder reductions, which produces large drifts the test cannot bound
+#: cleanly -- so the suite never enables it.
+O3_CPU_ARGS: str = '-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=off'
 
 
 def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
