@@ -50,12 +50,6 @@ _MATRIX, _IDS = _matrix()
 
 @pytest.mark.parametrize("program,kernel,remainder_strategy,branch_mode,len_val", _MATRIX, ids=_IDS)
 def test_tsvc_canonicalize_vectorization(program, kernel, remainder_strategy, branch_mode, len_val, request):
-    # s481 carries a ``for ... if cond: break`` whose vectorization needs a
-    # dedicated break-mask pass that is not in the canonicalize/VectorizeCPU
-    # path. Tracked separately; the kernel stays in the corpus so the
-    # tripwire flips when the break path lands.
-    if kernel.name == "s481_d_single":
-        pytest.xfail("s481 break-vectorization requires a dedicated VectorizeBreak pass")
 
     if kernel.regime == "1d":
         l1, l2 = len_val, tsvc.LEN_2D_FIXED
@@ -77,12 +71,21 @@ def test_tsvc_canonicalize_vectorization(program, kernel, remainder_strategy, br
     # Vectorised: simplify -> canonicalize -> VectorizeCPU.
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = sdfg.name + "_vec"
-    # ``peel_limit=8`` lets canonicalize peel the start-at-1 boundary of
-    # s2111's ``for j in range(1, LEN_2D)`` so the W-strided main map covers
-    # the divisible interior with a scalar prologue.
-    # ``break_anti_dependence`` lifts the ``for ... if cond: break`` pattern
-    # (TSVC s481) closer to a prefix-mask vectorizable form.
-    canonicalize(vsdfg, validate=True, peel_limit=8, break_anti_dependence=True)
+    # Enable every optional canonicalize knob so the full set of
+    # transformations runs:
+    # * ``peel_limit=8`` lets canonicalize peel the start-at-1 boundary of
+    #   s2111's ``for j in range(1, LEN_2D)`` so the W-strided main map
+    #   covers the divisible interior with a scalar prologue.
+    # * ``break_anti_dependence=True`` snapshot-renames read-ahead WAR
+    #   loops and pairs with the always-on ``EarlyExitToFindIndex`` stage
+    #   that lifts ``for ... if cond: break`` (TSVC s481).
+    # * ``validate_all=True`` validates after every stage so any
+    #   regression surfaces at the offending stage rather than at the end.
+    canonicalize(vsdfg,
+                 validate=True,
+                 validate_all=True,
+                 peel_limit=8,
+                 break_anti_dependence=True)
 
     if branch_mode == "fp_factor":
         branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)

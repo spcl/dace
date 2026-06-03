@@ -136,6 +136,121 @@ class EmitCtx:
     mask_connector: Optional[str] = None
 
 
+def _emit_python_ifexp_lane_loop(ctx: EmitCtx, code_str: str) -> str:
+    """Emit a per-lane C++ loop that copies a Python ``IfExp`` tasklet body.
+
+    Used by ``_generate_code`` as a targeted fallback for tasklet bodies of
+    the shape ``_out = (then_expr if cond else else_expr)`` whose
+    ``classify_tasklet`` result collapses to the inner comparison and loses
+    the ternary arms (TSVC s481's ``EarlyExitToFindIndex`` phi tasklet:
+    ``__out = (_loop_it_0 if (__r_d < 0.0) else LEN_1D)``). The Python
+    ``IfExp`` is translated to a C++ ``? :`` ternary via AST so the emitted
+    code is valid C++ rather than verbatim Python. Each in-connector read
+    in the body becomes ``conn[_vi]`` so the body runs per lane; the
+    vectorized map iter symbol (``ctx.vector_map_param``) is shifted to
+    ``(<param> + _vi)`` so a lane index like ``_loop_it_0`` walks the W
+    consecutive lane values. When ``ctx.mask_connector`` is set the lane
+    writeback is iter-mask gated.
+
+    :param ctx: Emission context.
+    :param code_str: The original Python tasklet body, stripped.
+    :returns: Generated C++ code for the per-lane loop.
+    :raises NotImplementedError: When the tasklet has multiple outputs.
+    """
+    import ast
+    import re
+
+    in_conns = list(ctx.node.in_connectors.keys())
+    out_conns = list(ctx.node.out_connectors.keys())
+    if len(out_conns) != 1:
+        raise NotImplementedError(
+            f"_emit_python_ifexp_lane_loop: expected 1 output connector, got {out_conns}")
+    out_conn = out_conns[0]
+    rhs = code_str.split(" = ", 1)[1] if " = " in code_str else code_str
+
+    # Parse the RHS to translate Python ``IfExp`` (``t if c else e``) into
+    # a C++ ternary ``(c) ? (t) : (e)``. ``ast.unparse`` gives back valid
+    # Python, so the transformer rewrites each ``IfExp`` to a ``Call`` on a
+    # sentinel name ``_DACE_TERN_`` and the textual output is then patched
+    # back to C++ ternary form. A single regex pass on ``_DACE_TERN_(...)``
+    # is unambiguous because the sentinel name cannot occur in source.
+    class _IfExpToCall(ast.NodeTransformer):
+        def visit_IfExp(self, node: ast.IfExp) -> ast.AST:
+            self.generic_visit(node)
+            return ast.Call(func=ast.Name(id="_DACE_TERN_", ctx=ast.Load()),
+                            args=[node.test, node.body, node.orelse],
+                            keywords=[])
+
+    try:
+        tree = ast.parse(rhs, mode="eval")
+    except SyntaxError as ex:
+        raise NotImplementedError(f"_emit_python_ifexp_lane_loop: failed to parse {rhs!r}: {ex}")
+    tree = _IfExpToCall().visit(tree)
+    ast.fix_missing_locations(tree)
+    body = ast.unparse(tree)
+    # Repeatedly fold ``_DACE_TERN_(C, T, E)`` -> ``((C) ? (T) : (E))``
+    # until no sentinel remains. The bracket matcher walks the string so
+    # nested ternaries fold from innermost to outermost.
+    while "_DACE_TERN_(" in body:
+        i = body.index("_DACE_TERN_(")
+        # Find the matching closing paren for the call.
+        depth = 0
+        j = i + len("_DACE_TERN_")
+        for k in range(j, len(body)):
+            ch = body[k]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end = k
+                    break
+        else:
+            raise NotImplementedError(
+                f"_emit_python_ifexp_lane_loop: unterminated _DACE_TERN_ in {body!r}")
+        inner = body[j + 1:end]
+        # Split top-level commas into three operands.
+        operands = []
+        bal = 0
+        last = 0
+        for k, ch in enumerate(inner):
+            if ch == "(":
+                bal += 1
+            elif ch == ")":
+                bal -= 1
+            elif ch == "," and bal == 0:
+                operands.append(inner[last:k].strip())
+                last = k + 1
+        operands.append(inner[last:].strip())
+        if len(operands) != 3:
+            raise NotImplementedError(
+                f"_emit_python_ifexp_lane_loop: expected 3 operands in {inner!r}, got {operands}")
+        c, t, e = operands
+        body = f"{body[:i]}(({c}) ? ({t}) : ({e})){body[end + 1:]}"
+
+    # Substitute ``conn`` -> ``conn[_vi]`` for every in-connector. Use a
+    # word-boundary regex so ``conn`` does not match a substring of another
+    # identifier (``__r_d`` vs ``__r_d_extra``).
+    for c in in_conns:
+        body = re.sub(rf"\b{re.escape(c)}\b", f"{c}[_vi]", body)
+    # Shift the vectorized map parameter to ``(<param> + _vi)`` so a lane
+    # index symbol like ``_loop_it_0`` walks the W lane values per call.
+    if ctx.vector_map_param and re.search(rf"\b{re.escape(ctx.vector_map_param)}\b", body):
+        body = re.sub(rf"\b{re.escape(ctx.vector_map_param)}\b",
+                      f"({ctx.vector_map_param} + _vi)", body)
+
+    vw = ctx.vector_width
+    code_lines = [f"_dace_vectorize({vw})"]
+    code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
+    if ctx.mask_connector:
+        code_lines.append(f"if ({ctx.mask_connector}[_vi]) {{")
+    code_lines.append(f"{out_conn}[_vi] = ({body});")
+    if ctx.mask_connector:
+        code_lines.append("}")
+    code_lines.append("}")
+    return "\n".join(code_lines)
+
+
 def _template_key(ctx: EmitCtx, base_op: str) -> str:
     """Return the templates-dict key for ``base_op``, adjusted for masking.
 
@@ -237,6 +352,18 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                                              vector_width=vw,
                                              dtype=dtype_,
                                              mask=mask_arg)
+
+    # Python ``IfExp`` ternary fallback: a tasklet body like
+    # ``_out = (sym_t if (arr < 0.0) else sym_e)`` is mis-classified as a
+    # comparison (only the inner ``<`` reaches ``classify_tasklet``), so the
+    # standard comparison-suffix lane loop would emit ``? 1.0 : 0.0`` and
+    # silently lose the ternary arms. Emit a per-lane copy of the original
+    # Python body instead, substituting ``[_vi]`` for each input connector
+    # read. Drives TSVC s481's canonicalize ``EarlyExitToFindIndex`` phi
+    # tasklet ``__out = (_loop_it_0 if (__r_d < 0.0) else LEN_1D)``.
+    code_str = (ctx.node.code.as_string or "").strip()
+    if " if " in code_str and " else " in code_str:
+        return _emit_python_ifexp_lane_loop(ctx, code_str)
 
     # Fallback: unsupported operator (or op with no ``_masked`` template).
     # When ``ctx.mask_connector`` is set the per-lane write MUST be gated
