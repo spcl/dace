@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import threading
 
 import dace
 from dace import subsets, symbolic
@@ -200,6 +201,44 @@ def test_pystr_to_symbolic_preserves_typed_symbols():
     assert symbolic.serialize_symbolic(cache_seed_restored) == '-1 + $N'
     assert typed_restored is typed_expr
     assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int16)'
+
+
+def test_serialization_symbol_dtypes_isolation_multi_thread():
+    entered_first = threading.Event()
+    entered_second = threading.Event()
+    first_serialized = threading.Event()
+    second_serialized = threading.Event()
+    failures = []
+    lock = threading.Lock()
+
+    def worker(name, dtype, wait_for_enter, wait_for_serialize, signal_enter, signal_serialize):
+        try:
+            sym = symbolic.symbol('N', dtype=dace.uint64)
+            with symbolic.serialization_symbol_dtypes({'N': dtype}):
+                signal_enter.set()
+                assert wait_for_enter.wait(timeout=10)
+                assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{dtype.to_string()})'
+                signal_serialize.set()
+                assert wait_for_serialize.wait(timeout=10)
+            assert symbolic.serialize_symbolic(sym) == 'symbol($N, dtype=dace.uint64)'
+        except BaseException as ex:
+            with lock:
+                failures.append(ex)
+
+    thread1 = threading.Thread(target=worker,
+                               args=('thread1', dace.int16, entered_second, second_serialized, entered_first,
+                                     first_serialized))
+    thread2 = threading.Thread(target=worker,
+                               args=('thread2', dace.uint32, entered_first, first_serialized, entered_second,
+                                     second_serialized))
+
+    thread1.start()
+    thread2.start()
+    thread1.join()
+    thread2.join()
+
+    if failures:
+        raise failures[0]
 
 
 def test_power_deserialization_preserves_typed_symbols_after_plain_power():

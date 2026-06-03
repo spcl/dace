@@ -3,6 +3,7 @@ import ast
 import contextlib
 from collections import Counter
 from functools import lru_cache
+import threading
 import sympy
 import pickle
 import re
@@ -25,7 +26,14 @@ DEFAULT_SYMBOL_TYPE = dtypes.int32
 # cache can leave stale (it conflates same-named symbols of different dtypes). The map
 # only ever *overrides*: a name it does not declare keeps the symbol's own dtype, so a
 # bare ``serialize_symbolic`` call (empty map) behaves exactly as before.
-_SERIALIZATION_SYMBOL_DTYPES: Dict[str, 'dtypes.typeclass'] = {}
+_SERIALIZATION_SYMBOL_DTYPES = threading.local()
+
+
+def _serialization_symbol_dtypes() -> Dict[str, 'dtypes.typeclass']:
+    stack = getattr(_SERIALIZATION_SYMBOL_DTYPES, 'stack', None)
+    if not stack:
+        return {}
+    return stack[-1]
 
 
 def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
@@ -49,13 +57,15 @@ def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
 
     :param authority: Mapping from symbol name to its authoritative dtype.
     """
-    global _SERIALIZATION_SYMBOL_DTYPES
-    previous = _SERIALIZATION_SYMBOL_DTYPES
-    _SERIALIZATION_SYMBOL_DTYPES = {n: dt for n, dt in authority.items() if _is_scalar_symbol_dtype(dt)}
+    stack = getattr(_SERIALIZATION_SYMBOL_DTYPES, 'stack', None)
+    if stack is None:
+        stack = []
+        _SERIALIZATION_SYMBOL_DTYPES.stack = stack
+    stack.append({n: dt for n, dt in authority.items() if _is_scalar_symbol_dtype(dt)})
     try:
         yield
     finally:
-        _SERIALIZATION_SYMBOL_DTYPES = previous
+        stack.pop()
 
 
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
@@ -1955,7 +1965,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             # Prefer the dtype the enclosing scope declares for this name over the
             # instance's own (possibly cache-stale) dtype; a name the scope does not
             # declare keeps the instance dtype (the authority only overrides).
-            dtype = _SERIALIZATION_SYMBOL_DTYPES.get(expr.name, expr.dtype)
+            dtype = _serialization_symbol_dtypes().get(expr.name, expr.dtype)
             kwargs = _symbol_serializer_kwargs(expr, dtype)
             if not kwargs:
                 return f'${expr.name}'
