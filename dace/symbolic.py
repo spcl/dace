@@ -21,7 +21,7 @@ from dace import dtypes
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
-class _SerialingSymbolDtypeContext(threading.local):
+class _SymbolDTypeContext(threading.local):
 
     def __init__(self):
 
@@ -29,6 +29,11 @@ class _SerialingSymbolDtypeContext(threading.local):
         self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
 
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
+        """
+        Adds a new level of authoritative dtype to the context.
+
+        :param authority: Mapping from symbol name to its authoritative dtype.
+        """
         new_stack_level = types.MappingProxyType({
             n: dt
             for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
@@ -36,13 +41,15 @@ class _SerialingSymbolDtypeContext(threading.local):
         self.ctx_stack.append(new_stack_level)
         return self.ctx_stack[-1]
 
-    def pop(self) -> "_SerialingSymbolDtypeContext":
+    def pop(self) -> "_SymbolDTypeContext":
+        """Remove the current active level of authoritative dtype."""
         if len(self.ctx_stack) == 1:
             raise IndexError("Tried to `pop()` from an empty symbol type stack.")
         self.ctx_stack.pop()
         return self
 
     def get(self) -> types.MappingProxyType[str, 'dtypes.typeclass']:
+        """Get the current active set of authoritative dtype."""
         if len(self.ctx_stack) == 0:
             raise IndexError("Symbol type stack is empty.")
         return self.ctx_stack[-1]
@@ -66,7 +73,7 @@ class _SerialingSymbolDtypeContext(threading.local):
 # cache can leave stale (it conflates same-named symbols of different dtypes). The map
 # only ever *overrides*: a name it does not declare keeps the symbol's own dtype, so a
 # bare ``serialize_symbolic`` call (empty map) behaves exactly as before.
-_SERIALIZATION_SYMBOL_DTYPES = _SerialingSymbolDtypeContext()
+_SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 
 
 @contextlib.contextmanager
