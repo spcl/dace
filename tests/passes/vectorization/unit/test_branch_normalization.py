@@ -7,8 +7,8 @@ After the pass runs:
 - Every state has well-formed connector roles
   (``assert_connector_role_matches_edges`` from the same construction-utils
   audit family that M3.1 uses).
-- A merge-tasklet is emitted for every previously-conditional write,
-  routing ``arr[subset] = merge(cond, expr, arr[subset])``.
+- An ITE-tasklet is emitted for every previously-conditional write,
+  routing ``arr[subset] = ITE(cond, expr, arr[subset])``.
 
 Cases covered:
 - Single-arm conditional ``if cond: a[i] = expr`` with no else.
@@ -98,7 +98,7 @@ def _build_disjoint_two_arm_sdfg():
     return sdfg
 
 
-def test_single_arm_removes_conditional_block_and_emits_merge_tasklet():
+def test_single_arm_removes_conditional_block_and_emits_ite_tasklet():
     sdfg = _build_single_arm_if_sdfg()
     rewritten = BranchNormalization().apply_pass(sdfg, {})
     assert rewritten is not None and rewritten >= 1
@@ -106,13 +106,13 @@ def test_single_arm_removes_conditional_block_and_emits_merge_tasklet():
     assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks()), \
         [b.label for b in sdfg.all_control_flow_blocks()]
 
-    found_merge = False
+    found_ite = False
     for state in sdfg.states():
         for n in state.nodes():
-            if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("bn_merge_"):
-                assert "merge(cond," in n.code.as_string.replace(" ", "")
-                found_merge = True
-    assert found_merge, "no bn_merge_ tasklet was emitted"
+            if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("bn_ite_"):
+                assert "ITE(cond," in n.code.as_string.replace(" ", "")
+                found_ite = True
+    assert found_ite, "no bn_ite_ tasklet was emitted"
 
 
 def test_single_arm_connector_topology_correct():

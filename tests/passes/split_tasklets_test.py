@@ -432,18 +432,18 @@ def test_single_tasklet_symbol_only_split(id: int, expression_str: str, expected
 
 
 @pytest.mark.parametrize("body,inputs", [
-    ("_o = merge(_c, _t, _e)", {"_c", "_t", "_e"}),
-    ("_o = merge((LEN_1D > 10), _t, _e)", {"_t", "_e"}),
-    ("_o = merge(_c, _t + 1.0, _e * 2.0)", {"_c", "_t", "_e"}),
+    ("_o = ITE(_c, _t, _e)", {"_c", "_t", "_e"}),
+    ("_o = ITE((LEN_1D > 10), _t, _e)", {"_t", "_e"}),
+    ("_o = ITE(_c, _t + 1.0, _e * 2.0)", {"_c", "_t", "_e"}),
 ])
-def test_split_does_not_treat_merge_as_variable(body: str, inputs: set):
-    """``merge`` is a registered SymPy ``Function`` (the ternary blend the
-    branch-normalization passes emit, lowered to ``dace/merge.h``). It must
+def test_split_does_not_treat_ite_as_variable(body: str, inputs: set):
+    """``ITE`` is a registered SymPy ``Function`` (the ternary blend the
+    branch-normalization passes emit, lowered to ``dace/ITE.h``). It must
     be classified as a function, not a per-lane variable, by the tasklet
-    splitter. The regression: ``split_tasklets._get_vars`` extracted
-    ``merge`` as an RHS variable, so a sub-tasklet got an input connector
-    named ``merge`` (a ``double``) while its body still called
-    ``merge(...)`` -> gcc "'merge' cannot be used as a function" (TSVC
+    splitter. The regression: ``split_tasklets._get_vars`` extracted the
+    function name as an RHS variable, so a sub-tasklet got an input
+    connector named after the function (a ``double``) while its body
+    still called ``ITE(...)`` -> gcc "cannot be used as a function" (TSVC
     s2710, a nested-if kernel whose inner cond stays inline)."""
     from dace.transformation.passes.split_tasklets import _get_vars as prod_get_vars, to_ssa
 
@@ -451,19 +451,19 @@ def test_split_does_not_treat_merge_as_variable(body: str, inputs: set):
     # form and in every SSA line the splitter would emit.
     for line in to_ssa(body):
         _, rhs_vars = prod_get_vars(line)
-        assert "merge" not in rhs_vars, f"{line!r} -> rhs_vars {rhs_vars} wrongly contains 'merge'"
+        assert "ITE" not in rhs_vars, f"{line!r} -> rhs_vars {rhs_vars} wrongly contains 'ITE'"
 
-    # Behavioural: build the merge tasklet with explicit connectors (the
+    # Behavioural: build the ITE tasklet with explicit connectors (the
     # file-local _get_vars / _generate_single_tasklet_sdfg helper has the
-    # same merge-as-variable bug and cannot be used to construct this case)
-    # then assert SplitTasklets keeps ``merge`` a function call.
-    sdfg = dace.SDFG(f"merge_split_{abs(hash(body))}")
+    # same name-as-variable bug and cannot be used to construct this case)
+    # then assert SplitTasklets keeps ``ITE`` a function call.
+    sdfg = dace.SDFG(f"ite_split_{abs(hash(body))}")
     if "LEN_1D" in body:
         sdfg.add_symbol("LEN_1D", dace.int64)
     state = sdfg.add_state("main")
     for arr in sorted(inputs) + ["_o"]:
         sdfg.add_array(arr + "_ARR", shape=(1, ), dtype=dace.float64, transient=False)
-    t = state.add_tasklet(name="t_merge", inputs=set(inputs), outputs={"_o"}, code=body)
+    t = state.add_tasklet(name="t_ite", inputs=set(inputs), outputs={"_o"}, code=body)
     for c in sorted(inputs):
         state.add_edge(state.add_access(f"{c}_ARR"), None, t, c, dace.Memlet(f"{c}_ARR[0]"))
     state.add_edge(t, "_o", state.add_access("_o_ARR"), None, dace.Memlet("_o_ARR[0]"))
@@ -472,20 +472,20 @@ def test_split_does_not_treat_merge_as_variable(body: str, inputs: set):
     sdfg.validate()
     assert_all_tasklets_are_ssa(sdfg)
 
-    saw_merge_call = False
+    saw_ite_call = False
     for n, _ in sdfg.all_nodes_recursive():
         if not isinstance(n, dace.nodes.Tasklet):
             continue
-        assert "merge" not in n.in_connectors, \
-            f"tasklet {n.name!r} has 'merge' as an input connector: {set(n.in_connectors)}"
-        assert "merge" not in n.out_connectors, \
-            f"tasklet {n.name!r} has 'merge' as an output connector: {set(n.out_connectors)}"
+        assert "ITE" not in n.in_connectors, \
+            f"tasklet {n.name!r} has 'ITE' as an input connector: {set(n.in_connectors)}"
+        assert "ITE" not in n.out_connectors, \
+            f"tasklet {n.name!r} has 'ITE' as an output connector: {set(n.out_connectors)}"
         tbody = n.code.as_string
         lhs = tbody.split("=", 1)[0].strip() if "=" in tbody else ""
-        assert lhs != "merge", f"tasklet {n.name!r} rebinds 'merge': {tbody!r}"
-        if re.search(r"\bmerge\s*\(", tbody):
-            saw_merge_call = True
-    assert saw_merge_call, "the merge(...) call did not survive splitting"
+        assert lhs != "ITE", f"tasklet {n.name!r} rebinds 'ITE': {tbody!r}"
+        if re.search(r"\bITE\s*\(", tbody):
+            saw_ite_call = True
+    assert saw_ite_call, "the ITE(...) call did not survive splitting"
 
 
 @pytest.mark.parametrize("id,expression_strs,expected_num_statements", example_double_expressions)

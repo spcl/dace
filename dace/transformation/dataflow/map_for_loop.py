@@ -155,6 +155,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
             if parent_cfr is not None:
                 was_start = parent_cfr.start_block is graph
                 target_state = parent_cfr.add_state(label=f"{graph.label}_for_inline")
+                # Move ``graph``'s INTRA-state dataflow to ``target_state``.
                 nodes_to_move = list(graph.nodes())
                 edges_to_move = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in graph.edges()]
                 for n in nodes_to_move:
@@ -163,6 +164,17 @@ class MapToForLoop(transformation.SingleStateTransformation):
                     target_state.add_node(n)
                 for src, sc, dst, dc, data in edges_to_move:
                     target_state.add_edge(src, sc, dst, dc, data)
+                # Reparent every existing ``graph -> *`` INTERSTATE edge to
+                # ``target_state -> *``. Otherwise the placeholder ``graph``
+                # would end up with both the new ``graph -> target_state``
+                # edge AND the original successor edges, giving it multiple
+                # unconditional out-edges that later trip
+                # ``control_flow_raising`` (else-not-last) and
+                # ``DeadStateElimination`` validation.
+                successor_edges = list(parent_cfr.out_edges(graph))
+                for e in successor_edges:
+                    parent_cfr.remove_edge(e)
+                    parent_cfr.add_edge(target_state, e.dst, e.data)
                 parent_cfr.add_edge(graph, target_state, dace.InterstateEdge())
                 if was_start:
                     parent_cfr.start_block = parent_cfr.node_id(graph)

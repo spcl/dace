@@ -255,10 +255,13 @@ class Vectorize(ppl.Pass):
                 # vectorization) with any user-supplied opt-in skip list, then forward as the
                 # `skip` parameter — replaces the previously-hardcoded cloudsc array names.
                 copy_skip = unstructured_data | self.user_skip_nsdfg_arrays
-                inserted_array_names = add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width,
-                                                                         self.vector_input_storage, copy_skip,
-                                                                         fuse_overlapping_loads=self.
-                                                                         fuse_overlapping_loads)
+                inserted_array_names = add_copies_before_and_after_nsdfg(
+                    state,
+                    nsdfg_node,
+                    self.vector_width,
+                    self.vector_input_storage,
+                    copy_skip,
+                    fuse_overlapping_loads=self.fuse_overlapping_loads)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
@@ -732,7 +735,7 @@ class Vectorize(ppl.Pass):
                 # Step 4.1 expands ARRAY memlets to a W-wide view ("This
                 # should be performed only for arrays"). A non-transient
                 # Scalar / length-1 source (e.g. the loop-invariant kernel
-                # arg ``c`` in ``a[i,j] > c``, which the merge-CFG arm
+                # arg ``c`` in ``a[i,j] > c``, which the ITE-CFG arm
                 # clone leaves with an in+out edge) is not an array view:
                 # widening its 1-element memlet to ``[0:W]`` reads past it
                 # (OOB) and it cannot be reshaped (parent-fed connector).
@@ -741,9 +744,8 @@ class Vectorize(ppl.Pass):
                 if not isinstance(n, dace.nodes.AccessNode):
                     continue
                 desc = inner_state.sdfg.arrays[n.data]
-                if (inner_state.in_degree(n) > 0 and inner_state.out_degree(n) > 0
-                        and desc.transient is False and isinstance(desc, dace.data.Array)
-                        and str(desc.total_size) != "1"):
+                if (inner_state.in_degree(n) > 0 and inner_state.out_degree(n) > 0 and desc.transient is False
+                        and isinstance(desc, dace.data.Array) and str(desc.total_size) != "1"):
                     readwrite_data.add(n.data)
             for rw in readwrite_data:
                 array_data.add(rw)
@@ -752,8 +754,7 @@ class Vectorize(ppl.Pass):
                 for edge in inner_state.edges()
                 if edge not in modified_edges and edge.data is not None and edge.data.data in array_data
             }
-            expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width,
-                                      vector_map_param)
+            expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width, vector_map_param)
 
         # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
         # There two types of doing this, assume the map parameters are (i, j) and we vectorize over j with vector simd length > 2
@@ -923,16 +924,12 @@ class Vectorize(ppl.Pass):
                                                                   subset=copy.deepcopy(rep_subset),
                                                                   symbol_offset=str(i),
                                                                   vector_map_param=vector_map_param)
-                    at = state.add_tasklet(name=f"assign_{i}",
-                                           inputs={"_in"},
-                                           outputs={"_out"},
-                                           code="_out = _in")
+                    at = state.add_tasklet(name=f"assign_{i}", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
                     at.add_in_connector("_in")
                     at.add_out_connector("_out")
                     e1 = state.add_edge(non_packed_access, None, at, "_in",
                                         dace.memlet.Memlet(data=data_name, subset=new_subset))
-                    e2 = state.add_edge(at, "_out", packed_src, None,
-                                        dace.memlet.Memlet(f"{packed_name}[{i}]"))
+                    e2 = state.add_edge(at, "_out", packed_src, None, dace.memlet.Memlet(f"{packed_name}[{i}]"))
                     modified_nodes.add(at)
                     if isinstance(e1, dace.nodes.Node) or isinstance(e2, dace.nodes.Node):
                         raise RuntimeError(f"state.add_edge returned a Node for {packed_name}; "
@@ -1822,8 +1819,7 @@ class Vectorize(ppl.Pass):
                     f"subset {ie.data.subset} (volume {src_volume_int}) > vector_width "
                     f"({self.vector_width}); strided handling should have intercepted earlier.")
                 # Add new array, if not there
-                arr_name_to_use = self._find_new_name(
-                    f"{VecNameScheme.make_k(ie.data.data)}{vectorization_number}")
+                arr_name_to_use = self._find_new_name(f"{VecNameScheme.make_k(ie.data.data)}{vectorization_number}")
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
@@ -1841,8 +1837,16 @@ class Vectorize(ppl.Pass):
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
                 if masked:
-                    emit_staging_copy(state, src, src_conn, an, None, data, arr_name_to_use,
-                                      int(self.vector_width), "in", gate_extent=True)
+                    emit_staging_copy(state,
+                                      src,
+                                      src_conn,
+                                      an,
+                                      None,
+                                      data,
+                                      arr_name_to_use,
+                                      int(self.vector_width),
+                                      "in",
+                                      gate_extent=True)
                 else:
                     state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
                 state.add_edge(an, None, map_entry, ie.dst_conn,
@@ -1902,8 +1906,16 @@ class Vectorize(ppl.Pass):
                 state.add_edge(map_exit, src_conn, an, None,
                                dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
                 if masked:
-                    emit_staging_copy(state, an, None, dst, dst_conn, data, arr_name_to_use,
-                                      int(self.vector_width), "out", gate_extent=True)
+                    emit_staging_copy(state,
+                                      an,
+                                      None,
+                                      dst,
+                                      dst_conn,
+                                      data,
+                                      arr_name_to_use,
+                                      int(self.vector_width),
+                                      "out",
+                                      gate_extent=True)
                 else:
                     state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
 

@@ -8,7 +8,7 @@
 #include <numeric>
 #include <type_traits>
 
-#include "merge.h"
+#include "ITE.h"
 #include "nan.h"
 #include "pi.h"
 #include "types.h"

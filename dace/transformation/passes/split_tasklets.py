@@ -125,6 +125,21 @@ class ASTSplitter:
             self.stmts.append(f"{t} = {op.join(values)}")
             return t
 
+        elif isinstance(node, ast.IfExp):
+            # Lower ``body if test else orelse`` to a 3-input ``ITE(c,
+            # t, e)`` call. ``ITE`` is the unified canonical name for
+            # the ternary blend; ``dace/ITE.h`` ships the ``ITE``
+            # template, and the canonicalize-stage
+            # ``LowerITEToFpFactor`` rewrites it to ``c * t + (1 - c) *
+            # e`` so codegen never has to lower a Python ternary to
+            # ``c ? t : e``.
+            cond = self.visit(node.test)
+            body = self.visit(node.body)
+            orelse = self.visit(node.orelse)
+            t = self.temp()
+            self.stmts.append(f"{t} = ITE({cond}, {body}, {orelse})")
+            return t
+
         return ast.unparse(node)
 
 

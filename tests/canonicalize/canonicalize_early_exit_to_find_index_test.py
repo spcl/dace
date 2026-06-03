@@ -15,7 +15,6 @@ from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 
-
 N = dace.symbol('N')
 
 
@@ -34,6 +33,7 @@ def _num_maps(sdfg):
 # -----------------------------------------------------------------------------
 # Positive: TSVC s481 (body_post + cond) and s482 (body_pre + cond).
 # -----------------------------------------------------------------------------
+
 
 def test_tsvc_s481_break_then_body_post():
     """``for i: if d[i] < 0: break; a[i] += b[i] * c[i]``.
@@ -59,8 +59,10 @@ def test_tsvc_s481_break_then_body_post():
 
     n = 16
     rng = np.random.default_rng(481)
-    a = rng.standard_normal(n); b = rng.standard_normal(n)
-    c = rng.standard_normal(n); d = rng.standard_normal(n)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    c = rng.standard_normal(n)
+    d = rng.standard_normal(n)
     a_ref = a.copy()
     for i in range(n):
         if d[i] < 0:
@@ -95,7 +97,9 @@ def test_tsvc_s482_body_pre_then_break():
 
     n = 16
     rng = np.random.default_rng(482)
-    a = rng.standard_normal(n); b = rng.standard_normal(n); c = rng.standard_normal(n)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    c = rng.standard_normal(n)
     a_ref = a.copy()
     for i in range(n):
         a_ref[i] = a_ref[i] + b[i] * c[i]
@@ -104,6 +108,70 @@ def test_tsvc_s482_body_pre_then_break():
     a_got = a.copy()
     sdfg(a=a_got, b=b.copy(), c=c.copy(), N=n)
     assert np.allclose(a_got, a_ref)
+
+
+def test_body_pre_and_body_post_combo_lifts():
+    """Body has BOTH a body_pre (write ``e`` before the break check)
+    AND a body_post (write ``a`` after the break check). The break
+    condition reads ``d`` and the body never writes ``d``, so the
+    disjointness check accepts. Both halves must lift: ``body_pre``
+    Map over ``[0, min(exit_i+1, N))`` and ``body_post`` Map over
+    ``[0, exit_i)``."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+        for i in range(N):
+            e[i] = a[i] + b[i]
+            if d[i] < 0.0:
+                break
+            a[i] = a[i] + b[i] * c[i]
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, 'body_pre + body_post combo must lift'
+    assert _num_loops(sdfg) == 0
+    assert _num_reduces(sdfg) == 1  # one Reduce(Min) for the argmin
+    # phi/indicator + body_pre + body_post = 3 maps total
+    assert _num_maps(sdfg) == 3, f'expected 3 maps (indicator + pre + post); got {_num_maps(sdfg)}'
+
+    n = 16
+    rng = np.random.default_rng(0xCAFE)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    c = rng.standard_normal(n)
+    d = np.linspace(1.0, -1.0, n)  # cond fires somewhere mid-range
+    e = np.zeros(n)
+    a_ref, e_ref = a.copy(), e.copy()
+    for i in range(n):
+        e_ref[i] = a_ref[i] + b[i]
+        if d[i] < 0.0:
+            break
+        a_ref[i] = a_ref[i] + b[i] * c[i]
+    sdfg(a=a, b=b.copy(), c=c.copy(), d=d.copy(), e=e, N=n)
+    assert np.allclose(a, a_ref), f'body_post write diverged: max diff {np.abs(a - a_ref).max()}'
+    assert np.allclose(e, e_ref), f'body_pre write diverged: max diff {np.abs(e - e_ref).max()}'
+
+
+def test_refuses_break_cond_array_modified_pre_and_post():
+    """The break check reads ``d[i]`` and the body writes ``d[i]`` both
+    BEFORE and AFTER the check. The body's writes invalidate the
+    Tier-Cheap whole-array disjointness, and parallel evaluation of
+    the indicator map would race against the body's writes -- the
+    pass must refuse."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            d[i] = a[i] + b[i] * c[i]
+            if d[i] < 0.0:
+                break
+            d[i] = a[i] + b[i] * c[i]
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res is None, ('cond reads ``d`` and body writes ``d`` (pre and post): the '
+                         'Tier-Cheap whole-array disjointness must refuse the lift')
 
 
 def test_no_fire_runs_full_range():
@@ -123,7 +191,10 @@ def test_no_fire_runs_full_range():
 
     n = 8
     # All d positive -> no break.
-    a = np.ones(n); b = np.full(n, 2.0); c = np.full(n, 3.0); d = np.full(n, 1.0)
+    a = np.ones(n)
+    b = np.full(n, 2.0)
+    c = np.full(n, 3.0)
+    d = np.full(n, 1.0)
     a_ref = a.copy()
     for i in range(n):
         a_ref[i] = a_ref[i] + b[i] * c[i]
@@ -146,7 +217,10 @@ def test_fire_at_first_iteration_no_body_run():
     sdfg.validate()
 
     n = 8
-    a = np.ones(n); b = np.full(n, 2.0); c = np.full(n, 3.0); d = np.full(n, -1.0)  # all negative
+    a = np.ones(n)
+    b = np.full(n, 2.0)
+    c = np.full(n, 3.0)
+    d = np.full(n, -1.0)  # all negative
     a_orig = a.copy()
     sdfg(a=a, b=b.copy(), c=c.copy(), d=d.copy(), N=n)
     assert np.allclose(a, a_orig), "no body iteration should have run"
@@ -155,6 +229,7 @@ def test_fire_at_first_iteration_no_body_run():
 # -----------------------------------------------------------------------------
 # Refusal contract (v1 scope).
 # -----------------------------------------------------------------------------
+
 
 def test_tsvc_s332_true_branch_scalar_rebind():
     """TSVC s332: the true-branch writes scalars ``index = i; value = a[i]``
@@ -207,7 +282,7 @@ def test_refuses_cond_reads_array_body_writes():
         for i in range(N):
             if a[i] < 0.0:
                 break
-            a[i] = a[i] * 2.0   # writes a -- cond's read-set intersects
+            a[i] = a[i] * 2.0  # writes a -- cond's read-set intersects
 
     sdfg = kernel.to_sdfg(simplify=True)
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
@@ -248,6 +323,7 @@ def test_refuses_non_unit_stride():
 # + parallel map would NOT preserve sequential semantics. All must be refused.
 # -----------------------------------------------------------------------------
 
+
 def test_refuses_body_loop_carried_dep():
     """Body has a real read-after-write carry on ``a`` (``a[i] = a[i-1] + ...``).
     The find-first lift would parallelize the body and race on the carry.
@@ -259,7 +335,7 @@ def test_refuses_body_loop_carried_dep():
         for i in range(1, N):
             if d[i] < 0.0:
                 break
-            a[i] = a[i - 1] + b[i]   # genuine loop-carried dep on `a`
+            a[i] = a[i - 1] + b[i]  # genuine loop-carried dep on `a`
 
     sdfg = kernel.to_sdfg(simplify=True)
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
@@ -350,8 +426,7 @@ def test_refuses_break_inside_nested_loop():
     # The INNER ``j`` loop has a break + non-trivial body; whether it lifts
     # depends on the inner body's parallelizability, but it must NOT lift the
     # OUTER. Verify at minimum the outer stays a LoopRegion.
-    outer_loops = [r for r in sdfg.all_control_flow_regions()
-                   if isinstance(r, LoopRegion) and r.loop_variable == 'i']
+    outer_loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable == 'i']
     assert len(outer_loops) >= 1, "outer i-loop must NOT be lifted"
 
 
@@ -367,7 +442,7 @@ def test_refuses_body_write_overlaps_cond_array_at_offset():
         for i in range(N):
             if d[i] < 0.0:
                 break
-            d[i + 1] = d[i + 1] + 1.0    # writes ``d`` at i+1; cond reads d[i]
+            d[i + 1] = d[i + 1] + 1.0  # writes ``d`` at i+1; cond reads d[i]
             a[i] = a[i] + d[i + 1]
 
     sdfg = kernel.to_sdfg(simplify=True)
@@ -386,7 +461,7 @@ def test_refuses_war_anti_dep_in_body():
         for i in range(N):
             if d[i] < 0.0:
                 break
-            a[i] = a[i + 1] + 1.0   # WAR on `a`
+            a[i] = a[i + 1] + 1.0  # WAR on `a`
 
     sdfg = kernel.to_sdfg(simplify=True)
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
@@ -397,6 +472,7 @@ def test_refuses_war_anti_dep_in_body():
 # Cross-pass non-interference: the break-loop pass must not fire on any of
 # the other loop-lift shapes.
 # -----------------------------------------------------------------------------
+
 
 def test_doesnt_lift_plain_reduction():
     """``for i: s = s + a[i]`` -- LoopToReduce shape, no break, no

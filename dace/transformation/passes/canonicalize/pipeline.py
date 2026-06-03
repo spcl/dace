@@ -13,6 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
+from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
@@ -35,6 +36,11 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.passes.remove_views import RemoveViews
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+    CleanAccessNodeToScalarSliceToTaskletPattern)
+from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
+    CleanTaskletToScalarSliceToAccessNodePattern)
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
@@ -93,19 +99,36 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
-    # NOTE: the input/output scalar-slice fold passes
-    # (``CleanAccessNodeToScalarSliceToTaskletPattern`` /
-    # ``CleanTaskletToScalarSliceToAccessNodePattern``) are deliberately NOT
-    # wired here yet -- a previous attempt regressed ~13 TSVC kernels
-    # (branched min/max s314-s316, gather-sum s4115/s4116, multi-state-chain
-    # s3111/s31111/s352, etc.) because the fold strips an intermediate scalar
-    # whose presence is load-bearing for the downstream
-    # ``LoopToReduce`` / ``LoopToScan`` matchers. The folds run per-pass via
-    # the D4 wiring (apply-time pre-normalization in each loop2X pass), so
-    # canonicalize's structural cleanup does not need to perform them.
+    # Order rationale:
+    # * ``StateFusionExtended`` -- collapse adjacent states first.
+    # * ``InlineMultistateSDFG`` + ``InlineSDFG`` -- flatten NestedSDFG
+    #   nestings so all subsequent cleanup passes can see across the
+    #   boundary.
+    # * ``RemoveViews`` (PR #2335) -- folds View access nodes into the
+    #   viewed array's address map: composing the view edge memlet's
+    #   affine mapping into every downstream memlet (and Python
+    #   tasklet subscript) eliminates the View node. Runs AFTER
+    #   inlining so views surfacing from a just-flattened NSDFG also
+    #   get folded.
+    # * Scalar-slice fold passes -- collapse the
+    #   ``AccessNode -> scalar slice -> Tasklet`` (``A``) and the
+    #   inverse ``Tasklet -> scalar slice -> AccessNode`` (``A^-1``)
+    #   bridges so a gather chain like ``d_index = d[i]`` reads as
+    #   ``d[i]`` directly. Wired here so downstream matchers (e.g.
+    #   ``EarlyExitToFindIndex`` 's cond read-analysis) see the
+    #   underlying array names rather than synthetic transients. The
+    #   folds had previously regressed ~13 TSVC kernels (branched
+    #   min/max s314-s316, gather-sum s4115/s4116, multi-state-chain
+    #   s3111/s31111/s352, etc.) by stripping a load-bearing scalar
+    #   that ``LoopToReduce`` / ``LoopToScan`` matched on; those
+    #   matchers have since been hardened to match through the folded
+    #   form.
+    # * ``EmptyStateElimination`` -- drop empty states left behind.
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
-            (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, EmptyStateElimination())]
+            (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, RemoveViews()),
+            (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
+            (label, CleanTaskletToScalarSliceToAccessNodePattern()), (label, EmptyStateElimination())]
 
 
 @properties.make_properties
@@ -133,9 +156,80 @@ class _PrivatizeScalarsStage(ppl.Pass):
         return PrivatizeScalars().apply_pass(sdfg, {})
 
 
+# Per-target knob presets. ``canonicalize(..., target='cpu'|'gpu')`` picks one
+# of these and any explicit knob arg overrides the preset value. Verdicts are
+# justified by the perf tests in ``tests/ab_perf/``; cite the test ID alongside
+# every knob that has a per-target asymmetry.
+#
+# ``interchange_carry_with_map`` (LoopToScan): the post-L2M ``LoopRegion[jk]
+# { Map[jl] }`` shape is interchanged in place to ``Map[jl] { LoopRegion[jk] }``
+# so the carry runs SEQUENTIAL per-thread.
+#   - CPU win (``tests/ab_perf/test_for_1133_ab.py``): 4.6-5.2x at klev in {90,
+#     96}, klon=20480, both fp32 and fp64. Fewer parallel-Map invocations and
+#     no kernel-launch-style per-jk barrier; the column carry runs in a
+#     register on a single thread.
+#   - GPU loss (same test): 0.73-0.80x. The kernel is BW-bound and Variant A's
+#     stream of short, contiguously-coalesced kernels saturates BW better than
+#     Variant B's single kernel where each thread carries the accumulator
+#     across ``klev`` global-memory loads with a true RAW dep chain.
+# ``peel_limit`` (BestEffortLoopPeeling): TSVC corpus
+# (``tests/corpus/measure_parallelization.py`` ``_PEEL_LIMIT = 4``) is the
+# coverage anchor. ``peel_limit=4`` lifts every boundary-conflict TSVC
+# kernel that's lift-able with peeling; higher values add cost without
+# adding lifts on the corpus. Same value on both targets -- the per-loop
+# search runs at canonicalize time, not in the kernel.
+#
+# ``break_anti_dependence`` (BreakAntiDependence): snapshot-renames pure
+# read-ahead anti-dep loops so LoopToMap lifts them at the cost of a
+# transient + one copy per call. AB verdict
+# (``tests/ab_perf/test_canon_knobs_ab.py``, N=1M, kernel ``A[i] =
+# A[i+1] + B[i]`` -- single-pass, low arithmetic intensity):
+#   - CPU: off=117ms, on=136ms (off wins 1.16x). The CPU auto-vectoriser
+#     handles the sequential read-ahead well; the snapshot copy
+#     out-costs the parallel speedup on THIS trivial kernel.
+#   - GPU: off=12490ms, on=151ms (on wins 82.6x).
+# Default is ON for both: realistic chained-anti-dep graphs (many
+# anti-dep loops + arithmetic per element) benefit from parallelization
+# more than this single-pass benchmark shows; the 16% CPU loss on the
+# trivial case is the worst case, not the typical case.
+# ``scatter_to_guarded_maps`` (ScatterToGuardedMaps): inserts a sort +
+# duplicate-count guard around scatter-shaped loops and lifts them to
+# parallel Maps. AB verdict (``tests/ab_perf/test_scatter_ab.py``,
+# N=1M, permutation idx):
+#   - CPU: B (guarded) ~1.04x A (unguarded). Sort overhead is small and
+#     the sorted-idx pattern is cache-friendlier; B also handles
+#     non-permutation idx safely. On.
+#   - GPU: B (guarded) ~1.03x A. Same reasoning. On.
+# Both targets default to True; the knob exists so the AB harness can
+# measure off-vs-on without resorting to pre-canonicalize hand-wiring.
+_CPU_DEFAULTS: Dict[str, Any] = {
+    'interchange_carry_with_map': True,
+    'peel_limit': 4,
+    'break_anti_dependence': True,
+    'scatter_to_guarded_maps': True,
+}
+_GPU_DEFAULTS: Dict[str, Any] = {
+    'interchange_carry_with_map': False,
+    'peel_limit': 4,
+    'break_anti_dependence': True,
+    'scatter_to_guarded_maps': True,
+}
+_TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': _CPU_DEFAULTS, 'gpu': _GPU_DEFAULTS}
+
+
+def _resolve_target_default(target: str, knob: str, explicit: Optional[Any], fallback: Any) -> Any:
+    """Pick ``explicit`` if not ``None``, else the per-target preset, else
+    ``fallback``. Used to resolve every per-target knob in one place."""
+    if explicit is not None:
+        return explicit
+    return _TARGET_DEFAULTS.get(target, {}).get(knob, fallback)
+
+
 def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   peel_limit: int = 0,
-                  break_anti_dependence: bool = False) -> List[Tuple[str, ppl.Pass]]:
+                  break_anti_dependence: bool = False,
+                  interchange_carry_with_map: bool = False,
+                  scatter_to_guarded_maps: bool = True) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
@@ -150,6 +244,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
                                   loops before ``parallelize`` (``BreakAntiDependence``);
                                   off by default (it adds a transient + a copy).
+    :param interchange_carry_with_map: ``LoopToScan`` knob (see
+                                       ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``
+                                       above): relocate the carry LoopRegion
+                                       INTO the per-column Map so the scan runs
+                                       sequential-per-thread. On for CPU, off
+                                       for GPU.
 
     Every map is lowered to a ``LoopRegion`` up front so all canonicalization
     runs on a single representation (one fission/normalize/reduce path, no
@@ -187,7 +287,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # NormalizeNegativeStride runs first so every downstream matcher
     # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
     # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
-    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq), ('clean', SplitTasklets()), ('clean', SimplifyPass())]
+    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq), ('clean', SplitTasklets()),
+          ('clean', LowerITEToFpFactor()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
@@ -280,8 +381,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # reader so the "loop-defined symbol used after the loop" refusal disappears.
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
           ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()),
-          ('reduce', LoopToReduce()), ('reduce', LoopToScan()), ('reduce', ArgMaxLift()),
-          ('reduce', EarlyExitToFindIndex()), ('reduce', LoopToConditionalReduce())]
+          ('reduce', LoopToReduce()), ('reduce', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
+          ('reduce', ArgMaxLift()), ('reduce', EarlyExitToFindIndex()), ('reduce', LoopToConditionalReduce())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -379,7 +480,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # LoopToScan handles single-statement scan bodies that don't need fission
     # (``s242``, ``s1221``); running it again here also lifts the post-fission
     # ones without harming the already-lifted shapes.
-    s += [('loop_to_scan', LoopToScan())]
+    s += [('loop_to_scan', LoopToScan(interchange_carry_with_map=interchange_carry_with_map))]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -418,7 +519,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # into a ``int64`` counter, and a separate sequential ``trap_state`` reads the
     # counter as an interstate-edge-bound symbol and traps if positive -- the trap
     # tasklet has no connectors (the symbol-only convention is satisfied).
-    s += [('scatter', ScatterToGuardedMaps())]
+    if scatter_to_guarded_maps:
+        s += [('scatter', ScatterToGuardedMaps())]
 
     # post_l2m: insert assign tasklets at map boundary, then structural
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
@@ -578,6 +680,14 @@ class CanonicalizationPipeline(ppl.Pass):
                        off by default -- the per-loop search is expensive).
     :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
                                   loops before parallelize (off by default).
+    :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
+                   preset (see ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``). Any
+                   explicit knob argument (e.g. ``interchange_carry_with_map=...``)
+                   overrides the preset for that knob.
+    :param interchange_carry_with_map: ``LoopToScan`` knob: relocate the carry
+                                       ``LoopRegion`` INTO the per-column Map so
+                                       the scan runs sequential-per-thread.
+                                       ``None`` (default) -> per-target preset.
     :param symbol_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
                              ``{'nclv': 5}``) substituted into the SDFG via
                              ``replace_dict`` BEFORE canonicalization. Symbolic
@@ -600,19 +710,49 @@ class CanonicalizationPipeline(ppl.Pass):
                                      desc='Best-effort loop peeling before parallelize (0 disables).')
     break_anti_dependence = properties.Property(
         dtype=bool, default=False, desc='Snapshot-rename read-ahead anti-dependence loops before parallelize.')
+    target = properties.Property(dtype=str,
+                                 default='cpu',
+                                 choices=['cpu', 'gpu'],
+                                 desc="Per-target knob preset selector ('cpu' or 'gpu').")
+    interchange_carry_with_map = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='LoopToScan: relocate the carry LoopRegion INTO the per-column Map (on for CPU, off for GPU).')
+    scatter_to_guarded_maps = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Run ScatterToGuardedMaps in the scatter stage to lift scatter loops with a sort-based guard.')
 
     def __init__(self,
                  validate: bool = False,
                  validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                 peel_limit: int = 0,
-                 break_anti_dependence: bool = False,
+                 peel_limit: Optional[int] = None,
+                 break_anti_dependence: Optional[bool] = None,
+                 target: str = 'cpu',
+                 interchange_carry_with_map: Optional[bool] = None,
+                 scatter_to_guarded_maps: Optional[bool] = None,
                  symbol_constants: Optional[Dict[str, int]] = None):
+        if target not in _TARGET_DEFAULTS:
+            raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
         self.validate_all = validate_all
         self.unroll_limit = unroll_limit
-        self.peel_limit = peel_limit
-        self.break_anti_dependence = break_anti_dependence
+        self.target = target
+        # Per-target knobs: ``None`` -> preset; explicit value overrides preset.
+        self.peel_limit = _resolve_target_default(target, 'peel_limit', peel_limit, fallback=0)
+        self.break_anti_dependence = _resolve_target_default(target,
+                                                             'break_anti_dependence',
+                                                             break_anti_dependence,
+                                                             fallback=False)
+        self.interchange_carry_with_map = _resolve_target_default(target,
+                                                                  'interchange_carry_with_map',
+                                                                  interchange_carry_with_map,
+                                                                  fallback=False)
+        self.scatter_to_guarded_maps = _resolve_target_default(target,
+                                                               'scatter_to_guarded_maps',
+                                                               scatter_to_guarded_maps,
+                                                               fallback=True)
         self._symbol_constants = symbol_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -641,7 +781,9 @@ class CanonicalizationPipeline(ppl.Pass):
                 specialize_symbol(sdfg, sym, val)
         stages = _build_stages(unroll_limit=self.unroll_limit,
                                peel_limit=self.peel_limit,
-                               break_anti_dependence=self.break_anti_dependence)
+                               break_anti_dependence=self.break_anti_dependence,
+                               interchange_carry_with_map=self.interchange_carry_with_map,
+                               scatter_to_guarded_maps=self.scatter_to_guarded_maps)
         for _label, unit in stages:
             _assert_self_contained(unit)
             unit.apply_pass(sdfg, {})
@@ -656,8 +798,11 @@ def canonicalize(sdfg: SDFG,
                  validate: bool = True,
                  validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                 peel_limit: int = 0,
-                 break_anti_dependence: bool = False,
+                 peel_limit: Optional[int] = None,
+                 break_anti_dependence: Optional[bool] = None,
+                 target: str = 'cpu',
+                 interchange_carry_with_map: Optional[bool] = None,
+                 scatter_to_guarded_maps: Optional[bool] = None,
                  symbol_constants: Optional[Dict[str, int]] = None) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
@@ -667,8 +812,18 @@ def canonicalize(sdfg: SDFG,
     :param validate: Validate the SDFG after canonicalization.
     :param validate_all: Validate the SDFG after each stage.
     :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
-    :param peel_limit: Best-effort loop peeling before parallelize (0 disables).
-    :param break_anti_dependence: Snapshot-rename read-ahead anti-dependence loops.
+    :param peel_limit: Best-effort loop peeling before parallelize; ``None``
+                       (default) -> per-target preset (CPU=4, GPU=4).
+    :param break_anti_dependence: Snapshot-rename read-ahead anti-dependence
+                                  loops (TSVC s121 shape:
+                                  ``a[i] = a[i+1] + b[i]``); ``None``
+                                  (default) -> per-target preset
+                                  (CPU=True, GPU=True).
+    :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
+                   preset (see ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``). Explicit
+                   knob args override the preset.
+    :param interchange_carry_with_map: ``LoopToScan`` knob; ``None`` (default) ->
+                                       per-target preset (CPU=True, GPU=False).
     :param symbol_constants: Optional ``{symbol: value}`` substituted (``replace_dict``)
                              before canonicalization, so symbolic trip counts that
                              become concrete unroll (e.g. ``{'nclv': 5}``).
@@ -679,5 +834,8 @@ def canonicalize(sdfg: SDFG,
                              unroll_limit=unroll_limit,
                              peel_limit=peel_limit,
                              break_anti_dependence=break_anti_dependence,
+                             target=target,
+                             interchange_carry_with_map=interchange_carry_with_map,
+                             scatter_to_guarded_maps=scatter_to_guarded_maps,
                              symbol_constants=symbol_constants).apply_pass(sdfg, {})
     return sdfg

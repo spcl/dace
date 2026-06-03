@@ -1,16 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Pass-level tests for ``SameWriteSetIfElseToMergeCFG``.
+Pass-level tests for ``SameWriteSetIfElseToITECFG``.
 
 After running, an SDFG that originally contained a same-write-set ``if/else``
 must:
 - have *no* remaining ``ConditionalBlock``,
-- have three new states ``compute_then`` / ``compute_else`` / ``apply_merge``
+- have three new states ``compute_then`` / ``compute_else`` / ``apply_ITE``
   wired in sequence,
 - produce numerically the same result as the original SDFG.
 
 The third assertion uses ``sdfg.compile()`` end-to-end. Per the project rule,
-the reference is an unfolded scalar Python evaluation — not a different
+the reference is an unfolded scalar Python evaluation -- not a different
 SDFG variant.
 """
 import os
@@ -20,12 +20,12 @@ import numpy as np
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
-    SameWriteSetIfElseToMergeCFG,
+from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
+    SameWriteSetIfElseToITECFG,
     _symbol_has_external_consumer,
 )
 
-# This pass emits ``merge(...)`` tasklets which need ``dace/merge.h``.
+# This pass emits ``ITE(...)`` tasklets which need ``dace/ITE.h``.
 os.environ.setdefault("DACE_compiler_cpu_args", "")
 
 
@@ -71,7 +71,7 @@ def _build_same_write_if_else_sdfg():
 
 def test_pass_removes_conditional_block_and_inserts_three_states():
     sdfg = _build_same_write_if_else_sdfg()
-    rewritten = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert rewritten == 1
 
     blocks = list(sdfg.all_control_flow_blocks())
@@ -79,12 +79,12 @@ def test_pass_removes_conditional_block_and_inserts_three_states():
     labels = {s.label for s in sdfg.states()}
     assert any(l.startswith("compute_then_") for l in labels)
     assert any(l.startswith("compute_else_") for l in labels)
-    assert any(l.startswith("apply_merge_") for l in labels)
+    assert any(l.startswith("apply_ITE_") for l in labels)
 
 
 def test_pass_creates_then_else_transients_with_matching_dtype_and_shape():
     sdfg = _build_same_write_if_else_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     base = sdfg.arrays["A"]
     then_names = [n for n in sdfg.arrays if n.startswith("_then_A")]
     else_names = [n for n in sdfg.arrays if n.startswith("_else_A")]
@@ -127,28 +127,28 @@ def test_pass_does_not_match_disjoint_write_set():
     es.add_edge(te, "_a", w2, None, dace.Memlet("B[0]"))
     cb.add_branch(None, else_cfr)
 
-    rewritten = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert rewritten is None
     assert any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
 
 
-def test_pass_emits_merge_tasklet_with_cond_in_code():
+def test_pass_emits_ite_tasklet_with_cond_in_code():
     sdfg = _build_same_write_if_else_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     found = False
     for state in sdfg.states():
         for n in state.nodes():
-            if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("merge_"):
-                assert "merge(c," in n.code.as_string.replace(" ", "")
+            if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("ITE_"):
+                assert "ITE(c," in n.code.as_string.replace(" ", "")
                 found = True
-    assert found, "no merge_ tasklet emitted"
+    assert found, "no ITE_ tasklet emitted"
 
 
 def test_pass_numerical_correctness():
     """End-to-end compile-run. Reference is the scalar branch expressed in
-    plain Python — not another SDFG."""
+    plain Python -- not another SDFG."""
     sdfg = _build_same_write_if_else_sdfg()
-    SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
 
     def reference(c: bool, B: np.ndarray) -> np.ndarray:
         return np.array([B[0] + 1.0 if c else B[0] - 1.0], dtype=np.float64)
@@ -165,8 +165,8 @@ def test_pass_numerical_correctness():
 
 def test_pass_is_idempotent_after_first_run():
     sdfg = _build_same_write_if_else_sdfg()
-    first = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
-    second = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
+    first = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+    second = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     assert first == 1
     assert second is None
 

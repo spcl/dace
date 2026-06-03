@@ -12,7 +12,7 @@ used by the upcoming branch-normalization passes (M3.1+):
 * ``move_branch_cfg_up_discard_conditions`` — replaces a ``ConditionalBlock``
   with the contents of one of its branches, rewiring in/out edges.
 
-These helpers are used by ``SameWriteSetIfElseToMergeCFG`` (M3.1) to lift the
+These helpers are used by ``SameWriteSetIfElseToITECFG`` (M3.1) to lift the
 two arms of an if-else into their own CFGs and then drop the conditional
 shell. Bugs in any of them silently corrupt control flow downstream; the
 tests below pin the contracts that pass requires.
