@@ -444,18 +444,15 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         else:  # remainder == "scalar"
             tile_remainder = "scalar_postamble"
         if not _tile_nodes_noop:
-            try:
-                VectorizeCPUMultiDim(widths=widths,
-                                     target_isa="SCALAR",
-                                     remainder_strategy=tile_remainder,
-                                     branch_mode=branch_mode,
-                                     loop_to_map_permissive=loop_to_map_permissive,
-                                     nest_map_bodies=nest_map_bodies,
-                                     insert_copies=insert_copies,
-                                     fuse_overlapping_loads=fuse_overlapping_loads,
-                                     scalar_remainder_emit=scalar_remainder_emit).apply_pass(copy_sdfg, {})
-            except NotImplementedError as _e:
-                _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
+            VectorizeCPUMultiDim(widths=widths,
+                                    target_isa="SCALAR",
+                                    remainder_strategy=tile_remainder,
+                                    branch_mode=branch_mode,
+                                    loop_to_map_permissive=loop_to_map_permissive,
+                                    nest_map_bodies=nest_map_bodies,
+                                    insert_copies=insert_copies,
+                                    fuse_overlapping_loads=fuse_overlapping_loads,
+                                    scalar_remainder_emit=scalar_remainder_emit).apply_pass(copy_sdfg, {})
         copy_sdfg.validate()
     else:
         if branch_mode == "fp_factor":
