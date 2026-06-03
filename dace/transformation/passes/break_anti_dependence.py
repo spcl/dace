@@ -174,9 +174,20 @@ class BreakAntiDependence(ppl.Pass):
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):
         """Find ``sym_name := expr`` on any interstate edge in the loop body.
-        Returns the RHS string, or ``None``."""
+        Returns the RHS string, or ``None``.
+
+        ``loop.all_states()`` recurses into nested control-flow regions
+        (LoopRegion / ConditionalBlock / etc.); a state inside a nested
+        region is NOT in ``loop._nodes`` directly, so asking
+        ``loop.in_edges(st)`` for such a state raises ``KeyError``. Use
+        ``st.parent_graph`` instead -- each state's parent CFR knows
+        about that state.
+        """
         for st in loop.all_states():
-            for e in loop.in_edges(st):
+            parent = st.parent_graph
+            if parent is None:
+                continue
+            for e in parent.in_edges(st):
                 if e.data is not None and sym_name in (e.data.assignments or {}):
                     return e.data.assignments[sym_name]
         return None
