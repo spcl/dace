@@ -206,5 +206,57 @@ def test_memset_cuda_rejects_non_contiguous_subset():
         sdfg.expand_library_nodes()
 
 
+def test_memset_register_outside_kernel_routes_to_cpu_tasklet():
+    """A Memset on a Register outside a GPU kernel scope lowers to a direct host-side Tasklet."""
+    sdfg = dace.SDFG('memset_reg_outside_kernel')
+    sdfg.add_array('R', [1], dace.float64, dace.StorageType.Register, transient=True)
+    state = sdfg.add_state('s')
+
+    r = state.add_access('R')
+    memset_node = MemsetLibraryNode(name='memset_r')
+    state.add_node(memset_node)
+    state.add_edge(memset_node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, r, None, dace.Memlet('R[0]'))
+
+    sdfg.expand_library_nodes()
+
+    # Verify no complex structures or CUDA launch strings are generated on the host for raw registers
+    nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert nsdfg_count == 0, "Host register memset should expand to a direct Tasklet, not a NestedSDFG."
+
+    assignments = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and '= 0' in n.code.as_string
+    ]
+    assert assignments, "Expected a basic literal assignment tasklet on the host."
+
+
+def test_memset_register_inside_kernel_routes_to_sequential():
+    """A multi-element Memset targeting a Register array inside a GPU kernel maps to sequential in-kernel logic."""
+    sdfg = dace.SDFG('memset_reg_inside_kernel')
+    sdfg.add_array('R', [4], dace.float64, dace.StorageType.Register, transient=True)
+    state = sdfg.add_state('s')
+
+    # Wrap inside a GPU_Device map scope
+    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    r = state.add_access('R')
+    memset_node = MemsetLibraryNode(name='memset_r')
+    state.add_node(memset_node)
+
+    state.add_memlet_path(me, memset_node, memlet=dace.Memlet())
+    state.add_edge(memset_node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, r, None, dace.Memlet('R[0:4]'))
+    state.add_memlet_path(r, mx, memlet=dace.Memlet())
+
+    sdfg.expand_library_nodes()
+
+    # Ensure it did not lower to a host-side or invalid device-side cudaMemset call
+    cuda_memsets = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and 'cudaMemset' in n.code.as_string
+    ]
+    assert len(cuda_memsets) == 0, "Cannot issue cudaMemset on local GPU registers."
+
+    # It should fall back to an internal loop/unrolled tasklet chain inside the device state
+    assert any(isinstance(n, dace.nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
