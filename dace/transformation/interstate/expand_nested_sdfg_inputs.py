@@ -152,7 +152,17 @@ def _rename_nsdfg_connector(state: SDFGState, nsdfg_node: nodes.NestedSDFG, old:
 class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
     """Pre-processor for :class:`InlineMultistateSDFG`: widen narrowed
     NSDFG in/out memlets to full-array subsets, reshape inner descriptors
-    to match, and offset inner memlets accordingly."""
+    to match, and offset inner memlets accordingly.
+
+    Handles both top-level NSDFGs and NSDFGs nested inside a Map scope.
+    For the in-map case the caller is expected to have first widened the
+    parent map's IN/OUT memlets to full arrays (via
+    ``propagate_full_array_subsets_through_map``) so the
+    MapEntry-to-NSDFG connector already carries the full extent; the
+    per-iteration tile offset is then captured from the original
+    narrowed subset and threaded onto every inner memlet referencing
+    that connector.
+    """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
@@ -168,27 +178,6 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         if nsdfg_node.no_inline:
             return False
-        # Refuse when nested in a Map scope: the narrowing is intentional.
-        if state.entry_node(nsdfg_node) is not None:
-            return False
-        if not _has_narrowed_edge(state, nsdfg_node, sdfg):
-            return False
-        inner = nsdfg_node.sdfg
-        # Refuse if widening would change any inner descriptor's rank
-        # (size-1 axis collapse). The handler below assumes rank-matched
-        # reshapes; same-rank widening is the common case.
-        for edge in (*state.in_edges(nsdfg_node), *state.out_edges(nsdfg_node)):
-            if edge.data is None or edge.data.data is None:
-                continue
-            outer_arr = sdfg.arrays.get(edge.data.data)
-            if outer_arr is None:
-                return False
-            conn = _connector_for(state, nsdfg_node, edge)
-            if conn is None or conn not in inner.arrays:
-                continue
-            inner_arr = inner.arrays[conn]
-            if _inner_descriptor_collapses_dim(outer_arr.shape, inner_arr.shape):
-                return False
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> None:
