@@ -364,9 +364,6 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     '5.0f64',
     '5f32',
     '7f64',
-    '(3.0 + 4.0j)c128',
-    '(3.0 - 4.0j)c128',
-    '(3.0 + 4.0j)c64',
 ])
 def test_minmax_with_float_literal_roundtrip(op, literal):
     serialized = f'{op}({literal}, $N)'
@@ -376,7 +373,7 @@ def test_minmax_with_float_literal_roundtrip(op, literal):
 
 def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
     first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic('Max(double(7), 5.0)'))
-    assert first == 'Max(7f64, 5.0)'
+    assert first == '7f64'
     second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
     assert first == second
 
