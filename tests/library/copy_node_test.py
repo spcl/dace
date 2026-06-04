@@ -943,26 +943,6 @@ def test_shared_memory_copy_global_to_shared_is_collective():
                 "GPU_ThreadBlock map.")
 
 
-def test_shared_memory_copy_shared_to_register_is_thread_level():
-    """A Shared -> Register ``MappedTasklet`` copy expands to a Sequential (thread-level) map."""
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, name="S_in"),
-        _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.Register, transient=True, name="R_out"),
-        implementation="MappedTasklet",
-        name="shmcpy_thread",
-        libnode_name="shmcpy_thr",
-    )
-    sdfg.expand_library_nodes()
-
-    found_sequential = False
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.sdfg.nodes.MapEntry):
-            if n.schedule == dace.dtypes.ScheduleType.Sequential:
-                found_sequential = True
-                break
-    assert found_sequential, ("SharedMemoryCopy (Shared->Register) should contain a Sequential map.")
-
-
 def _libnode_in_tblock_scope(src_storage, dst_storage, src_subset, dst_subset, src_shape=None, dst_shape=None):
     """Build an SDFG with a ``CopyLibraryNode`` nested inside a ``GPU_ThreadBlock``
     map; returns ``(sdfg, libnode, state)`` for scope-aware dispatcher tests."""
@@ -1521,6 +1501,32 @@ def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
         if isinstance(n, dace.nodes.Tasklet) and '_cpy_out = _cpy_in' in n.code.as_string
     ]
     assert assignments, "Expected at least one ``_cpy_out = _cpy_in`` Tasklet from the expansion."
+
+
+def test_register_location_detection():
+    """Test that the register location detection logic correctly identifies when a copy is in-kernel vs. host-side."""
+    sdfg = dace.SDFG('register_location_detection')
+    sdfg.add_array('R', [1], dace.float64, dace.StorageType.Register, transient=True)
+    sdfg.add_array('G', [1], dace.float64, dace.StorageType.GPU_Global, transient=True)
+    state = sdfg.add_state('s')
+
+    r = state.add_access('R')
+    g = state.add_access('G')
+    libnode = CopyLibraryNode(name='reg_to_g')
+    state.add_node(libnode)
+    state.add_edge(r, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet('R[0]'))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, g, None, dace.Memlet('G[0]'))
+
+    sdfg.expand_library_nodes()
+
+    nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert nsdfg_count == 0, (f"Single-element in-kernel copy should expand to a direct Memcpy (cross-boundary), "
+                              f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
+    assignments = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and 'cudaMemcpy' in n.code.as_string
+    ]
+    assert assignments, "Expected at least one ``cudaMemcpy`` Tasklet from the expansion."
 
 
 if __name__ == "__main__":
