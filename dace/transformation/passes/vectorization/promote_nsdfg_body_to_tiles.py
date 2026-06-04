@@ -47,6 +47,7 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.libraries.tileops import (TileBinop, TileGather, TileIota, TileLoad, TileMerge, TileScatter, TileStore,
                                     TileUnop)
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
     _classify_unop_tasklet_body,
@@ -2720,137 +2721,22 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             else:
                 istate.remove_edge(ed)
 
-    def _dedup_identity_assigns(self, istate: SDFGState) -> None:
-        """Collapse redundant duplicate ``AN(src) -> [_out=_in] -> AN(dst)`` triples.
-
-        FP-factor branch lowering can leave two arms emitting the same
-        ``cond -> float_factor`` assign chain side-by-side -- the cond
-        compute writes ONE tile (``tmp_condition_symbol_to_scalar_4``) and
-        BOTH per-arm assigns route it to ``float___tmp0``. The duplicate
-        out-edges from ``src`` push its out-degree above 1, which trips
-        :meth:`_bypass_transient_assigns`'s safety guard (intended to keep
-        SSA-like reassignment chains intact). Keep ONE assign per unique
-        ``(src.data, dst.data)`` pair so the bypass can proceed; the other
-        copies route into the same canonical ``dst`` AccessNode (or are
-        removed when both endpoints are the same node) and the cond tile
-        no longer fans out per arm. Drives the cloud_fraction[fp_factor]
-        regression where the broken ``_out = _in;`` pointer-reassignment
-        was left in place and ``float___tmp0`` stayed at its initial zero.
-
-        :param istate: Inner state being rewritten.
-        """
-        seen: dict = {}
-        for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
-            if not _is_assign_tasklet(t):
-                continue
-            in_es = istate.in_edges(t)
-            out_es = istate.out_edges(t)
-            if len(in_es) != 1 or len(out_es) != 1:
-                continue
-            in_e, out_e = in_es[0], out_es[0]
-            if not (isinstance(in_e.src, dace.nodes.AccessNode) and isinstance(out_e.dst, dace.nodes.AccessNode)):
-                continue
-            key = (in_e.src.data, out_e.dst.data)
-            keep = seen.setdefault(key, (t, in_e.src, out_e.dst))
-            if keep[0] is t:
-                continue
-            # Duplicate: rewire any other in/out edges of THIS tasklet's
-            # endpoints onto the kept tasklet's endpoints, then drop t.
-            kept_src, kept_dst = keep[1], keep[2]
-            cur_src, cur_dst = in_e.src, out_e.dst
-            if cur_dst is not kept_dst:
-                for de in list(istate.out_edges(cur_dst)):
-                    istate.add_edge(kept_dst, de.src_conn, de.dst, de.dst_conn,
-                                    dace.Memlet.from_memlet(de.data) if de.data is not None else dace.Memlet())
-                    istate.remove_edge(de)
-            for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
-                istate.remove_edge(te)
-            istate.remove_node(t)
-            if cur_src is not kept_src and istate.degree(cur_src) == 0:
-                istate.remove_node(cur_src)
-            if cur_dst is not kept_dst and istate.degree(cur_dst) == 0:
-                istate.remove_node(cur_dst)
-
     def _bypass_transient_assigns(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
         """Bypass ``AN(src) -> [_out=_in] -> AN(dst)`` between transients.
 
-        DaCe's tasklet codegen for a Python-language ``_out = _in`` body with
-        tile-pointer connectors emits ``_out = _in;`` which is a *pointer*
-        reassignment of the local variable -- the destination transient is
-        never written. Bypass the tasklet by either (a) routing every
-        downstream consumer of ``dst`` to ``src``, or (b) when ``dst`` is
-        an out-connector / non-transient, routing the producer of ``src``
-        to write into ``dst`` instead.
-
-        Runs :meth:`_dedup_identity_assigns` first so duplicate
-        ``(src.data, dst.data)`` assign triples (the cloud_fraction
-        fp_factor per-arm pattern) collapse to one and the bypass's
-        ``out_degree(src_an) > 1`` safety guard doesn't refuse them.
+        Delegates to :class:`BypassTrivialAssignTasklets` so the rewrite
+        is callable both from this in-place body descent and as a
+        standalone pipeline step. Runs the dedup pre-pass first so
+        duplicate ``(src.data, dst.data)`` chains collapse to one and
+        the bypass's ``out_degree(src_an) > 1`` safety guard doesn't
+        refuse them.
 
         :param istate: Inner state being rewritten.
-        :param nsdfg_node: The body NestedSDFG node (for connector check).
+        :param nsdfg_node: The body NestedSDFG node (signature-preserved
+            for the descent's calling convention; unused).
         """
-        self._dedup_identity_assigns(istate)
-        inner = istate.sdfg
-        for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
-            if not _is_assign_tasklet(t):
-                continue
-            in_es = istate.in_edges(t)
-            out_es = istate.out_edges(t)
-            if len(in_es) != 1 or len(out_es) != 1:
-                continue
-            in_e = in_es[0]
-            out_e = out_es[0]
-            if not (isinstance(in_e.src, dace.nodes.AccessNode) and isinstance(out_e.dst, dace.nodes.AccessNode)):
-                continue
-            src_an = in_e.src
-            dst_an = out_e.dst
-            src_desc = inner.arrays.get(src_an.data)
-            dst_desc = inner.arrays.get(dst_an.data)
-            if src_desc is None or dst_desc is None:
-                continue
-            # Only bypass when at least one side is a transient -- collapsing
-            # a connector -> connector assign would lose the boundary edge.
-            if not (src_desc.transient or dst_desc.transient):
-                continue
-            # Restrict to TRULY trivial cases: the source has exactly one
-            # consumer (this tasklet) AND the destination has exactly one
-            # producer (this tasklet). Multi-consumer / multi-producer
-            # patterns include SSA-like variable reassignment chains
-            # (vbor's ``c1 = c[i]; ...; c1 = c1*d1*e1 + ...``) where
-            # bypassing would silently fold separate assignments into one
-            # AccessNode and use the WRONG value. Leave those for codegen
-            # to emit properly.
-            if istate.out_degree(src_an) > 1 or istate.in_degree(dst_an) > 1:
-                continue
-            # Prefer rerouting the SOURCE's producer to write into the
-            # DESTINATION's AccessNode (preserving downstream consumers of
-            # ``dst``); fall back to the other direction when the source
-            # is the transient.
-            if src_desc.transient and istate.in_edges(src_an):
-                # Producer P -> AN(src) -> [_out=_in] -> AN(dst) becomes
-                # P -> AN(dst), removing AN(src) and the tasklet.
-                for pe in list(istate.in_edges(src_an)):
-                    istate.add_edge(pe.src, pe.src_conn, dst_an, out_e.dst_conn,
-                                    dace.Memlet(data=dst_an.data, subset=subsets.Range(list(out_e.data.subset.ranges))))
-                    istate.remove_edge(pe)
-                for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
-                    istate.remove_edge(te)
-                istate.remove_node(t)
-                if istate.degree(src_an) == 0:
-                    istate.remove_node(src_an)
-            elif dst_desc.transient:
-                # AN(src) -> [_out=_in] -> AN(dst) -> C becomes
-                # AN(src) -> C, removing AN(dst) and the tasklet.
-                for de in list(istate.out_edges(dst_an)):
-                    istate.add_edge(src_an, in_e.src_conn, de.dst, de.dst_conn,
-                                    dace.Memlet(data=src_an.data, subset=subsets.Range(list(in_e.data.subset.ranges))))
-                    istate.remove_edge(de)
-                for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
-                    istate.remove_edge(te)
-                istate.remove_node(t)
-                if istate.degree(dst_an) == 0:
-                    istate.remove_node(dst_an)
+        BypassTrivialAssignTasklets._dedup_identity_assigns(istate)
+        BypassTrivialAssignTasklets._bypass_transient_assigns(istate)
 
     def _drop_isolated(self, istate: SDFGState) -> None:
         """Remove access nodes left with no edges after the rewrite.
