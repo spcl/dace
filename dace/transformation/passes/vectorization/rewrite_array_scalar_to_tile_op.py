@@ -21,7 +21,7 @@ The contract on the edge follows the user's spec:
   load on the corresponding dim).
 
 Per-tile-dim classification piggy-backs on
-:func:`classify_tile_access_compat` so the resulting lib-node properties
+:func:`classify_box_for_widths` so the resulting lib-node properties
 (``dim_strides``, ``src_dims``) follow the same rules the in-place
 descent already uses for connector-array copies inside body NSDFGs.
 """
@@ -37,13 +37,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 from dace.transformation.passes.vectorization.emit_tile_ops import _tile_region_subset
 from dace.transformation.passes.vectorization.utils.name_schemes import TileConnectors
-from dace.transformation.passes.vectorization.utils.tile_access_compat import (
-    classify_tile_access_compat as classify_tile_access, )
-from dace.transformation.passes.vectorization.utils.tile_dims import (TileAccessClassification, TileAccessKind,
-                                                                      TileDimSpec)
-
-#: Per-dim classifications the rewriter accepts as a perfect tile box.
-_BOX_KINDS: Set[TileAccessKind] = {TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED}
+from dace.transformation.passes.vectorization.utils.promote_helpers import classify_box_for_widths
+from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
 def _is_tile_shaped(arr: dace.data.Data, widths: Tuple[int, ...]) -> bool:
@@ -56,29 +51,6 @@ def _is_tile_shaped(arr: dace.data.Data, widths: Tuple[int, ...]) -> bool:
     if not isinstance(arr, dace.data.Array):
         return False
     return tuple(arr.shape) == tuple(widths)
-
-
-def _classify_box(subset: subsets.Range, arr: dace.data.Data, iter_vars: Tuple[str, ...]) -> TileAccessClassification:
-    """Classify ``subset`` on ``arr`` as a perfect tile box, or raise.
-
-    A perfect box is the only shape the lib node can express in a
-    single load/store; gather / structured / broadcast kinds raise
-    ``NotImplementedError`` so the caller falls back to a per-lane
-    rewrite (or refuses the kernel out loud).
-
-    :param subset: Per-iteration array-side subset.
-    :param arr: Array descriptor.
-    :param iter_vars: Tile iter-var names (innermost-last).
-    :returns: The :class:`TileAccessClassification` describing the box.
-    :raises NotImplementedError: For non-box (gather / structured /
-        broadcast) accesses.
-    """
-    cls = classify_tile_access(subset, tuple(arr.strides), iter_vars)
-    if cls.kind in _BOX_KINDS:
-        return cls
-    raise NotImplementedError(f"rewrite_array_scalar_copy_to_tile_op: array-side access {subset} is "
-                              f"{cls.kind.value}; only perfect-box (contiguous / strided) loads/stores "
-                              f"are supported -- promote separately or refuse the kernel")
 
 
 def rewrite_array_scalar_copy_to_tile_op(
@@ -138,7 +110,7 @@ def rewrite_array_scalar_copy_to_tile_op(
         array_node, tile_node = edge.src, edge.dst
         array_desc = src_desc
         array_subset = _array_side_subset(edge, array_node.data)
-        cls = _classify_box(array_subset, array_desc, iter_vars)
+        cls = classify_box_for_widths(array_subset, array_desc, iter_vars, widths)
         promoted = _tile_region_subset(array_subset, iter_vars, widths)
         load = TileLoad(name=f"load_{array_node.data}",
                         widths=widths,
@@ -157,7 +129,7 @@ def rewrite_array_scalar_copy_to_tile_op(
         tile_node, array_node = edge.src, edge.dst
         array_desc = dst_desc
         array_subset = _array_side_subset(edge, array_node.data)
-        cls = _classify_box(array_subset, array_desc, iter_vars)
+        cls = classify_box_for_widths(array_subset, array_desc, iter_vars, widths)
         promoted = _tile_region_subset(array_subset, iter_vars, widths)
         store = TileStore(name=f"store_{array_node.data}",
                           widths=widths,

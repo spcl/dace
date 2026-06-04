@@ -83,8 +83,10 @@ from dace.transformation.passes.vectorization.utils.post_descent_invariants impo
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import (free_symbol_names, free_symbols)
 
+from dace.transformation.passes.vectorization.utils.promote_helpers import (BOX_KINDS as _BOX_KINDS,
+                                                                            classify_box_for_widths)
+
 _INNER_MASK = "_tile_iter_mask"
-_BOX_KINDS = (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED)
 
 
 def _index_lane_stride(window_size, tile_width) -> int:
@@ -387,42 +389,20 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                             conn_name: Optional[str] = None):
         """Classify a connector access and require a perfect box.
 
-        A register-tile boundary connector (shape exactly the tile widths,
-        widened from a length-1 per-lane connector by
-        :meth:`_widen_boundary_connectors`) carries its tile-var offset in
-        the NSDFG's *outer* edge, so the inner access is the full tile and
-        :func:`classify_tile_access` would see a tile-var-free subset
-        (``BROADCAST_SYMBOL``). Treat it directly as a contiguous full-tile
-        load/store — using the widen's recorded tile-lane -> connector-dim
-        permutation (``match_dims``) so a transposed (Fortran) map addresses the
-        right dim per lane instead of assuming connector-order == lane-order.
+        Thin descent-side wrapper around
+        :func:`classify_box_for_widths`; the ``conn_name`` argument is
+        kept for the descent's existing call sites (currently
+        information-only) so this method can be extended later if a
+        body-NSDFG-specific shortcut is needed.
 
         :param subset: Per-iteration subset on the connector array.
         :param arr: The connector array descriptor.
         :param iter_vars: Tile iter-vars.
-        :param conn_name: Connector name, to look up the widen's recorded
-            ``match_dims`` permutation (identity when absent).
+        :param conn_name: Connector name (unused; kept for API stability).
         :returns: The :class:`TileAccessClassification`.
         :raises NotImplementedError: For non-box (gather/structured) access.
         """
-        if tuple(arr.shape) == tuple(self.widths):
-            K = len(self.widths)
-            return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS,
-                                            dim_strides=(1, ) * K,
-                                            match_dims=tuple(range(K)))
-        cls = classify_tile_access(subset, tuple(arr.strides), iter_vars)
-        if cls.kind not in _BOX_KINDS:
-            # K=0 / widths=(1,) single-lane postamble: a broadcast scalar
-            # load IS a single-element load (only one lane to fill), so
-            # treat ``BROADCAST_SYMBOL`` as a contiguous box at K=1
-            # widths=(1,). The descent's downstream emission is the same
-            # as a regular contiguous load.
-            if cls.kind == TileAccessKind.BROADCAST_SYMBOL and len(iter_vars) == 1:
-                return TileAccessClassification(kind=TileAccessKind.CONTIGUOUS, dim_strides=(1, ), match_dims=(0, ))
-            raise NotImplementedError(
-                f"PromoteNSDFGBodyToTiles: connector access {subset} is {cls.kind.value}; "
-                f"only perfect-box (contiguous / strided) loads/stores are supported in this slice")
-        return cls
+        return classify_box_for_widths(subset, arr, iter_vars, tuple(self.widths))
 
     def _fanned_symbols(self, inner: dace.SDFG) -> Set[str]:
         """Return base names of symbols whose ``_laneid_<i>`` fan exists in interstate edges.
