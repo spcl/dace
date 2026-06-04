@@ -238,8 +238,7 @@ def expand_memlet_expression(state: SDFGState,
             # (DIAGONAL) cases, which both take the legacy path.
             ld = None
             if param_sym is not None:
-                ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides,
-                                          vector_map_param).lane_dim
+                ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides, vector_map_param).lane_dim
             # When the lane param is absent from the inner subset (the NSDFG
             # connector consumed it into a length-1 view, e.g. ``bb[0, 0]``
             # for a ``bb[i, j]`` body access with ``i`` innermost), the lane

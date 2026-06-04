@@ -95,8 +95,8 @@ def test_fp64_eps_is_finfo_float64_tiny():
     sdfg, state, tasklet = _make_div_sdfg(dace.float64)
     _make_pass().make_division_tasklets_safe_for_unconditional_execution(state, dace.float64)
     eps_in_code = _parse_constant_in_rhs(tasklet.code.as_string)
-    assert eps_in_code == np.finfo(np.float64).tiny, (
-        f"fp64 div eps = {eps_in_code!r}, expected {np.finfo(np.float64).tiny!r}")
+    assert eps_in_code == np.finfo(
+        np.float64).tiny, (f"fp64 div eps = {eps_in_code!r}, expected {np.finfo(np.float64).tiny!r}")
 
 
 def test_fp32_eps_is_finfo_float32_tiny():
@@ -111,8 +111,7 @@ def test_fp32_eps_is_finfo_float32_tiny():
     _make_pass().make_division_tasklets_safe_for_unconditional_execution(state, dace.float32)
     eps_in_code = _parse_constant_in_rhs(tasklet.code.as_string)
     fp32_tiny_as_fp64 = float(np.finfo(np.float32).tiny)
-    assert eps_in_code == fp32_tiny_as_fp64, (
-        f"fp32 div eps = {eps_in_code!r}, expected {fp32_tiny_as_fp64!r}")
+    assert eps_in_code == fp32_tiny_as_fp64, (f"fp32 div eps = {eps_in_code!r}, expected {fp32_tiny_as_fp64!r}")
 
 
 @pytest.mark.parametrize("dtype", [dace.float32, dace.float64])
@@ -150,9 +149,8 @@ def test_eps_does_not_introduce_machine_epsilon_shift():
     sdfg, state, tasklet = _make_div_sdfg(dace.float64)
     _make_pass().make_division_tasklets_safe_for_unconditional_execution(state, dace.float64)
     eps_in_code = _parse_constant_in_rhs(tasklet.code.as_string)
-    assert eps_in_code < np.finfo(np.float64).eps, (
-        f"eps {eps_in_code!r} >= machine eps {np.finfo(np.float64).eps!r}; "
-        f"divide-by-1 would shift the quotient by a measurable amount")
+    assert eps_in_code < np.finfo(np.float64).eps, (f"eps {eps_in_code!r} >= machine eps {np.finfo(np.float64).eps!r}; "
+                                                    f"divide-by-1 would shift the quotient by a measurable amount")
 
 
 if __name__ == "__main__":

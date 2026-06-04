@@ -8,7 +8,7 @@ pure expansion plugs in its own per-lane body via :func:`nested_loops`
 and uses :func:`tile_offset` to flatten the tile transient's index
 (register tiles are always row-major-contiguous).
 """
-from typing import Iterable, Sequence
+from typing import Sequence
 
 
 def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
@@ -56,23 +56,37 @@ def tile_offset(widths: Sequence[int]) -> str:
     return " + ".join(reversed(parts))
 
 
-def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str]) -> str:
+def offset_via_strides(coeffs: Sequence[int],
+                       strides: Sequence[str],
+                       replicate_factors: Sequence[int] = ()) -> str:
     """Return the flat offset expression
-    ``sum_d coeffs[d] * strides[d] * __l<d>``.
+    ``sum_d coeffs[d] * strides[d] * (__l<d> / replicate_factors[d])``.
 
     Used by ``TileLoad`` / ``TileStore`` to address the source / dest
     array's flat memory through its own per-dim strides scaled by the
-    optional per-tile-dim ``dim_strides`` coefficient.
+    optional per-tile-dim ``dim_strides`` coefficient. When
+    ``replicate_factors[d] > 1``, the per-dim lane index is divided by
+    the replicate factor so ``k`` consecutive lanes index the same
+    source element -- the within-dim group-broadcast lowering for the
+    ``int_floor`` / ``int_ceil`` regime.
 
     :param coeffs: Per-tile-dim integer coefficient (``1`` for
         contiguous; >1 for strided access).
     :param strides: Per-tile-dim source-array stride as a C++
         expression (typically the symbolic stride rendered with
         :func:`dace.symbolic.symstr`).
+    :param replicate_factors: Per-tile-dim replicate factor (``1`` =
+        each lane reads a distinct element; ``k > 1`` = ``k`` lanes
+        share each element). Defaults to all-1 (no replication) when
+        empty or omitted.
     :returns: The C++ offset expression, or ``"0"`` if K==0.
     """
     if not coeffs:
         return "0"
-    return " + ".join(
-        f"({c} * ({s}) * __l{d})" for d, (c, s) in enumerate(zip(coeffs, strides))
-    )
+    parts = []
+    for d, (c, s) in enumerate(zip(coeffs, strides)):
+        lane = f"__l{d}"
+        if d < len(replicate_factors) and replicate_factors[d] > 1:
+            lane = f"({lane} / {replicate_factors[d]})"
+        parts.append(f"({c} * ({s}) * {lane})")
+    return " + ".join(parts)

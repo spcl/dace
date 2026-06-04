@@ -16,8 +16,8 @@ from dace.transformation.passes.vectorization.utils.tasklets import (
 )
 
 
-@pytest.mark.parametrize("s", ["0.1", "2", "2.0", "5.5", "-1e30", "1e-5", "Infinity", "-Infinity", "inf", "oo", "-oo",
-                               "~0", "0", None])
+@pytest.mark.parametrize(
+    "s", ["0.1", "2", "2.0", "5.5", "-1e30", "1e-5", "Infinity", "-Infinity", "inf", "oo", "-oo", "~0", "0", None])
 def test_roundtrip_constant_is_verbatim(s):
     """Every input is returned exactly as given (no float mangling)."""
     assert _roundtrip_constant(s) is s

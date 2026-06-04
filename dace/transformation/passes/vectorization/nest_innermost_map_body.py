@@ -98,6 +98,10 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             if not self.nest_provably_divisible and self._trip_is_provably_divisible(n):
                 continue
             # Skip if the body already collapses to a single NestedSDFG.
+            # The always-on ``ExpandNestedSDFGInputs`` step in the
+            # orchestrator normalises every NSDFG's connector subsets
+            # regardless of how the body was produced, so this pass
+            # focuses purely on wrapping bare-tasklet bodies.
             if get_single_nsdfg_inside_map(g, n) is not None:
                 continue
             # Skip purely empty maps (nothing to nest).

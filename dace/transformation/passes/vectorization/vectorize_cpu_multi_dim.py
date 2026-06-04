@@ -29,15 +29,16 @@ from dace import properties
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern, )
-from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars, )
+from dace.transformation.passes.length_one_array_scalar_conversion import (
+    ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
-from dace.transformation.passes.vectorization.resolve_other_subset_an_edges import (
-    ResolveOtherSubsetANEdges, )
+from dace.transformation.passes.vectorization.clean_redundant_copies_and_assignments import (
+    CleanRedundantCopiesAndAssignments, )
 from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
     PromoteNSDFGBodyToTiles, )
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
@@ -55,10 +56,6 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     RemoveMathCall,
 )
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
-from dace.transformation.passes.remove_redundant_assignment_tasklets import RemoveRedundantAssignmentTasklets
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
-from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars, )
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.vectorization.utils.name_schemes import (
@@ -339,29 +336,23 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``MapCollapse`` run in ``apply_pass``. ``InlineSDFGs`` is
         # intentionally NOT run: it would flatten the body NSDFGs
         # ``PromoteNSDFGBodyToTiles`` descends into.)
-        # ``InsertAssignTaskletsAtMapBoundary`` emits semantically-transparent
-        # ``_out = _in`` staging tasklets at map boundaries; ``EmitTileOps``
-        # lifts each into a ``TileLoad`` (stage-in direction) or ``TileStore``
-        # (stage-out direction). Runs AFTER ``SplitTasklets`` so the staged
-        # tasklets are single-op.
+        # ``CleanRedundantCopiesAndAssignments`` is the single replacement for
+        # the family of cleanup passes that used to live here
+        # (``RemoveRedundantAssignmentTasklets`` /
+        # ``InsertAssignTaskletsAtMapBoundary`` /
+        # ``StageGlobalArrayThroughScalars`` / ``ResolveOtherSubsetANEdges``):
+        # it covers the 5 AN -> AN cleanup patterns the descent needs (tasklet
+        # -> AN -> assign -> MapExit; MapEntry -> AN -> tasklet; AN1 -> AN2 ->
+        # next; tasklet -> AN -> array; tasklet -> AN -> tasklet -> array) in
+        # one pass, with no intermediate-assignment insertion. Runs after
+        # SplitTasklets so the hops it cleans are single-op.
         passes += [
-            RemoveRedundantAssignmentTasklets(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
             PowerOperatorExpansion(),
             SplitTasklets(),
-            InsertAssignTaskletsAtMapBoundary(),
             RemoveMathCall(),
-            # Stage every ``Tasklet -> global-array -> Tasklet`` hop through
-            # transient scalars (the cloudsc zsolqa / zqlhs reuse). A global
-            # array routed between two tasklets forces a memory round-trip the
-            # tile descent cannot register-promote; staging it (disjoint -> two
-            # scalars + preserved store; RMW -> one scalar carrying the value +
-            # an assign store) decouples the producer/consumer dataflow from the
-            # global node while keeping the store. Runs after SplitTasklets (so
-            # the hops are single-op) and before MarkTileDims (so the staged
-            # transients are what gets tiled).
-            StageGlobalArrayThroughScalars(),
+            CleanRedundantCopiesAndAssignments(),
             # Clean up empty states left by the branch lowering + body rewrites
             # above, so the tiling passes see a tidy CFG. (A ``ppl.Pipeline``
             # forbids duplicate pass types, so this single end-of-prep cleanup
@@ -420,17 +411,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
             SplitMultiSliceBoundaryConnectors, )
         passes.append(SplitMultiSliceBoundaryConnectors(widths=widths_t))
-        # Reify body-NSDFG ``AccessNode -[other_subset]-> AccessNode`` edges
-        # left behind by ``RemoveRedundantAssignmentTasklets`` (and any other
-        # pass that collapses an assign-tasklet into a single AN -> AN
-        # memlet) into an ``_out = _in`` tasklet on 1-element residuals so the
-        # descent's classify / promote / fan-out walkers find them. Refuses
-        # multi-element residuals — auto-vectorization does not support
-        # multi-element ``other_subset``. Runs right before Promote so it's
-        # the last shape-pass before the descent and is scoped to inner-body
-        # NSDFGs only (the outer-SDFG AN -> AN scatter/gather staging used by
-        # legacy 1D detection is left alone).
-        passes.append(ResolveOtherSubsetANEdges())
         passes += [
             # Tile a flat body-NSDFG (vbor-style scalar chain) in place so
             # EmitTileOps can skip it; EmitTileOps still raises for un-handled
@@ -460,6 +440,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._nest_map_bodies = nest_map_bodies
         self._loop_to_map_permissive = loop_to_map_permissive
         self._expand_tile_nodes = expand_tile_nodes
+        self._insert_copies = insert_copies
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -511,6 +492,25 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # multi-state leaf compute body (cloudsc RMW chain, vbor) resists inlining
         # and stays an NSDFG for the tile descent. See ``normalize_loop_nests``.
         normalize_loop_nests(sdfg)
+        # ALWAYS run ExpandNestedSDFGInputs across every NSDFG so the
+        # downstream copy / tile / classify pipeline operates on a single,
+        # uniform shape: every NSDFG in/out edge reads/writes the full
+        # outer array; every inner memlet carries the per-iter offset and
+        # uses the source-rank descriptor. Independent of every knob
+        # (``nest_map_bodies``, ``insert_copies``, ...) -- the unification
+        # is the point.
+        from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+        sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+        # ``insert_copies``: lift every in-map body NSDFG's connector
+        # accesses into a private transient + one explicit copy state per
+        # direction. After this the compute body sees only local
+        # transients; the connector boundary is one full-array copy each
+        # way. Runs AFTER the always-on Expand pass so every connector
+        # already mirrors the source descriptor.
+        if self._insert_copies:
+            from dace.transformation.passes.vectorization.insert_body_nsdfg_copies import (
+                InsertBodyNSDFGCopies, )
+            InsertBodyNSDFGCopies().apply_pass(sdfg, {})
         result = super().apply_pass(sdfg, pipeline_results)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
         # to the caller — the SDFG returns with tile lib nodes still

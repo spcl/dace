@@ -638,8 +638,7 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
         else:
             access_node = in_access_dict[k]
             data_name = str(k)
-            state.add_edge(access_node, None, t, in_connectors[k],
-                           dace.memlet.Memlet(expr=f"{data_name}[0]"))
+            state.add_edge(access_node, None, t, in_connectors[k], dace.memlet.Memlet(expr=f"{data_name}[0]"))
     assert len(out_access_dict.items()) == 1
     for k, v in out_access_dict.items():
         data_name = v.data

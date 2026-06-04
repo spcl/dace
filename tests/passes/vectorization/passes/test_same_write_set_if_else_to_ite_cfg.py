@@ -95,8 +95,8 @@ def test_pass_creates_then_else_transients_with_matching_dtype():
     for n in (then_names[0], else_names[0]):
         arr = sdfg.arrays[n]
         assert arr.dtype == base.dtype
-        assert tuple(arr.shape) == (1, ), (
-            f"per-arm temp {n!r} shape must be (1,) (element-wise scratch); got {arr.shape}")
+        assert tuple(
+            arr.shape) == (1, ), (f"per-arm temp {n!r} shape must be (1,) (element-wise scratch); got {arr.shape}")
         assert arr.transient is True
         assert arr.storage == dace.dtypes.StorageType.Register
 
@@ -356,8 +356,10 @@ def test_two_writes_per_arm_uses_per_arm_temps():
     for arr in ("A", "C"):
         assert any(n.startswith(f"_then_{arr}") for n in sdfg.arrays), f"missing _then_{arr}"
         assert any(n.startswith(f"_else_{arr}") for n in sdfg.arrays), f"missing _else_{arr}"
-    ITE_tasklets = [n for state in sdfg.states() for n in state.nodes()
-                      if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("ITE_")]
+    ITE_tasklets = [
+        n for state in sdfg.states() for n in state.nodes()
+        if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("ITE_")
+    ]
     assert len(ITE_tasklets) == 2, f"expected 2 ITEs (one per written array), got {len(ITE_tasklets)}"
 
 
@@ -413,8 +415,8 @@ def test_2d_base_array_yields_scalar_per_arm_temps():
         names = [n for n in sdfg.arrays if n.startswith(prefix)]
         assert len(names) == 1, f"expected one {prefix} transient, got {names}"
         arr = sdfg.arrays[names[0]]
-        assert tuple(arr.shape) == (1, ), (
-            f"per-arm temp for 2D base must remain (1,) (Register-allocable); got {arr.shape}")
+        assert tuple(
+            arr.shape) == (1, ), (f"per-arm temp for 2D base must remain (1,) (Register-allocable); got {arr.shape}")
 
 
 def test_2d_base_array_memlets_subset_zero_on_temps():

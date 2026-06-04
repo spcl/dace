@@ -354,9 +354,10 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # means the normal contiguous widening would mis-lower it, so refuse
                         # (the loop-invariant ``int_floor(const, D)`` case does not reference
                         # the map param, so it is not flagged).
-                        unhandled_replication = (map_param in {str(s) for s in assignment_expr.free_symbols} and any(
-                            type(f).__name__ in ("int_floor", "int_ceil")
-                            for f in assignment_expr.atoms(sympy.Function)))
+                        unhandled_replication = (map_param in {str(s)
+                                                               for s in assignment_expr.free_symbols} and any(
+                                                                   type(f).__name__ in ("int_floor", "int_ceil")
+                                                                   for f in assignment_expr.atoms(sympy.Function)))
                         if len(funcs) != 0 or len(scalars) != 0 or unhandled_replication:
                             array_is_vectorizable[arr_name] = False
 

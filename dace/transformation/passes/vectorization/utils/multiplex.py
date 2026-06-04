@@ -62,12 +62,11 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                 # base that is not a multiple of ``D`` (e.g. D=3, W=8).
                 divisor_str = dace.symbolic.symstr(detected_divisor)
                 param_str = dace.symbolic.symstr(detected_param)
-                t = state.add_tasklet(
-                    "pack_tasklet", {"_in"}, {"_out"},
-                    f"multiplex_elements(_in, _out, {vector_length}, {divisor_str}, "
-                    f"({param_str}) % ({divisor_str}));",
-                    language=dace.dtypes.Language.CPP,
-                    code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
+                t = state.add_tasklet("pack_tasklet", {"_in"}, {"_out"},
+                                      f"multiplex_elements(_in, _out, {vector_length}, {divisor_str}, "
+                                      f"({param_str}) % ({divisor_str}));",
+                                      language=dace.dtypes.Language.CPP,
+                                      code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
                 modified_nodes.add(t)
                 state.remove_edge(edge)
                 new_range_list = list()

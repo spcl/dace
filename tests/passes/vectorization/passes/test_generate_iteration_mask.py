@@ -30,9 +30,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
 
 N = dace.symbol("N")
 
-
 from tests.passes.vectorization.passes.test_split_map_for_vector_remainder import add_one  # noqa: E402 (dedup: canonical add_one)
-
 
 
 def _innermost_nsdfgs(sdfg):

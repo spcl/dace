@@ -77,8 +77,8 @@ class SplitMultiSliceBoundaryConnectors(ppl.Pass):
             count += self._split_nsdfg(state, map_entry, nsdfg_node, spec)
         return count or None
 
-    def _split_nsdfg(self, parent_state: dace.SDFGState, map_entry: MapEntry,
-                     nsdfg_node: nodes.NestedSDFG, spec) -> int:
+    def _split_nsdfg(self, parent_state: dace.SDFGState, map_entry: MapEntry, nsdfg_node: nodes.NestedSDFG,
+                     spec) -> int:
         """Split every multi-slice in-connector of ``nsdfg_node``; return count."""
         tile_vars: Set[str] = set(spec.iter_vars)
         count = 0
@@ -87,8 +87,8 @@ class SplitMultiSliceBoundaryConnectors(ppl.Pass):
                 count += 1
         return count
 
-    def _try_split_connector(self, parent_state: dace.SDFGState, map_entry: MapEntry,
-                             nsdfg_node: nodes.NestedSDFG, conn: str, tile_vars: Set[str]) -> bool:
+    def _try_split_connector(self, parent_state: dace.SDFGState, map_entry: MapEntry, nsdfg_node: nodes.NestedSDFG,
+                             conn: str, tile_vars: Set[str]) -> bool:
         """Detect + split one connector; return True iff a split happened."""
         outer_edges = [e for e in parent_state.in_edges(nsdfg_node) if e.dst_conn == conn]
         if len(outer_edges) != 1:
@@ -202,8 +202,8 @@ class SplitMultiSliceBoundaryConnectors(ppl.Pass):
         ranges[dim] = (b_ms + off, b_ms + off, 1)
         return subsets.Range(ranges)
 
-    def _rewire_inner_reads(self, nsdfg_node: nodes.NestedSDFG, conn: str, dim: int,
-                            slice_names: Dict[int, str]) -> None:
+    def _rewire_inner_reads(self, nsdfg_node: nodes.NestedSDFG, conn: str, dim: int, slice_names: Dict[int,
+                                                                                                       str]) -> None:
         """Redirect each inner read of ``conn`` at point ``off`` along ``dim``
         to ``slice_names[off]`` with the multi-slice dim collapsed to ``[0:1]``.
         AccessNodes for ``conn`` are renamed in place; their out-edge memlets
@@ -246,8 +246,7 @@ class SplitMultiSliceBoundaryConnectors(ppl.Pass):
                         new_name = slice_names[off]
                         new_an = st.add_access(new_name)
                         new_subset = self._inner_per_slice_subset(e.data.subset, dim)
-                        st.add_edge(new_an, None, e.dst, e.dst_conn,
-                                    dace.Memlet(data=new_name, subset=new_subset))
+                        st.add_edge(new_an, None, e.dst, e.dst_conn, dace.Memlet(data=new_name, subset=new_subset))
                         st.remove_edge(e)
                     if st.degree(an) == 0:
                         st.remove_node(an)

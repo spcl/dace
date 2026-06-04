@@ -40,7 +40,7 @@ def _build_load_sdfg(src_shape, widths, has_mask, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8,), (4, 8)])
+@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
 def test_tile_load_pure_unmasked_contiguous(widths):
     """Unmasked load copies the leading tile region of SRC into DST."""
     sdfg = _build_load_sdfg(src_shape=widths, widths=widths, has_mask=False)
@@ -70,4 +70,72 @@ def test_tile_load_rejects_invalid_K():
     with pytest.raises(ValueError, match="length in"):
         TileLoad(name="bad_K", widths=())
     with pytest.raises(ValueError, match="dim_strides length"):
-        TileLoad(name="bad_stride_len", widths=(8,), dim_strides=(1, 1))
+        TileLoad(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
+
+
+# ---- Replicate-factor spectrum ---------------------------------------
+
+
+def _build_replicate_load_sdfg(src_shape, widths, replicate_factor_per_dim):
+    """Build a minimal SDFG exercising a TileLoad with a non-trivial
+    ``replicate_factor_per_dim``: source array is W/k elements per
+    replicate dim; destination is W lanes per dim."""
+    sdfg = dace.SDFG(f"tile_load_replicate_{'x'.join(str(w) for w in widths)}_"
+                     f"{'x'.join(str(k) for k in replicate_factor_per_dim)}")
+    sdfg.add_array("SRC", src_shape, dace.float64, transient=False)
+    sdfg.add_array("DST", widths, dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    src_node = state.add_access("SRC")
+    dst_node = state.add_access("DST")
+    node = TileLoad(name="tl_rep",
+                    widths=widths,
+                    has_mask=False,
+                    replicate_factor_per_dim=replicate_factor_per_dim)
+    state.add_node(node)
+    src_subset = ",".join(f"0:{s}" for s in src_shape)
+    dst_subset = ",".join(f"0:{w}" for w in widths)
+    state.add_edge(src_node, None, node, "_src", dace.Memlet(f"SRC[{src_subset}]"))
+    state.add_edge(node, "_dst", dst_node, None, dace.Memlet(f"DST[{dst_subset}]"))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("k", [2, 4])
+def test_tile_load_pure_replicate_k1(k):
+    """K=1 with ``replicate_factor=k`` (1 < k < W): source has W/k > 1
+    distinct elements; the pure expansion broadcasts each to ``k``
+    consecutive lanes. The degenerate endpoint ``k = W`` is the full
+    broadcast case -- covered by ``src_kind='Scalar'``, not this
+    spectrum."""
+    W = 8
+    sdfg = _build_replicate_load_sdfg(src_shape=(W // k, ), widths=(W, ), replicate_factor_per_dim=(k, ))
+    rng = np.random.default_rng(seed=21)
+    SRC = rng.random(W // k)
+    DST = np.zeros(W)
+    sdfg(SRC=SRC, DST=DST)
+    # Lane ``l`` should read SRC[l // k]
+    expected = np.array([SRC[l // k] for l in range(W)])
+    np.testing.assert_allclose(DST, expected, rtol=0, atol=0)
+
+
+def test_tile_load_pure_replicate_factor_1_is_contiguous():
+    """``replicate_factor=1`` is exactly the contiguous endpoint of the
+    spectrum -- the codegen reduces to a plain TileLoad."""
+    sdfg = _build_replicate_load_sdfg(src_shape=(8, ), widths=(8, ), replicate_factor_per_dim=(1, ))
+    rng = np.random.default_rng(seed=22)
+    SRC = rng.random(8)
+    DST = np.zeros(8)
+    sdfg(SRC=SRC, DST=DST)
+    np.testing.assert_allclose(DST, SRC, rtol=0, atol=0)
+
+
+def test_tile_load_rejects_invalid_replicate_factor():
+    """Constructor refuses replicate factors that don't divide widths
+    or that are < 1."""
+    with pytest.raises(ValueError, match="replicate_factor_per_dim"):
+        TileLoad(name="bad_factor_dim", widths=(8, ), replicate_factor_per_dim=(1, 2))
+    with pytest.raises(ValueError, match="must be >= 1"):
+        TileLoad(name="bad_factor_zero", widths=(8, ), replicate_factor_per_dim=(0, ))
+    with pytest.raises(ValueError, match="must divide"):
+        TileLoad(name="bad_factor_no_div", widths=(8, ), replicate_factor_per_dim=(3, ))

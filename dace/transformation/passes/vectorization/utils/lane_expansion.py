@@ -7,8 +7,7 @@ below a vectorized map, every lane needs its own copy of the symbol.
 These helpers build the per-lane variants and stitch them back into the
 SDFG.
 """
-import re
-from typing import Sequence, Set, Tuple
+from typing import Sequence, Set
 
 import sympy
 

@@ -22,10 +22,8 @@ from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
 N = dace.symbol("N")
 
-
 from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy  # noqa: E402 (dedup)
 from tests.passes.vectorization.kernels.test_jacobi import jacobi2d as jacobi2d_sve  # noqa: E402 (dedup)
-
 
 
 @dace.program
@@ -162,9 +160,6 @@ def test_sve_triad(NV, NC):
 
 
 S = dace.symbol("S")
-
-
-
 
 # Multi-dim non-divisible matrix (S-2 is the contiguous dim trip; pick
 # S such that S-2 hits the non-divisible cells that exercise the global

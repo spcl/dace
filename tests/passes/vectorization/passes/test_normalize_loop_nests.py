@@ -106,7 +106,10 @@ def test_cloudsc_inout_normalization_is_value_preserving():
     va = {k: v.copy() for k, v in arrays.items()}
     vec.compile()(**va, **params)
     for k in arrays:
-        numpy.testing.assert_allclose(va[k], ra[k], rtol=1e-12, atol=1e-12,
+        numpy.testing.assert_allclose(va[k],
+                                      ra[k],
+                                      rtol=1e-12,
+                                      atol=1e-12,
                                       err_msg=f"normalize changed cloudsc array {k!r}")
 
 

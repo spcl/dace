@@ -28,7 +28,7 @@ kernel.
 import ast
 import pathlib
 import sys
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import dace
 
@@ -192,11 +192,11 @@ def main():
         elif tier == "T2":
             # T2 just list names so the report stays readable
             names = sorted(r["name"] for r in kernels)
-            for chunk in (names[i:i+6] for i in range(0, len(names), 6)):
+            for chunk in (names[i:i + 6] for i in range(0, len(names), 6)):
                 print(f"  {', '.join(chunk)}")
         elif tier == "T3":
             names = sorted(r["name"] for r in kernels)
-            for chunk in (names[i:i+6] for i in range(0, len(names), 6)):
+            for chunk in (names[i:i + 6] for i in range(0, len(names), 6)):
                 print(f"  {', '.join(chunk)}")
     print()
     print(f"Total: {len(results)} kernels")

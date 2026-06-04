@@ -256,6 +256,16 @@ class TileStore(nodes.LibraryNode):
         desc="Symbolic expression embedded inline when ``src_kind=='Symbol'``; "
         "ignored otherwise.",
     )
+    wcr = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Optional write-conflict-resolution lambda (e.g. ``lambda a, b: a + b``) "
+        "applied per dst element. Required when any ``dim_strides`` entry is 0 -- "
+        "the broadcast / collapse-out semantic where multiple lanes write to the "
+        "same destination address would race without WCR. Lowered to an atomic / "
+        "reduction store by the per-arch expansion.",
+    )
 
     def __init__(self,
                  name: str,
@@ -265,6 +275,7 @@ class TileStore(nodes.LibraryNode):
                  has_mask: bool = False,
                  src_kind: str = "Tile",
                  src_expr: Optional[str] = None,
+                 wcr: Optional[str] = None,
                  location: Optional[str] = None):
         """Construct a ``TileStore`` node.
 
@@ -291,17 +302,24 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"TileStore: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
         if src_kind == "Symbol" and not src_expr:
             raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
+        resolved_dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
+        if any(s == 0 for s in resolved_dim_strides) and not wcr:
+            raise ValueError(
+                f"TileStore: dim_strides {resolved_dim_strides!r} contains a 0 (collapse-out / "
+                "broadcast write); WCR is required to avoid races. Pass ``wcr='lambda a, b: a + b'`` "
+                "(or another reduction lambda) when collapsing tile dims to a shared destination.")
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
         inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
-        self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
+        self.dim_strides = resolved_dim_strides
         self.dst_dims = list(dst_dims) if dst_dims else []
         self.has_mask = has_mask
         self.src_kind = src_kind
         self.src_expr = src_expr
+        self.wcr = wcr
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.

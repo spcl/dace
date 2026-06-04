@@ -37,8 +37,7 @@ def walk_test_files() -> List[pathlib.Path]:
 def _is_dace_program(decorator: ast.expr) -> bool:
     """Detect ``@dace.program`` and ``@dace.program(...)``."""
     if isinstance(decorator, ast.Attribute):
-        return (isinstance(decorator.value, ast.Name) and decorator.value.id == "dace"
-                and decorator.attr == "program")
+        return (isinstance(decorator.value, ast.Name) and decorator.value.id == "dace" and decorator.attr == "program")
     if isinstance(decorator, ast.Call):
         return _is_dace_program(decorator.func)
     return False

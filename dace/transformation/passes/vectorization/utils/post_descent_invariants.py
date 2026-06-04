@@ -182,18 +182,16 @@ def assert_wcr_is_last_out_of_map(state: SDFGState, map_entry: nodes.MapEntry) -
         ed for ed in state.scope_subgraph(map_entry).edges() if ed.data is not None and ed.data.wcr is not None
     ]
     if len(wcr_edges) > 1:
-        raise NotImplementedError(
-            f"vectorization: body of map {map_entry.label!r} carries {len(wcr_edges)} WCR-tagged "
-            f"memlets; at most one WCR chain per map is supported (multiple chains race on the "
-            f"destination tile) -- refusing.")
+        raise NotImplementedError(f"vectorization: body of map {map_entry.label!r} carries {len(wcr_edges)} WCR-tagged "
+                                  f"memlets; at most one WCR chain per map is supported (multiple chains race on the "
+                                  f"destination tile) -- refusing.")
     for ed in wcr_edges:
         if ed.dst is not map_exit:
-            raise NotImplementedError(
-                f"vectorization: WCR memlet {ed.data.data}[{ed.data.subset}] in map "
-                f"{map_entry.label!r} is not the last edge of its chain (dst is "
-                f"{type(ed.dst).__name__}({_node_handle(ed.dst)!r}), "
-                f"expected MapExit). A mid-chain WCR breaks DaCe's accumulator atomicity "
-                f"contract -- refusing.")
+            raise NotImplementedError(f"vectorization: WCR memlet {ed.data.data}[{ed.data.subset}] in map "
+                                      f"{map_entry.label!r} is not the last edge of its chain (dst is "
+                                      f"{type(ed.dst).__name__}({_node_handle(ed.dst)!r}), "
+                                      f"expected MapExit). A mid-chain WCR breaks DaCe's accumulator atomicity "
+                                      f"contract -- refusing.")
 
 
 def assert_post_descent_invariants(state: SDFGState, map_entry: nodes.MapEntry,

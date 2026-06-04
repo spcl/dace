@@ -38,7 +38,7 @@ def _build_store_sdfg(dst_shape, widths, has_mask, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8,), (4, 8)])
+@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
 def test_tile_store_pure_unmasked_contiguous(widths):
     """Unmasked store copies SRC into the leading tile region of DST."""
     sdfg = _build_store_sdfg(dst_shape=widths, widths=widths, has_mask=False)
@@ -71,4 +71,4 @@ def test_tile_store_rejects_invalid_K():
     with pytest.raises(ValueError, match="length in"):
         TileStore(name="bad_K", widths=())
     with pytest.raises(ValueError, match="dim_strides length"):
-        TileStore(name="bad_stride_len", widths=(8,), dim_strides=(1, 1))
+        TileStore(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))

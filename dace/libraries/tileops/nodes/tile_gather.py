@@ -82,8 +82,8 @@ class ExpandTileGatherPure(ExpandTransformation):
                 return ""
             return f"[{_strided_lane(idx_strides[k], off)}]"
 
-        flat_offset = " + ".join(
-            f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({src_strides[k]}))" for k in range(src_ndim))
+        flat_offset = " + ".join(f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({src_strides[k]}))"
+                                 for k in range(src_ndim))
         dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_dst").data.data].dtype.ctype
         if node.has_mask:

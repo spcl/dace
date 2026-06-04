@@ -9,6 +9,7 @@ vectorizer lowers to a SIMD blend. Only handles a two-branch
 element subsets and whose bodies are tasklets/access nodes; anything
 else raises :class:`NotImplementedError`.
 """
+import copy
 import re
 from typing import Optional, Tuple
 
@@ -365,22 +366,35 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             assert_connector_role_matches_edges(s)
 
     def _clone_with_redirect(self, src: dace.SDFGState, dst: dace.SDFGState, rename: dict):
-        """Deep-copy ``src`` into ``dst``; redirect only the *write* of each
-        renamed array to its private temp.
+        """Deep-copy ``src`` into ``dst``; rename writes safely.
 
-        Only access nodes that are written in the arm (in-degree > 0 in the
-        clone) are retargeted to ``rename[old]``; read-only access nodes
-        keep the original name. This is load-bearing for read-modify-write
-        arms: ``a[i] = a[i] + b[i]*d[i]`` must clone as
-        ``_then_a = a + b*d`` (RHS reads the *original* ``a``), not
-        ``_then_a = _then_a + b*d`` (RHS would read the uninitialised temp
-        and propagate garbage through the ITE -- TSVC s2710). Memlets are
-        rebound only on edges incident to a redirected write node, so the
-        RHS read memlet keeps naming the original array.
+        Two write-rename rules, applied in this order, ensure the clone
+        never produces a multi-state-write to the same array name:
+
+        1. **Escape writes** (entries in ``rename``): the caller has
+           pre-allocated a per-arm temp for each array that lives
+           outside the arm and needs ITE merging. The write is
+           redirected to that temp and memlets are rebound to ``[0]``
+           (the temps are length-1 by construction).
+        2. **Internal transient writes** that aren't in ``rename`` but
+           ARE written in the clone get a fresh unique name (per arm,
+           per array). Without this, ``BranchNormalization`` /
+           ``SameWriteSetIfElseToITECFG`` would emit two states writing
+           to the same internal transient (the original ``src`` plus
+           this ``dst`` clone), and a downstream pass that assumes
+           single-writer scalars (e.g. ``CleanRedundantCopiesAndAssignments``)
+           would raise.
+
+        Read-only access nodes keep their original name. This is
+        load-bearing for read-modify-write arms (``a = a + b*d``): the
+        RHS read of ``a`` must reference the *original* array; only the
+        LHS write of ``a`` is redirected.
         """
         node_map = copy_state_contents(src, dst)
-        redirected_nodes = set()
-        for old, new in node_map.items():
+        sdfg = dst.sdfg
+        # Pass 1: escape-write redirects (caller-supplied).
+        redirected_nodes: set = set()
+        for _old, new in node_map.items():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
             if new.data in rename and dst.in_degree(new) > 0:
@@ -388,12 +402,31 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 redirected_nodes.add(new)
         for e in dst.edges():
             if (e.src in redirected_nodes or e.dst in redirected_nodes) and e.data.data in rename:
-                # Rebind memlet to the (1,)-shaped temp: rename the data
-                # AND replace the subset with ``[0]`` (the temps are
-                # length-1 by construction since every escaping write is
-                # element-wise; see ``_alloc``).
                 e.data.data = rename[e.data.data]
                 e.data.subset = dace.subsets.Range([(0, 0, 1)])
+        # Pass 2: per-clone-unique renames for INTERNAL transient writes
+        # so multi-state writes can't happen. One fresh name per source
+        # array; every clone-side AccessNode + incident memlet for the
+        # source array is rewritten to the fresh name.
+        internal_renames: dict = {}
+        for _old, new in node_map.items():
+            if not isinstance(new, dace.nodes.AccessNode):
+                continue
+            if new in redirected_nodes:
+                continue
+            arr_name = new.data
+            desc = sdfg.arrays.get(arr_name)
+            if desc is None or not desc.transient:
+                continue
+            if dst.in_degree(new) == 0:
+                continue  # read-only in this clone -- keep the original name
+            if arr_name not in internal_renames:
+                internal_renames[arr_name] = sdfg.add_datadesc(arr_name, copy.deepcopy(desc), find_new_name=True)
+            new.data = internal_renames[arr_name]
+        if internal_renames:
+            for e in dst.edges():
+                if e.data is not None and e.data.data in internal_renames:
+                    e.data.data = internal_renames[e.data.data]
 
     def _emit_ite_tasklet(self,
                           sdfg: dace.SDFG,

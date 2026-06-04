@@ -95,21 +95,19 @@ class RefuseOtherSubsetInNSDFG(ppl.Pass):
             if mem is None or mem.is_empty():
                 continue
             if mem.other_subset is not None and not _is_boundary_edge(edge):
-                raise NotImplementedError(
-                    f"RefuseOtherSubsetInNSDFG: {scope} state {state.label!r} carries a memlet "
-                    f"with ``other_subset`` set ({_describe_edge(edge)}). The cleanup family "
-                    f"(CleanAccessNodeToScalarSliceToTaskletPattern, ResolveOtherSubsetANEdges, "
-                    f"RemoveRedundantAssignmentTasklets) is expected to remove these before the "
-                    f"descent; a residual one means vectorization cannot proceed without lossy "
-                    f"reinterpretation. Refactor the source pattern or extend a cleaner.")
+                raise NotImplementedError(f"RefuseOtherSubsetInNSDFG: {scope} state {state.label!r} carries a memlet "
+                                          f"with ``other_subset`` set ({_describe_edge(edge)}). The cleanup family "
+                                          f"(CleanAccessNodeToScalarSliceToTaskletPattern, ResolveOtherSubsetANEdges, "
+                                          f"RemoveRedundantAssignmentTasklets) is expected to remove these before the "
+                                          f"descent; a residual one means vectorization cannot proceed without lossy "
+                                          f"reinterpretation. Refactor the source pattern or extend a cleaner.")
             # WCR is only allowed at the top level (the canonical
             # ``Scalar -> WCR -> MapExit`` reduction pattern). Inside a
             # body NSDFG it cannot be vectorised cleanly.
             if mem.wcr is not None and inside_nested:
-                raise NotImplementedError(
-                    f"RefuseOtherSubsetInNSDFG: body NSDFG state {state.label!r} carries a WCR "
-                    f"memlet ({_describe_edge(edge)}). The only supported WCR shape is "
-                    f"``Scalar -> WCR -> MapExit`` in the outer state; an inner WCR is refused.")
+                raise NotImplementedError(f"RefuseOtherSubsetInNSDFG: body NSDFG state {state.label!r} carries a WCR "
+                                          f"memlet ({_describe_edge(edge)}). The only supported WCR shape is "
+                                          f"``Scalar -> WCR -> MapExit`` in the outer state; an inner WCR is refused.")
 
 
 def _describe_edge(edge) -> str:

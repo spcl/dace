@@ -11,7 +11,6 @@ NSDFG-body ``vbor`` chain are tiled with ``widths=(8,)`` and checked
 numerically against the unvectorized reference, with a structural check
 that tile lib nodes were actually emitted (not a scalar fallback).
 """
-import copy
 
 import numpy as np
 import pytest
@@ -33,6 +32,7 @@ from tests.passes.vectorization.passes.test_nest_innermost_map_body import bare_
 
 N = dace.symbol("N")
 
+
 @dace.program
 def triad(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
     for i in dace.map[0:N]:
@@ -40,12 +40,17 @@ def triad(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.fl
 
 
 @dace.program
-def vbor(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
-         d: dace.float64[N], e: dace.float64[N], x: dace.float64[N]):
+def vbor(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N],
+         x: dace.float64[N]):
     for i in range(N):
-        a1 = a[i]; b1 = b[i]; c1 = c[i]; d1 = d[i]; e1 = e[i]; f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 +
-              a1 * c1 * f1 + a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        a1 = a[i]
+        b1 = b[i]
+        c1 = c[i]
+        d1 = d[i]
+        e1 = e[i]
+        f1 = a[i]
+        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
+              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
         b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         d1 = d1 * e1 * f1

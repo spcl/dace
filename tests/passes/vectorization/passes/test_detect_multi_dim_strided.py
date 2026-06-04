@@ -73,10 +73,10 @@ def _run_and_check(prog, arrays, params, *, has_load: bool, has_store: bool):
 
 # --- diagonal load -----------------------------------------------------------
 
-
 from tests.passes.vectorization.kernels.test_strided_gather_scatter import (  # noqa: E402 (dedup)
-    gather_load_2i_i as load_2i_i, scatter_store_2i_i as store_2i_i,
-    gather_load_i_2i as load_i_2i, scatter_store_i_2i as store_i_2i)
+    gather_load_2i_i as load_2i_i, scatter_store_2i_i as store_2i_i, gather_load_i_2i as load_i_2i, scatter_store_i_2i
+    as store_i_2i)
+
 
 @dace.program
 def diag_load(A: dace.float64[8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
@@ -124,8 +124,6 @@ def test_diagonal_store_collapses_to_strided_intrinsic():
 # --- A[2*i, i] load ----------------------------------------------------------
 
 
-
-
 def test_2i_i_load_collapses_to_strided_intrinsic():
     Nv = 64
     A = np.random.rand(2 * Nv, Nv)
@@ -141,8 +139,6 @@ def test_2i_i_load_collapses_to_strided_intrinsic():
 
 
 # --- A[2*i, i] store ---------------------------------------------------------
-
-
 
 
 def test_2i_i_store_collapses_to_strided_intrinsic():
@@ -162,8 +158,6 @@ def test_2i_i_store_collapses_to_strided_intrinsic():
 # --- A[i, 2*i] load ----------------------------------------------------------
 
 
-
-
 def test_i_2i_load_collapses_to_strided_intrinsic():
     Nv = 64
     A = np.random.rand(Nv, 2 * Nv)
@@ -179,8 +173,6 @@ def test_i_2i_load_collapses_to_strided_intrinsic():
 
 
 # --- A[i, 2*i] store ---------------------------------------------------------
-
-
 
 
 def test_i_2i_store_collapses_to_strided_intrinsic():

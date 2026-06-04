@@ -38,8 +38,7 @@ def _structured_kernel(b: dace.float64[N], c: dace.float64[N], out: dace.float64
 
 
 @dace.program
-def _data_gather_binop_kernel(a: dace.float64[N], b: dace.float64[N],
-                              e: dace.float64[N], idx: dace.int32[N]):
+def _data_gather_binop_kernel(a: dace.float64[N], b: dace.float64[N], e: dace.float64[N], idx: dace.int32[N]):
     for i in range(N):
         a[i] = b[idx[i]] + e[i]
 
@@ -55,13 +54,16 @@ def test_data_gather_with_elementwise_input_matches_reference(n):
     outer edge and are widened ``(1,) -> (W,)`` before the binop / store.
     ``n=17, 23`` exercise the masked tail."""
     rng = np.random.default_rng(seed=n)
-    b = rng.random(n); e = rng.random(n)
+    b = rng.random(n)
+    e = rng.random(n)
     idx = rng.integers(0, n, size=n).astype(np.int32)
     a_ref, a_vec = np.zeros(n), np.zeros(n)
 
-    ref = _data_gather_binop_kernel.to_sdfg(simplify=True); ref.name = f"dgb_ref{n}"
-    vec = _data_gather_binop_kernel.to_sdfg(simplify=True); vec.name = f"dgb_vec{n}"
-    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+    ref = _data_gather_binop_kernel.to_sdfg(simplify=True)
+    ref.name = f"dgb_ref{n}"
+    vec = _data_gather_binop_kernel.to_sdfg(simplify=True)
+    vec.name = f"dgb_vec{n}"
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
 
     ref.compile()(a=a_ref, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
@@ -73,12 +75,17 @@ def test_structured_int_floor_replication_matches_reference(n):
     """``b[i // 2]`` (int_floor replication, STRUCTURED) lowers to a gather over
     a per-lane index map built by substitution and matches the reference."""
     rng = np.random.default_rng(seed=n)
-    b = rng.random(n); c = rng.random(n)
+    b = rng.random(n)
+    c = rng.random(n)
     ro, vo = np.zeros(n), np.zeros(n)
-    ref = copy.deepcopy(_structured_kernel.to_sdfg(simplify=False)); ref.name = f"sk_ref{n}"
-    ref.simplify(validate=True); ref.apply_transformations_repeated(LoopToMap()); ref.simplify()
-    vec = copy.deepcopy(ref); vec.name = f"sk_vec{n}"
-    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+    ref = copy.deepcopy(_structured_kernel.to_sdfg(simplify=False))
+    ref.name = f"sk_ref{n}"
+    ref.simplify(validate=True)
+    ref.apply_transformations_repeated(LoopToMap())
+    ref.simplify()
+    vec = copy.deepcopy(ref)
+    vec.name = f"sk_vec{n}"
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
     ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
     vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
     np.testing.assert_allclose(vo, ro, rtol=1e-12, atol=1e-12)
@@ -100,10 +107,10 @@ def test_diagonal_emits_gather_and_scatter():
     from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
         CleanAccessNodeToScalarSliceToTaskletPattern, )
     CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-    MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
-    GenerateTileIterationMask(widths=(8,)).apply_pass(sdfg, {})
-    StrideMapByTileWidths(widths=(8,)).apply_pass(sdfg, {})
-    EmitTileOps(widths=(8,)).apply_pass(sdfg, {})
+    MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
+    GenerateTileIterationMask(widths=(8, )).apply_pass(sdfg, {})
+    StrideMapByTileWidths(widths=(8, )).apply_pass(sdfg, {})
+    EmitTileOps(widths=(8, )).apply_pass(sdfg, {})
     gathers = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
     scatters = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileScatter)]
     assert len(gathers) >= 1, "expected a TileGather for the diagonal read"
@@ -114,12 +121,14 @@ def test_diagonal_emits_gather_and_scatter():
 def test_diagonal_gather_numerically_matches_reference(n):
     """Diagonal gather/scatter output matches the unvectorized SDFG."""
     rng = np.random.default_rng(seed=n)
-    aa = rng.random((n, n)); bb = rng.random((n, n)); cc = rng.random((n, n))
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    cc = rng.random((n, n))
     ref_aa, vec_aa = aa.copy(), aa.copy()
 
     ref = _prepped(f"ref{n}")
     vec = _prepped(f"vec{n}")
-    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
 
     ref.compile()(aa=ref_aa, bb=bb.copy(), cc=cc.copy(), N=n)
     vec.compile()(aa=vec_aa, bb=bb.copy(), cc=cc.copy(), N=n)

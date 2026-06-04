@@ -25,7 +25,6 @@ and the test is flipped to a strict pass.
 """
 import copy
 import numpy as np
-import pytest
 
 import dace
 from dace import subsets
@@ -43,9 +42,8 @@ def _ref_run(sdfg, **arrays):
 def _assert_equal(reference, result, *, rtol=1e-12):
     """All entries of ``result`` must match ``reference`` element-wise."""
     for k in reference:
-        assert np.allclose(reference[k], result[k], rtol=rtol), (
-            f"{k} mismatch after cleanup: max abs diff "
-            f"{np.max(np.abs(reference[k] - result[k]))}")
+        assert np.allclose(reference[k], result[k], rtol=rtol), (f"{k} mismatch after cleanup: max abs diff "
+                                                                 f"{np.max(np.abs(reference[k] - result[k]))}")
 
 
 def _build_an_to_an_with_other_subset_cross_state():
@@ -272,9 +270,8 @@ def test_cross_state_multidim_point_pure_box_cleanup_fallback():
     ref = _ref_run(sdfg, zqx=zqx, b=b)
     _run_cleanup(sdfg)
     sdfg.validate()
-    assert not _other_subset_remains(sdfg), (
-        "Multi-dim pure-box AN -> AN with other_subset must be lowered "
-        "via an assign tasklet by ResolveOtherSubsetANEdges")
+    assert not _other_subset_remains(sdfg), ("Multi-dim pure-box AN -> AN with other_subset must be lowered "
+                                             "via an assign tasklet by ResolveOtherSubsetANEdges")
     zqx_run, b_run = zqx.copy(), b.copy()
     sdfg(zqx=zqx_run, b=b_run)
     _assert_equal(ref, {"zqx": zqx_run, "b": b_run})

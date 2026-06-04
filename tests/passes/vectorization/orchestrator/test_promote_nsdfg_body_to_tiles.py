@@ -11,7 +11,6 @@ kernel vectorizes instead of clean-skipping. The carried-dependency
 LoopRegion bodies (s231) are NOT yet handled and must still clean-skip
 (``EmitTileOps`` raises -> the orchestrator surfaces ``NotImplementedError``).
 """
-import copy
 
 import numpy as np
 import pytest
@@ -25,12 +24,17 @@ L = dace.symbol("LEN_2D")
 
 
 @dace.program
-def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L],
-          d: dace.float64[L], e: dace.float64[L], x: dace.float64[L]):
+def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
+          x: dace.float64[L]):
     for i in range(L):
-        a1 = a[i]; b1 = b[i]; c1 = c[i]; d1 = d[i]; e1 = e[i]; f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 +
-              a1 * c1 * f1 + a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        a1 = a[i]
+        b1 = b[i]
+        c1 = c[i]
+        d1 = d[i]
+        e1 = e[i]
+        f1 = a[i]
+        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
+              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
         b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         d1 = d1 * e1 * f1
@@ -38,19 +42,24 @@ def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L],
 
 
 @dace.program
-def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L],
-                d: dace.float64[L], e: dace.float64[L], x: dace.float64[L]):
+def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
+                x: dace.float64[L]):
     # vbor verbatim with two unary-minus unops injected on reused scalars: same
     # boundary-connector structure as _vbor (known to tile e2e through the
     # descent), so the e2e isolates the descent's TileUnop path.
     for i in range(L):
-        a1 = a[i]; b1 = b[i]; c1 = c[i]; d1 = d[i]; e1 = e[i]; f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 +
-              a1 * c1 * f1 + a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
-        a1 = -a1                              # unary-minus unop on a reused scalar
+        a1 = a[i]
+        b1 = b[i]
+        c1 = c[i]
+        d1 = d[i]
+        e1 = e[i]
+        f1 = a[i]
+        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
+              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        a1 = -a1  # unary-minus unop on a reused scalar
         b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
-        c1 = -c1                              # unary-minus unop
+        c1 = -c1  # unary-minus unop
         d1 = d1 * e1 * f1
         x[i] = a1 * b1 * c1 * d1
 

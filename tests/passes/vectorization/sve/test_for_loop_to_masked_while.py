@@ -30,9 +30,7 @@ from dace.transformation.passes.vectorization.for_loop_to_masked_while import Fo
 
 N = dace.symbol("N")
 
-
 from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy  # noqa: E402 (dedup)
-
 
 
 def _mask_fill_bodies(sdfg):

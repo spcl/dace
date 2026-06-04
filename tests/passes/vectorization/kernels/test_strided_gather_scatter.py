@@ -947,9 +947,9 @@ def _assert_laneid_fan_collapsed(vec_sdfg):
     for t in fan_tasklets:
         assert "_idx" in t.in_connectors, (f"{t.label} did not get an _idx connector; "
                                            f"in_connectors={set(t.in_connectors)}")
-        assert not LaneIdScheme.contains_lane_chunk(t.code.as_string), (
-            f"{t.label} still references a laneid symbol (legacy or Option B chunked): "
-            f"{t.code.as_string!r}")
+        assert not LaneIdScheme.contains_lane_chunk(
+            t.code.as_string), (f"{t.label} still references a laneid symbol (legacy or Option B chunked): "
+                                f"{t.code.as_string!r}")
 
 
 def test_gather_load_collapse_laneid_structural():

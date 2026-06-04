@@ -352,6 +352,7 @@ def make_gather_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.T
     idx_strides = node.index_strides or [1] * src_ndim
     inputs = ({"_src"} | {f"_idx_{k}" for k in range(src_ndim)} | ({"_mask"} if node.has_mask else set()))
     off = tile_offset([vlen])
+
     # The ``tile_gather`` header reads ``_idx_0[lane]`` internally, so the
     # contiguous-source fast path only applies to a unit-stride index tile;
     # a ``c``-strided index window (``b[idx[c*i]]``) falls to the explicit
@@ -380,9 +381,8 @@ def make_gather_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.T
         code = (f"dace::tileops::tile_gather<{dst_dtype}, {idx_dtype}, {vlen}, {masked}>"
                 f"(_dst, _src, _idx_0, {mask_arg});")
     else:
-        soff = " + ".join(
-            f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({symstr(src_strides[k])}))"
-            for k in range(src_ndim))
+        soff = " + ".join(f"((std::ptrdiff_t)_idx_{k}{_idx_subscript(k)} * ({symstr(src_strides[k])}))"
+                          for k in range(src_ndim))
         if node.has_mask:
             code = nested_loops([vlen], f"_dst[{off}] = _mask[{off}] ? _src[{soff}] : {dst_dtype}(0);")
         else:
@@ -409,6 +409,7 @@ def make_scatter_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.
     masked = "true" if node.has_mask else "false"
     inputs = ({"_src"} | {f"_idx_{k}" for k in range(dst_ndim)} | ({"_mask"} if node.has_mask else set()))
     off = tile_offset([vlen])
+
     # Same Scalar / single-element broadcast rule as the gather.
     def _idx_subscript(k: int) -> str:
         ie = next(e for e in parent_state.in_edges(node) if e.dst_conn == f"_idx_{k}")

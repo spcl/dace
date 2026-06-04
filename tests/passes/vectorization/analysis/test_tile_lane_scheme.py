@@ -18,9 +18,8 @@ from dace.transformation.passes.vectorization.utils.name_schemes import (
 )
 
 
-@pytest.mark.parametrize("chunks",
-                         [((0, 0), ), ((0, 3), ), ((0, 1), (1, 2)), ((0, 0), (1, 1), (2, 7)),
-                          ((0, 4), (1, 0), (2, 2))])
+@pytest.mark.parametrize("chunks", [((0, 0), ), ((0, 3), ), ((0, 1), (1, 2)), ((0, 0), (1, 1), (2, 7)),
+                                    ((0, 4), (1, 0), (2, 2))])
 def test_make_multi_parse_chunks_roundtrip(chunks):
     """``make_multi`` ∘ ``parse_chunks`` is the identity for K ∈ {1, 2, 3}."""
     encoded = LaneIdScheme.make_multi("foo", chunks)

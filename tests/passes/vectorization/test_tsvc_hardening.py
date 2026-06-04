@@ -10,7 +10,6 @@ import pytest
 import numpy as np
 
 from tests.corpus import tsvc
-from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 _G1D = tsvc.collect(regime="1d")
 _G2D = tsvc.collect(regime="2d")
@@ -99,5 +98,3 @@ def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, rem
         insert_copies=insert_copies,
         vectorize_config=vectorize_config,
     )
-
-

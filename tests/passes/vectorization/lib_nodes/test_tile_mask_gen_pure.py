@@ -40,8 +40,8 @@ def _build_maskgen_sdfg(widths, iter_vars, global_ubs, tag):
 
 def test_tile_mask_gen_pure_1d_all_active():
     """When the trip aligns, every lane is active."""
-    widths = (8,)
-    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i",), global_ubs=("N",), tag="all_active")
+    widths = (8, )
+    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i", ), global_ubs=("N", ), tag="all_active")
     OUT = np.zeros(widths, dtype=bool)
     sdfg(OUT=OUT, i=0, N=8)
     np.testing.assert_array_equal(OUT, np.ones(widths, dtype=bool))
@@ -49,8 +49,8 @@ def test_tile_mask_gen_pure_1d_all_active():
 
 def test_tile_mask_gen_pure_1d_partial_mask():
     """When ``i + l >= N``, the corresponding lane is inactive."""
-    widths = (8,)
-    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i",), global_ubs=("N",), tag="partial")
+    widths = (8, )
+    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i", ), global_ubs=("N", ), tag="partial")
     OUT = np.zeros(widths, dtype=bool)
     sdfg(OUT=OUT, i=0, N=5)
     ref = np.arange(8) < 5
@@ -72,4 +72,4 @@ def test_tile_mask_gen_pure_2d_any_dim_oob():
 def test_tile_mask_gen_rejects_length_mismatch():
     """Constructor refuses unequal widths / iter_vars / global_ubs lengths."""
     with pytest.raises(ValueError, match="lengths must agree"):
-        TileMaskGen(name="bad", widths=(8, 4), iter_vars=("i",), global_ubs=("N",))
+        TileMaskGen(name="bad", widths=(8, 4), iter_vars=("i", ), global_ubs=("N", ))

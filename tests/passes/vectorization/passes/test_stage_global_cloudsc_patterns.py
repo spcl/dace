@@ -37,7 +37,6 @@ import copy
 import dace
 import numpy as np
 import pytest
-from dace import subsets
 from dace.memlet import Memlet
 
 
@@ -51,8 +50,8 @@ def _ref_run(sdfg, **arrays):
 
 def _assert_close(reference, result, *, rtol=1e-12):
     for k in reference:
-        assert np.allclose(reference[k], result[k], rtol=rtol), (
-            f"{k} mismatch: max abs diff {np.max(np.abs(reference[k] - result[k]))}")
+        assert np.allclose(reference[k], result[k],
+                           rtol=rtol), (f"{k} mismatch: max abs diff {np.max(np.abs(reference[k] - result[k]))}")
 
 
 def _bridge_is_staged(sdfg: dace.SDFG, bridge_name: str) -> bool:
@@ -307,8 +306,7 @@ def _build_nsdfg_single_bridge(N: int = 8):
     a_drain = bstate.add_access("A_io")
     bstate.add_edge(a_bridge, None, a_drain, None, Memlet("A_io[0]"))
 
-    nsdfg_node = state.add_nested_sdfg(
-        body, {"input_in", "A_io"}, {"output_out", "A_io"})
+    nsdfg_node = state.add_nested_sdfg(body, {"input_in", "A_io"}, {"output_out", "A_io"})
     in_node = state.add_access("input")
     a_node = state.add_access("A")
     out_node = state.add_access("output")
@@ -358,8 +356,7 @@ def test_inmap_single_bridge_through_scalar():
     sdfg(input=inputs.copy(), output=out_run, A=A_run)
     expected_A = 2.0 * inputs
     expected_out = expected_A + 1.0
-    _assert_close({"A": expected_A, "output": expected_out},
-                  {"A": A_run, "output": out_run})
+    _assert_close({"A": expected_A, "output": expected_out}, {"A": A_run, "output": out_run})
 
 
 @pytest.mark.xfail(reason="Pure-writer multi-subset pattern: multiple tasklets write "
@@ -419,9 +416,8 @@ def test_inmap_multi_state_propagation():
     ref = _ref_run(sdfg, input=inputs, output=outputs, A=A)
     _stage(sdfg)
     sdfg.validate()
-    assert _bridge_is_staged(sdfg, "A_io"), (
-        "Multi-state bridge ``A_io`` should have a staged scalar that "
-        "propagates between states")
+    assert _bridge_is_staged(sdfg, "A_io"), ("Multi-state bridge ``A_io`` should have a staged scalar that "
+                                             "propagates between states")
     cur = {"input": inputs.copy(), "output": outputs.copy(), "A": A.copy()}
     sdfg(**cur)
     _assert_close(ref, cur)
@@ -460,8 +456,7 @@ def test_inmap_multi_in_multi_out_subsets():
         for name, desc in s.arrays.items():
             if "A" in name and desc.transient and isinstance(desc, dace.data.Scalar):
                 staged_count += 1
-    assert staged_count >= 2, (
-        f"Expected ≥2 staged scalars (one per subset), got {staged_count}")
+    assert staged_count >= 2, (f"Expected ≥2 staged scalars (one per subset), got {staged_count}")
     cur = {"input": inputs.copy(), "output": outputs.copy(), "A": A.copy()}
     sdfg(**cur)
     _assert_close(ref, cur)
@@ -488,8 +483,7 @@ def test_nsdfg_single_bridge_through_scalar():
     ref = _ref_run(sdfg, input=inputs, output=outputs, A=A)
     _stage(sdfg)
     sdfg.validate()
-    assert _bridge_is_staged(sdfg, "A_io"), (
-        "Body-NSDFG bridge ``A_io`` should have a staged scalar transient")
+    assert _bridge_is_staged(sdfg, "A_io"), ("Body-NSDFG bridge ``A_io`` should have a staged scalar transient")
     cur = {"input": inputs.copy(), "output": outputs.copy(), "A": A.copy()}
     sdfg(**cur)
     _assert_close(ref, cur)

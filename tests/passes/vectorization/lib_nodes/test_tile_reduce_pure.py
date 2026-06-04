@@ -11,7 +11,6 @@ Single vectorization config is sufficient since the reduction emission is
 invariant across knobs (the lib node owns the per-arch lowering).
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.libraries.tileops import TileReduce

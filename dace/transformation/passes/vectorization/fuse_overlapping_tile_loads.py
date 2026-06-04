@@ -71,12 +71,11 @@ class FuseOverlappingTileLoads(ppl.Pass):
 
     CATEGORY: str = "Vectorization"
 
-    fusion_threshold = properties.Property(
-        dtype=int,
-        default=1,
-        desc="Minimum overlap count *above* which a per-array TileLoad fan is "
-        "fused into a shared union window. Default ``1`` preserves the "
-        "common contract (fuse iff ``>= 2`` overlapping reads).")
+    fusion_threshold = properties.Property(dtype=int,
+                                           default=1,
+                                           desc="Minimum overlap count *above* which a per-array TileLoad fan is "
+                                           "fused into a shared union window. Default ``1`` preserves the "
+                                           "common contract (fuse iff ``>= 2`` overlapping reads).")
 
     def __init__(self, fusion_threshold: int = 1):
         super().__init__()
@@ -230,8 +229,7 @@ class FuseOverlappingTileLoads(ppl.Pass):
         # via memlet sub-slicing).
         union_an = state.add_access(union_name)
         full_subset = ", ".join(f"0:{e}" for e in union_extent)
-        state.add_edge(src_an, None, union_an, None,
-                       dace.Memlet(data=src_data, subset=union, other_subset=full_subset))
+        state.add_edge(src_an, None, union_an, None, dace.Memlet(data=src_data, subset=union, other_subset=full_subset))
         # Replace each load with a plain memlet copy from the union buffer
         # into the *same* dense per-load tile transient. Keeping the tile
         # transient preserves the binop consumer interface (the lib node's

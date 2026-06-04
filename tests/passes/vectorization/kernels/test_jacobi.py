@@ -176,8 +176,7 @@ def test_jacobi2d_with_parameters(fuse_overlapping_loads, tile_emit_mode, emissi
         emission_style=emission_style,
         vectorize_config=vectorize_config,
     )
-    if (fuse_overlapping_loads and insert_copies and emission_style == "default"
-            and vectorize_config == "tile_nodes"):
+    if (fuse_overlapping_loads and insert_copies and emission_style == "default" and vectorize_config == "tile_nodes"):
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
 
 
@@ -281,6 +280,5 @@ def test_heat3d_with_parameters(fuse_overlapping_loads, tile_emit_mode, emission
         emission_style=emission_style,
         vectorize_config=vectorize_config,
     )
-    if (fuse_overlapping_loads and insert_copies and emission_style == "default"
-            and vectorize_config == "tile_nodes"):
+    if (fuse_overlapping_loads and insert_copies and emission_style == "default" and vectorize_config == "tile_nodes"):
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))

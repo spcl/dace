@@ -162,13 +162,12 @@ def _emit_ite_with_symbol_arms(ctx: EmitCtx) -> str:
         tree = ast.parse(rhs, mode="eval").body
     except SyntaxError as ex:
         raise NotImplementedError(f"_emit_ite_with_symbol_arms: parse failed on {rhs!r}: {ex}")
-    if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name)
-            and tree.func.id in ('ITE', 'merge') and len(tree.args) == 3):
+    if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and tree.func.id in ('ITE', 'merge')
+            and len(tree.args) == 3):
         raise NotImplementedError(f"_emit_ite_with_symbol_arms: expected ``ITE(c, t, e)``, got {rhs!r}")
     out_conns = list(ctx.node.out_connectors.keys())
     if len(out_conns) != 1:
-        raise NotImplementedError(
-            f"_emit_ite_with_symbol_arms: expected 1 output connector, got {out_conns}")
+        raise NotImplementedError(f"_emit_ite_with_symbol_arms: expected 1 output connector, got {out_conns}")
     out_conn = out_conns[0]
     in_conns = list(ctx.node.in_connectors.keys())
 
@@ -178,8 +177,7 @@ def _emit_ite_with_symbol_arms(ctx: EmitCtx) -> str:
         for c in in_conns:
             expr = re.sub(rf"\b{re.escape(c)}\b", f"{c}[_vi]", expr)
         if ctx.vector_map_param and re.search(rf"\b{re.escape(ctx.vector_map_param)}\b", expr):
-            expr = re.sub(rf"\b{re.escape(ctx.vector_map_param)}\b",
-                          f"({ctx.vector_map_param} + _vi)", expr)
+            expr = re.sub(rf"\b{re.escape(ctx.vector_map_param)}\b", f"({ctx.vector_map_param} + _vi)", expr)
         return expr
 
     cond = _shift(ast.unparse(tree.args[0]))
@@ -308,10 +306,9 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
     # arms and miscompile, so refuse loudly.
     code_str = (ctx.node.code.as_string or "").strip()
     if " if " in code_str and " else " in code_str:
-        raise NotImplementedError(
-            f"vectorization: tasklet {ctx.node.label!r} carries a Python ternary "
-            f"({code_str!r}); producers must emit ``ITE(c, t, e)`` instead so the "
-            f"vectorizer can lower it as a ``TERNARY_ARRAY``.")
+        raise NotImplementedError(f"vectorization: tasklet {ctx.node.label!r} carries a Python ternary "
+                                  f"({code_str!r}); producers must emit ``ITE(c, t, e)`` instead so the "
+                                  f"vectorizer can lower it as a ``TERNARY_ARRAY``.")
 
     # Fallback: unsupported operator (or op with no ``_masked`` template).
     # When ``ctx.mask_connector`` is set the per-lane write MUST be gated
@@ -402,7 +399,7 @@ def _binary_expr(l_op: str, op: str, r_op: str) -> str:
 
 
 def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str,
-                                       vector_map_param: str) -> bool:
+                                      vector_map_param: str) -> bool:
     """Whether input connector ``conn`` reads a lane-invariant value.
 
     A subset that does NOT mention the vectorized map parameter is by
@@ -648,9 +645,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
             # and codegen references an undeclared symbol. CPP lowering is reserved for
             # the intrinsic ops; the matching ``SCALAR_SYMBOL`` / ``SYMBOL_SYMBOL`` /
             # ``SCALAR_SCALAR`` per-lane assignments stay Python for the same reason.
-            node.code = dace.properties.CodeBlock(code="\n".join(
-                [f"{lhs}[{i}] = {LaneIdScheme.make_dim(c1, 0, i)}" for i in range(vw)]) + "\n",
-                                                  language=dace.Language.Python)
+            node.code = dace.properties.CodeBlock(
+                code="\n".join([f"{lhs}[{i}] = {LaneIdScheme.make_dim(c1, 0, i)}" for i in range(vw)]) + "\n",
+                language=dace.Language.Python)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         # A binop operand whose connector reads a single (non-vectorized)
         # element is a scalar value at the C level, not a vector pointer.
@@ -705,8 +702,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         # the vectorized map param shifted to ``(<param> + _vi)`` so a lane
         # index symbol like ``_loop_it_0`` walks the W consecutive lane values.
         if op in ('ITE', 'merge'):
-            node.code = dace.properties.CodeBlock(code=_emit_ite_with_symbol_arms(ctx),
-                                                  language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code=_emit_ite_with_symbol_arms(ctx), language=dace.Language.CPP)
             return
         arr_name = rhs1 if rhs1 is not None else rhs2
         occurrences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)

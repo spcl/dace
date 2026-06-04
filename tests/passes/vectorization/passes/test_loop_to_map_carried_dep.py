@@ -23,32 +23,32 @@ import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 from tests.corpus.tsvc import (s481_d_single, s482_d_single, s1119_d_single, s2101_d_single, s2111_d_single,
-                                s231_d_single, s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
-                                s257_d_single)
+                               s231_d_single, s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
+                               s257_d_single)
 
 # (kernel, loop variables carrying a real dependency that MUST stay sequential).
 _CARRIED_DEP = [
-    (s1119_d_single, {"i"}),       # aa[i, j] = aa[i - 1, j] + bb[i, j]
-    (s231_d_single, {"j"}),        # aa[j, i] = aa[j - 1, i] + bb[j, i]
-    (s232_d_single, {"i"}),        # aa[j, i] = aa[j, i - 1] ** 2 + bb[j, i]
-    (s235_d_single, {"j"}),        # aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i]
+    (s1119_d_single, {"i"}),  # aa[i, j] = aa[i - 1, j] + bb[i, j]
+    (s231_d_single, {"j"}),  # aa[j, i] = aa[j - 1, i] + bb[j, i]
+    (s232_d_single, {"i"}),  # aa[j, i] = aa[j, i - 1] ** 2 + bb[j, i]
+    (s235_d_single, {"j"}),  # aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i]
     (s2111_d_single, {"i", "j"}),  # Gauss-Seidel: aa[j, i - 1] and aa[j - 1, i]
-    (s256_d_single, {"j"}),        # a[j] = 1.0 - a[j - 1]
-    (s257_d_single, {"i"}),        # a[i] = aa[j, i] - a[i - 1]
+    (s256_d_single, {"j"}),  # a[j] = 1.0 - a[j - 1]
+    (s257_d_single, {"i"}),  # a[i] = aa[j, i] - a[i - 1]
 ]
 
 # Data-dependent ``break`` makes the loop trip count runtime-dependent: a
 # later iteration only runs if no earlier one broke, so the loop cannot be
 # parallelised. LoopToMap must keep it sequential.
 _DATA_DEPENDENT_BREAK = [
-    (s481_d_single, {"i"}),        # if d[i] < 0.0: break  (before the write)
-    (s482_d_single, {"i"}),        # ...; if c[i] > b[i]: break  (after the write)
+    (s481_d_single, {"i"}),  # if d[i] < 0.0: break  (before the write)
+    (s482_d_single, {"i"}),  # ...; if c[i] > b[i]: break  (after the write)
 ]
 
 # Fully-parallel TSVC kernels (control): every loop SHOULD map, so the guard
 # above is not trivially satisfied by a LoopToMap that never fires.
 _FULLY_PARALLEL = [
-    (s2101_d_single, {"i"}),       # diagonal aa[i, i] -- independent across i
+    (s2101_d_single, {"i"}),  # diagonal aa[i, i] -- independent across i
     (s2275_d_single, {"i", "j"}),  # column aa[j, i] -- both dims independent
 ]
 
@@ -100,14 +100,12 @@ def test_loop_to_map_keeps_data_dependent_break_sequential(prog, break_vars):
         f"{prog.name}: LoopToMap parallelised a loop with a data-dependent break {wrongly_mapped} "
         f"(map_params={map_params}); the early exit makes the trip count runtime-dependent.")
     missing = break_vars - loops
-    assert not missing, (
-        f"{prog.name}: break loop(s) {missing} are no longer a LoopRegion (loops_kept={loops}).")
+    assert not missing, (f"{prog.name}: break loop(s) {missing} are no longer a LoopRegion (loops_kept={loops}).")
 
 
 @pytest.mark.parametrize("prog,parallel_vars", _FULLY_PARALLEL, ids=[p[0].name for p in _FULLY_PARALLEL])
 def test_loop_to_map_parallelises_independent_loops(prog, parallel_vars):
     loops, map_params = _loops_and_maps_after_l2map(prog)
     not_mapped = parallel_vars - map_params
-    assert not not_mapped, (
-        f"{prog.name}: independent loop(s) {not_mapped} were NOT mapped (map_params={map_params}, "
-        f"loops_kept={loops}); LoopToMap should parallelise them.")
+    assert not not_mapped, (f"{prog.name}: independent loop(s) {not_mapped} were NOT mapped (map_params={map_params}, "
+                            f"loops_kept={loops}); LoopToMap should parallelise them.")

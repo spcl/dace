@@ -78,8 +78,8 @@ class CleanScalarAssignToMapExit(ppl.Pass):
 
     def _check_pattern(
         self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet
-    ) -> Optional[Tuple[MultiConnectorEdge[dace.Memlet], dace.nodes.AccessNode,
-                        MultiConnectorEdge[dace.Memlet], dace.nodes.MapExit]]:
+    ) -> Optional[Tuple[MultiConnectorEdge[dace.Memlet], dace.nodes.AccessNode, MultiConnectorEdge[dace.Memlet],
+                        dace.nodes.MapExit]]:
         """Match ``producer -> assign tasklet -> scalar transient -> MapExit``.
 
         :param state: State holding the candidate subgraph.
@@ -116,8 +116,8 @@ class CleanScalarAssignToMapExit(ppl.Pass):
             return None
         if isinstance(desc, dace.data.View):
             return None
-        if not (isinstance(desc, dace.data.Scalar)
-                or (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
+        if not (isinstance(desc, dace.data.Scalar) or
+                (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
             return None
 
         # The scalar must be written exactly once (by this tasklet) and read

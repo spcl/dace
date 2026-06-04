@@ -88,7 +88,12 @@ class ExpandTileLoadPure(ExpandTransformation):
             dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
             src_strides = [symstr(src_arr.strides[d]) for d in dims]
             coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-            src_off = offset_via_strides(coeff, src_strides)
+            # Per-dim replicate factor: ``__l<d> / k`` indexes a contracted
+            # box of W/k elements when ``k > 1``, broadcasting each loaded
+            # value to ``k`` consecutive lanes (the int_floor / int_ceil
+            # regime). Default all-1 = no replication.
+            replicate = list(node.replicate_factor_per_dim) if node.replicate_factor_per_dim else [1] * K
+            src_off = offset_via_strides(coeff, src_strides, replicate)
             src_ref = f"_src[{src_off}]"
         if node.has_mask:
             body = f"_dst[{dst_off}] = _mask[{dst_off}] ? {src_ref} : {dst_dtype}(0);"
@@ -302,6 +307,17 @@ class TileLoad(nodes.LibraryNode):
         default=None,
         desc="Literal / symbolic expression for ``src_kind='Symbol'``; ignored otherwise.",
     )
+    replicate_factor_per_dim = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-tile-dim replicate factor (lanes-per-distinct-value within "
+        "the dim). ``1`` (or empty) = no replication, the contiguous endpoint "
+        "of the spectrum. ``k > 1`` = ``int_floor`` / ``int_ceil`` regime: load "
+        "``W_d / k`` elements on this dim and group-broadcast each ``k`` times "
+        "across consecutive lanes. The codegen template covers all three "
+        "regimes (factor=1 contiguous, 1<k<W grouped, k=W full broadcast) "
+        "uniformly.",
+    )
 
     def __init__(self,
                  name: str,
@@ -312,6 +328,7 @@ class TileLoad(nodes.LibraryNode):
                  pad_mode: str = "ZERO",
                  src_kind: str = "Tile",
                  src_expr: Optional[str] = None,
+                 replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
                  location: Optional[str] = None):
         """Construct a ``TileLoad`` node.
 
@@ -347,6 +364,16 @@ class TileLoad(nodes.LibraryNode):
             raise ValueError(f"TileLoad: src_kind must be one of 'Tile' | 'Symbol' | 'Scalar', got {src_kind!r}")
         if src_kind == "Symbol" and not src_expr:
             raise ValueError("TileLoad: src_kind='Symbol' requires a non-empty src_expr")
+        if replicate_factor_per_dim is not None:
+            if len(replicate_factor_per_dim) != len(widths):
+                raise ValueError(f"TileLoad: replicate_factor_per_dim length "
+                                 f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
+            for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
+                if k < 1:
+                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k} must be >= 1")
+                if k > 1 and w % k != 0:
+                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k} must divide "
+                                     f"widths[{d}] = {w} (contracted-box load is W/k elements)")
         # ``Symbol`` source has no ``_src`` connector — the literal is embedded
         # inline at expansion time.
         inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
@@ -358,6 +385,8 @@ class TileLoad(nodes.LibraryNode):
         self.pad_mode = pad_mode
         self.src_kind = src_kind
         self.src_expr = src_expr
+        self.replicate_factor_per_dim = (list(replicate_factor_per_dim)
+                                         if replicate_factor_per_dim else [1] * len(widths))
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors.

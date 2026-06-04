@@ -50,8 +50,10 @@ def test_vector_int_floor(kernel, build, n):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"{kernel.name}_{n}_vec"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
-                 use_fp_factor=False, branch_normalization=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
+                 use_fp_factor=False,
+                 branch_normalization=True,
                  remainder_strategy="scalar").apply_pass(vsdfg, {})
 
     # ``//`` stays an ``int_floor(...)`` call in the vectorized body — never

@@ -24,7 +24,7 @@ def test_tile_gather_constructor_refuses_invalid_widths():
 def test_tile_gather_constructor_refuses_zero_source_ndim():
     """``source_ndim`` must be >= 1."""
     with pytest.raises(ValueError, match="source_ndim"):
-        TileGather(name="G", widths=(8,), source_ndim=0)
+        TileGather(name="G", widths=(8, ), source_ndim=0)
 
 
 def test_tile_gather_declares_source_ndim_index_connectors():
@@ -53,7 +53,7 @@ def test_tile_scatter_declares_dest_ndim_index_connectors():
 def test_tile_reduce_constructor_refuses_unknown_op():
     """Constructor refuses ops outside ``{+, *, min, max}``."""
     with pytest.raises(ValueError, match="unknown op"):
-        TileReduce(name="R", widths=(8,), op="xor")
+        TileReduce(name="R", widths=(8, ), op="xor")
 
 
 def test_tile_reduce_constructor_refuses_axis_out_of_range():
@@ -66,14 +66,14 @@ def test_tile_gather_pure_smoke_1d():
     """End-to-end smoke: 1D gather ``dst[k] = src[idx[k]]`` matches numpy."""
     W = 8
     sdfg = dace.SDFG("tile_gather_pure_1d")
-    sdfg.add_array("SRC", (W * 2,), dace.float64, transient=False)
-    sdfg.add_array("IDX", (W,), dace.int32, transient=False)
-    sdfg.add_array("DST", (W,), dace.float64, transient=False)
+    sdfg.add_array("SRC", (W * 2, ), dace.float64, transient=False)
+    sdfg.add_array("IDX", (W, ), dace.int32, transient=False)
+    sdfg.add_array("DST", (W, ), dace.float64, transient=False)
     state = sdfg.add_state("main")
     src = state.add_access("SRC")
     idx = state.add_access("IDX")
     dst = state.add_access("DST")
-    node = TileGather(name="G", widths=(W,), source_ndim=1)
+    node = TileGather(name="G", widths=(W, ), source_ndim=1)
     state.add_node(node)
     state.add_edge(src, None, node, "_src", dace.Memlet(f"SRC[0:{W * 2}]"))
     state.add_edge(idx, None, node, "_idx_0", dace.Memlet(f"IDX[0:{W}]"))
@@ -92,14 +92,14 @@ def test_tile_scatter_pure_smoke_1d():
     """End-to-end smoke: 1D scatter ``dst[idx[k]] = src[k]`` matches numpy."""
     W = 8
     sdfg = dace.SDFG("tile_scatter_pure_1d")
-    sdfg.add_array("SRC", (W,), dace.float64, transient=False)
-    sdfg.add_array("IDX", (W,), dace.int32, transient=False)
-    sdfg.add_array("DST", (W * 2,), dace.float64, transient=False)
+    sdfg.add_array("SRC", (W, ), dace.float64, transient=False)
+    sdfg.add_array("IDX", (W, ), dace.int32, transient=False)
+    sdfg.add_array("DST", (W * 2, ), dace.float64, transient=False)
     state = sdfg.add_state("main")
     src = state.add_access("SRC")
     idx = state.add_access("IDX")
     dst = state.add_access("DST")
-    node = TileScatter(name="S", widths=(W,), dest_ndim=1)
+    node = TileScatter(name="S", widths=(W, ), dest_ndim=1)
     state.add_node(node)
     state.add_edge(src, None, node, "_src", dace.Memlet(f"SRC[0:{W}]"))
     state.add_edge(idx, None, node, "_idx_0", dace.Memlet(f"IDX[0:{W}]"))
@@ -121,7 +121,7 @@ def test_tile_reduce_pure_smoke_2d_axis_1():
     W0, W1 = 4, 8
     sdfg = dace.SDFG("tile_reduce_pure_2d_axis1")
     sdfg.add_array("SRC", (W0, W1), dace.float64, transient=False)
-    sdfg.add_array("DST", (W0,), dace.float64, transient=False)
+    sdfg.add_array("DST", (W0, ), dace.float64, transient=False)
     state = sdfg.add_state("main")
     src = state.add_access("SRC")
     dst = state.add_access("DST")
@@ -161,9 +161,7 @@ def test_tile_gather_scalar_idx_no_subscript():
     state.add_edge(ix, None, g, "_idx_0", dace.Memlet("IDX[0]"))
     state.add_edge(g, "_dst", d, None, dace.Memlet("DST[0:8]"))
     sdfg.expand_library_nodes()
-    tasklet_bodies = [
-        n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)
-    ]
+    tasklet_bodies = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert not any("_idx_0[" in b for b in tasklet_bodies), tasklet_bodies
 
     # End-to-end: every lane reads SRC[IDX].

@@ -519,19 +519,21 @@ def test_to_ssa_temp_names_do_not_collide_with_input():
     assert any("int_floor(LEN_1D, 2)" in ln for ln in lines), joined
 
 
-@pytest.mark.parametrize("code,n_lines", [
-    # A function call with trivial (name/constant) args is NOT split: a
-    # multi-input function ``foo(a, b, c, d)`` stays a single statement.
-    ("out = foo(a, b, c, d)", 1),
-    # Each non-trivial arg is lifted into its own tasklet *before* the call,
-    # so ``foo(a+1, b+1, c+1, d+1)`` needs 4 arg tasklets + the call = 5.
-    ("out = foo(a + 1, b + 1, c + 1, d + 1)", 5),
-    # Only the non-trivial arg is lifted.
-    ("out = foo(a, b + 1, c, d)", 2),
-    # Two-arg builtin function: ``int_floor(a + 1, 2)`` lifts the ``a + 1``.
-    ("out = int_floor(a + 1, 2)", 2),
-    ("out = int_floor(a, b)", 1),
-])
+@pytest.mark.parametrize(
+    "code,n_lines",
+    [
+        # A function call with trivial (name/constant) args is NOT split: a
+        # multi-input function ``foo(a, b, c, d)`` stays a single statement.
+        ("out = foo(a, b, c, d)", 1),
+        # Each non-trivial arg is lifted into its own tasklet *before* the call,
+        # so ``foo(a+1, b+1, c+1, d+1)`` needs 4 arg tasklets + the call = 5.
+        ("out = foo(a + 1, b + 1, c + 1, d + 1)", 5),
+        # Only the non-trivial arg is lifted.
+        ("out = foo(a, b + 1, c, d)", 2),
+        # Two-arg builtin function: ``int_floor(a + 1, 2)`` lifts the ``a + 1``.
+        ("out = int_floor(a + 1, 2)", 2),
+        ("out = int_floor(a, b)", 1),
+    ])
 def test_to_ssa_multi_input_function_split(code: str, n_lines: int):
     """A function with multiple inputs is split only where its arguments are
     non-trivial: trivial args (names/constants) keep the call as one

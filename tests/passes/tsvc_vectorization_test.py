@@ -80,9 +80,7 @@ def test_tsvc_vectorization(program, kernel, remainder_strategy, branch_mode, le
     # directive: an unsupported kernel pattern must surface, never silently
     # skip). Configuration-mismatch skips happen UPSTREAM in the
     # parametrize matrix.
-    VectorizeCPU(vector_width=8,
-                 fail_on_unvectorizable=False,
-                 remainder_strategy=remainder_strategy,
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=False, remainder_strategy=remainder_strategy,
                  **branch_kwargs).apply_pass(vsdfg, {})
 
     c_ref = sdfg.compile()
@@ -101,9 +99,9 @@ def test_tsvc_vectorization(program, kernel, remainder_strategy, branch_mode, le
         # True)`` treats matching nans / infs as equal so the carried-dep
         # divergence is not a false positive — a genuine numerical
         # mismatch still trips the rtol/atol threshold.
-        assert np.allclose(arrays_ref[name], arrays_vec[name], rtol=1e-10, atol=1e-10, equal_nan=True), (
-            f"{kernel.name}/{name}: max abs diff = "
-            f"{np.nanmax(np.abs(arrays_ref[name] - arrays_vec[name]))}")
+        assert np.allclose(arrays_ref[name], arrays_vec[name], rtol=1e-10, atol=1e-10,
+                           equal_nan=True), (f"{kernel.name}/{name}: max abs diff = "
+                                             f"{np.nanmax(np.abs(arrays_ref[name] - arrays_vec[name]))}")
 
 
 if __name__ == "__main__":

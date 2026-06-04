@@ -39,8 +39,8 @@ _KERNELS_2D = [k for k in tsvc.collect(regime="2d") if k.name in _KERNEL_NAMES]
 
 
 def _matrix():
-    params = (build_tsvc_matrix([(k.program, k) for k in _KERNELS_1D], (64, 65))[0] +
-              build_tsvc_matrix([(k.program, k) for k in _KERNELS_2D], (16, 17))[0])
+    params = (build_tsvc_matrix([(k.program, k) for k in _KERNELS_1D],
+                                (64, 65))[0] + build_tsvc_matrix([(k.program, k) for k in _KERNELS_2D], (16, 17))[0])
     ids = [f"{p[1].name}-{p[2]}-{p[3]}-{p[4]}" for p in params]
     return params, ids
 
@@ -81,11 +81,7 @@ def test_tsvc_canonicalize_vectorization(program, kernel, remainder_strategy, br
     #   that lifts ``for ... if cond: break`` (TSVC s481).
     # * ``validate_all=True`` validates after every stage so any
     #   regression surfaces at the offending stage rather than at the end.
-    canonicalize(vsdfg,
-                 validate=True,
-                 validate_all=True,
-                 peel_limit=8,
-                 break_anti_dependence=True)
+    canonicalize(vsdfg, validate=True, validate_all=True, peel_limit=8, break_anti_dependence=True)
 
     if branch_mode == "fp_factor":
         branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
@@ -95,9 +91,7 @@ def test_tsvc_canonicalize_vectorization(program, kernel, remainder_strategy, br
     # NotImplementedError propagates as a real test failure (per design
     # directive: an unsupported kernel pattern must surface as a failure,
     # never silently skip).
-    VectorizeCPU(vector_width=8,
-                 fail_on_unvectorizable=False,
-                 remainder_strategy=remainder_strategy,
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=False, remainder_strategy=remainder_strategy,
                  **branch_kwargs).apply_pass(vsdfg, {})
 
     c_ref = sdfg.compile()

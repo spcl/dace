@@ -129,9 +129,7 @@ def test_mismatched_an_to_an_refuses_vectorization():
     # Skip ``sdfg.validate()`` here -- DaCe rejects this pattern at AN -> AN
     # rank check before our descent could see it. We invoke the descent's
     # helper directly on the body NSDFG to exercise its own refusal logic.
-    nested = next(
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.NestedSDFG))
+    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     with pytest.raises(NotImplementedError, match=r"AccessNode.*->.*AccessNode.*mismatched"):
         cleanup_an_to_an_edges(nested.sdfg)
 

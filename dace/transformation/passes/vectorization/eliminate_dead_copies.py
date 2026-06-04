@@ -26,7 +26,6 @@ scatter/gather staging that the legacy 1D detect passes consume).
 """
 from typing import Any, Dict, Optional
 
-import dace
 from dace import nodes
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState

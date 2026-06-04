@@ -24,7 +24,7 @@ from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
     emit_staging_copy,
 )
 from dace.transformation.passes.vectorization.utils.post_descent_invariants import (assert_post_descent_invariants,
-                                                                                     cleanup_an_to_an_edges)
+                                                                                    cleanup_an_to_an_edges)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 import dace.sdfg.tasklet_utils as tutil
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names, free_symbols
@@ -495,8 +495,7 @@ class Vectorize(ppl.Pass):
                 # gather. (The contiguous single-dim case is handled above;
                 # this is its non-contiguous sibling, judged by the
                 # descriptor stride, not dim position.)
-                if (len(param_dims_wide) == 1 and self.vector_width > 1
-                        and arr.strides[param_dims_wide[0][0]] != 1
+                if (len(param_dims_wide) == 1 and self.vector_width > 1 and arr.strides[param_dims_wide[0][0]] != 1
                         and param_dims_wide[0][1] == self.vector_width):
                     d0 = param_dims_wide[0][0]
                     # Guard: a strided access widens ONLY the lane dim; every
@@ -578,8 +577,7 @@ class Vectorize(ppl.Pass):
                                                 direction=direction,
                                                 multi_dim_param_dims=tuple(d for d, _ in param_dims_wide))
 
-    def _boundary_lane_dims(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
-                            vector_map_param: str) -> dict:
+    def _boundary_lane_dims(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str) -> dict:
         """Map each NSDFG connector to its lane dim in inner-array coordinates.
 
         The connector name equals the inner array name. For each boundary
@@ -606,8 +604,8 @@ class Vectorize(ppl.Pass):
             one dim.
         """
         lane_dims: dict = {}
-        for edge, conn in ([(e, e.dst_conn) for e in state.in_edges(nsdfg)] +
-                           [(e, e.src_conn) for e in state.out_edges(nsdfg)]):
+        for edge, conn in ([(e, e.dst_conn) for e in state.in_edges(nsdfg)] + [(e, e.src_conn)
+                                                                               for e in state.out_edges(nsdfg)]):
             if conn is None or edge.data is None or edge.data.subset is None:
                 continue
             boundary_subset = edge.data.subset
@@ -1556,9 +1554,10 @@ class Vectorize(ppl.Pass):
                 # non-stride-1 dim, leave the memlet alone — the gather/strided-load path will
                 # handle it (mirrors the original code, which would no-op-substitute in such
                 # cases by extending the contiguous dim that did not contain the param).
-                non_contig_lane_crosses_nsdfg = (
-                    len(param_dims) == 1 and arr_strides is not None and arr_strides[param_dims[0]] != 1
-                    and (isinstance(edge.dst, dace.nodes.NestedSDFG) or isinstance(edge.src, dace.nodes.NestedSDFG)))
+                non_contig_lane_crosses_nsdfg = (len(param_dims) == 1 and arr_strides is not None
+                                                 and arr_strides[param_dims[0]] != 1
+                                                 and (isinstance(edge.dst, dace.nodes.NestedSDFG)
+                                                      or isinstance(edge.src, dace.nodes.NestedSDFG)))
                 if len(param_dims) == 1 and arr_strides is not None and arr_strides[param_dims[0]] == 1:
                     d = param_dims[0]
                     lb, le, ls = new_range_list[d]

@@ -55,8 +55,14 @@ def _build_fortran_2d_axpy() -> dace.SDFG:
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "axpy",
-        {"j": "0:N", "i": "0:M"},
-        {"_a": dace.Memlet("A[i, j]"), "_b": dace.Memlet("B[i, j]")},
+        {
+            "j": "0:N",
+            "i": "0:M"
+        },
+        {
+            "_a": dace.Memlet("A[i, j]"),
+            "_b": dace.Memlet("B[i, j]")
+        },
         "_c = _a + _b",
         {"_c": dace.Memlet("C[i, j]")},
         external_edges=True,
@@ -75,8 +81,15 @@ def test_fortran_2d_axpy(branch_mode, remainder_strategy, emission_style):
     C = np.zeros((M_val, N_val), order="F")
     run_vectorization_test(
         dace_func=_build_fortran_2d_axpy(),
-        arrays={"A": A, "B": B, "C": C},
-        params={"M": M_val, "N": N_val},
+        arrays={
+            "A": A,
+            "B": B,
+            "C": C
+        },
+        params={
+            "M": M_val,
+            "N": N_val
+        },
         sdfg_name="fortran_2d_axpy",
         from_sdfg=True,
         branch_mode=branch_mode,

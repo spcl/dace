@@ -12,11 +12,9 @@ import dace
 from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileStore
 from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
-    GenerateTileIterationMask,
-)
+    GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
-    StrideMapByTileWidths,
-)
+    StrideMapByTileWidths, )
 
 
 def _build_k2_axpy_sdfg():
@@ -30,8 +28,14 @@ def _build_k2_axpy_sdfg():
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "axpy",
-        {"i": "0:M", "j": "0:N"},
-        {"_a": dace.Memlet("A[i, j]"), "_b": dace.Memlet("B[i, j]")},
+        {
+            "i": "0:M",
+            "j": "0:N"
+        },
+        {
+            "_a": dace.Memlet("A[i, j]"),
+            "_b": dace.Memlet("B[i, j]")
+        },
         "_c = _a + _b",
         {"_c": dace.Memlet("C[i, j]")},
         external_edges=True,

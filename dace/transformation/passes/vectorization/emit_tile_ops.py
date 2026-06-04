@@ -33,8 +33,14 @@ from dace.transformation.passes.vectorization.utils.name_schemes import TileConn
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     TileDimSpec,
-    classify_tile_access,
 )
+# Use the per-dim classifier via the compat shim. The shim drives the
+# legacy ``TileAccessClassification`` API from
+# :func:`tile_access.classify_tile_access`, so the consumers below
+# don't change yet -- the descent gets the new per-dim analysis under
+# the existing surface.
+from dace.transformation.passes.vectorization.utils.tile_access_compat import (
+    classify_tile_access_compat as classify_tile_access, )
 
 
 def _lane_index_expr(begin_str: str, iter_vars: Tuple[str, ...]) -> Optional[str]:
@@ -825,12 +831,12 @@ class EmitTileOps(ppl.Pass):
                 if nxt[0].data is not None and nxt[0].data.wcr is not None:
                     return edge, intermediates
                 # Same reduction signal one assign-tasklet removed:
-                # ``AccessNode -> assign_tasklet -[wcr]-> MapExit``. After
-                # ``InsertAssignTaskletsAtMapBoundary`` splits the stage-out
-                # edge, the WCR rides on the post-tasklet edge instead of
-                # the pre-tasklet one — stop here so the caller's WCR
-                # detector still sees the Scalar AccessNode as the
-                # reduction target.
+                # ``AccessNode -> assign_tasklet -[wcr]-> MapExit``. When
+                # an upstream pass has split the stage-out edge with a
+                # trivial ``_out = _in`` tasklet, the WCR rides on the
+                # post-tasklet edge instead of the pre-tasklet one --
+                # stop here so the caller's WCR detector still sees the
+                # Scalar AccessNode as the reduction target.
                 two_hop = nxt[0].dst
                 if (isinstance(two_hop, dace.nodes.Tasklet) and two_hop in assign_set):
                     two_hop_out = list(state.out_edges(two_hop))
