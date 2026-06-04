@@ -197,31 +197,35 @@ class RewriteArrayScalarToTileOp(ppl.Pass):
         are skipped.
 
         :param sdfg: Top-level SDFG.
-        :param pipeline_results: Unused.
+        :param pipeline_results: Reads ``"MarkTileDims"`` when present; the
+            pass is a no-op when the key is missing.
         :returns: Number of edges rewritten, or ``None`` if zero.
         """
         from dace.transformation.passes.vectorization.emit_tile_ops import _mask_name_for_map
+        if not pipeline_results or "MarkTileDims" not in pipeline_results:
+            return None
+        specs: Dict[nodes.MapEntry, TileDimSpec] = pipeline_results["MarkTileDims"]
         total = 0
-        for nsdfg in list(sdfg.all_sdfgs_recursive()):
-            for state in list(nsdfg.states()):
-                for map_entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
-                    spec = getattr(map_entry.map, "tile_spec", None)
-                    if not isinstance(spec, TileDimSpec):
-                        continue
-                    mask_name = _mask_name_for_map(state, map_entry)
-                    mask_node = None
-                    if mask_name is not None:
-                        for n in state.scope_subgraph(map_entry).nodes():
-                            if isinstance(n, nodes.AccessNode) and n.data == mask_name:
-                                mask_node = n
-                                break
-                    for edge in list(state.scope_subgraph(map_entry).edges()):
-                        try:
-                            if rewrite_array_scalar_copy_to_tile_op(state, edge, tuple(spec.iter_vars),
-                                                                    tuple(spec.widths), mask_node):
-                                total += 1
-                        except NotImplementedError:
-                            # Non-box subset -- leave for downstream gather/scatter
-                            # promotion, or for the kernel-level refusal.
-                            continue
+        for n, g in list(sdfg.all_nodes_recursive()):
+            if not isinstance(n, nodes.MapEntry) or not isinstance(g, SDFGState):
+                continue
+            spec = specs.get(n)
+            if spec is None:
+                continue
+            mask_name = _mask_name_for_map(g, n)
+            mask_node = None
+            if mask_name is not None:
+                for sn in g.scope_subgraph(n).nodes():
+                    if isinstance(sn, nodes.AccessNode) and sn.data == mask_name:
+                        mask_node = sn
+                        break
+            for edge in list(g.scope_subgraph(n).edges()):
+                try:
+                    if rewrite_array_scalar_copy_to_tile_op(g, edge, tuple(spec.iter_vars), tuple(spec.widths),
+                                                            mask_node):
+                        total += 1
+                except NotImplementedError:
+                    # Non-box subset -- leave for downstream gather/scatter
+                    # promotion, or for the kernel-level refusal.
+                    continue
         return total if total > 0 else None
