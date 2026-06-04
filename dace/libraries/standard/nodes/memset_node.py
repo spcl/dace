@@ -54,7 +54,7 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
             f"got '{out_name}' subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
             f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions.")
 
-    nbytes = f"{sym2cpp(out_subset.num_elements())} * sizeof({out.dtype.ctype})"
+    nbytes = f"{sym2cpp(out_subset.num_elements_exact())} * sizeof({out.dtype.ctype})"
     if cuda:
         code = f"cudaMemsetAsync({MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, 0, {nbytes}, {CURRENT_STREAM_NAME});"
     else:
@@ -83,7 +83,13 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     _out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
 
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
+        if out_subset.num_elements_exact() == 1:
+            return 'tasklet'
         return 'pure'
+
+    if out_subset.num_elements_exact() == 1 and (out.storage in dace.dtypes.CPU_RESIDENT_STORAGES
+                                                 or out.storage == dace.dtypes.StorageType.Register):
+        return 'tasklet'
 
     if not out_subset.is_contiguous_subset(out):
         return 'pure'
@@ -150,6 +156,35 @@ class ExpandCPU(ExpandTransformation):
         return _make_memset_tasklet(node, parent_state, cuda=False)
 
 
+@library.expansion
+class ExpandTasklet(ExpandTransformation):
+    """Single-element same-side scalar assignment"""
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        inp, out, out_subset = node.validate(parent_sdfg, parent_state)
+        out_volume = out_subset.num_elements_exact()
+        if out_volume != 1:
+            raise ValueError(f"Tasklet expansion requires single-element subsets "
+                             f"(got output volume {out_volume}). "
+                             f"Use MappedTasklet for multi-element copies.")
+
+        # Single-element Shared involvement is a valid thread-level
+        # assignment; the auto dispatcher routes it here when the copy is
+        # inside a thread-block scope.
+        if (is_devicelevel_gpu(parent_state.sdfg, parent_state, node)
+                and out.storage in dace.dtypes.GPU_RESIDENT_STORAGES):
+            raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
+                             f"got {inp.storage} -> {out.storage}. Use a Memset variant instead.")
+
+        return nodes.Tasklet(node.name,
+                             inputs={},
+                             outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME: out.dtype},
+                             code=f"{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME} = 0",
+                             language=dace.Language.Python)
+
+
 @library.node
 class MemsetLibraryNode(nodes.LibraryNode):
     """Library node representing a 0-memset over a contiguous output subset.
@@ -160,7 +195,13 @@ class MemsetLibraryNode(nodes.LibraryNode):
     selector reason purely from the static memlet subset.
     """
 
-    implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
+    implementations = {
+        "Auto": ExpandAuto,
+        "pure": ExpandPure,
+        "CUDA": ExpandCUDA,
+        "CPU": ExpandCPU,
+        "tasklet": ExpandTasklet
+    }
     default_implementation = 'Auto'
 
     # Connector name exposed for library node builders.

@@ -29,11 +29,25 @@ class CopyExpansion:
     out_shape_collapsed: List[symbolic.SymExpr]
 
 
-def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> bool:
+def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType, copy_node: "CopyLibraryNode",
+                      parent_state: dace.SDFGState) -> bool:
     """Return True if src and dst crosses the CPU/GPU boundary. ``Register``
-    adopts its enclosing scope's side and assumed it is never cross-boundary."""
-    return ((src_storage in dtypes.CPU_RESIDENT_STORAGES and dst_storage in dtypes.GPU_RESIDENT_STORAGES)
-            or (src_storage in dtypes.GPU_RESIDENT_STORAGES and dst_storage in dtypes.CPU_RESIDENT_STORAGES))
+    depends on the scope, within GPU scope we assume it is in GPU, and in CPU scope we assume it is in CPU."""
+    in_gpu = is_devicelevel_gpu(parent_state.sdfg, parent_state, copy_node)
+
+    # A storage is GPU-resident if it's explicitly a GPU storage, or a Register inside a GPU scope
+    src_gpu = (src_storage in dtypes.GPU_RESIDENT_STORAGES) or (src_storage == dtypes.StorageType.Register and in_gpu)
+    dst_gpu = (dst_storage in dtypes.GPU_RESIDENT_STORAGES) or (dst_storage == dtypes.StorageType.Register and in_gpu)
+
+    # A storage is CPU-resident if it's explicitly a CPU storage, or a Register outside a GPU scope
+    src_cpu = (src_storage in dtypes.CPU_RESIDENT_STORAGES) or (src_storage == dtypes.StorageType.Register
+                                                                and not in_gpu)
+    dst_cpu = (dst_storage in dtypes.CPU_RESIDENT_STORAGES) or (dst_storage == dtypes.StorageType.Register
+                                                                and not in_gpu)
+
+    print(src_gpu, dst_gpu, src_cpu, dst_cpu, dst_storage, in_gpu)
+
+    return (src_cpu and dst_gpu) or (src_gpu and dst_cpu)
 
 
 def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
@@ -78,7 +92,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # Invariant: single-element copies never route to ``MappedTasklet``
     # (its 0-D map crashes in memlet propagation). Steps 1 and 2 handle
     # the single-element case explicitly.
-    single_elt = (in_subset.num_elements() == 1 and out_subset.num_elements() == 1)
+    single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
 
     # 1. GPU_Shared involvement. Block-cooperative ``SharedMemoryCollective``
     # (``dace::CopyND<>`` + ``__syncthreads()``) unless the copy is
@@ -103,7 +117,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     #                                                   device pointers
     #   same side, has host    any        Tasklet       host runs the assignment
     if single_elt:
-        if _is_cross_cpu_gpu(inp.storage, out.storage):
+        if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
             return 'MemcpyCUDA1D'
         inside_kernel = is_devicelevel_gpu(parent_state.sdfg, parent_state, node)
         both_gpu_global = (inp.storage == dtypes.StorageType.GPU_Global
@@ -192,7 +206,7 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
         return 'MemcpyCUDA2D'
 
     # Same-side strided ND -- MappedTasklet.
-    if not _is_cross_cpu_gpu(inp.storage, out.storage):
+    if not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         return 'MappedTasklet'
 
     # Cross-boundary ND-strided: Sequential map of cudaMemcpyAsync along any
@@ -276,7 +290,7 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
     ctx = _make_expansion_sdfg(node, parent_state, allow_cross_storage=allow_cross_storage)
     inp, out = ctx.inp, ctx.out
 
-    if _is_cross_cpu_gpu(inp.storage, out.storage):
+    if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         raise ValueError("MappedTasklet expansion cannot cross the CPU/GPU boundary "
                          f"(got {inp.storage} -> {out.storage}). Use a MemcpyCUDA1D variant.")
 
@@ -343,7 +357,7 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
                 f"dst subset {ctx.out_subset} (contiguous: {out_contig}) on shape {tuple(out.shape)}.")
         layout = 'C' if inp.is_packed_c_strides() else 'F'
 
-        total = ctx.in_subset.num_elements()
+        total = ctx.in_subset.num_elements_exact()
         b_i_name = "__b_i"
         b_i = symbolic.symbol(b_i_name)
         map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
@@ -400,7 +414,7 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
 
     in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-    nbytes = f"{sym2cpp(in_subset.num_elements())} * sizeof({inp.dtype.ctype})"
+    nbytes = f"{sym2cpp(in_subset.num_elements_exact())} * sizeof({inp.dtype.ctype})"
     if cuda:
         code = f"cudaMemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
     else:
@@ -694,15 +708,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
 @library.expansion
 class ExpandTasklet(ExpandTransformation):
-    """Single-element same-side scalar copy: ``_cpy_out = _cpy_in`` as a
-    Python tasklet inside a wrapper SDFG.
-
-    Both subsets must be volume 1 and must not cross the CPU/GPU boundary
-    (storages within one side may differ, e.g. ``Register`` <-> ``GPU_Global``).
-    ``GPU_Shared`` is rejected -- a direct write lacks the ``__syncthreads``
-    of block-collective updates; use ``SharedMemoryCollective``. The wrapper
-    SDFG isolates the inner connector names from the outer ``_in`` / ``_out``
-    arrays, which would otherwise trip DaCe's connector-vs-array-name rule."""
+    """Single-element same-side scalar copy: ``_cpy_out = _cpy_in`` as a Python tasklet"""
     environments = []
 
     @staticmethod
@@ -710,8 +716,8 @@ class ExpandTasklet(ExpandTransformation):
         inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
                                                                             parent_state,
                                                                             allow_cross_storage=True)
-        in_volume = in_subset.num_elements()
-        out_volume = out_subset.num_elements()
+        in_volume = in_subset.num_elements_exact()
+        out_volume = out_subset.num_elements_exact()
         if in_volume != 1 or out_volume != 1:
             raise ValueError(f"Tasklet expansion requires single-element subsets "
                              f"(got input volume {in_volume}, output volume {out_volume}). "
@@ -719,7 +725,7 @@ class ExpandTasklet(ExpandTransformation):
         # Single-element Shared involvement is a valid thread-level
         # assignment; the auto dispatcher routes it here when the copy is
         # inside a thread-block scope.
-        if _is_cross_cpu_gpu(inp.storage, out.storage):
+        if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
             raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
                              f"got {inp.storage} -> {out.storage}. Use a MemcpyCUDA1D variant instead.")
 
