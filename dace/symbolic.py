@@ -131,7 +131,7 @@ class symbol(sympy.Symbol):
             # to modifying different references of symbols with the same name.
             self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'commutative': True})
         else:
-            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'integer': True, 'commutative': True})
+            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'commutative': True, 'integer': True})
 
         self.dtype = dtype
         self._constraints = []
