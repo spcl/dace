@@ -45,8 +45,6 @@ def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.Stora
     dst_cpu = (dst_storage in dtypes.CPU_RESIDENT_STORAGES) or (dst_storage == dtypes.StorageType.Register
                                                                 and not in_gpu)
 
-    print(src_gpu, dst_gpu, src_cpu, dst_cpu, dst_storage, in_gpu)
-
     return (src_cpu and dst_gpu) or (src_gpu and dst_cpu)
 
 
