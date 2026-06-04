@@ -37,8 +37,6 @@ from dace.transformation.passes.vectorization.generate_tile_iteration_mask impor
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
-from dace.transformation.passes.vectorization.clean_redundant_copies_and_assignments import (
-    CleanRedundantCopiesAndAssignments, )
 from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
     PromoteNSDFGBodyToTiles, )
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
@@ -319,11 +317,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             passes += [SameWriteSetIfElseToITECFG(), BranchNormalization()]
         # Full prep, run BEFORE tiling exactly as the legacy 1D pipeline
         # (vectorize_cpu.py) does, so the tile path handles the same kernels:
-        #   * RemoveEmptyStates / RemoveRedundantAssignmentTasklets — clean up
-        #     the branch-lowering output. (The live ``RemoveRedundantAssignment
-        #     Tasklets`` is used, NOT the dead vectorization-local
-        #     ``RemoveRedundantAssignments``, whose ``depends_on``
-        #     EliminateBranches trips the Pipeline's reapply machinery.)
+        #   * RemoveEmptyStates — tidy the CFG after branch lowering.
         #   * RemoveFP/IntTypeCasts — strip ``dace.floatNN``/``intNN`` casts (the
         #     tile binop re-promotes operands to the output dtype).
         #   * PowerOperatorExpansion — ``x**2`` -> ``x*x``; ``x**c`` ->
@@ -336,23 +330,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``MapCollapse`` run in ``apply_pass``. ``InlineSDFGs`` is
         # intentionally NOT run: it would flatten the body NSDFGs
         # ``PromoteNSDFGBodyToTiles`` descends into.)
-        # ``CleanRedundantCopiesAndAssignments`` is the single replacement for
-        # the family of cleanup passes that used to live here
-        # (``RemoveRedundantAssignmentTasklets`` /
-        # ``InsertAssignTaskletsAtMapBoundary`` /
-        # ``StageGlobalArrayThroughScalars`` / ``ResolveOtherSubsetANEdges``):
-        # it covers the 5 AN -> AN cleanup patterns the descent needs (tasklet
-        # -> AN -> assign -> MapExit; MapEntry -> AN -> tasklet; AN1 -> AN2 ->
-        # next; tasklet -> AN -> array; tasklet -> AN -> tasklet -> array) in
-        # one pass, with no intermediate-assignment insertion. Runs after
-        # SplitTasklets so the hops it cleans are single-op.
+        # The redundant-copy / staging cleanup that previously lived here was
+        # dropped because the required safety analysis is intractable; the
+        # replacement design stages every global-array I/O through transient
+        # scalars and emits broadcast / scatter / replicate / reduce only on
+        # copy nodes inserted after the tile compute (see the multi-dim K=1
+        # and K=2 path docs in the orchestrator slice that follows).
         passes += [
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
             PowerOperatorExpansion(),
             SplitTasklets(),
             RemoveMathCall(),
-            CleanRedundantCopiesAndAssignments(),
             # Clean up empty states left by the branch lowering + body rewrites
             # above, so the tiling passes see a tidy CFG. (A ``ppl.Pipeline``
             # forbids duplicate pass types, so this single end-of-prep cleanup

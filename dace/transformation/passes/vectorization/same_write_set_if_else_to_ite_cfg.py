@@ -381,9 +381,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
            per array). Without this, ``BranchNormalization`` /
            ``SameWriteSetIfElseToITECFG`` would emit two states writing
            to the same internal transient (the original ``src`` plus
-           this ``dst`` clone), and a downstream pass that assumes
-           single-writer scalars (e.g. ``CleanRedundantCopiesAndAssignments``)
-           would raise.
+           this ``dst`` clone), and downstream passes that assume
+           single-writer scalars would raise.
 
         Read-only access nodes keep their original name. This is
         load-bearing for read-modify-write arms (``a = a + b*d``): the
