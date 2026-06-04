@@ -129,9 +129,9 @@ class symbol(sympy.Symbol):
         if 'integer' in assumptions or not numpy.any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
             # to modifying different references of symbols with the same name.
-            self = sympy.Symbol.__xnew__(cls, name, **assumptions)
+            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'commutative': True})
         else:
-            self = sympy.Symbol.__xnew__(cls, name, integer=True, **assumptions)
+            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'integer': True, 'commutative': True})
 
         self.dtype = dtype
         self._constraints = []
