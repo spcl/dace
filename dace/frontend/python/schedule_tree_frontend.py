@@ -671,7 +671,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if iterator_kind == 'dace.map':
             map_scope = tn.MapScope(node=tn.FrontendMap(params=loop_indices, ranges=iterator_ranges), children=[])
             for index_name in loop_indices:
-                map_scope.symbols[index_name] = symbolic.symbol(index_name, dtypes.int64)
+                self._register_symbol(index_name)
             self._append_node(map_scope)
             self._visit_body(map_scope, node.body)
         elif iterator_kind == 'range':
@@ -684,7 +684,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 update_statement=CodeBlock(f'{index_name} = {index_name} + {step}'),
                 loop_variable=index_name),
                                       children=[])
-            loop_scope.symbols[index_name] = symbolic.symbol(index_name, dtypes.int64)
+            self._register_symbol(index_name)
             self._append_node(loop_scope)
             self._visit_body(loop_scope, node.body)
         else:
@@ -1514,8 +1514,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if member_descriptor is None:
             return
 
-        for descriptor in (binding.descriptor, self.root.containers.get(root_name), self.globals.get(root_name),
-                           self.scope_stack[-1].containers.get(root_name) if self.scope_stack else None):
+        for descriptor in (binding.descriptor, self.root.containers.get(root_name), self.globals.get(root_name)):
             if isinstance(descriptor, data.Data):
                 ensure_nested_member_descriptor(descriptor, member_names, member_descriptor)
 
@@ -2189,12 +2188,20 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if cloned is None:
             return
         self.root.containers[name] = _clone_descriptor(cloned)
-        if self.scope_stack[-1] is not self.root:
-            self.scope_stack[-1].containers[name] = _clone_descriptor(cloned)
         self.globals[name] = cloned
         for free_symbol in cloned.free_symbols:
             self.root.symbols[free_symbol.name] = free_symbol
             self.globals[free_symbol.name] = free_symbol
+
+    def _register_symbol(self, name: str, dtype: dtypes.typeclass = dtypes.int64) -> symbolic.symbol:
+        existing = self.root.symbols.get(name)
+        if isinstance(existing, symbolic.symbol):
+            return existing
+
+        symbol_value = symbolic.symbol(name, dtype)
+        self.root.symbols[name] = symbol_value
+        self.globals[name] = symbol_value
+        return symbol_value
 
     def _clone_constants(self, constants: Optional[Dict[str, Tuple[data.Data,
                                                                    Any]]]) -> Dict[str, Tuple[data.Data, Any]]:
@@ -2535,8 +2542,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             for name, binding in self.bindings.items() if binding.descriptor is not None
         })
         context.update(self.root.symbols)
-        for scope in self.scope_stack:
-            context.update(scope.symbols)
         return context
 
     def _numpy_lowering_context(self) -> NumpyLoweringContext:
@@ -2545,6 +2550,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                     resolve_output_target=self._resolve_output_target,
                                     tasklet_name=self._tasklet_name,
                                     fresh_symbol=self._fresh_symbol,
+                                    register_symbol=self._register_symbol,
                                     fresh_name=self._fresh_transient_name,
                                     append_node=self._append_node,
                                     register_binding=self._register_binding)

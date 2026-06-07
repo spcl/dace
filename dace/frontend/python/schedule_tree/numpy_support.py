@@ -25,6 +25,7 @@ OutputTargetResolver = Callable[[ast.AST, ast.AST, Optional[data.Data]], Optiona
 TaskletNameFactory = Callable[[ast.AST], str]
 EvaluationContextFactory = Callable[[], Dict[str, Any]]
 FreshSymbolFactory = Callable[[str], symbolic.symbol]
+SymbolRegistrar = Callable[[str], symbolic.symbol]
 FreshNameFactory = Callable[[str], str]
 NodeAppender = Callable[[tn.ScheduleTreeNode], None]
 BindingRegistrar = Callable[[str, data.Data, str], None]
@@ -37,6 +38,7 @@ class NumpyLoweringContext:
     resolve_output_target: OutputTargetResolver
     tasklet_name: TaskletNameFactory
     fresh_symbol: FreshSymbolFactory
+    register_symbol: SymbolRegistrar
     fresh_name: FreshNameFactory
     append_node: NodeAppender
     register_binding: BindingRegistrar
@@ -307,8 +309,7 @@ class _ElementwiseAssignmentPass:
             map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
                                                         ranges=list(iteration_plan.ranges)),
                                     children=[])
-            for param in iteration_plan.params:
-                map_scope.symbols[param] = symbolic.symbol(param, dtypes.int64)
+            _register_iteration_symbols(context, iteration_plan)
             tasklet_node.parent = map_scope
             map_scope.children.append(tasklet_node)
             return map_scope
@@ -364,8 +365,7 @@ class _ElementwiseAssignmentPass:
         map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
                                                     ranges=list(iteration_plan.ranges)),
                                 children=[])
-        for param in iteration_plan.params:
-            map_scope.symbols[param] = symbolic.symbol(param, dtypes.int64)
+        _register_iteration_symbols(context, iteration_plan)
         tasklet_node.parent = map_scope
         map_scope.children.append(tasklet_node)
         return map_scope
@@ -431,8 +431,7 @@ class _ElementwiseAssignmentPass:
         map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
                                                     ranges=list(iteration_plan.ranges)),
                                 children=[])
-        for param in iteration_plan.params:
-            map_scope.symbols[param] = symbolic.symbol(param, dtypes.int64)
+        _register_iteration_symbols(context, iteration_plan)
         tasklet_node.parent = map_scope
         map_scope.children.append(tasklet_node)
         return map_scope
@@ -476,8 +475,7 @@ class _ElementwiseAssignmentPass:
         map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
                                                     ranges=list(iteration_plan.ranges)),
                                 children=[])
-        for param in iteration_plan.params:
-            map_scope.symbols[param] = symbolic.symbol(param, dtypes.int64)
+        _register_iteration_symbols(context, iteration_plan)
         tasklet_node.parent = map_scope
         map_scope.children.append(tasklet_node)
         return map_scope
@@ -526,8 +524,7 @@ class _ElementwiseAssignmentPass:
         map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
                                                     ranges=list(iteration_plan.ranges)),
                                 children=[])
-        for param in iteration_plan.params:
-            map_scope.symbols[param] = symbolic.symbol(param, dtypes.int64)
+        _register_iteration_symbols(context, iteration_plan)
         tasklet_node.parent = map_scope
         map_scope.children.append(tasklet_node)
         return map_scope
@@ -778,6 +775,11 @@ def _build_iteration_plan(target_subset: subsets.Range) -> Optional[_IterationPl
                           non_singleton_dims=non_singleton_dims,
                           params=params,
                           ranges=ranges)
+
+
+def _register_iteration_symbols(context: NumpyLoweringContext, iteration_plan: _IterationPlan) -> None:
+    for param in iteration_plan.params:
+        context.register_symbol(param)
 
 
 def _build_iteration_plan_from_shape(shape: Sequence[Any]) -> Optional[_IterationPlan]:

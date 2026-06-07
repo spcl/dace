@@ -302,17 +302,6 @@ class _ContainerRenamer(tn.ScheduleNodeTransformer):
             text = re.sub(r'\b' + re.escape(old) + r'\b', new, text)
         return CodeBlock(text)
 
-    # -- scope containers -----------------------------------------------
-
-    def visit_scope(self, node: tn.ScheduleTreeScope):
-        if node.containers:
-            new_containers: Dict[str, data.Data] = {}
-            for k, v in node.containers.items():
-                new_containers[self._rename(k)] = v
-            node.containers = new_containers
-        self.generic_visit(node)
-        return node
-
     # -- leaf node visitors ---------------------------------------------
 
     def visit_CopyNode(self, node: tn.CopyNode):

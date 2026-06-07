@@ -1109,10 +1109,9 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             elif isinstance(node, tn.RefSetNode):
                 refset_nodes.append(node)
 
-            if isinstance(node, tn.ScheduleTreeScope):
-                for name, descriptor in node.containers.items():
-                    if isinstance(descriptor, PythonClass):
-                        pythonclass_names.append(name)
+        for name, descriptor in stree.containers.items():
+            if isinstance(descriptor, PythonClass):
+                pythonclass_names.append(name)
 
         if statement_nodes:
             examples = ', '.join(repr(node.code.as_string) for node in statement_nodes[:3])

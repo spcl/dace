@@ -31,6 +31,7 @@ def test_python_frontend_schedule_tree_structured_control_flow():
 
     assert isinstance(stree.children[0], tn.ViewNode)
     assert isinstance(stree.children[1], tn.LoopScope)
+    assert 'i' in stree.symbols
     assert isinstance(stree.children[1].loop, tn.FrontendLoop)
     assert isinstance(stree.children[1].children[0], tn.IfScope)
     assert isinstance(stree.children[1].children[0].children[0], tn.ContinueNode)
