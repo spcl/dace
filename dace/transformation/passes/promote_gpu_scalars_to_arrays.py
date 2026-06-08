@@ -11,13 +11,15 @@ is exempt -- thread-local stack). Memlets are rewritten via
 subscript, and nested SDFGs re-declaring the name are promoted recursively.
 """
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable
 
 from dace import data, dtypes, properties
-from dace.memlet import Memlet
-from dace.sdfg import SDFG, infer_types, nodes
+from dace.sdfg import SDFG, infer_types, nodes, SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
+
+PatternApplier: type = Callable[[str], str]
 
 
 def invalidate_array_connectors(sdfg: SDFG):
@@ -172,52 +174,104 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         sdfg.remove_data(name, validate=False)
         sdfg.add_datadesc(name, array_desc)
 
-        for state in sdfg.states():
-            for edge in state.edges():
-                if edge.data is not None and edge.data.data == name:
-                    new_memlet = Memlet.from_array(dataname=name, datadesc=array_desc)
-                    new_memlet.dynamic = edge.data.dynamic
-                    new_memlet.wcr = edge.data.wcr
-                    edge.data = new_memlet
+        # The rewrite patten we need to apply.
+        compiled_pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
+        pattern = lambda s: compiled_pattern.sub(rf'\1[0]', s)
 
-        # Interstate edge assignments referencing the promoted name as a
-        # bare identifier (e.g. the frontend's ``__sym_X = X`` symbol-promotion
-        # assignment for indirect indexing) must be rewritten to subscript
-        # the new length-1 array (``__sym_X = X[0]``) -- otherwise the codegen
-        # emits ``int = const int*``.
-        self._rewrite_interstate_assignments(sdfg, name)
-
-        # Recurse into nested SDFGs that share the name as a Scalar.
-        # Connector invalidation happens once at the end of ``apply_pass``
-        # over the full hierarchy.
-        for state in sdfg.states():
-            for node in state.nodes():
-                if (isinstance(node, nodes.NestedSDFG) and name in node.sdfg.arrays
-                        and isinstance(node.sdfg.arrays[name], data.Scalar)):
-                    self._promote_one(node.sdfg, name)
+        self._rewrite_state_machine(sdfg, pattern)
+        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern)
 
     @staticmethod
-    def _rewrite_interstate_assignments(sdfg: SDFG, name: str):
-        """Subscript bare-identifier references to ``name`` in interstate-edge assignments.
+    def _rewrite_codeblock(pattern: PatternApplier, codeblock: properties.CodeBlock) -> properties.CodeBlock:
+        codeblock_str = codeblock.as_string
+        new_codeblock_str = pattern(codeblock_str)
+        return properties.CodeBlock(new_codeblock_str, codeblock.language)
 
-        Rewrites ``name`` to ``name[0]`` so post-promotion code reads the
-        length-1 Array element rather than treating the array pointer as a
-        scalar value.
+    def _rewrite_state_machine(self, sdfg: SDFG, pattern: PatternApplier) -> None:
+        """Applies the pattern to all interstate edges.
+
+        This means all assignments and the condition.
 
         :param sdfg: SDFG whose interstate-edge assignments are rewritten.
-        :param name: Promoted descriptor name to subscript.
+        :param pattern: The rewrite pattern.
         """
-        # Word-boundary regex; subscripted (``name[``) and dotted (``.name``)
-        # references are intentionally skipped.
-        pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
         for cfg in sdfg.all_control_flow_regions():
             for edge in cfg.edges():
                 ise = edge.data
-                if ise is None or not getattr(ise, 'assignments', None):
+                if ise is None:
                     continue
-                for k, v in list(ise.assignments.items()):
+
+                for k, v in list(getattr(ise, "assignments", {}).items()):
                     if not isinstance(v, str):
                         continue
-                    new_v = pattern.sub(rf'\1[0]', v)
+                    new_v = pattern(v)
                     if new_v != v:
                         ise.assignments[k] = new_v
+
+                if hasattr(ise, "condition"):
+                    ise.condition = self._rewrite_codeblock(pattern, ise.condition)
+
+        # TODO(ThrudPrimrose): I am not an expert can we switch to `_regions()` here
+        #   and merge the two loops together? In that case we might even be able to
+        #   call `_rewrite_state()` here.
+        for block in sdfg.all_control_flow_blocks(recursive=True):
+
+            # TODO(ThrudPrimrose): Are there more block types that we need to handle?
+            if isinstance(block, ConditionalBlock):
+                for i in range(len(block._branches)):
+                    if block._branches[i][0] is not None:
+                        block._branches[i][0] = self._rewrite_codeblock(pattern, block._branches[i][0])
+            elif isinstance(block, LoopRegion):
+                block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
+                block.init_statement = self._rewrite_codeblock(pattern, block.init_statement)
+                block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
+
+    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier) -> None:
+        """Applies the promotion, `Scalar` to 'One-Element-Array', in all states.
+
+        :param sdfg: The SDFG on which we operate.
+        :param name: The name of the data that was promoted.
+        :param pattern: The rewrite pattern that we need to apply.
+        """
+        for state in sdfg.states():
+            self._rewrite_state(state=state, name=name, pattern=pattern)
+
+    def _rewrite_state(self, state: SDFGState, name: str, pattern: PatternApplier) -> None:
+        """Applies the promotion, `Scalar` to 'One-Element-Array', to `state`.
+
+        If there is a nested SDFG then the promotion is applied recursively.
+
+        :param state: The state in which to apply the promotion.
+        :param name: The name of the data that was promoted.
+        :param pattern: The pattern to apply.
+        """
+
+        # (void)pattern;
+
+        # NOTE: There is no need to modify the Memlet. The only thing that would change
+        #   at all is the subset (the one associated to the scalar data, the other, if
+        #   present, would not change). However, for Scalars the subset _must_ be `[0]`.
+        #   Which is exactly the same as for a length-one-array.
+        #   Thus the only real operation is to push the change into the nested SDFGs.
+
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+
+            handled_inner_names: set[str] = set()  # If data is referenced as input and output.
+            for iedge in state.in_edges(node):
+                if iedge.data.is_empty():
+                    continue
+                inner_name = iedge.dst_conn
+                if iedge.data.data == name and isinstance(node.sdfg.arrays[inner_name], data.Scalar):
+                    assert inner_name not in handled_inner_names  # Can only appear once.
+                    self._promote_one(node.sdfg, inner_name)
+                    handled_inner_names.add(inner_name)
+
+            for oedge in state.out_edges(node):
+                if oedge.data.is_empty():
+                    continue
+                inner_name = oedge.src_conn
+                if oedge.data.data == name and inner_name not in handled_inner_names and isinstance(
+                        node.sdfg.arrays[inner_name], data.Scalar):
+                    self._promote_one(node.sdfg, inner_name)
