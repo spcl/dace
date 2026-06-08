@@ -243,6 +243,34 @@ reconstructs from the descriptor.) Every consumer of an AN -> AN
 edge -- classifier, staging pass, lib-node emitter -- routes
 through this helper.
 
+### 3.8 Per-lane index materialisation (pre-pass)
+
+A gather expression `idx[i, k]` with `i` a tile iter-var and `k` an
+outer-constant is, before lowering, just a symbolic memlet. The
+modern equivalent of the legacy 1D `_laneid_<i>` symbol fan-out is a
+structural **pre-pass** `PreparePerLaneIndices` that materialises
+every such expression into an integer index tile:
+
+```
+for each gather memlet with index expression I (per dim d):
+  deps = sorted tile iter-var indices that I depends on
+  shape = tuple(widths[p] for p in deps)             # see section 9.2
+  mint a transient `_idx_<d>_<unique>` of shape + int dtype
+  emit a constant-assignment tasklet that fills the tile per lane:
+      for each lane offset l = (l_0, ..., l_{|deps|-1}):
+          tile[l] = I  with  iter_var_p -> base_p + l_idx_of_p
+  wire the tile to the lib node's _idx_<d> connector
+```
+
+This runs after staging (section 3.3) and before lib-node emission.
+Every classifier read of a gather expression is replaced by a tile
+the lib node can broadcast across the lane space at expansion time;
+no per-lane symbol survives into the post-emit SDFG.
+
+The corresponding post-emit audit (section 10.6) asserts the
+absence of `_laneid_<i>`-style symbols, the same loud-failure
+contract the legacy pipeline had.
+
 ### 3.4 Staged-transient scoping
 
 Every transient introduced by the staging pipeline lives in **one
@@ -425,8 +453,7 @@ properties are populated.
 
 Every read access lowers to a single `TileLoad`; every write access to
 a single `TileStore`. There are no separate gather / scatter nodes.
-The presence of an `_idx_<d>` connector on tile dim `d` (or `_idx_full`
-for the full N-D index) marks that dim as GATHER; the lib node's
+The presence of an `_idx_<d>` connector on tile dim `d` marks that dim as GATHER; the lib node's
 expansion picks the right intrinsic mix from `gather_dims` + the
 source layout (section 6.4).
 
@@ -498,7 +525,7 @@ the general gather path.
 Per the design pivot, separate `TileGather` / `TileScatter` nodes are
 **dropped**. Their behaviour is the gather / scatter path of
 `TileLoad` / `TileStore`, selected by wiring an `_idx_<d>` or
-`_idx_full` connector (section 9).
+`_idx_<d>` connectors (section 9).
 
 ### 6.2 Uniform operand contract
 
@@ -770,32 +797,44 @@ Each lib node has a fixed connector vocabulary, every name unique:
 
 | Connector | Direction | Shape | Role |
 |---|---|---|---|
-| `_src` | in (load), in (store source tile) | full source / `(K_0, ..., K_{K-1})` | data |
-| `_dst` | out (load), out (store dest array) | `(K_0, ..., K_{K-1})` / full dest | data |
+| `_src` | in (load) / in (store source tile) | full source / `(K_0, ..., K_{K-1})` | data |
+| `_dst` | out (load) / out (store dest array) | `(K_0, ..., K_{K-1})` / full dest | data |
 | `_mask` | in (optional) | `(K_0, ..., K_{K-1})` bool | predicate |
-| `_idx_full` | in (optional) | `(K_0, ..., K_{K-1})` int | full N-D gather index |
-| `_idx_0`, `_idx_1`, ..., `_idx_{K-1}` | in (optional) | `(K_d,)` int each | per-dim gather index for dim `d` |
+| `_idx_<d>` | in (optional, one per `d in gather_dims`) | **see section 9.2** | per-dim gather index |
 
-`_idx_full` and any `_idx_<d>` are **mutually exclusive** on the same
-node. `_idx_<d>` is wired only for `d in gather_dims`. Validators
-enforce both.
+There is **no separate `_idx_full` connector**. The full N-D case is
+just an `_idx_<d>` whose shape matches the full tile.
 
-### 9.2 Three index forms
+### 9.2 Per-dim index shape encodes lane dependency
 
-| `index_form` | Connectors wired | Per-lane semantics |
+The shape of `_idx_<d>` is determined by **which tile lane indices the
+gather expression for dim `d` depends on**. Let `deps(d)` be the
+sorted tuple of tile dim indices the expression touches. Then:
+
+| `deps(d)` | `_idx_<d>` shape | Lib-node behaviour |
 |---|---|---|
-| `"none"` | (no index connectors) | structured load/store from `dim_strides` + `replicate_factor` only |
-| `"per_dim"` | `_idx_<d>` for every `d in gather_dims` | for gather dims, lane `l_d` reads source dim from `_idx_<d>[l_d]`; for non-gather dims, the affine default |
-| `"full"` | `_idx_full` only | lane `(l_0, ..., l_{K-1})` reads source via `_idx_full[l_0, ..., l_{K-1}]` decoded against `src.strides` |
+| `()` (no lane index) | `(1,)` -- scalar index | every lane reads the same source index |
+| `(p,)` one tile dim | `(W_p,)` | broadcast over the other tile lanes |
+| `(p, q)` | `(W_p, W_q)` | broadcast over remaining tile lanes |
+| `(0, ..., K-1)` (full) | `(W_0, ..., W_{K-1})` | full N-D (subsumes the legacy `_idx_full`) |
 
-The classifier picks the form:
+Worked examples (tile vars `(i, j)` with widths `(W_i, W_j)`,
+optional outer-constant `k`):
 
-- **`none`** when no dim is GATHER.
-- **`per_dim`** when at least one dim is GATHER AND every GATHER dim's
-  index depends only on that dim's lane index (separable). Handles
-  diagonal / transpose / partial-gather kernels.
-- **`full`** when an index depends on multiple lane indices
-  (`src[idx[i, j]]`). The rarest case.
+| Access | `gather_dims` | `_idx_<d>` shapes |
+|---|---|---|
+| `a[idx[i]]` (K=1) | `(0,)` | `_idx_0: (W_i,)` |
+| `a[idx[i], j]` (K=2) | `(0,)` | `_idx_0: (W_i,)` |
+| `a[idx[i, j], j]` (K=2) | `(0,)` | `_idx_0: (W_i, W_j)` |
+| `a[idx[i], j, k]` (K=2 vec, k outer-const) | `(0,)` | `_idx_0: (W_i,)` |
+| `a[idx[i], j, idb[i]]` (K=2) | `(0, 2)` | `_idx_0: (W_i,)`, `_idx_2: (W_i,)` |
+| `a[idx[i, k], j, idb[i, k]]` ICON (K=2, k outer) | `(0, 2)` | `_idx_0: (W_i,)`, `_idx_2: (W_i,)` |
+| `a[idx[i, j, k]]` (K=3, all vec) | `(0,)` | `_idx_0: (W_i, W_j, W_k)` |
+
+The lib node reads each connector's actual shape at expansion time
+and broadcasts to fill `(W_0, ..., W_{K-1})` per lane. The classifier
+just records `deps(d)` per gather dim; the staging pass materialises
+the index tile at the right rank (see section 3.8 pre-pass).
 
 ### 9.3 Constructor signature
 
@@ -805,25 +844,24 @@ TileLoad(name, widths,
          replicate_factor_per_dim,   # tuple of K ints; k for REPLICATE, 1 otherwise
          src_dims,                   # tuple of K ints; permutation of source-array dims
          gather_dims=(),             # subset of range(K)
-         index_form="none",          # "none" | "per_dim" | "full"
          has_mask=False,
-         pad_value=0)                # OOB fill for gather; ignored when index_form == "none"
+         pad_value=0)                # OOB fill for gather; ignored when gather_dims is empty
 ```
 
 `TileStore` mirrors this with `dst_dims` in place of `src_dims` and
-no `pad_value`.
+no `pad_value`. There is no `index_form` property -- the form is
+inferred from the wired connectors' shapes.
 
 ### 9.4 Identifiability invariant
 
-The validator (section 10) checks:
+The validator (section 10) checks for each `TileLoad` / `TileStore`:
 
-- `index_form == "none"` iff no `_idx_*` connector is wired.
-- `index_form == "full"` iff `_idx_full` is wired AND no `_idx_<d>` is wired.
-- `index_form == "per_dim"` iff `_idx_<d>` is wired for every `d in gather_dims` AND `_idx_full` is NOT wired.
-- `gather_dims` matches the set of dims `d` for which `_idx_<d>` is wired (when `index_form == "per_dim"`).
-- An omitted `_idx_<d>` for `d not in gather_dims` falls back to the affine default; the corresponding `dim_strides[d]` and `replicate_factor_per_dim[d]` must define a valid affine access (i.e. that dim's per-dim kind is not GATHER).
+- An `_idx_<d>` connector is wired iff `d in gather_dims`.
+- Each `_idx_<d>`'s descriptor shape is `tuple(widths[p] for p in deps_d)` for some sorted subset `deps_d` of `range(K)`. The classifier records `deps_d` and the validator only checks the shape is a Cartesian product of widths.
+- An `_idx_<d>`'s descriptor dtype is signed integer (`int32` / `int64`); see section 10.4.
+- Each `d not in gather_dims` has a valid affine `dim_strides[d]` and `replicate_factor_per_dim[d]`.
 
-Any other combination is rejected at `validate()` time with a message
+Any other combination is rejected at `validate()` with a message
 naming the conflict.
 
 ---
@@ -833,7 +871,7 @@ naming the conflict.
 | Where | Checks |
 |--------------|------------------------------------------------------------------------------|
 | Constructor | `widths` length in `{1, 2, 3}`; operand kinds in `{Tile, Scalar, Symbol}`; `index_form` / `gather_dims` consistency; replicate factors divide widths. |
-| `validate()` | All declared connectors are wired; tile-operand dtypes match the output dtype (uniform-dtype lock); mask present iff `has_mask`; **mask descriptor is `Array(shape=widths, dtype=bool_, storage=Register, transient=True)`** (section 7.1); `_idx_full` and `_idx_<d>` not both wired on the same node (section 9.4). |
+| `validate()` | All declared connectors are wired; tile-operand dtypes match the output dtype (uniform-dtype lock); mask present iff `has_mask`; **mask descriptor is `Array(shape=widths, dtype=bool_, storage=Register, transient=True)`** (section 7.1); each `_idx_<d>`'s shape is a Cartesian product of `widths` (section 9.4). |
 | Expansion | Source array rank >= K; `src_dims` permutation valid; index tile shapes match `widths` (full / per-dim form); padding mode allowed. |
 
 Loud failure at every layer. No silent fallbacks.
@@ -889,8 +927,7 @@ an explicit axis). Lift when a kernel demands it.
 
 ### 10.4 Index tile dtype lock
 
-`TileLoad` / `TileStore` index connectors (`_idx_full` /
-`_idx_<d>`) must carry a **signed integer** descriptor:
+`TileLoad` / `TileStore` `_idx_<d>` index connectors must carry a **signed integer** descriptor:
 
 - dtype in `{dace.int32, dace.int64}` (int64 default);
 - storage `Register`, `transient=True`;
@@ -918,7 +955,8 @@ Two distinct failure modes, with explicit rules for which fires when:
 | `TileReduce(axis=...)` with non-scalar output | `NotImplementedError` | constructor |
 | Array stride pattern is neither C nor Fortran | `NotImplementedError` | `validate()` (section 2.3) |
 | WCR memlet appears anywhere other than `AccessNode -> MapExit` with single-element AccessNode | `NotImplementedError` | `validate()` (section 3.5) |
-| `_idx_full` and `_idx_<d>` both wired on the same `TileLoad`/`TileStore` | `NotImplementedError` | `validate()` (section 9.4) |
+| `_idx_<d>` descriptor shape not a Cartesian product of `widths` | `NotImplementedError` | `validate()` (section 9.4) |
+| Per-lane index symbol (`_laneid_<i>`-style) survives post-emit | `AssertionError` | post-emit audit (section 10.6) |
 | Index tile dtype not in `{int32, int64}` | `NotImplementedError` | `validate()` (section 10.4) |
 
 **Rule of thumb**:
@@ -933,6 +971,16 @@ Two distinct failure modes, with explicit rules for which fires when:
 
 The classifier never raises; it always returns a `TileAccess` or
 `None`. All raises live in passes that consume the classifier.
+
+### 10.6 Post-emit audit -- no per-lane index symbols
+
+After lib-node expansion finishes, **no `_laneid_<i>`-style symbol
+nor any per-lane index symbol that the staging pre-pass (section 3.8)
+was meant to materialise** may appear in the SDFG. A post-emit pass
+walks every tasklet body, every interstate-edge expression, and every
+memlet subset; any residual lane-fanout symbol triggers
+`AssertionError`. Mirrors the legacy `assert_no_laneid_in_tile_path`
+audit but extended to the modern per-lane-index-tile contract.
 
 ---
 
@@ -953,7 +1001,7 @@ The classifier never raises; it always returns a `TileAccess` or
 | section 8.2 Corner-absorbing peel | [split_map_for_tile_remainder.py](split_map_for_tile_remainder.py): comments at lines 7-34 describe the K boundary peel; impl appears to match. **Audit pending** (G5). |
 | section 8.4 Strategies | [vectorize_cpu_multi_dim.py:133-228](vectorize_cpu_multi_dim.py#L133): `full_mask` / `masked_tail` / `scalar_postamble` knob. |
 | section 5.1 `replicate_factor_per_dim` | [tile_load.py:310](../../../libraries/tileops/nodes/tile_load.py#L310). Wired through pure expansion. |
-| section 9 Index encoding | Currently `tile_gather.py` + `tile_scatter.py` (separate nodes). G3 folds them into `TileLoad` / `TileStore` with `gather_dims` + `index_form` + `_idx_full` / `_idx_<d>` connectors. |
+| section 9 Index encoding | Currently `tile_gather.py` + `tile_scatter.py` (separate nodes). G3 folds them into `TileLoad` / `TileStore` with `gather_dims` + variable-shape `_idx_<d>` connectors (section 9.2 lane-dependency rule). |
 
 ### 11.2 Vocabulary gap (cosmetic, mechanical commit)
 
@@ -1012,9 +1060,7 @@ the design pivot (section 5.1 + section 6.1). Concrete work:
 2. Add per-arch expansion dispatch (section 6.4): structured /
    real-gather / strip-mine based on `gather_dims` x contiguous-dim
    membership.
-3. Connector grammar + validators (section 9): `_idx_full` and
-   `_idx_<d>` mutually exclusive; `gather_dims` matches the wired
-   `_idx_<d>` set under `index_form="per_dim"`.
+3. Connector grammar + validators (section 9): exactly one `_idx_<d>` per `d in gather_dims`; each connector's descriptor shape is a Cartesian product of widths matching the classifier's `deps(d)`.
 4. Drop `TileGather` / `TileScatter` lib node classes (move existing
    call sites onto the unified API; no behaviour change for kernels
    that already work).
@@ -1051,14 +1097,33 @@ passes. The descent
 ([`promote_nsdfg_body_to_tiles.py`](promote_nsdfg_body_to_tiles.py))
 is the canonical lowering for K >= 2.
 
+### G8 -- Per-lane index materialisation pre-pass + post-emit audit
+
+New pass `PreparePerLaneIndices` (section 3.8) runs after staging
+and before lib-node emission. For each gather memlet, computes the
+lane-dependency set per gather dim, mints an integer transient of
+shape `tuple(widths[p] for p in deps)`, emits a constant-assignment
+tasklet that materialises the per-lane index, and wires the tile
+into the corresponding `TileLoad` / `TileStore` `_idx_<d>` connector.
+
+Post-emit audit (section 10.6) walks every tasklet / interstate
+expression / memlet subset and asserts no `_laneid_<i>`-style
+symbol survives. Modern equivalent of legacy
+`assert_no_laneid_in_tile_path`, extended to per-lane index
+materialisation contract.
+
+Unit tests cover the lane-dependency patterns from section 9.2:
+1-D, 2-D, scalar (constant index), full N-D, mixed (one per-dim
+gather + one full-tile gather on the same node).
+
 ---
 
 ## 13. Delivery Plan
 
 | Day | Goal |
 |----------|--------------------------------------------------------------------------------------------|
-| Mon | G1 (full-subset NSDFG body) + G2 (vocab rename + add MODULAR) + G7 stage-global multi-dim entry landed. |
-| Tue AM | G3 (`_idx_full` + `_idx_<d>` + identifiability) + G4 (tile-dep symbol classifier) landed. |
+| Mon | G2 (vocab rename + add MODULAR) + G7 stage-global multi-dim entry landed. (G1 dropped -- existing `ExpandNestedSDFGInputs` establishes the boundary.) |
+| Tue AM | G3 (TileLoad/TileStore unification + variable-shape `_idx_<d>`) + G4 (tile-dep symbol classifier) + G8 (per-lane index materialisation pre-pass) landed. |
 | Tue PM | Design freeze meeting. Lock lib-node interfaces. |
 | Wed | G5 (K=1/K=2/K=3 remainder audit) + G6 (symbol-coefficient distinction) + G7 full-tile fallback. |
 | Thu | Velocity-tendencies stencils parse + lower end-to-end through the pipeline. |
@@ -1168,7 +1233,7 @@ concrete kernel demands them:
 | Per-dim lattice (section 4) | yes | yes | yes | K-agnostic; lattice rule applies per-dim |
 | Cross-dim composition (section 5) | yes | yes | yes | sub-box expansion handles any K |
 | Structured `TileLoad` / `TileStore` | yes | yes | yes | `dim_strides` + `replicate_factor_per_dim` per K |
-| `TileLoad` full gather (`_idx_full`) | yes | yes | yes | `_idx_full` shape `(K_0, ..., K_{K-1})` |
+| `TileLoad` full N-D gather | yes | yes | yes | `_idx_<d>` shape `(K_0, ..., K_{K-1})` |
 | `TileLoad` per-dim gather (`_idx_<d>`) | yes (1)| yes | yes | `_idx_0, ..., _idx_{K-1}`; K=1 collapses to single `_idx_0` |
 | `TileLoad` partial gather | n/a | yes | yes | needs >=2 dims to have a partial subset |
 | Mask `(K_0, ..., K_{K-1})` | yes | yes | yes | always full-tile shape |
