@@ -7,8 +7,8 @@ from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from dace.codegen.tools import gpu_runtime
-from functools import lru_cache
 from io import StringIO
+import functools
 import os
 import subprocess
 from typing import List, Optional, Set, Union
@@ -37,7 +37,7 @@ def find_outgoing_edges(node, dfg):
         return list(dfg.out_edges(node))
 
 
-@lru_cache(maxsize=16384)
+@functools.lru_cache(maxsize=16384)
 def _sym2cpp(s, arrayexprs):
     return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 
@@ -100,18 +100,26 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     return strio.getvalue().strip()
 
 
-@lru_cache()
 def get_gpu_backend() -> str:
-    """
-    Returns the currently-selected GPU backend. If automatic,
-    will perform a series of checks to see if an NVIDIA device exists,
-    then if an AMD device exists, or fail.
-    Otherwise, chooses the configured backend in ``compiler.cuda.backend``.
+    """Returns the currently-selected GPU backend in ``compiler.cuda.backend``.
+
+    If automatic, will perform a series of checks to see if an NVIDIA device exists,
+    then if an AMD device exists, or fail. Note that the automatically detected case
+    will never be revisited.
     """
     backend: str = config.Config.get('compiler', 'cuda', 'backend')
     if backend and backend != 'auto':
         return backend
 
+    return _probing_for_gpu_backend()
+
+
+@functools.cache
+def _probing_for_gpu_backend() -> str:
+    # Inspects the system to figuring out which GPU backend to be used.
+    #  This function should not be called directly by the user, instead it is called
+    #  by `get_gpu_backend()` is the backend is not set. Note that the return value
+    #  of this function is cached and will never change.
     def _try_execute(cmd: str) -> bool:
         process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
         errcode = process.wait()
@@ -147,12 +155,20 @@ def get_gpu_backend() -> str:
                        'to either "cuda" or "hip".')
 
 
-@lru_cache()
 def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     """
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.
     """
     backend = get_gpu_backend()
+    return _look_for_runtime_file(backend)
+
+
+@functools.cache
+def _look_for_runtime_file(backend: str) -> gpu_runtime.GPURuntime:
+    # Look for the runtime information of a GPU backend.
+    #  The user should never call this function directly, instead it is called
+    #  indirectly by ``get_gpu_runtime()``.
+
     if backend == 'cuda':
         libpath = ctypes.util.find_library('cudart')
         if os.name == 'nt' and not libpath:  # Windows-based search
