@@ -1,19 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Body-agnostic helpers shared by the body-NSDFG descent and the
-outer-state (inlined) tile-promotion passes.
+"""Body-agnostic helpers for tile-promotion passes.
 
-The descent (:class:`PromoteNSDFGBodyToTiles`) and the K=2 outer-state
-port (:class:`PromoteInlinedMapToTiles`, landing in subsequent slices)
-share several pure analyses: the perfect-box classifier, the set of
-classification kinds that count as "tileable as a single load / store",
-and the lane-index expression for tile iter-vars. Centralising them
-here keeps the two passes from drifting (different refusal predicates
-in body vs outer scope would silently change which kernels promote).
-
-Each helper is body-context-free: callers that need an NSDFG-side
-shortcut (e.g. "connector array already at tile shape -> skip
-classify") layer it on top of the body-agnostic API rather than
-patching the API itself.
+Centralises the perfect-box classifier + the set of per-dim kinds
+that lower as a single ``TileLoad`` / ``TileStore``. Consumed by
+:class:`PromoteNSDFGBodyToTiles` (the descent, canonical body
+lowering) and any future body rewriter that needs the same refusal
+predicate. Body-context-free; callers add their own shortcuts on top.
 """
 from typing import Optional, Tuple
 

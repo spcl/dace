@@ -209,9 +209,8 @@ Pipeline order (K >= 2):
 `EnforceFullSubsetNSDFGBody` (G1) -> `StageGlobalArrayThroughScalars`
 (with G7 fallback) -> widening (`widen_in_map_nsdfg_inputs` /
 `widen_body_scalars_to_tile`) -> `PromoteNSDFGBodyToTiles` (descent,
-canonical lowering). The slice-1 / slice-2 inlined-outer-state path
-([`promote_inlined_map_to_tiles.py`](promote_inlined_map_to_tiles.py))
-is superseded; see [MULTI_DIM_CODE_AUDIT.md](MULTI_DIM_CODE_AUDIT.md).
+canonical lowering). The historical inlined-outer-state path was
+dropped in tier S of [MULTI_DIM_CODE_AUDIT.md](MULTI_DIM_CODE_AUDIT.md).
 
 ### 3.4 Staged-transient scoping
 
@@ -900,8 +899,8 @@ The classifier never raises; it always returns a `TileAccess` or
 |--------------|----------------------------------------------------------------------------------------------------|
 | section 4 Lattice | [utils/tile_access.py:85](utils/tile_access.py): `PerDimKind` with `BROADCAST` / `STRUCTURED_1` / `REPLICATE` / `AFFINE` / `GATHER`. |
 | section 4.2 Join | [utils/tile_access.py](utils/tile_access.py): partial -- REPLICATE-detection via `int_floor`/`int_ceil`/`__int_floor`/`__int_ceil` ([line 340](utils/tile_access.py#L340)). **Missing**: explicit loop-variant-coefficient -> GATHER. |
-| section 3 Staging | [promote_inlined_map_to_tiles.py](promote_inlined_map_to_tiles.py): slice 1 widens body scalars; slice 2 rewrites binop/unop tasklets to lib nodes. |
-| section 3 Array<->scalar copies | [rewrite_array_scalar_to_tile_op.py](rewrite_array_scalar_to_tile_op.py): direct `AN(Array) <-> AN(tile-transient)` edges -> `TileLoad` / `TileStore`. |
+| section 3 Staging | [stage_global_array_through_scalars.py](stage_global_array_through_scalars.py): per-subset scalar bridge. Full-tile fallback + multi-dim entry hook pending (G7). |
+| section 3 Body lowering | [promote_nsdfg_body_to_tiles.py](promote_nsdfg_body_to_tiles.py): descent, canonical lowering for K=1 and K>=2. |
 | section 6.1 Lib nodes | [libraries/tileops/nodes/](../../../libraries/tileops/nodes/): 10 lib nodes implemented (3,278 LoC). |
 | section 6.2 Operand kinds | [tile_binop.py:62-65](../../../libraries/tileops/nodes/tile_binop.py#L62): `_TILE` / `_SCALAR` / `_SYMBOL`. `TileUnop` ditto. |
 | section 7.1 Mask shape | [tile_mask_gen.py](../../../libraries/tileops/nodes/tile_mask_gen.py): emits ANY-OOB conjunction at tile shape. |
@@ -993,9 +992,7 @@ section 3.3 case 2, (b) multi-dim entry hook that asserts the
 call convention (section 2.4) and refuses when a non-transient
 AccessNode survives mid-body after staging. `VectorizeCPUMultiDim`
 wires `StageGlobalArrayThroughScalars` between G1 and the widening
-passes. Slice-1 / slice-2 inlined-outer-state code
-([`promote_inlined_map_to_tiles.py`](promote_inlined_map_to_tiles.py))
-is superseded; the descent
+passes. The descent
 ([`promote_nsdfg_body_to_tiles.py`](promote_nsdfg_body_to_tiles.py))
 is the canonical lowering for K >= 2.
 
