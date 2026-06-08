@@ -457,6 +457,45 @@ def test_copy_cuda_d2d():
     cp.testing.assert_array_equal(B[50:100], A[150:200])
 
 
+@pytest.mark.gpu
+def test_copy_cuda_1d_single_element():
+    """CUDA expansion (cudaMemcpyDeviceToDevice) on GPU_Global -> GPU_Global for a single element."""
+    import cupy as cp
+
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[200],
+                   strides=["src_stride"],
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   subset="130",
+                   name="gpu_A"),
+        _ArraySpec(shape=[200],
+                   strides=["dst_stride"],
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   subset="15",
+                   name="gpu_B"),
+        implementation="MemcpyCUDA1D",
+        name="copy_cuda_1d_single_element",
+    )
+    sdfg.add_symbol("src_stride", dace.int32)
+    sdfg.add_symbol("dst_stride", dace.int32)
+    sdfg.validate()
+
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+    exe = _compile_no_copynd(sdfg)
+
+    A = cp.arange(200, dtype=cp.float64)
+    B = cp.zeros(200, dtype=cp.float64)
+
+    ref = B.copy()
+    ref[15] = A[130]
+
+    exe(gpu_A=A, gpu_B=B, src_stride=1, dst_stride=1)
+
+    cp.testing.assert_array_equal(ref, B)
+
+
 def test_copy_pure_host_to_device_rejected():
     """Pure expansion must reject CPU_Heap -> GPU_Global (needs cudaMemcpy)."""
     sdfg, _ = _make_copy_sdfg(
