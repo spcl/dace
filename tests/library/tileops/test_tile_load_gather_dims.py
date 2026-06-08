@@ -136,3 +136,65 @@ def test_tilestore_gather_dims_symmetric():
     node.validate(sdfg, state)
     assert tuple(node.gather_dims) == (0, )
     assert "_idx_0" in node.in_connectors
+
+
+# ---------------------------------------------------------------------
+# End-to-end correctness: the pure expansion compiles + runs correctly
+# for each lane-dependency pattern.
+# ---------------------------------------------------------------------
+
+
+def _run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
+    """Build, expand, compile, and run a TileLoad with the given gather setup;
+    return the materialised destination tile as a numpy array."""
+    import numpy as np
+    sdfg = dace.SDFG(f"e2e_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
+    src_shape = src_np.shape
+    sdfg.add_array("Src", src_shape, dace.float64, transient=False)
+    sdfg.add_array("Dst", widths, dace.float64, transient=False)
+    for d in gather_dims:
+        sdfg.add_array(f"Idx{d}", idx_np_per_d[d].shape, dace.int64, transient=False)
+    state = sdfg.add_state("s")
+    src = state.add_access("Src")
+    dst = state.add_access("Dst")
+    node = TileLoad("tl", widths=widths, gather_dims=gather_dims, src_dims=src_dims)
+    state.add_node(node)
+    state.add_edge(src, None, node, "_src", Memlet(f"Src[{', '.join(f'0:{s}' for s in src_shape)}]"))
+    state.add_edge(node, "_dst", dst, None, Memlet(f"Dst[{', '.join(f'0:{w}' for w in widths)}]"))
+    for d in gather_dims:
+        idx = state.add_access(f"Idx{d}")
+        idx_subset = ", ".join(f"0:{s}" for s in idx_np_per_d[d].shape)
+        state.add_edge(idx, None, node, f"_idx_{d}", Memlet(f"Idx{d}[{idx_subset}]"))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    dst_np = np.zeros(widths, dtype=np.float64)
+    kwargs = {"Src": src_np.astype(np.float64), "Dst": dst_np}
+    for d in gather_dims:
+        kwargs[f"Idx{d}"] = idx_np_per_d[d].astype(np.int64)
+    sdfg(**kwargs)
+    return dst_np
+
+
+def test_e2e_1d_gather_K1():
+    """1-D gather: dst[l] = src[idx[l]]."""
+    import numpy as np
+    W = 8
+    src = np.arange(32, dtype=np.float64) * 10
+    idx = np.array([3, 7, 1, 5, 2, 6, 0, 4], dtype=np.int64)
+    out = _run_gather_load(src, {0: idx}, widths=(W, ), gather_dims=(0, ))
+    expected = src[idx]
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_e2e_partial_gather_K2():
+    """2-D access with gather on dim 0 only: dst[l_0, l_1] = src[idx_0[l_0], l_1]."""
+    import numpy as np
+    W0, W1 = 4, 8
+    src = np.arange(16 * W1, dtype=np.float64).reshape(16, W1)
+    idx0 = np.array([7, 2, 11, 5], dtype=np.int64)
+    out = _run_gather_load(src, {0: idx0}, widths=(W0, W1), gather_dims=(0, ))
+    expected = np.zeros((W0, W1), dtype=np.float64)
+    for l0 in range(W0):
+        for l1 in range(W1):
+            expected[l0, l1] = src[idx0[l0], l1]
+    np.testing.assert_array_equal(out, expected)

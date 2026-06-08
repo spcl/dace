@@ -61,6 +61,7 @@ class ExpandTileLoadPure(ExpandTransformation):
         :returns: A CPP tasklet replacing the lib node in place.
         """
         from dace.symbolic import symstr
+        from itertools import combinations
         widths = list(node.widths)
         K = len(widths)
         dst_off = tile_offset(widths)
@@ -88,12 +89,59 @@ class ExpandTileLoadPure(ExpandTransformation):
             dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
             src_strides = [symstr(src_arr.strides[d]) for d in dims]
             coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-            # Per-dim replicate factor: ``__l<d> / k`` indexes a contracted
-            # box of W/k elements when ``k > 1``, broadcasting each loaded
-            # value to ``k`` consecutive lanes (the int_floor / int_ceil
-            # regime). Default all-1 = no replication.
             replicate = list(node.replicate_factor_per_dim) if node.replicate_factor_per_dim else [1] * K
-            src_off = offset_via_strides(coeff, src_strides, replicate)
+            gather_set = set(node.gather_dims)
+            if not gather_set:
+                # Structured path: per-dim affine contributions only.
+                src_off = offset_via_strides(coeff, src_strides, replicate)
+            else:
+                # Unified path: gather dims contribute `_idx_<d>[<flat lane>]`;
+                # non-gather dims contribute the affine `__l<d> * coeff[d] * stride[d]`.
+                # Each `_idx_<d>` connector's descriptor shape determines which lane
+                # indices the index expression depends on (design section 9.2). For shape
+                # `(1,)` the index is loop-invariant (`_idx_<d>[0]`); for shape
+                # `tuple(widths[p] for p in deps_d)` the flat offset into the index tile
+                # is built from the corresponding `__l<p>` lane variables.
+                gather_idx_ref = {}
+                for d in node.gather_dims:
+                    conn = f"_idx_{d}"
+                    edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
+                    idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
+                    if idx_shape == (1, ):
+                        gather_idx_ref[d] = f"{conn}[0]"
+                        continue
+                    # Find the sorted subset deps_d whose width product matches idx_shape.
+                    deps_d = None
+                    for k in range(1, K + 1):
+                        for combo in combinations(range(K), k):
+                            if tuple(widths[p] for p in combo) == idx_shape:
+                                deps_d = combo
+                                break
+                        if deps_d is not None:
+                            break
+                    if deps_d is None:
+                        raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
+                                         f"{idx_shape} against widths {tuple(widths)}")
+                    parts = []
+                    for i, p in enumerate(deps_d):
+                        inner = 1
+                        for q in deps_d[i + 1:]:
+                            inner *= widths[q]
+                        parts.append(f"__l{p}" if inner == 1 else f"(__l{p} * {inner})")
+                    gather_idx_ref[d] = f"{conn}[{' + '.join(parts)}]"
+                # Per-dim contributions: gather dims use the index tile; others use the
+                # affine offset (REPLICATE-aware via `__l<d> / k`).
+                parts = []
+                for d in range(K):
+                    s = src_strides[d]
+                    if d in gather_set:
+                        parts.append(f"(({gather_idx_ref[d]}) * ({s}))")
+                    else:
+                        lane = f"__l{d}"
+                        if replicate[d] > 1:
+                            lane = f"({lane} / {replicate[d]})"
+                        parts.append(f"({coeff[d]} * ({s}) * {lane})")
+                src_off = " + ".join(parts) if parts else "0"
             src_ref = f"_src[{src_off}]"
         if node.has_mask:
             body = f"_dst[{dst_off}] = _mask[{dst_off}] ? {src_ref} : {dst_dtype}(0);"
@@ -101,6 +149,7 @@ class ExpandTileLoadPure(ExpandTransformation):
             body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
         inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
+        inputs |= {f"_idx_{d}" for d in node.gather_dims}
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
