@@ -251,6 +251,16 @@ Estimated final trim:
 - Tier B post-parity: ~9,500 LoC of passes + ~2,300 LoC of utils.
 - Final: ~13,000 LoC removed, roughly 60% of the vectorization tree.
 
+## Section G -- Knobs that became no-ops post-design-polish
+
+- `VectorizeCPUMultiDim(insert_copies=...)` -- the multi-dim pipeline
+  inserts every copy intrinsically (inside-body staging of section
+  3.1: each non-transient access stages through a fresh scalar / tile
+  transient, with the boundary AN -> staged AN being a direct
+  AccessNode -> AccessNode edge per section 3.6). The knob has no
+  effect for K >= 2; kept on the constructor for harness parity with
+  the 1D path until tier B retires it.
+
 ## Section F -- Don't drop yet (revisit later)
 
 - `vectorize.py` `Vectorize` base class -- check inheritance use

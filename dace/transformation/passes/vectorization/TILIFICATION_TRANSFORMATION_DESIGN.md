@@ -154,63 +154,94 @@ Map's scope. It satisfies the **full-subset call convention**:
 
 **Rationale**: the full-subset convention eliminates the "connector
 array shape mismatch" family of bugs that the descent and the
-inlined-outer-state port both fought. The pre-pass `G1`
-(`EnforceFullSubsetNSDFGBody`) guarantees the convention is
-dataflow-safe before any lowering touches the body.
+inlined-outer-state port both fought. The boundary is established
+by [`ExpandNestedSDFGInputs`](../../interstate/expand_nested_sdfg_inputs.py)
+(already invoked by `VectorizeCPUMultiDim`); all analysis runs
+inside the body NSDFG.
 
 ---
 
 ## 3. Inside The Body -- Tile Transients And The Scalar Exception
 
-### 3.1 Staging rule
+### 3.1 Staging rule (inside-body)
 
-> Every non-transient read and write inside the tiled body is staged
-> through a transient `Array(shape=widths, dtype=elem_dtype,
-> storage=Register, transient=True)`.
+> Inside the body NSDFG, every non-transient memlet read / write is
+> staged through a fresh transient. The shape of the transient is
+> chosen from the per-tile classification of the memlet's subset:
 
-The single exception: a **loop-invariant scalar broadcast** sourced
-*before* the lane loop may stay at length 1 / `Scalar` shape. The lib
-node that consumes it sees a `Scalar` operand (section 6.2). The broadcast is a
-column splat, a kernel argument, or any value that is the same across
-every lane of every dim.
+| Memlet's per-dim classification | Transient shape | Lib node emitted |
+|---|---|---|
+| **CONSTANT on every tile dim** | `Scalar` or `Array(shape=(1,))` | none -- direct `AN -> AN` scalar copy. Consumed via the `Scalar` operand kind (section 6.2; hardware splat at codegen). |
+| At least one dim in `{LINEAR, AFFINE, REPLICATE, MODULAR}` | `Array(shape=widths, storage=Register, transient=True)` | `TileLoad` (read) / `TileStore` (write). |
+| Any dim is `GATHER` | same `(K_0, ..., K_{K-1})` tile | `TileGather` (read) / `TileScatter` (write). |
+
+The boundary outside the NSDFG stays at full-array subsets
+(established by `ExpandNestedSDFGInputs`); the inner descriptor
+mirrors the outer shape; analysis runs inside.
 
 ### 3.2 Consequence
 
 Each lib node sees only a full tile or a scalar. Partial-subset /
-strided-lane complexity stays in the staging passes; the per-dim
+strided-lane complexity stays in the staging pass; the per-dim
 lattice (section 4) is a closed surface.
 
-### 3.3 Stage-global is mandatory for the multi-dim body
+### 3.3 No `AN(non-transient) -> NSDFG -> AN(non-transient)`
 
-For `K >= 2` the body is always a NestedSDFG (section 2.4 invariant
-4). `StageGlobalArrayThroughScalars` runs over the body and is
-mandatory: no non-transient AccessNode may appear inside the body's
-dataflow except as the producer / consumer of a staged scalar at the
-body boundary.
+After the multi-dim pipeline runs, no non-transient AccessNode
+appears in the middle of the body's dataflow. Every non-transient
+inner AN is either:
 
-Two-tier staging:
+* **A producer** of a staged scalar / tile transient (read side), or
+* **A consumer** of a staged scalar / tile transient (write side).
 
-1. **Scalar bridge (default)**. Per `(producer, A, s1) x (consumer,
-   A, s2)` pair, replace the global hop with a length-1 transient
-   scalar (Case A / Case B in
-   [STAGE_GLOBAL_THROUGH_SCALARS_SPEC.md](STAGE_GLOBAL_THROUGH_SCALARS_SPEC.md)).
-   Section 3.1 widens the scalar to tile shape downstream.
-
-2. **Full-tile fallback**. When the scalar bridge cannot fold a
-   pair (subset mismatch, cross-state write breaks the linear-
-   accumulation invariant), insert a `(K_0, ..., K_{K-1})` tile
-   transient: `TileLoad` at body entry, in-body compute, `TileStore`
-   at body exit. The global sits at the boundary only.
-
-Refusal: if both tiers fail, the pass raises `NotImplementedError`
-naming the array and state. Caller falls back to scalar code.
+Refusal: when staging cannot fold a producer / consumer pair
+(cross-state RMW chain rejecting the linear-accumulation invariant,
+overlapping subsets the classifier cannot resolve), the pass raises
+`NotImplementedError` naming the array and the offending state.
 
 Pipeline order (K >= 2):
-`EnforceFullSubsetNSDFGBody` (G1) -> `StageGlobalArrayThroughScalars`
-(with G7 fallback) -> widening (`widen_in_map_nsdfg_inputs` /
-`widen_body_scalars_to_tile`) -> `PromoteNSDFGBodyToTiles` (descent,
-canonical lowering). The historical inlined-outer-state path was
-dropped in tier S of [MULTI_DIM_CODE_AUDIT.md](MULTI_DIM_CODE_AUDIT.md).
+
+```
+ExpandNestedSDFGInputs                  (boundary -> full subset, EXISTS in core)
+   -> BypassTrivialAssignTasklets       (no `_out=_in` stragglers; section 3.6)
+   -> StageGlobalArrayThroughScalars    (with G7 multi-dim entry + fallback)
+   -> widen body transients to tile shape
+   -> PromoteNSDFGBodyToTiles           (descent; canonical lowering)
+```
+
+The historical inlined-outer-state path was dropped in tier S of
+[MULTI_DIM_CODE_AUDIT.md](MULTI_DIM_CODE_AUDIT.md).
+
+### 3.6 AN -> AN no-tasklet copy contract
+
+Every staged copy between a non-transient and a transient is a
+direct `AccessNode -> AccessNode` edge -- no `_out = _in` assign
+tasklet in between.
+
+The cleaning pass [BypassTrivialAssignTasklets](bypass_trivial_assign_tasklets.py)
+runs early in the pipeline so the classifier and the staging pass
+see direct edges everywhere.
+
+### 3.7 Reading the AN-side subset
+
+For any AN-incident edge, the subset belonging to that AN is read
+via a **single three-way helper**, not by ad-hoc `edge.data.subset`
+reads (which silently pick the wrong array when `data` points at
+the other side):
+
+```python
+def an_side_subset(edge, an, sdfg) -> Range:
+    if edge.data.data == an.data:
+        return edge.data.subset
+    if edge.data.other_subset is not None:
+        return edge.data.other_subset
+    return Range([(0, s - 1, 1) for s in an.desc(sdfg).shape])
+```
+
+(Implicit full-shape copies omit `other_subset`; the helper
+reconstructs from the descriptor.) Every consumer of an AN -> AN
+edge -- classifier, staging pass, lib-node emitter -- routes
+through this helper.
 
 ### 3.4 Staged-transient scoping
 
@@ -940,13 +971,13 @@ sites in the same commit.
 Each item is a single self-contained slice. Ordering reflects
 dependencies; landing them in order keeps every commit green.
 
-### G1 -- EnforceFullSubsetNSDFGBody
+### G1 -- DROPPED
 
-New standalone pass: for each tile-tagged Map whose body is a
-NestedSDFG, widen every connector memlet to `array[0:N_0, ...,
-0:N_{D-1}]`, assert inner body references the per-tile region via
-`symbol_mapping`, refuse if the outer subset cannot be widened
-safely. Unit tests on K=1 / K=2 / K=3 fixtures.
+The boundary full-subset convention is established by the existing
+[`ExpandNestedSDFGInputs`](../../interstate/expand_nested_sdfg_inputs.py)
+(invoked unconditionally by `VectorizeCPUMultiDim` before any tile
+lowering). All analysis runs inside the body NSDFG; no dedicated
+boundary-enforcement pass is needed.
 
 ### G2 -- Vocabulary rename + add MODULAR
 
