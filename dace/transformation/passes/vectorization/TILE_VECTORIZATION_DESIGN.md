@@ -1,380 +1,625 @@
 # Tile Vectorization — Design Specification
 
-**Status**: draft for Tuesday freeze. Sections 2-9 are the contract; Section 10
-is the implementation audit and migration list.
+**Status**: Draft for Tuesday freeze.
+**Scope**: Lower a K-dim register tile (K ∈ {1, 2, 3}) onto AVX-512 / NEON /
+SVE / scalar / cuTile back ends.
+**Layout**: §§ 2-10 are the contract; §11 audits the current codebase
+against it; §12 lists the gaps and the migration order; §13 holds the
+schedule.
 
-## 1. Scope
+---
 
-Lower a K-dim register tile (K ∈ {1, 2, 3}) onto AVX-512, NEON, SVE, scalar,
-and cuTile back ends. The pipeline that produces this representation is
-otherwise out of scope; this document defines:
+## 1. Goals
 
-- the structural shape of the tiled body (Section 2),
-- the data shape inside the body (Section 3),
-- per-dimension access classification (Section 4),
-- cross-dimension composition rules (Section 5),
-- the library-node surface (Section 6),
-- masking (Section 7),
-- remainder loops (Section 8),
-- gather/scatter index encoding (Section 9).
+1. **One canonical body shape**: the tiled loop body is a NestedSDFG with
+   full-array subsets on every connector. No pointer offsetting at the
+   call site.
+2. **One operand contract per lib node**: each library-node input is either
+   a *full tile* (shape `(K_0, …, K_{K-1})`) or a *scalar* (length-1 / true
+   `Scalar`). Nothing in between.
+3. **One classification surface**: a per-dimension access lattice
+   (§4) plus a single composition rule (§5). All higher-level emission
+   decisions read from the lattice; the lattice falls back to GATHER when
+   it cannot decide (§4.2).
+4. **One mask shape**: every lib node accepts an optional `(K_0, …,
+   K_{K-1})` mask; per-dim masking is uniformly expressed by broadcasting
+   into the K-dim mask (§7).
+5. **One remainder rule**: K boundary regions (not 2^K - 1), produced by
+   the corner-absorbing peel (§8).
+6. **Three gather forms** (full / per-dim / partial) on the same node,
+   with affine fallback on omitted dims (§9).
+
+---
 
 ## 2. Tiled Body — NestedSDFG With Full-Array Subsets
 
-The tiled body is a `NestedSDFG`. The outer Map iterates per-tile (step `widths`
-in each tiled dim); the body is invoked once per tile.
+The outer Map iterates per-tile in each tiled dim (step `W_d` per dim).
+Its body is a single `NestedSDFG` invocation per iteration. Contract:
 
-**Call convention (load-bearing)**:
+| Connector kind | Subset                     | Inner reference                   |
+|----------------|----------------------------|-----------------------------------|
+| Input          | full array `A[0:N_0, …]`   | `A_sub[i_0:i_0+W_0, …]`           |
+| Output         | full array `A[0:N_0, …]`   | `A_sub[i_0:i_0+W_0, …]`           |
+| Symbol         | passed via `symbol_mapping`| `i_d`, `j_d`, …                   |
 
-- Every input/output connector receives the **full array subset**.
-- No pointer offsetting is performed at the call site.
-- The body's inner memlets reference the full array; per-tile addressing is
-  derived from the iter-vars passed through `NestedSDFG.symbol_mapping`.
+**Invariants**:
 
-Rationale: full-array subsets remove the only source of subset confusion that
-the descent and the inlined-outer-state ports were both fighting (the
-"connector array shape mismatch" family). A separate cleanup pass guarantees
-that the resulting call convention is dataflow-safe (alias-free, no
-overlapping writes the codegen would lose); see Section 10.
+- The call-site memlet is `A[0:N_0, …]` — the full extent on every dim.
+- Per-tile addressing happens *inside* the body via `symbol_mapping`
+  (the outer iter-vars enter as inner symbols).
+- The body is responsible for staging its own reads/writes through
+  transients (§3); the call convention itself never offsets.
 
-## 3. Data Shape Inside The Body — Tile Transients
+**Rationale**: full-array subsets remove the only source of subset
+confusion the descent and the inlined-outer-state port both fought (the
+"connector array shape mismatch" family). A dedicated cleanup pass (G1
+in §12) guarantees the convention is dataflow-safe.
 
-Inside the tiled body **every non-transient read and write is staged through a
-transient `Array`** of tile shape, with the following exceptions:
+---
 
-- A **column or scalar broadcast** sourced before the lane loop (a loop-
-  invariant load) may remain at length 1 / scalar shape. The lib node consuming
-  it sees a `Scalar` operand (Section 6.2).
+## 3. Inside The Body — Tile Transients And The Scalar Exception
 
-All other transients are `Array(shape=widths, dtype=elem_dtype,
-storage=Register, transient=True)`.
+### 3.1 Staging rule
 
-**Why**: every library node then sees either a *full tile* or a *scalar*
-operand. No node has to reason about partial-tile or strided-into-tile
-operands; that complexity moves to the staging passes that produce the
-operand.
+> Every non-transient read and write inside the tiled body is staged
+> through a transient `Array(shape=widths, dtype=elem_dtype,
+> storage=Register, transient=True)`.
+
+The single exception: a **loop-invariant scalar broadcast** sourced
+*before* the lane loop may stay at length 1 / `Scalar` shape. The lib
+node that consumes it sees a `Scalar` operand (§6.2). The broadcast is a
+column splat, a kernel argument, or any value that is the same across
+every lane of every dim.
+
+### 3.2 Why staging is load-bearing
+
+Each lib node then sees either a full tile or a scalar — never a
+partial-tile or strided-into-tile shape. All the "partial subset" /
+"strided lane" complexity moves *out* of the lib nodes and *into* the
+staging passes that produce the operand. That separation is what makes
+the per-dim lattice (§4) implementable as a closed surface.
+
+---
 
 ## 4. Per-Dimension Access Lattice
 
-Each tile dimension's access is one of:
+### 4.1 Kinds
 
-| Kind         | Definition                                                              | Example                                     |
-|--------------|-------------------------------------------------------------------------|---------------------------------------------|
-| **CONSTANT** | dim's index is loop-invariant (no tile iter-var)                        | `a[0]`, `a[N+1]`                            |
-| **LINEAR**   | dim's index is exactly `iter_var + c` (stride 1, offset constant)       | `a[i]`, `a[i + 3]`                          |
-| **AFFINE**   | dim's index is `s * iter_var + c` with `s` constant int                 | `a[2*i + 1]`                                |
-| **REPLICATE**| dim's index is `floor(iter_var, k) + c` (1 < k < W, no other tile vars) | `a[i//2]`, `a[i//4 + 7]`                    |
-| **GATHER**   | none of the above                                                       | `a[idx[i]]`, `a[i*j]`, `a[2*sym + 1]` (sym loop-variant) |
+Each tile dimension's access is classified as one of:
 
-The lattice order on a single dim is
+| Kind         | Definition                                                                  | Example                                  |
+|--------------|-----------------------------------------------------------------------------|------------------------------------------|
+| **CONSTANT** | dim's index is loop-invariant (no tile iter-var anywhere in the expression) | `a[0]`, `a[N+1]`                         |
+| **LINEAR**   | dim's index is exactly `iter_var + c` (stride 1, constant offset)           | `a[i]`, `a[i + 3]`                       |
+| **AFFINE**   | dim's index is `s · iter_var + c` with `s`, `c` outer-scope constants       | `a[2*i + 1]`                             |
+| **REPLICATE**| dim's index is `floor(c · iter_var + c0, k)` or `ceil(…)` (1 < k < W)       | `a[i//2]`, `a[i//4 + 7]`                 |
+| **GATHER**   | none of the above                                                           | `a[idx[i]]`, `a[i*j]`, `a[2*sym + 1]` (sym loop-variant) |
+
+### 4.2 Lattice order and join rule
 
 ```
 CONSTANT  ⊑  LINEAR  ⊑  AFFINE  ⊑  GATHER
-                       ⊓
-                  REPLICATE
+                     ⊓
+                REPLICATE
 ```
 
-`REPLICATE` is incomparable with LINEAR / AFFINE — it is a separate axis (group
-broadcast within the dim with factor `k`); on the lattice it joins with any of
-them to GATHER.
+- `CONSTANT ⊑ LINEAR ⊑ AFFINE ⊑ GATHER` is a strict chain.
+- `REPLICATE` is **incomparable** with LINEAR / AFFINE — it is a separate
+  axis (group broadcast inside the dim with factor `k`). The join of
+  REPLICATE with anything outside `{CONSTANT, REPLICATE}` is GATHER.
 
-**Join rule (per-dim, for symbolic / non-constant coefficients)**:
+**Join rule (loop-variant coefficient → GATHER)**:
 
-> If a coefficient or offset is *itself* loop-variant — e.g. `2*sym + 1` where
-> `sym` depends on a tile iter-var — the dim's classification rises to
-> GATHER. Constants and pure outer-scope symbols are CONSTANT.
+> When the classifier cannot prove a coefficient or offset is loop-
+> invariant, the dim's kind is **GATHER**.
 
-This mirrors the type-lattice fallback used for FP precision: when in doubt,
-join up to GATHER.
+Examples:
+- `a[2*sym + 1]` where `sym` is a tile iter-var or transitively depends
+  on one (interstate-edge assignments inside the body) → **GATHER**.
+- `a[2*sym + 1]` where `sym` is an outer-scope constant symbol →
+  **AFFINE** with stride 2.
+- `a[i*j]` (two tile iter-vars multiplied) → **GATHER** (the lattice
+  rejects expressions with more than one tile iter-var contributing to
+  a single dim).
+
+This mirrors the FP-precision-type fallback: when in doubt, join up to
+the strictest classification (GATHER) so correctness is preserved at
+the cost of a slower path.
+
+---
 
 ## 5. Cross-Dimension Composition
 
-A tile access is a tuple `(d_0, ..., d_{K-1})` of per-dim kinds. Composition
-rules:
+A tile access is a tuple `(d_0, …, d_{K-1})` of per-dim kinds. The
+composition decides which lib node lowers the access and how its
+properties are populated.
 
-### 5.1 No-GATHER case
+### 5.1 No-GATHER case — structured box
 
-If `GATHER ∉ {d_0, ..., d_{K-1}}` the access is a **structured box** and
-lowers to a single `TileLoad` / `TileStore` parameterised by:
+If `GATHER ∉ {d_0, …, d_{K-1}}` the access lowers to a single
+`TileLoad` / `TileStore` parameterised by:
 
-- per-dim `dim_strides`: `0` for CONSTANT, `1` for LINEAR, `c` for `AFFINE`,
-- per-dim `replicate_factor`: `k` for REPLICATE dims, `1` otherwise,
-- `src_dims` / `dst_dims` permutation: the source-array dim each tile dim
+- `dim_strides[d]`: per-dim stride coefficient.
+  - `0` for CONSTANT,
+  - `1` for LINEAR,
+  - `c` for AFFINE,
+  - `1` for REPLICATE (the replicate factor lives in its own property).
+- `replicate_factor_per_dim[d]`: per-dim group-broadcast factor.
+  - `k` for REPLICATE dims,
+  - `1` otherwise.
+- `src_dims[d]` / `dst_dims[d]`: which source-array dim each tile dim
   binds to (handles Fortran / transposed inputs).
 
-**Sub-box expansion to full (K_0, K_1, ..., K_{K-1})**: dims whose kind is
-narrower than "one element per lane" replicate to fill the tile:
+The lowered tile always has shape `(K_0, …, K_{K-1})`. Per-dim
+replication / splatting happens *inside* the lib node's expansion, not
+as a pre-pass.
 
-- CONSTANT  →  splat the single value across all lanes of that dim,
-- REPLICATE →  group-broadcast (`k` lanes share each loaded element),
-- LINEAR    →  contiguous load,
-- AFFINE    →  strided load with constant stride.
+### 5.2 Cross-dim broadcast resolution (sub-box → full tile)
 
-The lowered tile is always `(K_0, K_1, ..., K_{K-1})` — the per-dim
-replication / broadcast happens inside the lib node, not as a separate
-pre-pass.
+When some dims are narrower than "one element per lane" (CONSTANT,
+REPLICATE, or AFFINE-without-iter-var), the lib node replicates them to
+fill the tile:
 
-### 5.2 GATHER case
+| Per-dim kind | Per-dim source range | Per-dim lane-to-source map           |
+|--------------|----------------------|--------------------------------------|
+| CONSTANT     | 1 element            | every lane reads the same element    |
+| LINEAR       | K_d elements         | lane `l` reads element `l`           |
+| AFFINE       | K_d · s elements     | lane `l` reads element `l·s`         |
+| REPLICATE    | K_d / k elements     | lane `l` reads element `floor(l/k)`  |
 
-If any dim is GATHER, the entire access is a `TileGather` / `TileScatter`. Per-
-dim semantics survive: non-GATHER dims may still be CONSTANT / LINEAR / AFFINE
-/ REPLICATE, encoded as `dim_strides` + `replicate_factor` + missing index for
-that dim (Section 9).
+The Cartesian product of these per-dim maps gives the K-dim load pattern
+that the expansion emits. **No mid-pipeline reshape pass is needed**;
+the lib node's expansion does the broadcast at codegen time.
 
-### 5.3 Special-case shapes (recognised but lowered as GATHER for now)
+### 5.3 GATHER case
 
-- **Diagonal** (`a[i, i]` for K=2 tile vars `i, j`) — a LINEAR dim using a
-  *non-canonical* iter-var. Classified as GATHER with a 1-D index tile.
-- **Transpose** (`a[j, i]` where the canonical lane order is `(i, j)`) — same,
+If any dim is GATHER, the entire access lowers to `TileGather` /
+`TileScatter` (§9). Per-dim semantics survive: non-GATHER dims may still
+be CONSTANT / LINEAR / AFFINE / REPLICATE and the gather node honours
+their `dim_strides` / `replicate_factor` (i.e. those dims are addressed
+affinely without a `_idx_<d>` connector).
+
+### 5.4 Diagonal and transpose
+
+- **Diagonal** (`a[i, i]` where `(i, j)` are the K=2 tile vars): two
+  LINEAR dims with the *same* iter-var. The lattice flags this and the
+  composition lowers as GATHER with a 1-D index tile.
+- **Transpose** (`a[j, i]` where canonical lane order is `(i, j)`): K
+  LINEAR dims in non-canonical permutation. Same treatment — GATHER
   with a permuted index tile.
 
-These could be lowered to dedicated structured patterns later; the design
-admits them as GATHER for now so a single index-array path covers them.
+Both fold into the gather path; dedicated structured patterns can land
+later behind the same lib-node surface.
+
+---
 
 ## 6. Library Nodes
 
-### 6.1 Node set
+### 6.1 Node set (frozen for Tuesday)
 
-| Node                  | Purpose                                                  |
-|-----------------------|----------------------------------------------------------|
-| `TileLoad`            | Structured tile load (Section 5.1)                       |
-| `TileStore`           | Structured tile store                                    |
-| `TileGather`          | Indirect / mixed tile load (Section 5.2)                 |
-| `TileScatter`         | Indirect / mixed tile store                              |
-| `TileBinop`           | Elementwise binary op, Tile/Scalar/Symbol operands       |
-| `TileUnop`            | Elementwise unary op                                     |
-| `TileMerge`           | `where(mask, t, e)`                                      |
-| `TileReduce`          | Cross-lane reduction                                     |
-| `TileMaskGen`         | ANY-dim-OOB conjunction → `(K_0, ..., K_{K-1})` bool tile|
-| `TileIota`            | `arange`-style index seed for gather/scatter             |
+| Node           | Purpose                                            |
+|----------------|----------------------------------------------------|
+| `TileLoad`     | Structured tile load (§5.1)                        |
+| `TileStore`    | Structured tile store                              |
+| `TileGather`   | Indirect / mixed tile load (§9)                    |
+| `TileScatter`  | Indirect / mixed tile store                        |
+| `TileBinop`    | Elementwise binary op                              |
+| `TileUnop`     | Elementwise unary op                               |
+| `TileMerge`    | `where(mask, t, e)`                                |
+| `TileReduce`   | Cross-lane reduction                               |
+| `TileMaskGen`  | ANY-dim-OOB conjunction → bool tile (§7.4)         |
+| `TileIota`     | `arange`-style index seed for gather/scatter       |
 
-### 6.2 Operand kinds — uniform contract
+### 6.2 Uniform operand contract
 
-Every elementwise node (`TileBinop`, `TileUnop`, `TileMerge`) accepts operands
-classified as one of:
+Every elementwise node (`TileBinop`, `TileUnop`, `TileMerge`) and
+every store-style node accepts each operand as one of:
 
-- **Tile** — a `(K_0, ..., K_{K-1})` transient AccessNode (wired through
-  `_a` / `_b`).
-- **Scalar** — a length-1 / `dace.data.Scalar` AccessNode; hardware
-  scalar-to-tile broadcast (wired through `_a` / `_b`).
-- **Symbol** — a symbolic expression embedded inline (no connector).
+| Kind       | Connector         | Source                                                 | Lowering                                       |
+|------------|-------------------|--------------------------------------------------------|------------------------------------------------|
+| **Tile**   | `_a` / `_b` …     | tile-shaped `Array` `AccessNode`                       | per-lane register read                         |
+| **Scalar** | `_a` / `_b` …     | length-1 / `dace.data.Scalar` `AccessNode`             | hardware splat (`_mm512_set1_pd`, `svdup_f64`) |
+| **Symbol** | *no connector*    | symbolic expression in `expr_a` / `expr_b` property    | inline literal embedded in the per-lane body   |
 
-Per-arch expansions are responsible for emitting the hardware splat for Scalar
-operands (e.g. AVX-512 `_mm512_set1_pd`). Scalar is a first-class kind, not
-syntactic sugar for "Tile from a length-1 source."
+**Hardware rationale for Scalar as a first-class kind**: AVX-512, NEON
+and SVE all provide single-cycle broadcast intrinsics from a scalar
+register; cuTile auto-broadcasts in its DSL. Routing a length-1 read
+through a per-lane Tile would waste both a register and an extra load.
 
 ### 6.3 Symbolic broadcast
 
-Every node that takes operands accepts symbolic constants (`expr_a` / `expr_b`
-properties on `TileBinop` / `TileUnop`). The expansion embeds the value inline
-per lane; no per-lane materialisation in registers is required.
+`Symbol` is not a degenerate `Scalar`. It is a *compile-time* constant
+or symbolic expression embedded directly in the per-lane code string,
+not materialised in any register. Use it for numeric literals
+(`_out = _a + 1.0`) and outer-scope symbol broadcasts where no read
+edge is needed.
+
+---
 
 ## 7. Masking
 
 ### 7.1 Uniform mask shape
 
-Every tile node accepts an optional `_mask` input. The mask is **always shape
-`(K_0, ..., K_{K-1})`**, even when only one dim needs predication. The
-single-dim case lowers to a broadcast comparison inside `TileMaskGen`; the
-rest of the pipeline sees a uniform K-dim mask. Two reasons:
+Every tile node accepts an optional `_mask` input of shape `(K_0, …,
+K_{K-1})` — full tile, not per-dim. Even when only a single dim
+requires predication, the mask is broadcast to all K dims at generation
+time (§7.4).
 
-- intrinsics (AVX-512 `__mmask8`, SVE predicate registers) only have a single
-  K-dim predicate concept; a 1-D mask would need re-broadcast at every use,
-- the lib-node `has_mask` toggle stays a single bool rather than per-dim.
+### 7.2 `has_mask` toggle
 
-### 7.2 has_mask toggle
-
-Each tile node has a `has_mask: bool` constructor knob. When False the `_mask`
-input connector is omitted. When True the expansion threads the predicate
-through every load / store / op.
+Each node has a `has_mask: bool` constructor knob. When `False` the
+`_mask` connector is omitted entirely (no spurious wiring, no
+per-iteration mask load). When `True` every load / store / op inside
+the expansion threads the predicate.
 
 ### 7.3 No-mask short-circuit
 
-The main map of a `MASKED_TAIL` split has `has_mask=False` on every node — the
-provably-divisible interior is the perf fast path. Only the remainder map
-carries masks.
+The interior region of a `masked_tail` split has `has_mask=False` on
+every node — the provably-divisible interior is the performance fast
+path. Only the boundary regions carry masks.
+
+### 7.4 `TileMaskGen` contract
+
+For tile vars `(i_0, …, i_{K-1})` with widths `(W_0, …, W_{K-1})` and
+global upper bounds `(N_0, …, N_{K-1})`, `TileMaskGen` emits the
+ANY-dim-OOB conjunction:
+
+```
+mask[l_0, …, l_{K-1}] = (i_0 + l_0 < N_0) ∧ … ∧ (i_{K-1} + l_{K-1} < N_{K-1})
+```
+
+When a particular dim doesn't need masking (the corner-absorbing peel
+of §8 covers it at full extent), its conjunct is the constant `true`
+and folds away at expansion. The same lib node is used regardless of
+which dim is being predicated.
+
+### 7.5 Intra-tile (branch) masks
+
+Branch normalisation produces `TileMerge` with an explicit condition
+tile. The iteration mask (`_iter_mask`) and the condition mask combine
+inside the expansion to a single effective mask. No separate
+`TileMaskAnd` / `Or` / `Not` lib nodes are needed for the common case;
+they remain out of scope until a kernel demands them (§10.5).
+
+---
 
 ## 8. Remainder Loops
 
-### 8.1 One remainder per tiled dim
+### 8.1 One remainder map per tiled dim
 
-For each tiled dim, the pipeline emits one remainder map. Untiled dims pass
-through at their full extent in every remainder.
+For K tiled dims the pipeline emits exactly **K + 1 regions**:
 
-### 8.2 Subdivision rule (avoiding 3+ remainders for K=2)
+- 1 interior region (all tiled dims at main range, `has_mask=False`),
+- K boundary regions (one per tiled dim, `has_mask=True`).
 
-For `K=2` with tiled dims `(i, j)`, naive cartesian splitting produces 4
-regions: `(main_i, main_j)`, `(main_i, tail_j)`, `(tail_i, main_j)`,
-`(tail_i, tail_j)`. To reduce this to **3 regions** (one per tiled dim, plus
-the main), apply the corner-absorbing rule:
+Untiled dims pass through at their full extent in every region.
+
+### 8.2 Corner-absorbing peel (avoids 2^K - 1 corners)
+
+For K=2 with tiled dims `(i, j)` and global bounds `(N_0, N_1)`,
+widths `(W_0, W_1)`:
 
 ```
-region 0:  (main_i,  main_j)        — interior, has_mask=False
-region 1:  (FULL i,  tail_j)        — j remainder, FULL i absorbs the corner
-region 2:  (tail_i,  main_j)        — i remainder, no overlap with region 1
+region 0 (interior):    i ∈ [0, ⌊N_0/W_0⌋·W_0),  j ∈ [0, ⌊N_1/W_1⌋·W_1)
+region 1 (j boundary):  i ∈ [0, N_0),            j ∈ [⌊N_1/W_1⌋·W_1, N_1)
+region 2 (i boundary):  i ∈ [⌊N_0/W_0⌋·W_0, N_0),j ∈ [0, ⌊N_1/W_1⌋·W_1)
 ```
 
-i.e. the j-remainder map covers the *full* i extent (not just the i-main
-range) so the `(tail_i, tail_j)` corner is handled there. The i-remainder
-covers only the i-tail × j-main rectangle. Total: 1 interior + 2 boundary =
-3 regions. Same shape generalises to K=3 with 1 interior + 3 boundary.
+The `(tail_i, tail_j)` corner is absorbed by region 1 (which iterates
+the *full* i extent over j's tail). Region 2 only covers `(tail_i,
+main_j)` so it doesn't overlap.
 
-### 8.3 Mask threading on remainders
+Generalises to K=3:
 
-Each boundary region has `has_mask=True`; its `TileMaskGen` produces the
-conjunction `((i + l_i) < ub_i) ∧ ((j + l_j) < ub_j) ∧ ...`. The same lib node
-is used regardless of which dim is the remainder one — the absorbed-full dims
-just contribute `True` to the conjunction.
+- 1 interior,
+- 3 boundary regions (one per tiled dim),
+- each boundary region's untiled dims (relative to it) are at full
+  extent so all corners are absorbed.
 
-### 8.4 Remainder strategies (existing knob, unchanged)
+### 8.3 Mask threading
 
-- `MASKED_TAIL` — Section 8.2 + 8.3 (default for AVX-512 CPU).
-- `SCALAR_POSTAMBLE` — boundary regions left as `Sequential` scalar loops,
-  no masks. Used for kernels where the masked variant is too expensive (rare
-  on modern CPUs).
-- `ALWAYS_ITER_MASK` — single map, no split, `has_mask=True` everywhere. SVE
-  default (runtime VL).
+Each boundary region runs `TileMaskGen` over the conjunction of its
+tiled dim's `(i_d + l_d < N_d)` predicate. Absorbed-full dims
+contribute `true` and fold away (§7.4). This way the lib-node
+*interface* is uniform — `has_mask=True` everywhere a region needs
+predication — even though the actual mask shape per region collapses
+to a single non-trivial dim.
+
+### 8.4 Strategies (existing knob)
+
+The orchestrator's `remainder_strategy` selects:
+
+- `masked_tail` (default for AVX-512 CPU): §8.1 + §8.2.
+- `scalar_postamble`: boundary regions left as `Sequential` scalar
+  loops, no masks. Used when the masked path measures slower than the
+  scalar fallback.
+- `full_mask`: single map, no split, `has_mask=True` everywhere
+  (SVE default; runtime VL via `svwhilelt`).
+
+---
 
 ## 9. Gather / Scatter Index Encoding
 
-`TileGather` and `TileScatter` accept indices in three forms; partial forms
-fill missing dims with the affine-default reading from `dim_strides` /
-`replicate_factor`:
+`TileGather` and `TileScatter` accept indices in three forms. A *single
+node* covers all three; the form is determined by which `_idx_<d>`
+connectors are wired.
 
-### 9.1 Full index tile
+### 9.1 Full N-D index tile (`_idx_full`)
 
-One `(K_0, K_1, ..., K_{K-1})` integer tile. Per-lane reads
-`src[idx[l_0, l_1, ...]]` with the flat-index convention given by the source
-array strides.
+One `(K_0, …, K_{K-1})` integer tile. Per-lane:
+`src[idx_full[l_0, …, l_{K-1}]]` decoded against the source array's
+flat-index layout.
 
-### 9.2 Per-dim index tiles
+### 9.2 Per-dim index tiles (`_idx_0`, `_idx_1`, …)
 
-K integer tiles, each of length `K_d`. Per-lane reads
-`src[idx_0[l_0], idx_1[l_1], ..., idx_{K-1}[l_{K-1}]]`. Cheaper than 9.1 when
-each dim's indices are independent (the diagonal/transpose cases lower to this
-form: a `TileIota` of length `K_d` per dim).
+K integer tiles, each of shape `(K_d,)`. Per-lane:
+`src[idx_0[l_0], idx_1[l_1], …, idx_{K-1}[l_{K-1}]]`. This is the
+cheap path for **separable** patterns (diagonal, transpose, per-row
+permutation): the index tiles are 1-D, not K-D.
 
 ### 9.3 Partial index tiles
 
-A *subset* of dims has an explicit index; the remaining dims fall back to the
-affine default (i.e. behave as their per-dim kind from Section 4 dictates,
-typically LINEAR or REPLICATE). The classifier emits this form when a
-multi-dim access has GATHER on a subset of dims; the non-GATHER dims keep
-their classification and the GATHER dims get explicit indices.
+A *subset* of dims has a `_idx_<d>` connector wired; the rest fall
+back to the affine default driven by `dim_strides[d]` /
+`replicate_factor_per_dim[d]`. The classifier emits this form when
+a multi-dim access has GATHER on a *subset* of dims; the non-GATHER
+dims keep their per-dim kind and the GATHER dims get explicit indices.
 
-Wire-level: per-dim index tiles attach through `_idx_<k>` connectors. A
-missing `_idx_<k>` means the kth tile dim uses its `dim_strides[k]` /
-`replicate_factor_per_dim[k]`.
+### 9.4 Wire-level rule
 
-## 10. Implementation Audit
+A `TileGather` constructor takes:
 
-This section maps the design to the current codebase and lists the gaps to
-close before Tuesday freeze.
+```python
+TileGather(name, widths, src_ndim,
+           gather_dims: Tuple[int, ...],  # subset of [0..K) that has _idx_<d>
+           dim_strides, replicate_factor_per_dim, src_dims,
+           index_form: Literal["full", "per_dim", "partial"],
+           has_mask=False, pad_value=0)
+```
 
-### 10.1 What already aligns
+- `index_form="full"`: a single `_idx_full` connector. `gather_dims`
+  is `tuple(range(K))`.
+- `index_form="per_dim"`: connectors `_idx_0, …, _idx_{K-1}`,
+  shape `(K_d,)` each. `gather_dims == tuple(range(K))`.
+- `index_form="partial"`: connectors `_idx_<d>` only for `d ∈
+  gather_dims`. Other dims use `dim_strides` / `replicate_factor`.
 
-| Design                                  | Existing code                                                           |
-|-----------------------------------------|-------------------------------------------------------------------------|
-| Per-dim access kinds (Section 4)        | `utils/tile_access.py::PerDimKind`: `BROADCAST`, `STRUCTURED_1`, `REPLICATE`, `AFFINE`, `GATHER` |
-| Tile-shape transients (Section 3)       | `PromoteInlinedMapToTiles._widen_body_scalars` (slice 1)                |
-| Uniform operand kinds (Section 6.2)     | `TileBinop` / `TileUnop` `kind_a` / `kind_b` ∈ `{Tile, Scalar, Symbol}` |
-| `(K_0, ..., K_{K-1})` mask (Section 7.1)| `TileMaskGen` emits ANY-dim-OOB conjunction at tile shape               |
-| `has_mask` toggle (Section 7.2)         | every lib node, optional `_mask` connector                              |
-| Main + remainder split (Section 8.4)    | `SplitMapForTileRemainder` (MASKED_TAIL, SCALAR_POSTAMBLE)              |
-| `replicate_factor_per_dim` (Section 5.1)| `TileLoad.replicate_factor_per_dim` (committed earlier this branch)     |
-| Array<->scalar copy → load/store (Section 3) | `RewriteArrayScalarToTileOp`                                       |
+The expansion handles all three with one switch on `index_form` at the
+top of the codegen body; no separate node types.
 
-### 10.2 Vocabulary alignment needed
+---
 
-The design uses **CONSTANT / LINEAR / AFFINE / REPLICATE / GATHER**. The
-existing `PerDimKind` uses **BROADCAST / STRUCTURED_1 / REPLICATE / AFFINE /
-GATHER**. Mapping:
+## 10. Validation Rules
 
-| Spec name | Current enum   |
-|-----------|----------------|
-| CONSTANT  | `BROADCAST`    |
-| LINEAR    | `STRUCTURED_1` |
-| AFFINE    | `AFFINE`       |
-| REPLICATE | `REPLICATE`    |
-| GATHER    | `GATHER`       |
+| Where        | Checks                                                                       |
+|--------------|------------------------------------------------------------------------------|
+| Constructor  | `widths` length in `{1, 2, 3}`; operand kinds in `{Tile, Scalar, Symbol}`; index_form / gather_dims consistency; replicate factors divide widths. |
+| `validate()` | All declared connectors are wired; tile-operand dtypes match the output dtype (uniform-dtype lock); mask present iff `has_mask`. |
+| Expansion    | Source array rank ≥ K; `src_dims` permutation valid; index tile shapes match `widths` (full / per-dim form); padding mode allowed. |
 
-**Action**: rename the enum members. Spec names are clearer; current names
-date from when `BROADCAST` was overloaded for the symbol-fanout case. Single
-commit, mechanical.
+Loud failure at every layer. No silent fallbacks.
 
-### 10.3 Gaps to close before Tuesday
+### 10.1 Operand-dtype uniformity (locked)
 
-**G1 — NSDFG-of-tiled-body call convention.** The descent
-(`PromoteNSDFGBodyToTiles`) currently widens connectors at a per-tile subset;
-the design requires full-array subsets with no offsetting. Need a pre-pass
-that (a) ensures the body NSDFG is invoked with `array_full[:]` on every
-connector, (b) carries the offsetting into the body's inner memlets via
-`symbol_mapping`.
+Tile operands across a single op share a dtype. Cross-dtype operations
+(`f32 + f64`) raise `NotImplementedError` at `validate()` time. A mixed-
+dtype kernel must materialise the cast through a `TileUnop` of kind
+`cast_to_<dtype>` first. Rationale: AVX-512 / SVE lane widths differ per
+dtype; supporting cross-dtype binops requires per-arch dispatch we'd
+rather defer.
 
-*Existing pieces*: `expand_nested_sdfg_inputs.py` already widens connector
-subsets; `insert_body_nsdfg_copies.py` inserts copy-in/copy-out states.
-Combine into one explicit "FullSubsetCallConvention" pass.
+---
 
-**G2 — Generic "auto-classify" load node.** The design proposes a load node
-that detects the access pattern at expansion time from its subset + connectors.
-Currently the classifier runs at pipeline-time and lowers to one of `TileLoad`
-/ `TileGather`. Either:
+## 11. Implementation Audit
 
-- (a) keep the current pipeline-time decision and document the classifier as
-  the canonical entry point; or
-- (b) add a `TileAutoLoad` umbrella node that defers classification to its
-  expansion.
+### 11.1 What the codebase already provides
 
-Recommendation: **(a)**. The classifier already covers the cases the
-description lists. The umbrella node would duplicate the lattice
-implementation. Mark `(b)` as not pursued.
+| Spec section | Existing implementation                                                                            |
+|--------------|----------------------------------------------------------------------------------------------------|
+| §4 Lattice   | [utils/tile_access.py:85](utils/tile_access.py): `PerDimKind` with `BROADCAST` / `STRUCTURED_1` / `REPLICATE` / `AFFINE` / `GATHER`. |
+| §4.2 Join    | [utils/tile_access.py](utils/tile_access.py): partial — REPLICATE-detection via `int_floor`/`int_ceil`/`__int_floor`/`__int_ceil` ([line 340](utils/tile_access.py#L340)). **Missing**: explicit loop-variant-coefficient → GATHER. |
+| §3 Staging   | [promote_inlined_map_to_tiles.py](promote_inlined_map_to_tiles.py): slice 1 widens body scalars; slice 2 rewrites binop/unop tasklets to lib nodes. |
+| §3 Array↔scalar copies | [rewrite_array_scalar_to_tile_op.py](rewrite_array_scalar_to_tile_op.py): direct `AN(Array) ↔ AN(tile-transient)` edges → `TileLoad` / `TileStore`. |
+| §6.1 Lib nodes | [libraries/tileops/nodes/](../../../libraries/tileops/nodes/): 10 lib nodes implemented (3,278 LoC).                |
+| §6.2 Operand kinds | [tile_binop.py:62-65](../../../libraries/tileops/nodes/tile_binop.py#L62): `_TILE` / `_SCALAR` / `_SYMBOL`. `TileUnop` ditto. |
+| §7.1 Mask shape | [tile_mask_gen.py](../../../libraries/tileops/nodes/tile_mask_gen.py): emits ANY-OOB conjunction at tile shape. |
+| §7.2 `has_mask` | every lib node has the constructor knob.                                                       |
+| §8.2 Corner-absorbing peel | [split_map_for_tile_remainder.py](split_map_for_tile_remainder.py): comments at lines 7-34 describe the K boundary peel; impl appears to match. **Audit pending** (G5). |
+| §8.4 Strategies | [vectorize_cpu_multi_dim.py:133-228](vectorize_cpu_multi_dim.py#L133): `full_mask` / `masked_tail` / `scalar_postamble` knob. |
+| §5.1 `replicate_factor_per_dim` | [tile_load.py:310](../../../libraries/tileops/nodes/tile_load.py#L310). Wired through pure expansion. |
+| §9.1 Single index tile | [tile_gather.py](../../../libraries/tileops/nodes/tile_gather.py): per-dim `_idx_<k>` connectors already exist for the K=2 / K=3 case (one connector per source-array dim). |
 
-**G3 — Per-dim partial gather indices (Section 9.3).** `TileGather` /
-`TileScatter` currently take a single index tile. Need:
+### 11.2 Vocabulary gap (cosmetic, mechanical commit)
 
-- `_idx_<k>` connectors (one per tile dim),
-- per-dim shape `(K_d,)` integer tiles,
-- expansion: missing `_idx_<k>` → fall back to
-  `dim_strides[k]` / `replicate_factor_per_dim[k]` affine indexing.
+The spec uses **CONSTANT / LINEAR / AFFINE / REPLICATE / GATHER**. The
+codebase uses **BROADCAST / STRUCTURED_1 / REPLICATE / AFFINE / GATHER**.
+Rename in [utils/tile_access.py](utils/tile_access.py):
 
-This is the main lib-node interface change before Tuesday freeze.
+| Spec       | Code today      | Action                                |
+|------------|-----------------|---------------------------------------|
+| CONSTANT   | `BROADCAST`     | rename enum member                    |
+| LINEAR     | `STRUCTURED_1`  | rename enum member                    |
+| AFFINE     | `AFFINE`        | keep                                  |
+| REPLICATE  | `REPLICATE`     | keep                                  |
+| GATHER     | `GATHER`        | keep                                  |
 
-**G4 — Lattice join when a coefficient is loop-variant.** The classifier
-currently inspects symbolic expressions but does not formally implement the
-"if coefficient is loop-variant → GATHER" rule (Section 4 join rule).
-Implementation: when classifying a dim, walk the begin expression's free
-symbols; if any is in the tile iter-var set OR depends on one transitively
-(via interstate-edge assignments in the enclosing body), classify as GATHER.
+`TileAccessKind.BROADCAST` / `.STRUCTURED` (the whole-subset kind) also
+get the analogous rename. Single mechanical commit, no behaviour
+change. Update the compat shim, descent, and outer-state pass call
+sites in the same commit.
 
-**G5 — 3-region remainder split for K=2.** `SplitMapForTileRemainder` today
-emits 1 interior + N (potentially 2^K - 1) boundary maps; the design pins this
-to **K boundary maps** via the corner-absorbing rule (Section 8.2). Audit
-SplitMapForTileRemainder against this rule; tighten if needed.
+### 11.3 Six gaps — see §12
 
-**G6 — Symbol-as-coefficient handling.** `a[N*i]` where `N` is an outer-scope
-constant symbol is AFFINE with symbolic stride; `a[N*i]` where `N` is itself a
-function of `i` is GATHER (join rule). The classifier needs to distinguish.
-Current behavior: untested; surfaces as a corner case during velocity-
-tendencies stencil parsing.
+---
 
-### 10.4 Out-of-scope / deferred
+## 12. Gaps And Action Items
 
-- Cross-tile reductions across map invocations (`TileReduce` already
-  supports intra-tile; cross-tile is a separate concern).
-- Mask combinators (`TileMaskAnd` / `Or` / `Not`) for branch-normalised
-  if-else. Deferred to a follow-up; current branch path produces `TileMerge`
-  which is sufficient.
-- GPU `TileScatter` with arbitrary cross-block conflicts. Single-thread-per-
-  lane block layouts only.
-- Velocity-tendencies stencil parsing — that is the Thursday deliverable,
-  not a design constraint.
+Each item is a single self-contained slice. Ordering reflects
+dependencies; landing them in order keeps every commit green.
 
-## 11. Delivery Plan (informational)
+### G1 — NSDFG body call convention: full subsets, no offsetting
 
-| Day      | Goal                                                                        |
-|----------|-----------------------------------------------------------------------------|
-| Tuesday  | G1 + G3 + G4 + G5 landed. Lib-node interfaces frozen. Vocabulary renamed.   |
-| Wed      | Baseline broadcast / gather / scatter end-to-end on hand-written K=2 kernel.|
-| Thu      | Velocity-tendencies stencils parse + lower through the pipeline.            |
+**Why**: Section 2 says "no pointer offsetting at the call site". The
+descent's existing wider machinery
+([expand_nested_sdfg_inputs.py](expand_nested_sdfg_inputs.py),
+[insert_body_nsdfg_copies.py](insert_body_nsdfg_copies.py)) already
+covers part of this, but the *convention* — full-array memlets on every
+connector — is not yet enforced as an invariant.
 
-Sections 2-9 are the contract; Section 10 is the punchlist; Section 11 is the
-schedule the contract serves.
+**What lands**: a single pass `EnforceFullSubsetNSDFGBody` that, for each
+tile-tagged Map whose body is a NestedSDFG:
+
+1. Widens every connector memlet on the outer NSDFG node to
+   `array[0:N_0, …, 0:N_{D-1}]`.
+2. Asserts the inner body still references the correct per-tile region
+   via `symbol_mapping`.
+3. Refuses (NotImplementedError) when the outer subset cannot be widened
+   safely (e.g. the connector has aliased non-disjoint writes upstream).
+
+Unit tests on hand-built K=1 and K=2 fixtures.
+
+**Owner**: standalone pass; lives next to
+[promote_nsdfg_body_to_tiles.py](promote_nsdfg_body_to_tiles.py).
+
+### G2 — Vocabulary rename (mechanical)
+
+See §11.2. Single commit. Update both
+[utils/tile_access.py](utils/tile_access.py) and
+[utils/tile_access_compat.py](utils/tile_access_compat.py).
+Bonus: drop the now-redundant `TileAccessKind` enum and use
+`PerDimKind` everywhere with a top-level "whole-subset kind = max of
+per-dim kinds" helper.
+
+### G3 — Per-dim partial gather indices (`_idx_<d>` semantics)
+
+**Why**: §9.3. The classifier needs to be able to emit a `TileGather`
+that takes indices for only the GATHER dims and leaves the others on
+the affine path.
+
+**What lands**:
+
+1. Extend `TileGather` constructor with `gather_dims: Tuple[int, ...]`
+   and `index_form: Literal["full", "per_dim", "partial"]` (§9.4).
+2. Make the expansion read `index_form` at the top and switch.
+3. Update the classifier to emit the right form: when a subset has
+   mixed kinds with some GATHER, prefer `index_form="partial"` and
+   set `gather_dims` to the GATHER-dim indices.
+4. Mirror the same surface on `TileScatter`.
+
+Unit tests on three fixtures: full, per-dim, partial.
+
+### G4 — Lattice join in the classifier
+
+**Why**: §4.2 says loop-variant coefficient → GATHER. The current
+classifier ([utils/tile_access.py:316](utils/tile_access.py#L316))
+detects REPLICATE but doesn't have the explicit "if any symbol in the
+expression transitively depends on a tile iter-var → GATHER" check.
+
+**What lands**: a helper `_is_loop_invariant(expr, iter_vars,
+inner_sdfg) -> bool` that walks the free symbols and the body's
+interstate-edge assignments transitively. The classifier uses it to
+decide AFFINE vs GATHER for ambiguous coefficients.
+
+### G5 — Audit `SplitMapForTileRemainder` for §8.2
+
+**Why**: the docstring at
+[split_map_for_tile_remainder.py:7-34](split_map_for_tile_remainder.py#L7)
+describes the K-boundary peel, but the spec requires it as a
+*correctness* invariant. Need a unit test (or several) that constructs
+a K=2 map with N_0 % W_0 ≠ 0 ∧ N_1 % W_1 ≠ 0 and asserts the produced
+SDFG has **exactly 3 regions** (interior + 2 boundary), not 4
+(2^K - 1 = 3 boundary + interior is fine; 2^K = 4 with separate
+corner is the failure mode to catch).
+
+### G6 — Symbol-coefficient distinction
+
+**Why**: §4.2 split: `a[N*i]` where `N` is an outer constant → AFFINE;
+where `N` depends on `i` → GATHER. This is the velocity-tendencies
+trigger pattern. The classifier currently treats `N*i` as AFFINE with
+symbolic stride; need to gate that on `N`'s loop-invariance (G4 covers
+the helper; G6 wires it into the AFFINE path).
+
+### G2-also — drop `_operand_kind` partial in slice 2
+
+The slice-2 outer-state operand classifier
+([promote_inlined_map_to_tiles.py](promote_inlined_map_to_tiles.py)
+`_operand_kind`) currently handles Tile + Symbol only. Once G3 +
+G4 land, extend it to:
+
+- broadcast Scalar (length-1 source in scope),
+- gather index (NDTile walk-back: a transient hides an N-D source
+  per-lane read behind a length-1 operand).
+
+This is the slice-2 deliverable's GATHER extension.
+
+---
+
+## 13. Delivery Plan
+
+| Day      | Goal                                                                                 |
+|----------|--------------------------------------------------------------------------------------|
+| Mon      | G1 (full-subset NSDFG body) + G2 (vocab rename) landed.                              |
+| Tue AM   | G3 (`_idx_<d>` partial indices) + G4 (lattice join in classifier) landed.            |
+| Tue PM   | Design freeze meeting. Lock lib-node interfaces.                                     |
+| Wed      | G5 (K=2 remainder audit) + G6 (symbol-coefficient distinction) + slice-2 GATHER ext. |
+| Thu      | Velocity-tendencies stencils parse + lower end-to-end through the pipeline.          |
+
+---
+
+## 14. Out Of Scope (Explicit Non-Goals)
+
+These are deliberately excluded from this design; revisit only when a
+concrete kernel demands them:
+
+- **Mask combinators as lib nodes** (`TileMaskAnd` / `Or` / `Not`).
+  Branch normalisation produces `TileMerge` which is sufficient for
+  the current kernel corpus.
+- **Cross-tile (across-Map-invocations) reductions**. `TileReduce`
+  reduces within one tile; across-tile is a separate concern handled
+  by the WCR / reduce-scope machinery in the rest of DaCe.
+- **GPU `TileScatter` with cross-block conflicts**. Single-thread-per-
+  lane block layouts only; cross-block atomics deferred.
+- **Mixed dtypes inside a single op** (§10.1). Materialise via an
+  explicit cast `TileUnop` first.
+- **K ≥ 4**. The constructors refuse `len(widths) > 3` at construction
+  time. Lift only when a kernel justifies the register pressure.
+- **Diagonal / transpose as dedicated structured patterns**. Both fold
+  into GATHER for now (§5.4); a structured fast path can land later
+  behind the same `TileGather` surface.
+- **Auto-classify load node** (a single node that defers
+  classification to its expansion). The pipeline-time classifier
+  already covers it cleanly; adding an umbrella node would duplicate
+  the lattice. Marked NOT pursued.
+
+---
+
+## Appendix A — Cross-Dimension Composition Examples
+
+| Access                | Per-dim kinds (i, j)         | Lowering                                         |
+|-----------------------|------------------------------|--------------------------------------------------|
+| `a[i, j]`             | (LINEAR, LINEAR)             | TileLoad, `dim_strides=(1,1)`                    |
+| `a[0, j]`             | (CONSTANT, LINEAR)           | TileLoad, broadcast dim 0, contiguous dim 1      |
+| `a[i, 0]`             | (LINEAR, CONSTANT)           | TileLoad, contiguous dim 0, broadcast dim 1      |
+| `a[i//2, j]`          | (REPLICATE k=2, LINEAR)      | TileLoad, dim 0 replicate factor 2               |
+| `a[2*i + 1, j]`       | (AFFINE s=2, LINEAR)         | TileLoad, `dim_strides=(2,1)`                    |
+| `a[i, i]`             | (LINEAR i, LINEAR i)         | TileGather diagonal, `index_form="per_dim"`      |
+| `a[j, i]`             | (LINEAR j, LINEAR i)         | TileGather transposed, `index_form="per_dim"`    |
+| `a[idx[i], j]`        | (GATHER, LINEAR)             | TileGather, `index_form="partial"`, gather_dims=(0,) |
+| `a[idx0[i], idx1[j]]` | (GATHER, GATHER)             | TileGather, `index_form="per_dim"`               |
+| `a[idx[i, j]]`        | flat 1-D, idx is N-D         | TileGather, `index_form="full"`                  |
+| `a[2*sym + 1, j]`     | (AFFINE / GATHER on sym, LIN)| AFFINE if `sym` outer-constant else GATHER (§G4) |
+
+---
+
+## Appendix B — Symbol Definitions
+
+| Symbol | Meaning                                                                |
+|--------|------------------------------------------------------------------------|
+| K      | Number of tiled dimensions; K ∈ {1, 2, 3}.                             |
+| W_d    | Tile width on dim `d`; `widths[d]`.                                    |
+| N_d    | Global upper bound on dim `d`.                                         |
+| i_d    | Tile iter-var on dim `d` (outer Map's parameter).                      |
+| l_d    | Lane index within the tile on dim `d`; `0 ≤ l_d < W_d`.                |
+| k      | REPLICATE factor; the dim varies in groups of `k` lanes.               |
+| s      | AFFINE stride coefficient.                                             |
+| c      | AFFINE / LINEAR offset (loop-invariant constant).                      |
