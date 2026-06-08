@@ -1,14 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileScatter`` — indirect write from a K-dim tile into a K-dim destination.
+"""``TileScatter`` -- indirect write from a K-dim tile into a K-dim destination.
+
+DEPRECATED (TILIFICATION_TRANSFORMATION_DESIGN.md section 6.1): the
+scatter path now lives on :class:`TileStore` via the ``gather_dims``
+constructor argument + the variable-shape ``_idx_<d>`` connectors
+(design section 9). Kept for the existing descent + emit_tile_ops call
+sites until G3 step 3 migrates them. New code MUST use
+``TileStore(gather_dims=..., _idx_<d>=...)``.
 
 Each input lane ``(l_0, ..., l_{K-1})`` of ``_src`` is written to
 ``_dst[_idx_0[l_*], _idx_1[l_*], ...]`` where ``_idx_<k>`` is a
-tile-shaped integer tile carrying the per-destination-dim index. The
-shape mirrors :class:`TileGather`; only the data-flow direction
-differs (src tile → indirect-indexed dst array slots).
+tile-shaped integer tile carrying the per-destination-dim index.
 
-When ``has_mask=True`` an inactive lane does NOT write — matches the
-cuTile ``ct.scatter(dst, idx, value, mask=...)`` semantic.
+When ``has_mask=True`` an inactive lane does NOT write (matches cuTile
+``ct.scatter(dst, idx, value, mask=...)``).
 """
 from typing import Optional, Tuple
 

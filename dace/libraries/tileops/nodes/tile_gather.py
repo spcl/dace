@@ -1,16 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileGather`` — indirect read from a K-dim source into a K-dim tile.
+"""``TileGather`` -- indirect read from a K-dim source into a K-dim tile.
+
+DEPRECATED (TILIFICATION_TRANSFORMATION_DESIGN.md section 6.1): the
+gather path now lives on :class:`TileLoad` via the ``gather_dims``
+constructor argument + the variable-shape ``_idx_<d>`` connectors
+(design section 9). The unified API supports the full lane-dependency
+spectrum (scalar / 1-D / N-D index tiles) that this fixed-shape gather
+node cannot represent (e.g. the ICON pattern
+``A[idx[i, k], j, idb[i, k]]`` which needs two ``_idx_<d>`` connectors
+each of shape ``(W_i,)``).
+
+This class is kept for the existing descent + emit_tile_ops call sites
+until G3 step 3 migrates them to the unified API. New code MUST use
+``TileLoad(gather_dims=..., _idx_<d>=...)``; do not add new call sites
+of ``TileGather``.
 
 Each output lane ``(l_0, ..., l_{K-1})`` of ``_dst`` is filled from
 ``_src[_idx_0[l_*], _idx_1[l_*], ...]`` where ``_idx_<k>`` is a
-tile-shaped integer tile carrying the per-source-dim index. For a
-1D source this is a single index tile ``_idx_0``; for a 2D source two
-index tiles ``_idx_0`` and ``_idx_1`` (matching the cuTile pattern
-``ct.gather(array, (idx_0, idx_1), mask=...)``).
-
-When ``has_mask=True`` an inactive lane writes ``0`` into the
-destination — matches the AVX-512 ``maskz_*`` / cuTile
-``padding_value=0`` semantics.
+tile-shaped integer tile carrying the per-source-dim index. When
+``has_mask=True`` an inactive lane writes ``0`` into the destination
+(matches AVX-512 ``maskz_*`` / cuTile ``padding_value=0``).
 """
 from typing import Optional, Tuple
 
