@@ -126,19 +126,42 @@ The common K=2 instance that triggers this reduction: `a[i % W_d]`
 where the outer Map step is `W_d` ⇒ tile start ≡ 0 (mod `W_d`) ⇒
 LINEAR with offset 0.
 
-**Join rule (loop-variant coefficient → GATHER)**:
+**Join rule (tile-dependent symbol → GATHER)**:
 
-> When the classifier cannot prove a coefficient or offset is loop-
-> invariant, the dim's kind is **GATHER**.
+> A symbol is **tile-dependent** iff materialising its value differs
+> across lanes — equivalently, the symbol (or any symbol it transitively
+> depends on via interstate-edge assignments inside the body) is a tile
+> iter-var. The implementation mechanism: a tile-dependent symbol is
+> exactly the symbol kind that would need per-lane (laneid-style)
+> expansion to materialise. The classifier reuses this notion as the
+> ground truth.
+>
+> **Rule**: if any symbol in a dim's expression is tile-dependent and
+> the surrounding form is not already CONSTANT / LINEAR / AFFINE /
+> REPLICATE / MODULAR (over outer-scope constants), the dim's kind is
+> **GATHER**.
 
-Examples:
-- `a[2*sym + 1]` where `sym` is a tile iter-var or transitively depends
-  on one (interstate-edge assignments inside the body) → **GATHER**.
-- `a[2*sym + 1]` where `sym` is an outer-scope constant symbol →
-  **AFFINE** with stride 2.
-- `a[i*j]` (two tile iter-vars multiplied) → **GATHER** (the lattice
-  rejects expressions with more than one tile iter-var contributing to
-  a single dim).
+In other words, the classifier asks one question per symbol: *is this
+symbol tile-dependent or outer-scope?* — using the same dependency walk
+the codegen would use to decide whether a per-lane materialisation is
+required. Outer-scope symbols and numeric literals are tile-independent;
+tile iter-vars and any symbol whose definition transitively touches one
+are tile-dependent.
+
+Examples (with `i` a tile iter-var, `N` an outer-scope constant symbol,
+`sym` an interstate-edge-assigned symbol inside the body):
+
+| Expression       | Symbol analysis                          | Kind              |
+|------------------|------------------------------------------|-------------------|
+| `a[i]`           | only `i` (tile iter-var)                 | LINEAR            |
+| `a[i + 3]`       | only `i`                                 | LINEAR            |
+| `a[N + 1]`       | `N` outer-scope                          | CONSTANT          |
+| `a[2*i + 1]`     | only `i`                                 | AFFINE            |
+| `a[N*i + 1]`     | `N` outer-scope, `i` tile iter-var       | AFFINE (stride `N`) |
+| `a[2*sym + 1]` (sym ← `i + 3`) | `sym` tile-dependent               | **GATHER**        |
+| `a[2*sym + 1]` (sym ← outer)   | `sym` outer-scope                  | AFFINE            |
+| `a[i*j]`         | both `i`, `j` tile-dependent             | **GATHER**        |
+| `a[idx[i]]`      | `idx[i]` is a data-dependent read        | **GATHER**        |
 
 This mirrors the FP-precision-type fallback: when in doubt, join up to
 the strictest classification (GATHER) so correctness is preserved at
@@ -199,19 +222,22 @@ affinely without a `_idx_<d>` connector).
 
 ### 5.4 Diagonal and transpose — fall back to GATHER
 
-- **Diagonal** (`a[i, i]` where `(i, j)` are the K=2 tile vars): two
-  LINEAR dims with the *same* iter-var. **Lowers as GATHER**, per-dim
-  form (§9.2), with a 1-D `TileIota` index tile per dim.
-- **Transpose** (`a[j, i]` where canonical lane order is `(i, j)`): K
-  LINEAR dims in non-canonical permutation. **Lowers as GATHER**,
-  per-dim form with permuted `TileIota` index tiles.
+- **Diagonal** (e.g. `a[i, i]` for K=2 tile vars `(i, j)`, or
+  `a[i, i, i]` for K=3 `(i, j, k)`): two or more LINEAR dims sharing
+  the *same* tile iter-var. **Lowers as GATHER**, per-dim form (§9.2),
+  with a 1-D `TileIota` index tile per dim.
+- **Transpose** (e.g. `a[j, i]` for K=2, or `a[k, j, i]` for K=3): K
+  LINEAR dims in a non-canonical permutation of the tile iter-vars.
+  **Lowers as GATHER**, per-dim form with permuted `TileIota` index
+  tiles.
 
-Both shapes are recognisable structurally but the design explicitly
-falls back to GATHER for them — the per-dim gather form (§9.2) with
-1-D index tiles is cheap enough that a dedicated structured load /
-store path is not justified for the kernel corpus this pass targets.
-A future dedicated path can land later behind the same lib-node
-surface without breaking the operand contract.
+Both shapes are recognisable structurally for any `K ∈ {1, 2, 3}` but
+the design explicitly falls back to GATHER for them — the per-dim
+gather form (§9.2) with 1-D index tiles is cheap enough that a
+dedicated structured load / store path is not justified for the kernel
+corpus this pass targets. A future dedicated path can land later
+behind the same lib-node surface without breaking the operand
+contract.
 
 ---
 
@@ -333,25 +359,64 @@ Untiled dims pass through at their full extent in every region.
 
 ### 8.2 Corner-absorbing peel (avoids 2^K - 1 corners)
 
-For K=2 with tiled dims `(i, j)` and global bounds `(N_0, N_1)`,
-widths `(W_0, W_1)`:
+**Algorithm (any K)**: pick an ordering `(d_{K-1}, d_{K-2}, …, d_0)`
+of the tiled dims — innermost-first by convention. For each tiled dim
+`d_p` (in order), emit a boundary region with:
+
+- `d_p` at the **tail** range `[⌊N_{d_p} / W_{d_p}⌋ · W_{d_p}, N_{d_p})`;
+- **higher-priority dims** `d_q` with `q > p` (not yet peeled) at the
+  **full** range `[0, N_{d_q})`;
+- **lower-priority dims** `d_q` with `q < p` (already peeled) at the
+  **main** range `[0, ⌊N_{d_q} / W_{d_q}⌋ · W_{d_q})`;
+- untiled dims at their full extent in every region.
+
+Each boundary region covers its own tail-strip and absorbs only those
+corners that the not-yet-peeled dims still own. The lower-priority
+"main" range guarantees disjointness with the regions that come later.
+
+Define
+- `M_d = ⌊N_d / W_d⌋ · W_d` — the last main-tile boundary on dim `d`,
+- `T_d = [M_d, N_d)` — the tail strip on dim `d`,
+- `F_d = [0, N_d)` — the full range on dim `d`.
+
+**K=2** (tiled dims `(i, j)` with `(i = d_1, j = d_0)`, innermost-first
+peels `j` then `i`):
 
 ```
-region 0 (interior):    i ∈ [0, ⌊N_0/W_0⌋·W_0),  j ∈ [0, ⌊N_1/W_1⌋·W_1)
-region 1 (j boundary):  i ∈ [0, N_0),            j ∈ [⌊N_1/W_1⌋·W_1, N_1)
-region 2 (i boundary):  i ∈ [⌊N_0/W_0⌋·W_0, N_0),j ∈ [0, ⌊N_1/W_1⌋·W_1)
+region 0 (interior):    i ∈ [0, M_i),  j ∈ [0, M_j)
+region 1 (j boundary):  i ∈ F_i,       j ∈ T_j
+region 2 (i boundary):  i ∈ T_i,       j ∈ [0, M_j)
 ```
 
-The `(tail_i, tail_j)` corner is absorbed by region 1 (which iterates
-the *full* i extent over j's tail). Region 2 only covers `(tail_i,
-main_j)` so it doesn't overlap.
+The `(tail_i, tail_j)` corner is absorbed by region 1 (full i over j's
+tail). Region 2 takes only `(tail_i, main_j)` — no overlap.
 
-Generalises to K=3:
+**K=3** (tiled dims `(i, j, k)` with `(i = d_2, j = d_1, k = d_0)`,
+innermost-first peels `k`, then `j`, then `i`):
 
-- 1 interior,
-- 3 boundary regions (one per tiled dim),
-- each boundary region's untiled dims (relative to it) are at full
-  extent so all corners are absorbed.
+```
+region 0 (interior):    i ∈ [0, M_i),  j ∈ [0, M_j),  k ∈ [0, M_k)
+region 1 (k boundary):  i ∈ F_i,       j ∈ F_j,       k ∈ T_k
+region 2 (j boundary):  i ∈ F_i,       j ∈ T_j,       k ∈ [0, M_k)
+region 3 (i boundary):  i ∈ T_i,       j ∈ [0, M_j),  k ∈ [0, M_k)
+```
+
+Disjointness:
+- region 1 vs all others — disjoint on `k` (only region 1 has `k ∈ T_k`);
+- region 2 vs region 0 — disjoint on `j` (region 2 has `j ∈ T_j`,
+  region 0 has `j ∈ [0, M_j)`);
+- region 2 vs region 3 — disjoint on `j` (region 2 has `j ∈ T_j`,
+  region 3 has `j ∈ [0, M_j)`);
+- region 3 vs region 0 — disjoint on `i`.
+
+Coverage: every `(i, j, k) ∈ [0, N_i) × [0, N_j) × [0, N_k)` belongs to
+exactly one region. **Result: K + 1 = 4 regions** (instead of
+2^K - 1 = 7 corner cells + 1 interior = 8 a naïve Cartesian split would
+produce).
+
+**Generalises to any K**: the pattern follows mechanically from the
+algorithm above — the `p`-th boundary region (counting from innermost)
+has tail on `d_p`, full on `d_q` for `q > p`, main on `d_q` for `q < p`.
 
 ### 8.3 Mask threading
 
@@ -483,21 +548,36 @@ non-Register storage are rejected at `validate()` time. The constructor
 also rejects any `has_mask=True` request when the lib node's tile shape
 is not declarable (e.g. an inconsistent operand width).
 
-### 10.3 TileReduce shape lock (current slice)
+### 10.3 TileReduce shape lock — tile → scalar only
 
-`TileReduce` is locked to **full-tile → scalar** for the current slice:
-a `(K_0, …, K_{K-1})` tile input reduces to a single value
-(`dace.data.Scalar`). Axis-keep / per-row reductions
-(e.g. tile → `(K_0,)` row) are recognised as future work but
-**deliberately unimplemented**; the constructor refuses any `axis` /
-`keepdims` argument. The classifier must not emit a partial-axis
-reduction; if a kernel needs one it falls back to scalar code (the
-remainder map's scalar postamble).
+`TileReduce` is locked to **full-tile → scalar** for the current
+slice. A `(K_0, …, K_{K-1})` tile input reduces to a single value
+(`dace.data.Scalar`).
+
+**Contract**:
+
+> If `axis` is omitted (or equivalent to the full tile shape), the
+> reduction lowers to the per-arch full horizontal reduce
+> (`_mm512_reduce_*`, SVE `svaddv`, etc.) and writes a scalar output.
+>
+> If `axis` is given and does **not** reduce the full tile to a
+> scalar — i.e. any non-empty subset of dims is preserved
+> (e.g. `axis=(0,)` on a K=2 tile producing a `(K_1,)` row, or
+> `axis=(1,)` on a K=3 tile producing a `(K_0, K_2)` plane) — the
+> node raises **`NotImplementedError`** at construction time. The
+> error message names the requested axis and the expected output
+> shape so the caller can fall back to scalar code (the remainder
+> map's scalar postamble) or refuse the kernel.
+
+The classifier must not emit a partial-axis reduction. Axis-keep /
+per-row / per-plane reductions are recognised as future work but
+deliberately unimplemented.
 
 Rationale: keeping reductions tile→scalar avoids the per-arch
 horizontal-shuffle plumbing that axis-keep would require (SVE
-`svaddv` is global; AVX-512 needs a hand-rolled `_mm512_reduce_*`
-plus per-row materialisation). Lift when a kernel demands it.
+`svaddv` is global; AVX-512 needs hand-rolled `_mm512_reduce_*`
+plus per-row materialisation; cuTile needs a Tile-IR reduce with
+an explicit axis). Lift when a kernel demands it.
 
 ---
 
@@ -601,28 +681,49 @@ the affine path.
 
 Unit tests on three fixtures: full, per-dim, partial.
 
-### G4 — Lattice join in the classifier
+### G4 — Tile-dependent symbol classification in the classifier
 
-**Why**: §4.2 says loop-variant coefficient → GATHER. The current
-classifier ([utils/tile_access.py:316](utils/tile_access.py#L316))
-detects REPLICATE but doesn't have the explicit "if any symbol in the
-expression transitively depends on a tile iter-var → GATHER" check.
+**Why**: §4.2 says a tile-dependent symbol in a dim's expression
+forces GATHER. The current classifier
+([utils/tile_access.py:316](utils/tile_access.py#L316)) detects
+REPLICATE but doesn't have the explicit symbol-dependency walk.
 
-**What lands**: a helper `_is_loop_invariant(expr, iter_vars,
-inner_sdfg) -> bool` that walks the free symbols and the body's
-interstate-edge assignments transitively. The classifier uses it to
-decide AFFINE vs GATHER for ambiguous coefficients.
+**Mechanism**: a symbol is tile-dependent iff it (or any symbol it
+transitively depends on via interstate-edge assignments inside the
+body) is a tile iter-var. This is the same dependency relation the
+codegen uses to decide whether a symbol requires per-lane
+(laneid-style) materialisation; G4 reuses it as the ground truth.
 
-### G5 — Audit `SplitMapForTileRemainder` for §8.2
+**What lands**:
+
+1. A helper `_is_tile_dependent(symbol, iter_vars, inner_sdfg) -> bool`
+   that walks the SDFG's interstate-edge assignment definitions
+   transitively (memoised on `symbol`).
+2. A helper `_classify_symbols(expr, iter_vars, inner_sdfg) -> Dict[str, bool]`
+   returning per-symbol tile-dependence.
+3. Wire into the per-dim classifier: if any symbol in the expression
+   is tile-dependent and the form is not already
+   CONSTANT / LINEAR / AFFINE / REPLICATE / MODULAR over the *outer-
+   scope* symbols, return GATHER.
+
+The mechanism is **K-agnostic**: it scales to K=1, K=2, K=3 without
+change (the iter-var set passed in determines the dependency walk).
+
+### G5 — Audit `SplitMapForTileRemainder` for §8.2 (all K)
 
 **Why**: the docstring at
 [split_map_for_tile_remainder.py:7-34](split_map_for_tile_remainder.py#L7)
 describes the K-boundary peel, but the spec requires it as a
-*correctness* invariant. Need a unit test (or several) that constructs
-a K=2 map with N_0 % W_0 ≠ 0 ∧ N_1 % W_1 ≠ 0 and asserts the produced
-SDFG has **exactly 3 regions** (interior + 2 boundary), not 4
-(2^K - 1 = 3 boundary + interior is fine; 2^K = 4 with separate
-corner is the failure mode to catch).
+*correctness* invariant for **any** `K ∈ {1, 2, 3}`. Need regression
+tests that construct:
+
+- A **K=1** map with `N_0 % W_0 ≠ 0` → assert **2 regions** (interior + 1 boundary).
+- A **K=2** map with `N_d % W_d ≠ 0` on both dims → assert **3 regions** (interior + 2 boundary). The failure mode to catch is a Cartesian split producing 4 regions (1 interior + 2^K - 1 = 3 corner cells).
+- A **K=3** map with `N_d % W_d ≠ 0` on all three dims → assert **4 regions** (interior + 3 boundary). The failure mode is a Cartesian split producing 8 regions.
+
+Each test should verify the ranges per region match the §8.2 algorithm
+(innermost-first peel; later boundaries take "main" on already-peeled
+dims, "full" on not-yet-peeled).
 
 ### G6 — Symbol-coefficient distinction
 
@@ -688,6 +789,18 @@ concrete kernel demands them:
 
 ## Appendix A — Cross-Dimension Composition Examples
 
+### A.1 K = 1
+
+| Access     | Per-dim kind  | Lowering                                  |
+|------------|---------------|-------------------------------------------|
+| `a[i]`     | LINEAR        | TileLoad, `dim_strides=(1,)`              |
+| `a[0]`     | CONSTANT      | TileLoad, broadcast                       |
+| `a[i//2]`  | REPLICATE k=2 | TileLoad, replicate factor 2              |
+| `a[2*i+1]` | AFFINE s=2    | TileLoad, `dim_strides=(2,)`              |
+| `a[idx[i]]`| GATHER        | TileGather, `_idx_0` index tile           |
+
+### A.2 K = 2 (tile vars `(i, j)`)
+
 | Access                | Per-dim kinds (i, j)         | Lowering                                         |
 |-----------------------|------------------------------|--------------------------------------------------|
 | `a[i, j]`             | (LINEAR, LINEAR)             | TileLoad, `dim_strides=(1,1)`                    |
@@ -700,10 +813,30 @@ concrete kernel demands them:
 | `a[idx[i], j]`        | (GATHER, LINEAR)             | TileGather, `index_form="partial"`, gather_dims=(0,) |
 | `a[idx0[i], idx1[j]]` | (GATHER, GATHER)             | TileGather, `index_form="per_dim"`               |
 | `a[idx[i, j]]`        | flat 1-D, idx is N-D         | TileGather, `index_form="full"`                  |
-| `a[2*sym + 1, j]`     | (AFFINE / GATHER on sym, LIN)| AFFINE if `sym` outer-constant else GATHER (§G4) |
+| `a[2*sym + 1, j]`     | (AFFINE / GATHER on sym, LIN)| AFFINE if `sym` tile-independent else GATHER (§4.2) |
 | `a[i % N, j]`         | (MODULAR N, LINEAR)          | TileGather (general MODULAR), `index_form="partial"` |
 | `a[i % W_0, j]`       | (MODULAR → LINEAR, LINEAR)   | TileLoad — tile-aligned reduction (§4.2)         |
 | `a[i % (2*W_0), j]`   | (MODULAR → LINEAR, LINEAR)   | TileLoad with per-tile constant offset (§4.2)    |
+
+### A.3 K = 3 (tile vars `(i, j, k)`)
+
+| Access                   | Per-dim kinds (i, j, k)         | Lowering                                              |
+|--------------------------|---------------------------------|-------------------------------------------------------|
+| `a[i, j, k]`             | (LINEAR, LINEAR, LINEAR)        | TileLoad, `dim_strides=(1,1,1)`                       |
+| `a[0, j, k]`             | (CONSTANT, LINEAR, LINEAR)      | TileLoad, broadcast dim 0                             |
+| `a[i, 0, k]`             | (LINEAR, CONSTANT, LINEAR)      | TileLoad, broadcast dim 1                             |
+| `a[i, j, 0]`             | (LINEAR, LINEAR, CONSTANT)      | TileLoad, broadcast dim 2                             |
+| `a[i//2, j, k]`          | (REPLICATE k=2, LINEAR, LINEAR) | TileLoad, dim 0 replicate factor 2                    |
+| `a[i, j//4, k]`          | (LINEAR, REPLICATE k=4, LINEAR) | TileLoad, dim 1 replicate factor 4                    |
+| `a[2*i + 1, j, k]`       | (AFFINE s=2, LINEAR, LINEAR)    | TileLoad, `dim_strides=(2,1,1)`                       |
+| `a[i, i, k]`             | (LINEAR i, LINEAR i, LINEAR)    | TileGather (diagonal on dims 0,1), `index_form="per_dim"` |
+| `a[k, j, i]`             | (LINEAR k, LINEAR j, LINEAR i)  | TileGather transposed, `index_form="per_dim"` (permuted) |
+| `a[idx[i], j, k]`        | (GATHER, LINEAR, LINEAR)        | TileGather, `index_form="partial"`, gather_dims=(0,)  |
+| `a[idx0[i], j, idx2[k]]` | (GATHER, LINEAR, GATHER)        | TileGather, `index_form="partial"`, gather_dims=(0,2) |
+| `a[idx0[i], idx1[j], idx2[k]]` | (GATHER, GATHER, GATHER)  | TileGather, `index_form="per_dim"`                    |
+| `a[idx[i, j, k]]`        | flat 1-D, idx is K-D            | TileGather, `index_form="full"`                       |
+| `a[i % N, j, k]`         | (MODULAR N, LINEAR, LINEAR)     | TileGather (general MODULAR), `index_form="partial"`  |
+| `a[i % W_0, j, k]`       | (MODULAR → LINEAR, LINEAR, LINEAR) | TileLoad — tile-aligned reduction (§4.2)           |
 
 ---
 
