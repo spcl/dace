@@ -241,6 +241,75 @@ def _direct_symbols(expr: sympy.Expr) -> Set[str]:
     return result
 
 
+def _is_tile_dependent(symbol: str,
+                       iter_vars: Set[str],
+                       inner_sdfg: Optional[SDFG],
+                       memo: Optional[Dict[str, bool]] = None) -> bool:
+    """True iff ``symbol`` transitively depends on a tile iter-var.
+
+    Implements the section 4.2 join rule: a symbol is tile-dependent
+    iff it (or any symbol it transitively depends on via interstate-
+    edge assignments inside ``inner_sdfg``) is a tile iter-var. This
+    is the same dependency relation the codegen uses to decide whether
+    a symbol requires per-lane materialisation, so the classifier
+    reuses it as the ground truth for GATHER fallback.
+
+    Walks ``inner_sdfg.all_interstate_edges()`` collecting
+    ``edge.data.assignments`` and follows the RHS free symbols
+    transitively. ``memo`` caches per-symbol results.
+
+    :param symbol: Symbol name to test.
+    :param iter_vars: The K tile iter-var names.
+    :param inner_sdfg: The body NSDFG (assignments live on its
+        interstate edges). When ``None`` only the direct check
+        ``symbol in iter_vars`` fires.
+    :param memo: Optional shared memo across calls.
+    :returns: ``True`` if ``symbol`` is (transitively) tile-dependent.
+    """
+    if symbol in iter_vars:
+        return True
+    if inner_sdfg is None:
+        return False
+    if memo is None:
+        memo = {}
+    if symbol in memo:
+        return memo[symbol]
+    memo[symbol] = False  # tentatively assume no -- guards against cycles
+    for edge in inner_sdfg.all_interstate_edges():
+        assigns = edge.data.assignments if edge.data is not None else {}
+        if symbol not in assigns:
+            continue
+        rhs_expr = _safe_sympify(assigns[symbol])
+        if rhs_expr is None:
+            continue
+        for fs in rhs_expr.free_symbols:
+            if _is_tile_dependent(str(fs), iter_vars, inner_sdfg, memo):
+                memo[symbol] = True
+                return True
+    return memo[symbol]
+
+
+def classify_symbols(expr: sympy.Expr, iter_vars: Sequence[str], inner_sdfg: Optional[SDFG]) -> Dict[str, bool]:
+    """Per-symbol tile-dependence map for every symbol in ``expr``.
+
+    :param expr: The expression to walk.
+    :param iter_vars: Tile iter-var names.
+    :param inner_sdfg: Body NSDFG carrying interstate assignments.
+    :returns: ``{symbol_name: is_tile_dependent}`` for every free
+        symbol in ``expr``. Tile iter-vars appear in the map (always
+        ``True``).
+    """
+    if expr is None:
+        return {}
+    iter_var_set = set(iter_vars)
+    memo: Dict[str, bool] = {}
+    out: Dict[str, bool] = {}
+    for fs in expr.free_symbols:
+        name = str(fs)
+        out[name] = _is_tile_dependent(name, iter_var_set, inner_sdfg, memo)
+    return out
+
+
 def _gather_subscripts(expr: sympy.Expr) -> List[symbolic.Subscript]:
     """Every :class:`Subscript` node anywhere in ``expr``. Used to
     detect data-dependent indices (``arr[idx[i]]``)."""
@@ -466,6 +535,22 @@ def classify_tile_access(subset: Range, iter_vars: Sequence[str], inner_sdfg: Op
             replicate_factor_per_dim.append(None)
             dim_to_canonical_iter_var.append(None)
             continue
+
+        # Section 4.2 join rule: any non-iter-var symbol in the expression that is
+        # transitively tile-dependent (defined by an interstate edge whose RHS touches
+        # a tile iter-var) forces GATHER. Catches the `a[2*sym + 1]` (sym <- i + 3)
+        # pattern that would otherwise look CONSTANT to the direct-symbol check.
+        if lo_sym is not None and inner_sdfg is not None:
+            non_tile_syms = direct - iter_var_set
+            if any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in non_tile_syms):
+                per_dim_kind.append(PerDimKind.GATHER)
+                dim_strides.append(None)
+                dim_iter_var.append(None)
+                gather_index_per_dim.append(None)
+                dim_offset.append(None)
+                replicate_factor_per_dim.append(None)
+                dim_to_canonical_iter_var.append(None)
+                continue
 
         # Stop 2: no tile iter-var as direct symbol -> BROADCAST dim
         # (replicate_factor = None, meaning all W lanes of the dim
