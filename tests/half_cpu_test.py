@@ -83,4 +83,3 @@ def test_float16_cpu_random_roundtrip_matches_numpy():
 if __name__ == "__main__":
     test_float16_cpu_roundtrip_matches_numpy()
     test_float16_cpu_random_roundtrip_matches_numpy()
-    print("All tests passed.")
