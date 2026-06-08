@@ -21,9 +21,49 @@ import dace
 from dace import SDFGState, typeclass
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge
+from dace.sdfg.nodes import AccessNode
+from dace.subsets import Range
 from dace.transformation.passes.vectorization.utils.lane_access import classify_lane_access
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import subs
+
+
+def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG) -> Range:
+    """Return the subset belonging to ``an`` on the AN-incident ``edge``.
+
+    Per TILIFICATION_TRANSFORMATION_DESIGN.md section 3.7, an
+    AN-incident edge carries the subset of one array as
+    ``edge.data.subset`` (the array named by ``edge.data.data``) and the
+    other side as ``edge.data.other_subset``. When ``other_subset`` is
+    absent the convention is an implicit full-shape copy, so the AN's
+    full descriptor range is the answer.
+
+    This three-way is the **only correct way** to read an AN's subset
+    from an AN-incident edge. Direct ``edge.data.subset`` reads silently
+    pick the wrong array when ``data`` points at the other endpoint.
+    Every consumer (classifier, staging pass, lib-node emitter) routes
+    through this helper.
+
+    :param edge: An edge with ``an`` as one of its endpoints.
+    :param an: The :class:`AccessNode` whose subset is wanted.
+    :param sdfg: The SDFG owning ``an`` (used to look up the descriptor
+        for the full-shape fallback).
+    :returns: A fresh :class:`Range` carrying ``an``'s subset on
+        ``edge``.
+    :raises ValueError: When ``edge`` has no memlet or its endpoints
+        don't include ``an``.
+    """
+    mem = edge.data
+    if mem is None:
+        raise ValueError(f"an_side_subset: edge {edge} has no memlet")
+    if edge.src is not an and edge.dst is not an:
+        raise ValueError(f"an_side_subset: AN {an.data!r} is not an endpoint of edge {edge}")
+    if mem.data == an.data and mem.subset is not None:
+        return copy.deepcopy(mem.subset)
+    if mem.other_subset is not None:
+        return copy.deepcopy(mem.other_subset)
+    desc = an.desc(sdfg)
+    return Range([(0, s - 1, 1) for s in desc.shape])
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
