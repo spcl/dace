@@ -48,6 +48,7 @@ from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.prepare_per_lane_indices import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
@@ -295,7 +296,37 @@ class StageInsideBody(ppl.Pass):
                     continue
                 kinds = set(record.per_dim_kind)
                 if PerDimKind.GATHER in kinds:
-                    # GATHER case -- deferred to step 4c (requires PreparePerLaneIndices).
+                    # GATHER case: materialise the per-lane index tiles inline, then call
+                    # ``stage_tile_access`` with ``gather_dims`` + ``idx_sources``. Per design
+                    # section 9.2 ``gather_dims`` indexes source-array dim indices; the subset
+                    # dim ``k`` corresponds to source dim ``k`` for the canonical (non-permuted)
+                    # case. K=1 single-iter-var first slice; multi-iter-var deps land in 4d.
+                    if len(iter_vars) != 1:
+                        continue
+                    gather_source_dims = tuple(k for k, kind in enumerate(record.per_dim_kind)
+                                               if kind == PerDimKind.GATHER)
+                    idx_sources: Dict[int, AccessNode] = {}
+                    for k in gather_source_dims:
+                        begin_str = str(subset.ranges[k][0])
+                        idx_name = materialise_per_lane_index_tile(
+                            inner_state,
+                            name_hint=f"_idx_{an.data}_{k}",
+                            gather_expr=begin_str,
+                            tile_iter_vars=iter_vars[0],
+                            tile_widths=int(self.widths[0]),
+                        )
+                        idx_an = next(n for n in inner_state.nodes()
+                                      if isinstance(n, AccessNode) and n.data == idx_name)
+                        idx_sources[k] = idx_an
+                    src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
+                    stage_tile_access(inner_state,
+                                      an,
+                                      widths=tuple(self.widths),
+                                      src_subset=src_subset_memlet,
+                                      name_hint=f"{an.data}_gather",
+                                      gather_dims=gather_source_dims,
+                                      idx_sources=idx_sources)
+                    staged += 1
                     continue
                 if kinds == {PerDimKind.CONSTANT}:
                     stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
