@@ -33,8 +33,7 @@ def _roundtrip_program():
 def test_float16_cpu_roundtrip_matches_numpy():
     """Host float32<->float16 conversion must agree with IEEE-754 (NumPy float16).
 
-    Covers zero, normals, exact-rounding cases, and small/subnormal magnitudes
-    that the previous bit-hack conversion corrupted.
+    Covers zero, exact-rounding, small/subnormal magnitudes, inf, and NaN.
     """
     prog = _roundtrip_program()
     inp = np.array(
@@ -56,6 +55,9 @@ def test_float16_cpu_roundtrip_matches_numpy():
             6e-5,
             6e-8,
             -6e-8,
+            np.inf,
+            -np.inf,
+            np.nan,
         ],
         dtype=np.float32,
     )
