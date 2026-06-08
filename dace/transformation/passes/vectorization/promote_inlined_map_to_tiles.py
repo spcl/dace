@@ -9,32 +9,43 @@ first, then performs the equivalent rewrites directly on the outer
 state. This module is the in-progress port; it lands in 5 slices per
 ``PROMOTE_INLINED_MAP_TO_TILES_PLAN.md``.
 
-This file ships **slice 1**: the pass scaffold + the body-scalar
-widening step. After this pass runs, every transient whose access
-nodes are entirely within the tile-tagged Map's scope and whose
-descriptor is either a :class:`Scalar` or an :class:`Array` of shape
-``(1,)`` / ``(1, 1, ...)`` is widened to ``Array(shape=widths,
-dtype=orig_dtype, transient=True, storage=Register)``, and every
-memlet that references it has its subset rewritten from the length-1
-form to the full tile subset ``[0:W_0, ..., 0:W_{K-1}]``.
+**Slice 1** widens every body scalar in a tile-tagged Map's scope to
+``Array(shape=widths, dtype=orig_dtype, transient=True,
+storage=Register)`` and rewrites every memlet that references it from
+the length-1 form to the full tile subset ``[0:W_0, ..., 0:W_{K-1}]``.
 
-The widened SDFG is **temporarily uncompilable** — internal tasklets
-still have scalar bodies (``_out = _in1 + _in2``) but their memlets
-now describe full-tile reads / writes. Slice 2 closes the loop by
-rewriting the tasklets to :class:`TileBinop` / :class:`TileUnop` lib
-nodes that consume the widened shape. Unit tests on this slice assert
-the descriptor + memlet rewrite in isolation; runtime / numerical
-parity comes with slice 4.
+**Slice 2** rewrites every recognised binop / unop tasklet in the same
+scope to a :class:`TileBinop` / :class:`TileUnop` lib node that
+consumes the widened shape. Together with slice 1 the body's compute
+is now tile-to-tile -- the SDFG is structurally correct (slice 4
+closes the remaining gap: global I/O staging + integration test +
+mask threading).
+
+Operand classification (slice 2): each binop / unop operand connector
+is one of
+
+* **Tile** -- in-edge sources from an :class:`AccessNode` whose
+  descriptor matches the tile shape (post-widening). Wired through
+  ``_a`` / ``_b``.
+* **Symbol** -- numeric literal in the tasklet body. Embedded inline
+  via ``expr_a`` / ``expr_b``.
+* (Other operand kinds -- broadcast Scalar, gather index, ND-Tile
+  walk-back -- are deferred to slice 4 alongside the orchestrator
+  wiring; the rewrite refuses them here so the kernel stays a clean
+  skip rather than a silent-wrong rewrite.)
 """
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import data, nodes, subsets
+from dace.libraries.tileops import TileBinop, TileUnop
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 
+from dace.transformation.passes.vectorization.emit_tile_ops import (_classify_binop_tasklet_body,
+                                                                    _classify_unop_tasklet_body, _is_numeric_literal)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
@@ -180,6 +191,172 @@ def widen_body_scalars_to_tile(state: SDFGState, map_entry: nodes.MapEntry, spec
     for name in _collect_body_scalar_transients(state, map_entry, scope_nodes):
         _widen_descriptor(state.sdfg, name, widths)
         out[name] = _rewrite_memlets_in_scope(state, scope_nodes, name, widths)
+    return out
+
+
+def _operand_kind(token: str, in_edges: Dict[str, Any], sdfg: SDFG,
+                  widths: Tuple[int, ...]) -> Tuple[str, Optional[Any], Optional[str]]:
+    """Classify a binop / unop operand token as ``Tile`` / ``Symbol``.
+
+    :param token: Operand token from the tasklet body (a connector name
+        or a numeric literal).
+    :param in_edges: ``{dst_conn_name: in_edge}`` for the tasklet.
+    :param sdfg: The SDFG owning the tasklet.
+    :param widths: Tile widths.
+    :returns: ``(kind, edge_or_None, expr_or_None)``. ``kind`` is one
+        of ``"Tile"`` / ``"Symbol"``. For ``"Tile"`` the second tuple
+        slot is the in-edge for that operand and the third is None;
+        for ``"Symbol"`` the second is None and the third is the
+        literal expression string.
+    :raises NotImplementedError: When the token is neither a numeric
+        literal nor a Tile-shaped in-edge source -- slice 4 expands
+        this; here the rewrite refuses the kernel out loud.
+    """
+    if _is_numeric_literal(token):
+        return "Symbol", None, token
+    if token in in_edges:
+        edge = in_edges[token]
+        src = edge.src
+        if isinstance(src, nodes.AccessNode):
+            desc = sdfg.arrays.get(src.data)
+            if isinstance(desc, data.Array) and tuple(desc.shape) == tuple(widths):
+                return "Tile", edge, None
+    raise NotImplementedError(f"PromoteInlinedMapToTiles: operand {token!r} not a Tile / Symbol "
+                              f"in slice 2 (slice 4 adds Scalar broadcast / gather / NDTile)")
+
+
+def promote_binop_tasklet_to_tile_binop(state: SDFGState, tasklet: nodes.Tasklet, widths: Tuple[int, ...]) -> bool:
+    """Replace one binop tasklet with a :class:`TileBinop` lib node.
+
+    The tasklet body must match :func:`_classify_binop_tasklet_body`
+    (``out = lhs OP rhs`` or ``out = max(lhs, rhs)`` form). Each
+    operand is classified by :func:`_operand_kind`; at least one
+    operand must be a Tile (the lib node refuses the all-Symbol case).
+
+    :param state: State holding the tasklet.
+    :param tasklet: Tasklet to rewrite.
+    :param widths: Tile widths.
+    :returns: ``True`` when the rewrite fired; ``False`` when the
+        tasklet body isn't a binop.
+    :raises NotImplementedError: For operand shapes deferred to slice 4.
+    """
+    parsed = _classify_binop_tasklet_body(tasklet)
+    if parsed is None:
+        return False
+    out_conn, a_tok, op, b_tok = parsed
+    sdfg = state.sdfg
+    in_edges = {e.dst_conn: e for e in state.in_edges(tasklet)}
+    out_edges = {e.src_conn: e for e in state.out_edges(tasklet)}
+    if out_conn not in out_edges:
+        return False
+    out_edge = out_edges[out_conn]
+    if not isinstance(out_edge.dst, nodes.AccessNode):
+        return False
+    out_desc = sdfg.arrays.get(out_edge.dst.data)
+    if not (isinstance(out_desc, data.Array) and tuple(out_desc.shape) == tuple(widths)):
+        # Output isn't a tile -- slice 4 (global staging) hasn't fired yet.
+        raise NotImplementedError(f"PromoteInlinedMapToTiles: binop {tasklet.label!r} output "
+                                  f"{out_edge.dst.data!r} is not tile-shaped {widths}")
+    a_kind, a_edge, a_expr = _operand_kind(a_tok, in_edges, sdfg, widths)
+    b_kind, b_edge, b_expr = _operand_kind(b_tok, in_edges, sdfg, widths)
+    if a_kind != "Tile" and b_kind != "Tile":
+        raise NotImplementedError(f"PromoteInlinedMapToTiles: binop {tasklet.label!r} has no Tile "
+                                  f"operand ({a_kind} {op} {b_kind}); TileBinop requires at least one Tile")
+    binop = TileBinop(name=f"binop_{tasklet.label}",
+                      widths=widths,
+                      op=op,
+                      kind_a=a_kind,
+                      kind_b=b_kind,
+                      expr_a=a_expr,
+                      expr_b=b_expr)
+    state.add_node(binop)
+    tile_subset_str = ", ".join(f"0:{w}" for w in widths)
+    if a_kind == "Tile":
+        state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a",
+                       dace.Memlet(f"{a_edge.src.data}[{tile_subset_str}]"))
+    if b_kind == "Tile":
+        state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b",
+                       dace.Memlet(f"{b_edge.src.data}[{tile_subset_str}]"))
+    state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn,
+                   dace.Memlet(f"{out_edge.dst.data}[{tile_subset_str}]"))
+    # Drop the old tasklet + its edges.
+    for e in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
+        state.remove_edge(e)
+    state.remove_node(tasklet)
+    return True
+
+
+def promote_unop_tasklet_to_tile_unop(state: SDFGState, tasklet: nodes.Tasklet, widths: Tuple[int, ...]) -> bool:
+    """Replace one unop tasklet with a :class:`TileUnop` lib node.
+
+    The tasklet body must match :func:`_classify_unop_tasklet_body`
+    (``out = -a``, ``out = abs(a)`` / ``exp`` / ``log`` / ``sqrt`` /
+    etc.). The single operand must be a Tile.
+
+    :param state: State holding the tasklet.
+    :param tasklet: Tasklet to rewrite.
+    :param widths: Tile widths.
+    :returns: ``True`` when the rewrite fired; ``False`` when the
+        tasklet body isn't a recognised unop.
+    :raises NotImplementedError: For operand shapes deferred to slice 4.
+    """
+    parsed = _classify_unop_tasklet_body(tasklet)
+    if parsed is None:
+        return False
+    out_conn, op, a_tok = parsed
+    sdfg = state.sdfg
+    in_edges = {e.dst_conn: e for e in state.in_edges(tasklet)}
+    out_edges = {e.src_conn: e for e in state.out_edges(tasklet)}
+    if out_conn not in out_edges:
+        return False
+    out_edge = out_edges[out_conn]
+    if not isinstance(out_edge.dst, nodes.AccessNode):
+        return False
+    out_desc = sdfg.arrays.get(out_edge.dst.data)
+    if not (isinstance(out_desc, data.Array) and tuple(out_desc.shape) == tuple(widths)):
+        raise NotImplementedError(f"PromoteInlinedMapToTiles: unop {tasklet.label!r} output "
+                                  f"{out_edge.dst.data!r} is not tile-shaped {widths}")
+    a_kind, a_edge, a_expr = _operand_kind(a_tok, in_edges, sdfg, widths)
+    if a_kind != "Tile":
+        raise NotImplementedError(f"PromoteInlinedMapToTiles: unop {tasklet.label!r} operand is "
+                                  f"{a_kind}; TileUnop requires a Tile operand")
+    unop = TileUnop(name=f"unop_{tasklet.label}", widths=widths, op=op, kind_a=a_kind, expr_a=a_expr)
+    state.add_node(unop)
+    tile_subset_str = ", ".join(f"0:{w}" for w in widths)
+    state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet(f"{a_edge.src.data}[{tile_subset_str}]"))
+    state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn,
+                   dace.Memlet(f"{out_edge.dst.data}[{tile_subset_str}]"))
+    for e in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
+        state.remove_edge(e)
+    state.remove_node(tasklet)
+    return True
+
+
+def promote_tasklets_to_tile_ops(state: SDFGState, map_entry: nodes.MapEntry,
+                                 spec: TileDimSpec) -> Dict[str, int]:
+    """Walk every tasklet in ``map_entry``'s scope and apply binop / unop promotion.
+
+    Returns a counts dict ``{"binop": n_binops_rewritten, "unop":
+    n_unops_rewritten}``. Tasklets that match neither classifier are
+    skipped (caller handles them in slice 3).
+
+    :param state: State holding the tile-tagged map.
+    :param map_entry: Map entry whose scope is being lowered.
+    :param spec: Tile spec.
+    :returns: Per-kind rewrite count.
+    """
+    widths = tuple(spec.widths)
+    scope_nodes = _scope_subgraph_nodes(state, map_entry)
+    out = {"binop": 0, "unop": 0}
+    for n in list(scope_nodes):
+        if not isinstance(n, nodes.Tasklet):
+            continue
+        if promote_binop_tasklet_to_tile_binop(state, n, widths):
+            out["binop"] += 1
+            continue
+        if promote_unop_tasklet_to_tile_unop(state, n, widths):
+            out["unop"] += 1
+            continue
     return out
 
 
