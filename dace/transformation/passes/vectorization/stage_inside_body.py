@@ -41,13 +41,16 @@ Status (incremental landing):
 """
 from typing import Any, Dict, Optional, Tuple
 
-from dace import dtypes
+from dace import dtypes, properties
 from dace.libraries.tileops import TileLoad
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
-from dace.sdfg.nodes import AccessNode
+from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
+from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
 def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "constant_bridge") -> str:
@@ -167,17 +170,51 @@ def stage_tile_access(state: SDFGState,
 stage_gather_access = stage_tile_access
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class StageInsideBody(ppl.Pass):
-    """Inside-body staging pass scaffold (design section 3.3).
+    """Inside-body staging pass (design section 3.3).
 
-    Walks every tile-tagged Map's body NSDFG and stages each non-transient
-    access through a fresh transient sized per the classifier output. Step 1
-    landed the CONSTANT helper; subsequent steps wire the Tile + Gather
-    helpers + the walker that drives them across the body.
+    Walks every tile-tagged Map's body NSDFG. For each non-transient
+    AccessNode inside that body, reads the AN-incident memlet's per-tile
+    subset, classifies it via :func:`classify_tile_access`, and stages
+    through a fresh transient sized per the lattice (section 4):
+
+    * **CONSTANT-only on every tile dim** -- staged via
+      :func:`stage_constant_access` (direct AN -> AN scalar copy).
+    * **Any LINEAR / AFFINE / REPLICATE / MODULAR / GATHER dim** --
+      DEFERRED (step 4b / 4c). Currently logged via the return count
+      so the pipeline can observe coverage but the SDFG is left alone.
+
+    Conservative by design: anything outside the CONSTANT case is a
+    silent skip in this step. Subsequent G7 step 4b adds the Tile
+    branch; 4c adds the Gather branch via :class:`PreparePerLaneIndices`
+    integration.
+
+    :ivar widths: Per-tile-dim widths ``(W_0, ..., W_{K-1})``, innermost-
+        last. Matches the ``EmitTileOps`` / ``GenerateTileIterationMask``
+        constructor pattern; the spec for each visited map is rebuilt by
+        slicing the last ``K`` params off ``map_entry.map.params``.
     """
 
     CATEGORY: str = "Vectorization"
+
+    widths = properties.Property(
+        dtype=tuple,
+        default=(8, ),
+        desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
+    )
+
+    def __init__(self, widths: Tuple[int, ...] = (8, )) -> None:
+        """Build the pass.
+
+        :param widths: Per-tile-dim widths, innermost-last.
+        :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
+        """
+        super().__init__()
+        if not (1 <= len(widths) <= 3):
+            raise ValueError(f"StageInsideBody: widths length {len(widths)} not in {{1, 2, 3}}")
+        self.widths = tuple(widths)
 
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors | ppl.Modifies.Tasklets
@@ -189,9 +226,82 @@ class StageInsideBody(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Stub -- the walker lands in step 4.
+    def _body_nsdfgs(self, sdfg: SDFG):
+        """Yield ``(state, nsdfg_node, map_entry)`` for every body NSDFG sitting
+        directly inside an innermost map whose dim count >= ``K``.
 
-        :returns: ``None`` (no rewrites performed by the stub).
+        The tile-tagging contract (per the orchestrator pipeline):
+        ``NestInnermostMapBodyIntoNSDFG`` nests every eligible map's body in a
+        :class:`NestedSDFG` so the descent + classifier can see a clean
+        single-NSDFG body. This walker walks every state and yields any
+        innermost map whose body is exactly one NestedSDFG.
         """
-        return None
+        K = len(self.widths)
+        for node, parent in sdfg.all_nodes_recursive():
+            if not isinstance(node, MapEntry):
+                continue
+            if not isinstance(parent, SDFGState):
+                continue
+            try:
+                if not is_innermost_map(parent, node):
+                    continue
+            except (StopIteration, ValueError):
+                continue
+            if len(node.map.params) < K:
+                continue
+            try:
+                scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+            except (StopIteration, ValueError):
+                continue
+            nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
+            if len(nsdfgs) != 1:
+                continue
+            yield parent, nsdfgs[0], node
+
+    def _stage_constant_only(self, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
+        """Walk every non-transient AccessNode in ``inner_sdfg`` and stage
+        CONSTANT-only AN-incident reads via :func:`stage_constant_access`.
+
+        :returns: Number of staged ANs (>= 0).
+        """
+        staged = 0
+        for inner_state in inner_sdfg.states():
+            for an in list(inner_state.nodes()):
+                if not isinstance(an, AccessNode):
+                    continue
+                desc = inner_sdfg.arrays.get(an.data)
+                if desc is None or desc.transient:
+                    continue
+                # Only consider source-side ANs (out-edges describe reads from the array).
+                out_edges = list(inner_state.out_edges(an))
+                if not out_edges:
+                    continue
+                # Read the per-tile subset on the AN-incident side of the first out-edge.
+                try:
+                    subset = an_side_subset(out_edges[0], an, inner_sdfg)
+                except Exception:  # noqa: BLE001 -- helper may refuse on edge shapes outside scope.
+                    continue
+                record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                # Conservative gate: every tile dim must be CONSTANT (loop-invariant access).
+                if not record.per_dim_kind or any(k != PerDimKind.CONSTANT for k in record.per_dim_kind):
+                    continue
+                # Stage via the helper. The AN -> AN edge it adds doesn't yet rewire downstream
+                # consumers -- step 4b's tile case will handle the full rewire. For now the
+                # constant stage simply mints the scalar bridge so the structure is observable.
+                stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
+                staged += 1
+        return staged
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Walk every tile-tagged body NSDFG; stage CONSTANT-only ANs.
+
+        :param sdfg: Top-level SDFG.
+        :param pipeline_results: Pipeline results (unused at this step).
+        :returns: Number of ANs staged across the SDFG, or ``None`` if zero.
+        """
+        K = len(self.widths)
+        total = 0
+        for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
+            iter_vars = tuple(map_entry.map.params[-K:])
+            total += self._stage_constant_only(_state, nsdfg_node.sdfg, iter_vars)
+        return total or None

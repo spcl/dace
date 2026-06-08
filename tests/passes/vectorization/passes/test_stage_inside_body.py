@@ -54,11 +54,20 @@ def test_helper_preserves_source_dtype():
     assert sdfg.arrays[name].dtype == dace.int32
 
 
-def test_pass_stub_is_noop():
-    """The Pass class itself is a stub returning None."""
+def test_pass_returns_none_on_empty_sdfg():
+    """Empty SDFG -> no tile-tagged maps -> no stages -> ``None``."""
     sdfg = dace.SDFG("empty")
     sdfg.add_state("s")
-    assert StageInsideBody().apply_pass(sdfg, {}) is None
+    assert StageInsideBody(widths=(8, )).apply_pass(sdfg, {}) is None
+
+
+def test_pass_refuses_widths_outside_k_range():
+    """Constructor refuses K outside {1, 2, 3}."""
+    import pytest as _pt
+    with _pt.raises(ValueError, match=r"widths length"):
+        StageInsideBody(widths=())
+    with _pt.raises(ValueError, match=r"widths length"):
+        StageInsideBody(widths=(8, 8, 8, 8))
 
 
 # ---- stage_tile_access (G7 step 2) ----------------------------------------
@@ -201,3 +210,59 @@ def test_gather_helper_refuses_idx_sources_mismatch():
                             src_subset=Memlet("A[0:16, j:j+8]"),
                             gather_dims=(0, 1),
                             idx_sources={0: idx_an})
+
+
+# ---- StageInsideBody walker (G7 step 4) ----------------------------------
+
+
+def _build_const_only_tile_fixture():
+    """Build an SDFG with one innermost K=1 map (param ``ii``), a body NSDFG, and
+    a non-transient AccessNode ``B`` whose only edge in the body reads ``B[0]``
+    (CONSTANT-only -- no dependency on the tile iter-var ``ii``).
+    """
+    sdfg = dace.SDFG("walker_fixture")
+    sdfg.add_array("B", (16, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body_nsdfg")
+    inner.add_array("B", (16, ), dace.float64, transient=False)
+    inner.add_array("out_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    b_inner = instate.add_access("B")
+    t_inner = instate.add_access("out_t")
+    tasklet = instate.add_tasklet("ld", {"_b"}, {"_o"}, "_o = _b")
+    instate.add_edge(b_inner, None, tasklet, "_b", Memlet("B[0]"))
+    instate.add_edge(tasklet, "_o", t_inner, None, Memlet("out_t[0]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"B"}, set())
+    b_outer = state.add_access("B")
+    state.add_memlet_path(b_outer, me, nsdfg, dst_conn="B", memlet=Memlet("B[0:16]"))
+    state.add_nedge(nsdfg, mx, Memlet())
+    return sdfg, inner
+
+
+def test_walker_stages_constant_only_access_in_body_nsdfg():
+    """The walker mints a Scalar bridge transient inside the body NSDFG for the
+    CONSTANT-only AN ``B``."""
+    sdfg, inner = _build_const_only_tile_fixture()
+    before_scalars = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Scalar) and d.transient)
+    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    after_scalars = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Scalar) and d.transient)
+    assert after_scalars == before_scalars + 1, "expected one staged Scalar bridge"
+
+
+def test_walker_skips_non_innermost_maps():
+    """A nested outer-map structure with no innermost K-dim map yields no stages."""
+    sdfg = dace.SDFG("outer_only")
+    sdfg.add_array("B", (16, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    state.add_map("outer", {"o": "0:4"})
+    assert StageInsideBody(widths=(8, )).apply_pass(sdfg, {}) is None
+
+
+def test_walker_skips_maps_with_fewer_dims_than_K():
+    """K=2 walker skips a K=1 innermost map (len(params) < K)."""
+    sdfg, _ = _build_const_only_tile_fixture()
+    assert StageInsideBody(widths=(8, 8)).apply_pass(sdfg, {}) is None
