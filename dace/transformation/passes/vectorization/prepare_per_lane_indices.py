@@ -27,14 +27,18 @@ Status (incremental landing):
   classifies gather memlets, calls the helper, rewires to TileLoad /
   TileStore.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import dace
-from dace import dtypes
+from dace import dtypes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
+from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
+from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
 def materialise_per_lane_index_tile(state: SDFGState,
@@ -126,23 +130,46 @@ def materialise_per_lane_index_tile(state: SDFGState,
     return arr_name
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class PreparePerLaneIndices(ppl.Pass):
-    """Stub for the per-lane index materialisation pass (design section 3.8).
+    """Per-lane index materialisation pass (design section 3.8).
 
-    Walks every tile-tagged Map's body NSDFG and, for each gather memlet,
-    derives ``deps(d)`` (which tile iter-vars the gather expression touches),
-    materialises an index tile via :func:`materialise_per_lane_index_tile`
-    (or the multi-dim variant landed in step 2), and rewires the memlet
-    through a ``TileLoad`` / ``TileStore`` ``_idx_<d>`` connector.
+    For every tile-tagged Map's body NSDFG, walks every non-transient
+    AccessNode whose AN-incident per-tile subset classifies with at
+    least one ``GATHER`` dim. For each such (AN, source-dim k) pair the
+    walker calls :func:`materialise_per_lane_index_tile` to mint a
+    fresh integer transient holding the per-lane index values, ready
+    to be wired into the corresponding :class:`TileLoad` ``_idx_<k>``
+    connector by :class:`StageInsideBody` (G7 step 4c).
 
-    This step-1 stub implements the **helper** and the pass scaffold; the
-    full walk + classifier-driven rewrite lands in step 3 once G7 (the
-    inside-body staging pass) has reduced every non-transient access to
-    a canonical AN -> AN shape the classifier can read cleanly.
+    The materialised tile's shape follows the design section 9.2 lane-
+    dependency rule: the tuple of widths over the tile dims the gather
+    expression depends on (record ``deps(k)``). For the first slice
+    this walker emits a 1-D index of shape ``(W_p,)`` for the most
+    common single-tile-iter-var case (``a[idx[i]]``).
+
+    :ivar widths: Per-tile-dim widths, mirroring :class:`StageInsideBody`.
     """
 
     CATEGORY: str = "Vectorization"
+
+    widths = properties.Property(
+        dtype=tuple,
+        default=(8, ),
+        desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
+    )
+
+    def __init__(self, widths: Tuple[int, ...] = (8, )) -> None:
+        """Build the pass.
+
+        :param widths: Per-tile-dim widths, innermost-last (1..3 entries).
+        :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
+        """
+        super().__init__()
+        if not (1 <= len(widths) <= 3):
+            raise ValueError(f"PreparePerLaneIndices: widths length {len(widths)} not in {{1, 2, 3}}")
+        self.widths = tuple(widths)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors | ppl.Modifies.Tasklets
@@ -153,9 +180,88 @@ class PreparePerLaneIndices(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Stub -- the full walk lands in step 3.
+    def _body_nsdfgs(self, sdfg: SDFG):
+        """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG."""
+        K = len(self.widths)
+        for node, parent in sdfg.all_nodes_recursive():
+            if not isinstance(node, MapEntry):
+                continue
+            if not isinstance(parent, SDFGState):
+                continue
+            try:
+                if not is_innermost_map(parent, node):
+                    continue
+            except (StopIteration, ValueError):
+                continue
+            if len(node.map.params) < K:
+                continue
+            try:
+                scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+            except (StopIteration, ValueError):
+                continue
+            nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
+            if len(nsdfgs) != 1:
+                continue
+            yield parent, nsdfgs[0], node
 
-        :returns: ``None`` (no rewrites performed by the stub).
+    def _materialise_for_body(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
+        """For every gather AN in ``inner_sdfg``, mint a per-lane index transient.
+
+        :returns: Number of materialised index tiles.
         """
-        return None
+        K = len(self.widths)
+        widths = tuple(self.widths)
+        minted = 0
+        for inner_state in inner_sdfg.states():
+            for an in list(inner_state.nodes()):
+                if not isinstance(an, AccessNode):
+                    continue
+                desc = inner_sdfg.arrays.get(an.data)
+                if desc is None or desc.transient:
+                    continue
+                out_edges = list(inner_state.out_edges(an))
+                if not out_edges:
+                    continue
+                try:
+                    subset = an_side_subset(out_edges[0], an, inner_sdfg)
+                except Exception:  # noqa: BLE001
+                    continue
+                record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                if not record.per_dim_kind or PerDimKind.GATHER not in record.per_dim_kind:
+                    continue
+                # For each per-dim GATHER, materialise an index tile. The classifier records
+                # gather index access nodes per dim via ``record.gather_index_per_dim`` but for
+                # the first slice we focus on the structural materialisation: emit a 1-D index
+                # tile of shape ``(W_0,)`` for the single tile iter-var case (single tile dim).
+                # Multi-tile-dim deps land in a follow-up slice.
+                if K != 1:
+                    continue  # Multi-tile-dim case deferred -- first slice handles K=1.
+                iter_var = iter_vars[0]
+                for k, kind in enumerate(record.per_dim_kind):
+                    if kind != PerDimKind.GATHER:
+                        continue
+                    # Derive the per-lane index expression from the subset's begin on dim k.
+                    begin_str = str(subset.ranges[k][0])
+                    materialise_per_lane_index_tile(
+                        inner_state,
+                        name_hint=f"_idx_{an.data}_{k}",
+                        gather_expr=begin_str,
+                        tile_iter_vars=iter_var,
+                        tile_widths=widths[0],
+                    )
+                    minted += 1
+        return minted
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Walk every tile-tagged body NSDFG; materialise per-lane index tiles for GATHER dims.
+
+        :param sdfg: Top-level SDFG.
+        :param pipeline_results: Pipeline results (unused).
+        :returns: Number of index tiles materialised, or ``None`` if zero.
+        """
+        K = len(self.widths)
+        total = 0
+        for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
+            iter_vars = tuple(map_entry.map.params[-K:])
+            total += self._materialise_for_body(nsdfg_node.sdfg, iter_vars)
+        return total or None

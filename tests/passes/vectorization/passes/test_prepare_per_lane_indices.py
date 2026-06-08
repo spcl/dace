@@ -80,12 +80,62 @@ def test_helper_supports_int32_dtype():
     assert sdfg.arrays[name].dtype == dace.int32
 
 
-def test_pass_stub_is_noop():
-    """The pass class itself is a stub that returns None (no rewrites)."""
+def test_pass_returns_none_on_empty_sdfg():
+    """No tile-tagged maps -> no gather memlets -> ``None``."""
     sdfg = dace.SDFG("empty")
     sdfg.add_state("s")
-    result = PreparePerLaneIndices().apply_pass(sdfg, {})
-    assert result is None
+    assert PreparePerLaneIndices(widths=(8, )).apply_pass(sdfg, {}) is None
+
+
+def test_pass_refuses_widths_outside_k_range():
+    """Constructor refuses K outside {1, 2, 3}."""
+    import pytest as _pt
+    with _pt.raises(ValueError, match=r"widths length"):
+        PreparePerLaneIndices(widths=())
+    with _pt.raises(ValueError, match=r"widths length"):
+        PreparePerLaneIndices(widths=(8, 8, 8, 8))
+
+
+def test_walker_materialises_index_tile_for_gather_access():
+    """``a[idx[ii]]`` (1D gather) -> walker mints one per-lane index tile of shape ``(8,)``."""
+    from dace.memlet import Memlet as _Memlet
+
+    sdfg = dace.SDFG("walker_gather_fixture")
+    sdfg.add_array("A", (32, ), dace.float64, transient=False)
+    sdfg.add_array("idx", (32, ), dace.int64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body_nsdfg")
+    inner.add_array("A", (32, ), dace.float64, transient=False)
+    inner.add_array("idx", (32, ), dace.int64, transient=False)
+    inner.add_array("out_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    a_inner = instate.add_access("A")
+    t_inner = instate.add_access("out_t")
+    tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
+    # Gather: A[idx[ii]]. Per-tile subset on A is [idx[ii]:idx[ii]+1] -- GATHER on dim 0.
+    # Build via Subscript expression since the nested-bracket form confuses Memlet's parser.
+    from dace.subsets import Range as _Range
+    from dace.symbolic import pystr_to_symbolic as _to_sym
+    instate.add_edge(a_inner, None, tasklet, "_a",
+                     _Memlet(data="A", subset=_Range([(_to_sym("idx[ii]"), _to_sym("idx[ii]"), 1)])))
+    instate.add_edge(tasklet, "_o", t_inner, None, _Memlet("out_t[0]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A", "idx"}, set(), symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    idx_outer = state.add_access("idx")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=_Memlet("A[0:32]"))
+    state.add_memlet_path(idx_outer, me, nsdfg, dst_conn="idx", memlet=_Memlet("idx[0:32]"))
+    state.add_nedge(nsdfg, mx, _Memlet())
+
+    before_int_arrays = sum(1 for d in inner.arrays.values()
+                            if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
+    result = PreparePerLaneIndices(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    after_int_arrays = sum(1 for d in inner.arrays.values()
+                           if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
+    assert after_int_arrays == before_int_arrays + 1, "expected one new int64 index transient"
 
 
 def test_e2e_2d_lane_index():
