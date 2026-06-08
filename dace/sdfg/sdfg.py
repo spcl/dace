@@ -700,7 +700,7 @@ class SDFG(ControlFlowRegion):
         edges = json_obj['edges']
 
         if 'constants_prop' in attrs:
-            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']), context=context)
         else:
             constants_prop = None
 
