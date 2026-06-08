@@ -39,9 +39,10 @@ Status (incremental landing):
 * Step 4 (follow-up): Pass walker drives the helpers across every
   body NSDFG.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from dace import dtypes
+from dace.libraries.tileops import TileLoad
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode
@@ -85,6 +86,62 @@ def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "co
     # access (the classifier upstream guarantees this is CONSTANT-only).
     state.add_edge(an, None, bridge_an, None, Memlet(data=an.data, subset=f"0:1" if len(desc.shape) == 1 else None))
     return bridge_name
+
+
+def stage_tile_access(state: SDFGState,
+                      an: AccessNode,
+                      widths: Tuple[int, ...],
+                      src_subset: Memlet,
+                      name_hint: str = "tile_bridge",
+                      dim_strides: Optional[Tuple[int, ...]] = None,
+                      replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
+                      src_dims: Optional[Tuple[int, ...]] = None) -> Tuple[str, "TileLoad"]:
+    """Stage a tile-shaped access on ``an`` through a fresh `(widths,)` Array transient.
+
+    Mints a transient ``Array(shape=widths, ...)`` of ``an``'s element
+    dtype, adds an :class:`TileLoad` lib node between ``an`` and the new
+    transient, and wires the source / destination memlets. Used by the
+    LINEAR / AFFINE / REPLICATE / MODULAR case (the access varies per
+    tile lane but the index is affine / structured).
+
+    Per design section 3.1: the consuming lib node reads the staged tile
+    transient as a ``Tile`` operand at register granularity.
+
+    :param state: State holding ``an``.
+    :param an: Non-transient AccessNode being staged.
+    :param widths: Tile widths ``(W_0, ..., W_{K-1})``.
+    :param src_subset: The memlet that will be attached to the
+        ``an -> TileLoad._src`` edge (carries the per-tile region).
+    :param name_hint: Hint for the transient name; uniquified.
+    :param dim_strides: Per-dim stride coefficients forwarded to
+        :class:`TileLoad`. Defaults to all 1s (LINEAR).
+    :param replicate_factor_per_dim: Per-dim REPLICATE factors;
+        defaults to all 1s (no replication).
+    :param src_dims: Source-array dim permutation. Defaults to the
+        ``TileLoad`` default (innermost ``K`` dims in order).
+    :returns: ``(bridge_name, load_node)`` -- the staged transient's
+        name and the inserted :class:`TileLoad` instance.
+    """
+    sdfg = state.sdfg
+    desc = sdfg.arrays[an.data]
+    dtype = desc.dtype
+    bridge_name, _ = sdfg.add_array(name_hint,
+                                    shape=widths,
+                                    dtype=dtype,
+                                    transient=True,
+                                    storage=dtypes.StorageType.Register,
+                                    find_new_name=True)
+    bridge_an = state.add_access(bridge_name)
+    load = TileLoad(name=f"load_{bridge_name}",
+                    widths=widths,
+                    dim_strides=dim_strides,
+                    replicate_factor_per_dim=replicate_factor_per_dim,
+                    src_dims=src_dims)
+    state.add_node(load)
+    state.add_edge(an, None, load, "_src", src_subset)
+    dst_subset_str = ", ".join(f"0:{w}" for w in widths)
+    state.add_edge(load, "_dst", bridge_an, None, Memlet(f"{bridge_name}[{dst_subset_str}]"))
+    return bridge_name, load
 
 
 @transformation.explicit_cf_compatible
