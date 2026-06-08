@@ -45,8 +45,7 @@ from dace.sdfg.nodes import MapEntry
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 
-from dace.libraries.tileops import (TileBinop, TileGather, TileIota, TileLoad, TileMerge, TileScatter, TileStore,
-                                    TileUnop)
+from dace.libraries.tileops import (TileBinop, TileIota, TileLoad, TileMerge, TileStore, TileUnop)
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.emit_tile_ops import (
     _classify_binop_tasklet_body,
@@ -68,7 +67,6 @@ from dace.transformation.passes.fusion_inline import FuseStates
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme, TileConnectors
 from dace.transformation.passes.vectorization.utils.tile_dims import (
-    TileAccessClassification,
     TileAccessKind,
     TileDimSpec,
 )
@@ -83,8 +81,7 @@ from dace.transformation.passes.vectorization.utils.post_descent_invariants impo
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import (free_symbol_names, free_symbols)
 
-from dace.transformation.passes.vectorization.utils.promote_helpers import (BOX_KINDS as _BOX_KINDS,
-                                                                            classify_box_for_widths)
+from dace.transformation.passes.vectorization.utils.promote_helpers import (classify_box_for_widths)
 
 _INNER_MASK = "_tile_iter_mask"
 
@@ -678,10 +675,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         iacc = istate.add_access(iname)
                         istate.add_edge(fill, "_dst", iacc, None, dace.Memlet(f"{iname}[{out_subset}]"))
                         idx_accs.append(iacc)
-                    gather = TileGather(name=f"agather_{conn}",
-                                        widths=W,
-                                        source_ndim=src_ndim,
-                                        has_mask=mask_acc is not None)
+                    # G3 step 3: unified gather via TileLoad with source-dim-indexed gather_dims.
+                    gather = TileLoad(name=f"agather_{conn}",
+                                      widths=W,
+                                      gather_dims=tuple(range(src_ndim)),
+                                      has_mask=mask_acc is not None)
                     istate.add_node(gather)
                     istate.add_edge(cnode, None, gather, TileConnectors.SRC,
                                     dace.Memlet(data=conn, subset=subsets.Range.from_string(full)))
@@ -1140,11 +1138,22 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         idx_info[k] = (k, None, iname, W[0], 1)
                 if unresolved:
                     continue
-                gather = TileGather(name=f"gather_{src_name}",
-                                    widths=W,
-                                    source_ndim=src_ndim,
-                                    has_mask=mask_acc is not None,
-                                    index_strides=tuple(stride for *_, stride in idx_info))
+                # G3 step 3: unified gather via TileLoad. The legacy ``TileGather`` carried an
+                # ``index_strides`` property for the "widened-1D index tile with per-source-dim
+                # stride lookup" form (each `_idx_<k>[lane * stride[k]]`). The unified TileLoad
+                # contract assumes per-lane-dense index tiles (lane-dependency rule, design
+                # section 9.2): a non-unit stride needs a structural restage rather than a node
+                # property. Refuse the kernel when any stride > 1 instead of silently dropping it.
+                _legacy_idx_strides = tuple(stride for *_, stride in idx_info)
+                if any(s != 1 for s in _legacy_idx_strides):
+                    raise NotImplementedError(
+                        f"promote_nsdfg_body_to_tiles: gather '{src_name}' uses non-unit index_strides "
+                        f"{_legacy_idx_strides}; the unified TileLoad does not carry this property. "
+                        f"Re-stage the index tile densely (per design section 9.2) before lowering.")
+                gather = TileLoad(name=f"gather_{src_name}",
+                                  widths=W,
+                                  gather_dims=tuple(range(src_ndim)),
+                                  has_mask=mask_acc is not None)
                 istate.add_node(gather)
                 istate.add_edge(e.src, None, gather, TileConnectors.SRC, dace.Memlet.from_array(src_name, src_arr))
                 for k, sym, idx_arr, window, _stride in idx_info:
@@ -1411,10 +1420,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                     idx_info[k] = (k, None, iname, W[0])
                 if unresolved:
                     continue
-            scatter = TileScatter(name=f"scatter_{dst_name}",
-                                  widths=W,
-                                  dest_ndim=dst_ndim,
-                                  has_mask=mask_acc is not None)
+            # G3 step 3: unified scatter via TileStore with dest-dim-indexed gather_dims.
+            scatter = TileStore(name=f"scatter_{dst_name}",
+                                widths=W,
+                                gather_dims=tuple(range(dst_ndim)),
+                                has_mask=mask_acc is not None)
             istate.add_node(scatter)
             istate.add_edge(value_access, None, scatter, TileConnectors.SRC,
                             dace.Memlet(f"{value_access.data}[{out_subset}]"))
@@ -1781,8 +1791,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             # TileBinop drops the operand connector for Symbol and embeds the
             # expression inline, so the lib node still validates.
             def _is_tile_kind(k, info):
-                return k in ("Tile", "NDTile") or (k == "Symbol" and isinstance(info, str)
-                                                                       and "__l" in info)
+                return k in ("Tile", "NDTile") or (k == "Symbol" and isinstance(info, str) and "__l" in info)
 
             if not _is_tile_kind(kind_a, info_a) and not _is_tile_kind(kind_b, info_b):
                 # Two operands are non-tile (Scalar / Symbol / loop-invariant
@@ -1816,8 +1825,8 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # tile transient.
                 if tuple(W) == (1, ):
                     out_is_tile_shape = (out_desc is not None
-                                         and (isinstance(out_desc, dace.data.Scalar) or tuple(out_desc.shape) ==
-                                              (1, ) or tuple(out_desc.shape) == tuple(W)))
+                                         and (isinstance(out_desc, dace.data.Scalar) or tuple(out_desc.shape) == (1, )
+                                              or tuple(out_desc.shape) == tuple(W)))
                 else:
                     out_is_tile_shape = (out_desc is not None and not isinstance(out_desc, dace.data.Scalar)
                                          and tuple(out_desc.shape) != (1, ) and tuple(out_desc.shape) == tuple(W))
@@ -2059,8 +2068,8 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                 # tile transient.
                 if tuple(W) == (1, ):
                     out_is_tile_shape = (out_desc is not None
-                                         and (isinstance(out_desc, dace.data.Scalar) or tuple(out_desc.shape) ==
-                                              (1, ) or tuple(out_desc.shape) == tuple(W)))
+                                         and (isinstance(out_desc, dace.data.Scalar) or tuple(out_desc.shape) == (1, )
+                                              or tuple(out_desc.shape) == tuple(W)))
                 else:
                     out_is_tile_shape = (out_desc is not None and not isinstance(out_desc, dace.data.Scalar)
                                          and tuple(out_desc.shape) != (1, ) and tuple(out_desc.shape) == tuple(W))
@@ -2834,8 +2843,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         # memlets.
         from dace.transformation.passes.vectorization.widen_in_map_nsdfg_inputs import (
             widen_in_map_nsdfg_inputs, )
-        widen_in_map_nsdfg_inputs(parent_state.sdfg, parent_state, nsdfg_node,
-                                  tile_widths=dict(zip(spec.iter_vars, W)))
+        widen_in_map_nsdfg_inputs(parent_state.sdfg, parent_state, nsdfg_node, tile_widths=dict(zip(spec.iter_vars, W)))
         self._reshape_transients(inner, W)
         consumed: set = set()
         # Boundary copy states produced by :class:`InsertBodyNSDFGCopies`
