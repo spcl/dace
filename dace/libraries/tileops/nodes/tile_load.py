@@ -318,6 +318,16 @@ class TileLoad(nodes.LibraryNode):
         "regimes (factor=1 contiguous, 1<k<W grouped, k=W full broadcast) "
         "uniformly.",
     )
+    gather_dims = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Sorted tile-dim indices that GATHER (per TILIFICATION_TRANSFORMATION_DESIGN.md "
+        "section 5 + section 9). For each ``d in gather_dims`` an ``_idx_<d>`` input connector is "
+        "declared; the connector's descriptor shape is the Cartesian product of the widths of the "
+        "tile dims the gather expression depends on (section 9.2 lane-dependency rule). The lib "
+        "node broadcasts each index tile to fill ``(W_0, ..., W_{K-1})`` at expansion time. Empty "
+        "list = no gather (structured load).",
+    )
 
     def __init__(self,
                  name: str,
@@ -329,6 +339,7 @@ class TileLoad(nodes.LibraryNode):
                  src_kind: str = "Tile",
                  src_expr: Optional[str] = None,
                  replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
+                 gather_dims: Optional[Tuple[int, ...]] = None,
                  location: Optional[str] = None):
         """Construct a ``TileLoad`` node.
 
@@ -374,9 +385,16 @@ class TileLoad(nodes.LibraryNode):
                 if k > 1 and w % k != 0:
                     raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k} must divide "
                                      f"widths[{d}] = {w} (contracted-box load is W/k elements)")
+        # Validate gather_dims: subset of range(K), sorted, unique.
+        K = len(widths)
+        g = tuple(gather_dims) if gather_dims else ()
+        if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 or d >= K for d in g):
+            raise ValueError(f"TileLoad: gather_dims must be a sorted tuple of unique indices in "
+                             f"range({K}); got {g!r}")
         # ``Symbol`` source has no ``_src`` connector — the literal is embedded
         # inline at expansion time.
         inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
+        inputs |= {f"_idx_{d}" for d in g}
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
@@ -385,15 +403,18 @@ class TileLoad(nodes.LibraryNode):
         self.pad_mode = pad_mode
         self.src_kind = src_kind
         self.src_expr = src_expr
-        self.replicate_factor_per_dim = (list(replicate_factor_per_dim)
-                                         if replicate_factor_per_dim else [1] * len(widths))
+        self.gather_dims = list(g)
+        self.replicate_factor_per_dim = (list(replicate_factor_per_dim) if replicate_factor_per_dim else [1] *
+                                         len(widths))
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Check connectors.
+        """Check connectors + index-tile shape contract (design section 9.4).
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
-        :raises ValueError: If a required connector is unconnected.
+        :raises ValueError: If a required connector is unconnected, an index
+            tile's descriptor shape is not a Cartesian product of widths, or
+            the dtype is not in ``{int32, int64}``.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
@@ -403,3 +424,32 @@ class TileLoad(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
+        # Per-dim gather index validation (design section 9.4).
+        widths = tuple(self.widths)
+        allowed_dtypes = {dace.int32, dace.int64}
+        for d in self.gather_dims:
+            conn = f"_idx_{d}"
+            if conn not in in_e:
+                raise ValueError(f"{self.label}: gather_dims includes {d} but '{conn}' is not connected")
+            desc = sdfg.arrays[in_e[conn].data.data]
+            shape = tuple(desc.shape)
+            # Shape must be a Cartesian product of widths for some sorted subset of tile dims, or
+            # ``(1,)`` for a scalar (no-lane-dep) index.
+            if shape != (1, ):
+                # Match shape against every possible sorted subset of widths.
+                valid = False
+                for k in range(1, len(widths) + 1):
+                    from itertools import combinations
+                    for combo in combinations(range(len(widths)), k):
+                        if shape == tuple(widths[p] for p in combo):
+                            valid = True
+                            break
+                    if valid:
+                        break
+                if not valid:
+                    raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
+                                     f"product of widths {widths} for any sorted subset of tile dims "
+                                     f"(design section 9.2)")
+            if desc.dtype not in allowed_dtypes:
+                raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
+                                 f"{{int32, int64}} (design section 10.4)")

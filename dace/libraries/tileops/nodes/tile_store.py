@@ -266,6 +266,15 @@ class TileStore(nodes.LibraryNode):
         "same destination address would race without WCR. Lowered to an atomic / "
         "reduction store by the per-arch expansion.",
     )
+    gather_dims = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Sorted tile-dim indices that SCATTER (per TILIFICATION_TRANSFORMATION_DESIGN.md "
+        "section 5 + section 9). Mirrors TileLoad's ``gather_dims`` property; each ``d`` "
+        "declares an ``_idx_<d>`` input connector whose descriptor shape is a Cartesian "
+        "product of widths for some sorted subset of tile dims (section 9.2). Empty = "
+        "structured store.",
+    )
 
     def __init__(self,
                  name: str,
@@ -276,6 +285,7 @@ class TileStore(nodes.LibraryNode):
                  src_kind: str = "Tile",
                  src_expr: Optional[str] = None,
                  wcr: Optional[str] = None,
+                 gather_dims: Optional[Tuple[int, ...]] = None,
                  location: Optional[str] = None):
         """Construct a ``TileStore`` node.
 
@@ -304,14 +314,20 @@ class TileStore(nodes.LibraryNode):
             raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
         resolved_dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         if any(s == 0 for s in resolved_dim_strides) and not wcr:
-            raise ValueError(
-                f"TileStore: dim_strides {resolved_dim_strides!r} contains a 0 (collapse-out / "
-                "broadcast write); WCR is required to avoid races. Pass ``wcr='lambda a, b: a + b'`` "
-                "(or another reduction lambda) when collapsing tile dims to a shared destination.")
+            raise ValueError(f"TileStore: dim_strides {resolved_dim_strides!r} contains a 0 (collapse-out / "
+                             "broadcast write); WCR is required to avoid races. Pass ``wcr='lambda a, b: a + b'`` "
+                             "(or another reduction lambda) when collapsing tile dims to a shared destination.")
+        # Validate gather_dims: subset of range(K), sorted, unique.
+        K = len(widths)
+        g = tuple(gather_dims) if gather_dims else ()
+        if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 or d >= K for d in g):
+            raise ValueError(f"TileStore: gather_dims must be a sorted tuple of unique indices in "
+                             f"range({K}); got {g!r}")
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
         inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
+        inputs |= {f"_idx_{d}" for d in g}
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
         self.dim_strides = resolved_dim_strides
@@ -320,13 +336,16 @@ class TileStore(nodes.LibraryNode):
         self.src_kind = src_kind
         self.src_expr = src_expr
         self.wcr = wcr
+        self.gather_dims = list(g)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Check connectors.
+        """Check connectors + index-tile shape contract (design section 9.4).
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
-        :raises ValueError: If a required connector is unconnected.
+        :raises ValueError: If a required connector is unconnected, an
+            index tile's descriptor shape is not a Cartesian product of
+            widths, or its dtype is not in ``{int32, int64}``.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
@@ -336,3 +355,29 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
+        # Per-dim scatter index validation (design section 9.4).
+        widths = tuple(self.widths)
+        allowed_dtypes = {dace.int32, dace.int64}
+        for d in self.gather_dims:
+            conn = f"_idx_{d}"
+            if conn not in in_e:
+                raise ValueError(f"{self.label}: gather_dims includes {d} but '{conn}' is not connected")
+            desc = sdfg.arrays[in_e[conn].data.data]
+            shape = tuple(desc.shape)
+            if shape != (1, ):
+                valid = False
+                from itertools import combinations
+                for k in range(1, len(widths) + 1):
+                    for combo in combinations(range(len(widths)), k):
+                        if shape == tuple(widths[p] for p in combo):
+                            valid = True
+                            break
+                    if valid:
+                        break
+                if not valid:
+                    raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
+                                     f"product of widths {widths} for any sorted subset of tile dims "
+                                     f"(design section 9.2)")
+            if desc.dtype not in allowed_dtypes:
+                raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
+                                 f"{{int32, int64}} (design section 10.4)")
