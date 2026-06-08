@@ -4,11 +4,19 @@ descriptors with length-1 ``Array`` descriptors (after storage/schedule
 inference; depends on ``InferDefaultSchedulesAndStorages``).
 
 Two rules: (1) a ``Scalar`` with ``GPU_Global``/``GPU_Shared`` storage keeps
-its storage and is widened to length-1; (2) a ``Scalar`` written inside a
-``GPU_Device`` kernel is widened and forced to ``GPU_Global`` (``Register``
-is exempt -- thread-local stack). Memlets are rewritten via
-``Memlet.from_array``, bare-identifier interstate assignments get a ``[0]``
-subscript, and nested SDFGs re-declaring the name are promoted recursively.
+its storage and is widened to length-1; (2) a ``Scalar`` that is a
+**kernel output** -- written by a GPU map's ``MapExit`` -- is widened and
+forced to ``GPU_Global``. ``Register`` storage is exempt (thread-local
+stack), and the ``non_transient_only`` knob further restricts rule 2 to
+non-transient scalars (kernel-local transients then stay as registers).
+
+Bare-identifier references to a promoted name are subscripted ``name[0]``
+in interstate assignments, interstate conditions, ``LoopRegion``
+init/update/condition, ``ConditionalBlock`` branch conditions, and
+``NestedSDFG.symbol_mapping`` values. Memlets are left intact -- a
+``Scalar`` access already has subset ``[0]``, matching the length-1 array's
+subset. Nested SDFGs are recursed via the connector that carries the
+promoted descriptor (inner name may differ from outer).
 """
 import re
 from typing import Any, Dict, Optional, Callable
@@ -16,7 +24,6 @@ from typing import Any, Dict, Optional, Callable
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 
 PatternApplier: type = Callable[[str], str]
@@ -84,6 +91,13 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
     # per-thread ``cudaMalloc`` inside the kernel body.
     _RULE2_EXEMPT_STORAGES = frozenset({dtypes.StorageType.Register})
 
+    non_transient_only = properties.Property(dtype=bool,
+                                             default=True,
+                                             desc="Rule 2 only promotes non-transient kernel-output scalars. "
+                                             "A transient scalar written by a GPU map exit stays a Scalar -- the "
+                                             "host never observes the value, so it can live in registers / "
+                                             "per-thread stack. Disable to promote every kernel-output scalar.")
+
     def depends_on(self):
         return {InferDefaultSchedulesAndStorages}
 
@@ -128,17 +142,24 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
             return True
 
-        # Rule 2: written-to from inside a GPU_Device kernel scope.
+        # Rule 2: scalar is a kernel output -- written by a GPU map's ``MapExit``.
+        # Transient kernel outputs are skipped under the default knob (the
+        # host can never observe the value, so it can live in registers).
         if desc.storage in self._RULE2_EXEMPT_STORAGES:
+            return False
+        if self.non_transient_only and desc.transient:
             return False
         for state in sdfg.states():
             for node in state.nodes():
                 if not (isinstance(node, nodes.AccessNode) and node.data == name):
                     continue
-                if state.in_degree(node) == 0:
-                    continue  # not a write target
-                if is_devicelevel_gpu(sdfg, state, node):
-                    return True
+                for in_edge in state.in_edges(node):
+                    src = in_edge.src
+                    if not isinstance(src, nodes.ExitNode):
+                        continue
+                    entry = state.entry_node(src)
+                    if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
+                        return True
         return False
 
     def _promote_one(self, sdfg: SDFG, name: str):
@@ -188,11 +209,12 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         return properties.CodeBlock(new_codeblock_str, codeblock.language)
 
     def _rewrite_state_machine(self, sdfg: SDFG, pattern: PatternApplier) -> None:
-        """Applies the pattern to all interstate edges.
+        """Rewrite bare-identifier references on every state-machine code
+        slot: interstate edges (assignments + condition), ``LoopRegion`` and
+        ``ConditionalBlock`` CodeBlocks. ``InterstateEdge.assignments`` and
+        ``.condition`` are class-level properties so they always exist.
 
-        This means all assignments and the condition.
-
-        :param sdfg: SDFG whose interstate-edge assignments are rewritten.
+        :param sdfg: SDFG whose state-machine slots are rewritten.
         :param pattern: The rewrite pattern.
         """
         for cfg in sdfg.all_control_flow_regions():
@@ -200,23 +222,19 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                 ise = edge.data
                 if ise is None:
                     continue
-
-                for k, v in list(getattr(ise, "assignments", {}).items()):
+                for k, v in list(ise.assignments.items()):
                     if not isinstance(v, str):
                         continue
                     new_v = pattern(v)
                     if new_v != v:
                         ise.assignments[k] = new_v
+                ise.condition = self._rewrite_codeblock(pattern, ise.condition)
 
-                if hasattr(ise, "condition"):
-                    ise.condition = self._rewrite_codeblock(pattern, ise.condition)
-
-        # TODO(ThrudPrimrose): I am not an expert can we switch to `_regions()` here
-        #   and merge the two loops together? In that case we might even be able to
-        #   call `_rewrite_state()` here.
+        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock
+        # slots reached from a state-machine walk -- a ``ControlFlowBlock``
+        # doesn't otherwise embed user expressions. Both subclass
+        # ``ControlFlowBlock`` so they appear via ``all_control_flow_blocks``.
         for block in sdfg.all_control_flow_blocks(recursive=True):
-
-            # TODO(ThrudPrimrose): Are there more block types that we need to handle?
             if isinstance(block, ConditionalBlock):
                 for i in range(len(block._branches)):
                     if block._branches[i][0] is not None:
@@ -237,26 +255,28 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
             self._rewrite_state(state=state, name=name, pattern=pattern)
 
     def _rewrite_state(self, state: SDFGState, name: str, pattern: PatternApplier) -> None:
-        """Applies the promotion, `Scalar` to 'One-Element-Array', to `state`.
+        """Push the rewrite into NestedSDFGs reached from ``state``.
 
-        If there is a nested SDFG then the promotion is applied recursively.
+        Memlets are not touched -- a ``Scalar`` access always carries subset
+        ``[0]``, identical to a length-1 array's. The two slots that DO need
+        attention are (a) the inner descriptor when the NSDFG re-declares it
+        as a ``Scalar``, and (b) ``symbol_mapping`` values that bare-reference
+        the promoted name (frontend symbol-promotion threads scalars into the
+        nested scope this way).
 
         :param state: The state in which to apply the promotion.
         :param name: The name of the data that was promoted.
         :param pattern: The pattern to apply.
         """
-
-        # (void)pattern;
-
-        # NOTE: There is no need to modify the Memlet. The only thing that would change
-        #   at all is the subset (the one associated to the scalar data, the other, if
-        #   present, would not change). However, for Scalars the subset _must_ be `[0]`.
-        #   Which is exactly the same as for a length-one-array.
-        #   Thus the only real operation is to push the change into the nested SDFGs.
-
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
+
+            for k, v in list(node.symbol_mapping.items()):
+                v_str = v if isinstance(v, str) else str(v)
+                new_v = pattern(v_str)
+                if new_v != v_str:
+                    node.symbol_mapping[k] = new_v
 
             handled_inner_names: set[str] = set()  # If data is referenced as input and output.
             for iedge in state.in_edges(node):
