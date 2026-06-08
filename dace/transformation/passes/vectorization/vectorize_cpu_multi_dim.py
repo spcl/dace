@@ -27,10 +27,9 @@ from typing import Literal, Optional, Tuple
 import dace
 from dace import properties
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern, )
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
@@ -61,7 +60,6 @@ from dace.transformation.passes.vectorization.utils.name_schemes import (
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
 from dace.transformation.passes.vectorization.fuse_overlapping_tile_loads import FuseOverlappingTileLoads
-from dace.transformation.passes.vectorization.insert_body_nsdfg_copies import InsertBodyNSDFGCopies
 from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
 from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
@@ -198,13 +196,9 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             same-write-set if/else to a per-lane :class:`TileMerge` select;
             ``"fp_factor"`` (K=1 only, requires ``scalar_postamble``) lowers it
             to ``c*x + (1-c)*y`` tile-binop arithmetic.
-        :param insert_copies: Accepted for harness parity with the legacy
-            ``VectorizeCPU``. The tile path does not need explicit boundary
-            copy nodes — its ``TileLoad``/``TileStore`` lib nodes already make
-            the NSDFG-boundary memlets explicit at expansion time — so this
-            knob is a no-op here. Keeping it on the constructor lets the
-            shared harness forward the same knob to either pipeline without a
-            branching wrapper.
+        :param insert_copies: NO-OP under the multi-dim design (kept for harness parity with the 1D
+            path). The inside-body staging (design section 3) inserts every copy intrinsically via
+            tile transients on each non-transient access.
         :param fuse_overlapping_loads: Accepted for harness parity with the
             legacy ``VectorizeCPU``. The tile path does not yet fuse
             overlapping loads (every ``TileLoad`` emits its own window); this
@@ -252,27 +246,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # way regardless of K.
 
         widths_t = tuple(widths)
-        # ``NormalizeWCRSource`` runs first so every WCR sink is sourced by an
-        # AccessNode (private scalar) — the post-vectorise reduction lowering
-        # in ``EmitTileOps`` keys on this shape (``tile -> _wcr_src (Scalar)
-        # -[wcr]-> sink``) and emits a ``TileReduce`` per matching edge so the
-        # tile collapses to a scalar before the outer OpenMP reduction fires.
-        # Idempotent — re-runs are no-ops.
-        # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read the
-        # original tile-dependent array access directly, not a length-1 scalar
-        # slice (which ``EmitTileOps`` would mis-classify as a Scalar broadcast).
-        # Mirrors the run-at-front placement on the 1D path.
-        # Run ``ConvertLengthOneArraysToScalars`` early so any length-1
-        # boundary array (e.g. cloudsc ``z1`` minted by the python frontend
-        # with shape ``(1,)``) becomes a true ``Scalar``. The K-dim descent
-        # then has a clean signal — ``Scalar`` source ⇒ loop-invariant
-        # broadcast, NOT to be widened — instead of a heuristic over the
-        # parent array shape. Recursive (transient-only on nested SDFGs
-        # so the body-NSDFG signature is unchanged).
+        # Front passes (target-agnostic normalization):
+        #   * ConvertLengthOneArraysToScalars -- length-1 arrays become true Scalars so the per-tile
+        #     classifier sees CONSTANT-only sources directly as the Scalar operand kind (section 6.2).
+        #   * NormalizeWCRSource -- ensures every WCR sink is sourced by an AccessNode; design 3.5 locks
+        #     WCR to the outside-NSDFG AN -> MapExit boundary so the inner state has none after staging.
+        #   * BypassTrivialAssignTasklets -- design 3.6: every staged copy is a direct AN -> AN edge with
+        #     no `_out = _in` tasklet between. Runs early so the classifier and the staging pass see clean
+        #     edges everywhere.
         passes = [
             ConvertLengthOneArraysToScalars(recursive=True, transient_only=False),
             NormalizeWCRSource(),
-            CleanAccessNodeToScalarSliceToTaskletPattern(),
+            BypassTrivialAssignTasklets(),
         ]
         if branch_mode == "fp_factor":
             # FP-factor branch lowering (the legacy front): collapse a
@@ -458,49 +443,22 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :param pipeline_results: Carry-in from any enclosing pipeline.
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
-        # WCR sinks that the tile path CAN handle (the post-:class:`NormalizeWCRSource`
-        # ``tile -> _wcr_src (Scalar) -[wcr]-> sink`` shape, lowered to a
-        # ``TileReduce``) are left alone — running ``WCRToAugAssign`` on them
-        # would convert each ``s += a[i]`` reduction into an RMW tasklet
-        # ``s = s + a[i]`` whose operands are both Scalar (acc + per-iteration
-        # scalar), losing the reduction semantics the tile reduce expansion
-        # needs. Every OTHER WCR (the historical "we can't handle this"
-        # case) stays converted via the augassign fallback on a follow-up
-        # pass below — first lower the recognised reductions, then convert
-        # anything left over.
-        NormalizeWCRSource().apply_pass(sdfg, {})
+        # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction shape into an
+        # in-place RMW tasklet. The recognised tile-path reductions (post-NormalizeWCRSource in the
+        # constructor pipeline) land as `tile -> scalar -[wcr]-> sink` and are left alone -- they're
+        # lowered to TileReduce; everything else converts so no stray WCR survives into the body.
         sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
-        # ``LoopToMap`` parallelises every data-parallel ``for`` loop into a map
-        # so the tile path can tile it. On its own it propagates WHOLE-array body
-        # edges (``e[0:N]`` instead of the per-iteration slice ``e[i]`` a
-        # hand-written ``dace.map`` produces), which the tile boundary-widening
-        # mis-tiles (duplicate tiles). ``RefineNestedAccess`` is the canonicaliser
-        # that recovers the per-iteration form: it tightens the outer memlet to
-        # what the body NSDFG actually accesses (``e[i]``; a gather ``b[idx[i]]``
-        # stays the whole-array ``b(1)[0:N]``, matching the hand-map granularity).
+        # LoopToMap parallelises data-parallel `for` loops; RefineNestedAccess tightens the body's
+        # outer memlet to the per-iteration slice (LoopToMap on its own emits whole-array body edges).
         self._refine_loop_to_map_bodies(sdfg, LoopToMap, RefineNestedAccess)
-        # Normalise loop-nest map bodies just before MapCollapse needs them:
-        # inline the loop-nesting wrapper NSDFGs so nested ``for`` loops' maps
-        # become adjacent + collapse them into one multi-param map. An inout /
-        # multi-state leaf compute body (cloudsc RMW chain, vbor) resists inlining
-        # and stays an NSDFG for the tile descent. See ``normalize_loop_nests``.
+        # Inline wrapper NSDFGs + collapse adjacent perfectly-nested single-param maps so the K-dim
+        # tile spans K genuine map dims.
         normalize_loop_nests(sdfg)
-        # ALWAYS run ExpandNestedSDFGInputs across every NSDFG so the
-        # downstream copy / tile / classify pipeline operates on a single,
-        # uniform shape: every NSDFG in/out edge reads/writes the full
-        # outer array; every inner memlet carries the per-iter offset and
-        # uses the source-rank descriptor. Independent of every knob
-        # (``nest_map_bodies``, ``insert_copies``, ...) -- the unification
-        # is the point.
+        # ExpandNestedSDFGInputs establishes the section 2.4 boundary contract: every body NSDFG's
+        # in/out connector reads/writes the full outer array; inner descriptors mirror outer shape.
+        # All downstream classification / staging / lowering runs inside the body against the inner
+        # full-shape mirror.
         sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
-        # ``insert_copies``: lift every in-map body NSDFG's connector
-        # accesses into a private transient + one explicit copy state per
-        # direction. After this the compute body sees only local
-        # transients; the connector boundary is one full-array copy each
-        # way. Runs AFTER the always-on Expand pass so every connector
-        # already mirrors the source descriptor.
-        if self._insert_copies:
-            InsertBodyNSDFGCopies().apply_pass(sdfg, {})
         result = super().apply_pass(sdfg, pipeline_results)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
         # to the caller — the SDFG returns with tile lib nodes still
