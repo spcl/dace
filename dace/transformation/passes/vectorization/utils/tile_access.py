@@ -611,6 +611,25 @@ def classify_tile_access(subset: Range, iter_vars: Sequence[str], inner_sdfg: Op
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
             if coeff is not None:
+                # G6 (design section 4.2 join rule): the AFFINE coefficient must be tile-
+                # independent. `a[N*i]` with N outer-constant is AFFINE stride N; with N tile-
+                # dependent (defined by an interstate edge whose RHS touches a tile iter-var)
+                # the access is GATHER. Forces a GATHER fallback for unrecognised symbolic
+                # coefficients whose tile-independence we cannot prove.
+                tile_dep_coeff = False
+                if inner_sdfg is not None:
+                    coeff_syms = {str(s) for s in coeff.free_symbols} if hasattr(coeff, "free_symbols") else set()
+                    if any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in coeff_syms):
+                        tile_dep_coeff = True
+                if tile_dep_coeff:
+                    per_dim_kind.append(PerDimKind.GATHER)
+                    dim_strides.append(None)
+                    dim_iter_var.append(None)
+                    gather_index_per_dim.append(None)
+                    dim_offset.append(None)
+                    replicate_factor_per_dim.append(None)
+                    dim_to_canonical_iter_var.append(None)
+                    continue
                 # Affine in one iter-var. Coerce to int when possible
                 # (the emitter wants a concrete stride for the lib node).
                 try:
