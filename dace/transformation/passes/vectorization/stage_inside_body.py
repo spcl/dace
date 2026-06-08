@@ -95,97 +95,45 @@ def stage_tile_access(state: SDFGState,
                       name_hint: str = "tile_bridge",
                       dim_strides: Optional[Tuple[int, ...]] = None,
                       replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
-                      src_dims: Optional[Tuple[int, ...]] = None) -> Tuple[str, "TileLoad"]:
+                      src_dims: Optional[Tuple[int, ...]] = None,
+                      gather_dims: Tuple[int, ...] = (),
+                      idx_sources: Optional[Dict[int, AccessNode]] = None) -> Tuple[str, "TileLoad"]:
     """Stage a tile-shaped access on ``an`` through a fresh `(widths,)` Array transient.
 
     Mints a transient ``Array(shape=widths, ...)`` of ``an``'s element
-    dtype, adds an :class:`TileLoad` lib node between ``an`` and the new
-    transient, and wires the source / destination memlets. Used by the
-    LINEAR / AFFINE / REPLICATE / MODULAR case (the access varies per
-    tile lane but the index is affine / structured).
+    dtype, adds a :class:`TileLoad` lib node between ``an`` and the new
+    transient, and wires the source / destination memlets.
 
-    Per design section 3.1: the consuming lib node reads the staged tile
-    transient as a ``Tile`` operand at register granularity.
+    Covers both the structured case (design section 3.1's LINEAR /
+    AFFINE / REPLICATE / MODULAR; ``gather_dims`` empty) and the GATHER
+    case (``gather_dims`` non-empty; ``idx_sources`` provides the per-
+    dim ``_idx_<d>`` AccessNodes, typically materialised upstream by
+    :func:`materialise_per_lane_index_tile`).
 
     :param state: State holding ``an``.
     :param an: Non-transient AccessNode being staged.
     :param widths: Tile widths ``(W_0, ..., W_{K-1})``.
-    :param src_subset: The memlet that will be attached to the
+    :param src_subset: The memlet attached to the
         ``an -> TileLoad._src`` edge (carries the per-tile region).
     :param name_hint: Hint for the transient name; uniquified.
     :param dim_strides: Per-dim stride coefficients forwarded to
         :class:`TileLoad`. Defaults to all 1s (LINEAR).
     :param replicate_factor_per_dim: Per-dim REPLICATE factors;
-        defaults to all 1s (no replication).
+        defaults to all 1s.
     :param src_dims: Source-array dim permutation. Defaults to the
         ``TileLoad`` default (innermost ``K`` dims in order).
-    :returns: ``(bridge_name, load_node)`` -- the staged transient's
-        name and the inserted :class:`TileLoad` instance.
-    """
-    sdfg = state.sdfg
-    desc = sdfg.arrays[an.data]
-    dtype = desc.dtype
-    bridge_name, _ = sdfg.add_array(name_hint,
-                                    shape=widths,
-                                    dtype=dtype,
-                                    transient=True,
-                                    storage=dtypes.StorageType.Register,
-                                    find_new_name=True)
-    bridge_an = state.add_access(bridge_name)
-    load = TileLoad(name=f"load_{bridge_name}",
-                    widths=widths,
-                    dim_strides=dim_strides,
-                    replicate_factor_per_dim=replicate_factor_per_dim,
-                    src_dims=src_dims)
-    state.add_node(load)
-    state.add_edge(an, None, load, "_src", src_subset)
-    dst_subset_str = ", ".join(f"0:{w}" for w in widths)
-    state.add_edge(load, "_dst", bridge_an, None, Memlet(f"{bridge_name}[{dst_subset_str}]"))
-    return bridge_name, load
-
-
-def stage_gather_access(state: SDFGState,
-                        an: AccessNode,
-                        widths: Tuple[int, ...],
-                        src_subset: Memlet,
-                        gather_dims: Tuple[int, ...],
-                        idx_sources: Dict[int, AccessNode],
-                        name_hint: str = "gather_bridge",
-                        dim_strides: Optional[Tuple[int, ...]] = None,
-                        replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
-                        src_dims: Optional[Tuple[int, ...]] = None) -> Tuple[str, "TileLoad"]:
-    """Stage a gather-shaped access on ``an`` through a fresh tile transient + ``TileLoad`` with ``gather_dims``.
-
-    Mirrors :func:`stage_tile_access` but wires the per-dim
-    ``_idx_<d>`` connectors using AccessNodes already in scope
-    (typically materialised by :func:`materialise_per_lane_index_tile`
-    from :mod:`prepare_per_lane_indices`).
-
-    Per design section 3.1: gather staging produces the same tile
-    transient shape as the structured case; only the lib node's
-    ``gather_dims`` + the wired ``_idx_<d>`` connectors differ.
-
-    :param state: State holding ``an``.
-    :param an: Non-transient AccessNode being staged.
-    :param widths: Tile widths.
-    :param src_subset: The memlet on ``an -> TileLoad._src``.
-    :param gather_dims: Sorted tuple of tile dims that gather (subset
-        of ``range(K)``).
+    :param gather_dims: Sorted tuple of tile dims that gather (empty
+        for the structured case).
     :param idx_sources: ``{d: AccessNode}`` for each ``d in
-        gather_dims``. Each AN's descriptor shape must be a Cartesian
-        product of widths for some sorted subset of tile dims (design
-        section 9.2 lane-dependency rule); :class:`TileLoad.validate`
-        re-checks this.
-    :param name_hint: Hint for the bridge transient name.
-    :param dim_strides: Forwarded to :class:`TileLoad`.
-    :param replicate_factor_per_dim: Forwarded to :class:`TileLoad`.
-    :param src_dims: Forwarded to :class:`TileLoad`.
-    :returns: ``(bridge_name, load_node)``.
-    :raises ValueError: When ``set(gather_dims) != set(idx_sources)``.
+        gather_dims``. Required when ``gather_dims`` is non-empty.
+    :returns: ``(bridge_name, load_node)`` -- staged transient name +
+        :class:`TileLoad` instance.
+    :raises ValueError: When ``gather_dims`` is non-empty and
+        ``set(gather_dims) != set(idx_sources)``.
     """
-    if set(gather_dims) != set(idx_sources):
-        raise ValueError(f"stage_gather_access: gather_dims {gather_dims!r} must match the keys of "
-                         f"idx_sources {sorted(idx_sources)}")
+    if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
+        raise ValueError(f"stage_tile_access: gather_dims {gather_dims!r} must match the keys of "
+                         f"idx_sources {sorted(idx_sources) if idx_sources else None}")
     sdfg = state.sdfg
     desc = sdfg.arrays[an.data]
     dtype = desc.dtype
@@ -204,7 +152,6 @@ def stage_gather_access(state: SDFGState,
                     gather_dims=gather_dims)
     state.add_node(load)
     state.add_edge(an, None, load, "_src", src_subset)
-    # Wire each _idx_<d> connector from the supplied AccessNode.
     for d in gather_dims:
         idx_an = idx_sources[d]
         idx_desc = sdfg.arrays[idx_an.data]
@@ -213,6 +160,11 @@ def stage_gather_access(state: SDFGState,
     dst_subset_str = ", ".join(f"0:{w}" for w in widths)
     state.add_edge(load, "_dst", bridge_an, None, Memlet(f"{bridge_name}[{dst_subset_str}]"))
     return bridge_name, load
+
+
+# Backwards-compat alias: callers that already wrote against ``stage_gather_access`` keep working.
+# The unified ``stage_tile_access`` above handles both shapes via the optional ``gather_dims`` arg.
+stage_gather_access = stage_tile_access
 
 
 @transformation.explicit_cf_compatible

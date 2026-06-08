@@ -56,9 +56,7 @@ def tile_offset(widths: Sequence[int]) -> str:
     return " + ".join(reversed(parts))
 
 
-def offset_via_strides(coeffs: Sequence[int],
-                       strides: Sequence[str],
-                       replicate_factors: Sequence[int] = ()) -> str:
+def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_factors: Sequence[int] = ()) -> str:
     """Return the flat offset expression
     ``sum_d coeffs[d] * strides[d] * (__l<d> / replicate_factors[d])``.
 
@@ -90,3 +88,56 @@ def offset_via_strides(coeffs: Sequence[int],
             lane = f"({lane} / {replicate_factors[d]})"
         parts.append(f"({c} * ({s}) * {lane})")
     return " + ".join(parts)
+
+
+def resolve_gather_deps(idx_shape, widths):
+    """Find the sorted subset of tile dims whose widths spell out ``idx_shape``.
+
+    Implements the design section 9.2 lane-dependency lookup: given an
+    ``_idx_<d>`` connector's descriptor shape and the lib node's tile widths,
+    return the sorted tuple of tile dim indices ``deps_d`` such that
+    ``tuple(widths[p] for p in deps_d) == idx_shape``, or ``None`` if no such
+    subset exists. The special ``(1,)`` shape (scalar gather index, no lane
+    dep) returns the empty tuple ``()``.
+
+    :param idx_shape: The descriptor shape of an ``_idx_<d>`` connector
+        (e.g. ``(4,)`` or ``(4, 8)``).
+    :param widths: The lib node's full tile widths ``(W_0, ..., W_{K-1})``.
+    :returns: Sorted tuple of tile dim indices, ``()`` for the scalar case,
+        or ``None`` when no Cartesian product of widths matches.
+    """
+    from itertools import combinations
+    if tuple(idx_shape) == (1, ):
+        return ()
+    K = len(widths)
+    for k in range(1, K + 1):
+        for combo in combinations(range(K), k):
+            if tuple(idx_shape) == tuple(widths[p] for p in combo):
+                return combo
+    return None
+
+
+def gather_lane_offset(deps, widths, conn):
+    """Build the row-major flat lane offset C expression into an ``_idx_<d>`` tile.
+
+    Given ``deps = (p_0, ..., p_{n-1})`` (the tile dims the gather expression
+    depends on) and the lib node's widths, returns the CPP expression
+    ``conn[<flat offset>]`` where the flat offset is
+    ``__l<p_0> * (W_<p_1> * W_<p_2> * ...) + __l<p_1> * (W_<p_2> * ...) + ... + __l<p_{n-1}>``.
+
+    For the scalar case (``deps == ()``) returns ``conn[0]``.
+
+    :param deps: Sorted tuple of tile dim indices from :func:`resolve_gather_deps`.
+    :param widths: Lib node's full tile widths.
+    :param conn: The connector name (e.g. ``"_idx_0"``).
+    :returns: A CPP expression string of the form ``conn[<offset>]``.
+    """
+    if not deps:
+        return f"{conn}[0]"
+    parts = []
+    for i, p in enumerate(deps):
+        inner = 1
+        for q in deps[i + 1:]:
+            inner *= widths[q]
+        parts.append(f"__l{p}" if inner == 1 else f"(__l{p} * {inner})")
+    return f"{conn}[{' + '.join(parts)}]"

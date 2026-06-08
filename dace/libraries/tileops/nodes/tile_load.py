@@ -12,7 +12,7 @@ from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import nested_loops, offset_via_strides, tile_offset
+from .._pure_codegen import (gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
 from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
@@ -61,7 +61,6 @@ class ExpandTileLoadPure(ExpandTransformation):
         :returns: A CPP tasklet replacing the lib node in place.
         """
         from dace.symbolic import symstr
-        from itertools import combinations
         widths = list(node.widths)
         K = len(widths)
         dst_off = tile_offset(widths)
@@ -107,28 +106,11 @@ class ExpandTileLoadPure(ExpandTransformation):
                     conn = f"_idx_{d}"
                     edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
                     idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
-                    if idx_shape == (1, ):
-                        gather_idx_ref[d] = f"{conn}[0]"
-                        continue
-                    # Find the sorted subset deps_d whose width product matches idx_shape.
-                    deps_d = None
-                    for k in range(1, K + 1):
-                        for combo in combinations(range(K), k):
-                            if tuple(widths[p] for p in combo) == idx_shape:
-                                deps_d = combo
-                                break
-                        if deps_d is not None:
-                            break
+                    deps_d = resolve_gather_deps(idx_shape, widths)
                     if deps_d is None:
                         raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
                                          f"{idx_shape} against widths {tuple(widths)}")
-                    parts = []
-                    for i, p in enumerate(deps_d):
-                        inner = 1
-                        for q in deps_d[i + 1:]:
-                            inner *= widths[q]
-                        parts.append(f"__l{p}" if inner == 1 else f"(__l{p} * {inner})")
-                    gather_idx_ref[d] = f"{conn}[{' + '.join(parts)}]"
+                    gather_idx_ref[d] = gather_lane_offset(deps_d, widths, conn)
                 # Per-dim contributions: gather dims use the index tile; others use the
                 # affine offset (REPLICATE-aware via `__l<d> / k`).
                 parts = []
@@ -482,23 +464,10 @@ class TileLoad(nodes.LibraryNode):
                 raise ValueError(f"{self.label}: gather_dims includes {d} but '{conn}' is not connected")
             desc = sdfg.arrays[in_e[conn].data.data]
             shape = tuple(desc.shape)
-            # Shape must be a Cartesian product of widths for some sorted subset of tile dims, or
-            # ``(1,)`` for a scalar (no-lane-dep) index.
-            if shape != (1, ):
-                # Match shape against every possible sorted subset of widths.
-                valid = False
-                for k in range(1, len(widths) + 1):
-                    from itertools import combinations
-                    for combo in combinations(range(len(widths)), k):
-                        if shape == tuple(widths[p] for p in combo):
-                            valid = True
-                            break
-                    if valid:
-                        break
-                if not valid:
-                    raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
-                                     f"product of widths {widths} for any sorted subset of tile dims "
-                                     f"(design section 9.2)")
+            if resolve_gather_deps(shape, widths) is None:
+                raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
+                                 f"product of widths {widths} for any sorted subset of tile dims "
+                                 f"(design section 9.2)")
             if desc.dtype not in allowed_dtypes:
                 raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
                                  f"{{int32, int64}} (design section 10.4)")

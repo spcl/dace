@@ -1,10 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for :func:`stage_constant_access` (design section 3.1 + section 3.6)."""
+import pytest
+
 import dace
+from dace.libraries.tileops import TileLoad
 from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.stage_inside_body import (
     StageInsideBody,
     stage_constant_access,
+    stage_gather_access,
+    stage_tile_access,
 )
 
 
@@ -57,9 +62,6 @@ def test_pass_stub_is_noop():
 
 
 # ---- stage_tile_access (G7 step 2) ----------------------------------------
-
-from dace.libraries.tileops import TileLoad
-from dace.transformation.passes.vectorization.stage_inside_body import stage_tile_access
 
 
 def test_tile_helper_mints_tile_transient_and_tileload_node():
@@ -128,9 +130,6 @@ def test_tile_helper_preserves_source_dtype():
 
 
 # ---- stage_gather_access (G7 step 3) -------------------------------------
-
-import pytest
-from dace.transformation.passes.vectorization.stage_inside_body import stage_gather_access
 
 
 def _add_idx(sdfg, name, shape):
