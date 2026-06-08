@@ -31,7 +31,7 @@ The pass is body-NSDFG-scoped: the outer SDFG's ``AN -> AN`` edges may
 be scatter / gather staging that the legacy 1D detect passes consume,
 so they stay untouched. Mirrors :class:`EliminateDeadCopies`'s scoping.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import subsets
@@ -39,6 +39,26 @@ from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
+
+
+def _assign_triple(istate: SDFGState, t: dace.nodes.Tasklet) -> Optional[Tuple]:
+    """Return ``(in_edge, out_edge)`` iff ``t`` is the trivial
+    ``AN -> [_out=_in] -> AN`` triple. ``None`` otherwise.
+
+    Shared gate for the dedup and bypass passes -- collapses six
+    repeated checks (assign body, single in/out edge, both endpoints
+    AccessNodes) into one helper.
+    """
+    if not _is_assign_tasklet(t):
+        return None
+    in_es = istate.in_edges(t)
+    out_es = istate.out_edges(t)
+    if len(in_es) != 1 or len(out_es) != 1:
+        return None
+    in_e, out_e = in_es[0], out_es[0]
+    if not (isinstance(in_e.src, dace.nodes.AccessNode) and isinstance(out_e.dst, dace.nodes.AccessNode)):
+        return None
+    return in_e, out_e
 
 
 @transformation.explicit_cf_compatible
@@ -97,15 +117,10 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         seen: Dict = {}
         removed = 0
         for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
-            if not _is_assign_tasklet(t):
+            triple = _assign_triple(istate, t)
+            if triple is None:
                 continue
-            in_es = istate.in_edges(t)
-            out_es = istate.out_edges(t)
-            if len(in_es) != 1 or len(out_es) != 1:
-                continue
-            in_e, out_e = in_es[0], out_es[0]
-            if not (isinstance(in_e.src, dace.nodes.AccessNode) and isinstance(out_e.dst, dace.nodes.AccessNode)):
-                continue
+            in_e, out_e = triple
             key = (in_e.src.data, out_e.dst.data)
             keep = seen.setdefault(key, (t, in_e.src, out_e.dst))
             if keep[0] is t:
@@ -156,18 +171,11 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         inner = istate.sdfg
         removed = 0
         for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
-            if not _is_assign_tasklet(t):
+            triple = _assign_triple(istate, t)
+            if triple is None:
                 continue
-            in_es = istate.in_edges(t)
-            out_es = istate.out_edges(t)
-            if len(in_es) != 1 or len(out_es) != 1:
-                continue
-            in_e = in_es[0]
-            out_e = out_es[0]
-            if not (isinstance(in_e.src, dace.nodes.AccessNode) and isinstance(out_e.dst, dace.nodes.AccessNode)):
-                continue
-            src_an = in_e.src
-            dst_an = out_e.dst
+            in_e, out_e = triple
+            src_an, dst_an = in_e.src, out_e.dst
             src_desc = inner.arrays.get(src_an.data)
             dst_desc = inner.arrays.get(dst_an.data)
             if src_desc is None or dst_desc is None:

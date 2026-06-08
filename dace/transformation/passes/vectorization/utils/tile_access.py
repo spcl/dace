@@ -85,46 +85,40 @@ from dace.subsets import Range
 class PerDimKind(enum.Enum):
     """Per-dim classification of a memlet subset for tile lowering.
 
-    All five kinds sit on a unified ``replicate_factor`` axis -- the
-    number of consecutive lanes that read the same source element on
-    this dim. ``BROADCAST`` (factor = "all W lanes"), ``REPLICATE``
-    (factor = k, 1 < k < W) and ``STRUCTURED_1`` (factor = 1) are points
-    on this spectrum; the codegen uses the per-dim factor uniformly to
-    pick the right intrinsic. ``AFFINE`` and ``GATHER`` step outside
-    the spectrum because non-unit-stride and data-dependent accesses
-    aren't characterised by a replicate factor.
+    See TILIFICATION_TRANSFORMATION_DESIGN.md section 4 for the lattice.
     """
 
-    #: No tile iter-var anywhere in this dim's expression -- loop-invariant.
-    #: All W lanes of this dim share one source element. The endpoint of
-    #: the replicate-factor spectrum (factor = W); the codegen loads one
-    #: element and splats it across the whole dim.
-    BROADCAST = "broadcast"
+    #: No tile iter-var -- loop-invariant. All W lanes share one source
+    #: element (codegen splats).
+    CONSTANT = "constant"
 
-    #: A tile iter-var as a direct top-level symbol with identity
-    #: coefficient (``iter_var + c``). Each lane reads a distinct
-    #: consecutive element (replicate_factor = 1). Lane ``l`` reads
-    #: ``addr + l``.
-    STRUCTURED_1 = "structured-1"
+    #: Exactly ``iter_var + c`` -- stride 1, constant offset. Lane ``l``
+    #: reads index ``l`` more.
+    LINEAR = "linear"
 
-    #: A tile iter-var inside ``int_floor(c * iter_var + c0, k)`` or
-    #: ``int_ceil(...)`` -- the dim varies WITHIN itself but groups
-    #: ``k`` consecutive lanes onto the same source element. The
-    #: replicate factor ``k`` lives in
-    #: :attr:`TileAccess.replicate_factor_per_dim`. The codegen loads
-    #: ``W / k`` elements and group-broadcasts each ``k`` times.
+    #: ``int_floor(c * iter_var + c0, k)`` / ``int_ceil(...)`` with
+    #: ``1 < k < W`` -- group-broadcast within the dim with factor ``k``
+    #: (codegen loads ``W/k`` and replicates each ``k`` times).
     REPLICATE = "replicate"
 
-    #: Tile iter-var(s) as direct top-level symbol(s) with non-unit
-    #: coefficient (``2*i``) or multiple iter-vars combined (``i + j``).
-    #: ``dim_stride`` is the coefficient when isolatable; otherwise the
-    #: emitter falls back to GATHER.
+    #: ``s * iter_var + c`` with ``s`` outer-scope constant, ``s >= 1``.
+    #: Strided load with constant stride. Multiple iter-vars sharing a
+    #: dim is GATHER.
     AFFINE = "affine"
 
-    #: A tile iter-var appears nested inside a :class:`Subscript`
-    #: (``arr[idx[i]]``). Data-dependent index; emits :class:`TileGather`
-    #: with the index expression.
+    #: ``(c * iter_var + c0) % N`` with ``N`` outer-scope constant.
+    #: Cyclic wrap. When ``N | c * W_p`` (tile-aligned), reduces to
+    #: LINEAR with a per-tile constant offset.
+    MODULAR = "modular"
+
+    #: Data-dependent / unsupported. Tile-dependent symbols in the
+    #: expression force GATHER (see section 4.2 join rule).
     GATHER = "gather"
+
+    # Backwards-compat aliases -- removed after the rename has
+    # propagated through every consumer.
+    BROADCAST = "constant"
+    STRUCTURED_1 = "linear"
 
 
 class TileAccessKind(enum.Enum):
@@ -359,6 +353,37 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     return k
 
 
+def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
+    """Detect ``(c * var + c0) % N`` -- the MODULAR per-dim pattern.
+
+    Returns ``N`` (positive integer) when ``expr`` is a Mod / mod call
+    whose RHS is a positive integer constant and whose LHS is affine
+    in ``var_name``. Returns ``None`` otherwise. Tile-aligned cases
+    (``N | c * W_p``) are detected later by the classifier so MODULAR
+    can reduce to LINEAR.
+    """
+    if expr is None:
+        return None
+    fname = type(expr).__name__
+    # SymPy's modulo is ``Mod`` (also produced by ``a % b``). DaCe's
+    # ``__mod__`` overload may yield ``mod`` or ``Mod`` depending on
+    # how the expression was constructed.
+    if fname not in ("Mod", "mod", "__mod__"):
+        return None
+    if len(expr.args) != 2:
+        return None
+    dividend, divisor = expr.args
+    try:
+        N = int(divisor)
+    except (TypeError, ValueError):
+        return None
+    if N <= 1:
+        return None
+    if _affine_coeff_for(dividend, var_name) is None:
+        return None
+    return N
+
+
 def _resolve_gather_index_an(inner_sdfg: Optional[SDFG], expr: sympy.Expr) -> Optional[nodes.AccessNode]:
     """If ``expr`` contains exactly one Subscript whose base is an array
     name in ``inner_sdfg.arrays``, find an :class:`AccessNode` for that
@@ -475,6 +500,21 @@ def classify_tile_access(subset: Range,
                 iter_var_in_dim[tvar].append(d)
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
+            # Stop 3b: ``(c * tvar + c0) % N`` -> MODULAR. The codegen
+            # falls back to GATHER for the general case; the tile-
+            # aligned reduction to LINEAR is a future optimisation
+            # (TILIFICATION_TRANSFORMATION_DESIGN.md section 4.2).
+            modular_N = _detect_modular_factor(lo_sym, tvar)
+            if modular_N is not None:
+                per_dim_kind.append(PerDimKind.MODULAR)
+                dim_strides.append(None)
+                dim_iter_var.append(tvar)
+                gather_index_per_dim.append(None)
+                dim_offset.append(None)
+                replicate_factor_per_dim.append(None)
+                iter_var_in_dim[tvar].append(d)
+                dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
+                continue
             coeff = _affine_coeff_for(lo_sym, tvar)
             offset = _affine_offset_for(lo_sym, tvar)
             if coeff is not None and coeff == 1:
@@ -530,18 +570,17 @@ def classify_tile_access(subset: Range,
             iter_var_in_dim[tv].append(d)
         dim_to_canonical_iter_var.append(list(iter_vars).index(rep))
 
-    # Whole-subset kind: strongest per-dim kind. REPLICATE shares the
-    # same whole-subset bucket as STRUCTURED (both are perfectly
-    # regular -- the codegen picks contiguous vs group-broadcast from
-    # the per-dim ``replicate_factor`` field).
-    has_gather = any(k == PerDimKind.GATHER for k in per_dim_kind)
-    has_affine = any(k == PerDimKind.AFFINE for k in per_dim_kind)
-    has_struct = any(k in (PerDimKind.STRUCTURED_1, PerDimKind.REPLICATE) for k in per_dim_kind)
-    if has_gather:
+    # Whole-subset kind: strongest per-dim kind. MODULAR / REPLICATE
+    # share the STRUCTURED bucket (both perfectly regular; codegen
+    # picks the right intrinsic from the per-dim records).
+    kinds = set(per_dim_kind)
+    if PerDimKind.GATHER in kinds or PerDimKind.MODULAR in kinds:
+        # MODULAR currently routes to GATHER until the tile-aligned
+        # reduction lands (section 4.2 future work).
         kind = TileAccessKind.GATHER
-    elif has_affine:
+    elif PerDimKind.AFFINE in kinds:
         kind = TileAccessKind.AFFINE
-    elif has_struct:
+    elif kinds & {PerDimKind.LINEAR, PerDimKind.REPLICATE}:
         kind = TileAccessKind.STRUCTURED
     else:
         kind = TileAccessKind.BROADCAST
