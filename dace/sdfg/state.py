@@ -1294,7 +1294,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
         ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 
@@ -3959,7 +3959,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
         ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         for condition, region in json_obj['branches']:
             if condition is not None:
