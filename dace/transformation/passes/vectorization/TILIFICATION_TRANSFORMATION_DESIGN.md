@@ -1,4 +1,4 @@
-# Tile Vectorization — Design Specification
+# Tilification Transformation — Design Specification
 
 **Status**: Draft for Tuesday freeze.
 **Scope**: Lower a K-dim register tile (K ∈ {1, 2, 3}) onto AVX-512 / NEON /
