@@ -210,44 +210,9 @@ class ExpandTileBinopCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting the cuTile binop.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with the element-wise body.
-        """
-
-        def _cutile_operand(kind, tile_conn, scalar_conn, expr):
-            """cuTile operand reference: inline expr for Symbol, the
-            tile connector for Tile, the scalar connector (broadcasts
-            NumPy-style) for Scalar."""
-            if kind == _SYMBOL:
-                return expr
-            if kind == _TILE:
-                return tile_conn
-            return scalar_conn
-
-        lhs = _cutile_operand(node.kind_a, "__rhs1", "__const1", node.expr_a)
-        rhs = _cutile_operand(node.kind_b, "__rhs2", "__const2", node.expr_b)
-        rhs_expr = _CUTE_OP_EXPR[node.op].format(lhs=lhs, rhs=rhs)
-        body = f"__output = {rhs_expr}"
-        inputs = set()
-        if node.kind_a == _TILE:
-            inputs.add("__rhs1")
-        elif node.kind_a == _SCALAR:
-            inputs.add("__const1")
-        if node.kind_b == _TILE:
-            inputs.add("__rhs2")
-        elif node.kind_b == _SCALAR:
-            inputs.add("__const2")
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"__output": None},
-            code=body,
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileBinopCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 

@@ -162,38 +162,9 @@ class ExpandTileLoadCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileLoad", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting ``ct.load``.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet whose body calls
-            ``ct.load`` with the :attr:`TileLoad.pad_mode` padding mode.
-        :raises ValueError: If :attr:`TileLoad.pad_mode` is not a
-            recognised cuTile padding-mode name.
-        """
-        widths = list(node.widths)
-        K = len(widths)
-        if node.pad_mode not in _PAD_MODE_CUTE:
-            raise ValueError(f"{node.label}: unknown pad_mode {node.pad_mode!r}; "
-                             f"allowed: {sorted(_PAD_MODE_CUTE)}")
-        pad_mode = _PAD_MODE_CUTE[node.pad_mode]
-        shape_tuple = ", ".join(str(w) for w in widths)
-        index_tuple = ", ".join(f"__pid{k}" for k in range(K))
-        lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
-        lines.append(f"__output = ct.load(__src, index=({index_tuple},), shape=({shape_tuple},),"
-                     f" padding_mode={pad_mode})")
-        # L-load-nomask: the load never reads a per-lane mask, so even with
-        # has_mask=True we must NOT declare a dangling __mask input — the
-        # mask is consumed downstream at the store/scatter.
-        inputs = {"__src"}
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"__output": None},
-            code="\n".join(lines),
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileLoadCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 

@@ -105,46 +105,9 @@ class ExpandTileMergeCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileMerge", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting the cuTile select.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with the ``ct.where`` (or
-            arithmetic-blend) body.
-        :raises NotImplementedError: If ``ct.where`` is known absent and
-            the output dtype is floating point (the blend cannot safely
-            handle a possibly-non-finite unselected branch — ``0.0 * inf
-            = NaN``); verify ``ct.where`` in the installed cuda-tile
-            package.
-        """
-        # _CT_HAS_WHERE is None on CI (no cuTile install) -> assume present and
-        # emit the documented ct.where default; only an explicit False forces
-        # the arithmetic fallback / raise.
-        if _CT_HAS_WHERE is not False:
-            body = "__output = ct.where(__cond, __then, __else)"
-        else:
-            out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_o")
-            out_dtype = parent_sdfg.arrays[out_edge.data.data].dtype
-            is_float = out_dtype.as_numpy_dtype().kind == "f"
-            if is_float:
-                # Blending a possibly-non-finite unselected branch with 0.0
-                # leaks NaN (0.0 * inf); no confirmed cuTile select otherwise.
-                raise NotImplementedError(f"{node.label}: cuTile select without ct.where cannot safely blend "
-                                          f"possibly-non-finite branches (0.0 * inf = NaN) for float output "
-                                          f"{out_dtype}; verify ct.where in the installed cuda-tile package.")
-            body = ("__m = __cond.astype(__then.dtype)\n"
-                    "__output = __m * __then + (1.0 - __m) * __else")
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs={
-                "__cond": None,
-                "__then": None,
-                "__else": None
-            },
-            outputs={"__output": None},
-            code=body,
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileMergeCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 

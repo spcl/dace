@@ -198,71 +198,9 @@ class ExpandTileReduceCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting the masked / unmasked reduction.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet.
-        :raises NotImplementedError: If ``has_mask`` and ``op in {min,
-            max}`` while ``ct.where`` is known absent — injecting ``±inf``
-            into masked lanes without a select hits the ``inf * 0 = NaN``
-            hazard (L-reduce-nomask).
-        """
-        fn = _OP_CUTE[node.op]
-        axis_kw = "" if node.axis is None else f", axis={node.axis}"
-
-        if not node.has_mask:
-            body = f"__output = {fn}(__src{axis_kw})"
-            inputs = {"__src"}
-            return nodes.Tasklet(
-                label=f"{node.label}_cutile",
-                inputs={c: None
-                        for c in inputs},
-                outputs={"__output": None},
-                code=body,
-                language=dace.dtypes.Language.Python,
-            )
-
-        # has_mask=True: pre-select the op identity into masked lanes.
-        ident = _OP_IDENTITY_CUTE[node.op]
-        # _CT_HAS_WHERE is None on CI (no cuTile install) -> assume present and
-        # emit the documented ct.where default; only an explicit False forces
-        # the arithmetic fallback / raise.
-        if _CT_HAS_WHERE is not False:
-            lines = [
-                f"__masked_src = ct.where(__mask, __src, {ident})",
-                f"__output = {fn}(__masked_src{axis_kw})",
-            ]
-        elif node.op == "+":
-            # 0 is the + identity, so zeroing inactive lanes is exact.
-            lines = [
-                "__m = __mask.astype(__src.dtype)",
-                f"__output = ct.sum(__m * __src{axis_kw})",
-            ]
-        elif node.op == "*":
-            # 1 is the * identity: blend src in active lanes, 1 in inactive.
-            lines = [
-                "__m = __mask.astype(__src.dtype)",
-                f"__output = ct.prod(__m * __src + (1.0 - __m){axis_kw})",
-            ]
-        else:
-            # L-reduce-nomask: masked min/max needs ct.where to inject ±inf;
-            # the arithmetic blend __src*__m + IDENT*(1-__m) yields NaN when a
-            # masked lane already holds inf (inf * 0). No safe lowering.
-            raise NotImplementedError(f"{node.label}: masked {node.op!r} tile reduction needs ct.where to inject "
-                                      f"±inf into masked lanes; cuTile reductions take no mask (L-reduce-nomask) "
-                                      f"and the arithmetic blend is unsafe for non-finite data. Verify ct.where in "
-                                      f"the installed cuda-tile package.")
-        body = "\n".join(lines)
-        inputs = {"__src", "__mask"}
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"__output": None},
-            code=body,
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileReduceCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 

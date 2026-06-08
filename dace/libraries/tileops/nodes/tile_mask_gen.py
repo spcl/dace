@@ -63,38 +63,9 @@ class ExpandTileMaskGenCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet building the K-dim cuTile mask.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet whose body produces a
-            ``cuda.tile``-broadcasted boolean tile.
-        """
-        widths = list(node.widths)
-        global_ubs = list(node.global_ubs)
-        K = len(widths)
-        shape_tuple = ", ".join(str(w) for w in widths)
-        lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
-        for k, (ub, w) in enumerate(zip(global_ubs, widths)):
-            lines.append(f"__offsets{k} = ct.arange({w}, dtype=ct.int32)")
-            lines.append(f"__mask{k} = __offsets{k} + __pid{k} * {w} < ({ub})")
-        if K == 1:
-            lines.append("__output = __mask0")
-        else:
-            terms = []
-            for k in range(K):
-                slc = ["None"] * K
-                slc[k] = ":"
-                slc_str = "[" + ", ".join(slc) + "]"
-                terms.append(f"ct.broadcast_to(__mask{k}{slc_str}, ({shape_tuple}))")
-            lines.append("__output = " + " & ".join(terms))
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs=set(),
-            outputs={"__output": None},
-            code="\n".join(lines),
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileMaskGenCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 

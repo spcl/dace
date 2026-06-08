@@ -155,32 +155,9 @@ class ExpandTileUnopCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileUnop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting the cuTile unary op.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with the element-wise body.
-        """
-        if node.kind_a == _SYMBOL:
-            operand = node.expr_a
-        elif node.kind_a == _TILE:
-            operand = "__rhs1"
-        else:
-            operand = "__const1"
-        body = f"__output = {_CUTE_UNOP_EXPR[node.op].format(a=operand)}"
-        inputs = set()
-        if node.kind_a == _TILE:
-            inputs.add("__rhs1")
-        elif node.kind_a == _SCALAR:
-            inputs.add("__const1")
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"__output": None},
-            code=body,
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileUnopCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 

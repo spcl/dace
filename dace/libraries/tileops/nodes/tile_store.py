@@ -124,34 +124,9 @@ class ExpandTileStoreCutile(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting ``ct.store`` or ``ct.scatter``.
-
-        :param node: The lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet whose body either calls
-            ``ct.store`` (unmasked) or ``ct.scatter`` (masked).
-        """
-        widths = list(node.widths)
-        K = len(widths)
-        lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
-        if node.has_mask:
-            for k, w in enumerate(widths):
-                lines.append(f"__idx{k} = ct.arange({w}, dtype=ct.int32) + __pid{k} * {w}")
-            idx_tuple = ", ".join(f"__idx{k}" for k in range(K))
-            lines.append(f"ct.scatter(__output, ({idx_tuple},), __src, mask=__mask)")
-        else:
-            index_tuple = ", ".join(f"__pid{k}" for k in range(K))
-            shape_tuple = ", ".join(str(w) for w in widths)
-            lines.append(f"ct.store(__output, index=({index_tuple},), tile=__src)")
-        inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
-        return nodes.Tasklet(
-            label=f"{node.label}_cutile",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"__output": None},
-            code="\n".join(lines),
-            language=dace.dtypes.Language.Python,
+        raise NotImplementedError(
+            "ExpandTileStoreCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 
