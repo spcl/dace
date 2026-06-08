@@ -45,7 +45,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.ControlFlowBlockReachability, ap.AccessSets}
+        return [ap.ControlFlowBlockReachability, ap.AccessSets]
 
     def apply(self, region, pipeline_results):
         """
