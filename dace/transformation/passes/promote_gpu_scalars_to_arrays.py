@@ -264,7 +264,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                     continue
                 inner_name = iedge.dst_conn
                 if iedge.data.data == name and isinstance(node.sdfg.arrays[inner_name], data.Scalar):
-                    assert inner_name not in handled_nested_names  # Can only appear once.
+                    assert inner_name not in handled_inner_names  # Can only appear once.
                     self._promote_one(node.sdfg, inner_name)
                     handled_inner_names.add(inner_name)
 
