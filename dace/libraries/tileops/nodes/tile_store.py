@@ -45,33 +45,37 @@ class ExpandTileStorePure(ExpandTransformation):
         # Step along the array dim each tile dim maps to (``dst_dims``);
         # default to the last K dims in order (a plain row-major tile).
         dims = list(node.dst_dims) if node.dst_dims else list(range(ndim - K, ndim))
-        dst_strides = [symstr(dst_arr.strides[d]) for d in dims]
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
         gather_set = set(node.gather_dims)
         if not gather_set:
-            # Structured store: existing affine path.
-            dst_off = offset_via_strides(coeff, dst_strides)
+            # Structured store: per-tile-dim affine path.
+            dst_strides_tile = [symstr(dst_arr.strides[d]) for d in dims]
+            dst_off = offset_via_strides(coeff, dst_strides_tile)
         else:
-            # Unified scatter dispatch (mirror of TileLoad's gather path; see design section 9.2).
-            # Per gather dim, the destination index is `_idx_<d>[<flat lane offset>]`; per non-
-            # gather dim, the affine `__l<d> * coeff[d] * stride[d]`.
+            # Dest-dim addressing (design section 9.3). Per DEST dim k in range(ndim):
+            #   k in gather_dims -> `_idx_<k>[<flat lane>] * dst.strides[k]`
+            #   k mapped to tile dim d via dst_dims -> `coeff[d] * dst.strides[k] * __l<d>`
+            #   otherwise (untouched by the tile) -> outer `_dst` memlet carries the base offset.
             gather_idx_ref = {}
-            for d in node.gather_dims:
-                conn = f"_idx_{d}"
+            for k in node.gather_dims:
+                conn = f"_idx_{k}"
                 edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
                 idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
                 deps_d = resolve_gather_deps(idx_shape, widths)
                 if deps_d is None:
                     raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
                                      f"{idx_shape} against widths {tuple(widths)}")
-                gather_idx_ref[d] = gather_lane_offset(deps_d, widths, conn)
+                gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
+            dst_to_tile = {dims[d]: d for d in range(K)}
             parts = []
-            for d in range(K):
-                s = dst_strides[d]
-                if d in gather_set:
-                    parts.append(f"(({gather_idx_ref[d]}) * ({s}))")
-                else:
+            for k in range(ndim):
+                s = symstr(dst_arr.strides[k])
+                if k in gather_set:
+                    parts.append(f"(({gather_idx_ref[k]}) * ({s}))")
+                elif k in dst_to_tile:
+                    d = dst_to_tile[k]
                     parts.append(f"({coeff[d]} * ({s}) * __l{d})")
+                # else: dest dim k untouched; outer base pointer covers it.
             dst_off = " + ".join(parts) if parts else "0"
         src_off = tile_offset(widths)
         # Resolve the per-lane source reference for each ``src_kind``:
@@ -295,11 +299,12 @@ class TileStore(nodes.LibraryNode):
     gather_dims = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Sorted tile-dim indices that SCATTER (per TILIFICATION_TRANSFORMATION_DESIGN.md "
-        "section 5 + section 9). Mirrors TileLoad's ``gather_dims`` property; each ``d`` "
-        "declares an ``_idx_<d>`` input connector whose descriptor shape is a Cartesian "
-        "product of widths for some sorted subset of tile dims (section 9.2). Empty = "
-        "structured store.",
+        desc="Sorted DEST-array dim indices that SCATTER. Mirror of :attr:`TileLoad.gather_dims` "
+        "(source-array dim indexing) -- ``len(widths) == K_tile`` and ``max(gather_dims) < dst_ndim`` "
+        "(``dst_ndim`` read from the wired ``_dst`` edge at ``validate()`` time). Each ``d`` declares "
+        "an ``_idx_<d>`` input connector whose descriptor shape is a Cartesian product of widths over "
+        "the tile dims its scatter expression depends on (design section 9.2). Empty = structured "
+        "store.",
     )
 
     def __init__(self,
@@ -343,12 +348,13 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"TileStore: dim_strides {resolved_dim_strides!r} contains a 0 (collapse-out / "
                              "broadcast write); WCR is required to avoid races. Pass ``wcr='lambda a, b: a + b'`` "
                              "(or another reduction lambda) when collapsing tile dims to a shared destination.")
-        # Validate gather_dims: subset of range(K), sorted, unique.
-        K = len(widths)
+        # Validate gather_dims: sorted, unique, non-negative dest-dim indices.
+        # The upper bound (max(gather_dims) < dst_ndim) is checked at validate() time since
+        # ``dst_ndim`` depends on the wired ``_dst`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
-        if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 or d >= K for d in g):
-            raise ValueError(f"TileStore: gather_dims must be a sorted tuple of unique indices in "
-                             f"range({K}); got {g!r}")
+        if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
+            raise ValueError(f"TileStore: gather_dims must be a sorted tuple of unique non-negative "
+                             f"dest-dim indices; got {g!r}")
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
@@ -381,9 +387,16 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
-        # Per-dim scatter index validation (design section 9.4).
+        # gather_dims dest-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
         allowed_dtypes = {dace.int32, dace.int64}
+        if self.gather_dims:
+            dst_arr = sdfg.arrays[out_e["_dst"].data.data]
+            dst_ndim = len(dst_arr.shape)
+            if any(d >= dst_ndim for d in self.gather_dims):
+                raise ValueError(f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
+                                 f"dest ndim {dst_ndim} (dest '{out_e['_dst'].data.data}' shape "
+                                 f"{tuple(dst_arr.shape)})")
         for d in self.gather_dims:
             conn = f"_idx_{d}"
             if conn not in in_e:

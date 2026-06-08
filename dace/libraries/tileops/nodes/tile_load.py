@@ -86,43 +86,44 @@ class ExpandTileLoadPure(ExpandTransformation):
             # Step along the array dim each tile dim maps to (``src_dims``);
             # default to the last K dims in order (a plain row-major tile).
             dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
-            src_strides = [symstr(src_arr.strides[d]) for d in dims]
             coeff = list(node.dim_strides) if node.dim_strides else [1] * K
             replicate = list(node.replicate_factor_per_dim) if node.replicate_factor_per_dim else [1] * K
             gather_set = set(node.gather_dims)
             if not gather_set:
-                # Structured path: per-dim affine contributions only.
-                src_off = offset_via_strides(coeff, src_strides, replicate)
+                # Structured path: per-tile-dim affine contributions only.
+                src_strides_tile = [symstr(src_arr.strides[d]) for d in dims]
+                src_off = offset_via_strides(coeff, src_strides_tile, replicate)
             else:
-                # Unified path: gather dims contribute `_idx_<d>[<flat lane>]`;
-                # non-gather dims contribute the affine `__l<d> * coeff[d] * stride[d]`.
-                # Each `_idx_<d>` connector's descriptor shape determines which lane
-                # indices the index expression depends on (design section 9.2). For shape
-                # `(1,)` the index is loop-invariant (`_idx_<d>[0]`); for shape
-                # `tuple(widths[p] for p in deps_d)` the flat offset into the index tile
-                # is built from the corresponding `__l<p>` lane variables.
+                # Source-dim addressing (design section 9.2 / 9.3): per SOURCE dim k in range(ndim),
+                # if k in gather_dims contribute `_idx_<k>[<flat lane>] * src.strides[k]`; otherwise,
+                # if k is the tile-mapped source dim for some tile dim d (via src_dims), contribute
+                # the affine `coeff[d] * src.strides[k] * (__l<d> / replicate[d])`; remaining source
+                # dims fall outside the tile's reach -- their per-iteration index lives in the outer
+                # `_src` memlet subset offset (the lib node addresses through ``_src[<offset>]`` and
+                # the codegen-supplied base pointer carries everything not contributed here).
                 gather_idx_ref = {}
-                for d in node.gather_dims:
-                    conn = f"_idx_{d}"
+                for k in node.gather_dims:
+                    conn = f"_idx_{k}"
                     edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
                     idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
                     deps_d = resolve_gather_deps(idx_shape, widths)
                     if deps_d is None:
                         raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
                                          f"{idx_shape} against widths {tuple(widths)}")
-                    gather_idx_ref[d] = gather_lane_offset(deps_d, widths, conn)
-                # Per-dim contributions: gather dims use the index tile; others use the
-                # affine offset (REPLICATE-aware via `__l<d> / k`).
+                    gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
+                src_to_tile = {dims[d]: d for d in range(K)}
                 parts = []
-                for d in range(K):
-                    s = src_strides[d]
-                    if d in gather_set:
-                        parts.append(f"(({gather_idx_ref[d]}) * ({s}))")
-                    else:
+                for k in range(ndim):
+                    s = symstr(src_arr.strides[k])
+                    if k in gather_set:
+                        parts.append(f"(({gather_idx_ref[k]}) * ({s}))")
+                    elif k in src_to_tile:
+                        d = src_to_tile[k]
                         lane = f"__l{d}"
                         if replicate[d] > 1:
                             lane = f"({lane} / {replicate[d]})"
                         parts.append(f"({coeff[d]} * ({s}) * {lane})")
+                    # else: source dim k has no per-lane contribution; outer base pointer covers it.
                 src_off = " + ".join(parts) if parts else "0"
             src_ref = f"_src[{src_off}]"
         if node.has_mask:
@@ -352,12 +353,15 @@ class TileLoad(nodes.LibraryNode):
     gather_dims = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Sorted tile-dim indices that GATHER (per TILIFICATION_TRANSFORMATION_DESIGN.md "
+        desc="Sorted SOURCE-array dim indices that GATHER (per TILIFICATION_TRANSFORMATION_DESIGN.md "
         "section 5 + section 9). For each ``d in gather_dims`` an ``_idx_<d>`` input connector is "
-        "declared; the connector's descriptor shape is the Cartesian product of the widths of the "
-        "tile dims the gather expression depends on (section 9.2 lane-dependency rule). The lib "
-        "node broadcasts each index tile to fill ``(W_0, ..., W_{K-1})`` at expansion time. Empty "
-        "list = no gather (structured load).",
+        "declared; the connector's descriptor shape is the Cartesian product of widths over the tile "
+        "dims the gather expression depends on (section 9.2 lane-dependency rule). Lane geometry "
+        "(``widths``) and source addressing (``gather_dims``) are orthogonal: ``len(widths) == K_tile`` "
+        "and ``max(gather_dims) < src_ndim`` (checked at ``validate()`` time since ``src_ndim`` "
+        "is read from the wired ``_src`` edge). Empty list = no gather (structured load). "
+        "ICON-shape example: ``B[idx[i, k], j, idb[i, k]]`` vec(i, j) -> ``widths=(W_i, W_j)``, "
+        "``gather_dims=(0, 2)``, ``_idx_0`` shape ``(W_i,)``, ``_idx_2`` shape ``(W_i,)``.",
     )
 
     def __init__(self,
@@ -416,12 +420,13 @@ class TileLoad(nodes.LibraryNode):
                 if k > 1 and w % k != 0:
                     raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k} must divide "
                                      f"widths[{d}] = {w} (contracted-box load is W/k elements)")
-        # Validate gather_dims: subset of range(K), sorted, unique.
-        K = len(widths)
+        # Validate gather_dims: sorted, unique, non-negative source-dim indices.
+        # The upper bound (max(gather_dims) < src_ndim) is checked at validate() time since
+        # ``src_ndim`` depends on the wired ``_src`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
-        if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 or d >= K for d in g):
-            raise ValueError(f"TileLoad: gather_dims must be a sorted tuple of unique indices in "
-                             f"range({K}); got {g!r}")
+        if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
+            raise ValueError(f"TileLoad: gather_dims must be a sorted tuple of unique non-negative "
+                             f"source-dim indices; got {g!r}")
         # ``Symbol`` source has no ``_src`` connector — the literal is embedded
         # inline at expansion time.
         inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
@@ -455,9 +460,16 @@ class TileLoad(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
-        # Per-dim gather index validation (design section 9.4).
+        # gather_dims source-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
         allowed_dtypes = {dace.int32, dace.int64}
+        if self.gather_dims and self.src_kind == "Tile":
+            src_arr = sdfg.arrays[in_e["_src"].data.data]
+            src_ndim = len(src_arr.shape)
+            if any(d >= src_ndim for d in self.gather_dims):
+                raise ValueError(f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
+                                 f"source ndim {src_ndim} (source '{in_e['_src'].data.data}' shape "
+                                 f"{tuple(src_arr.shape)})")
         for d in self.gather_dims:
             conn = f"_idx_{d}"
             if conn not in in_e:

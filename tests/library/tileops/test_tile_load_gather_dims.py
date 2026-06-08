@@ -105,10 +105,52 @@ def test_refuse_unsorted_gather_dims():
         TileLoad("bad", widths=(4, 8, 16), gather_dims=(2, 0))
 
 
-def test_refuse_out_of_range_gather_dims():
-    """Constructor refuses gather_dims outside range(K)."""
-    with pytest.raises(ValueError, match="range"):
-        TileLoad("bad", widths=(4, 8), gather_dims=(2, ))
+def test_refuse_negative_gather_dims():
+    """Constructor refuses negative gather_dims at construction time."""
+    with pytest.raises(ValueError, match="non-negative"):
+        TileLoad("bad", widths=(4, 8), gather_dims=(-1, ))
+
+
+def test_validate_refuses_gather_dim_exceeding_src_ndim():
+    """``validate()`` refuses ``gather_dims`` entries >= ``src_ndim`` (source-dim indexing).
+
+    ``_build_load`` mints ``Src`` with ndim = ``max(2, len(widths))``; widths=(4, 8) -> src_ndim=2.
+    gather_dims=(3,) exceeds src_ndim=2.
+    """
+    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(3, ), idx_shapes=[(4, )])
+    # _build_load already wires Idx3 -> _idx_3 so the missing-conn check passes and the
+    # src-ndim upper bound is the failure cause.
+    with pytest.raises(ValueError, match=r"gather_dims.*>= source ndim"):
+        node.validate(sdfg, state)
+
+
+def test_icon_pattern_K2_vec_K3_src_gather_dims_0_and_2():
+    """ICON-shape: K_tile=2 vec(i, j), source 3D, ``gather_dims=(0, 2)`` (source dims 0+2 gather).
+
+    Validates the source-dim-indexed contract. ``_idx_0`` and ``_idx_2`` each carry a
+    ``(W_i,)``-shape index (only i is the lane-dep var; j is structured; k is outer-const).
+    """
+    sdfg = dace.SDFG("icon_pattern_node")
+    sdfg.add_array("Src", (32, 32, 64), dace.float64, transient=False)
+    sdfg.add_array("Dst", (4, 8), dace.float64, transient=True)
+    sdfg.add_array("Idx0", (4, ), dace.int64, transient=True)
+    sdfg.add_array("Idx2", (4, ), dace.int64, transient=True)
+    state = sdfg.add_state("s")
+    src = state.add_access("Src")
+    dst = state.add_access("Dst")
+    idx0 = state.add_access("Idx0")
+    idx2 = state.add_access("Idx2")
+    node = TileLoad("tl_icon", widths=(4, 8), gather_dims=(0, 2))
+    state.add_node(node)
+    state.add_edge(src, None, node, "_src", Memlet("Src[0:32, 0:32, 0:64]"))
+    state.add_edge(idx0, None, node, "_idx_0", Memlet("Idx0[0:4]"))
+    state.add_edge(idx2, None, node, "_idx_2", Memlet("Idx2[0:4]"))
+    state.add_edge(node, "_dst", dst, None, Memlet("Dst[0:4, 0:8]"))
+    node.validate(sdfg, state)
+    assert tuple(node.gather_dims) == (0, 2)
+    assert "_idx_0" in node.in_connectors
+    assert "_idx_2" in node.in_connectors
+    assert "_idx_1" not in node.in_connectors
 
 
 def test_refuse_wrong_index_dtype():

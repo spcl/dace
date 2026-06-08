@@ -374,7 +374,7 @@ Each tile dimension's access is classified as one of:
 
 ```
 CONSTANT <= LINEAR <= AFFINE <= GATHER
-                      meet meet 
+                      meet meet
                 REPLICATE MODULAR
 ```
 
@@ -465,7 +465,11 @@ The `TileLoad` / `TileStore` constructor takes:
 - `replicate_factor_per_dim[d]`: `k` for REPLICATE dims, `1` otherwise.
 - `src_dims[d]` / `dst_dims[d]`: source-array dim binding (Fortran /
   transposed handling).
-- `gather_dims`: subset of `range(K)` -- tile dims that gather.
+- `gather_dims`: sorted subset of `range(src_ndim)` (resp. `dst_ndim` for `TileStore`) --
+  **SOURCE-array dim indices** that gather. Lane geometry (`widths`) and source addressing
+  (`gather_dims`) are orthogonal: `len(widths) = K_tile` is the lane count and may differ from
+  `src_ndim`. The upper bound (`max(gather_dims) < src_ndim`) is checked at `validate()` time
+  since `src_ndim` is read from the wired `_src` connector descriptor.
 - `index_form`: `"none" | "per_dim" | "full"`. Mutually exclusive with
   the wired index connectors (section 9.4).
 - `has_mask`, `pad_value` (gather OOB fill).
@@ -793,73 +797,85 @@ of distinct, non-overlapping connectors. The connector name is the
 
 ### 9.1 Connector grammar
 
-Each lib node has a fixed connector vocabulary, every name unique:
+Each lib node has a fixed connector vocabulary, every name unique. The
+`d` suffix on `_idx_<d>` is a **source-array dim index** (resp. dest
+for `TileStore`), NOT a tile dim index -- lane geometry (`widths`) and
+source addressing (`gather_dims`) are orthogonal.
 
 | Connector | Direction | Shape | Role |
 |---|---|---|---|
 | `_src` | in (load) / in (store source tile) | full source / `(K_0, ..., K_{K-1})` | data |
 | `_dst` | out (load) / out (store dest array) | `(K_0, ..., K_{K-1})` / full dest | data |
 | `_mask` | in (optional) | `(K_0, ..., K_{K-1})` bool | predicate |
-| `_idx_<d>` | in (optional, one per `d in gather_dims`) | **see section 9.2** | per-dim gather index |
+| `_idx_<k>` | in (optional, one per `k in gather_dims`) | **see section 9.2** | gather index for **source dim k** |
 
 There is **no separate `_idx_full` connector**. The full N-D case is
-just an `_idx_<d>` whose shape matches the full tile.
+just an `_idx_<k>` whose shape spans every tile dim.
 
-### 9.2 Per-dim index shape encodes lane dependency
+### 9.2 Per-source-dim index shape encodes lane dependency
 
-The shape of `_idx_<d>` is determined by **which tile lane indices the
-gather expression for dim `d` depends on**. Let `deps(d)` be the
-sorted tuple of tile dim indices the expression touches. Then:
+The shape of `_idx_<k>` is determined by **which tile lane indices the
+gather expression for source dim `k` depends on**. Let `deps(k)` be
+the sorted tuple of **tile dim** indices the expression touches. Then:
 
-| `deps(d)` | `_idx_<d>` shape | Lib-node behaviour |
+| `deps(k)` | `_idx_<k>` shape | Lib-node behaviour |
 |---|---|---|
-| `()` (no lane index) | `(1,)` -- scalar index | every lane reads the same source index |
+| `()` (no lane index) | `(1,)` -- scalar index | every lane reads the same source-dim-k index |
 | `(p,)` one tile dim | `(W_p,)` | broadcast over the other tile lanes |
 | `(p, q)` | `(W_p, W_q)` | broadcast over remaining tile lanes |
-| `(0, ..., K-1)` (full) | `(W_0, ..., W_{K-1})` | full N-D (subsumes the legacy `_idx_full`) |
+| `(0, ..., K_tile-1)` (full) | `(W_0, ..., W_{K_tile-1})` | full N-D (subsumes the legacy `_idx_full`) |
 
 Worked examples (tile vars `(i, j)` with widths `(W_i, W_j)`,
-optional outer-constant `k`):
+optional outer-constant `k_o`). `K_tile = len(widths)` is the lane
+count; `K_src = src.ndim` is the source rank. Indices in
+`gather_dims` are SOURCE-dim indices:
 
-| Access | `gather_dims` | `_idx_<d>` shapes |
-|---|---|---|
-| `a[idx[i]]` (K=1) | `(0,)` | `_idx_0: (W_i,)` |
-| `a[idx[i], j]` (K=2) | `(0,)` | `_idx_0: (W_i,)` |
-| `a[idx[i, j], j]` (K=2) | `(0,)` | `_idx_0: (W_i, W_j)` |
-| `a[idx[i], j, k]` (K=2 vec, k outer-const) | `(0,)` | `_idx_0: (W_i,)` |
-| `a[idx[i], j, idb[i]]` (K=2) | `(0, 2)` | `_idx_0: (W_i,)`, `_idx_2: (W_i,)` |
-| `a[idx[i, k], j, idb[i, k]]` ICON (K=2, k outer) | `(0, 2)` | `_idx_0: (W_i,)`, `_idx_2: (W_i,)` |
-| `a[idx[i, j, k]]` (K=3, all vec) | `(0,)` | `_idx_0: (W_i, W_j, W_k)` |
+| Access | `src.ndim` | `gather_dims` | `_idx_<k>` shapes |
+|---|---|---|---|
+| `a[idx[i]]` (K_tile=1, K_src=1) | 1 | `(0,)` | `_idx_0: (W_i,)` |
+| `a[idx[i], j]` (K_tile=2, K_src=2) | 2 | `(0,)` | `_idx_0: (W_i,)` |
+| `a[idx[i, j], j]` (K_tile=2, K_src=2) | 2 | `(0,)` | `_idx_0: (W_i, W_j)` |
+| `a[idx[i], j, k_o]` (K_tile=2, K_src=3, k_o outer) | 3 | `(0,)` | `_idx_0: (W_i,)` |
+| `a[idx[i], j, idb[i]]` (K_tile=2, K_src=3) | 3 | `(0, 2)` | `_idx_0: (W_i,)`, `_idx_2: (W_i,)` |
+| `a[idx[i, k_o], j, idb[i, k_o]]` ICON (K_tile=2, K_src=3, k_o outer) | 3 | `(0, 2)` | `_idx_0: (W_i,)`, `_idx_2: (W_i,)` |
+| `a[idx[i, j, k]]` (K_tile=3, K_src=1) | 1 | `(0,)` | `_idx_0: (W_i, W_j, W_k)` |
 
-The lib node reads each connector's actual shape at expansion time
-and broadcasts to fill `(W_0, ..., W_{K-1})` per lane. The classifier
-just records `deps(d)` per gather dim; the staging pass materialises
-the index tile at the right rank (see section 3.8 pre-pass).
+The lib node walks every source dim `k in range(src.ndim)` and emits
+`_idx_<k>[<flat lane>] * src.strides[k]` for gather dims, the affine
+`coeff[d] * src.strides[k] * __l<d>` (with `d = src_dims.index(k)`)
+for tile-mapped non-gather dims, and nothing for source dims with no
+tile-lane contribution (the outer `_src` memlet offset covers them).
+
+The classifier records `deps(k)` per gather source dim; the staging
+pass materialises the index tile at the right rank (see section 3.8).
 
 ### 9.3 Constructor signature
 
 ```python
 TileLoad(name, widths,
-         dim_strides,                # tuple of K ints (0 / 1 / s); 0 = CONSTANT, 1 = LINEAR, s = AFFINE
-         replicate_factor_per_dim,   # tuple of K ints; k for REPLICATE, 1 otherwise
-         src_dims,                   # tuple of K ints; permutation of source-array dims
-         gather_dims=(),             # subset of range(K)
+         dim_strides,                # tuple of K_tile ints; 0 = CONSTANT, 1 = LINEAR, s = AFFINE
+         replicate_factor_per_dim,   # tuple of K_tile ints; k for REPLICATE, 1 otherwise
+         src_dims,                   # tuple of K_tile ints; per-tile-dim source-dim binding
+         gather_dims=(),             # sorted subset of range(src_ndim); SOURCE-dim indices
          has_mask=False,
          pad_value=0)                # OOB fill for gather; ignored when gather_dims is empty
 ```
 
 `TileStore` mirrors this with `dst_dims` in place of `src_dims` and
 no `pad_value`. There is no `index_form` property -- the form is
-inferred from the wired connectors' shapes.
+inferred from the wired connectors' shapes. The `max(gather_dims) <
+src_ndim` upper bound is checked at `validate()` time (not in the
+constructor) since `src_ndim` is read from the wired `_src` edge.
 
 ### 9.4 Identifiability invariant
 
 The validator (section 10) checks for each `TileLoad` / `TileStore`:
 
-- An `_idx_<d>` connector is wired iff `d in gather_dims`.
-- Each `_idx_<d>`'s descriptor shape is `tuple(widths[p] for p in deps_d)` for some sorted subset `deps_d` of `range(K)`. The classifier records `deps_d` and the validator only checks the shape is a Cartesian product of widths.
-- An `_idx_<d>`'s descriptor dtype is signed integer (`int32` / `int64`); see section 10.4.
-- Each `d not in gather_dims` has a valid affine `dim_strides[d]` and `replicate_factor_per_dim[d]`.
+- `gather_dims` is sorted, unique, non-negative (constructor-time).
+- Every `k in gather_dims` satisfies `k < src_ndim` (`dst_ndim` for `TileStore`); read from the wired `_src` / `_dst` edge at `validate()` time.
+- An `_idx_<k>` connector is wired iff `k in gather_dims`.
+- Each `_idx_<k>`'s descriptor shape is `tuple(widths[p] for p in deps_k)` for some sorted subset `deps_k` of `range(K_tile)` (or `(1,)` for scalar). The validator only checks the shape is a Cartesian product of widths.
+- Each `_idx_<k>`'s descriptor dtype is signed integer (`int32` / `int64`); see section 10.4.
 
 Any other combination is rejected at `validate()` with a message
 naming the conflict.
