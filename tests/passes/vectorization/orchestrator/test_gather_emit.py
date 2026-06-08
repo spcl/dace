@@ -3,7 +3,7 @@
 
 A diagonal access ``a[i, i]`` (the tile var ``i`` indexes two array dims) is
 NOT a perfect box, so ``classify_tile_access`` reports GATHER and
-``EmitTileOps`` lowers it to a :class:`TileGather` (read) / :class:`TileScatter`
+``EmitTileOps`` lowers it to a :class:`TileLoad` (gather) (read) / :class:`TileStore` (scatter)
 (write) over an affine per-dim index map (``_idx_k[lane] = i + lane``), rather
 than a strided load. This pins the diagonal numerically against the
 unvectorized reference and asserts the gather/scatter lib nodes are emitted.

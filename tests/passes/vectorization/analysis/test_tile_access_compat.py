@@ -30,8 +30,8 @@ def _R(*ranges):
         else:
             lo, hi, step = r
         out.append((symbolic.pystr_to_symbolic(str(lo)) if isinstance(lo, str) else lo,
-                   symbolic.pystr_to_symbolic(str(hi)) if isinstance(hi, str) else hi,
-                   symbolic.pystr_to_symbolic(str(step)) if isinstance(step, str) else step))
+                    symbolic.pystr_to_symbolic(str(hi)) if isinstance(hi, str) else hi,
+                    symbolic.pystr_to_symbolic(str(step)) if isinstance(step, str) else step))
     return Range(out)
 
 
@@ -102,7 +102,7 @@ def test_compat_k0_to_k2_full_splat():
 
 
 def test_compat_int_floor_falls_to_gather():
-    """``arr[i // 2]`` -> legacy GATHER (lowered as a TileGather over a
+    """``arr[i // 2]`` -> legacy GATHER (lowered as a TileLoad (gather) over a
     computed index map at emit time). The new classifier tags this as
     AFFINE with no integer stride; the compat shim routes it to legacy
     GATHER to match."""

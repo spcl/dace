@@ -16,7 +16,7 @@ write / index-tile-fill is a tile lib node.
 import dace
 import pytest
 
-from dace.libraries.tileops import TileGather
+from dace.libraries.tileops import TileLoad
 from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -56,7 +56,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
 
 
 def _count_tile_gathers(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileGather))
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileLoad) and tuple(n.gather_dims)))
 
 
 def test_icon_zekinh_descent_to_tile_only():
@@ -89,7 +89,7 @@ def test_icon_zekinh_descent_to_tile_only():
     n_gather = _count_tile_gathers(sdfg)
     assert n_tasklet == 0, (f"icon_zekinh_gather must lower to tile lib nodes only at the K-dim layer; "
                             f"got {n_tasklet} raw Tasklet nodes after the descent.")
-    assert n_gather >= 1, (f"The 3-edge mixed gather must yield at least one TileGather; got {n_gather}.")
+    assert n_gather >= 1, (f"The 3-edge mixed gather must yield at least one TileLoad (gather); got {n_gather}.")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 """``TileIota`` lib node — affine per-lane index-tile fill.
 
 Constructed by the K-dim emitter / NSDFG-body promoter to materialize
-integer index tiles for :class:`TileGather` / :class:`TileScatter` and
+integer index tiles for :class:`TileLoad` (gather) / :class:`TileStore` (scatter) and
 any other per-lane affine fill (constant arange, diagonal index,
 strided base). The pure expansion lowers to a K-fold nested CPP loop;
 the IR-level node is what keeps the K-dim path tile-only.

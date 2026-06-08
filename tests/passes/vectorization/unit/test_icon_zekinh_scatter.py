@@ -8,12 +8,12 @@ source is fully bound at ``src[jb, jk, jc]``.
 
 The K-dim descent (``PromoteNSDFGBodyToTiles`` + ``EmitTileOps``) at
 K=2 (``widths=(8, 8)``) must lower the body to zero raw Tasklet nodes
-and emit at least one :class:`TileScatter`.
+and emit at least one :class:`TileStore` (scatter).
 """
 import dace
 import pytest
 
-from dace.libraries.tileops import TileScatter
+from dace.libraries.tileops import TileStore
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NB = dace.symbol("NB")
@@ -41,7 +41,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
 
 
 def _count_tile_scatters(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileScatter))
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileStore) and tuple(n.gather_dims)))
 
 
 def test_icon_zekinh_scatter_descent_to_tile_only():
@@ -67,7 +67,8 @@ def test_icon_zekinh_scatter_descent_to_tile_only():
     n_scatter = _count_tile_scatters(sdfg)
     assert n_tasklet == 0, (f"icon_zekinh_scatter must lower to tile lib nodes only at the K-dim layer; "
                             f"got {n_tasklet} raw Tasklet nodes after the descent.")
-    assert n_scatter >= 1, (f"The mixed-scatter destination must yield at least one TileScatter; got {n_scatter}.")
+    assert n_scatter >= 1, (
+        f"The mixed-scatter destination must yield at least one TileStore (scatter); got {n_scatter}.")
 
 
 if __name__ == "__main__":

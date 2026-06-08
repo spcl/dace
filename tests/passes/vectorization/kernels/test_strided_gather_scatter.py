@@ -1156,7 +1156,7 @@ def test_scatter_loop_permissive_tile(n):
     """For-loop data scatter ``dst[idx[i]] = src[i] + 1.0`` tiles on the v2
     path: ``loop_to_map_permissive`` parallelises the scatter loop (the write is
     not uniquely indexed, so plain LoopToMap refuses) and the body descent routes
-    the ``dst[idx[i]]`` store through a :class:`TileScatter`. The result matches
+    the ``dst[idx[i]]`` store through a :class:`TileStore` (scatter). The result matches
     the unvectorized reference (``n=17`` exercises the masked tail).
 
     Driven through the orchestrator directly (not ``run_vectorization_test``)

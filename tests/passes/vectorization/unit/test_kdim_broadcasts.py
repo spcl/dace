@@ -16,7 +16,7 @@ source rank is lower than the tile rank. The patterns covered here:
 4. **2-D contiguous ``a[jk, jc]`` -> tile** — the baseline,
    ``dim_strides=(1, 1)``.
 5. **1-D column gather ``a[idx[jk]]``** — per-row data-dependent
-   gather, broadcast across ``jc`` — lowers to a ``TileGather`` whose
+   gather, broadcast across ``jc`` — lowers to a ``TileLoad`` (gather) whose
    index tile encodes the broadcast.
 6. **1-D column structured ``a[jk // 2]``** — per-row structured
    gather (lane replication), broadcast across ``jc``.
@@ -32,7 +32,7 @@ that the expected per-tile-dim shape survives.
 import dace
 import pytest
 
-from dace.libraries.tileops import TileGather, TileLoad, TileStore
+from dace.libraries.tileops import TileLoad, TileLoad, TileStore
 from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -198,7 +198,7 @@ _BROADCAST_GAP_REASON = ("K>=2 BROADCAST_SYMBOL composition gap: the descent nee
                          "those lanes). The naive `dim_strides=(0,)*K` fallback silently degrades "
                          "gathers to broadcasts (incorrect numerics). Tracked as the next slice — "
                          "needs a TileLoad with per-tile-dim dim_strides reflecting the partial "
-                         "binding + a TileGather composition for fanned indices.")
+                         "binding + a TileLoad (gather) composition for fanned indices.")
 
 
 def test_scalar_broadcast_descent_to_tile_only():
@@ -248,7 +248,7 @@ def test_full_2d_baseline_descent_to_tile_only():
 def test_col_gather_descent_to_tile_only():
     """Per-row data-dep gather (a[idx[jk]]) broadcast across jc.
 
-    Lowers to a ``TileGather`` (data-dep index tile) whose result is
+    Lowers to a ``TileLoad`` (gather) (data-dep index tile) whose result is
     then broadcast across ``jc``. No raw Tasklets at the K-dim layer.
     """
     sdfg = _col_gather.to_sdfg()
@@ -256,7 +256,7 @@ def test_col_gather_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_col_structured_descent_to_tile_only():
@@ -266,7 +266,7 @@ def test_col_structured_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_row_gather_descent_to_tile_only():
@@ -276,7 +276,7 @@ def test_row_gather_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_row_structured_descent_to_tile_only():
@@ -286,7 +286,7 @@ def test_row_structured_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_fully_structured_2d_descent_to_tile_only():
@@ -297,7 +297,7 @@ def test_fully_structured_2d_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_fully_unstructured_separable_descent_to_tile_only():
@@ -305,13 +305,13 @@ def test_fully_unstructured_separable_descent_to_tile_only():
 
     Both dims gather, but the index sources factor (one per tile var)
     so the descent can build two independent 1-D index tiles. The
-    resulting ``TileGather`` reads ``a`` with per-lane (8, 8) indices."""
+    resulting ``TileLoad`` (gather) reads ``a`` with per-lane (8, 8) indices."""
     sdfg = _fully_unstructured_separable.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) >= 1
 
 
 def test_fully_unstructured_2d_index_descent_to_tile_only():
@@ -319,13 +319,13 @@ def test_fully_unstructured_2d_index_descent_to_tile_only():
 
     The single source dim collapses both tile vars via a single 2-D
     index lookup (canonical batched-gather shape). The descent lowers
-    to one ``TileGather`` with a (8, 8)-shaped per-lane index tile."""
+    to one ``TileLoad`` (gather) with a (8, 8)-shaped per-lane index tile."""
     sdfg = _fully_unstructured_2d_index.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileGather) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) >= 1
 
 
 if __name__ == "__main__":

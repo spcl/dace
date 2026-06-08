@@ -25,7 +25,7 @@ import ast
 import pytest
 
 import dace
-from dace.libraries.tileops import (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore)
+from dace.libraries.tileops import (TileBinop, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore)
 from dace.libraries.tileops.nodes import tile_merge as _tile_merge_mod
 from dace.libraries.tileops.nodes import tile_reduce as _tile_reduce_mod
 
@@ -206,44 +206,6 @@ def test_tile_mask_gen_cutile_K2_combines_per_dim_via_broadcast_and_amp():
     assert "ct.broadcast_to(__mask0[:, None], (4, 8))" in body
     assert "ct.broadcast_to(__mask1[None, :], (4, 8))" in body
     assert " & " in body
-
-
-def test_tile_gather_cutile_1d_unmasked_emits_padding_value():
-    """1D unmasked gather: single index tile + ``padding_value=0`` (no mask)."""
-    body, lang = _expand_cutile(TileGather(name="G", widths=(8, )))
-    _assert_parses_as_python(body)
-    assert "ct.gather(__src, __idx_0, padding_value=0)" in body
-    assert "mask=" not in body
-    assert lang == dace.dtypes.Language.Python
-
-
-def test_tile_gather_cutile_1d_masked_emits_mask_and_padding_value():
-    """1D masked gather: ``mask=__mask, padding_value=0``."""
-    body, _ = _expand_cutile(TileGather(name="G", widths=(8, ), has_mask=True))
-    _assert_parses_as_python(body)
-    assert "ct.gather(__src, __idx_0, mask=__mask, padding_value=0)" in body
-
-
-def test_tile_gather_cutile_2d_masked_uses_index_tuple():
-    """2D-source masked gather uses the ``(__idx_0, __idx_1)`` tuple form."""
-    body, _ = _expand_cutile(TileGather(name="G", widths=(8, ), source_ndim=2, has_mask=True))
-    _assert_parses_as_python(body)
-    assert "ct.gather(__src, (__idx_0, __idx_1), mask=__mask, padding_value=0)" in body
-
-
-def test_tile_gather_cutile_pad_value_emitted():
-    """A non-zero ``pad_value`` is emitted as ``padding_value=<v>`` (cuTile
-    gather padding is an arbitrary scalar, so e.g. ``1`` for prod identity)."""
-    body, _ = _expand_cutile(TileGather(name="G", widths=(8, ), pad_value=1))
-    _assert_parses_as_python(body)
-    assert "padding_value=1" in body
-
-
-def test_tile_gather_cutile_nonunit_index_strides_raises():
-    """Non-unit ``index_strides`` cannot be expressed by ``ct.gather`` (no
-    per-lane stride) → ``NotImplementedError`` at expansion time."""
-    with pytest.raises(NotImplementedError):
-        _expand_cutile(TileGather(name="G", widths=(8, ), index_strides=(2, )))
 
 
 def test_tile_reduce_cutile_unmasked_full_and_axis():

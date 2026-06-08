@@ -19,18 +19,18 @@ in both modes (no postamble interaction needed for this knob).
 import dace
 import pytest
 
-from dace.libraries.tileops import (TileBinop, TileGather, TileLoad, TileMaskGen, TileReduce, TileScatter, TileStore,
+from dace.libraries.tileops import (TileBinop, TileLoad, TileLoad, TileMaskGen, TileReduce, TileStore, TileStore,
                                     TileUnop)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
 _TILE_LIB_NODE_TYPES = (
     TileBinop,
-    TileGather,
+    TileLoad(gather),
     TileLoad,
     TileMaskGen,
     TileReduce,
-    TileScatter,
+    TileStore(scatter),
     TileStore,
     TileUnop,
 )

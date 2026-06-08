@@ -10,12 +10,12 @@ s_idx[jb,jc]] = …``). Both directions have two data-dependent dims
 
 The K-dim descent (``PromoteNSDFGBodyToTiles`` + ``EmitTileOps``) at
 K=2 (``widths=(8, 8)``) must lower the body to zero raw Tasklet nodes
-and emit at least one ``TileGather`` AND at least one ``TileScatter``.
+and emit at least one ``TileLoad`` (gather) AND at least one ``TileStore`` (scatter).
 """
 import dace
 import pytest
 
-from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -79,12 +79,12 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
     sdfg.validate()
 
     n_tasklet = _count_tasklets(sdfg)
-    n_gather = _count_lib(sdfg, TileGather)
-    n_scatter = _count_lib(sdfg, TileScatter)
+    n_gather = _count_lib(sdfg, TileLoad(gather))
+    n_scatter = _count_lib(sdfg, TileStore(scatter))
     assert n_tasklet == 0, (f"icon_zekinh_gather_scatter must lower to tile lib nodes only at the K-dim "
                             f"layer; got {n_tasklet} raw Tasklet nodes after the descent.")
-    assert n_gather >= 1, (f"The mixed-gather source must yield at least one TileGather; got {n_gather}.")
-    assert n_scatter >= 1, (f"The mixed-scatter destination must yield at least one TileScatter; "
+    assert n_gather >= 1, (f"The mixed-gather source must yield at least one TileLoad (gather); got {n_gather}.")
+    assert n_scatter >= 1, (f"The mixed-scatter destination must yield at least one TileStore (scatter); "
                             f"got {n_scatter}.")
 
 

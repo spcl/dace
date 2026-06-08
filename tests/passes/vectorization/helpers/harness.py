@@ -160,8 +160,8 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     # the assertion-based tests stay green; the knob itself is forwarded for
     # callers that just want a perf hint.
     # ``lower_to_intrinsics`` and ``collapse_laneid_index_loads`` are
-    # implicit-always-on on the tile path: the K-dim lib nodes (TileGather /
-    # TileScatter / TileLoad strided) ARE the K-dim equivalent of the legacy
+    # implicit-always-on on the tile path: the K-dim lib nodes (TileLoad (gather) /
+    # TileStore (scatter) / TileLoad strided) ARE the K-dim equivalent of the legacy
     # per-arch C++ intrinsics, and the descent never fans out per-lane index
     # symbols — so both knobs are accepted as no-ops here (already implied
     # by the tile lowering). ``fuse_overlapping_loads`` is wired through the

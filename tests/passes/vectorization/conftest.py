@@ -323,8 +323,8 @@ def vectorize_config(request) -> str:
 
     - ``"tile_nodes"`` — the K-dim tile-op routing through
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
-      (TileBinop / TileLoad / TileStore / TileMerge / TileGather /
-      TileScatter), expanded to the per-ISA backend (scalar reference in
+      (TileBinop / TileLoad / TileStore / TileMerge / TileLoad (gather) /
+      TileStore (scatter)), expanded to the per-ISA backend (scalar reference in
       the harness). Body-nesting is controlled per-test via the
       ``tile_emit_mode`` fixture (or an explicit ``nest_map_bodies``
       kwarg to :func:`run_vectorization_test`).
