@@ -125,3 +125,80 @@ def test_tile_helper_preserves_source_dtype():
     an = state.add_access("A")
     name, _ = stage_tile_access(state, an, widths=widths, src_subset=Memlet("A[i:i+4, j:j+8]"))
     assert sdfg.arrays[name].dtype == dace.int64
+
+
+# ---- stage_gather_access (G7 step 3) -------------------------------------
+
+import pytest
+from dace.transformation.passes.vectorization.stage_inside_body import stage_gather_access
+
+
+def _add_idx(sdfg, name, shape):
+    sdfg.add_array(name, shape, dace.int64, transient=True)
+    return name
+
+
+def test_gather_helper_emits_tileload_with_gather_dims_and_wires_idx_connectors():
+    """gather_dims=(0,) -> TileLoad with `_idx_0` wired from a (W_0,) index tile."""
+    widths = (4, 8)
+    sdfg = dace.SDFG("gather_partial")
+    sdfg.add_array("A", (16, 32), dace.float64, transient=False)
+    _add_idx(sdfg, "Idx0", (4, ))
+    state = sdfg.add_state("s")
+    an = state.add_access("A")
+    idx_an = state.add_access("Idx0")
+    name, load = stage_gather_access(state,
+                                     an,
+                                     widths=widths,
+                                     src_subset=Memlet("A[0:16, j:j+8]"),
+                                     gather_dims=(0, ),
+                                     idx_sources={0: idx_an})
+    assert tuple(load.gather_dims) == (0, )
+    assert "_idx_0" in load.in_connectors
+    # _idx_0 edge wired from Idx0 access.
+    idx_edges = [e for e in state.edges() if e.src is idx_an and e.dst is load and e.dst_conn == "_idx_0"]
+    assert len(idx_edges) == 1
+
+
+def test_gather_helper_supports_multiple_gather_dims_with_distinct_shapes():
+    """ICON pattern -- two gather dims with shape (W_i,) each."""
+    widths = (4, 8, 16)  # K=3
+    sdfg = dace.SDFG("icon_pattern")
+    sdfg.add_array("A", (32, 32, 64), dace.float64, transient=False)
+    _add_idx(sdfg, "Idx0", (4, ))
+    _add_idx(sdfg, "Idx2", (4, ))
+    state = sdfg.add_state("s")
+    an = state.add_access("A")
+    idx0 = state.add_access("Idx0")
+    idx2 = state.add_access("Idx2")
+    name, load = stage_gather_access(state,
+                                     an,
+                                     widths=widths,
+                                     src_subset=Memlet("A[0:32, j:j+8, 0:64]"),
+                                     gather_dims=(0, 2),
+                                     idx_sources={
+                                         0: idx0,
+                                         2: idx2
+                                     })
+    assert tuple(load.gather_dims) == (0, 2)
+    assert "_idx_0" in load.in_connectors
+    assert "_idx_2" in load.in_connectors
+    assert "_idx_1" not in load.in_connectors
+
+
+def test_gather_helper_refuses_idx_sources_mismatch():
+    """idx_sources keys must match gather_dims."""
+    widths = (4, 8)
+    sdfg = dace.SDFG("mismatch")
+    sdfg.add_array("A", (16, 32), dace.float64, transient=False)
+    _add_idx(sdfg, "Idx0", (4, ))
+    state = sdfg.add_state("s")
+    an = state.add_access("A")
+    idx_an = state.add_access("Idx0")
+    with pytest.raises(ValueError, match="must match"):
+        stage_gather_access(state,
+                            an,
+                            widths=widths,
+                            src_subset=Memlet("A[0:16, j:j+8]"),
+                            gather_dims=(0, 1),
+                            idx_sources={0: idx_an})

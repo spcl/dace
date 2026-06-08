@@ -144,6 +144,77 @@ def stage_tile_access(state: SDFGState,
     return bridge_name, load
 
 
+def stage_gather_access(state: SDFGState,
+                        an: AccessNode,
+                        widths: Tuple[int, ...],
+                        src_subset: Memlet,
+                        gather_dims: Tuple[int, ...],
+                        idx_sources: Dict[int, AccessNode],
+                        name_hint: str = "gather_bridge",
+                        dim_strides: Optional[Tuple[int, ...]] = None,
+                        replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
+                        src_dims: Optional[Tuple[int, ...]] = None) -> Tuple[str, "TileLoad"]:
+    """Stage a gather-shaped access on ``an`` through a fresh tile transient + ``TileLoad`` with ``gather_dims``.
+
+    Mirrors :func:`stage_tile_access` but wires the per-dim
+    ``_idx_<d>`` connectors using AccessNodes already in scope
+    (typically materialised by :func:`materialise_per_lane_index_tile`
+    from :mod:`prepare_per_lane_indices`).
+
+    Per design section 3.1: gather staging produces the same tile
+    transient shape as the structured case; only the lib node's
+    ``gather_dims`` + the wired ``_idx_<d>`` connectors differ.
+
+    :param state: State holding ``an``.
+    :param an: Non-transient AccessNode being staged.
+    :param widths: Tile widths.
+    :param src_subset: The memlet on ``an -> TileLoad._src``.
+    :param gather_dims: Sorted tuple of tile dims that gather (subset
+        of ``range(K)``).
+    :param idx_sources: ``{d: AccessNode}`` for each ``d in
+        gather_dims``. Each AN's descriptor shape must be a Cartesian
+        product of widths for some sorted subset of tile dims (design
+        section 9.2 lane-dependency rule); :class:`TileLoad.validate`
+        re-checks this.
+    :param name_hint: Hint for the bridge transient name.
+    :param dim_strides: Forwarded to :class:`TileLoad`.
+    :param replicate_factor_per_dim: Forwarded to :class:`TileLoad`.
+    :param src_dims: Forwarded to :class:`TileLoad`.
+    :returns: ``(bridge_name, load_node)``.
+    :raises ValueError: When ``set(gather_dims) != set(idx_sources)``.
+    """
+    if set(gather_dims) != set(idx_sources):
+        raise ValueError(f"stage_gather_access: gather_dims {gather_dims!r} must match the keys of "
+                         f"idx_sources {sorted(idx_sources)}")
+    sdfg = state.sdfg
+    desc = sdfg.arrays[an.data]
+    dtype = desc.dtype
+    bridge_name, _ = sdfg.add_array(name_hint,
+                                    shape=widths,
+                                    dtype=dtype,
+                                    transient=True,
+                                    storage=dtypes.StorageType.Register,
+                                    find_new_name=True)
+    bridge_an = state.add_access(bridge_name)
+    load = TileLoad(name=f"load_{bridge_name}",
+                    widths=widths,
+                    dim_strides=dim_strides,
+                    replicate_factor_per_dim=replicate_factor_per_dim,
+                    src_dims=src_dims,
+                    gather_dims=gather_dims)
+    state.add_node(load)
+    state.add_edge(an, None, load, "_src", src_subset)
+    # Wire each _idx_<d> connector from the supplied AccessNode.
+    for d in gather_dims:
+        idx_an = idx_sources[d]
+        idx_desc = sdfg.arrays[idx_an.data]
+        idx_subset = ", ".join(f"0:{s}" for s in idx_desc.shape)
+        state.add_edge(idx_an, None, load, f"_idx_{d}", Memlet(f"{idx_an.data}[{idx_subset}]"))
+    dst_subset_str = ", ".join(f"0:{w}" for w in widths)
+    state.add_edge(load, "_dst", bridge_an, None, Memlet(f"{bridge_name}[{dst_subset_str}]"))
+    return bridge_name, load
+
+
 @transformation.explicit_cf_compatible
 class StageInsideBody(ppl.Pass):
     """Inside-body staging pass scaffold (design section 3.3).
