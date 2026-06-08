@@ -362,6 +362,10 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
+        if self.has_mask:
+            from .._pure_codegen import validate_mask_descriptor_lock
+            mask_arr = sdfg.arrays[in_e["_mask"].data.data]
+            validate_mask_descriptor_lock(self.label, "_mask", mask_arr, tuple(self.widths))
         # gather_dims dest-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
         allowed_dtypes = {dace.int32, dace.int64}

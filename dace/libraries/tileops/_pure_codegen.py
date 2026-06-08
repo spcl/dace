@@ -117,6 +117,39 @@ def resolve_gather_deps(idx_shape, widths):
     return None
 
 
+def validate_mask_descriptor_lock(node_label, conn_name, desc, widths):
+    """Refuse any mask descriptor that breaks the design section 10.2 lock.
+
+    The locked shape: ``Array(shape=widths, dtype=bool_, storage=Register,
+    transient=True)``. Anything else -- scalar masks, per-dim masks, non-bool
+    predicates, non-Register storage, non-transient -- is rejected with a
+    named error so the codegen never silently mis-emits.
+
+    :param node_label: Label of the calling lib node (for error messages).
+    :param conn_name: Connector name carrying the mask (typically ``_mask``
+        or ``_o``).
+    :param desc: The descriptor (``dace.data.Data`` subclass) of the array
+        wired to the connector.
+    :param widths: Tile widths ``(W_0, ..., W_{K-1})``.
+    :raises ValueError: On any descriptor lock violation.
+    """
+    import dace
+    if not isinstance(desc, dace.data.Array):
+        raise ValueError(f"{node_label}: {conn_name!r} mask must be a dace.data.Array, "
+                         f"got {type(desc).__name__}")
+    if tuple(desc.shape) != tuple(widths):
+        raise ValueError(f"{node_label}: {conn_name!r} mask shape {tuple(desc.shape)} must "
+                         f"match widths {tuple(widths)} (section 10.2)")
+    if desc.dtype != dace.bool_:
+        raise ValueError(f"{node_label}: {conn_name!r} mask dtype {desc.dtype} must be bool_ "
+                         f"(section 10.2)")
+    if desc.storage != dace.dtypes.StorageType.Register:
+        raise ValueError(f"{node_label}: {conn_name!r} mask storage {desc.storage} must be "
+                         f"Register (section 10.2)")
+    if not desc.transient:
+        raise ValueError(f"{node_label}: {conn_name!r} mask must be transient (section 10.2)")
+
+
 def gather_lane_offset(deps, widths, conn):
     """Build the row-major flat lane offset C expression into an ``_idx_<d>`` tile.
 

@@ -134,16 +134,17 @@ class TileMaskGen(nodes.LibraryNode):
         self.global_ubs = list(global_ubs)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Confirm ``_o`` is connected and the descriptor has ``bool``.
+        """Confirm ``_o`` is connected and its descriptor satisfies the design
+        section 10.2 mask descriptor lock (``Array(shape=widths, dtype=bool_,
+        storage=Register, transient=True)``).
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
-        :raises ValueError: If ``_o`` is not connected or has the
-            wrong dtype.
+        :raises ValueError: If ``_o`` is not connected or fails the lock.
         """
+        from .._pure_codegen import validate_mask_descriptor_lock
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
         if "_o" not in out_e:
             raise ValueError(f"{self.label}: required output '_o' not connected")
         mask_arr = sdfg.arrays[out_e["_o"].data.data]
-        if mask_arr.dtype != dace.bool_:
-            raise ValueError(f"{self.label}: _o must have dtype bool_, got {mask_arr.dtype}")
+        validate_mask_descriptor_lock(self.label, "_o", mask_arr, tuple(self.widths))
