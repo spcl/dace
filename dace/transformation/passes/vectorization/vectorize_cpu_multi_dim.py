@@ -58,24 +58,64 @@ from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.vectorization.utils.name_schemes import (
     assert_no_laneid_in_tile_path, )
+from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
+from dace.transformation.passes.vectorization.fuse_overlapping_tile_loads import FuseOverlappingTileLoads
+from dace.transformation.passes.vectorization.insert_body_nsdfg_copies import InsertBodyNSDFGCopies
+from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
+from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
+from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
+    SplitMultiSliceBoundaryConnectors, )
+from dace.libraries.tileops.nodes import (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce,
+                                          TileScatter, TileStore, TileUnop)
+from dace.libraries.tileops._dispatch import select_tile_implementation
 
-# "AUTO" resolves to the host's best ISA at expansion time (see
-# dace.libraries.tileops._dispatch.detect_host_isa); the others pin one backend.
+#: Tile lib-node types -- all of them, used by the implementation selector.
+_TILE_NODE_TYPES = (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce, TileScatter, TileStore,
+                    TileUnop)
+
+#: "AUTO" resolves to the host's best ISA at expansion time
+#: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
 _VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR")
+_VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble")
+_VALID_BRANCH = ("merge", "fp_factor")
+_VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
-#: Convergence cap for the per-NSDFG ``RefineNestedAccess`` re-check loop (one
-#: application already refines every candidate; the cap guards against a
-#: pathological non-converging fixpoint).
+#: Convergence cap for the per-NSDFG ``RefineNestedAccess`` re-check loop.
 _MAX_REFINE_ITERS = 8
 
 
 def _is_power_of_two(n: int) -> bool:
-    """Return True iff ``n`` is a strictly-positive power of 2.
-
-    :param n: Integer to test.
-    :returns: ``True`` iff ``n & (n - 1) == 0`` and ``n > 0``.
-    """
+    """True iff ``n > 0`` and ``n`` is a power of 2."""
     return n > 0 and (n & (n - 1)) == 0
+
+
+def _validate_knobs(widths: Tuple[int, ...], target_isa: str, remainder_strategy: str, branch_mode: str,
+                    scalar_remainder_emit: str) -> None:
+    """Reject unsupported knob combinations with one ``NotImplementedError``.
+
+    Replaces an 8-deep ``if ...: raise`` cascade with a single table
+    pass. See :class:`VectorizeCPUMultiDim` constructor for semantics.
+    """
+    checks = [
+        (scalar_remainder_emit in _VALID_SCALAR_REMAINDER,
+         f"scalar_remainder_emit {scalar_remainder_emit!r} not in {_VALID_SCALAR_REMAINDER}"),
+        (scalar_remainder_emit != "tile_k1" or remainder_strategy == "scalar_postamble",
+         f"scalar_remainder_emit='tile_k1' requires remainder_strategy='scalar_postamble'; "
+         f"got remainder_strategy={remainder_strategy!r}"),
+        (1 <= len(widths) <= 3, f"K={len(widths)} not in {{1, 2, 3}}; got widths={widths!r}"),
+        (target_isa in _VALID_ISAS, f"target_isa {target_isa!r} not in {_VALID_ISAS}"),
+        (all(_is_power_of_two(w) for w in widths), f"every width must be a power of 2; got {widths!r}"),
+        (target_isa != "AVX512"
+         or widths[-1] % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={widths[-1]}"),
+        (remainder_strategy
+         in _VALID_REMAINDER, f"remainder_strategy {remainder_strategy!r} not in {_VALID_REMAINDER}"),
+        (branch_mode in _VALID_BRANCH, f"branch_mode {branch_mode!r} not in {_VALID_BRANCH}"),
+    ]
+    for ok, msg in checks:
+        if not ok:
+            raise NotImplementedError(f"VectorizeCPUMultiDim: {msg}")
 
 
 def normalize_loop_nests(sdfg: dace.SDFG) -> None:
@@ -106,9 +146,6 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
 
     :param sdfg: SDFG to normalise in place.
     """
-    from dace.sdfg.propagation import propagate_memlets_sdfg
-    from dace.transformation.dataflow import MapCollapse
-    from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
     sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False)
     sdfg.apply_transformations_repeated(MapCollapse, permissive=False, validate=False)
     propagate_memlets_sdfg(sdfg)
@@ -206,30 +243,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :raises NotImplementedError: On any disallowed combination (e.g. a
             K=1-only knob at K>=2, or fp_factor with a masked remainder).
         """
-        if scalar_remainder_emit not in ("scalar", "tile_k1"):
-            raise NotImplementedError(f"VectorizeCPUMultiDim: scalar_remainder_emit "
-                                      f"{scalar_remainder_emit!r} not in {{'scalar', 'tile_k1'}}")
-        if scalar_remainder_emit == "tile_k1" and remainder_strategy != "scalar_postamble":
-            raise NotImplementedError(f"VectorizeCPUMultiDim: scalar_remainder_emit='tile_k1' "
-                                      f"requires remainder_strategy='scalar_postamble'; got "
-                                      f"remainder_strategy={remainder_strategy!r}")
-        if not (1 <= len(widths) <= 3):
-            raise NotImplementedError(f"VectorizeCPUMultiDim: K={len(widths)} not in {{1, 2, 3}}; "
-                                      f"got widths={widths!r}")
-        if target_isa not in _VALID_ISAS:
-            raise NotImplementedError(f"VectorizeCPUMultiDim: target_isa {target_isa!r} not in {_VALID_ISAS}; "
-                                      f"cuTile lowering lands in T9.")
-        if not all(_is_power_of_two(w) for w in widths):
-            raise NotImplementedError(f"VectorizeCPUMultiDim: every width must be a power of 2; got {widths!r}")
-        if target_isa == "AVX512" and widths[-1] % 8 != 0:
-            raise NotImplementedError(f"VectorizeCPUMultiDim: AVX-512 requires widths[-1] % 8 == 0; got "
-                                      f"widths[-1]={widths[-1]}")
-        if remainder_strategy not in ("full_mask", "masked_tail", "scalar_postamble"):
-            raise NotImplementedError(f"VectorizeCPUMultiDim: remainder_strategy {remainder_strategy!r} not in "
-                                      f"{{'full_mask', 'masked_tail', 'scalar_postamble'}}")
-        if branch_mode not in ("merge", "fp_factor"):
-            raise NotImplementedError(f"VectorizeCPUMultiDim: branch_mode {branch_mode!r} not in "
-                                      f"{{'merge', 'fp_factor'}}")
+        _validate_knobs(widths, target_isa, remainder_strategy, branch_mode, scalar_remainder_emit)
         # K-dependent knob support. K=1 and K>=2 both support every (branch,
         # remainder) combo: the iter_mask only gates stores (the fp_factor
         # arithmetic itself runs on every lane unchanged), and the fp_factor
@@ -244,7 +258,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # -[wcr]-> sink``) and emits a ``TileReduce`` per matching edge so the
         # tile collapses to a scalar before the outer OpenMP reduction fires.
         # Idempotent — re-runs are no-ops.
-        from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
         # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read the
         # original tile-dependent array access directly, not a length-1 scalar
         # slice (which ``EmitTileOps`` would mis-classify as a Scalar broadcast).
@@ -358,8 +371,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # slabs; ``scalar_postamble`` marks them ``__scalar_tail`` so they
             # stay plain step-1 scalar loops (the legacy postamble shape) that
             # every tile prep pass skips.
-            from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
-                SplitMapForTileRemainder, )
             if remainder_strategy == "scalar_postamble":
                 tail_mode = "tile_k1" if scalar_remainder_emit == "tile_k1" else "scalar"
             else:
@@ -397,8 +408,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # handles them via the existing degenerate path. Runs after
         # ``StrideMapByTileWidths`` (so the tile-var classification matches
         # the post-stride spec) and before Promote.
-        from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
-            SplitMultiSliceBoundaryConnectors, )
         passes.append(SplitMultiSliceBoundaryConnectors(widths=widths_t))
         passes += [
             # Tile a flat body-NSDFG (vbor-style scalar chain) in place so
@@ -414,8 +423,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # before ``EmitTileOps`` (which would otherwise rewrite the body
             # again). See ``fuse_overlapping_tile_loads.py`` for the structural
             # contract.
-            from dace.transformation.passes.vectorization.fuse_overlapping_tile_loads import (
-                FuseOverlappingTileLoads, )
             passes.append(FuseOverlappingTileLoads())
         passes += [
             EmitTileOps(widths=widths_t),
@@ -451,8 +458,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :param pipeline_results: Carry-in from any enclosing pipeline.
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
-        from dace.transformation.dataflow import WCRToAugAssign
-        from dace.transformation.interstate import LoopToMap, RefineNestedAccess
         # WCR sinks that the tile path CAN handle (the post-:class:`NormalizeWCRSource`
         # ``tile -> _wcr_src (Scalar) -[wcr]-> sink`` shape, lowered to a
         # ``TileReduce``) are left alone — running ``WCRToAugAssign`` on them
@@ -463,7 +468,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # case) stays converted via the augassign fallback on a follow-up
         # pass below — first lower the recognised reductions, then convert
         # anything left over.
-        from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
         NormalizeWCRSource().apply_pass(sdfg, {})
         sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
         # ``LoopToMap`` parallelises every data-parallel ``for`` loop into a map
@@ -488,7 +492,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # uses the source-rank descriptor. Independent of every knob
         # (``nest_map_bodies``, ``insert_copies``, ...) -- the unification
         # is the point.
-        from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
         sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
         # ``insert_copies``: lift every in-map body NSDFG's connector
         # accesses into a private transient + one explicit copy state per
@@ -497,8 +500,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # way. Runs AFTER the always-on Expand pass so every connector
         # already mirrors the source descriptor.
         if self._insert_copies:
-            from dace.transformation.passes.vectorization.insert_body_nsdfg_copies import (
-                InsertBodyNSDFGCopies, )
             InsertBodyNSDFGCopies().apply_pass(sdfg, {})
         result = super().apply_pass(sdfg, pipeline_results)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
@@ -571,12 +572,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
 
         :param sdfg: SDFG whose tile lib nodes are resolved in place.
         """
-        from dace.libraries.tileops._dispatch import select_tile_implementation
-        from dace.libraries.tileops.nodes import (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce,
-                                                  TileScatter, TileStore, TileUnop)
-        tile_node_types = (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce, TileScatter, TileStore,
-                           TileUnop)
         for node, _ in sdfg.all_nodes_recursive():
-            if isinstance(node, tile_node_types):
+            if isinstance(node, _TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
                 node.implementation = select_tile_implementation(node)

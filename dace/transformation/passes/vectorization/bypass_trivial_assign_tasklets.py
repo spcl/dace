@@ -187,9 +187,8 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             if src_desc.transient and istate.in_edges(src_an):
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
                 for pe in list(istate.in_edges(src_an)):
-                    istate.add_edge(
-                        pe.src, pe.src_conn, dst_an, out_e.dst_conn,
-                        dace.Memlet(data=dst_an.data, subset=subsets.Range(list(out_e.data.subset.ranges))))
+                    istate.add_edge(pe.src, pe.src_conn, dst_an, out_e.dst_conn,
+                                    dace.Memlet(data=dst_an.data, subset=subsets.Range(list(out_e.data.subset.ranges))))
                     istate.remove_edge(pe)
                 for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                     istate.remove_edge(te)
@@ -200,9 +199,8 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             elif dst_desc.transient:
                 # AN(src) -> [_out=_in] -> AN(dst) -> C becomes AN(src) -> C.
                 for de in list(istate.out_edges(dst_an)):
-                    istate.add_edge(
-                        src_an, in_e.src_conn, de.dst, de.dst_conn,
-                        dace.Memlet(data=src_an.data, subset=subsets.Range(list(in_e.data.subset.ranges))))
+                    istate.add_edge(src_an, in_e.src_conn, de.dst, de.dst_conn,
+                                    dace.Memlet(data=src_an.data, subset=subsets.Range(list(in_e.data.subset.ranges))))
                     istate.remove_edge(de)
                 for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                     istate.remove_edge(te)

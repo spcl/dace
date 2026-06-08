@@ -409,9 +409,7 @@ def _resolve_gather_index_an(inner_sdfg: Optional[SDFG], expr: sympy.Expr) -> Op
 # ----- public API --------------------------------------------------------
 
 
-def classify_tile_access(subset: Range,
-                         iter_vars: Sequence[str],
-                         inner_sdfg: Optional[SDFG] = None) -> TileAccess:
+def classify_tile_access(subset: Range, iter_vars: Sequence[str], inner_sdfg: Optional[SDFG] = None) -> TileAccess:
     """Classify a memlet subset for tile lib-node dispatch.
 
     :param subset: The :class:`Range` to classify (typically a memlet's
