@@ -6,7 +6,5 @@ from .tile_store import TileStore
 from .tile_binop import TileBinop
 from .tile_unop import TileUnop
 from .tile_merge import TileMerge
-from .tile_gather import TileGather
-from .tile_scatter import TileScatter
 from .tile_reduce import TileReduce
 from .tile_iota import TileIota

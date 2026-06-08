@@ -336,7 +336,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         # materialised loop-invariant idx transients (``*_lc`` /
         # ``*_lc_<n>`` minted by ``_materialize_loop_invariant_idx``) —
         # those mirror a Scalar / literal-``(1,)`` boundary source and
-        # MUST stay length-1 so the downstream ``TileGather`` codegen
+        # MUST stay length-1 so the downstream ``TileLoad`` (with ``gather_dims``) codegen
         # picks the broadcast subscript (``_idx_<k>[0]`` for pointer-
         # to-single, or no subscript for a Scalar by-value). Widening
         # them defeats the broadcast intent and OOB-reads through the
@@ -565,13 +565,13 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
 
     def _collapse_affine_gathers(self, parent_state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG, spec: TileDimSpec,
                                  mask_name: Optional[str]) -> None:
-        """Route a non-box affine/structured boundary read to a :class:`TileGather`.
+        """Route a non-box affine/structured boundary read to a :class:`TileLoad` (with ``gather_dims``).
 
         A deterministic but non-box read — the diagonal ``A[i, i]`` (one tile var
         in two dims), a correlated affine ``A[2*i, i]``, or a structured
         ``c[i//2]`` (``int_floor``) — classifies as ``Gather`` / ``Structured``;
         box-widening it would read the wrong cross-product (an 8x8 block for the
-        diagonal). Instead read the FULL source array through a ``TileGather``
+        diagonal). Instead read the FULL source array through a ``TileLoad`` (with ``gather_dims``)
         whose per-dim index tile is the affine lane index
         ``_gidx_k[l] = begin_k(tvar -> tvar + l)`` (the same affine substitution
         the flat :class:`EmitTileOps` gather path uses, via ``_lane_index_expr``).
@@ -754,7 +754,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         A loop-invariant scalar gather/scatter index sourced from an outer
         ``const T* __restrict__`` connector triggers a duplicate
         ``__restrict__`` qualifier in the generated tasklet body when wired
-        directly as a ``TileGather`` / ``TileScatter`` ``_idx_<k>`` input
+        directly as a ``TileLoad`` / ``TileStore`` ``_idx_<k>`` input
         (the inner tasklet codegen redeclares the pointer with another
         ``__restrict__``, which gcc rejects). Materialize it into a fresh
         ``(1,)`` transient via a Python copy tasklet so the lib-node
@@ -821,11 +821,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
 
     def _collapse_tile_gathers(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> set:
-        """Collapse a fanned-out data gather into a masked :class:`TileGather`.
+        """Collapse a fanned-out data gather into a masked :class:`TileLoad` (with ``gather_dims``).
 
         Mirrors the 1D ``DetectGather`` collapse: a ``src[__sym]`` read whose
         ``__sym`` was fanned out into a widened index tile becomes
-        ``TileGather(src, idx_tile, mask) -> src_tile`` and the consumer is
+        ``TileLoad (gather_dims)(src, idx_tile, mask) -> src_tile`` and the consumer is
         rerouted to ``src_tile``. The gather symbols are returned for the
         caller to simplify away.
 
@@ -1138,7 +1138,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
                         idx_info[k] = (k, None, iname, W[0], 1)
                 if unresolved:
                     continue
-                # G3 step 3: unified gather via TileLoad. The legacy ``TileGather`` carried an
+                # G3 step 3: unified gather via TileLoad. The legacy ``TileLoad`` (with ``gather_dims``) carried an
                 # ``index_strides`` property for the "widened-1D index tile with per-source-dim
                 # stride lookup" form (each `_idx_<k>[lane * stride[k]]`). The unified TileLoad
                 # contract assumes per-lane-dense index tiles (lane-dependency rule, design
@@ -1213,12 +1213,12 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
 
     def _collapse_tile_scatters(self, istate: SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                 mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> set:
-        """Collapse a fanned-out data scatter into a masked :class:`TileScatter`.
+        """Collapse a fanned-out data scatter into a masked :class:`TileStore` (with ``gather_dims``).
 
         The write-side mirror of :meth:`_collapse_tile_gathers`: a ``dst[__sym]``
         store whose ``__sym`` was fanned out (by the same interstate-assignment
         fan-out — ``__sym = idx[i]``) into a widened ``(W,)`` index tile becomes
-        ``TileScatter(value_tile, idx_tile, mask) -> dst``. The value reaches the
+        ``TileStore (gather_dims)(value_tile, idx_tile, mask) -> dst``. The value reaches the
         store either directly from a ``(W,)`` tile access node or through a
         trivial assign tasklet (folded away). The scatter index symbols are
         returned so the caller can simplify them away.
@@ -1460,7 +1460,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             istate.remove_edge(e)
             if to_remove is not None:
                 # The assign tasklet's value source already wires into the
-                # new ``TileScatter`` (``value_access`` above), so the dangling
+                # new ``TileStore`` (with ``gather_dims``) (``value_access`` above), so the dangling
                 # in-edges are dead — drop them with the tasklet so its
                 # connectors don't leak into the validated SDFG.
                 for ie in list(istate.in_edges(to_remove)) + list(istate.out_edges(to_remove)):
@@ -2566,7 +2566,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             and e.dst.data in nsdfg_node.out_connectors and e.data is not None and e.data.data is not None
         ]
         for ed in store_edges:
-            # A tile lib node (TileBinop / TileMerge / TileLoad / TileGather)
+            # A tile lib node (TileBinop / TileMerge / TileLoad / TileLoad (gather_dims))
             # already wrote the masked ``(W, ...)`` tile straight into the
             # widened out-connector; the NSDFG outer edge stores it to the
             # array region. No separate TileStore is needed (it would be an
@@ -2797,7 +2797,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             self._thread_mask(parent_state, map_entry, nsdfg_node, mask_name, W)
         # Gather descent (mirrors 1D expand -> DetectGather): fan a per-lane
         # gather index ``__sym = idx[i]`` into a widened ``(W,)`` index tile,
-        # then collapse the ``src[__sym]`` reads into a TileGather and drop the
+        # then collapse the ``src[__sym]`` reads into a TileLoad (gather_dims) and drop the
         # now-unused index symbols. K=1 only for now (the separable / K-D index
         # cases land in a later slice).
         # Reset per-promote bookkeeping for the K-aware fan-out's exempt list.
@@ -2827,7 +2827,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         # :meth:`_promote_binops._operand`.
         self._unrefine_minmax_connectors(parent_state, nsdfg_node, spec)
         # Affine / structured non-box reads (diagonal A[i,i], correlated A[2*i,i],
-        # structured c[i//2]) -> TileGather over the full source with affine
+        # structured c[i//2]) -> TileLoad (gather_dims) over the full source with affine
         # index tiles. Runs before the box widening, which then skips these
         # connectors (their outer edge is the tile-var-free full-array subset).
         self._collapse_affine_gathers(parent_state, nsdfg_node, spec, mask_name)
@@ -2868,7 +2868,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             self._promote_unops(istate, nsdfg_node, mask_acc, spec)
             self._promote_merges(istate, nsdfg_node, mask_acc, spec)
             # Route a data-scatter store (``dst[idx[i]]`` — value tile already
-            # produced by the binop/merge above) through a TileScatter before the
+            # produced by the binop/merge above) through a TileStore (gather_dims) before the
             # box-store promotion, which would otherwise reject the non-box dst.
             consumed |= self._collapse_tile_scatters(istate, nsdfg_node, mask_acc, spec)
             self._promote_stores(istate, nsdfg_node, mask_acc, spec)

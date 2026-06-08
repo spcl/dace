@@ -305,7 +305,7 @@ def _widen_index_connector_to_tile(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes
     # edge is grown to the CONTIGUOUS bounding window ``idx[c*i : c*i+c*(W-1)]``
     # (``c*(W-1)+1`` elements) and the connector keeps that contiguous shape:
     # the ``c``-strided per-lane pick is realised at the gather, which reads
-    # ``_idx[c*l]`` (TileGather ``index_strides``). A strided memlet / strided
+    # ``_idx[c*l]`` (TileLoad (gather_dims) ``index_strides``). A strided memlet / strided
     # connector would NOT work because the NSDFG argument is a base pointer
     # (``&idx[c*i]``) that drops the source stride. A unit ``c`` recovers the
     # plain ``idx[i:i+W]`` window.
@@ -342,7 +342,7 @@ def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.no
     fan the 1D path builds as ``sym_laneid_<i>`` — this widens ``C_idx`` to a
     ``(W,)`` tile (``idx[i] -> idx[i:i+W]``) and fans ``__sym`` out into
     ``__sym_laneid_<l> = C_idx[l]`` per lane. A later collapse pass promotes
-    the per-lane fan into a ``TileGather`` and simplifies the symbols away
+    the per-lane fan into a ``TileLoad`` (with ``gather_dims``) and simplifies the symbols away
     (the tile mirror of expand-then-``DetectGather``).
 
     Unlike the 1D helper, a length-1 index connector is NOT treated as a

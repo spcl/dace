@@ -421,12 +421,12 @@ class TileConnectors:
     internal tasklet variable names, e.g. ``__src``, which are not
     connectors).
 
-    :cvar SRC: Source-array input of ``TileLoad`` / ``TileGather`` /
-        ``TileScatter`` / ``TileReduce`` (and the tile input of
+    :cvar SRC: Source-array input of ``TileLoad`` / ``TileLoad`` (with ``gather_dims``) /
+        ``TileStore`` (with ``gather_dims``) / ``TileReduce`` (and the tile input of
         ``TileStore``).
-    :cvar DST: Tile output of ``TileLoad`` / ``TileGather`` /
+    :cvar DST: Tile output of ``TileLoad`` / ``TileLoad`` (with ``gather_dims``) /
         ``TileReduce`` (and the array output of ``TileStore`` /
-        ``TileScatter``).
+        ``TileStore`` (with ``gather_dims``)).
     :cvar MASK: Optional iteration / condition mask input.
     :cvar A: ``TileBinop`` left operand.
     :cvar B: ``TileBinop`` right operand.

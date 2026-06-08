@@ -485,7 +485,7 @@ class EmitTileOps(ppl.Pass):
             return "Scalar", (source_edge, edge)
         if cls.kind in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
             # Non-perfect-box (diagonal ``a[i,i]``) or structured-replication
-            # (``a[i//2]`` -> ``int_floor``) read: lower to a TileGather over a
+            # (``a[i//2]`` -> ``int_floor``) read: lower to a TileLoad (gather_dims) over a
             # per-dim index map ("gather map"), built by substituting the lane
             # offsets into each dim's begin (``_emit_gather_load`` ->
             # ``_lane_index_expr``). Both index forms are deterministic.
@@ -608,7 +608,7 @@ class EmitTileOps(ppl.Pass):
     def _emit_gather_load(self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet, conn: str, source_edge, in_edge,
                           per_iter_subset: subsets.Range, spec: TileDimSpec,
                           mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
-        """Insert a :class:`TileGather` materializing one tile transient from a
+        """Insert a :class:`TileLoad` (with ``gather_dims``) materializing one tile transient from a
         non-box (diagonal / affine-indirect) read.
 
         :returns: ``(tile_name, tile_access)`` of the gathered tile.
@@ -624,7 +624,7 @@ class EmitTileOps(ppl.Pass):
         idx_accesses = self._emit_gather_index_tiles(state, map_entry, per_iter_subset, src_ndim, spec)
         tile_name = self._add_tile_transient(sdfg, f"_tile_{conn.lstrip('_')}", src_arr.dtype, spec.widths)
         # G3 step 3: unified gather lowers to TileLoad with gather_dims=(0, ..., src_ndim-1).
-        # The old TileGather emitted one full-tile-shape index per source dim; the new
+        # The old TileLoad (gather_dims) emitted one full-tile-shape index per source dim; the new
         # TileLoad does the same via the source-dim-indexed gather_dims (design section 9.2).
         gather = TileLoad(name=f"{tasklet.label}_gather_{conn.lstrip('_')}",
                           widths=spec.widths,
@@ -648,7 +648,7 @@ class EmitTileOps(ppl.Pass):
     def _emit_scatter_store(self, state: dace.SDFGState, map_entry: MapEntry, out_access: dace.nodes.AccessNode,
                             out_edge, spec: TileDimSpec, mask_access: dace.nodes.AccessNode) -> None:
         """Scatter a result tile back to a non-box (diagonal / affine) output
-        via a :class:`TileScatter` over the same affine index map.
+        via a :class:`TileStore` (with ``gather_dims``) over the same affine index map.
 
         :param state: Parent state.
         :param map_entry: Inner map entry (index-tile dependency source).
@@ -1121,7 +1121,7 @@ class EmitTileOps(ppl.Pass):
 
         Used when the map scope contains only assign tasklets (no compute):
         ``dst[i] = src[i//2]``-style kernels where the load itself (TileLoad
-        / TileGather, selected by the in-edge's classification) IS the tile
+        / TileLoad (gather_dims), selected by the in-edge's classification) IS the tile
         op. The returned tile transient access node feeds the stores phase
         which then emits the matching TileStore back to the output array.
 

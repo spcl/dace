@@ -3,7 +3,7 @@
 expression in the lane placeholders ``__l0..__l{K-1}``.
 
 Used by the K-dim emitter / NSDFG-body promoter to materialize the
-integer index tiles that feed :class:`TileGather` / :class:`TileScatter`,
+integer index tiles that feed :class:`TileLoad` / :class:`TileStore`,
 plus any other per-lane affine fill (constant arange, diagonal index,
 strided base). The expression may also reference additional input tiles
 / arrays declared via ``extra_inputs`` — the lane body reads them by

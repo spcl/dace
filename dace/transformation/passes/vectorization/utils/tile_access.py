@@ -9,7 +9,7 @@ lanes?*
 The classifier is **target-isa-agnostic** and does **no SDFG mutation**:
 its sole output is a :class:`TileAccess` record. The emitter consumes
 that record to pick a tile lib node (``TileLoad`` / ``TileLoadStrided``
-/ ``TileGather`` / ``TileStore`` / ``TileScatter`` / ``TileBroadcast``)
+/ ``TileLoad`` (with ``gather_dims``) / ``TileStore`` / ``TileStore`` (with ``gather_dims``) / ``TileBroadcast``)
 and arch-specific intrinsics live in the lib-node expansions.
 
 Per-dim classification
@@ -28,7 +28,7 @@ Every dim of the subset is tagged independently as one of
   combined (``i + j``). Emitter chooses strided-load intrinsic vs.
   loop-of-loads vs. fallback to GATHER per arch.
 * **GATHER** -- a tile iter-var appears inside a :class:`Subscript`
-  (``arr[idx[i]]``). Data-dependent access; always lowers to TileGather.
+  (``arr[idx[i]]``). Data-dependent access; always lowers to TileLoad (gather_dims).
 
 Whole-subset composition (DIAGONAL / TRANSPOSE flags)
 -----------------------------------------------------
@@ -46,7 +46,7 @@ also captured:
 
 The classifier captures these as informational fields; the emitter
 decides the actual lib-node target. Per the user's locked direction,
-DIAGONAL and TRANSPOSE both fold into ``TileGather`` today.
+DIAGONAL and TRANSPOSE both fold into ``TileLoad`` (with ``gather_dims``) today.
 
 dim_strides convention
 ----------------------
@@ -126,7 +126,7 @@ class TileAccessKind(enum.Enum):
     ``GATHER > AFFINE > STRUCTURED > BROADCAST``. Two specialised
     compositions (DIAGONAL / TRANSPOSE) of STRUCTURED_1 dims are tagged
     on the :class:`TileAccess` record for emitter information only --
-    both fold into ``TileGather`` per the locked design."""
+    both fold into ``TileLoad`` (with ``gather_dims``) per the locked design."""
 
     BROADCAST = "broadcast"
     STRUCTURED = "structured"

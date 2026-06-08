@@ -39,8 +39,7 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
 )
 
 
-def _compute_match_dims(dim_iter_var: Sequence[Optional[str]],
-                        iter_vars: Sequence[str]) -> Tuple[int, ...]:
+def _compute_match_dims(dim_iter_var: Sequence[Optional[str]], iter_vars: Sequence[str]) -> Tuple[int, ...]:
     """Permutation: ``match_dims[k]`` is the source dim that tile lane
     ``k`` (iter-var ``iter_vars[k]``) addresses.
 
@@ -101,7 +100,7 @@ def classify_tile_access_compat(subset: Range, array_strides: Sequence,
     # recognises these as a within-dim group-broadcast optimization
     # carrying a per-dim ``replicate_factor``. The legacy lib nodes
     # don't have a replicate-factor property yet (that's slice 2 of the
-    # rollout), so route through GATHER -- the existing TileGather path
+    # rollout), so route through GATHER -- the existing TileLoad (gather_dims) path
     # with a computed index map is the safe fallback that preserves
     # correctness. Once the lib node grows the property the shim can
     # switch this to STRUCTURED + populate the factor on the result.
@@ -113,10 +112,9 @@ def classify_tile_access_compat(subset: Range, array_strides: Sequence,
         # BROADCAST dims get stride 0, AFFINE dims get their coefficient,
         # STRUCTURED_1 dims get 1. If any AFFINE dim has a non-isolable
         # coefficient (``None`` in the new classifier -- e.g. ``i // 2``),
-        # the legacy bucket is GATHER (lowered as a TileGather over a
+        # the legacy bucket is GATHER (lowered as a TileLoad (gather_dims) over a
         # computed index map at emit time).
-        if any(k == PerDimKind.AFFINE and ta.dim_strides[d] is None
-               for d, k in enumerate(ta.per_dim_kind)):
+        if any(k == PerDimKind.AFFINE and ta.dim_strides[d] is None for d, k in enumerate(ta.per_dim_kind)):
             return TileAccessClassification(kind=TileAccessKind.GATHER)
         per_dim_int_strides: list = []
         for d, kind in enumerate(ta.per_dim_kind):
@@ -142,5 +140,4 @@ def classify_tile_access_compat(subset: Range, array_strides: Sequence,
         )
 
     # All dims are BROADCAST.
-    return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL,
-                                    dim_strides=tuple(0 for _ in iter_vars))
+    return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=tuple(0 for _ in iter_vars))

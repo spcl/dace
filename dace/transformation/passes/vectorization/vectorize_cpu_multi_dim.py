@@ -65,13 +65,11 @@ from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, Lo
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
     SplitMultiSliceBoundaryConnectors, )
-from dace.libraries.tileops.nodes import (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce,
-                                          TileScatter, TileStore, TileUnop)
+from dace.libraries.tileops.nodes import (TileBinop, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-_TILE_NODE_TYPES = (TileBinop, TileGather, TileLoad, TileMaskGen, TileMerge, TileReduce, TileScatter, TileStore,
-                    TileUnop)
+_TILE_NODE_TYPES = (TileBinop, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore, TileUnop)
 
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.

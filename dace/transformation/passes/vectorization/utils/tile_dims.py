@@ -77,7 +77,7 @@ class TileAccessKind(Enum):
     :cvar GATHER: A source-array dim's index is data-dependent / not a
         perfect box: read from a SEPARATE index array (``b[idx[i]]``), a
         diagonal (``a[i, i]`` — one tile var in two dims), or a dim mixing
-        tile vars (``a[i + j]``). Emit ``TileGather`` / ``TileScatter``.
+        tile vars (``a[i + j]``). Emit ``TileLoad`` / ``TileStore``.
     :cvar UNRECOGNIZED: Anything the classifier cannot put into the
         above buckets (a tile var bound to no subset dim, etc.).
     """
@@ -297,7 +297,7 @@ def classify_tile_access(
     tilevar_dims = {p: [d for d, di in enumerate(dims) if p in di.dep] for p in range(K)}
     if any(len(ds) > 1 for ds in tilevar_dims.values()):
         # A tile var spanning ≥2 array dims is a diagonal (``a[i, i]``).
-        # K=1 lowers it via a TileGather over an affine per-dim index map
+        # K=1 lowers it via a TileLoad (gather_dims) over an affine per-dim index map
         # (one shared lane offset folded into every spanned dim). For K>1 a
         # diagonal inside a multi-dim register tile is unsupported — the
         # gather map would have to fold one shared tile var across multiple
