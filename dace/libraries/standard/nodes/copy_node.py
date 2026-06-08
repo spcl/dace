@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import dace
 from dace import data, library, nodes, dtypes, symbolic
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.transformation.transformation import ExpandTransformation
@@ -384,7 +384,8 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     dst_loc = "Device" if out.storage == dace.dtypes.StorageType.GPU_Global else "Host"
-    return f"cudaMemcpy{src_loc}To{dst_loc}"
+    backend = get_gpu_backend()
+    return f"{backend}Memcpy{src_loc}To{dst_loc}"
 
 
 def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
@@ -414,7 +415,8 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
     nbytes = f"{sym2cpp(in_subset.num_elements_exact())} * sizeof({inp.dtype.ctype})"
     if cuda:
-        code = f"cudaMemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
+        backend = get_gpu_backend()
+        code = f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
     else:
         code = f"memcpy({out_conn}, {in_conn}, {nbytes});"
 
@@ -567,6 +569,7 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
         src_strides = in_strides_2d
         dst_strides = out_strides_2d
         ctype = inp.dtype.ctype
+        backend = get_gpu_backend()
 
         if src_strides[1] == 1 and dst_strides[1] == 1:
             dpitch = f"{sym2cpp(dst_strides[0])} * sizeof({ctype})"
@@ -589,7 +592,7 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
                                       f"src_strides={src_strides}, dst_strides={dst_strides}.")
 
         code = (
-            f"cudaMemcpy2DAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {dpitch}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, {spitch}, "
+            f"{backend}Memcpy2DAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {dpitch}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, {spitch}, "
             f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME});")
 
         in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
@@ -644,12 +647,13 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         ctype = inp.dtype.ctype
         chunk = sym2cpp(in_shape_collapsed[chunk_dim])
         kind = _memcpy_kind(inp, out)
+        backend = get_gpu_backend()
 
         if ndims == 1:
             # Degenerate case: a single contiguous run. Emit a flat Tasklet
             # with the libnode's connector naming directly -- no wrapper SDFG.
             code = (
-                f"DACE_GPU_CHECK(cudaMemcpyAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, "
+                f"DACE_GPU_CHECK({backend}MemcpyAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
             in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
             return nodes.Tasklet(node.name,
@@ -684,7 +688,8 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         # Inner-tasklet connectors. Must not collide with the wrapper SDFG's
         # parameter arrays, which are named after the libnode's outer connectors.
         inner_in, inner_out = "_in", "_out"
-        code = (f"DACE_GPU_CHECK(cudaMemcpyAsync({inner_out}, {inner_in}, "
+        backend = get_gpu_backend()
+        code = (f"DACE_GPU_CHECK({backend}MemcpyAsync({inner_out}, {inner_in}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
 
         inner_tasklet, map_entry, _map_exit = ctx.state.add_mapped_tasklet(name=f"{node.label}_tasklet",
