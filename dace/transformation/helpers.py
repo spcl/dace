@@ -835,7 +835,6 @@ def isolate_nested_sdfg(
         visited.add(node_to_process)
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
-    pre_nodes = list(sorted(pre_nodes, key=lambda n: n.id))
 
     # These are the nodes of the middle state. Which are all access nodes that serves
     #  as input to the nested SDFG and the nested SDFG itself.
@@ -862,7 +861,6 @@ def isolate_nested_sdfg(
                 "Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG."
             )
         middle_nodes.add(oedge.dst)
-    middle_nodes = list(sorted(middle_nodes, key=lambda n: n.id))
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
