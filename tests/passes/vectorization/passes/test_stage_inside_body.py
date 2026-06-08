@@ -266,3 +266,44 @@ def test_walker_skips_maps_with_fewer_dims_than_K():
     """K=2 walker skips a K=1 innermost map (len(params) < K)."""
     sdfg, _ = _build_const_only_tile_fixture()
     assert StageInsideBody(widths=(8, 8)).apply_pass(sdfg, {}) is None
+
+
+def _build_linear_tile_fixture():
+    """Build an SDFG with one innermost K=1 map (param ``ii``), body NSDFG with
+    a non-transient ``B`` whose body reads ``B[ii]`` -- a LINEAR access (per-lane)."""
+    sdfg = dace.SDFG("walker_tile_fixture")
+    sdfg.add_array("B", (32, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body_nsdfg")
+    inner.add_array("B", (32, ), dace.float64, transient=False)
+    inner.add_array("out_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    b_inner = instate.add_access("B")
+    t_inner = instate.add_access("out_t")
+    tasklet = instate.add_tasklet("ld", {"_b"}, {"_o"}, "_o = _b")
+    instate.add_edge(b_inner, None, tasklet, "_b", Memlet("B[ii]"))
+    instate.add_edge(tasklet, "_o", t_inner, None, Memlet("out_t[0]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"B"}, set(), symbol_mapping={"ii": "ii"})
+    b_outer = state.add_access("B")
+    state.add_memlet_path(b_outer, me, nsdfg, dst_conn="B", memlet=Memlet("B[0:32]"))
+    state.add_nedge(nsdfg, mx, Memlet())
+    return sdfg, inner
+
+
+def test_walker_stages_linear_access_via_tile_branch():
+    """LINEAR access ``B[ii]`` stages through a tile-shape Array transient + TileLoad."""
+    sdfg, inner = _build_linear_tile_fixture()
+    before_arrays = sum(1 for d in inner.arrays.values()
+                        if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
+    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    after_arrays = sum(1 for d in inner.arrays.values()
+                       if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
+    assert after_arrays == before_arrays + 1, "expected one new (8,)-shape tile bridge transient"
+    # The new TileLoad is wired between B and the bridge.
+    body_state = next(s for s in inner.states())
+    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
+    assert len(tile_loads) == 1, "expected exactly one TileLoad inserted by the walker"

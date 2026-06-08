@@ -258,9 +258,20 @@ class StageInsideBody(ppl.Pass):
                 continue
             yield parent, nsdfgs[0], node
 
-    def _stage_constant_only(self, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
-        """Walk every non-transient AccessNode in ``inner_sdfg`` and stage
-        CONSTANT-only AN-incident reads via :func:`stage_constant_access`.
+    def _stage_inner_body(self, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
+        """Walk every non-transient read AccessNode in ``inner_sdfg``'s states and
+        dispatch each one to its lattice-appropriate stager (design section 3.1).
+
+        Per-lattice dispatch:
+
+        * Every tile dim CONSTANT
+            -> :func:`stage_constant_access` (Scalar bridge, AN -> AN copy).
+        * Mix of CONSTANT / LINEAR / AFFINE / REPLICATE / MODULAR (no GATHER)
+            -> :func:`stage_tile_access` (TileLoad with empty ``gather_dims``).
+        * Any GATHER dim
+            -> DEFERRED to step 4c, which calls
+              :func:`PreparePerLaneIndices` (G8 step 3) first to materialise
+              the index tile(s), then stages via the gather branch.
 
         :returns: Number of staged ANs (>= 0).
         """
@@ -272,24 +283,39 @@ class StageInsideBody(ppl.Pass):
                 desc = inner_sdfg.arrays.get(an.data)
                 if desc is None or desc.transient:
                     continue
-                # Only consider source-side ANs (out-edges describe reads from the array).
                 out_edges = list(inner_state.out_edges(an))
                 if not out_edges:
                     continue
-                # Read the per-tile subset on the AN-incident side of the first out-edge.
                 try:
                     subset = an_side_subset(out_edges[0], an, inner_sdfg)
                 except Exception:  # noqa: BLE001 -- helper may refuse on edge shapes outside scope.
                     continue
                 record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
-                # Conservative gate: every tile dim must be CONSTANT (loop-invariant access).
-                if not record.per_dim_kind or any(k != PerDimKind.CONSTANT for k in record.per_dim_kind):
+                if not record.per_dim_kind:
                     continue
-                # Stage via the helper. The AN -> AN edge it adds doesn't yet rewire downstream
-                # consumers -- step 4b's tile case will handle the full rewire. For now the
-                # constant stage simply mints the scalar bridge so the structure is observable.
-                stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
-                staged += 1
+                kinds = set(record.per_dim_kind)
+                if PerDimKind.GATHER in kinds:
+                    # GATHER case -- deferred to step 4c (requires PreparePerLaneIndices).
+                    continue
+                if kinds == {PerDimKind.CONSTANT}:
+                    stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
+                    staged += 1
+                else:
+                    # Tile case (LINEAR / AFFINE / REPLICATE / MODULAR; possibly mixed with
+                    # CONSTANT dims). Build a full-tile-shape src_subset memlet covering the
+                    # access (the inner_state's out-edge already carries the per-tile region;
+                    # we reuse its memlet so the lib node downstream sees the same subset).
+                    src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
+                    dim_strides = tuple(s if s is not None else 1 for s in record.dim_strides)
+                    replicate = tuple(r if r is not None else 1 for r in record.replicate_factor_per_dim)
+                    stage_tile_access(inner_state,
+                                      an,
+                                      widths=tuple(self.widths),
+                                      src_subset=src_subset_memlet,
+                                      name_hint=f"{an.data}_tile",
+                                      dim_strides=dim_strides,
+                                      replicate_factor_per_dim=replicate)
+                    staged += 1
         return staged
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
@@ -303,5 +329,5 @@ class StageInsideBody(ppl.Pass):
         total = 0
         for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
             iter_vars = tuple(map_entry.map.params[-K:])
-            total += self._stage_constant_only(_state, nsdfg_node.sdfg, iter_vars)
+            total += self._stage_inner_body(_state, nsdfg_node.sdfg, iter_vars)
         return total or None
