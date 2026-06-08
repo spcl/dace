@@ -198,3 +198,59 @@ def test_e2e_partial_gather_K2():
         for l1 in range(W1):
             expected[l0, l1] = src[idx0[l0], l1]
     np.testing.assert_array_equal(out, expected)
+
+
+def _run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, dst_dims=None, initial_dst=None):
+    """Build, expand, compile, and run a TileStore with scatter; return the dst array."""
+    import numpy as np
+    sdfg = dace.SDFG(f"e2e_store_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
+    sdfg.add_array("Src", widths, dace.float64, transient=False)
+    sdfg.add_array("Dst", dst_shape, dace.float64, transient=False)
+    for d in gather_dims:
+        sdfg.add_array(f"Idx{d}", idx_np_per_d[d].shape, dace.int64, transient=False)
+    state = sdfg.add_state("s")
+    src = state.add_access("Src")
+    dst = state.add_access("Dst")
+    node = TileStore("ts", widths=widths, gather_dims=gather_dims, dst_dims=dst_dims)
+    state.add_node(node)
+    state.add_edge(src, None, node, "_src", Memlet(f"Src[{', '.join(f'0:{w}' for w in widths)}]"))
+    state.add_edge(node, "_dst", dst, None, Memlet(f"Dst[{', '.join(f'0:{s}' for s in dst_shape)}]"))
+    for d in gather_dims:
+        idx = state.add_access(f"Idx{d}")
+        idx_subset = ", ".join(f"0:{s}" for s in idx_np_per_d[d].shape)
+        state.add_edge(idx, None, node, f"_idx_{d}", Memlet(f"Idx{d}[{idx_subset}]"))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    dst_np = np.zeros(dst_shape, dtype=np.float64) if initial_dst is None else initial_dst.copy()
+    kwargs = {"Src": src_tile.astype(np.float64), "Dst": dst_np}
+    for d in gather_dims:
+        kwargs[f"Idx{d}"] = idx_np_per_d[d].astype(np.int64)
+    sdfg(**kwargs)
+    return dst_np
+
+
+def test_e2e_1d_scatter_K1():
+    """K=1 1-D scatter: dst[idx[l]] = src[l]."""
+    import numpy as np
+    W = 8
+    src_tile = np.arange(W, dtype=np.float64) * 100
+    idx = np.array([3, 7, 1, 5, 2, 6, 0, 4], dtype=np.int64)
+    out = _run_scatter_store(src_tile, {0: idx}, dst_shape=(32, ), widths=(W, ), gather_dims=(0, ))
+    expected = np.zeros(32, dtype=np.float64)
+    for l in range(W):
+        expected[idx[l]] = src_tile[l]
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_e2e_partial_scatter_K2():
+    """K=2 partial scatter on dim 0: dst[idx_0[l_0], l_1] = src[l_0, l_1]."""
+    import numpy as np
+    W0, W1 = 4, 8
+    src_tile = np.arange(W0 * W1, dtype=np.float64).reshape(W0, W1)
+    idx0 = np.array([7, 2, 11, 5], dtype=np.int64)
+    out = _run_scatter_store(src_tile, {0: idx0}, dst_shape=(16, W1), widths=(W0, W1), gather_dims=(0, ))
+    expected = np.zeros((16, W1), dtype=np.float64)
+    for l0 in range(W0):
+        for l1 in range(W1):
+            expected[idx0[l0], l1] = src_tile[l0, l1]
+    np.testing.assert_array_equal(out, expected)

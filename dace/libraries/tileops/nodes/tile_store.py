@@ -37,6 +37,7 @@ class ExpandTileStorePure(ExpandTransformation):
         :returns: A CPP tasklet replacing the lib node in place.
         """
         from dace.symbolic import symstr
+        from itertools import combinations
         widths = list(node.widths)
         K = len(widths)
         dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
@@ -47,7 +48,48 @@ class ExpandTileStorePure(ExpandTransformation):
         dims = list(node.dst_dims) if node.dst_dims else list(range(ndim - K, ndim))
         dst_strides = [symstr(dst_arr.strides[d]) for d in dims]
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-        dst_off = offset_via_strides(coeff, dst_strides)
+        gather_set = set(node.gather_dims)
+        if not gather_set:
+            # Structured store: existing affine path.
+            dst_off = offset_via_strides(coeff, dst_strides)
+        else:
+            # Unified scatter dispatch (mirror of TileLoad's gather path; see design section 9.2).
+            # Per gather dim, the destination index is `_idx_<d>[<flat lane offset>]`; per non-
+            # gather dim, the affine `__l<d> * coeff[d] * stride[d]`.
+            gather_idx_ref = {}
+            for d in node.gather_dims:
+                conn = f"_idx_{d}"
+                edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
+                idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
+                if idx_shape == (1, ):
+                    gather_idx_ref[d] = f"{conn}[0]"
+                    continue
+                deps_d = None
+                for k in range(1, K + 1):
+                    for combo in combinations(range(K), k):
+                        if tuple(widths[p] for p in combo) == idx_shape:
+                            deps_d = combo
+                            break
+                    if deps_d is not None:
+                        break
+                if deps_d is None:
+                    raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
+                                     f"{idx_shape} against widths {tuple(widths)}")
+                parts = []
+                for i, p in enumerate(deps_d):
+                    inner = 1
+                    for q in deps_d[i + 1:]:
+                        inner *= widths[q]
+                    parts.append(f"__l{p}" if inner == 1 else f"(__l{p} * {inner})")
+                gather_idx_ref[d] = f"{conn}[{' + '.join(parts)}]"
+            parts = []
+            for d in range(K):
+                s = dst_strides[d]
+                if d in gather_set:
+                    parts.append(f"(({gather_idx_ref[d]}) * ({s}))")
+                else:
+                    parts.append(f"({coeff[d]} * ({s}) * __l{d})")
+            dst_off = " + ".join(parts) if parts else "0"
         src_off = tile_offset(widths)
         # Resolve the per-lane source reference for each ``src_kind``:
         #   * ``Tile`` — the existing per-lane tile read.
@@ -67,6 +109,7 @@ class ExpandTileStorePure(ExpandTransformation):
             body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
         inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
+        inputs |= {f"_idx_{d}" for d in node.gather_dims}
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
