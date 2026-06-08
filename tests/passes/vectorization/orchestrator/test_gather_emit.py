@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
@@ -102,7 +102,8 @@ def _prepped(tag=""):
 
 
 def test_diagonal_emits_gather_and_scatter():
-    """The diagonal read/write lower to TileGather + TileScatter lib nodes."""
+    """The diagonal read/write lower to TileLoad(gather_dims=...) + TileStore(gather_dims=...)
+    per the G3-step-3 unified design (source-dim-indexed gather)."""
     sdfg = _prepped()
     from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
         CleanAccessNodeToScalarSliceToTaskletPattern, )
@@ -111,10 +112,12 @@ def test_diagonal_emits_gather_and_scatter():
     GenerateTileIterationMask(widths=(8, )).apply_pass(sdfg, {})
     StrideMapByTileWidths(widths=(8, )).apply_pass(sdfg, {})
     EmitTileOps(widths=(8, )).apply_pass(sdfg, {})
-    gathers = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
-    scatters = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileScatter)]
-    assert len(gathers) >= 1, "expected a TileGather for the diagonal read"
-    assert len(scatters) == 1, "expected a TileScatter for the diagonal write"
+    # Gather-loads are TileLoad nodes with non-empty gather_dims; scatter-stores are TileStore
+    # nodes with non-empty gather_dims. (Structured TileLoad/TileStore have empty gather_dims.)
+    gather_loads = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad) and tuple(n.gather_dims)]
+    scatter_stores = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileStore) and tuple(n.gather_dims)]
+    assert len(gather_loads) >= 1, "expected a TileLoad with gather_dims for the diagonal read"
+    assert len(scatter_stores) == 1, "expected a TileStore with gather_dims for the diagonal write"
 
 
 @pytest.mark.parametrize("n", [16, 17])

@@ -24,8 +24,7 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.libraries.tileops import (TileBinop, TileGather, TileIota, TileLoad, TileReduce, TileScatter, TileStore,
-                                    TileUnop)
+from dace.libraries.tileops import (TileBinop, TileIota, TileLoad, TileReduce, TileStore, TileUnop)
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
@@ -624,10 +623,13 @@ class EmitTileOps(ppl.Pass):
         map_entry = self._map_entry_of(state, tasklet)
         idx_accesses = self._emit_gather_index_tiles(state, map_entry, per_iter_subset, src_ndim, spec)
         tile_name = self._add_tile_transient(sdfg, f"_tile_{conn.lstrip('_')}", src_arr.dtype, spec.widths)
-        gather = TileGather(name=f"{tasklet.label}_gather_{conn.lstrip('_')}",
-                            widths=spec.widths,
-                            source_ndim=src_ndim,
-                            has_mask=mask_name is not None)
+        # G3 step 3: unified gather lowers to TileLoad with gather_dims=(0, ..., src_ndim-1).
+        # The old TileGather emitted one full-tile-shape index per source dim; the new
+        # TileLoad does the same via the source-dim-indexed gather_dims (design section 9.2).
+        gather = TileLoad(name=f"{tasklet.label}_gather_{conn.lstrip('_')}",
+                          widths=spec.widths,
+                          gather_dims=tuple(range(src_ndim)),
+                          has_mask=mask_name is not None)
         state.add_node(gather)
         full = ", ".join(f"0:{s}" for s in src_arr.shape)
         state.add_edge(in_edge.src, in_edge.src_conn, gather, TileConnectors.SRC,
@@ -661,10 +663,11 @@ class EmitTileOps(ppl.Pass):
         dst_ndim = len(dst_arr.shape)
         out_subset = ", ".join(f"0:{w}" for w in spec.widths)
         idx_accesses = self._emit_gather_index_tiles(state, map_entry, out_edge.data.subset, dst_ndim, spec)
-        scatter = TileScatter(name=f"{out_access.data}_scatter",
-                              widths=spec.widths,
-                              dest_ndim=dst_ndim,
-                              has_mask=mask_access is not None)
+        # G3 step 3: unified scatter lowers to TileStore with gather_dims=(0, ..., dst_ndim-1).
+        scatter = TileStore(name=f"{out_access.data}_scatter",
+                            widths=spec.widths,
+                            gather_dims=tuple(range(dst_ndim)),
+                            has_mask=mask_access is not None)
         state.add_node(scatter)
         state.add_edge(out_access, None, scatter, TileConnectors.SRC, dace.Memlet(f"{out_access.data}[{out_subset}]"))
         for k, idx_acc in enumerate(idx_accesses):
