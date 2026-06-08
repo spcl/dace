@@ -392,7 +392,11 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=cuda)
-    if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+    single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
+    if single_elt:
+        # For a single element we must/can ignore the strides.
+        pass
+    elif not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
         raise ValueError(f"{label} requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
                          f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
                          f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
