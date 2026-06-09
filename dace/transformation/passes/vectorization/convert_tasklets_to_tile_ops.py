@@ -37,8 +37,11 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 
-#: Subset of binary operators that map directly onto :class:`TileBinop`.
-_SUPPORTED_BINOPS = {"+", "-", "*", "/", "min", "max"}
+#: Subset of binary operators that map directly onto :class:`TileBinop`. Includes
+#: comparison (``<``, ``<=``, ``>``, ``>=``, ``==``, ``!=``) which produce bool tile
+#: outputs used as the cond input of :class:`TileITE` (per design 7.5 cond-mask
+#: broadcasting).
+_SUPPORTED_BINOPS = {"+", "-", "*", "/", "%", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"}
 
 #: Subset of reduction operators that map directly onto :class:`TileReduce`.
 #: Subset of :data:`_SUPPORTED_BINOPS` excluding non-associative ``-`` and ``/``.
@@ -535,30 +538,85 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 return out_conn, other_conn, op
         return None
 
-    def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
+    def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, ...]]:
         """If ``tasklet`` is a ternary if-then-else body, return
-        ``(out_conn, cond_conn, t_conn, e_conn)``. Otherwise ``None``.
+        ``(out_conn, cond_conn_or_expr, t_conn_or_expr, e_conn_or_expr, has_t_sym, has_e_sym)``.
 
-        Matches the Python ternary form (DaCe parenthesises the RHS):
-        ``_o = _t if _cond else _e`` -> ``_o = (_t if _cond else _e)``.
+        Otherwise ``None``.
 
-        Three in-connectors are required; their roles are inferred from the
-        position in the expression (``_t``, ``_cond``, ``_e``).
+        Recognised forms:
+
+        * Python ternary -- 3 in-conn: ``_o = _t if _cond else _e``
+          (possibly parenthesised).
+        * SplitTasklets canonical: ``_o = ITE(_cond, _t, _e)``
+          (3 in-conn).
+        * SplitTasklets with literal/Symbol arms -- 2 in-conn:
+          ``_o = ITE(_cond, _t, <expr>)`` (e_arm is a literal/Symbol),
+          ``_o = ITE(_cond, <expr>, _e)`` (t_arm is a literal/Symbol).
         """
-        if len(tasklet.in_connectors) != 3 or len(tasklet.out_connectors) != 1:
+        n_in = len(tasklet.in_connectors)
+        if n_in not in (2, 3) or len(tasklet.out_connectors) != 1:
             return None
         body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
-        # Try every (t, cond, e) ordering of the three connectors; accept both the parenthesised
-        # and bare forms.
-        from itertools import permutations
-        for t, cond, e in permutations(in_conns, 3):
-            for form in (f"{out_conn} = {t} if {cond} else {e}", f"{out_conn} = ({t} if {cond} else {e})"):
-                if body == form:
-                    return out_conn, cond, t, e
+        # Python ternary form -- 3 in-conn only.
+        if n_in == 3:
+            from itertools import permutations
+            for t, cond, e in permutations(in_conns, 3):
+                for form in (f"{out_conn} = {t} if {cond} else {e}", f"{out_conn} = ({t} if {cond} else {e})"):
+                    if body == form:
+                        return out_conn, cond, t, e, False, False
+        # ITE(cond, t, e) function form: handles both 3-in-conn and the 2-in-conn-with-symbol
+        # cases that SplitTasklets emits.
+        rhs = body[len(f"{out_conn} = "):].strip()
+        if rhs.startswith("(") and rhs.endswith(")"):
+            rhs = rhs[1:-1].strip()
+        prefix = "ITE("
+        if rhs.startswith(prefix) and rhs.endswith(")"):
+            inner = rhs[len(prefix):-1]
+            # Split on top-level commas (3 parts).
+            parts = self._split_top_level_commas(inner, 3)
+            if parts is not None and len(parts) == 3:
+                cond_arg, t_arg, e_arg = (p.strip() for p in parts)
+                # Each arg is either an in-connector (Tile/Scalar) or a literal/Symbol expression.
+                is_cond_conn = cond_arg in in_conns
+                is_t_conn = t_arg in in_conns
+                is_e_conn = e_arg in in_conns
+                # cond is always a connector (it's the comparison result), but t / e may be Symbol.
+                if is_cond_conn:
+                    if is_t_conn and is_e_conn:
+                        return out_conn, cond_arg, t_arg, e_arg, False, False
+                    if is_t_conn and not is_e_conn:
+                        # e is Symbol/literal.
+                        return out_conn, cond_arg, t_arg, e_arg, False, True
+                    if not is_t_conn and is_e_conn:
+                        # t is Symbol/literal.
+                        return out_conn, cond_arg, t_arg, e_arg, True, False
         return None
+
+    def _split_top_level_commas(self, s: str, expected_parts: int) -> Optional[list]:
+        """Split ``s`` on top-level commas (skipping commas inside parentheses).
+        Returns the parts when their count matches ``expected_parts``; else ``None``."""
+        parts = []
+        depth = 0
+        current = []
+        for ch in s:
+            if ch == "(":
+                depth += 1
+                current.append(ch)
+            elif ch == ")":
+                depth -= 1
+                current.append(ch)
+            elif ch == "," and depth == 0:
+                parts.append("".join(current))
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            parts.append("".join(current))
+        return parts if len(parts) == expected_parts else None
 
     def _detect_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
         """If ``tasklet`` body is exactly ``_o = _a`` (a trivial assign), return
@@ -630,6 +688,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         symbol_binop = self._detect_binop_with_symbol(tasklet)
         if symbol_binop is not None:
             return self._convert_binop_with_symbol(inner_state, tasklet, symbol_binop, iter_vars)
+        # ITE shape (``if .. else`` or ``ITE(...)`` function form) -- detect FIRST so the
+        # 2-in-conn ``ITE(_cond, _t, <symbol>)`` shape isn't miscaptured as a binop or
+        # reduction. The ITE detector requires a precise body match so binop fall-through
+        # remains safe.
+        ite = self._detect_ite(tasklet)
+        if ite is not None:
+            return self._convert_ite(inner_state, tasklet, ite, iter_vars)
         # 2 in-conn tasklets (reduction before plain binop so accumulators aren't miscaptured).
         reduction = self._detect_reduction(tasklet)
         if reduction is not None:
@@ -637,10 +702,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         binop = self._detect_binop(tasklet)
         if binop is not None:
             return self._convert_binop(inner_state, tasklet, binop)
-        # 3 in-conn tasklets.
-        ite = self._detect_ite(tasklet)
-        if ite is not None:
-            return self._convert_ite(inner_state, tasklet, ite)
         return False
 
     def _convert_reduction(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
@@ -672,31 +733,198 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
-    def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
-        out_conn, cond_conn, t_conn, e_conn = detected
+    def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str, ...]) -> bool:
+        """Convert a ternary tasklet to a TileITE lib node.
+
+        ``detected`` shape: ``(out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym)``.
+        When ``t_is_sym`` or ``e_is_sym`` is True the corresponding arm is a Symbol or
+        literal expression (not a tasklet in-connector). For those we materialise a
+        full-tile transient via :meth:`_materialise_symbol_to_tile` and wire it to the
+        TileITE connector -- the lib node sees a uniform Tile operand contract.
+
+        This implements the "transients-are-either-full-tile-or-scalar" invariant of
+        design 7.5: a Symbol arm becomes a full-tile transient (broadcast values or
+        per-lane materialised), so TileITE doesn't need a Symbol kind.
+        """
+        out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym = detected
         in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
         out_edges = list(inner_state.out_edges(tasklet))
-        if any(c not in in_edges for c in (cond_conn, t_conn, e_conn)) or not out_edges:
+        if not out_edges or cond_arg not in in_edges:
+            return False
+        if not t_is_sym and t_arg not in in_edges:
+            return False
+        if not e_is_sym and e_arg not in in_edges:
             return False
         out_edge = out_edges[0]
-        # Output transient shape is pre-determined by InferBodyTransientShapes (forward
-        # analysis pre-pass per design 6.2). No reactive widening here.
         mask_an = self._find_mask_an(inner_state)
         ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths), has_mask=mask_an is not None)
         inner_state.add_node(ite)
         self._wire_mask(inner_state, ite, mask_an)
-        # TileITE connectors: _cond / _t / _e -> _o.
-        for src_conn_name, dst_conn_name in (
-            (cond_conn, "_cond"),
-            (t_conn, "_t"),
-            (e_conn, "_e"),
-        ):
-            edge = in_edges[src_conn_name]
-            inner_state.add_edge(edge.src, edge.src_conn, ite, dst_conn_name, dace.Memlet.from_memlet(edge.data))
+        # cond is always a connector (the result of the comparison upstream). If it's
+        # a Scalar transient (from an all-Symbol comparison like ``FLAG > 0``), broadcast
+        # to full-tile shape per design 7.5 (cond-mask broadcast). TileITE's pure
+        # expansion expects a full-tile bool tile.
+        cond_edge = in_edges[cond_arg]
+        if self._is_scalar_or_len1_source(inner_state, cond_edge):
+            broadcast_name = self._broadcast_scalar_to_tile(inner_state, cond_edge, dtype=dace.bool_)
+            from dace.sdfg.nodes import AccessNode
+            existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == broadcast_name),
+                            None)
+            cond_an = existing if existing is not None else inner_state.add_access(broadcast_name)
+            subset = ", ".join(f"0:{w}" for w in self.widths)
+            inner_state.add_edge(cond_an, None, ite, "_cond", dace.Memlet(f"{broadcast_name}[{subset}]"))
+        else:
+            inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_cond",
+                                 dace.Memlet.from_memlet(cond_edge.data))
+        # t arm: connector OR Symbol-materialised tile.
+        if t_is_sym:
+            t_an = self._materialise_symbol_to_tile(inner_state, t_arg, iter_vars, out_edge)
+            subset = ", ".join(f"0:{w}" for w in self.widths)
+            inner_state.add_edge(t_an, None, ite, "_t", dace.Memlet(f"{t_an.data}[{subset}]"))
+        else:
+            t_edge = in_edges[t_arg]
+            inner_state.add_edge(t_edge.src, t_edge.src_conn, ite, "_t", dace.Memlet.from_memlet(t_edge.data))
+        # e arm: connector OR Symbol-materialised tile.
+        if e_is_sym:
+            e_an = self._materialise_symbol_to_tile(inner_state, e_arg, iter_vars, out_edge)
+            subset = ", ".join(f"0:{w}" for w in self.widths)
+            inner_state.add_edge(e_an, None, ite, "_e", dace.Memlet(f"{e_an.data}[{subset}]"))
+        else:
+            e_edge = in_edges[e_arg]
+            inner_state.add_edge(e_edge.src, e_edge.src_conn, ite, "_e", dace.Memlet.from_memlet(e_edge.data))
         inner_state.add_edge(ite, "_o", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
+        return True
+
+    def _is_scalar_or_len1_source(self, inner_state: SDFGState, edge) -> bool:
+        """Return True when ``edge.src`` reads a Scalar or length-1 Array (the "scalar"
+        side of the transients-are-full-tile-or-scalar invariant)."""
+        from dace.sdfg.nodes import AccessNode
+        import dace.data as dd
+        if not isinstance(edge.src, AccessNode):
+            return False
+        desc = inner_state.sdfg.arrays.get(edge.src.data)
+        if desc is None:
+            return False
+        if isinstance(desc, dd.Scalar):
+            return True
+        if isinstance(desc, dd.Array):
+            try:
+                return all(bool(dace.symbolic.simplify(s - 1) == 0) for s in desc.shape)
+            except Exception:  # noqa: BLE001
+                return False
+        return False
+
+    def _broadcast_scalar_to_tile(self, inner_state: SDFGState, src_edge, dtype) -> str:
+        """Mint a FULL-TILE transient with element type ``dtype`` and emit a tasklet that
+        reads the Scalar / length-1 source via ``src_edge`` and writes the value to every
+        lane.
+
+        Reuses the producer's AccessNode as the input (so the SDFG scheduler orders the
+        comparison tasklet before the broadcast tasklet).
+        """
+        import dace.dtypes as _dtypes
+        from dace.memlet import Memlet as _Memlet
+        sdfg = inner_state.sdfg
+        widths = tuple(int(w) for w in self.widths)
+        arr_name, _ = sdfg.add_array("_cond_bcast",
+                                     shape=widths,
+                                     dtype=dtype,
+                                     transient=True,
+                                     storage=_dtypes.StorageType.Register,
+                                     find_new_name=True)
+        K = len(widths)
+        parts = []
+        for i in range(K):
+            inner = 1
+            for q in range(i + 1, K):
+                inner *= widths[q]
+            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
+        flat = " + ".join(parts) if parts else "0"
+        code_lines = []
+        for d in range(K):
+            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+        code_lines.append(f"{'    ' * K}_out[{flat}] = ({dtype.ctype})(_in);")
+        for d in reversed(range(K)):
+            code_lines.append(f"{'    ' * d}}}")
+        tasklet = inner_state.add_tasklet(
+            name=f"bcast_to_tile_{arr_name}",
+            inputs={"_in"},
+            outputs={"_out"},
+            code="\n".join(code_lines),
+            language=_dtypes.Language.CPP,
+        )
+        # Wire from the source AN (reuse, not a fresh access) and to a fresh broadcast AN.
+        inner_state.add_edge(src_edge.src, src_edge.src_conn, tasklet, "_in", dace.Memlet.from_memlet(src_edge.data))
+        out_an = inner_state.add_access(arr_name)
+        out_subset = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
+        return arr_name
+
+    def _materialise_symbol_to_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...], out_edge):
+        """Materialise a Symbol / literal expression as a FULL-TILE transient.
+
+        Two sub-cases (per design 7.5):
+
+        * **Lane-id-dependent** (expr references an iter_var) -- delegate to
+          :meth:`_materialise_lane_id_tile` (int64 tile).
+        * **Loop-invariant** (no iter_var refs) -- mint a transient with the OUTPUT
+          edge's element dtype and emit a constant-fill tasklet that broadcasts
+          ``expr`` across every lane.
+        """
+        if self._is_lane_id_dependent(expr, iter_vars):
+            an_name = self._materialise_lane_id_tile(inner_state, expr, iter_vars)
+        else:
+            an_name = self._materialise_invariant_to_tile(inner_state, expr, out_edge)
+        from dace.sdfg.nodes import AccessNode
+        existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == an_name), None)
+        return existing if existing is not None else inner_state.add_access(an_name)
+
+    def _materialise_invariant_to_tile(self, inner_state: SDFGState, expr: str, out_edge) -> str:
+        """Mint a per-lane FULL-TILE transient containing ``expr`` broadcast across
+        every lane. The dtype matches the OUTPUT edge's element dtype (so the
+        TileITE's _t / _e operand dtype matches _o).
+        """
+        import dace.dtypes as _dtypes
+        from dace.memlet import Memlet as _Memlet
+        sdfg = inner_state.sdfg
+        widths = tuple(int(w) for w in self.widths)
+        # Pick element dtype from the OUTPUT edge's array (the ITE's output dtype).
+        out_desc = sdfg.arrays.get(out_edge.data.data)
+        dtype = out_desc.dtype if out_desc is not None else dace.float64
+        arr_name, _ = sdfg.add_array("_ite_sym_tile",
+                                     shape=widths,
+                                     dtype=dtype,
+                                     transient=True,
+                                     storage=_dtypes.StorageType.Register,
+                                     find_new_name=True)
+        K = len(widths)
+        parts = []
+        for i in range(K):
+            inner = 1
+            for q in range(i + 1, K):
+                inner *= widths[q]
+            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
+        flat = " + ".join(parts) if parts else "0"
+        code_lines = []
+        for d in range(K):
+            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+        code_lines.append(f"{'    ' * K}_out[{flat}] = ({dtype.ctype})({expr});")
+        for d in reversed(range(K)):
+            code_lines.append(f"{'    ' * d}}}")
+        tasklet = inner_state.add_tasklet(
+            name=f"sym_broadcast_{arr_name}",
+            inputs=set(),
+            outputs={"_out"},
+            code="\n".join(code_lines),
+            language=_dtypes.Language.CPP,
+        )
+        out_an = inner_state.add_access(arr_name)
+        out_subset = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
+        return arr_name
         return True
 
     def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:

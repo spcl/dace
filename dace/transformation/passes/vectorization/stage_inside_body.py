@@ -442,7 +442,7 @@ class StageInsideBody(ppl.Pass):
                         staged += 1
                         continue
                     dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
-                    dim_strides_w = tuple(s if s is not None else 1 for s in wrecord.dim_strides)
+                    dim_strides_w, _ = self._pad_to_tile_dims(wrecord, iter_vars)
                     bridge_name, _ = stage_tile_store(inner_state,
                                                       an,
                                                       widths=tuple(self.widths),
@@ -515,8 +515,7 @@ class StageInsideBody(ppl.Pass):
                     # access (the inner_state's out-edge already carries the per-tile region;
                     # we reuse its memlet so the lib node downstream sees the same subset).
                     src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
-                    dim_strides = tuple(s if s is not None else 1 for s in record.dim_strides)
-                    replicate = tuple(r if r is not None else 1 for r in record.replicate_factor_per_dim)
+                    dim_strides, replicate = self._pad_to_tile_dims(record, iter_vars)
                     bridge_name, _ = stage_tile_access(inner_state,
                                                        an,
                                                        widths=tuple(self.widths),
@@ -528,6 +527,44 @@ class StageInsideBody(ppl.Pass):
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
         return staged
+
+    def _pad_to_tile_dims(self, record, iter_vars: Tuple[str, ...]):
+        """Pad classifier's per-source-dim arrays (``dim_strides``,
+        ``replicate_factor_per_dim``) to full per-tile-dim length ``K``.
+
+        When the source array has fewer dims than the tile (e.g. ``A[ii]`` accessed
+        inside a K=2 ``(ii, jj)`` body), iter_var ``jj`` doesn't appear in any subset
+        dim -- the corresponding tile dim is a BROADCAST and the lib node should see
+        ``dim_strides_k = 0`` + ``replicate_factor_k = widths[k]`` so the load emits
+        the same source value across every lane of that tile dim.
+
+        Per design 7.5 + user direction 2026-06-10: this is the "transients are
+        either full tile or scalar" invariant. By padding here, the resulting tile
+        transient stays full-tile shape ``(W_0, ..., W_{K-1})`` regardless of how
+        many source dims the access touches.
+        """
+        K = len(iter_vars)
+        widths = tuple(int(w) for w in self.widths)
+        # Build reverse map: iter_var -> source dim index that this iter_var dominates.
+        iv_to_src_dim: Dict[str, int] = {}
+        for d, iv_name in enumerate(record.dim_iter_var):
+            if iv_name is not None and iv_name not in iv_to_src_dim:
+                iv_to_src_dim[iv_name] = d
+        padded_strides = []
+        padded_replicate = []
+        for k in range(K):
+            iv = iter_vars[k]
+            if iv in iv_to_src_dim:
+                d = iv_to_src_dim[iv]
+                s = record.dim_strides[d]
+                padded_strides.append(s if s is not None else 1)
+                r = record.replicate_factor_per_dim[d]
+                padded_replicate.append(r if r is not None else 1)
+            else:
+                # BROADCAST tile dim -- this iter_var doesn't appear in the subset.
+                padded_strides.append(0)
+                padded_replicate.append(widths[k])
+        return tuple(padded_strides), tuple(padded_replicate)
 
     def _find_inner_mask_name(self, inner_sdfg: SDFG) -> Optional[str]:
         """Find the body-NSDFG's iteration mask array name, or None if no mask is in scope."""

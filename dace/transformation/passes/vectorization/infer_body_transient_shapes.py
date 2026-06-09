@@ -286,13 +286,12 @@ class InferBodyTransientShapes(ppl.Pass):
                 except Exception:  # noqa: BLE001
                     continue
                 modified = False
-                for k in range(min(K, len(ranges))):
-                    target_dim = len(ranges) - K + k
-                    if target_dim < 0:
-                        continue
-                    beg, end, step = ranges[target_dim]
-                    iv = iter_vars[k]
-                    iv_sym = dace.symbolic.pystr_to_symbolic(iv)
+                # Walk every SUBSET dim and find which (if any) iter_var dominates the
+                # begin. Widen using THAT iter_var's tile width. Handles partial-dim
+                # accesses (subset.dims < K) correctly -- e.g. ``A[ii]`` in K=2 widens
+                # to ``A[ii:ii+W_0]`` based on the iter_var ``ii``'s width.
+                for d in range(len(ranges)):
+                    beg, end, step = ranges[d]
                     try:
                         is_single = bool(dace.symbolic.simplify(end - beg) == 0)
                     except Exception:  # noqa: BLE001
@@ -303,13 +302,18 @@ class InferBodyTransientShapes(ppl.Pass):
                         beg_syms = dace.symbolic.SymExpr(str(beg)).free_symbols
                     except Exception:  # noqa: BLE001
                         beg_syms = set()
-                    if iv_sym not in beg_syms:
-                        # The subset begin doesn't reference this iter_var -- it's a
+                    dominating_k = None
+                    for k in range(K):
+                        if dace.symbolic.pystr_to_symbolic(iter_vars[k]) in beg_syms:
+                            dominating_k = k
+                            break
+                    if dominating_k is None:
+                        # The subset begin doesn't reference any iter_var -- it's a
                         # CONSTANT / Symbol access on this dim. Leave it alone.
                         continue
-                    w = widths[k]
+                    w = widths[dominating_k]
                     new_end = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1")
-                    ranges[target_dim] = (beg, new_end, step)
+                    ranges[d] = (beg, new_end, step)
                     modified = True
                 if modified:
                     new_subset = dace.subsets.Range(ranges)

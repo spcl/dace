@@ -81,16 +81,22 @@ def test_stride_map_respects_mark_tile_dims_selection():
     assert rewritten == 1
 
 
-def test_generate_tile_iteration_mask_allocates_in_outer_scope():
-    """``GenerateTileIterationMask`` adds the transient + producer in the outer SDFG."""
+def test_generate_tile_iteration_mask_allocates_in_body_nsdfg():
+    """Mask placement moved INSIDE the body NSDFG (design 7.4, 2026-06-10) so the
+    walker / converter can find it via the inner SDFG's arrays."""
     sdfg = _build_k2_axpy_sdfg()
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import (NestInnermostMapBodyIntoNSDFG)
+    NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
     attached = GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
     assert attached == 1
-    assert TileNameScheme.ITER_MASK in sdfg.arrays
-    arr = sdfg.arrays[TileNameScheme.ITER_MASK]
+    body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert body_nsdfgs, "expected a body NSDFG"
+    inner = body_nsdfgs[0].sdfg
+    assert TileNameScheme.ITER_MASK in inner.arrays
+    arr = inner.arrays[TileNameScheme.ITER_MASK]
     assert tuple(int(s) for s in arr.shape) == (4, 8)
     assert arr.dtype == dace.bool_
-    masks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileMaskGen)]
+    masks = [n for n, _ in inner.all_nodes_recursive() if isinstance(n, TileMaskGen)]
     assert len(masks) == 1
     assert tuple(masks[0].widths) == (4, 8)
 

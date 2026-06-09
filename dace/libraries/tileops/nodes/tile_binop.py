@@ -88,7 +88,11 @@ _OP_CPP = {
     "-": ("(", " - ", ")"),
     "*": ("(", " * ", ")"),
     "/": ("(", " / ", ")"),
-    "%": ("(", " % ", ")"),
+    # Python ``%`` differs from C ``%`` on negative operands (Python follows the divisor's
+    # sign; C follows the dividend's). DaCe runtime ships ``dace::math::py_mod`` which
+    # matches Python semantics; use it so the vectorised body matches the unvectorised
+    # reference bit-for-bit.
+    "%": ("dace::math::py_mod(", ", ", ")"),
     "<": ("(", " < ", ")"),
     "<=": ("(", " <= ", ")"),
     ">": ("(", " > ", ")"),
