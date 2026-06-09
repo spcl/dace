@@ -200,6 +200,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
             assigned_before = len(assignments)
             for node in component:
                 assignments[node] = gpu_stream
+                node.gpu_stream_id = gpu_stream
                 if isinstance(node, nodes.NestedSDFG):
                     for nested_state in node.sdfg.states():
                         self._assign_in_state(node.sdfg, True, nested_state, assignments, gpu_stream)

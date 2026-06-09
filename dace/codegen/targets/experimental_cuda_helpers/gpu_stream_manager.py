@@ -30,10 +30,12 @@ class GPUStreamManager:
 
     def get_stream_node(self, node: nodes.Node) -> str:
         """Return the access expression for the GPU stream assigned to ``node``,
-        e.g. ``__state->gpu_context->streams[0]``. Raises if the node is not
-        in the scheduler's assignment map."""
-        if node in self._assignments:
-            return self._stream_access_template.format(gpu_stream=self._assignments[node])
+        e.g. ``__state->gpu_context->streams[0]``. Reads ``node.gpu_stream_id``
+        (persisted via the Node Property) so a deserialised SDFG round-trips
+        without re-running the scheduler. Raises if the node was never assigned.
+        """
+        if node.gpu_stream_id is not None:
+            return self._stream_access_template.format(gpu_stream=node.gpu_stream_id)
         raise ValueError(f"No GPU stream assigned to node {node}. "
                          "Check whether the node is relevant for GPU stream assignment and, if it is, "
                          "inspect the GPU stream pipeline to see why no stream was assigned.")
