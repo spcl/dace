@@ -395,6 +395,18 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         for conn, (outer_arr_name, outer_subset, collapsed_dims) in write_subsets.items():
             free_syms = outer_subset.free_symbols - defined_syms
             introduced_symbols.update(str(s) for s in free_syms)
+        # Per user direction 2026-06-10: all symbols needed for any array's shape /
+        # strides / offsets must be added to the inner NSDFG (if not present) AND
+        # bound in symbol_mapping (identity if no entry). Use ``Data.free_symbols``
+        # (which aggregates shape + strides + offset/start_offset free symbols)
+        # instead of walking each field by hand.
+        for inner_arr_name, inner_desc in inner_sdfg.arrays.items():
+            for sym in inner_desc.free_symbols:
+                sym_name = str(sym)
+                if sym_name in nsdfg_node.in_connectors or sym_name in nsdfg_node.out_connectors:
+                    continue
+                if sym_name not in nsdfg_node.symbol_mapping:
+                    introduced_symbols.add(sym_name)
 
         # Propagate any offset symbols not already passed in via
         # symbol_mapping. Identity binding is the right default --
