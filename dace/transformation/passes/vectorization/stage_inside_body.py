@@ -377,10 +377,43 @@ class StageInsideBody(ppl.Pass):
                         # and the existing producer edge handles it correctly.
                         continue
                     if PerDimKind.GATHER in wkinds:
-                        # Deferred: scatter writes (gather_dims set on TileStore). The
-                        # TileStore non-full-tile-write lock (commit b9173e366) will fire
-                        # at validate() time if a partial-tile structured write slips
-                        # past dispatch.
+                        # SCATTER case (symmetric to the read-side GATHER branch). Per
+                        # design section 9.2 ``gather_dims`` indexes destination-array dim
+                        # indices on TileStore; the subset dim ``k`` corresponds to dest
+                        # dim ``k`` for the canonical (non-permuted) case. Materialise the
+                        # per-lane index tile per scatter dim, then call ``stage_tile_store``
+                        # with ``gather_dims`` + ``idx_sources``. Each lane writes its tile
+                        # value to ``dst[base + _idx_<k>[lane]]``. The non-full-tile-write
+                        # lock is exempt in scatter mode (commit b9173e366): the dest memlet
+                        # legitimately covers the full destination array; per-lane addressing
+                        # comes from ``_idx_<k>``.
+                        K_tile_w = len(iter_vars)
+                        scatter_source_dims = tuple(k for k, kind in enumerate(wrecord.per_dim_kind)
+                                                    if kind == PerDimKind.GATHER)
+                        idx_sources_w: Dict[int, AccessNode] = {}
+                        for k in scatter_source_dims:
+                            begin_str = str(wsubset.ranges[k][0])
+                            idx_name = materialise_per_lane_index_tile(
+                                inner_state,
+                                name_hint=f"_idx_scatter_{an.data}_{k}",
+                                gather_expr=begin_str,
+                                tile_iter_vars=iter_vars[0] if K_tile_w == 1 else iter_vars,
+                                tile_widths=int(self.widths[0]) if K_tile_w == 1 else tuple(
+                                    int(w) for w in self.widths),
+                            )
+                            idx_an = next(n for n in inner_state.nodes()
+                                          if isinstance(n, AccessNode) and n.data == idx_name)
+                            idx_sources_w[k] = idx_an
+                        dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
+                        bridge_name, _ = stage_tile_store(inner_state,
+                                                          an,
+                                                          widths=tuple(self.widths),
+                                                          dst_subset=dst_subset_memlet,
+                                                          name_hint=f"{an.data}_scatter_out",
+                                                          gather_dims=scatter_source_dims,
+                                                          idx_sources=idx_sources_w)
+                        self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
+                        staged += 1
                         continue
                     dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
                     dim_strides_w = tuple(s if s is not None else 1 for s in wrecord.dim_strides)

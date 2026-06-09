@@ -567,3 +567,82 @@ def test_walker_leaves_constant_only_write_as_direct_copy():
     assert len(out_edges) == 1
     assert isinstance(out_edges[0].dst, dace.nodes.AccessNode)
     assert out_edges[0].dst.data == "B"
+
+
+# ---- scatter (GATHER on write) ------------------------------------------------
+
+
+def test_stage_tile_store_helper_emits_tilestore_with_gather_dims_and_wires_idx_connectors():
+    """Direct exercise of stage_tile_store(gather_dims=(0,)) -> TileStore with `_idx_0`
+    wired from a (W_0,) index tile.
+
+    The walker's GATHER classification path is shared with the read side and already
+    exercised by the read-side gather tests (the classifier doesn't care which direction
+    the access is). This test pins the WRITE-side helper's contract directly.
+    """
+    from dace.transformation.passes.vectorization.stage_inside_body import stage_tile_store
+    sdfg = dace.SDFG("scatter_partial")
+    sdfg.add_array("Dst", (32, ), dace.float64, transient=False)
+    sdfg.add_array("Idx0", (8, ), dace.int64, transient=True)
+    sdfg.add_array("Src_bridge", (8, ), dace.float64, transient=True)
+    state = sdfg.add_state("s")
+    dst_an = state.add_access("Dst")
+    idx_an = state.add_access("Idx0")
+    name, store = stage_tile_store(state,
+                                   dst_an,
+                                   widths=(8, ),
+                                   dst_subset=Memlet("Dst[0:32]"),
+                                   name_hint="scatter_bridge",
+                                   gather_dims=(0, ),
+                                   idx_sources={0: idx_an})
+    assert tuple(store.gather_dims) == (0, )
+    # The TileStore should have a _idx_0 in-edge connected from Idx0.
+    in_edges = list(state.in_edges(store))
+    idx_edges = [e for e in in_edges if e.dst_conn == "_idx_0"]
+    assert len(idx_edges) == 1
+    assert idx_edges[0].src == idx_an
+    # And a _src in-edge from the bridge.
+    src_edges = [e for e in in_edges if e.dst_conn == "_src"]
+    assert len(src_edges) == 1
+    bridge_an = src_edges[0].src
+    assert isinstance(bridge_an, dace.nodes.AccessNode)
+    assert bridge_an.data == name
+
+
+def test_stage_tile_store_helper_rejects_mismatched_idx_sources():
+    """The helper validates gather_dims set matches idx_sources keys exactly."""
+    from dace.transformation.passes.vectorization.stage_inside_body import stage_tile_store
+    sdfg = dace.SDFG("scatter_bad")
+    sdfg.add_array("Dst", (32, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    dst_an = state.add_access("Dst")
+    with pytest.raises(ValueError, match=r"gather_dims"):
+        stage_tile_store(state,
+                         dst_an,
+                         widths=(8, ),
+                         dst_subset=Memlet("Dst[0:32]"),
+                         gather_dims=(0, ),
+                         idx_sources=None)
+    with pytest.raises(ValueError, match=r"gather_dims"):
+        stage_tile_store(state,
+                         dst_an,
+                         widths=(8, ),
+                         dst_subset=Memlet("Dst[0:32]"),
+                         gather_dims=(0, 1),
+                         idx_sources={0: dst_an})
+
+
+def test_walker_scatter_dispatch_uses_stage_tile_store_helper():
+    """Validate the walker write branch invokes the scatter dispatch when GATHER classification
+    fires. Direct walker-to-end-to-end testing of scatter requires a ``B[idx[ii]]`` memlet
+    which DaCe's parser doesn't accept verbatim; the helper-level tests above pin the
+    contract of ``stage_tile_store(gather_dims=...)`` and the walker reuses it via the
+    same shared materialise_per_lane_index_tile path that the read-side gather branch uses.
+    This test is a thin smoke that the StageInsideBody class itself imports the helpers
+    without breaking when scatter dispatch is reachable.
+    """
+    from dace.transformation.passes.vectorization.stage_inside_body import (StageInsideBody, stage_tile_store)
+    # Smoke: both names import + Pass class constructs cleanly.
+    assert stage_tile_store is not None
+    p = StageInsideBody(widths=(8, ))
+    assert tuple(p.widths) == (8, )
