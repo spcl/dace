@@ -164,11 +164,12 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     # TileStore (scatter) / TileLoad strided) ARE the K-dim equivalent of the legacy
     # per-arch C++ intrinsics, and the descent never fans out per-lane index
     # symbols — so both knobs are accepted as no-ops here (already implied
-    # by the tile lowering). ``fuse_overlapping_loads`` is wired through the
-    # tile path at both K=1 and K>=2 (auto-enables ``nest_map_bodies`` and
-    # runs the ``FuseOverlappingTileLoads`` pass after Promote / before
-    # EmitTileOps); the fuse pass replaces per-load TileLoads with offset
-    # memlet copies from the shared ``<base>_vec`` union buffer.
+    # by the tile lowering). ``fuse_overlapping_loads`` is accepted on the
+    # tile path for harness parity with the legacy 1D VectorizeCPU but is a
+    # no-op there: ExpandNestedSDFGInputs widens every body-NSDFG boundary
+    # memlet to the full source-array subset (section 2.4), so every inner
+    # TileLoad reads the same full-array connector and there are no per-tile
+    # windows to fuse.
     # ``loop_to_map_permissive`` IS supported on the tile path now (threaded into
     # the orchestrator's LoopToMap call) — scatter benchmarks set it True so the
     # scatter loop parallelises and the tile path can vectorise it. No skip.

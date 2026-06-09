@@ -71,7 +71,6 @@ The multi-dim path. Touch only for the design gaps G1..G7.
 | `refuse_other_subset_in_nsdfg.py` | ~120 | Loud failure precheck. |
 | `nest_innermost_map_body.py` | ~200 | Map-body -> NSDFG nesting. |
 | `split_multi_slice_boundary_connectors.py` | ~300 | AoR boundary split. |
-| `fuse_overlapping_tile_loads.py` | ~250 | CSE on tile loads. |
 
 ### A.5 Utils
 
