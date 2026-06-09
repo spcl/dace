@@ -257,6 +257,14 @@ class TileITE(nodes.LibraryNode):
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         o_arr = sdfg.arrays[out_e["_o"].data.data]
         t_arr = sdfg.arrays[in_e["_t"].data.data]
+        # Output-kind rule (design 6.2): TileITE inputs are implicitly Tile (no kind
+        # properties), so the output must be tile-shape.
+        from .tile_binop import _is_tile_shape
+        if not _is_tile_shape(o_arr, tuple(self.widths)):
+            raise NotImplementedError(
+                f"{self.label}: output-kind rule violated -- TileITE inputs are implicitly Tile but "
+                f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design section 6.2: "
+                f"any Tile input -> Tile output.")
         e_arr = sdfg.arrays[in_e["_e"].data.data]
         if {o_arr.dtype, t_arr.dtype, e_arr.dtype} != {o_arr.dtype}:
             raise NotImplementedError(

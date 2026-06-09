@@ -24,6 +24,25 @@ from .. import _isa_codegen
 from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 
+def _is_tile_shape(desc, widths) -> bool:
+    """True iff ``desc`` is an :class:`dace.data.Array` whose shape equals ``widths``."""
+    if not isinstance(desc, dace.data.Array):
+        return False
+    shape = tuple(desc.shape)
+    if len(shape) != len(widths):
+        return False
+    return all(bool(dace.symbolic.simplify(s - w) == 0) for s, w in zip(shape, widths))
+
+
+def _is_scalar_shape(desc) -> bool:
+    """True iff ``desc`` is a :class:`dace.data.Scalar` or a length-1 :class:`Array`."""
+    if isinstance(desc, dace.data.Scalar):
+        return True
+    if isinstance(desc, dace.data.Array):
+        return all(bool(dace.symbolic.simplify(s - 1) == 0) for s in desc.shape)
+    return False
+
+
 def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
     """Whether a Tile operand of dtype ``src`` may be promoted to the output
     dtype ``dst`` before the op (a widening conversion).
@@ -151,11 +170,26 @@ class ExpandTileBinopPure(ExpandTransformation):
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b)
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
-        if node.has_mask:
-            body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
+        # Output kind dispatch (design 6.2): when all inputs are non-Tile and ``_c`` is Scalar /
+        # length-1, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
+        # ``_c[off] = ...`` over the tile.
+        out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
+        out_is_scalar = (node.kind_a != _TILE and node.kind_b != _TILE and _is_scalar_shape(out_desc))
+        if out_is_scalar:
+            # The Scalar output path: no lane loop; one assignment. ``_c[0]`` for a length-1
+            # Array (pointer connector), bare ``_c`` for a true Scalar (by-value connector).
+            c_ref = "_c[0]" if isinstance(out_desc, dace.data.Array) else "_c"
+            if node.has_mask:
+                body = f"{c_ref} = _mask[0] ? ({rhs_expr}) : {out_dtype}(0);"
+            else:
+                body = f"{c_ref} = {rhs_expr};"
+            code = body
         else:
-            body = f"_c[{off}] = {rhs_expr};"
-        code = nested_loops(widths, body)
+            if node.has_mask:
+                body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
+            else:
+                body = f"_c[{off}] = {rhs_expr};"
+            code = nested_loops(widths, body)
         inputs = {"_a", "_b", "_mask"}
         if node.kind_a == _SYMBOL:
             inputs.discard("_a")
@@ -419,13 +453,18 @@ class TileBinop(nodes.LibraryNode):
         self.expr_b = expr_b
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Validate connector counts at expansion time.
+        """Validate connector counts + output-kind rule at expansion time.
+
+        Output-kind rule (design section 6.2, locked 2026-06-09):
+        any Tile input -> ``_c`` must be tile-shape (``Array(shape=widths)``).
+        All inputs Scalar / Symbol -> ``_c`` may be Scalar / length-1 Array
+        (preferred) OR tile-shape (allowed for compositional flexibility).
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
         :raises ValueError: If a required connector is unconnected.
-        :raises NotImplementedError: If Tile operand dtypes disagree
-            with the output dtype (E2 lock).
+        :raises NotImplementedError: If Tile operand dtypes disagree with
+            the output dtype (E2 lock) or the output-kind rule is violated.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
@@ -434,6 +473,12 @@ class TileBinop(nodes.LibraryNode):
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         c_arr = sdfg.arrays[out_e["_c"].data.data]
+        # Output-kind rule (design 6.2): when any input is Tile, the output must be tile-shape.
+        any_tile_input = (self.kind_a == _TILE or self.kind_b == _TILE)
+        if any_tile_input and not _is_tile_shape(c_arr, tuple(self.widths)):
+            raise NotImplementedError(f"{self.label}: output-kind rule violated -- kind_a={self.kind_a!r}, "
+                                      f"kind_b={self.kind_b!r} (has Tile input) but '_c' descriptor is not tile-shape "
+                                      f"{tuple(self.widths)!r}. Per design section 6.2: any Tile input -> Tile output.")
         for label, kind in (("_a", self.kind_a), ("_b", self.kind_b)):
             if kind in (_TILE, _SCALAR):
                 if label not in in_e:

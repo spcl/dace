@@ -127,11 +127,24 @@ class ExpandTileUnopPure(ExpandTransformation):
 
         pre, post = _UNOP_CPP[node.op]
         rhs_expr = f"{pre}{operand}{post}"
-        if node.has_mask:
-            body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
+        # Output kind dispatch (design 6.2): non-Tile input + Scalar / length-1 output -> single
+        # assignment (no lane loop). Otherwise the K-fold tile loop.
+        from .tile_binop import _is_scalar_shape
+        out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
+        out_is_scalar = (node.kind_a != _TILE and _is_scalar_shape(out_desc))
+        if out_is_scalar:
+            c_ref = "_c[0]" if isinstance(out_desc, dace.data.Array) else "_c"
+            if node.has_mask:
+                body = f"{c_ref} = _mask[0] ? ({rhs_expr}) : {out_dtype}(0);"
+            else:
+                body = f"{c_ref} = {rhs_expr};"
+            code = body
         else:
-            body = f"_c[{off}] = {rhs_expr};"
-        code = nested_loops(widths, body)
+            if node.has_mask:
+                body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
+            else:
+                body = f"_c[{off}] = {rhs_expr};"
+            code = nested_loops(widths, body)
         inputs = set()
         if node.kind_a in (_TILE, _SCALAR):
             inputs.add("_a")
@@ -335,10 +348,16 @@ class TileUnop(nodes.LibraryNode):
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         if self.kind_a in (_TILE, _SCALAR) and "_a" not in in_e:
             raise ValueError(f"{self.label}: kind_a={self.kind_a!r} but '_a' not connected")
+        c_arr = sdfg.arrays[out_e["_c"].data.data]
         if self.kind_a == _TILE:
-            c_arr = sdfg.arrays[out_e["_c"].data.data]
             src = sdfg.arrays[in_e["_a"].data.data].dtype
             if not _promotion_ok(src, c_arr.dtype):
                 raise NotImplementedError(
                     f"{self.label}: Tile operand '_a' dtype {src} cannot be promoted to output dtype "
                     f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
+        # Output-kind rule (design 6.2): when input is Tile, the output must be tile-shape.
+        from .tile_binop import _is_tile_shape
+        if self.kind_a == _TILE and not _is_tile_shape(c_arr, tuple(self.widths)):
+            raise NotImplementedError(
+                f"{self.label}: output-kind rule violated -- kind_a=Tile but '_c' descriptor is not "
+                f"tile-shape {tuple(self.widths)!r}. Per design section 6.2: Tile input -> Tile output.")
