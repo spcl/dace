@@ -223,32 +223,3 @@ def find_inner_gpu_consumers(sdfg: SDFG):
             for node in state.nodes():
                 if is_gpu_stream_consumer(node, nsdfg, state):
                     yield node, nsdfg, state
-
-
-def read_stream_assignments_from_wired_sdfg(sdfg: SDFG):
-    """Recover ``{node: stream_id}`` from a post-pipeline SDFG.
-
-    Reads the ``gpu_streams[<i>]`` subset wired into each consumer's
-    stream in-connector. Re-running the scheduler instead would differ
-    because pipeline-internal nodes stitch otherwise-independent
-    components together. Returns ``{}`` if the lowering hasn't run yet.
-    """
-    if not is_gpu_lowering_applied(sdfg):
-        return {}
-    stream_array = get_gpu_stream_array_name()
-    assignments = {}
-    for node, parent_sdfg, state in find_inner_gpu_consumers(sdfg):
-        for edge in state.in_edges(node):
-            if not edge.dst_conn or not is_stream_typed_connector(node, edge.dst_conn):
-                continue
-            if edge.data is None or edge.data.data != stream_array or edge.data.subset is None:
-                continue
-            # The wired memlet is ``gpu_streams[<i>]`` -- a single-element
-            # ``Range`` whose start equals its end. Read the start.
-            try:
-                stream_id = int(edge.data.subset[0][0])
-            except (TypeError, ValueError, IndexError):
-                continue
-            assignments[node] = stream_id
-            break
-    return assignments
