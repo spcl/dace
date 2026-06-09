@@ -291,3 +291,51 @@ def test_scatter_no_conflict_numerics_via_expand_then_inline():
     tsdfg.validate()
     tsdfg(a=test_a, b=b.copy(), idx=idx.copy(), N=n)
     assert np.allclose(test_a, ref_a), f'max diff: {np.abs(test_a - ref_a).max():.3e}'
+
+
+def test_widened_shape_introduces_symbol_already_in_inner_table():
+    """Repro for 2026-06-10 fix: when ExpandNestedSDFGInputs widens an inner connector's
+    memlet (``A[ii]`` -> ``A[0:N, 0:N]``), the inner array's SHAPE gains a reference to
+    the outer dim symbol ``N``. If ``N`` is already declared in ``inner_sdfg.symbols``
+    (e.g. inherited during nesting), the prior logic excluded it from the
+    ``introduced_symbols`` set via ``defined_syms`` filtering -- yet ``N`` was still
+    NOT bound in ``symbol_mapping``. The validator then trips with
+    ``Missing symbols on nested SDFG: ['N']``.
+
+    The fix walks every inner array's ``free_symbols`` (which aggregates shape + strides
+    + offset) and adds any non-connector, non-mapped symbol to ``introduced_symbols``.
+    """
+    sdfg = dace.SDFG("widened_shape_sym")
+    N_sym = dace.symbol("N", dtype=dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", (N_sym, N_sym), dace.float64)
+    state = sdfg.add_state("s")
+    a_outer = state.add_access("A")
+
+    # Build an inner NSDFG that already has N in its symbols but no symbol_mapping entry
+    # for it. The inner SDFG accepts a connector "A_conn" whose shape is (N, N) -- which
+    # will trip the "Missing symbols on nested SDFG" check unless symbol_mapping
+    # auto-propagates N.
+    inner = dace.SDFG("inner")
+    inner.add_symbol("N", dace.int64)
+    inner.add_array("A_conn", (N_sym, N_sym), dace.float64)
+    inner.add_state("body")
+    nsdfg = state.add_nested_sdfg(inner, {"A_conn"}, set(), symbol_mapping={})
+    # Outer memlet feeds a narrowed subset; Expand will widen to the full source shape.
+    state.add_edge(a_outer, None, nsdfg, "A_conn", dace.Memlet("A[0, 0]"))
+    # add_nested_sdfg auto-populates symbol_mapping with any inner.symbols. Drop N
+    # to recreate the original bug shape (real-world callers can hit this via passes
+    # that reset the mapping or via nested NSDFG construction patterns).
+    nsdfg.symbol_mapping.pop("N", None)
+
+    # Pre-expansion: nsdfg.symbol_mapping has no N. inner.symbols already has N.
+    assert "N" not in nsdfg.symbol_mapping
+    assert "N" in inner.symbols
+
+    PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+
+    # After expansion: A_conn's shape is (N, N) referencing N. symbol_mapping MUST bind N.
+    assert "N" in nsdfg.symbol_mapping, \
+        f"N should be auto-propagated to symbol_mapping; got {dict(nsdfg.symbol_mapping)}"
+    # Validation must succeed (the original bug raised here).
+    sdfg.validate()
