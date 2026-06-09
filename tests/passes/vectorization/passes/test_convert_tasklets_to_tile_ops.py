@@ -516,3 +516,106 @@ def test_converter_handles_symbol_in_min_function():
     assert binop.kind_a == "Tile"
     assert binop.kind_b == "Symbol"
     assert binop.expr_b == "0.5"
+
+
+# ---- mask wiring on converted lib nodes ------------------------------------
+
+
+def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
+    """Build a body NSDFG with a TileMaskGen + _tile_iter_mask AccessNode in scope,
+    plus a tasklet whose body is ``body_str``. Used to verify the converter wires
+    ``has_mask=True`` + ``_mask`` on the emitted Tile* lib node."""
+    from dace.libraries.tileops import TileMaskGen
+    sdfg = dace.SDFG("mask_fixture")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    if has_b_arr:
+        sdfg.add_array("B", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    if has_b_arr:
+        inner.add_array("B", (8, ), dace.float64, transient=False)
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner.add_array("_tile_iter_mask", (8, ), dace.bool_, transient=True)
+    instate = inner.add_state("body")
+
+    # Emit TileMaskGen + mask AN inside the body (mimics GenerateTileIterationMask).
+    mask_gen = TileMaskGen(name="_tile_iter_mask_gen", widths=(8, ), iter_vars=("ii", ), global_ubs=("8", ))
+    instate.add_node(mask_gen)
+    mask_an = instate.add_access("_tile_iter_mask")
+    instate.add_edge(mask_gen, "_o", mask_an, None, Memlet("_tile_iter_mask[0:8]"))
+
+    in_conns = {"_a", "_b"} if n_in_conns == 2 else ({"_a", "_b", "_c"} if n_in_conns == 3 else {"_a"})
+    tasklet = instate.add_tasklet("body_t", in_conns, {"_o"}, body_str)
+    a_in = instate.add_access("A")
+    instate.add_edge(a_in, None, tasklet, "_a", Memlet("A[ii]"))
+    if has_b_arr and "_b" in in_conns:
+        b_in = instate.add_access("B")
+        instate.add_edge(b_in, None, tasklet, "_b", Memlet("B[ii]"))
+    c_in = instate.add_access("C")
+    instate.add_edge(tasklet, "_o", c_in, None, Memlet("C[ii]"))
+
+    inputs = {"A", "B"} if has_b_arr else {"A"}
+    nsdfg = state.add_nested_sdfg(inner, inputs, {"C"}, symbol_mapping={"ii": "ii"})
+    state.add_memlet_path(state.add_access("A"), me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    if has_b_arr:
+        state.add_memlet_path(state.add_access("B"), me, nsdfg, dst_conn="B", memlet=Memlet("B[0:8]"))
+    state.add_memlet_path(nsdfg, mx, state.add_access("C"), src_conn="C", memlet=Memlet("C[0:8]"))
+    return sdfg, inner
+
+
+def test_converter_wires_mask_on_binop_when_mask_in_scope():
+    """Binop ``_o = _a + _b`` with iter mask in scope -> TileBinop.has_mask=True + _mask edge."""
+    sdfg, inner = _build_body_with_mask("_o = _a + _b")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.has_mask is True, f"expected has_mask=True, got {binop.has_mask}"
+    mask_edges = [e for e in body_state.in_edges(binop) if e.dst_conn == "_mask"]
+    assert len(mask_edges) == 1
+    assert isinstance(mask_edges[0].src, dace.nodes.AccessNode)
+    assert mask_edges[0].src.data == "_tile_iter_mask"
+
+
+def test_converter_wires_mask_on_unop_when_mask_in_scope():
+    """Unop with iter mask in scope -> TileUnop.has_mask=True + _mask edge."""
+    from dace.libraries.tileops import TileUnop
+    sdfg, inner = _build_body_with_mask("_o = abs(_a)", n_in_conns=1, has_b_arr=False)
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
+    assert unop.has_mask is True
+    mask_edges = [e for e in body_state.in_edges(unop) if e.dst_conn == "_mask"]
+    assert len(mask_edges) == 1
+    assert mask_edges[0].src.data == "_tile_iter_mask"
+
+
+def test_converter_skips_mask_when_no_mask_in_scope():
+    """A body without TileMaskGen produces has_mask=False (the divisible / unmasked case)."""
+    sdfg, inner = _build_inner_body_with_binop(op="+")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.has_mask is False
+    mask_edges = [e for e in body_state.in_edges(binop) if e.dst_conn == "_mask"]
+    assert len(mask_edges) == 0
+
+
+def test_converter_reuses_same_mask_producer_an_for_scheduling():
+    """All consumer ``_mask`` edges read from the SAME AccessNode that TileMaskGen writes to,
+    so the SDFG scheduler orders TileMaskGen before the consumers."""
+    from dace.libraries.tileops import TileMaskGen, TileUnop
+    sdfg, inner = _build_body_with_mask("_o = _a + _b")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    mask_gen = next(n for n in body_state.nodes() if isinstance(n, TileMaskGen))
+    # Find the AN the TileMaskGen writes to.
+    producer_an = next(e.dst for e in body_state.out_edges(mask_gen) if e.src_conn == "_o")
+    # Every consumer's _mask edge must read from this AccessNode (not a fresh add_access).
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    mask_edge = next(e for e in body_state.in_edges(binop) if e.dst_conn == "_mask")
+    assert mask_edge.src is producer_an, \
+        "consumer _mask edge must reuse the TileMaskGen output AN (not a fresh access)"

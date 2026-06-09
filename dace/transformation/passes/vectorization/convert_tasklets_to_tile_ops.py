@@ -29,7 +29,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop, TileITE, TileReduce, TileUnop
+from dace.libraries.tileops import TileBinop, TileITE, TileMaskGen, TileReduce, TileUnop
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -96,6 +96,30 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def depends_on(self):
         return set()
+
+    def _find_mask_an(self, inner_state: SDFGState):
+        """Find the AccessNode that :class:`TileMaskGen` WRITES to (its ``_o`` target).
+
+        Every lib-node ``_mask`` consumer reads from this SAME AccessNode so the SDFG
+        scheduler orders TileMaskGen before the consumers. Returns ``None`` when no
+        iteration mask is in scope (the divisible / unmasked case).
+        """
+        from dace.sdfg.nodes import AccessNode
+        for n in inner_state.nodes():
+            if not isinstance(n, TileMaskGen):
+                continue
+            for out_edge in inner_state.out_edges(n):
+                if out_edge.src_conn == "_o" and isinstance(out_edge.dst, AccessNode):
+                    return out_edge.dst
+        return None
+
+    def _wire_mask(self, inner_state: SDFGState, lib_node, mask_an) -> None:
+        """If ``mask_an`` is non-None, wire ``mask_an -> lib_node._mask`` with a full-tile
+        subset memlet matching the mask's widths shape."""
+        if mask_an is None:
+            return
+        subset = ", ".join(f"0:{w}" for w in self.widths)
+        inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
 
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
@@ -420,8 +444,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         val_edge = in_edges[val_conn]
         out_edge = out_edges[acc_conn]
-        reduce_node = TileReduce(name=f"{tasklet.label}_reduce", widths=tuple(self.widths), op=op)
+        mask_an = self._find_mask_an(inner_state)
+        reduce_node = TileReduce(name=f"{tasklet.label}_reduce",
+                                 widths=tuple(self.widths),
+                                 op=op,
+                                 has_mask=mask_an is not None)
         inner_state.add_node(reduce_node)
+        self._wire_mask(inner_state, reduce_node, mask_an)
         # TileReduce connectors: _src (tile input) -> _dst (scalar accumulator). The acc-input
         # edge dangles: TileReduce reads no separate scalar accumulator -- it accumulates over
         # the full tile in one shot. If the original tasklet's acc_in edge was the initial
@@ -445,8 +474,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         # Output transient shape is pre-determined by InferBodyTransientShapes (forward
         # analysis pre-pass per design 6.2). No reactive widening here.
-        ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths))
+        mask_an = self._find_mask_an(inner_state)
+        ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths), has_mask=mask_an is not None)
         inner_state.add_node(ite)
+        self._wire_mask(inner_state, ite, mask_an)
         # TileITE connectors: _cond / _t / _e -> _o.
         for src_conn_name, dst_conn_name in (
             (cond_conn, "_cond"),
@@ -477,8 +508,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Output transient shape is pre-determined by InferBodyTransientShapes (forward
         # analysis pre-pass per design 6.2). The output kind on the lib node is implied by
         # the descriptor on ``out_edge``'s destination; validate() enforces consistency.
-        binop = TileBinop(name=f"{tasklet.label}_binop", widths=tuple(self.widths), op=op, kind_a=kind_a, kind_b=kind_b)
+        mask_an = self._find_mask_an(inner_state)
+        binop = TileBinop(name=f"{tasklet.label}_binop",
+                          widths=tuple(self.widths),
+                          op=op,
+                          kind_a=kind_a,
+                          kind_b=kind_b,
+                          has_mask=mask_an is not None)
         inner_state.add_node(binop)
+        self._wire_mask(inner_state, binop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
@@ -502,13 +540,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
         kind_tile_side = self._operand_kind(inner_state, a_edge)
+        mask_an = self._find_mask_an(inner_state)
         if symbol_side == "b":
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
                               widths=tuple(self.widths),
                               op=op,
                               kind_a=kind_tile_side,
                               kind_b="Symbol",
-                              expr_b=symbol_expr)
+                              expr_b=symbol_expr,
+                              has_mask=mask_an is not None)
             inner_state.add_node(binop)
             inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         else:
@@ -517,9 +557,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                               op=op,
                               kind_a="Symbol",
                               kind_b=kind_tile_side,
-                              expr_a=symbol_expr)
+                              expr_a=symbol_expr,
+                              has_mask=mask_an is not None)
             inner_state.add_node(binop)
             inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(a_edge.data))
+        self._wire_mask(inner_state, binop, mask_an)
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
@@ -536,8 +578,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         a_edge = in_edges[a_conn]
         kind_a = self._operand_kind(inner_state, a_edge)
         # Output transient shape is pre-determined by InferBodyTransientShapes.
-        unop = TileUnop(name=f"{tasklet.label}_unop", widths=tuple(self.widths), op=op, kind_a=kind_a)
+        mask_an = self._find_mask_an(inner_state)
+        unop = TileUnop(name=f"{tasklet.label}_unop",
+                        widths=tuple(self.widths),
+                        op=op,
+                        kind_a=kind_a,
+                        has_mask=mask_an is not None)
         inner_state.add_node(unop)
+        self._wire_mask(inner_state, unop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
