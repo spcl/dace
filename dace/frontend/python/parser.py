@@ -16,6 +16,9 @@ from dace.frontend.python import (newast, common as pycommon, cached_program, pr
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
+if TYPE_CHECKING:
+    from dace.codegen.compiled_sdfg import CompiledSDFG
+
 try:
     import mpi4py
     from dace.sdfg.utils import distributed_compile
@@ -793,7 +796,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg, cachekey
 
-    def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> None:
+    def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> tuple[CompiledSDFG, cached_program.ProgramCacheKey]:
         """
         Loads an external compiled SDFG object that will be invoked when the
         function is called.
