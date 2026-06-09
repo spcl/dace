@@ -101,7 +101,8 @@ def stage_tile_access(state: SDFGState,
                       replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
                       src_dims: Optional[Tuple[int, ...]] = None,
                       gather_dims: Tuple[int, ...] = (),
-                      idx_sources: Optional[Dict[int, AccessNode]] = None) -> Tuple[str, "TileLoad"]:
+                      idx_sources: Optional[Dict[int, AccessNode]] = None,
+                      mask_an: Optional[AccessNode] = None) -> Tuple[str, "TileLoad"]:
     """Stage a tile-shaped access on ``an`` through a fresh `(widths,)` Array transient.
 
     Mints a transient ``Array(shape=widths, ...)`` of ``an``'s element
@@ -148,12 +149,17 @@ def stage_tile_access(state: SDFGState,
                                     storage=dtypes.StorageType.Register,
                                     find_new_name=True)
     bridge_an = state.add_access(bridge_name)
+    # Wire ``has_mask`` + ``_mask`` connector when a mask AN is in scope (per design 6.5
+    # mask handling). The mask AN is the body NSDFG's ``_tile_iter_mask`` access; its
+    # descriptor is ``bool[widths]`` per :class:`TileMaskGen`.
+    has_mask_wired = mask_an is not None
     load = TileLoad(name=f"load_{bridge_name}",
                     widths=widths,
                     dim_strides=dim_strides,
                     replicate_factor_per_dim=replicate_factor_per_dim,
                     src_dims=src_dims,
-                    gather_dims=gather_dims)
+                    gather_dims=gather_dims,
+                    has_mask=has_mask_wired)
     state.add_node(load)
     state.add_edge(an, None, load, "_src", src_subset)
     for d in gather_dims:
@@ -161,6 +167,9 @@ def stage_tile_access(state: SDFGState,
         idx_desc = sdfg.arrays[idx_an.data]
         idx_subset = ", ".join(f"0:{s}" for s in idx_desc.shape)
         state.add_edge(idx_an, None, load, f"_idx_{d}", Memlet(f"{idx_an.data}[{idx_subset}]"))
+    if has_mask_wired:
+        mask_subset_str = ", ".join(f"0:{w}" for w in widths)
+        state.add_edge(mask_an, None, load, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
     dst_subset_str = ", ".join(f"0:{w}" for w in widths)
     state.add_edge(load, "_dst", bridge_an, None, Memlet(f"{bridge_name}[{dst_subset_str}]"))
     return bridge_name, load
@@ -179,7 +188,8 @@ def stage_tile_store(state: SDFGState,
                      dim_strides: Optional[Tuple[int, ...]] = None,
                      dst_dims: Optional[Tuple[int, ...]] = None,
                      gather_dims: Tuple[int, ...] = (),
-                     idx_sources: Optional[Dict[int, AccessNode]] = None) -> Tuple[str, "TileStore"]:
+                     idx_sources: Optional[Dict[int, AccessNode]] = None,
+                     mask_an: Optional[AccessNode] = None) -> Tuple[str, "TileStore"]:
     """Stage a tile-shaped WRITE to ``an`` through a fresh ``(widths,)`` Array transient.
 
     Symmetric to :func:`stage_tile_access` but for the destination side. Mints a transient
@@ -216,11 +226,13 @@ def stage_tile_store(state: SDFGState,
                                     storage=dtypes.StorageType.Register,
                                     find_new_name=True)
     bridge_an = state.add_access(bridge_name)
+    has_mask_wired = mask_an is not None
     store = TileStore(name=f"store_{bridge_name}",
                       widths=widths,
                       dim_strides=dim_strides,
                       dst_dims=dst_dims,
-                      gather_dims=gather_dims)
+                      gather_dims=gather_dims,
+                      has_mask=has_mask_wired)
     state.add_node(store)
     src_subset_str = ", ".join(f"0:{w}" for w in widths)
     state.add_edge(bridge_an, None, store, "_src", Memlet(f"{bridge_name}[{src_subset_str}]"))
@@ -229,6 +241,9 @@ def stage_tile_store(state: SDFGState,
         idx_desc = sdfg.arrays[idx_an.data]
         idx_subset = ", ".join(f"0:{s}" for s in idx_desc.shape)
         state.add_edge(idx_an, None, store, f"_idx_{d}", Memlet(f"{idx_an.data}[{idx_subset}]"))
+    if has_mask_wired:
+        mask_subset_str = ", ".join(f"0:{w}" for w in widths)
+        state.add_edge(mask_an, None, store, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
     state.add_edge(store, "_dst", an, None, dst_subset)
     return bridge_name, store
 
@@ -339,6 +354,12 @@ class StageInsideBody(ppl.Pass):
         :returns: Number of staged ANs (>= 0).
         """
         staged = 0
+        # The iteration mask (per design 6.5) lives INSIDE the body NSDFG as an
+        # ``_tile_iter_mask`` AccessNode produced by :class:`TileMaskGen` (emitted by
+        # :class:`GenerateTileIterationMask`). Find it once per body NSDFG; each staging
+        # call gets a fresh AccessNode (a new ``inner_state.add_access`` of the same name)
+        # so the read edge is unambiguous.
+        mask_name = self._find_inner_mask_name(inner_sdfg)
         for inner_state in inner_sdfg.states():
             for an in list(inner_state.nodes()):
                 if not isinstance(an, AccessNode):
@@ -352,6 +373,10 @@ class StageInsideBody(ppl.Pass):
                 # dangles and tasklets continue to read directly from the global array.
                 pre_stage_out_edges = list(inner_state.out_edges(an))
                 pre_stage_in_edges = list(inner_state.in_edges(an))
+                # Reuse the SAME AccessNode that TileMaskGen writes to (per-state). Creating
+                # fresh add_access() calls per consumer produces orphan AccessNodes that
+                # DaCe's scheduler doesn't order after TileMaskGen, causing zero-mask bugs.
+                mask_an_for_this = (self._find_mask_producer_an(inner_state, mask_name) if mask_name else None)
                 # Write-side staging: when ``an`` has IN edges (something writes to it),
                 # symmetrically insert a tile-shape bridge transient + TileStore. The producer
                 # rewire below redirects the producer to write to the bridge, then the bridge
@@ -411,7 +436,8 @@ class StageInsideBody(ppl.Pass):
                                                           dst_subset=dst_subset_memlet,
                                                           name_hint=f"{an.data}_scatter_out",
                                                           gather_dims=scatter_source_dims,
-                                                          idx_sources=idx_sources_w)
+                                                          idx_sources=idx_sources_w,
+                                                          mask_an=mask_an_for_this)
                         self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
                         staged += 1
                         continue
@@ -422,7 +448,8 @@ class StageInsideBody(ppl.Pass):
                                                       widths=tuple(self.widths),
                                                       dst_subset=dst_subset_memlet,
                                                       name_hint=f"{an.data}_tile_out",
-                                                      dim_strides=dim_strides_w)
+                                                      dim_strides=dim_strides_w,
+                                                      mask_an=mask_an_for_this)
                     self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
                     staged += 1
                     continue
@@ -473,7 +500,8 @@ class StageInsideBody(ppl.Pass):
                                                        src_subset=src_subset_memlet,
                                                        name_hint=f"{an.data}_gather",
                                                        gather_dims=gather_source_dims,
-                                                       idx_sources=idx_sources)
+                                                       idx_sources=idx_sources,
+                                                       mask_an=mask_an_for_this)
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
                     continue
@@ -495,10 +523,41 @@ class StageInsideBody(ppl.Pass):
                                                        src_subset=src_subset_memlet,
                                                        name_hint=f"{an.data}_tile",
                                                        dim_strides=dim_strides,
-                                                       replicate_factor_per_dim=replicate)
+                                                       replicate_factor_per_dim=replicate,
+                                                       mask_an=mask_an_for_this)
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
         return staged
+
+    def _find_inner_mask_name(self, inner_sdfg: SDFG) -> Optional[str]:
+        """Find the body-NSDFG's iteration mask array name, or None if no mask is in scope."""
+        from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
+        base = TileNameScheme.ITER_MASK
+        if base in inner_sdfg.arrays:
+            return base
+        for name in inner_sdfg.arrays:
+            if name.startswith(f"{base}_"):
+                return name
+        return None
+
+    def _find_mask_producer_an(self, inner_state: SDFGState, mask_name: str) -> Optional[AccessNode]:
+        """Find the AccessNode that the TileMaskGen writes to (its OUTPUT side).
+
+        Every downstream consumer's ``_mask`` edge MUST read from this SAME AccessNode so
+        the SDFG scheduler orders TileMaskGen before the consumers. Creating fresh ``add_access``
+        calls per consumer produces separate orphan AccessNodes that DaCe schedules
+        independently -- TileLoad / TileStore may then run before the mask is written,
+        causing all-zero-mask incorrect output.
+        """
+        from dace.libraries.tileops import TileMaskGen
+        for n in inner_state.nodes():
+            if not isinstance(n, TileMaskGen):
+                continue
+            for out_edge in inner_state.out_edges(n):
+                if out_edge.src_conn == "_o" and isinstance(out_edge.dst,
+                                                            AccessNode) and out_edge.dst.data == mask_name:
+                    return out_edge.dst
+        return None
 
     def _bridge_memlet(self, inner_sdfg: SDFG, bridge_name: str) -> Memlet:
         """Build a memlet for the WHOLE bridge transient (matches the converter's contract
@@ -511,27 +570,44 @@ class StageInsideBody(ppl.Pass):
         # Scalar bridge (dace.data.Scalar) -- no subset.
         return Memlet(data=bridge_name)
 
+    def _find_existing_bridge_an(self, inner_state: SDFGState, bridge_name: str, side: str) -> Optional[AccessNode]:
+        """Find an existing AccessNode for ``bridge_name`` that the staging helper just
+        created -- for ``side='read'`` look for one with IN edges (TileLoad's _dst target);
+        for ``side='write'`` look for one with OUT edges (TileStore's _src source).
+
+        Reusing this AN (instead of ``add_access``ing a fresh one per consumer) ensures
+        the SDFG scheduler sees the dependency chain ``TileLoad -> bridge -> consumer``
+        and orders them correctly. Without it, fresh orphan AccessNodes are scheduled
+        independently and may run before TileLoad fills the bridge.
+        """
+        for node in inner_state.nodes():
+            if not isinstance(node, AccessNode) or node.data != bridge_name:
+                continue
+            if side == "read" and inner_state.in_degree(node) > 0:
+                return node
+            if side == "write" and inner_state.out_degree(node) > 0:
+                return node
+        return None
+
     def _rewire_producers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
                                     original_in_edges) -> None:
         """Symmetric to :meth:`_rewire_consumers_to_bridge` for the write side.
 
         Redirect each producer edge that previously wrote into ``original_an`` to write
         into the bridge AccessNode named ``bridge_name``. The bridge then flows through
-        :class:`TileStore` to ``original_an``. Skips edges that the staging helper just
-        added (the new ``TileStore._dst -> original_an`` edge is staging plumbing, not
-        a producer).
-
-        The rewired memlet's ``data`` field is set to the bridge name (not the original
-        AN name) and its subset spans the full bridge. Without this, the SDFG validator
-        flags ``Memlet data does not match source or destination data nodes`` because
-        the memlet would still reference the original array.
+        :class:`TileStore` to ``original_an``. Reuses the existing bridge AN (the source
+        of the TileStore._src edge) so the scheduler sees ``producer -> bridge -> TileStore``
+        as a chain.
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
+        # The staging helper added `bridge_an -> TileStore._src`. That's the AN with OUT
+        # edges. Reuse it so producers write to the SAME AN.
+        shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="write")
         for old_edge in original_in_edges:
             # Skip the new TileStore._dst -> original_an edge that stage_tile_store added.
             if hasattr(old_edge.src, "label") and old_edge.src_conn == "_dst":
                 continue
-            bridge_an = inner_state.add_access(bridge_name)
+            bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn,
                                  Memlet.from_memlet(bridge_memlet_template))
             inner_state.remove_edge(old_edge)
@@ -539,15 +615,12 @@ class StageInsideBody(ppl.Pass):
     def _rewire_consumers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
                                     original_out_edges) -> None:
         """Redirect each consumer edge that previously read from ``original_an`` to read from
-        the bridge AccessNode named ``bridge_name``.
-
-        The original edges in ``original_out_edges`` were captured BEFORE the staging helper
-        added the new ``original_an -> bridge`` edge. We delete each original consumer edge
-        and replace it with one whose source is a new AccessNode wrapping ``bridge_name``.
-        The rewired memlet's ``data`` field is set to the bridge name (not the original AN
-        name) and its subset spans the full bridge.
+        the SAME bridge AccessNode that the staging helper produced (the TileLoad._dst target).
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
+        # The staging helper added `TileLoad._dst -> bridge_an`. That's the AN with IN
+        # edges. Reuse it so consumers read from the SAME AN.
+        shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="read")
         for old_edge in original_out_edges:
             # Skip the edge that the staging helper just added (an -> tile bridge / scalar bridge);
             # that edge is part of the staging structure, not a consumer.
@@ -557,7 +630,7 @@ class StageInsideBody(ppl.Pass):
             # from the staging helper -- those are also part of the staging plumbing.
             if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
                 continue
-            bridge_an = inner_state.add_access(bridge_name)
+            bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
             inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn,
                                  Memlet.from_memlet(bridge_memlet_template))
             inner_state.remove_edge(old_edge)

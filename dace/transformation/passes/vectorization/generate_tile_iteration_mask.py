@@ -106,47 +106,65 @@ class GenerateTileIterationMask(ppl.Pass):
 
     def _attach_mask(self, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState, map_entry: MapEntry,
                      spec: TileDimSpec) -> bool:
-        """Add the mask transient + the producer :class:`TileMaskGen`
-        inside the map scope.
+        """Add the mask transient + the producer :class:`TileMaskGen` INSIDE the body NSDFG.
+
+        Per design 6.5 / 6.7 + user direction 2026-06-10: the mask lives WHERE the lib nodes
+        consume it -- inside the body NSDFG. The walker and converter then detect the
+        inner ``_tile_iter_mask`` AccessNode and wire ``has_mask=True`` + ``_mask`` onto
+        TileLoad / TileStore / Tile{Binop, Unop, ITE, Reduce} lib nodes.
 
         :param parent_sdfg: SDFG owning ``parent_state``.
         :param parent_state: State holding the inner map.
         :param map_entry: Inner map entry.
         :param spec: Per-dim tile specification.
-        :returns: ``True`` when a mask was added; ``False`` if this map
-            already has a ``TileMaskGen`` in its scope (idempotent
-            per-map, not per-SDFG — so multiple maps in one state each
-            get their own mask).
+        :returns: ``True`` when a mask was added; ``False`` if the body NSDFG already has
+            a ``TileMaskGen`` in its inner state (idempotent per-map).
         """
         scope = parent_state.all_nodes_between(map_entry, parent_state.exit_node(map_entry)) or set()
-        if any(isinstance(node, TileMaskGen) for node in scope):
+        # The body NSDFG should exist inside the scope (NestInnermost runs first).
+        body_nsdfgs = [n for n in scope if isinstance(n, dace.nodes.NestedSDFG)]
+        if not body_nsdfgs:
+            # Fall back to outer-scope emission for any kernels that didn't get nested
+            # (defensive: should not happen under the walker-primary pipeline).
             return False
-        mask_name = _mask_array_name_for(parent_sdfg)
-        parent_sdfg.add_array(
+        body_nsdfg = body_nsdfgs[0]
+        inner_sdfg = body_nsdfg.sdfg
+        # Idempotency: skip if the body already has a TileMaskGen.
+        for inner_state in inner_sdfg.states():
+            if any(isinstance(n, TileMaskGen) for n in inner_state.nodes()):
+                return False
+        # Pick a unique name in the inner SDFG's arrays.
+        mask_name = TileNameScheme.ITER_MASK
+        if mask_name in inner_sdfg.arrays:
+            idx = 1
+            while f"{mask_name}_{idx}" in inner_sdfg.arrays:
+                idx += 1
+            mask_name = f"{mask_name}_{idx}"
+        inner_sdfg.add_array(
             mask_name,
             list(spec.widths),
             dace.bool_,
             storage=dace.dtypes.StorageType.Register,
             transient=True,
         )
+        # Insert TileMaskGen + access node into the body NSDFG's FIRST state.
+        inner_state = inner_sdfg.start_state
         mask_node = TileMaskGen(
             name="_tile_iter_mask_gen",
             widths=spec.widths,
             iter_vars=spec.iter_vars,
             global_ubs=spec.global_ubs,
         )
-        parent_state.add_node(mask_node)
-        mask_access = parent_state.add_access(mask_name)
+        inner_state.add_node(mask_node)
+        mask_access = inner_state.add_access(mask_name)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
-        parent_state.add_edge(
+        inner_state.add_edge(
             mask_node,
             "_o",
             mask_access,
             None,
             dace.Memlet(f"{mask_name}[{subset}]"),
         )
-        parent_state.add_nedge(map_entry, mask_node, dace.Memlet())
-        parent_state.add_nedge(mask_access, parent_state.exit_node(map_entry), dace.Memlet())
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
