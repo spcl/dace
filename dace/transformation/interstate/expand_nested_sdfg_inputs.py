@@ -207,6 +207,13 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
         A = sympy.Symbol(outer_name)
         return node.subs(A, symbolic.Subscript(A, *offset_dims))
 
+    # Per user direction 2026-06-10: "On memlets we use subset 0,0,1 but on codeblocks we
+    # treat scalar as if it is a symbol." A true ``dace.data.Scalar`` source has no
+    # array dimension to subscript -- the bare symbol reference IS the correct C++
+    # form. Only wrap with ``[offset_dims]`` when the source is an Array (i.e. has a
+    # dimension to address).
+    outer_is_scalar = isinstance(desc, data.Scalar)
+
     # Uncollapse dims (interstate edges).
     for edge in inner_sdfg.edges():
         assignments = edge.data.assignments
@@ -216,12 +223,16 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
             if outer_name in symbolic.arrays(symexpr):
                 new_assignments[var] = symbolic.symstr(symexpr.replace(symbolic.Subscript, _uncollapse_subscript))
             elif outer_name in {str(s) for s in symexpr.free_symbols}:  # Could be scalar and fully collapsed
-                matching_syms = {s for s in symexpr.free_symbols if str(s) == outer_name}
-                assert len(
-                    matching_syms
-                ) == 1, f"Expected exactly one matching symbol for {outer_name} in {symexpr}, found {matching_syms}"
-                sym = matching_syms.pop()
-                new_assignments[var] = symbolic.symstr(symexpr.subs(sym, _uncollapse_scalar(sym)))
+                if outer_is_scalar:
+                    # Scalar source: keep the bare symbol reference; codegen handles it
+                    # the same way it would handle any other free symbol.
+                    new_assignments[var] = str_expr
+                else:
+                    matching_syms = {s for s in symexpr.free_symbols if str(s) == outer_name}
+                    assert len(matching_syms) == 1, \
+                        f"Expected exactly one matching symbol for {outer_name} in {symexpr}, found {matching_syms}"
+                    sym = matching_syms.pop()
+                    new_assignments[var] = symbolic.symstr(symexpr.subs(sym, _uncollapse_scalar(sym)))
             else:
                 new_assignments[var] = str_expr
         edge.data.assignments = new_assignments

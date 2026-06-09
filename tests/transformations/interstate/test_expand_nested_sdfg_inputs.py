@@ -339,3 +339,52 @@ def test_widened_shape_introduces_symbol_already_in_inner_table():
         f"N should be auto-propagated to symbol_mapping; got {dict(nsdfg.symbol_mapping)}"
     # Validation must succeed (the original bug raised here).
     sdfg.validate()
+
+
+def test_scalar_source_not_subscripted_in_interstate_assignment():
+    """Per user direction 2026-06-10: ``on codeblocks we treat scalar as if it is a
+    symbol``. ``_uncollapse_scalar`` was unconditionally wrapping references to
+    ``outer_name`` with ``[offset_dims]`` -- emitting ``c1[0] * c2[0]`` in an
+    interstate-edge assignment whose outer source is a Scalar passed as
+    ``const T&``. The fix skips the wrap when the outer descriptor is
+    :class:`dace.data.Scalar`.
+    """
+    sdfg = dace.SDFG("scalar_in_iedge")
+    N_sym = dace.symbol("N", dtype=dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", (N_sym, ), dace.float64)
+    sdfg.add_scalar("c1", dace.float64)
+    sdfg.add_scalar("c2", dace.float64)
+    state = sdfg.add_state("s")
+    a_an = state.add_access("A")
+    c1_an = state.add_access("c1")
+    c2_an = state.add_access("c2")
+
+    # Inner NSDFG: has its own c1, c2 connectors and an interstate edge that
+    # references c1, c2 by bare name (the @dace.program shape).
+    inner = dace.SDFG("inner")
+    inner.add_array("A_conn", (1, ), dace.float64)  # length-1 connector for outer A
+    inner.add_scalar("c1", dace.float64)
+    inner.add_scalar("c2", dace.float64)
+    s_init = inner.add_state("init")
+    s_body = inner.add_state("body")
+    # interstate edge with bare-symbol assignment (the shape that codegens wrong).
+    inner.add_edge(s_init, s_body, dace.InterstateEdge(assignments={"prod": "(c1 * c2)"}))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A_conn", "c1", "c2"}, set(), symbol_mapping={})
+    state.add_edge(a_an, None, nsdfg, "A_conn", dace.Memlet("A[0]"))
+    state.add_edge(c1_an, None, nsdfg, "c1", dace.Memlet("c1[0]"))
+    state.add_edge(c2_an, None, nsdfg, "c2", dace.Memlet("c2[0]"))
+
+    PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+
+    # The interstate-edge assignment in the inner SDFG MUST still reference c1, c2
+    # as bare symbols -- NOT as ``c1[0]``, ``c2[0]``. The outer descriptors are
+    # Scalars, so the codegen will pass them as ``const T&`` references; subscripting
+    # a reference is invalid C++.
+    found_assigns = []
+    for edge in nsdfg.sdfg.edges():
+        found_assigns.extend(edge.data.assignments.values())
+    expr = next((a for a in found_assigns if "c1" in a and "c2" in a), None)
+    assert expr is not None, f"expected an assignment referencing c1 and c2; got {found_assigns}"
+    assert "[0]" not in expr, f"Scalar reference should not be subscripted; got {expr!r}"
