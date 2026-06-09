@@ -199,18 +199,40 @@ Refusal: when staging cannot fold a producer / consumer pair
 overlapping subsets the classifier cannot resolve), the pass raises
 `NotImplementedError` naming the array and the offending state.
 
-Pipeline order (K >= 2):
+Pipeline order (canonical walker-primary, all K):
 
 ```
-ExpandNestedSDFGInputs                  (boundary -> full subset, EXISTS in core)
-   -> BypassTrivialAssignTasklets       (no `_out=_in` stragglers; section 3.6)
-   -> StageGlobalArrayThroughScalars    (with G7 multi-dim entry + fallback)
-   -> widen body transients to tile shape
-   -> PromoteNSDFGBodyToTiles           (descent; canonical lowering)
+WCRToAugAssign                          (canonicalise WCR -> RMW where applicable)
+   -> LoopToMap + RefineNestedAccess    (parallelise + tighten body NSDFGs)
+   -> normalize_loop_nests              (Inline + MapCollapse; no propagation)
+   -> ExpandNestedSDFGInputs            (boundary -> full subset, design section 2.4)
+   -> Front prep:
+       ConvertLengthOneArraysToScalars + NormalizeWCRSource + BypassTrivialAssignTasklets
+   -> Branch lowering:
+       SameWriteSetIfElseToITECFG + BranchNormalization
+       (+ EliminateBranches + LowerITEToFpFactor for branch_mode='fp_factor')
+   -> LowerInterstateConditionalAssignmentsToTasklets
+   -> Tasklet preprocessing:
+       RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion,
+       SplitTasklets, RemoveMathCall, RemoveEmptyStates
+   -> Tile shaping:
+       SplitMapForTileRemainder (optional per remainder_strategy)
+       NestInnermostMapBodyIntoNSDFG (optional per nest_map_bodies)
+       MarkTileDims
+       GenerateTileIterationMask
+       StrideMapByTileWidths
+   -> Walker:
+       PreparePerLaneIndices             (per-source-dim _idx_<k> materialisation)
+       StageInsideBody                   (CONSTANT / Tile / Gather dispatch per AN)
+   -> Library node expansion + audit:
+       sdfg.expand_library_nodes()
+       ClearPerLaneIndexSymbols          (section 10.6 post-emit audit)
 ```
 
-The historical inlined-outer-state path was dropped in tier S of
-[MULTI_DIM_CODE_AUDIT.md](MULTI_DIM_CODE_AUDIT.md).
+The legacy descent (``PromoteNSDFGBodyToTiles``, 2996 LoC) and legacy
+``EmitTileOps`` (1470 LoC) were deleted during the walker-primary
+migration. The historical inlined-outer-state path was dropped in
+tier S of [MULTI_DIM_CODE_AUDIT.md](MULTI_DIM_CODE_AUDIT.md).
 
 ### 3.6 AN -> AN no-tasklet copy contract
 
