@@ -604,6 +604,140 @@ an outer (non-contiguous) dim collapses to an outer scalar loop where
 each iteration does a cheap contiguous load of one row / column. The
 lib node owns this dispatch -- the classifier just records facts.
 
+### 6.5 Inner-dim-driven CPU emission strategy (formalised)
+
+The CPU emission strategy for `TileLoad` (symmetric for `TileStore`)
+is **driven by the per-dim kind of the contiguous source dim** -- the
+dim whose stride is 1. Lane geometry on the contig dim dictates how
+the inner SIMD register is materialised; outer (non-contig) dims
+become explicit `for`-loops wrapping the SIMD inner.
+
+Let `contig_src_dim` be the source dim with `src.strides[d] == 1`,
+and `contig_tile_dim = src_dims.index(contig_src_dim)` if the contig
+source dim is bound by a tile dim, else `None`. Let
+`contig_kind = per_dim_kind[contig_tile_dim]` (or `CONSTANT` if no
+tile dim is bound).
+
+| `contig_kind` | Inner-SIMD strategy | Per-arch realisation |
+|---|---|---|
+| **CONSTANT** | Every lane reads the same element. Emit one scalar load, splat to the register. | AVX-512 `_mm512_set1_pd`; SVE `svdup_f64`; NEON `vdupq_n_f64`; cuTile `ct.full(shape, scalar)`; CUDA `__shfl_sync` broadcast. |
+| **LINEAR** | Lane `l` reads element `base + l`. Emit one dense (aligned / unaligned) vector load. | AVX-512 `_mm512_loadu_pd`; SVE `svld1`; NEON `vld1q_f64`; cuTile `ct.load(view, ...)`; CUDA contiguous threads load consecutive elements. |
+| **REPLICATE** (factor `k`) | Lane `l` reads element `base + floor(l/k)`. Emit one dense load of `W/k` elements followed by a broadcast / shuffle that duplicates each loaded value `k` times across consecutive lanes. | AVX-512 `_mm512_permutexvar_pd` on a stride-`k` index pattern; SVE `svdup_lane_f64`; NEON `vdupq_lane_f64`; cuTile broadcast via `ct.repeat`; CUDA per-thread index `floor(l/k)`. |
+| **AFFINE** stride `s > 1` | Lane `l` reads element `base + l * s`. Try a strided-load intrinsic; fall back to GATHER. | AVX-512 `_mm512_i64gather_pd` with a precomputed index vector `[0, s, 2s, ...]`; SVE `svld1_gather` similarly; NEON has no strided load -> falls to scalar loop; cuTile relies on `ct.gather` with a strided index tile; CUDA permits the strided form via per-thread index computation. |
+| **MODULAR** (`% N`) | Lane `l` reads element `base + ((l * c + c0) mod N)`. Materialise the mod index per lane and gather. | Same as AFFINE / gather path -- the modular index is precomputed via the per-lane index tile (G8). When `N | c * W_p` the classifier folds this back to LINEAR with a per-tile offset; the gather form only fires for irreducible cases. |
+| **GATHER** | Lane `l` reads element `_idx_<contig_src_dim>[l] * 1`. Real gather intrinsic on the contig dim. | AVX-512 `_mm512_i64gather_pd`; SVE `svld1_gather_*_z`; NEON falls to scalar loop; cuTile `ct.gather(view, idx_tile)`; CUDA each thread issues `*ptr_base + idx[l]`. |
+
+When the contig source dim is **NOT bound by any tile dim** (i.e. the
+contig dim is a constant scope variable not iterated by the tile),
+the inner load is a single scalar splat regardless of outer-dim kinds
+-- the outer scalar `for`-loops walk the tile shape and the inner
+register holds `W_{contig_tile_dim}` copies of the same scalar.
+
+#### Outer-dim wrap
+
+Every non-contig tile dim becomes an outer scalar `for`-loop wrapping
+the inner SIMD body. The outer loop's per-iteration index contribution
+follows §6.4: gather dims (`gather_dims` includes the outer source
+dim) -> `_idx_<k>[<flat lane>] * src.strides[k]`; tile-mapped non-
+gather dims -> affine; untouched dims -> handled by the outer `_src`
+memlet base pointer.
+
+K-fold nesting for `K = 3` (innermost-last contig):
+
+```
+for (l_0 = 0; l_0 < W_0; ++l_0)                  // outer dim 0
+  for (l_1 = 0; l_1 < W_1; ++l_1)                // outer dim 1
+    <inner-SIMD load over W_2 lanes>             // contig dim, per table above
+```
+
+#### Mask handling
+
+For each strategy the mask gate composes as a separate decision on top
+of the load itself:
+
+* CONSTANT load + mask -> `mask[l] ? splat : dtype(0)` (the mask
+  selects between the splat and the zero identity).
+* LINEAR load + mask -> use the per-arch masked-load form
+  (`_mm512_maskz_loadu_pd`, `svld1_z(pg, ptr)`).
+* REPLICATE load + mask -> masked dense load of `W/k` followed by the
+  same broadcast / shuffle as the unmasked path.
+* AFFINE / MODULAR / GATHER load + mask -> per-arch masked-gather form;
+  on architectures with no masked gather, fall to the strip-mined
+  scalar loop with a per-lane `if (mask[l])` guard.
+
+### 6.6 GPU emission strategy (formalised)
+
+Two paths: raw CUDA codegen and cuTile.
+
+#### CUDA codegen
+
+The CUDA path maps **the contiguous tile dim to a warp** (or half-
+warp / quarter-warp when `W_{contig} < 32`):
+
+```
+let W_c = widths[contig_tile_dim]
+if W_c >= 32: assign full warp; each thread handles one lane
+elif W_c >= 16: assign half-warp (16 threads)
+elif W_c >= 8:  assign quarter-warp (8 threads)
+else:           assign W_c threads + idle the rest
+```
+
+Outer (non-contig) tile dims become thread-block axes (`blockIdx.y`,
+`blockIdx.z`) -- one thread block per outer-dim tile, threads within
+the block share the inner SIMD register file.
+
+Per-tile-dim inner-load strategy (mirror of §6.5):
+
+* CONSTANT -> single global load + `__shfl_sync(0xffffffff, value, 0)`
+  broadcast across the warp.
+* LINEAR -> coalesced global load (each thread reads `src[base + tid]`).
+* REPLICATE (`k`) -> coalesced load of `W_c/k` then `__shfl_sync` per
+  thread to its broadcast lane.
+* AFFINE / MODULAR / GATHER -> per-thread global load
+  (`src[base + tid * s]` or `src[idx[tid]]`); coalescing depends on the
+  pattern (LINEAR coalesces; GATHER is non-coalesced unless `idx[]`
+  happens to be sorted).
+
+Warp-wide load width (`W_{contig} > 32`) is split across multiple
+loads; the compiler handles the loop unrolling.
+
+**Tile-dim bounds < 32**: padded to a power of 2 and the unused
+threads are masked out via the `_tile_iter_mask`. The contig tile dim
+sets the warp lane count; outer dims set the grid shape.
+
+#### cuTile
+
+For cuTile we leverage the framework's own dispatch: every `TileLoad`
+lowers to one `ct.load(view, shape=widths, padding_mode=...)` call;
+cuTile's optimizer picks the per-load shape and the resulting
+thread-block configuration based on architectural heuristics
+(register pressure, SM count). We do NOT pre-bake the inner-dim
+emission strategy on the cuTile path.
+
+Gather / scatter on cuTile uses `ct.gather` / `ct.scatter` with
+explicit index tiles; cuTile chooses the underlying intrinsic mix.
+Mask handling delegates to `ct.where`.
+
+### 6.7 Implementation phasing -- pure now, smarter strategies later
+
+For the current phase **only the `pure` expansion is supported**:
+
+* Every `TileLoad` / `TileStore` emits a K-fold nested `for`-loop
+  with per-lane **scalar** loads / stores from `_src` / `_dst`,
+  decoded by the unified per-source-dim offset (§9 + §6.4).
+* The inner-dim-driven CPU strategy table (§6.5), CUDA warp mapping
+  (§6.6), and cuTile dispatch (§6.6) are **planned but not yet
+  implemented**. The lib node's `pure` expansion handles correctness
+  uniformly; per-arch fast paths land as subsequent slices.
+
+Why pure first: the walker (G7) + per-lane index materialisation (G8)
++ validators (§10) lock the IR shape end-to-end. The arch-specific
+expansions are then a single-file slice each -- the IR contract is
+already pinned by the lib-node `validate()` calls. Adding intrinsics
+without the IR locked first would risk per-arch divergence on edge
+cases (mask + replicate + strided combinations) that pure-expansion
+testing surfaces cleanly.
+
 ---
 
 ## 7. Masking
