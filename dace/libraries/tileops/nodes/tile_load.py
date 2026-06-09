@@ -435,6 +435,11 @@ class TileLoad(nodes.LibraryNode):
             from .._pure_codegen import validate_mask_descriptor_lock
             mask_arr = sdfg.arrays[in_e["_mask"].data.data]
             validate_mask_descriptor_lock(self.label, "_mask", mask_arr, tuple(self.widths))
+        # Packed-layout lock (design section 2.3): refuse non-C non-Fortran source strides.
+        if self.src_kind == "Tile":
+            from .._pure_codegen import validate_packed_layout
+            src_arr = sdfg.arrays[in_e["_src"].data.data]
+            validate_packed_layout(self.label, "_src", src_arr)
         # gather_dims source-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
         allowed_dtypes = {dace.int32, dace.int64}

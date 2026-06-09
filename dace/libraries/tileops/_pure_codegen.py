@@ -117,6 +117,81 @@ def resolve_gather_deps(idx_shape, widths):
     return None
 
 
+def _strides_match_packed(shape, strides, order):
+    """True when ``strides`` is the packed contiguous form for ``shape`` in
+    ``order`` ("C" -- innermost-last, stride 1 on the last dim; or "F" --
+    innermost-first, stride 1 on the first dim) with NO padding between dims.
+
+    Symbolic shapes / strides are compared via sympy ``simplify == 0``.
+
+    :param shape: Tuple of dim sizes (may be symbolic).
+    :param strides: Tuple of per-dim strides (may be symbolic).
+    :param order: "C" or "F".
+    :returns: ``True`` iff the layout is exactly packed in the requested order.
+    """
+    import dace
+    if len(shape) != len(strides):
+        return False
+    if order == "C":
+        order_range = range(len(shape) - 1, -1, -1)
+    elif order == "F":
+        order_range = range(len(shape))
+    else:
+        raise ValueError(f"order must be 'C' or 'F'; got {order!r}")
+    expected = 1
+    for d in order_range:
+        try:
+            diff = dace.symbolic.simplify(strides[d] - expected)
+            if diff != 0:
+                return False
+        except Exception:  # noqa: BLE001 -- conservative refusal on un-comparable expressions.
+            return False
+        expected = expected * shape[d]
+    return True
+
+
+def validate_packed_layout(node_label, conn_name, desc):
+    """Refuse any source / dest array whose stride pattern is neither packed C
+    nor packed Fortran (design section 2.3).
+
+    Padded layouts -- where strides exceed the product of inner dims -- raise
+    :class:`NotImplementedError` until per-arch codegen support lands. 1-D
+    arrays trivially satisfy both packings and are accepted iff their single
+    stride is 1.
+
+    :param node_label: Label of the calling lib node (for error messages).
+    :param conn_name: Connector name carrying the array (typically ``_src``
+        or ``_dst``).
+    :param desc: The array descriptor (``dace.data.Data`` subclass) wired to
+        the connector.
+    :raises NotImplementedError: On non-packed-C non-packed-Fortran layout.
+    """
+    import dace
+    if not isinstance(desc, dace.data.Array):
+        return  # Scalars / Streams have no per-dim stride pattern to check.
+    shape = tuple(desc.shape)
+    strides = tuple(desc.strides)
+    if len(shape) == 0:
+        return
+    if len(shape) == 1:
+        try:
+            if dace.symbolic.simplify(strides[0] - 1) != 0:
+                raise NotImplementedError(f"{node_label}: {conn_name!r} has non-unit stride "
+                                          f"{strides[0]} on its single dim; only packed layouts are "
+                                          f"supported (section 2.3).")
+        except NotImplementedError:
+            raise
+        except Exception:  # noqa: BLE001
+            raise NotImplementedError(f"{node_label}: {conn_name!r} stride {strides[0]} could not be "
+                                      f"verified against the packed-layout invariant (section 2.3).")
+        return
+    if not (_strides_match_packed(shape, strides, "C") or _strides_match_packed(shape, strides, "F")):
+        raise NotImplementedError(f"{node_label}: {conn_name!r} has non-packed stride pattern "
+                                  f"(shape={shape}, strides={strides}). Only packed-C and packed-"
+                                  f"Fortran layouts are supported (section 2.3); padded layouts raise "
+                                  f"NotImplementedError until codegen lands.")
+
+
 def validate_mask_descriptor_lock(node_label, conn_name, desc, widths):
     """Refuse any mask descriptor that breaks the design section 10.2 lock.
 
