@@ -240,9 +240,14 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                     if block._branches[i][0] is not None:
                         block._branches[i][0] = self._rewrite_codeblock(pattern, block._branches[i][0])
             elif isinstance(block, LoopRegion):
-                block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
-                block.init_statement = self._rewrite_codeblock(pattern, block.init_statement)
-                block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
+                # ``init_statement`` / ``update_statement`` are optional --
+                # a bare ``while`` LoopRegion has only the condition.
+                if block.update_statement is not None:
+                    block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
+                if block.init_statement is not None:
+                    block.init_statement = self._rewrite_codeblock(pattern, block.init_statement)
+                if block.loop_condition is not None:
+                    block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
 
     def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier) -> None:
         """Applies the promotion, `Scalar` to 'One-Element-Array', in all states.

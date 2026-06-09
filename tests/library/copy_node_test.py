@@ -76,7 +76,10 @@ def _make_copy_skeleton(src: _ArraySpec, dst: _ArraySpec, name: str, dtype: dace
     for arr_name, spec in ((src_name, src), (dst_name, dst)):
         kwargs = {"transient": spec.transient}
         if spec.strides is not None:
-            kwargs["strides"] = spec.strides
+            # Sympify each stride so string entries (``"src_stride"``) become
+            # SDFG symbols. ``Array.validate`` rejects raw strings, and
+            # ``add_array`` only sympifies the shape, not the strides.
+            kwargs["strides"] = [dace.symbolic.pystr_to_symbolic(s) for s in spec.strides]
             kwargs["total_size"] = spec.total_size if spec.total_size is not None else int(np.prod(spec.shape))
         sdfg.add_array(arr_name, spec.shape, spec.dtype or dtype, storage=spec.storage, **kwargs)
     state = sdfg.add_state("main")
@@ -476,8 +479,7 @@ def test_copy_cuda_1d_single_element():
         implementation="MemcpyCUDA1D",
         name="copy_cuda_1d_single_element",
     )
-    sdfg.add_symbol("src_stride", dace.int32)
-    sdfg.add_symbol("dst_stride", dace.int32)
+    # ``add_array`` registered the stride symbols at default int.
     sdfg.validate()
 
     sdfg.expand_library_nodes()

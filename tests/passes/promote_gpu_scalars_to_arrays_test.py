@@ -147,20 +147,76 @@ def test_nested_sdfg_rename_via_connector():
 # ---------------------------------------------------------------------------
 # Memlet preservation: a copy memlet with explicit src/dst subsets stays intact
 # (the bug PR #2394 documents in fix 2 is the dropped ``other_subset``).
+# The pass intentionally does NOT touch memlets -- a ``Scalar`` access always
+# carries subset ``[0]``, identical to a length-1 array's, so the rewrite is
+# semantically a no-op. These tests pin that invariant from three angles.
 # ---------------------------------------------------------------------------
-def test_memlet_other_subset_preserved():
-    sdfg = dace.SDFG('m')
+def test_memlet_other_subset_preserved_x_as_data():
+    """Promoted scalar X is the ``data`` side of a copy memlet; other_subset on Y survives."""
+    sdfg = dace.SDFG('m_xdata')
+    sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('Y', shape=(4, ), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    x = state.add_access('X')
+    y = state.add_access('Y')
+    state.add_nedge(x, y, Memlet(data='X', subset='0', other_subset='2'))
+
+    _run(sdfg)
+    new_edge = next(e for e in state.edges() if e.src is x and e.dst is y)
+    assert new_edge.data.other_subset is not None and str(new_edge.data.other_subset) == '2', new_edge.data.other_subset
+
+
+def test_memlet_other_subset_preserved_x_as_other():
+    """Y is the ``data`` side, X is referenced by ``other_subset='0'``; survives promotion."""
+    sdfg = dace.SDFG('m_xother')
+    sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('Y', shape=(4, ), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    y = state.add_access('Y')
+    x = state.add_access('X')
+    state.add_nedge(y, x, Memlet(data='Y', subset='3', other_subset='0'))
+
+    _run(sdfg)
+    new_edge = next(e for e in state.edges() if e.src is y and e.dst is x)
+    assert new_edge.data.data == 'Y', new_edge.data.data
+    assert str(new_edge.data.subset) == '3', new_edge.data.subset
+    assert str(new_edge.data.other_subset) == '0', new_edge.data.other_subset
+
+
+def test_memlet_multidim_other_subset_preserved():
+    """Multi-dimensional ``other_subset`` (range, not a point) survives unchanged."""
+    sdfg = dace.SDFG('m_multidim')
+    sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('Y', shape=(4, 4), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    x = state.add_access('X')
+    y = state.add_access('Y')
+    state.add_nedge(x, y, Memlet(data='X', subset='0', other_subset='1, 2'))
+
+    _run(sdfg)
+    new_edge = next(e for e in state.edges() if e.src is x and e.dst is y)
+    assert new_edge.data.other_subset is not None
+    assert str(new_edge.data.other_subset) == '1, 2', new_edge.data.other_subset
+
+
+def test_memlet_dynamic_and_wcr_preserved():
+    """A memlet's ``dynamic`` flag and WCR string survive promotion (the pass touches descriptors, not memlets)."""
+    sdfg = dace.SDFG('m_dyn_wcr')
     sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_array('Y', shape=(4, ), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     x = state.add_access('X')
     y = state.add_access('Y')
     m = Memlet(data='X', subset='0', other_subset='2')
+    m.dynamic = True
+    m.wcr = 'lambda a, b: a + b'
     state.add_nedge(x, y, m)
 
     _run(sdfg)
     new_edge = next(e for e in state.edges() if e.src is x and e.dst is y)
-    assert new_edge.data.other_subset is not None and str(new_edge.data.other_subset) == '2', new_edge.data.other_subset
+    assert new_edge.data.dynamic is True
+    assert new_edge.data.wcr == 'lambda a, b: a + b'
+    assert str(new_edge.data.other_subset) == '2'
 
 
 # ---------------------------------------------------------------------------
