@@ -8,7 +8,6 @@ from dace import dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import StateSubgraphView
-from ordered_set import OrderedSet
 
 ScopeDictType = Dict[nd.Node, List[nd.Node]]
 
@@ -63,16 +62,16 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubg
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
     node_to_children = graph.scope_children()
     if include_exit:
-        children_nodes = OrderedSet(node_to_children[entry_node])
+        children_nodes = set(node_to_children[entry_node])
     else:
-        children_nodes = OrderedSet(n for n in node_to_children[entry_node] if not isinstance(n, nd.ExitNode))
+        children_nodes = set(n for n in node_to_children[entry_node] if not isinstance(n, nd.ExitNode))
     map_nodes = [node for node in children_nodes if isinstance(node, nd.EntryNode)]
     while len(map_nodes) > 0:
         next_map_nodes = []
         # Traverse children map nodes
         for map_node in map_nodes:
             # Get child map subgraph (1 level)
-            more_nodes = OrderedSet(node_to_children[map_node])
+            more_nodes = set(node_to_children[map_node])
             # Unionize children_nodes with new nodes
             children_nodes |= more_nodes
             # Add nodes of the next level to next_map_nodes

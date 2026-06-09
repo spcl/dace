@@ -1790,13 +1790,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        # TODO(tehrengruber): Using sets here leads to a situation where self._nodes has a different
-        # ordering, but to_json from_json restores the order again. Investigate.
-        if isinstance(inputs, set) or isinstance(outputs, set):
-            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
-        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
+        if isinstance(inputs, (set, collections.abc.KeysView)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
+        if isinstance(outputs, (set, collections.abc.KeysView)):
             outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(

@@ -2,6 +2,8 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
+import functools
+
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
@@ -59,7 +61,7 @@ class Pass:
         """
         If in the context of a ``Pipeline``, which other Passes need to run first.
 
-        :return: A set of Pass subclasses or objects that need to run prior to this Pass.
+        :return: A list of Pass subclasses or objects that need to run prior to this Pass.
         """
         return []
 
@@ -412,7 +414,7 @@ class Pipeline(Pass):
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
-        self._pass_names = set(type(p).__name__ for p in passes)  # todo sort this?
+        self._pass_names = set(type(p).__name__ for p in passes)
         self.passes.extend(passes)
 
         # Add missing Pass dependencies
@@ -483,7 +485,8 @@ class Pipeline(Pass):
         return any(p.should_reapply(modified) for p in self.passes)
 
     def depends_on(self) -> List[Type[Pass]]:
-        return list(dict.fromkeys([p.depends_on() for p in self.passes]))
+        deps = functools.reduce(lambda a, b: a + b, [p.depends_on() for p in self.transformations], [])
+        return list(dict.fromkeys(deps))
 
     def _make_dependency_graph(self) -> gr.OrderedDiGraph:
         """

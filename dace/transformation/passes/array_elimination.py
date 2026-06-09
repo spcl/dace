@@ -13,7 +13,6 @@ from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, Re
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
-from ordered_set import OrderedSet
 
 
 @properties.make_properties
@@ -57,7 +56,7 @@ class ArrayElimination(ppl.Pass):
             return None
         for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
-            removable_data: OrderedSet[str] = OrderedSet(
+            removable_data: Set[str] = set(
                 s for s in access_sets if state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
             # Find duplicate access nodes as an ordered list

@@ -3,6 +3,7 @@
 
 import collections
 from dataclasses import dataclass
+import functools
 import time
 import warnings
 
@@ -80,7 +81,8 @@ class PatternMatchAndApply(ppl.Pass):
         self.progress = progress
 
     def depends_on(self) -> List[Type[ppl.Pass]]:
-        return list(dict.fromkeys([p.depends_on() for p in self.transformations]))
+        deps = functools.reduce(lambda a, b: a + b, [p.depends_on() for p in self.transformations], [])
+        return list(dict.fromkeys(deps))  # Remove duplicates while preserving order
 
     def modifies(self) -> ppl.Modifies:
         result = ppl.Modifies.Nothing
