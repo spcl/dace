@@ -254,4 +254,67 @@ class InferBodyTransientShapes(ppl.Pass):
             for name, target_tile in transient_kinds.items():
                 if self._apply_shape_to_transient(inner_sdfg, name, target_tile):
                     rewrites += 1
+            # Widen non-transient AN edge memlets to span the full tile region (per user
+            # direction 2026-06-09): ``A[ii]`` -> ``A[ii:ii+W]`` etc. ONLY for accesses
+            # classified as non-CONSTANT (so Scalar / broadcast accesses stay single-element).
+            for non_transient_name, needs_tile in non_transient_kinds.items():
+                if not needs_tile:
+                    continue
+                if self._widen_non_transient_memlets(inner_sdfg, non_transient_name, iter_vars):
+                    rewrites += 1
         return rewrites or None
+
+    def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str, iter_vars: Tuple[str, ...]) -> bool:
+        """Widen single-element memlets on edges incident to a non-transient AN.
+
+        For each edge whose memlet's data is ``name`` and whose subset is single-element
+        on dims that reference ``iter_vars``, replace those dims with ``[beg : beg + W - 1]``.
+        Leaves multi-element / non-iter-var dims untouched, and leaves Scalar / broadcast
+        accesses (whose subset doesn't reference any iter_var) alone.
+        """
+        widths = tuple(self.widths)
+        K = len(iter_vars)
+        changed = False
+        for inner_state in inner_sdfg.states():
+            for edge in inner_state.edges():
+                if edge.data is None or edge.data.data != name:
+                    continue
+                if edge.data.subset is None:
+                    continue
+                try:
+                    ranges = list(edge.data.subset.ranges)
+                except Exception:  # noqa: BLE001
+                    continue
+                modified = False
+                for k in range(min(K, len(ranges))):
+                    target_dim = len(ranges) - K + k
+                    if target_dim < 0:
+                        continue
+                    beg, end, step = ranges[target_dim]
+                    iv = iter_vars[k]
+                    iv_sym = dace.symbolic.pystr_to_symbolic(iv)
+                    try:
+                        is_single = bool(dace.symbolic.simplify(end - beg) == 0)
+                    except Exception:  # noqa: BLE001
+                        is_single = False
+                    if not is_single:
+                        continue
+                    try:
+                        beg_syms = dace.symbolic.SymExpr(str(beg)).free_symbols
+                    except Exception:  # noqa: BLE001
+                        beg_syms = set()
+                    if iv_sym not in beg_syms:
+                        # The subset begin doesn't reference this iter_var -- it's a
+                        # CONSTANT / Symbol access on this dim. Leave it alone.
+                        continue
+                    w = widths[k]
+                    new_end = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1")
+                    ranges[target_dim] = (beg, new_end, step)
+                    modified = True
+                if modified:
+                    new_subset = dace.subsets.Range(ranges)
+                    edge.data.subset = new_subset
+                    # Recompute volume from the new subset (Memlet.volume can't be None).
+                    edge.data.volume = new_subset.num_elements()
+                    changed = True
+        return changed

@@ -500,6 +500,17 @@ class StageInsideBody(ppl.Pass):
                     staged += 1
         return staged
 
+    def _bridge_memlet(self, inner_sdfg: SDFG, bridge_name: str) -> Memlet:
+        """Build a memlet for the WHOLE bridge transient (matches the converter's contract
+        that rewired edges feed the entire tile)."""
+        desc = inner_sdfg.arrays[bridge_name]
+        shape = tuple(desc.shape) if hasattr(desc, "shape") and desc.shape else None
+        if shape and len(shape) > 0:
+            subset = ", ".join(f"0:{s}" for s in shape)
+            return Memlet(f"{bridge_name}[{subset}]")
+        # Scalar bridge (dace.data.Scalar) -- no subset.
+        return Memlet(data=bridge_name)
+
     def _rewire_producers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
                                     original_in_edges) -> None:
         """Symmetric to :meth:`_rewire_consumers_to_bridge` for the write side.
@@ -509,14 +520,20 @@ class StageInsideBody(ppl.Pass):
         :class:`TileStore` to ``original_an``. Skips edges that the staging helper just
         added (the new ``TileStore._dst -> original_an`` edge is staging plumbing, not
         a producer).
+
+        The rewired memlet's ``data`` field is set to the bridge name (not the original
+        AN name) and its subset spans the full bridge. Without this, the SDFG validator
+        flags ``Memlet data does not match source or destination data nodes`` because
+        the memlet would still reference the original array.
         """
+        bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
         for old_edge in original_in_edges:
             # Skip the new TileStore._dst -> original_an edge that stage_tile_store added.
             if hasattr(old_edge.src, "label") and old_edge.src_conn == "_dst":
                 continue
             bridge_an = inner_state.add_access(bridge_name)
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn,
-                                 Memlet.from_memlet(old_edge.data))
+                                 Memlet.from_memlet(bridge_memlet_template))
             inner_state.remove_edge(old_edge)
 
     def _rewire_consumers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
@@ -527,9 +544,10 @@ class StageInsideBody(ppl.Pass):
         The original edges in ``original_out_edges`` were captured BEFORE the staging helper
         added the new ``original_an -> bridge`` edge. We delete each original consumer edge
         and replace it with one whose source is a new AccessNode wrapping ``bridge_name``.
-        Memlets are reused verbatim (subsets carry over); the consumer's ``dst_conn`` /
-        downstream tasklet semantics stay intact.
+        The rewired memlet's ``data`` field is set to the bridge name (not the original AN
+        name) and its subset spans the full bridge.
         """
+        bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
         for old_edge in original_out_edges:
             # Skip the edge that the staging helper just added (an -> tile bridge / scalar bridge);
             # that edge is part of the staging structure, not a consumer.
@@ -540,7 +558,8 @@ class StageInsideBody(ppl.Pass):
             if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
                 continue
             bridge_an = inner_state.add_access(bridge_name)
-            inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, Memlet.from_memlet(old_edge.data))
+            inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn,
+                                 Memlet.from_memlet(bridge_memlet_template))
             inner_state.remove_edge(old_edge)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:

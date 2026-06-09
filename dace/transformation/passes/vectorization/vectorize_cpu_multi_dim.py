@@ -85,6 +85,37 @@ _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 _MAX_REFINE_ITERS = 8
 
 
+class _RunExpandNestedSDFGInputs(ppl.Pass):
+    """Pipeline-embedded wrapper that runs :class:`ExpandNestedSDFGInputs` to fixed point.
+
+    The walker (:class:`StageInsideBody`) traverses body NSDFGs which only exist AFTER
+    :class:`NestInnermostMapBodyIntoNSDFG` runs. ``ExpandNestedSDFGInputs`` widens the
+    body NSDFG's per-iteration boundary memlets to the full source-array subset
+    (design section 2.4). It MUST run between Nest and the walker; otherwise the
+    walker classifies inner ``A[0]`` memlets as CONSTANT and stages them via Scalar
+    bridges, breaking numerics.
+
+    Embedded as a Pass (vs a side call from ``apply_pass``) so the standard
+    ``ppl.Pipeline.apply_pass`` machinery executes the whole list in order without
+    fighting the cached dependency graph.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Edges | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        applied = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+        return applied or None
+
+
 def _is_power_of_two(n: int) -> bool:
     """True iff ``n > 0`` and ``n`` is a power of 2."""
     return n > 0 and (n & (n - 1)) == 0
@@ -380,9 +411,19 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # we always nest. The ``nest_map_bodies`` knob is kept on the constructor for harness
         # parity with the legacy 1D path but is otherwise unused.
         passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
+        # Embedded wrapper -- expands body NSDFG boundary memlets to the full source-array
+        # subset (design section 2.4). MUST run between Nest and the walker; see the class
+        # docstring for the rationale.
+        passes.append(_RunExpandNestedSDFGInputs())
+        # Conceptual order (per user direction 2026-06-09):
+        #   MarkTileDims                (tag the outer map with TileDimSpec)
+        #   StrideMapByTileWidths       (map step 1 -> W; iter_var now means "tile start")
+        #   InferBodyTransientShapes    (widen memlets + intermediate transient descriptors
+        #                                AFTER stride so iter_var is in tile-start form)
+        #   GenerateTileIterationMask   (mask reflects the final tile shape; runs after
+        #                                stride + widening so it sees the canonical body)
         passes += [
             MarkTileDims(widths=widths_t),
-            GenerateTileIterationMask(widths=widths_t),
             StrideMapByTileWidths(widths=widths_t),
         ]
         # Pre-emit: split a body-NSDFG boundary connector whose propagated
@@ -403,19 +444,23 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            # PROACTIVE forward-analysis pre-shape of body-NSDFG transients (per user
-            # direction 2026-06-09; design section 6.2). Classifies every non-transient
-            # AN's access pattern, propagates forward through tasklets, and pre-shapes
-            # every transient to Scalar / length-1 (when chain reads only CONSTANT
-            # sources) or full (widths,) (otherwise). Runs BEFORE the walker so the
-            # walker sees right-shaped intermediate transients and no post-hoc widening
-            # is needed in the converter.
+            # PROACTIVE forward-analysis widening pre-pass (per user direction 2026-06-09;
+            # design section 6.2). Runs AFTER StrideMapByTileWidths (iter_var means "tile
+            # start") and BEFORE GenerateTileIterationMask + walker + converter. Widens:
+            #   * Non-transient AN edge memlets: ``A[ii]`` -> ``A[ii:ii+W]`` for non-CONSTANT
+            #     classifications. CONSTANT / Scalar / Symbol stay as-is.
+            #   * Intermediate transient descriptors: length-1 -> ``(widths,)`` when
+            #     producer chain reaches a tile source; Scalar / length-1 otherwise.
             InferBodyTransientShapes(widths=widths_t),
+            # Mask reflects the FINAL tile shape; emit after stride + widening so the body
+            # is in canonical tile form.
+            GenerateTileIterationMask(widths=widths_t),
             PreparePerLaneIndices(widths=widths_t),
+            # Walker sees already-widened memlets + the mask in scope; it can wire
+            # has_mask + _mask onto TileLoad / TileStore lib nodes.
             StageInsideBody(widths=widths_t),
-            # Convert in-body binary tasklets (``_o = _a <op> _b``) to TileBinop lib nodes so the
-            # post-expansion pure-loop body operates on tile-shape register transients (design
-            # section 5.1 + section 6.7). First-slice scope: BINARY Tile+Tile only.
+            # Converter sees the walker's lib nodes + the mask in scope; it sets
+            # has_mask=True + wires _mask onto Tile{Binop, Unop, ITE, Reduce} lib nodes.
             ConvertTaskletsToTileOps(widths=widths_t),
         ]
         super().__init__(passes)
@@ -460,28 +505,13 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # Inline wrapper NSDFGs + collapse adjacent perfectly-nested single-param maps so the K-dim
         # tile spans K genuine map dims.
         normalize_loop_nests(sdfg)
-        # Two-half pipeline split: the walker (StageInsideBody) walks body NSDFGs which only
-        # exist AFTER NestInnermostMapBodyIntoNSDFG runs. ExpandNestedSDFGInputs MUST run
-        # AFTER NestInnermostMapBodyIntoNSDFG so it widens the per-iteration boundary memlets
-        # to the full source-array subset (design section 2.4); otherwise the walker classifies
-        # inner ``A[0]`` memlets as CONSTANT and stages them via Scalar bridges, breaking
-        # numerics. Run the passes list up through the nest pass, then ExpandNestedSDFGInputs,
-        # then the rest.
-        try:
-            nest_idx = next(i for i, p in enumerate(self.passes) if isinstance(p, NestInnermostMapBodyIntoNSDFG))
-        except StopIteration:
-            nest_idx = -1
-        if nest_idx >= 0:
-            head, tail = self.passes[:nest_idx + 1], self.passes[nest_idx + 1:]
-            self.passes = head
-            super().apply_pass(sdfg, pipeline_results)
-            sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
-            self.passes = tail
-            result = super().apply_pass(sdfg, pipeline_results)
-            self.passes = head + tail
-        else:
-            sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
-            result = super().apply_pass(sdfg, pipeline_results)
+        # ExpandNestedSDFGInputs runs as a Pass embedded in the pipeline (see
+        # ``_RunExpandNestedSDFGInputs`` constructed at __init__) -- it has to fire AFTER
+        # ``NestInnermostMapBodyIntoNSDFG`` (which mints the body NSDFG) and BEFORE
+        # ``MarkTileDims`` / the walker. Embedding it as a Pass lets the standard
+        # ``ppl.Pipeline.apply_pass`` machinery run the whole list in order without the
+        # caller needing to split-and-rerun.
+        result = super().apply_pass(sdfg, pipeline_results)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
         # to the caller — the SDFG returns with tile lib nodes still
         # present (for inspection / saving / further transformations).

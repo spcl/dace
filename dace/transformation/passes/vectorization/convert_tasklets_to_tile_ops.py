@@ -336,6 +336,47 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     return out_conn, cond, t, e
         return None
 
+    def _detect_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
+        """If ``tasklet`` body is exactly ``_o = _a`` (a trivial assign), return
+        ``(out_conn, a_conn)``. Otherwise ``None``.
+        """
+        if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
+            return None
+        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = body.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        a_conn = next(iter(tasklet.in_connectors))
+        if body in (f"{out_conn} = {a_conn}", f"{out_conn} = ({a_conn})"):
+            return out_conn, a_conn
+        return None
+
+    def _convert_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        """Replace a trivial ``_o = _a`` tasklet with a direct AN-to-AN edge.
+
+        Both edges already have matching tile-shape descriptors (the pre-pass ensures
+        this); the tasklet is doing nothing semantically. DaCe handles array-to-array
+        memlet copies natively.
+
+        The new edge's memlet references the SOURCE bridge (the read side); DaCe handles
+        the destination via the edge endpoint. Memlets typed against the destination
+        confuse the SDFG validator (which checks data-vs-endpoint consistency).
+        """
+        out_conn, a_conn = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if a_conn not in in_edges or not out_edges:
+            return False
+        a_edge = in_edges[a_conn]
+        out_edge = out_edges[0]
+        # Use the input-side memlet (which references the source bridge / AN) so the new
+        # edge's memlet.data matches the new edge's source.
+        inner_state.add_edge(a_edge.src, a_edge.src_conn, out_edge.dst, out_edge.dst_conn,
+                             dace.Memlet.from_memlet(a_edge.data))
+        for edge in list(in_edges.values()) + out_edges:
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
+
     def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet) -> bool:
         """Replace ``tasklet`` with a :class:`TileBinop` / :class:`TileUnop` /
         :class:`TileITE` / :class:`TileReduce` lib node if its body matches a
@@ -348,9 +389,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         :returns: ``True`` on rewrite.
         """
-        # Unop first (single in-connector unary call); then binop-with-symbol (single
-        # in-connector but body has a Symbol second operand); then reduction (2 in conns,
-        # in-place RMW); then plain binop (2 in conns, non-RMW).
+        # Assign first (trivial ``_o = _a``); then unop (single in-connector unary call);
+        # then binop-with-symbol (single in-connector but body has a Symbol second operand);
+        # then reduction (2 in conns, in-place RMW); then plain binop (2 in conns, non-RMW).
+        assign = self._detect_assign(tasklet)
+        if assign is not None:
+            return self._convert_assign(inner_state, tasklet, assign)
         unop = self._detect_unop(tasklet)
         if unop is not None:
             return self._convert_unop(inner_state, tasklet, unop)
