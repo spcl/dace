@@ -31,6 +31,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.clear_per_lane_index_symbols import ClearPerLaneIndexSymbols
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
@@ -403,6 +404,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         passes += [
             PreparePerLaneIndices(widths=widths_t),
             StageInsideBody(widths=widths_t),
+            # Convert in-body binary tasklets (``_o = _a <op> _b``) to TileBinop lib nodes so the
+            # post-expansion pure-loop body operates on tile-shape register transients (design
+            # section 5.1 + section 6.7). First-slice scope: BINARY Tile+Tile only.
+            ConvertTaskletsToTileOps(widths=widths_t),
         ]
         super().__init__(passes)
         self._widths = widths_t

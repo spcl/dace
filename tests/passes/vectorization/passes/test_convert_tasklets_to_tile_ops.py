@@ -1,0 +1,101 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Unit tests for :class:`ConvertTaskletsToTileOps` (first slice: binary Tile+Tile)."""
+import pytest
+
+import dace
+from dace.libraries.tileops import TileBinop
+from dace.memlet import Memlet
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (ConvertTaskletsToTileOps)
+
+
+def _build_inner_body_with_binop(op="+"):
+    """Build an SDFG with one tile-tagged Map containing a body NSDFG whose state
+    has a single binary tasklet ``_o = _a <op> _b``."""
+    sdfg = dace.SDFG("binop_fixture")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("B", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("B", (8, ), dace.float64, transient=False)
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    instate = inner.add_state("body")
+    a_inner = instate.add_access("A")
+    b_inner = instate.add_access("B")
+    c_inner = instate.add_access("C")
+    if op in ("min", "max"):
+        body_str = f"_o = {op}(_a, _b)"
+    else:
+        body_str = f"_o = _a {op} _b"
+    tasklet = instate.add_tasklet("body_tasklet", {"_a", "_b"}, {"_o"}, body_str)
+    instate.add_edge(a_inner, None, tasklet, "_a", Memlet("A[ii]"))
+    instate.add_edge(b_inner, None, tasklet, "_b", Memlet("B[ii]"))
+    instate.add_edge(tasklet, "_o", c_inner, None, Memlet("C[ii]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A", "B"}, {"C"}, symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    b_outer = state.add_access("B")
+    c_outer = state.add_access("C")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(b_outer, me, nsdfg, dst_conn="B", memlet=Memlet("B[0:8]"))
+    state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
+    return sdfg, inner
+
+
+@pytest.mark.parametrize("op", ["+", "-", "*", "/", "min", "max"])
+def test_converter_replaces_binary_tasklet_with_tilebinop(op):
+    """Each supported op gets converted; the inner state has exactly one TileBinop after."""
+    sdfg, inner = _build_inner_body_with_binop(op=op)
+    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    body_state = next(s for s in inner.states())
+    binops = [n for n in body_state.nodes() if isinstance(n, TileBinop)]
+    assert len(binops) == 1, f"expected exactly one TileBinop, got {len(binops)}"
+    assert binops[0].op == op
+
+
+def test_converter_preserves_memlets_on_rewired_edges():
+    """Rewired ``_a`` / ``_b`` / ``_c`` memlets keep their per-iteration subset shape."""
+    sdfg, inner = _build_inner_body_with_binop(op="+")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    a_edge = next(e for e in body_state.in_edges(binop) if e.dst_conn == "_a")
+    b_edge = next(e for e in body_state.in_edges(binop) if e.dst_conn == "_b")
+    c_edge = next(e for e in body_state.out_edges(binop) if e.src_conn == "_c")
+    assert str(a_edge.data) == "A[ii]"
+    assert str(b_edge.data) == "B[ii]"
+    assert str(c_edge.data) == "C[ii]"
+
+
+def test_converter_skips_non_recognised_tasklet():
+    """A tasklet with an unsupported op (e.g. ``//``) is left intact."""
+    sdfg, inner = _build_inner_body_with_binop(op="+")
+    # Mutate the tasklet body to an unrecognised form post-construction.
+    body_state = next(s for s in inner.states())
+    tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    tasklet.code = dace.properties.CodeBlock("_o = _a // _b")
+    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    assert result is None
+    # Tasklet still present, no TileBinop.
+    body_state = next(s for s in inner.states())
+    assert any(isinstance(n, dace.nodes.Tasklet) for n in body_state.nodes())
+    assert not any(isinstance(n, TileBinop) for n in body_state.nodes())
+
+
+def test_converter_empty_sdfg_returns_none():
+    """SDFG with no tile-tagged map yields zero conversions -> ``None``."""
+    sdfg = dace.SDFG("empty")
+    sdfg.add_state("s")
+    assert ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {}) is None
+
+
+def test_converter_refuses_invalid_widths():
+    """Constructor refuses K outside {1, 2, 3}."""
+    with pytest.raises(ValueError, match=r"widths length"):
+        ConvertTaskletsToTileOps(widths=())
+    with pytest.raises(ValueError, match=r"widths length"):
+        ConvertTaskletsToTileOps(widths=(8, 8, 8, 8))
