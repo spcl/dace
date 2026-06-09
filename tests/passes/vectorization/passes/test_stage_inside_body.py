@@ -457,3 +457,73 @@ def test_walker_rewires_consumers_to_bridge_for_constant_branch():
     desc = inner.arrays[src.data]
     assert isinstance(desc, dace.data.Scalar) and desc.transient, \
         "expected consumer to read from Scalar bridge transient"
+
+
+# ---- write-side staging (TileStore) ---------------------------------------
+
+
+def _build_linear_write_fixture():
+    """Body NSDFG: ``B[ii] = src_t[0]`` -- LINEAR write into a non-transient B.
+
+    Models the post-walker shape for an output store: the body writes a
+    tile-shape value into the non-transient AN; the walker should mint a
+    bridge transient + TileStore between the writer and the AN.
+    """
+    sdfg = dace.SDFG("walker_write_fixture")
+    sdfg.add_array("B", (32, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body_nsdfg")
+    inner.add_array("B", (32, ), dace.float64, transient=False)
+    inner.add_array("src_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    src_inner = instate.add_access("src_t")
+    b_inner = instate.add_access("B")
+    tasklet = instate.add_tasklet("st", {"_s"}, {"_b"}, "_b = _s")
+    instate.add_edge(src_inner, None, tasklet, "_s", Memlet("src_t[0]"))
+    instate.add_edge(tasklet, "_b", b_inner, None, Memlet("B[ii]"))
+    nsdfg = state.add_nested_sdfg(inner, set(), {"B"}, symbol_mapping={"ii": "ii"})
+    b_outer = state.add_access("B")
+    state.add_nedge(me, nsdfg, Memlet())
+    state.add_memlet_path(nsdfg, mx, b_outer, src_conn="B", memlet=Memlet("B[0:32]"))
+    return sdfg, inner
+
+
+def test_walker_stages_linear_write_via_tilestore():
+    """LINEAR write ``B[ii] = ...`` stages through a tile bridge + TileStore."""
+    from dace.libraries.tileops import TileStore
+    sdfg, inner = _build_linear_write_fixture()
+    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    assert result is not None and result >= 1
+    body_state = next(s for s in inner.states())
+    stores = [n for n in body_state.nodes() if isinstance(n, TileStore)]
+    assert len(stores) == 1, f"expected one TileStore, got {len(stores)}"
+
+
+def test_walker_rewires_producers_to_bridge_for_tile_write():
+    """The original tasklet's ``_b`` connector writes to a bridge transient, not directly to B."""
+    sdfg, inner = _build_linear_write_fixture()
+    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    out_edges = [e for e in body_state.out_edges(tasklet) if e.src_conn == "_b"]
+    assert len(out_edges) == 1
+    dst = out_edges[0].dst
+    assert isinstance(dst, dace.nodes.AccessNode)
+    desc = inner.arrays[dst.data]
+    assert desc.transient, "expected the tasklet to write into a bridge transient, not the original AN"
+    assert tuple(desc.shape) == (8, )
+
+
+def test_walker_tilestore_feeds_into_original_an():
+    """The TileStore's ``_dst`` edge writes into the original non-transient AN."""
+    from dace.libraries.tileops import TileStore
+    sdfg, inner = _build_linear_write_fixture()
+    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    store = next(n for n in body_state.nodes() if isinstance(n, TileStore))
+    dst_edges = [e for e in body_state.out_edges(store) if e.src_conn == "_dst"]
+    assert len(dst_edges) == 1
+    target = dst_edges[0].dst
+    assert isinstance(target, dace.nodes.AccessNode)
+    assert target.data == "B"

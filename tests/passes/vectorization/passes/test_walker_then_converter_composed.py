@@ -173,3 +173,51 @@ def test_walker_extends_then_converter_replaces_all_recognised_tasklets():
         assert _count(
             body,
             expected_node_type) >= 1, (f"{builder.__name__}: expected a {expected_node_type.__name__} after conversion")
+
+
+def _build_full_io_binop_kernel():
+    """Body NSDFG: ``B[ii] = A[ii] + A[ii]`` -- non-transient READ A and WRITE B together."""
+    sdfg = dace.SDFG("compose_full_io")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("B", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("B", (8, ), dace.float64, transient=False)
+    instate = inner.add_state("body")
+    a_inner = instate.add_access("A")
+    b_inner = instate.add_access("B")
+    tasklet = instate.add_tasklet("t", {"_a", "_a2"}, {"_b"}, "_b = _a + _a2")
+    instate.add_edge(a_inner, None, tasklet, "_a", Memlet("A[ii]"))
+    instate.add_edge(a_inner, None, tasklet, "_a2", Memlet("A[ii]"))
+    instate.add_edge(tasklet, "_b", b_inner, None, Memlet("B[ii]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"B"}, symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    b_outer = state.add_access("B")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(nsdfg, mx, b_outer, src_conn="B", memlet=Memlet("B[0:8]"))
+    return sdfg, inner
+
+
+def test_walker_extends_load_and_store_then_converter_replaces_tasklet():
+    """End-to-end: walker stages BOTH read (TileLoad) AND write (TileStore) sides, then
+    converter replaces the in-body binop tasklet with TileBinop. The body NSDFG should
+    have:
+
+    * 0 raw tasklets,
+    * >= 1 TileLoad on the read boundary,
+    * exactly 1 TileStore on the write boundary,
+    * exactly 1 TileBinop in the middle.
+    """
+    from dace.libraries.tileops import TileLoad, TileStore
+    sdfg, inner = _build_full_io_binop_kernel()
+    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body = _body_state(inner)
+    assert _count(body, dace.nodes.Tasklet) == 0, "expected no raw tasklets after composed pipeline"
+    assert _count(body, TileLoad) >= 1, "expected at least one TileLoad on the read boundary"
+    assert _count(body, TileStore) == 1, "expected exactly one TileStore on the write boundary"
+    assert _count(body, TileBinop) == 1, "expected exactly one TileBinop in the middle"
