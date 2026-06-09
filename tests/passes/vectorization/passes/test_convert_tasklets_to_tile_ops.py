@@ -224,3 +224,84 @@ def test_converter_ite_wires_cond_t_e_connectors_correctly():
     assert str(t_edge.data) == "T[ii]"
     assert str(e_edge.data) == "E[ii]"
     assert str(out_edge.data) == "O[ii]"
+
+
+# ---- operand-kind detection (Scalar broadcast) ---------------------------
+
+
+def _build_inner_body_with_tile_plus_scalar(op="+"):
+    """Binop with tile-shape left + Scalar right (the post-walker shape for stage_constant)."""
+    sdfg = dace.SDFG("mixed_kind_fixture")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner.add_array("A_tile", (8, ), dace.float64, transient=True)
+    inner.add_scalar("S_bridge", dace.float64, transient=True)
+    instate = inner.add_state("body")
+    tile_an = instate.add_access("A_tile")
+    scalar_an = instate.add_access("S_bridge")
+    c_inner = instate.add_access("C")
+    tasklet = instate.add_tasklet("body_tasklet", {"_a", "_b"}, {"_o"}, f"_o = _a {op} _b")
+    instate.add_edge(tile_an, None, tasklet, "_a", Memlet("A_tile[ii]"))
+    instate.add_edge(scalar_an, None, tasklet, "_b", Memlet("S_bridge"))
+    instate.add_edge(tasklet, "_o", c_inner, None, Memlet("C[ii]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"C"}, symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    c_outer = state.add_access("C")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
+    return sdfg, inner
+
+
+def test_converter_classifies_scalar_bridge_operand_as_scalar_kind():
+    """Binop right-reads a Scalar transient -> TileBinop.kind_b == "Scalar"."""
+    sdfg, inner = _build_inner_body_with_tile_plus_scalar(op="+")
+    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.kind_a == "Tile"
+    assert binop.kind_b == "Scalar"
+
+
+def test_converter_default_tile_kind_when_both_sources_are_tile_shape():
+    """Both reads from tile-shape -> both kinds default to Tile."""
+    sdfg, inner = _build_inner_body_with_binop(op="+")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.kind_a == "Tile"
+    assert binop.kind_b == "Tile"
+
+
+def test_converter_unop_with_scalar_source_sets_scalar_kind():
+    """Unary op reading a Scalar bridge -> TileUnop.kind_a == "Scalar"."""
+    from dace.libraries.tileops import TileUnop
+    sdfg = dace.SDFG("unop_scalar_fixture")
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body")
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner.add_scalar("S_bridge", dace.float64, transient=True)
+    instate = inner.add_state("body")
+    scalar_an = instate.add_access("S_bridge")
+    c_inner = instate.add_access("C")
+    tasklet = instate.add_tasklet("body_tasklet", {"_a"}, {"_o"}, "_o = abs(_a)")
+    instate.add_edge(scalar_an, None, tasklet, "_a", Memlet("S_bridge"))
+    instate.add_edge(tasklet, "_o", c_inner, None, Memlet("C[ii]"))
+    nsdfg = state.add_nested_sdfg(inner, set(), {"C"}, symbol_mapping={"ii": "ii"})
+    c_outer = state.add_access("C")
+    state.add_memlet_path(me, nsdfg, memlet=Memlet())
+    state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
+
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
+    assert unop.kind_a == "Scalar"

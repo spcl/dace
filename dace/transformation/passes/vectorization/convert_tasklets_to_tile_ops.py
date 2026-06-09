@@ -174,6 +174,35 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         return out_conn, a_conn, op
         return None
 
+    def _operand_kind(self, inner_state: SDFGState, edge) -> str:
+        """Classify the operand kind for the lib node based on the source descriptor.
+
+        Per design section 6.5: a CONSTANT-only staged source is a Scalar bridge or a
+        length-1 Array; the lib node consuming it sees ``kind="Scalar"`` and emits a
+        hardware splat to fill the lane register. Tile-shape staged sources (LINEAR /
+        AFFINE / REPLICATE / MODULAR / GATHER) wire as ``kind="Tile"``.
+
+        :param inner_state: Inner SDFGState holding the edge.
+        :param edge: The wired in-edge to the tasklet / lib node connector.
+        :returns: ``"Scalar"`` if the source's descriptor is a Scalar or a length-1
+            Array; ``"Tile"`` otherwise.
+        """
+        import dace.data as dd
+        if edge.data is None or edge.data.data is None:
+            return "Tile"
+        try:
+            desc = inner_state.sdfg.arrays[edge.data.data]
+        except KeyError:
+            return "Tile"
+        if isinstance(desc, dd.Scalar):
+            return "Scalar"
+        if isinstance(desc, dd.Array):
+            shape = tuple(desc.shape)
+            # Single-element Array (shape == (1,) or all 1s) is treated as Scalar broadcast.
+            if all(bool(dace.symbolic.simplify(s - 1) == 0) for s in shape):
+                return "Scalar"
+        return "Tile"
+
     def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
         """If ``tasklet`` is a ternary if-then-else body, return
         ``(out_conn, cond_conn, t_conn, e_conn)``. Otherwise ``None``.
@@ -247,10 +276,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if a_conn not in in_edges or b_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
-        binop = TileBinop(name=f"{tasklet.label}_binop", widths=tuple(self.widths), op=op)
-        inner_state.add_node(binop)
         a_edge = in_edges[a_conn]
         b_edge = in_edges[b_conn]
+        # Operand-kind classification from the source's descriptor: Scalar / length-1 Array
+        # source = broadcast Scalar operand kind on the lib node (design section 6.5).
+        kind_a = self._operand_kind(inner_state, a_edge)
+        kind_b = self._operand_kind(inner_state, b_edge)
+        binop = TileBinop(name=f"{tasklet.label}_binop", widths=tuple(self.widths), op=op, kind_a=kind_a, kind_b=kind_b)
+        inner_state.add_node(binop)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
@@ -266,9 +299,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if a_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
-        unop = TileUnop(name=f"{tasklet.label}_unop", widths=tuple(self.widths), op=op)
-        inner_state.add_node(unop)
         a_edge = in_edges[a_conn]
+        kind_a = self._operand_kind(inner_state, a_edge)
+        unop = TileUnop(name=f"{tasklet.label}_unop", widths=tuple(self.widths), op=op, kind_a=kind_a)
+        inner_state.add_node(unop)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
