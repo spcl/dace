@@ -29,7 +29,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop, TileITE, TileUnop
+from dace.libraries.tileops import TileBinop, TileITE, TileReduce, TileUnop
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -38,6 +38,10 @@ from dace.transformation.passes.vectorization.utils.map_predicates import is_inn
 
 #: Subset of binary operators that map directly onto :class:`TileBinop`.
 _SUPPORTED_BINOPS = {"+", "-", "*", "/", "min", "max"}
+
+#: Subset of reduction operators that map directly onto :class:`TileReduce`.
+#: Subset of :data:`_SUPPORTED_BINOPS` excluding non-associative ``-`` and ``/``.
+_SUPPORTED_REDUCE_OPS = {"+", "*", "min", "max"}
 
 #: Mapping ``tasklet-body form`` -> ``TileUnop op label``. Each value names the
 #: ``TileUnop.op`` keyword to instantiate; each key form is matched against the
@@ -203,6 +207,55 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 return "Scalar"
         return "Tile"
 
+    def _detect_reduction(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
+        """If ``tasklet`` is an in-place RMW reduction body ``_acc = _acc <op> _val`` (or
+        ``_acc = _val <op> _acc`` for commutative ops), return ``(acc_conn, val_conn, op)``.
+        Otherwise ``None``.
+
+        Detection criteria:
+
+        * 2 in-connectors, 1 out-connector.
+        * The output connector name matches one of the in-connector names (in-place RMW).
+        * Body is exactly ``<out> = <out> <op> <other>`` (or the symmetric form) with op
+          in :data:`_SUPPORTED_REDUCE_OPS` (associative subset).
+
+        Per the user direction (2026-06-09): a tile -> scalar reduction is the natural
+        store-with-reduction case; the in-body accumulator pattern is the entry point. The
+        post-walker shape places the tile-shape input on the ``_val`` edge (from a bridge)
+        and the scalar accumulator on the ``_acc`` edges. ``TileReduce`` lowers the
+        accumulation across the full tile to a single scalar write at the boundary.
+        """
+        if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
+            return None
+        out_conn = next(iter(tasklet.out_connectors))
+        if out_conn not in tasklet.in_connectors:
+            return None
+        # The "other" in-connector is the tile-shape input feeding the reduction.
+        other_conns = [c for c in tasklet.in_connectors if c != out_conn]
+        if len(other_conns) != 1:
+            return None
+        other_conn = other_conns[0]
+        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = body.strip().rstrip(";").strip()
+        for op in _SUPPORTED_REDUCE_OPS:
+            if op in ("min", "max"):
+                forms = (
+                    f"{out_conn} = {op}({out_conn}, {other_conn})",
+                    f"{out_conn} = ({op}({out_conn}, {other_conn}))",
+                    f"{out_conn} = {op}({other_conn}, {out_conn})",
+                    f"{out_conn} = ({op}({other_conn}, {out_conn}))",
+                )
+            else:
+                forms = (
+                    f"{out_conn} = {out_conn} {op} {other_conn}",
+                    f"{out_conn} = ({out_conn} {op} {other_conn})",
+                    f"{out_conn} = {other_conn} {op} {out_conn}",
+                    f"{out_conn} = ({other_conn} {op} {out_conn})",
+                )
+            if body in forms:
+                return out_conn, other_conn, op
+        return None
+
     def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
         """If ``tasklet`` is a ternary if-then-else body, return
         ``(out_conn, cond_conn, t_conn, e_conn)``. Otherwise ``None``.
@@ -230,14 +283,22 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet) -> bool:
         """Replace ``tasklet`` with a :class:`TileBinop` / :class:`TileUnop` /
-        :class:`TileITE` lib node if its body matches a recognised op shape.
+        :class:`TileITE` / :class:`TileReduce` lib node if its body matches a
+        recognised op shape.
+
+        Dispatch order: unary (1 in) -> reduction (2 in, in-place RMW) -> binop
+        (2 in, non-RMW) -> ITE (3 in). The reduction check runs BEFORE binop so
+        an RMW accumulator pattern ``_acc = _acc + _val`` is never miscaptured
+        as a generic ``TileBinop(+)``.
 
         :returns: ``True`` on rewrite.
         """
-        # Try unary first (single in connector) -- cheaper detection short-circuits.
         unop = self._detect_unop(tasklet)
         if unop is not None:
             return self._convert_unop(inner_state, tasklet, unop)
+        reduction = self._detect_reduction(tasklet)
+        if reduction is not None:
+            return self._convert_reduction(inner_state, tasklet, reduction)
         binop = self._detect_binop(tasklet)
         if binop is not None:
             return self._convert_binop(inner_state, tasklet, binop)
@@ -245,6 +306,30 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if ite is not None:
             return self._convert_ite(inner_state, tasklet, ite)
         return False
+
+    def _convert_reduction(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        acc_conn, val_conn, op = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = {e.src_conn: e for e in inner_state.out_edges(tasklet)}
+        if acc_conn not in in_edges or val_conn not in in_edges or acc_conn not in out_edges:
+            return False
+        val_edge = in_edges[val_conn]
+        out_edge = out_edges[acc_conn]
+        reduce_node = TileReduce(name=f"{tasklet.label}_reduce", widths=tuple(self.widths), op=op)
+        inner_state.add_node(reduce_node)
+        # TileReduce connectors: _src (tile input) -> _dst (scalar accumulator). The acc-input
+        # edge dangles: TileReduce reads no separate scalar accumulator -- it accumulates over
+        # the full tile in one shot. If the original tasklet's acc_in edge was the initial
+        # load of the accumulator from a parent state, the inner_sdfg.states() walk will leave
+        # it intact on the source AN; the new _dst edge writes the reduction result on top.
+        inner_state.add_edge(val_edge.src, val_edge.src_conn, reduce_node, "_src",
+                             dace.Memlet.from_memlet(val_edge.data))
+        inner_state.add_edge(reduce_node, "_dst", out_edge.dst, out_edge.dst_conn,
+                             dace.Memlet.from_memlet(out_edge.data))
+        for edge in list(in_edges.values()) + list(out_edges.values()):
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
 
     def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         out_conn, cond_conn, t_conn, e_conn = detected

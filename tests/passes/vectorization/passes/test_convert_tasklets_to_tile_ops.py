@@ -305,3 +305,77 @@ def test_converter_unop_with_scalar_source_sets_scalar_kind():
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
     assert unop.kind_a == "Scalar"
+
+
+# ---- reduction (TileReduce) ---------------------------------------------
+
+
+def _build_inner_body_with_reduction(op="+"):
+    """Build a body NSDFG with an in-place RMW accumulator tasklet ``_acc = _acc <op> _val``."""
+    _OP_TAG = {"+": "add", "*": "mul", "min": "min", "max": "max"}
+    sdfg = dace.SDFG(f"reduce_{_OP_TAG[op]}_fixture")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("Acc", (1, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("Acc", (1, ), dace.float64, transient=False)
+    instate = inner.add_state("body")
+    a_inner = instate.add_access("A")
+    acc_inner_in = instate.add_access("Acc")
+    acc_inner_out = instate.add_access("Acc")
+    if op in ("min", "max"):
+        body_str = f"_acc = {op}(_acc, _val)"
+    else:
+        body_str = f"_acc = _acc {op} _val"
+    tasklet = instate.add_tasklet("body_tasklet", {"_acc", "_val"}, {"_acc"}, body_str)
+    instate.add_edge(a_inner, None, tasklet, "_val", Memlet("A[ii]"))
+    instate.add_edge(acc_inner_in, None, tasklet, "_acc", Memlet("Acc[0]"))
+    instate.add_edge(tasklet, "_acc", acc_inner_out, None, Memlet("Acc[0]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A", "Acc"}, {"Acc"}, symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    acc_outer_in = state.add_access("Acc")
+    acc_outer_out = state.add_access("Acc")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(acc_outer_in, me, nsdfg, dst_conn="Acc", memlet=Memlet("Acc[0]"))
+    state.add_memlet_path(nsdfg, mx, acc_outer_out, src_conn="Acc", memlet=Memlet("Acc[0]"))
+    return sdfg, inner
+
+
+@pytest.mark.parametrize("op", ["+", "*", "min", "max"])
+def test_converter_replaces_inplace_rmw_tasklet_with_tilereduce(op):
+    """Each supported associative op gets converted to a TileReduce."""
+    from dace.libraries.tileops import TileReduce
+    sdfg, inner = _build_inner_body_with_reduction(op=op)
+    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    body_state = next(s for s in inner.states())
+    reduces = [n for n in body_state.nodes() if isinstance(n, TileReduce)]
+    assert len(reduces) == 1
+    assert reduces[0].op == op
+
+
+def test_converter_reduction_wires_src_and_dst_correctly():
+    """``_val`` (tile input) -> TileReduce._src; ``_acc`` (accumulator) -> TileReduce._dst."""
+    from dace.libraries.tileops import TileReduce
+    sdfg, inner = _build_inner_body_with_reduction(op="+")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    reduce_node = next(n for n in body_state.nodes() if isinstance(n, TileReduce))
+    src_edge = next(e for e in body_state.in_edges(reduce_node) if e.dst_conn == "_src")
+    dst_edge = next(e for e in body_state.out_edges(reduce_node) if e.src_conn == "_dst")
+    assert str(src_edge.data) == "A[ii]"
+    assert str(dst_edge.data) == "Acc[0]"
+
+
+def test_converter_skips_non_inplace_binop():
+    """Non-RMW binop ``_o = _a + _b`` is NOT recognised as a reduction; stays a TileBinop."""
+    from dace.libraries.tileops import TileBinop, TileReduce
+    sdfg, inner = _build_inner_body_with_binop(op="+")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    assert not any(isinstance(n, TileReduce) for n in body_state.nodes())
+    assert any(isinstance(n, TileBinop) for n in body_state.nodes())
