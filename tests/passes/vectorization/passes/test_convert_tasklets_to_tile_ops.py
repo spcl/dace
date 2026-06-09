@@ -619,3 +619,82 @@ def test_converter_reuses_same_mask_producer_an_for_scheduling():
     mask_edge = next(e for e in body_state.in_edges(binop) if e.dst_conn == "_mask")
     assert mask_edge.src is producer_an, \
         "consumer _mask edge must reuse the TileMaskGen output AN (not a fresh access)"
+
+
+# ---- Symbol operand: data-independent vs lane-id-dependent -----------------
+
+
+def _build_body_with_zero_in_conn(body_str, add_symbol_N=True):
+    """Build a body NSDFG whose tasklet has 0 input connectors (purely Symbol-driven)."""
+    sdfg = dace.SDFG("sym_only_fixture")
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    if add_symbol_N:
+        sdfg.add_symbol("N", dace.int64)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body")
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    if add_symbol_N:
+        inner.add_symbol("N", dace.int64)
+    instate = inner.add_state("body")
+    c_in = instate.add_access("C")
+    tasklet = instate.add_tasklet("body_t", set(), {"_o"}, body_str)
+    instate.add_edge(tasklet, "_o", c_in, None, Memlet("C[ii]"))
+    nsdfg = state.add_nested_sdfg(inner,
+                                  set(), {"C"},
+                                  symbol_mapping={
+                                      "ii": "ii",
+                                      "N": "N"
+                                  } if add_symbol_N else {"ii": "ii"})
+    c_outer = state.add_access("C")
+    state.add_nedge(me, nsdfg, Memlet())
+    state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
+    return sdfg, inner
+
+
+def test_converter_emits_tileunop_with_symbol_invariant():
+    """``_o = abs(N + 1)`` (N invariant) -> TileUnop(kind_a=Symbol, expr_a) with NO _a edge."""
+    from dace.libraries.tileops import TileUnop
+    sdfg, inner = _build_body_with_zero_in_conn("_o = abs(N + 1)")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
+    assert unop.kind_a == "Symbol"
+    assert "N" in (unop.expr_a or "")
+    # No _a in-edge.
+    in_edges = [e for e in body_state.in_edges(unop) if e.dst_conn == "_a"]
+    assert len(in_edges) == 0
+
+
+def test_converter_materialises_tile_for_lane_id_dependent_symbol_in_unop():
+    """``_o = abs(ii + 1)`` -> the materialiser produces a per-lane tile; TileUnop reads
+    from it as a Tile operand. Validates the user's "lane-id-symbol -> tile" path."""
+    from dace.libraries.tileops import TileUnop
+    sdfg, inner = _build_body_with_zero_in_conn("_o = abs(ii + 1)", add_symbol_N=False)
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
+    assert unop.kind_a == "Tile", f"expected Tile (materialised lane-id), got {unop.kind_a}"
+    in_edges = [e for e in body_state.in_edges(unop) if e.dst_conn == "_a"]
+    assert len(in_edges) == 1, "expected an _a edge wired from the materialised tile"
+    src = in_edges[0].src
+    assert isinstance(src, dace.nodes.AccessNode)
+
+
+def test_converter_emits_tilebinop_with_two_symbols_invariant():
+    """``_o = N + 5`` (both invariant) -> TileBinop(kind_a=Symbol, kind_b=Symbol)."""
+    sdfg, inner = _build_body_with_zero_in_conn("_o = N + 5")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.kind_a == "Symbol"
+    assert binop.kind_b == "Symbol"
+
+
+def test_converter_emits_mixed_tilebinop_with_lane_id_and_invariant_symbols():
+    """``_o = ii * N`` -> lane-id ``ii`` materialised to Tile; N stays Symbol."""
+    sdfg, inner = _build_body_with_zero_in_conn("_o = ii * N")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert {binop.kind_a, binop.kind_b} == {"Tile", "Symbol"}
