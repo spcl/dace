@@ -10,8 +10,7 @@ from typing import Optional
 
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
-                                                                                 GPUStreamSchedulingStrategy,
-                                                                                 NaiveGPUStreamScheduler)
+                                                                                 GPUStreamSchedulingStrategy)
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
 from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaultSchedulesAndStorages

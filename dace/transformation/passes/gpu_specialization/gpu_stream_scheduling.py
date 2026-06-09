@@ -20,7 +20,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import Graph, NodeT
 from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (

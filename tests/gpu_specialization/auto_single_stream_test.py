@@ -18,11 +18,9 @@ import numpy as np
 import pytest
 
 from dace.codegen import common
-from dace.sdfg import nodes
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
-                                                                                 NaiveGPUStreamScheduler)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 
 N = dace.symbol('N')
