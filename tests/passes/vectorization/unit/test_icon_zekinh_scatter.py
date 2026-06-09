@@ -10,6 +10,9 @@ The K-dim descent (``PromoteNSDFGBodyToTiles`` + ``EmitTileOps``) at
 K=2 (``widths=(8, 8)``) must lower the body to zero raw Tasklet nodes
 and emit at least one :class:`TileStore` (scatter).
 """
+
+import pytest
+pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 

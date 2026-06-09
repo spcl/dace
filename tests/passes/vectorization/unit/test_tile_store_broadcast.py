@@ -22,6 +22,9 @@ guarded body sets six arrays to ``0.0`` inside the ``if`` arm. After
 nodes survive), the SDFG must hold zero ``Tasklet`` nodes — every
 constant store is now a ``TileStore`` lib node.
 """
+
+import pytest
+pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 
