@@ -75,7 +75,10 @@ def _make_copy_skeleton(src: _ArraySpec, dst: _ArraySpec, name: str, dtype: dace
     for arr_name, spec in ((src_name, src), (dst_name, dst)):
         kwargs = {"transient": spec.transient}
         if spec.strides is not None:
-            kwargs["strides"] = spec.strides
+            # Sympify each stride so string entries (``"src_stride"``) become
+            # SDFG symbols. ``Array.validate`` rejects raw strings, and
+            # ``add_array`` only sympifies the shape, not the strides.
+            kwargs["strides"] = [dace.symbolic.pystr_to_symbolic(s) for s in spec.strides]
             kwargs["total_size"] = spec.total_size if spec.total_size is not None else int(np.prod(spec.shape))
         sdfg.add_array(arr_name, spec.shape, spec.dtype or dtype, storage=spec.storage, **kwargs)
     state = sdfg.add_state("main")
@@ -454,6 +457,44 @@ def test_copy_cuda_d2d():
     exe(gpu_A=A, gpu_B=B)
 
     cp.testing.assert_array_equal(B[50:100], A[150:200])
+
+
+@pytest.mark.gpu
+def test_copy_cuda_1d_single_element():
+    """CUDA expansion (cudaMemcpyDeviceToDevice) on GPU_Global -> GPU_Global for a single element."""
+    import cupy as cp
+
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[200],
+                   strides=["src_stride"],
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   subset="130",
+                   name="gpu_A"),
+        _ArraySpec(shape=[200],
+                   strides=["dst_stride"],
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   subset="15",
+                   name="gpu_B"),
+        implementation="MemcpyCUDA1D",
+        name="copy_cuda_1d_single_element",
+    )
+    # ``add_array`` registered the stride symbols at default int.
+    sdfg.validate()
+
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+    exe = _compile_no_copynd(sdfg)
+
+    A = cp.arange(200, dtype=cp.float64)
+    B = cp.zeros(200, dtype=cp.float64)
+
+    ref = B.copy()
+    ref[15] = A[130]
+
+    exe(gpu_A=A, gpu_B=B, src_stride=1, dst_stride=1)
+
+    cp.testing.assert_array_equal(ref, B)
 
 
 def test_copy_pure_host_to_device_rejected():

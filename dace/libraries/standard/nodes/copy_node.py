@@ -192,10 +192,14 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
             cuda2d_2d = True
         else:
             try:
-                cuda2d_2d = (s0 / s1 == w and d0 / d1 == w)
+                # ``inequal_symbols`` normalizes same-named symbols across both sides
+                # (e.g. ``N`` declared once with ``positive=True`` and once without),
+                # so the ratio check isn't defeated by sympy-assumption identity drift.
+                cuda2d_2d = (not symbolic.inequal_symbols(s0 / s1, w) and not symbolic.inequal_symbols(d0 / d1, w))
             except (TypeError, ZeroDivisionError):
                 pass
-    cuda2d_1d = (src_rank == 1 and dst_rank == 1 and in_shape_collapsed[0] == out_shape_collapsed[0])
+    cuda2d_1d = (src_rank == 1 and dst_rank == 1
+                 and not symbolic.inequal_symbols(in_shape_collapsed[0], out_shape_collapsed[0]))
     if cuda2d_2d or cuda2d_1d:
         return 'MemcpyCUDA2D'
 
@@ -239,6 +243,13 @@ def _make_expansion_sdfg(node: "CopyLibraryNode",
     sdfg = dace.SDFG(f"{node.label}_sdfg")
     sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+    # When the experimental GPU codegen has already wired the ambient stream onto this
+    # libnode (in-connector ``__dace_current_stream`` typed ``gpuStream_t``), the resulting
+    # NestedSDFG inherits that outer connector, so the inner SDFG needs a matching
+    # descriptor or NestedSDFG.validate() rejects it. The legacy codegen never adds the
+    # connector, so this branch is a no-op there.
+    if CURRENT_STREAM_NAME in node.in_connectors:
+        sdfg.add_scalar(CURRENT_STREAM_NAME, dtypes.gpuStream_t, transient=False)
 
     state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
     map_lengths = [s for s in in_subset.size() if s != 1]
@@ -303,10 +314,13 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
 
     if len(in_shape) == len(out_shape):
         # Same-rank: per-dim map params, shared access expression on both sides.
-        # Per-dim shapes must match; otherwise the shared index expression
-        # walks past the smaller side (transposes / permutations belong to a
-        # Transpose libnode, reshapes go through the rank-mismatch branch).
-        if list(in_shape) != list(out_shape):
+        # Per-dim shapes must match; otherwise the shared index expression walks past
+        # the smaller side (transposes / permutations belong to a Transpose libnode;
+        # reshapes go through the rank-mismatch branch). ``inequal_symbols`` normalizes
+        # same-named SymPy symbols with different assumption sets (e.g. ``Symbol('N',
+        # integer=True)`` vs ``Symbol('N', integer=True, positive=True)``) before
+        # comparing, so a shape mismatch is real and not a symbol-identity artifact.
+        if any(symbolic.inequal_symbols(a, b) for a, b in zip(in_shape, out_shape)):
             raise ValueError(f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
                              f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
                              f"supported -- use a Transpose libnode. Reshapes must change rank.")
@@ -392,7 +406,11 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=cuda)
-    if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+    single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
+    if single_elt:
+        # For a single element we must/can ignore the strides.
+        pass
+    elif not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
         raise ValueError(f"{label} requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
                          f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
                          f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
@@ -567,7 +585,8 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
             spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
             width = f"{sym2cpp(copy_shape[0])} * sizeof({ctype})"
             height = sym2cpp(copy_shape[1])
-        elif (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1]):
+        elif (not symbolic.inequal_symbols(src_strides[0] / src_strides[1], copy_shape[1])
+              and not symbolic.inequal_symbols(dst_strides[0] / dst_strides[1], copy_shape[1])):
             dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
             spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
             width = f"sizeof({ctype})"
