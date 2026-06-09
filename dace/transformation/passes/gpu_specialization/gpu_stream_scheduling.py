@@ -650,17 +650,20 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             if node.gpu_stream_id is None:
                 node.gpu_stream_id = 0
 
-        # AccessNodes for GPU_Global storage also need a stream id even though they aren't
-        # "consumers" in the launcher / runtime-call sense -- pool-backed transients route
-        # ``cudaMallocAsync`` / ``cudaFreeAsync`` through the AccessNode's assigned stream
-        # (see ``experimental_cuda.py``'s pool branch). Naive picks this up implicitly via WCC
-        # membership; the Auto strategy stamps stream 0 on every relevant AccessNode to match.
+        # Pool-backed transients route ``cudaMallocAsync`` / ``cudaFreeAsync`` through the
+        # AccessNode's assigned stream (see ``experimental_cuda.py``'s pool branch). Naive
+        # picks this up implicitly via WCC membership; the Auto strategy stamps stream 0 on
+        # the specific AccessNodes that the pool branch consults. Tagging *every* GPU_Global
+        # AccessNode (a previous attempt at this fix) over-tags inner-NestedSDFG AccessNodes
+        # and confuses the wiring pass's NestedSDFG propagation -- so keep the predicate
+        # narrow to the pool case.
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for node in state.nodes():
                     if not isinstance(node, nodes.AccessNode):
                         continue
-                    if node.desc(nsdfg).storage != dtypes.StorageType.GPU_Global:
+                    desc = node.desc(nsdfg)
+                    if desc.storage != dtypes.StorageType.GPU_Global or not getattr(desc, 'pool', False):
                         continue
                     assignments[node] = 0
                     if node.gpu_stream_id is None:
