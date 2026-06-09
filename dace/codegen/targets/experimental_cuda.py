@@ -23,7 +23,6 @@ from dace.codegen.target import TargetCodeGenerator, make_absolute
 
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import read_stream_assignments_from_wired_sdfg
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
@@ -122,13 +121,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # the framecode's symbol/constant cache so lookups succeed for them.
         self._rebuild_frame_symbol_cache(sdfg)
 
-        # Strategy stamps the WCC assignment dict on the SDFG; codegen
-        # consumers (memory-pool path needs AccessNode stream ids, not
-        # just wired-consumer ids) read it from there. Pre-lowered
-        # fixtures fall back to reading consumers from wired connectors.
-        gpustream_assignments = (getattr(sdfg, '_gpu_stream_assignments', None)
-                                 or read_stream_assignments_from_wired_sdfg(sdfg))
-        self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments)
+        # Stream assignment is persisted per node via ``Node.gpu_stream_id``
+        # (set by ``GPUStreamSchedulingStrategy``); the manager reads it
+        # directly so a deserialised SDFG round-trips without re-scheduling.
+        self._gpu_stream_manager = GPUStreamManager(sdfg)
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)

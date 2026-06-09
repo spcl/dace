@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU stream scheduling strategies.
 
-A strategy owns end-to-end stream lowering for one SDFG: assign a stream
-id per consumer (strategy-specific), allocate ``gpu_streams`` and wire
-connectors (shared, via :mod:`stream_lowering_helpers`), then insert sync
-tasklets (strategy-specific). Strategies act on the root SDFG only;
-nested SDFGs share its decisions and a non-root :meth:`apply_pass` raises.
+A strategy is a scheduling-only pass: it walks the SDFG and writes
+``Node.gpu_stream_id`` per relevant node. The wiring step (allocate the
+``gpu_streams`` array, wire connectors, insert sync tasklets) is owned by
+:class:`GPUStreamWiring` and runs after the strategy. Strategies act on
+the root SDFG only; nested SDFGs share its decisions and a non-root
+:meth:`apply_pass` raises.
 """
-import warnings
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
@@ -25,18 +25,18 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (S
                                                                                is_gpu_relevant_node)
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (allocate_stream_array,
-                                                                                   insert_per_node_syncs,
-                                                                                   insert_state_end_syncs,
-                                                                                   wire_stream_connectors)
+from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (insert_per_node_syncs,
+                                                                                   insert_state_end_syncs)
 
 
 class GPUStreamSchedulingStrategy(ppl.Pass):
-    """Base class for GPU stream scheduling strategies.
+    """Scheduling-only base for GPU stream strategies.
 
-    Subclasses override :meth:`assign_streams` and :meth:`insert_sync_tasklets`.
-    Allocation + connector wiring is shared between strategies and runs
-    automatically in :meth:`apply_pass` between the two strategy steps.
+    Writes ``Node.gpu_stream_id`` on every relevant node and returns. The
+    *wiring* step (gpu_streams array, connector hookup, sync tasklets) is
+    owned by :class:`GPUStreamWiring`, which runs after this pass.
+    Subclasses override :meth:`assign_streams` and :meth:`insert_sync_tasklets`
+    (the latter is called by :class:`GPUStreamWiring`, not from here).
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
@@ -45,47 +45,35 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         return {InsertExplicitGPUGlobalMemoryCopies}
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets
+        return ppl.Modifies.Nodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Dict[nodes.Node, int]:
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[Dict[nodes.Node, int]]:
         if sdfg.parent_sdfg is not None:
             raise ValueError(f"{type(self).__name__}: stream scheduling must run on the root SDFG. "
                              f"Got nested SDFG '{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). "
                              "Nested SDFGs share the root's decisions; do not invoke the strategy on them.")
-        # Self-idempotency: if streams were already wired, re-wiring would corrupt the chains.
-        # Return the cached assignment so downstream passes see the same result.
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_lowering_applied
-        if is_gpu_lowering_applied(sdfg):
-            return getattr(sdfg, '_gpu_stream_assignments', {})
-
         assignments = self.assign_streams(sdfg)
-        num_streams = max(assignments.values(), default=-1) + 1
-
-        max_concurrent = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
-        warnings.warn(
-            f"{type(self).__name__}: allocating {num_streams} stream(s) "
-            f"(max_concurrent_streams={max_concurrent}).",
-            UserWarning,
-            stacklevel=2)
-
-        allocate_stream_array(sdfg, num_streams)
-        wire_stream_connectors(sdfg, assignments)
-        self.insert_sync_tasklets(sdfg, assignments)
-
-        # Cache the full dict on the SDFG: downstream consumers (e.g. memory-pool codegen)
-        # need every WCC-coloured AccessNode's id, not just wired consumers.
-        sdfg._gpu_stream_assignments = assignments
         return assignments
 
     # Strategy-specific overrides.
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
+        """Walk the SDFG and set ``node.gpu_stream_id`` on every relevant node.
+
+        The returned dict is a convenience view used by the test suite and
+        diagnostics; the durable answer is the per-node property.
+        """
         raise NotImplementedError(f"{type(self).__name__} did not implement assign_streams(sdfg).")
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
+        """Insert sync tasklets given the assignments dict view.
+
+        Called by :class:`GPUStreamWiring`, not directly. The dict is built at
+        wiring time from ``Node.gpu_stream_id``.
+        """
         raise NotImplementedError(f"{type(self).__name__} did not implement insert_sync_tasklets(sdfg, assignments).")
 
 
@@ -196,6 +184,15 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                          gpu_stream: int):
         for component in self._weakly_connected(state):
             if not self._requires_gpu_stream(state, component):
+                continue
+            # Idempotency: if any node in the component already has a stream
+            # id (from a prior scheduler run or from deserialised state), the
+            # component is settled. Skip without touching the next-stream
+            # counter so independent components stay on independent streams.
+            preassigned = next((n.gpu_stream_id for n in component if n.gpu_stream_id is not None), None)
+            if preassigned is not None:
+                for node in component:
+                    assignments[node] = preassigned
                 continue
             assigned_before = len(assignments)
             for node in component:

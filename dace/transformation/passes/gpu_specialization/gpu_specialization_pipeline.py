@@ -3,28 +3,31 @@
 
 :class:`GPUCodegenPreprocessPipeline` is the codegen target's one-shot
 codegen-preparation pipeline. :class:`GPUStreamPipeline` is a lower-level
-entry point that runs just the stream-scheduling strategy on a
-post-expansion SDFG. Both are single-shot and act on the root SDFG only.
+entry point that runs the stream scheduler + wirer on a post-expansion
+SDFG. Both act on the root SDFG only.
 """
-import warnings
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from dace import SDFG
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (GPUStreamSchedulingStrategy,
                                                                                  NaiveGPUStreamScheduler)
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_lowering_applied
+from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
 from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaultSchedulesAndStorages
 
 
 class GPUStreamPipeline(Pipeline):
-    """Post-expansion GPU stream lowering, parametrised by scheduling strategy.
+    """Post-expansion GPU stream lowering: scheduling -> wiring.
 
-    Pass ``scheduling_strategy=<instance>`` to swap in a different
+    Pass ``scheduling_strategy=<instance>`` to swap in a different scheduling
     strategy (default :class:`NaiveGPUStreamScheduler`). Expects a
     post-expansion SDFG -- libnodes must be flattened upstream via
     ``sdfg.expand_library_nodes(recursive=True)``.
+
+    The scheduling pass is idempotent (gpu_stream_id is persisted per node);
+    the wiring pass is single-shot, gated by
+    :func:`is_stream_wiring_applied`. Pipeline-level guards are no longer
+    needed -- each pass owns its own re-entry semantics.
     """
 
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
@@ -34,22 +37,7 @@ class GPUStreamPipeline(Pipeline):
             raise TypeError(f"scheduling_strategy must be a GPUStreamSchedulingStrategy instance, "
                             f"got {type(scheduling_strategy).__name__}.")
         self._scheduling_strategy = scheduling_strategy
-        super().__init__([scheduling_strategy])
-
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
-        if is_gpu_lowering_applied(sdfg):
-            warnings.warn(
-                "GPUStreamPipeline: skipping re-application -- the SDFG already has the "
-                "``gpu_streams`` array, indicating the pipeline has run. Stream "
-                "assignment is single-shot and re-running it would corrupt the wiring.",
-                UserWarning,
-                stacklevel=2)
-            return {}
-        if sdfg.parent_sdfg is not None:
-            raise ValueError(f"GPUStreamPipeline: must run on the root SDFG. Got nested SDFG "
-                             f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). Nested SDFGs share "
-                             "the root's decisions; do not invoke the pipeline on them.")
-        return super().apply_pass(sdfg, pipeline_results)
+        super().__init__([scheduling_strategy, GPUStreamWiring(scheduling_strategy)])
 
 
 # Legacy alias preserved so out-of-tree references keep working.
@@ -85,13 +73,17 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     symbol into host-side ``cudaMalloc`` size expressions for hoisted transients.
         #   * ``ReinferConnectorTypes`` last: earlier passes mutate descriptors under NestedSDFG
         #     connectors, so connector types must be re-derived for correct codegen signatures.
+        # Scheduling pass writes ``Node.gpu_stream_id``; wiring pass reads it
+        # and lays down the ``gpu_streams`` array + connector + sync wiring.
+        strategy = NaiveGPUStreamScheduler()
         super().__init__([
             InferDefaultSchedulesAndStorages(),
             PromoteGPUScalarsToArrays(),
             AssignmentAndCopyKernelToMemsetAndMemcpy(),
             InsertExplicitGPUGlobalMemoryCopies(),
             ExpandLibraryNodes(),
-            NaiveGPUStreamScheduler(),
+            strategy,
+            GPUStreamWiring(strategy),
             LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
             ReinferConnectorTypes(),

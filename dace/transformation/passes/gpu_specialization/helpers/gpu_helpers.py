@@ -35,12 +35,18 @@ def dependency_edge():
     return Memlet()
 
 
-def is_gpu_lowering_applied(sdfg: SDFG) -> bool:
-    """True iff the gpu_specialization lowering has already run on ``sdfg``.
-
-    Signalled by the ``gpu_streams`` transient; used to short-circuit a re-application.
+def is_stream_wiring_applied(sdfg: SDFG) -> bool:
+    """True iff the stream-wiring step has already produced the ``gpu_streams``
+    array + sync wiring on ``sdfg``. Only the *wiring* step is single-shot;
+    scheduling is now persisted per node via ``Node.gpu_stream_id`` and
+    survives serialisation. Used by :class:`GPUStreamWiring` to skip re-wiring.
     """
     return get_gpu_stream_array_name() in sdfg.arrays
+
+
+# Backwards-compatible alias -- old name conflated "scheduling done" with
+# "wiring done"; new code should prefer the wiring-specific name.
+is_gpu_lowering_applied = is_stream_wiring_applied
 
 
 def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:

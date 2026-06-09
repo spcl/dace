@@ -38,21 +38,30 @@ def _topology_signature(sdfg: SDFG):
 
 
 def test_pipeline_idempotent_on_simple_sdfg():
-    """Re-applying the pipeline is a no-op (returns ``{}``, topology untouched)."""
+    """Re-applying the pipeline leaves topology + properties untouched."""
     sdfg = _build_simple_gpu_copy_sdfg()
 
     pipeline = GPUSpecializationPipeline()
 
     pipeline.apply_pass(sdfg, {})
-    assert is_gpu_lowering_applied(sdfg), 'first pass must mark lowering as applied'
+    assert is_gpu_lowering_applied(sdfg), 'first pass must mark wiring as applied'
     assert get_gpu_stream_array_name() in sdfg.arrays
     sig_after_first = _topology_signature(sdfg)
+    streams_after_first = {
+        id(n): n.gpu_stream_id
+        for s in sdfg.states()
+        for n in s.nodes() if n.gpu_stream_id is not None
+    }
 
-    second = pipeline.apply_pass(sdfg, {})
+    pipeline.apply_pass(sdfg, {})
 
-    assert second == {}, 'a re-applied pipeline must be a no-op (return {})'
     assert _topology_signature(sdfg) == sig_after_first, 're-application must not mutate topology'
-
+    streams_after_second = {
+        id(n): n.gpu_stream_id
+        for s in sdfg.states()
+        for n in s.nodes() if n.gpu_stream_id is not None
+    }
+    assert streams_after_first == streams_after_second, 're-application must preserve assignments'
     # Defensive: still exactly one ``gpu_streams`` array.
     assert sum(1 for k in sdfg.arrays if k == get_gpu_stream_array_name()) == 1
 
