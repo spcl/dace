@@ -426,3 +426,34 @@ def test_walker_stages_K2_multi_tile_dim_gather():
     load = tile_loads[0]
     assert tuple(load.gather_dims) == (0, )
     assert "_idx_0" in load.in_connectors
+
+
+def test_walker_rewires_consumers_to_bridge_for_tile_branch():
+    """After staging a LINEAR access, the downstream tasklet's ``_b`` connector must read
+    from the bridge transient, not the original non-transient AccessNode."""
+    sdfg, inner = _build_linear_tile_fixture()
+    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    b_edges = [e for e in body_state.in_edges(tasklet) if e.dst_conn == "_b"]
+    assert len(b_edges) == 1
+    src = b_edges[0].src
+    assert isinstance(src, dace.nodes.AccessNode)
+    desc = inner.arrays[src.data]
+    assert desc.transient, "expected tasklet _b to read from a transient bridge, not the original"
+    assert tuple(desc.shape) == (8, ), "expected the bridge to be (W,)-shaped"
+
+
+def test_walker_rewires_consumers_to_bridge_for_constant_branch():
+    """After staging a CONSTANT access, downstream consumers read from the Scalar bridge."""
+    sdfg, inner = _build_const_only_tile_fixture()
+    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    b_edges = [e for e in body_state.in_edges(tasklet) if e.dst_conn == "_b"]
+    assert len(b_edges) == 1
+    src = b_edges[0].src
+    assert isinstance(src, dace.nodes.AccessNode)
+    desc = inner.arrays[src.data]
+    assert isinstance(desc, dace.data.Scalar) and desc.transient, \
+        "expected consumer to read from Scalar bridge transient"

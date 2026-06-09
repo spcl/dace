@@ -284,7 +284,12 @@ class StageInsideBody(ppl.Pass):
                 desc = inner_sdfg.arrays.get(an.data)
                 if desc is None or desc.transient:
                     continue
-                out_edges = list(inner_state.out_edges(an))
+                # Capture ORIGINAL consumer edges before staging adds the bridge edge -- the
+                # rewire below redirects each original consumer to read from the bridge AN
+                # instead of the non-transient ``an``. Without this, the bridge transient
+                # dangles and tasklets continue to read directly from the global array.
+                pre_stage_out_edges = list(inner_state.out_edges(an))
+                out_edges = pre_stage_out_edges
                 if not out_edges:
                     continue
                 try:
@@ -325,17 +330,19 @@ class StageInsideBody(ppl.Pass):
                                       if isinstance(n, AccessNode) and n.data == idx_name)
                         idx_sources[k] = idx_an
                     src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
-                    stage_tile_access(inner_state,
-                                      an,
-                                      widths=tuple(self.widths),
-                                      src_subset=src_subset_memlet,
-                                      name_hint=f"{an.data}_gather",
-                                      gather_dims=gather_source_dims,
-                                      idx_sources=idx_sources)
+                    bridge_name, _ = stage_tile_access(inner_state,
+                                                       an,
+                                                       widths=tuple(self.widths),
+                                                       src_subset=src_subset_memlet,
+                                                       name_hint=f"{an.data}_gather",
+                                                       gather_dims=gather_source_dims,
+                                                       idx_sources=idx_sources)
+                    self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
                     continue
                 if kinds == {PerDimKind.CONSTANT}:
-                    stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
+                    bridge_name = stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
+                    self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
                 else:
                     # Tile case (LINEAR / AFFINE / REPLICATE / MODULAR; possibly mixed with
@@ -345,15 +352,40 @@ class StageInsideBody(ppl.Pass):
                     src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
                     dim_strides = tuple(s if s is not None else 1 for s in record.dim_strides)
                     replicate = tuple(r if r is not None else 1 for r in record.replicate_factor_per_dim)
-                    stage_tile_access(inner_state,
-                                      an,
-                                      widths=tuple(self.widths),
-                                      src_subset=src_subset_memlet,
-                                      name_hint=f"{an.data}_tile",
-                                      dim_strides=dim_strides,
-                                      replicate_factor_per_dim=replicate)
+                    bridge_name, _ = stage_tile_access(inner_state,
+                                                       an,
+                                                       widths=tuple(self.widths),
+                                                       src_subset=src_subset_memlet,
+                                                       name_hint=f"{an.data}_tile",
+                                                       dim_strides=dim_strides,
+                                                       replicate_factor_per_dim=replicate)
+                    self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
         return staged
+
+    def _rewire_consumers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
+                                    original_out_edges) -> None:
+        """Redirect each consumer edge that previously read from ``original_an`` to read from
+        the bridge AccessNode named ``bridge_name``.
+
+        The original edges in ``original_out_edges`` were captured BEFORE the staging helper
+        added the new ``original_an -> bridge`` edge. We delete each original consumer edge
+        and replace it with one whose source is a new AccessNode wrapping ``bridge_name``.
+        Memlets are reused verbatim (subsets carry over); the consumer's ``dst_conn`` /
+        downstream tasklet semantics stay intact.
+        """
+        for old_edge in original_out_edges:
+            # Skip the edge that the staging helper just added (an -> tile bridge / scalar bridge);
+            # that edge is part of the staging structure, not a consumer.
+            if isinstance(old_edge.dst, AccessNode) and old_edge.dst.data == bridge_name:
+                continue
+            # Skip edges that go through a tile lib node (TileLoad / TileMaskGen / etc.) directly
+            # from the staging helper -- those are also part of the staging plumbing.
+            if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
+                continue
+            bridge_an = inner_state.add_access(bridge_name)
+            inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, Memlet.from_memlet(old_edge.data))
+            inner_state.remove_edge(old_edge)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Walk every tile-tagged body NSDFG; stage CONSTANT-only ANs.

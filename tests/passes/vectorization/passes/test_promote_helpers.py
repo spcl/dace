@@ -1,17 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unit tests for :func:`classify_box_for_widths`.
+"""Unit tests for :func:`classify_box_for_widths` -- FROZEN.
 
-Each test builds a hand-rolled Range / dummy descriptor pair (no full
-SDFG) so the classifier's branches are isolated. Numerical-equivalence
-testing of the descent + outer-state passes that consume the helper
-lives in their own suites.
+The :mod:`utils.promote_helpers` module was deleted in the walker-primary
+migration (commit 1e55ea4ce). This test file is preserved for history
+but skipped at module level until walker-primary equivalents land.
 """
 import pytest
 
-import dace
-from dace import subsets
-from dace.transformation.passes.vectorization.utils.promote_helpers import (BOX_KINDS, classify_box_for_widths)
-from dace.transformation.passes.vectorization.utils.tile_dims import TileAccessKind
+pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent-helper test -- promote_helpers module was deleted in the "
+                              "walker-primary migration (commit 1e55ea4ce); will be replaced once the walker's lattice "
+                              "classification has its own equivalent test slice.")
 
 
 def _arr(shape, strides=None):
