@@ -178,6 +178,52 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         return out_conn, a_conn, op
         return None
 
+    def _widen_output_transient_for_tile(self, inner_state: SDFGState, out_edge) -> None:
+        """Forward-analysis transient widening (per user direction 2026-06-09).
+
+        When a tile-op produces a Tile output (any input is Tile), the destination
+        transient must be tile-shape to receive the per-lane stores. If the original
+        tasklet's downstream transient is length-1 (a Scalar or shape ``(1,)`` Array
+        produced by the python frontend's default scalar tasklet wiring), widen it
+        in place to ``(widths,)`` and rewrite the output memlet's subset
+        accordingly.
+
+        Per the user: "When expanding transient scalars inside the nsdfg, we should
+        expand accordingly by analyzing tasklet types, so that we don't need to
+        narrow afterwards." This helper does the analysis at conversion time
+        (the producer's input kinds drive the widening), avoiding a post-hoc
+        narrowing pass.
+
+        Non-transient destinations are NOT widened (the walker mints a bridge +
+        TileStore at the boundary; the bridge is already tile-shape). Already
+        tile-shape transients are left alone.
+        """
+        import dace.data as dd
+        if out_edge.data is None or out_edge.data.data is None:
+            return
+        sdfg = inner_state.sdfg
+        desc = sdfg.arrays.get(out_edge.data.data)
+        if desc is None or not desc.transient:
+            return
+        widths = tuple(self.widths)
+        # Already tile-shape? Nothing to do.
+        if isinstance(desc, dd.Array):
+            current_shape = tuple(desc.shape)
+            if current_shape == widths:
+                return
+            # Only widen length-1 Arrays. Anything else is user-shaped; leave alone.
+            if not all(bool(dace.symbolic.simplify(s - 1) == 0) for s in current_shape):
+                return
+        # Widen: replace the descriptor with a tile-shape Array of the same dtype.
+        new_desc = dd.Array(dtype=desc.dtype,
+                            shape=widths,
+                            transient=True,
+                            storage=desc.storage if hasattr(desc, "storage") else None)
+        sdfg.arrays[out_edge.data.data] = new_desc
+        # Rewrite the output memlet to span the full tile.
+        subset_str = ", ".join(f"0:{w}" for w in widths)
+        out_edge.data.subset = dace.subsets.Range.from_string(subset_str)
+
     def _operand_kind(self, inner_state: SDFGState, edge) -> str:
         """Classify the operand kind for the lib node based on the source descriptor.
 
@@ -338,6 +384,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if any(c not in in_edges for c in (cond_conn, t_conn, e_conn)) or not out_edges:
             return False
         out_edge = out_edges[0]
+        # Forward-analysis output widening: if ANY of cond/t/e is Tile, the output is Tile.
+        if any(self._operand_kind(inner_state, in_edges[c]) == "Tile" for c in (cond_conn, t_conn, e_conn)):
+            self._widen_output_transient_for_tile(inner_state, out_edge)
         ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths))
         inner_state.add_node(ite)
         # TileITE connectors: _cond / _t / _e -> _o.
@@ -367,6 +416,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # source = broadcast Scalar operand kind on the lib node (design section 6.5).
         kind_a = self._operand_kind(inner_state, a_edge)
         kind_b = self._operand_kind(inner_state, b_edge)
+        # Forward-analysis output-kind rule (design 6.2): if any input is Tile, the output
+        # is Tile and the destination transient must be widened to (widths,). If all inputs
+        # are Scalar / Symbol, leave the destination as-is (the output is Scalar).
+        if "Tile" in (kind_a, kind_b):
+            self._widen_output_transient_for_tile(inner_state, out_edge)
         binop = TileBinop(name=f"{tasklet.label}_binop", widths=tuple(self.widths), op=op, kind_a=kind_a, kind_b=kind_b)
         inner_state.add_node(binop)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
@@ -386,6 +440,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
         kind_a = self._operand_kind(inner_state, a_edge)
+        # Forward-analysis output widening: if the input is Tile, widen the output transient.
+        if kind_a == "Tile":
+            self._widen_output_transient_for_tile(inner_state, out_edge)
         unop = TileUnop(name=f"{tasklet.label}_unop", widths=tuple(self.widths), op=op, kind_a=kind_a)
         inner_state.add_node(unop)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))

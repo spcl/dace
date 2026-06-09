@@ -379,3 +379,70 @@ def test_converter_skips_non_inplace_binop():
     body_state = next(s for s in inner.states())
     assert not any(isinstance(n, TileReduce) for n in body_state.nodes())
     assert any(isinstance(n, TileBinop) for n in body_state.nodes())
+
+
+# ---- forward-analysis output transient widening -------------------------------
+
+
+def test_converter_widens_length1_output_transient_to_tile_for_binop_with_tile_input():
+    """Per user direction: any-Tile input -> output transient widened to (W,)."""
+    sdfg, inner = _build_inner_body_with_binop(op="+")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    # The original tasklet wrote to C[ii] (non-transient). The end-to-end widening case
+    # uses an intermediate transient; build that fixture inline:
+    sdfg2 = dace.SDFG("widen_intermediate")
+    sdfg2.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg2.add_array("B", (8, ), dace.float64, transient=False)
+    state = sdfg2.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("B", (8, ), dace.float64, transient=False)
+    inner.add_array("mid_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    a_in = instate.add_access("A")
+    b_in = instate.add_access("B")
+    mid = instate.add_access("mid_t")
+    tasklet = instate.add_tasklet("body_t", {"_a", "_b"}, {"_o"}, "_o = _a + _b")
+    instate.add_edge(a_in, None, tasklet, "_a", Memlet("A[ii]"))
+    instate.add_edge(b_in, None, tasklet, "_b", Memlet("B[ii]"))
+    instate.add_edge(tasklet, "_o", mid, None, Memlet("mid_t[0]"))
+    nsdfg = state.add_nested_sdfg(inner, {"A", "B"}, set(), symbol_mapping={"ii": "ii"})
+    state.add_memlet_path(state.add_access("A"), me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(state.add_access("B"), me, nsdfg, dst_conn="B", memlet=Memlet("B[0:8]"))
+    state.add_nedge(nsdfg, mx, Memlet())
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg2, {})
+    desc = inner.arrays["mid_t"]
+    assert tuple(desc.shape) == (8, ), f"expected mid_t to be widened to (8,), got {tuple(desc.shape)}"
+
+
+def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
+    """When BOTH inputs are Scalar, the output transient stays length-1 (no widening).
+
+    Per user direction: scalar-scalar / scalar-symbol / symbol-symbol op -> Scalar output."""
+    sdfg = dace.SDFG("no_widen_scalar")
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body")
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    # Two Scalar bridges + one length-1 intermediate transient.
+    inner.add_scalar("S_a", dace.float64, transient=True)
+    inner.add_scalar("S_b", dace.float64, transient=True)
+    inner.add_array("mid_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    sa = instate.add_access("S_a")
+    sb = instate.add_access("S_b")
+    mid = instate.add_access("mid_t")
+    c_in = instate.add_access("C")
+    binop_tasklet = instate.add_tasklet("body_t", {"_a", "_b"}, {"_o"}, "_o = _a + _b")
+    instate.add_edge(sa, None, binop_tasklet, "_a", Memlet("S_a"))
+    instate.add_edge(sb, None, binop_tasklet, "_b", Memlet("S_b"))
+    instate.add_edge(binop_tasklet, "_o", mid, None, Memlet("mid_t[0]"))
+    nsdfg = state.add_nested_sdfg(inner, set(), {"C"}, symbol_mapping={"ii": "ii"})
+    state.add_nedge(me, nsdfg, Memlet())
+    state.add_memlet_path(nsdfg, mx, state.add_access("C"), src_conn="C", memlet=Memlet("C[0:8]"))
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    desc = inner.arrays["mid_t"]
+    assert tuple(desc.shape) == (1, ), \
+        f"expected mid_t to stay length-1 for all-Scalar op (Scalar output), got {tuple(desc.shape)}"
