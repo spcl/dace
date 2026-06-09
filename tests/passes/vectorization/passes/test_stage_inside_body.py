@@ -365,3 +365,64 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
     load = tile_loads[0]
     assert tuple(load.gather_dims) == (0, ), "expected gather_dims=(0,) on the TileLoad"
     assert "_idx_0" in load.in_connectors, "expected _idx_0 connector wired"
+
+
+def _build_k2_gather_tile_fixture():
+    """K=2 multi-tile-dim gather: ``A[idx[ii, jj]]`` -- depends on both tile iter-vars."""
+    from dace.subsets import Range as _Range
+    from dace.symbolic import pystr_to_symbolic as _to_sym
+
+    sdfg = dace.SDFG("walker_k2_gather_fixture")
+    sdfg.add_array("A", (64, ), dace.float64, transient=False)
+    sdfg.add_array("idx", (8, 16), dace.int64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8", "jj": "0:16"})
+
+    inner = dace.SDFG("body_nsdfg")
+    inner.add_array("A", (64, ), dace.float64, transient=False)
+    inner.add_array("idx", (8, 16), dace.int64, transient=False)
+    inner.add_array("out_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    a_inner = instate.add_access("A")
+    t_inner = instate.add_access("out_t")
+    tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
+    instate.add_edge(a_inner, None, tasklet, "_a",
+                     Memlet(data="A", subset=_Range([(_to_sym("idx[ii, jj]"), _to_sym("idx[ii, jj]"), 1)])))
+    instate.add_edge(tasklet, "_o", t_inner, None, Memlet("out_t[0]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A", "idx"}, set(), symbol_mapping={"ii": "ii", "jj": "jj"})
+    a_outer = state.add_access("A")
+    idx_outer = state.add_access("idx")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:64]"))
+    state.add_memlet_path(idx_outer, me, nsdfg, dst_conn="idx", memlet=Memlet("idx[0:8, 0:16]"))
+    state.add_nedge(nsdfg, mx, Memlet())
+    return sdfg, inner
+
+
+def test_walker_stages_K2_multi_tile_dim_gather():
+    """``A[idx[ii, jj]]`` (K=2 multi-tile-dim gather) -- the walker materialises a (8, 16)-shape
+    int64 index tile + a (8, 16) tile bridge transient, and inserts a TileLoad with
+    ``gather_dims=(0,)`` wiring _idx_0."""
+    sdfg, inner = _build_k2_gather_tile_fixture()
+    before_int_arrays = sum(
+        1 for d in inner.arrays.values()
+        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64 and tuple(d.shape) == (8, 16))
+    before_float_tiles = sum(
+        1 for d in inner.arrays.values()
+        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, 16))
+    result = StageInsideBody(widths=(8, 16)).apply_pass(sdfg, {})
+    assert result == 1
+    after_int_arrays = sum(
+        1 for d in inner.arrays.values()
+        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64 and tuple(d.shape) == (8, 16))
+    after_float_tiles = sum(
+        1 for d in inner.arrays.values()
+        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, 16))
+    assert after_int_arrays == before_int_arrays + 1, "expected one (8, 16)-shape int64 index tile"
+    assert after_float_tiles == before_float_tiles + 1, "expected one (8, 16) float64 tile bridge"
+    body_state = next(s for s in inner.states())
+    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
+    assert len(tile_loads) == 1
+    load = tile_loads[0]
+    assert tuple(load.gather_dims) == (0, )
+    assert "_idx_0" in load.in_connectors

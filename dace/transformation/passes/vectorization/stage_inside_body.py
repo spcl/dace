@@ -296,24 +296,30 @@ class StageInsideBody(ppl.Pass):
                     continue
                 kinds = set(record.per_dim_kind)
                 if PerDimKind.GATHER in kinds:
-                    # GATHER case: materialise the per-lane index tiles inline, then call
+                    # GATHER case: materialise the per-lane index tile per gather dim, then call
                     # ``stage_tile_access`` with ``gather_dims`` + ``idx_sources``. Per design
                     # section 9.2 ``gather_dims`` indexes source-array dim indices; the subset
                     # dim ``k`` corresponds to source dim ``k`` for the canonical (non-permuted)
-                    # case. K=1 single-iter-var first slice; multi-iter-var deps land in 4d.
-                    if len(iter_vars) != 1:
-                        continue
+                    # case. Multi-tile-dim deps: the per-lane index expression for source dim
+                    # ``k`` is the subset's begin string, with EVERY tile iter-var substituted
+                    # at the right lane position. ``materialise_per_lane_index_tile`` handles
+                    # both forms (str + int for K_dep == 1; tuple form for K_dep >= 2).
+                    K_tile = len(iter_vars)
                     gather_source_dims = tuple(k for k, kind in enumerate(record.per_dim_kind)
                                                if kind == PerDimKind.GATHER)
                     idx_sources: Dict[int, AccessNode] = {}
                     for k in gather_source_dims:
                         begin_str = str(subset.ranges[k][0])
+                        # Pass all tile iter-vars + widths to the helper; it substitutes each in
+                        # the expression and produces an index tile of shape ``widths`` rank K_tile.
+                        # When the expression depends on a subset of iter-vars, the helper still
+                        # produces a full-rank tile (the missing vars are broadcast in the body).
                         idx_name = materialise_per_lane_index_tile(
                             inner_state,
                             name_hint=f"_idx_{an.data}_{k}",
                             gather_expr=begin_str,
-                            tile_iter_vars=iter_vars[0],
-                            tile_widths=int(self.widths[0]),
+                            tile_iter_vars=iter_vars[0] if K_tile == 1 else iter_vars,
+                            tile_widths=int(self.widths[0]) if K_tile == 1 else tuple(int(w) for w in self.widths),
                         )
                         idx_an = next(n for n in inner_state.nodes()
                                       if isinstance(n, AccessNode) and n.data == idx_name)
