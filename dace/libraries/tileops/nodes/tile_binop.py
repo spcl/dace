@@ -108,6 +108,10 @@ _OP_CPP = {
     # tile_binop_apply (which calls ``std::min`` / ``std::max``).
     "min": ("std::min(", ", ", ")"),
     "max": ("std::max(", ", ", ")"),
+    # Python ``**`` -> ``std::pow``. ``PowerOperatorExpansion`` runs upstream in the
+    # multi-dim pipeline and rewrites integer-constant exponents (``x**2`` -> ``x*x``);
+    # only true runtime / non-constant exponents reach this lowering.
+    "**": ("std::pow(", ", ", ")"),
 }
 
 

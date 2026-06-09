@@ -698,3 +698,27 @@ def test_converter_emits_mixed_tilebinop_with_lane_id_and_invariant_symbols():
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert {binop.kind_a, binop.kind_b} == {"Tile", "Symbol"}
+
+
+# ---- ``**`` / ``pow`` lowering -----------------------------------------------
+
+
+@pytest.mark.parametrize("body_form", [
+    "_o = _a ** _b",
+    "_o = pow(_a, _b)",
+])
+def test_converter_emits_tilebinop_for_power(body_form):
+    """Both ``_a ** _b`` and ``pow(_a, _b)`` lower to a TileBinop with op='**'.
+
+    ``PowerOperatorExpansion`` runs upstream and rewrites integer-constant exponents
+    (``x ** 2`` -> ``x * x``); only runtime exponents reach this dispatch. The lib node
+    lowers ``**`` to ``std::pow`` at expansion time.
+    """
+    sdfg, inner = _build_inner_body_with_binop(op="+")  # placeholder, body replaced below
+    # Replace the tasklet body with the requested form.
+    body_state = next(s for s in inner.states())
+    tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    tasklet.code = dace.properties.CodeBlock(body_form)
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.op == "**", f"expected op='**', got {binop.op!r}"

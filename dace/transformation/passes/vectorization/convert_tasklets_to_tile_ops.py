@@ -40,8 +40,12 @@ from dace.transformation.passes.vectorization.utils.map_predicates import is_inn
 #: Subset of binary operators that map directly onto :class:`TileBinop`. Includes
 #: comparison (``<``, ``<=``, ``>``, ``>=``, ``==``, ``!=``) which produce bool tile
 #: outputs used as the cond input of :class:`TileITE` (per design 7.5 cond-mask
-#: broadcasting).
-_SUPPORTED_BINOPS = {"+", "-", "*", "/", "%", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"}
+#: broadcasting), and ``**`` (Python power; lowers to ``std::pow``). ``PowerOperatorExpansion``
+#: upstream rewrites integer-constant exponents (``x**2`` -> ``x*x``); only true runtime
+#: exponents reach this dispatch.
+_SUPPORTED_BINOPS = {
+    "+", "-", "*", "/", "%", "**", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"
+}
 
 #: Subset of reduction operators that map directly onto :class:`TileReduce`.
 #: Subset of :data:`_SUPPORTED_BINOPS` excluding non-associative ``-`` and ``/``.
@@ -267,10 +271,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         in_conns = list(tasklet.in_connectors)
         # Try every op in _SUPPORTED_BINOPS against the two operand orderings. DaCe wraps the
         # RHS of an assignment tasklet in parentheses (``_o = (_a + _b)``); accept both forms.
+        # The function-form ops (``min``, ``max``, ``pow``) accept the bare-name function syntax
+        # as well; ``pow(a, b)`` is the Python equivalent of ``a ** b``.
         for op in _SUPPORTED_BINOPS:
             for a, b in (in_conns, list(reversed(in_conns))):
                 if op in ("min", "max"):
                     forms = (f"{out_conn} = {op}({a}, {b})", f"{out_conn} = ({op}({a}, {b}))")
+                elif op == "**":
+                    forms = (f"{out_conn} = {a} ** {b}", f"{out_conn} = ({a} ** {b})", f"{out_conn} = pow({a}, {b})",
+                             f"{out_conn} = (pow({a}, {b}))")
                 else:
                     forms = (f"{out_conn} = {a} {op} {b}", f"{out_conn} = ({a} {op} {b})")
                 if body in forms:
