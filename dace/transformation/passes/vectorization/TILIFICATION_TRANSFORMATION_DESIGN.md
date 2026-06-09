@@ -611,6 +611,42 @@ Validate enforces the contract: `_c` descriptor shape must equal
 may be either Scalar / length-1 Array (preferred for cheap chains) or
 Tile-shape (allowed when downstream wants a broadcast register).
 
+#### Forward-analysis pre-shape pass (single source of truth)
+
+Per user direction 2026-06-09 ("If we perform widening before, the
+replacement of tasklet to tile ops and inserting load/scatters should
+become much easier"), all transient shaping inside body NSDFGs is done
+**proactively** by a single pre-pass:
+
+* **`InferBodyTransientShapes(widths)`** runs FIRST in the staging
+  block (before `PreparePerLaneIndices`, `StageInsideBody`,
+  `ConvertTaskletsToTileOps`).
+* It classifies every non-transient AN's access pattern (CONSTANT vs
+  non-CONSTANT) and forward-propagates the kinds through every
+  tasklet.
+* Each intermediate transient is then mutated in place to either
+  Scalar / length-1 (for chains that read only CONSTANT non-transients)
+  or `Array(shape=widths)` (when any producer in the chain reaches a
+  non-CONSTANT non-transient).
+* Memlets referencing widened transients are rewritten to span the
+  full tile.
+
+After this pass, every downstream pass is **shape-clean**:
+
+* `StageInsideBody` mints bridges already aligned with the right
+  shape; no special handling for transient mismatch.
+* `ConvertTaskletsToTileOps` is a pure tasklet → lib-node rewriter,
+  no widening / narrowing logic of its own. The lib-node's
+  `_c` descriptor is whatever the pre-pass set; `validate()` checks
+  consistency with the kind contract above.
+* The lib-node pure expansion dispatches on the output descriptor
+  shape (Scalar → single assignment; Tile → K-fold loop) without
+  needing to re-analyse anything.
+
+Conservative bias: when in doubt (e.g. classification fails, producer
+unknown), the transient is widened to full tile. Over-widening is
+benign (extra register pressure); under-widening is a correctness bug.
+
 ### 6.3 Symbolic broadcast
 
 `Symbol` is not a degenerate `Scalar`. It is a *compile-time* constant

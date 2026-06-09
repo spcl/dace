@@ -32,6 +32,8 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.clear_per_lane_index_symbols import ClearPerLaneIndexSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
+from dace.transformation.passes.vectorization.infer_body_transient_shapes import (
+    InferBodyTransientShapes, )
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
@@ -401,6 +403,14 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
+            # PROACTIVE forward-analysis pre-shape of body-NSDFG transients (per user
+            # direction 2026-06-09; design section 6.2). Classifies every non-transient
+            # AN's access pattern, propagates forward through tasklets, and pre-shapes
+            # every transient to Scalar / length-1 (when chain reads only CONSTANT
+            # sources) or full (widths,) (otherwise). Runs BEFORE the walker so the
+            # walker sees right-shaped intermediate transients and no post-hoc widening
+            # is needed in the converter.
+            InferBodyTransientShapes(widths=widths_t),
             PreparePerLaneIndices(widths=widths_t),
             StageInsideBody(widths=widths_t),
             # Convert in-body binary tasklets (``_o = _a <op> _b``) to TileBinop lib nodes so the

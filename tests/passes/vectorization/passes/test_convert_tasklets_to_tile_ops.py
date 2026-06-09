@@ -384,12 +384,13 @@ def test_converter_skips_non_inplace_binop():
 # ---- forward-analysis output transient widening -------------------------------
 
 
-def test_converter_widens_length1_output_transient_to_tile_for_binop_with_tile_input():
-    """Per user direction: any-Tile input -> output transient widened to (W,)."""
-    sdfg, inner = _build_inner_body_with_binop(op="+")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
-    # The original tasklet wrote to C[ii] (non-transient). The end-to-end widening case
-    # uses an intermediate transient; build that fixture inline:
+def test_widening_done_by_infer_body_transient_shapes_pre_pass():
+    """Per user direction 2026-06-09: widening is done PROACTIVELY by a pre-pass
+    (``InferBodyTransientShapes``), NOT reactively by the converter. The converter
+    no longer widens output transients -- it just emits lib nodes and trusts the
+    descriptor shapes set up by the pre-pass.
+    """
+    from dace.transformation.passes.vectorization.infer_body_transient_shapes import (InferBodyTransientShapes)
     sdfg2 = dace.SDFG("widen_intermediate")
     sdfg2.add_array("A", (8, ), dace.float64, transient=False)
     sdfg2.add_array("B", (8, ), dace.float64, transient=False)
@@ -411,9 +412,15 @@ def test_converter_widens_length1_output_transient_to_tile_for_binop_with_tile_i
     state.add_memlet_path(state.add_access("A"), me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
     state.add_memlet_path(state.add_access("B"), me, nsdfg, dst_conn="B", memlet=Memlet("B[0:8]"))
     state.add_nedge(nsdfg, mx, Memlet())
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg2, {})
+    # Run the proactive pre-pass first -- it widens mid_t based on producer access patterns.
+    InferBodyTransientShapes(widths=(8, )).apply_pass(sdfg2, {})
     desc = inner.arrays["mid_t"]
-    assert tuple(desc.shape) == (8, ), f"expected mid_t to be widened to (8,), got {tuple(desc.shape)}"
+    assert tuple(desc.shape) == (8, ), \
+        f"InferBodyTransientShapes should widen mid_t to (8,); got {tuple(desc.shape)}"
+    # Then the converter is a pure tasklet -> lib-node rewriter (no widening, no narrowing).
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg2, {})
+    # mid_t still tile-shape.
+    assert tuple(inner.arrays["mid_t"].shape) == (8, )
 
 
 def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():

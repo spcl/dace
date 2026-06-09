@@ -13,6 +13,8 @@ that tile lib nodes were actually emitted (not a scalar fallback).
 """
 
 import pytest
+pytest.importorskip("dace.transformation.passes.vectorization.emit_tile_ops", reason="legacy descent module deleted -- this test is frozen")
+import pytest
 pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 
 import numpy as np
@@ -23,7 +25,7 @@ from dace.libraries.tileops import TileBinop, TileLoad, TileStore
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern, )
-from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
+# from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps  (frozen -- module deleted)
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import PromoteNSDFGBodyToTiles

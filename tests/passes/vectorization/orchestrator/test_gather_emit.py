@@ -10,6 +10,8 @@ unvectorized reference and asserts the gather/scatter lib nodes are emitted.
 """
 
 import pytest
+pytest.importorskip("dace.transformation.passes.vectorization.emit_tile_ops", reason="legacy descent module deleted -- this test is frozen")
+import pytest
 pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import copy
 
@@ -19,7 +21,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
+# from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps  (frozen -- module deleted)
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
