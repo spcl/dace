@@ -299,7 +299,15 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             raise ValueError("MonolithicSingleStreamGPUScheduler requires every Tasklet/LibraryNode "
                              "to run on-device. Offenders:\n  - " + "\n  - ".join(offenders))
 
-        return {node: 0 for node, _, _ in find_inner_gpu_consumers(sdfg)}
+        # Persist the assignment per node so :class:`GPUStreamWiring` (which
+        # reads ``Node.gpu_stream_id`` after this pass) sees a non-empty
+        # set and allocates ``gpu_streams`` with at least one slot.
+        assignments: Dict[nodes.Node, int] = {}
+        for node, _, _ in find_inner_gpu_consumers(sdfg):
+            assignments[node] = 0
+            if node.gpu_stream_id is None:
+                node.gpu_stream_id = 0
+        return assignments
 
     @staticmethod
     def _not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
