@@ -204,13 +204,12 @@ Refusal: when staging cannot fold a producer / consumer pair
 overlapping subsets the classifier cannot resolve), the pass raises
 `NotImplementedError` naming the array and the offending state.
 
-Pipeline order (canonical walker-primary, all K):
+Pipeline order (canonical walker-primary, all K) -- current as of 2026-06-10:
 
 ```
 WCRToAugAssign                          (canonicalise WCR -> RMW where applicable)
    -> LoopToMap + RefineNestedAccess    (parallelise + tighten body NSDFGs)
    -> normalize_loop_nests              (Inline + MapCollapse; no propagation)
-   -> ExpandNestedSDFGInputs            (boundary -> full subset, design section 2.4)
    -> Front prep:
        ConvertLengthOneArraysToScalars + NormalizeWCRSource + BypassTrivialAssignTasklets
    -> Branch lowering:
@@ -220,19 +219,80 @@ WCRToAugAssign                          (canonicalise WCR -> RMW where applicabl
    -> Tasklet preprocessing:
        RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion,
        SplitTasklets, RemoveMathCall, RemoveEmptyStates
-   -> Tile shaping:
-       SplitMapForTileRemainder (optional per remainder_strategy)
-       NestInnermostMapBodyIntoNSDFG (optional per nest_map_bodies)
-       MarkTileDims
-       GenerateTileIterationMask
-       StrideMapByTileWidths
-   -> Walker:
-       PreparePerLaneIndices             (per-source-dim _idx_<k> materialisation)
-       StageInsideBody                   (CONSTANT / Tile / Gather dispatch per AN)
+   -> Tile shaping (must run in this order):
+       SplitMapForTileRemainder      (optional per remainder_strategy)
+       NestInnermostMapBodyIntoNSDFG (ALWAYS-ON; the walker needs a body NSDFG)
+       _RunExpandNestedSDFGInputs    (embedded Pass; widens boundary memlets to
+                                      full source-array subset; runs AFTER Nest)
+       MarkTileDims                  (tag the outer map with TileDimSpec)
+       StrideMapByTileWidths         (step 1 -> W; iter_var means "tile start")
+       InferBodyTransientShapes      (proactive widening: non-transient AN edge
+                                      memlets ``A[ii]`` -> ``A[ii:ii+W]`` for
+                                      non-CONSTANT classifications; length-1
+                                      intermediate transients -> ``(widths,)``
+                                      when chain reads a tile source; CONSTANT /
+                                      Scalar / Symbol stay as-is.)
+       GenerateTileIterationMask     (emits TileMaskGen + _tile_iter_mask
+                                      INSIDE the body NSDFG so the walker /
+                                      converter can find + wire it)
+   -> Walker + converter:
+       PreparePerLaneIndices         (per-source-dim _idx_<k> materialisation)
+       StageInsideBody               (CONSTANT / Tile / Gather dispatch per AN;
+                                      finds the mask and wires has_mask=True +
+                                      _mask onto TileLoad / TileStore)
+       ConvertTaskletsToTileOps      (replaces in-body tasklets with Tile lib
+                                      nodes; finds the mask and wires has_mask
+                                      + _mask onto Tile{Binop, Unop, ITE, Reduce})
    -> Library node expansion + audit:
        sdfg.expand_library_nodes()
-       ClearPerLaneIndexSymbols          (section 10.6 post-emit audit)
+       ClearPerLaneIndexSymbols      (section 10.6 post-emit audit)
 ```
+
+**Key ordering invariants** (per user direction 2026-06-09 / 2026-06-10):
+
+* `NestInnermostMapBodyIntoNSDFG` is **always-on**. The walker traverses body
+  NSDFGs; without one it has nothing to do.
+
+* `_RunExpandNestedSDFGInputs` (a tiny `ppl.Pass` wrapper around
+  `sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs)`) runs
+  **AFTER Nest** and **BEFORE any tile-shaping pass**. Embedding it as a
+  Pass in the list keeps the standard `ppl.Pipeline.apply_pass` machinery
+  in charge of execution order. An earlier implementation used a
+  two-half pipeline split with a depgraph-invalidation hack; that
+  silently skipped the entire walker tail.
+
+* `StrideMapByTileWidths` runs **BEFORE `InferBodyTransientShapes`**.
+  After stride, `ii` means "start of a W-element tile"; the widening
+  pass replaces single-element `A[ii]` with `A[ii:ii+W]` based on
+  that semantics.
+
+* `GenerateTileIterationMask` runs **AFTER `InferBodyTransientShapes`**.
+  The mask reflects the final tile shape; emitting before widening
+  would lock the mask shape into a shape that doesn't match the
+  widened lib-node operands.
+
+* `GenerateTileIterationMask` emits `TileMaskGen` + the
+  `_tile_iter_mask` AccessNode **INSIDE the body NSDFG** (not in the
+  outer scope). The walker / converter find the mask via
+  `inner_sdfg.arrays['_tile_iter_mask']` and wire `_mask` connectors
+  on every lib node they mint.
+
+**SDFG-scheduling invariant** (load-bearing for correctness): every
+consumer of a transient must read from the SAME AccessNode that the
+producer writes to. Creating fresh `inner_state.add_access(name)`
+calls per consumer produces orphan AccessNodes that DaCe's scheduler
+orders independently from the producer -- the consumers may run
+before the producer, producing zero / uninitialised reads. This
+applies to:
+
+* The `_tile_iter_mask` AccessNode: all walker + converter `_mask`
+  edges reuse the AccessNode that `TileMaskGen._o` writes to (helper
+  `_find_mask_producer_an` / `_find_mask_an`).
+
+* The tile-bridge transient AccessNodes: the rewire helpers
+  (`_rewire_consumers_to_bridge` / `_rewire_producers_to_bridge`)
+  reuse the AccessNode that `TileLoad._dst` writes to / that
+  `TileStore._src` reads from (helper `_find_existing_bridge_an`).
 
 The legacy descent (``PromoteNSDFGBodyToTiles``, 2996 LoC) and legacy
 ``EmitTileOps`` (1470 LoC) were deleted during the walker-primary
@@ -615,21 +675,40 @@ Tile-shape (allowed when downstream wants a broadcast register).
 
 Per user direction 2026-06-09 ("If we perform widening before, the
 replacement of tasklet to tile ops and inserting load/scatters should
-become much easier"), all transient shaping inside body NSDFGs is done
-**proactively** by a single pre-pass:
+become much easier"), all body-NSDFG widening (memlets + intermediate
+transient descriptors) is done **proactively** by a single pre-pass.
 
-* **`InferBodyTransientShapes(widths)`** runs FIRST in the staging
-  block (before `PreparePerLaneIndices`, `StageInsideBody`,
-  `ConvertTaskletsToTileOps`).
-* It classifies every non-transient AN's access pattern (CONSTANT vs
-  non-CONSTANT) and forward-propagates the kinds through every
-  tasklet.
-* Each intermediate transient is then mutated in place to either
-  Scalar / length-1 (for chains that read only CONSTANT non-transients)
-  or `Array(shape=widths)` (when any producer in the chain reaches a
-  non-CONSTANT non-transient).
-* Memlets referencing widened transients are rewritten to span the
-  full tile.
+* **`InferBodyTransientShapes(widths)`** runs AFTER `StrideMapByTileWidths`
+  (so iter_vars mean "tile start") and BEFORE `GenerateTileIterationMask`,
+  the walker, and the converter.
+
+It owns TWO widening steps:
+
+1. **Non-transient AN edge memlet widening**: classifies every
+   non-transient AN's access pattern (CONSTANT vs non-CONSTANT). For
+   accesses classified as non-CONSTANT, walks every edge whose memlet's
+   data is that AN's name; for each single-element per-dim range whose
+   begin references an iter_var, replaces `[beg]` with
+   `[beg : beg + widths[k] - 1]`. So `A[ii]` becomes `A[ii:ii+W]`,
+   `A[ii, jj]` becomes `A[ii:ii+W_0, jj:jj+W_1]`, etc.
+
+   Leaves CONSTANT / Scalar / Symbol subsets alone (the begin doesn't
+   reference an iter_var for those).
+
+2. **Intermediate transient descriptor widening**: forward-propagates
+   the kinds through every tasklet to fixed point. Each intermediate
+   transient is mutated in place to either Scalar / length-1 (when
+   the chain reads only CONSTANT non-transients) or
+   `Array(shape=widths)` (when any producer reaches a non-CONSTANT
+   non-transient). Memlets referencing widened transients are
+   rewritten to span the full tile.
+
+The user phrased the temporary-state invariant explicitly: after the
+pre-pass, "we will have temporarily valid-looking SDFG that has
+invalid tasklets but that is fine". The tasklets' bodies still
+operate scalar-style (`_b = _a`), but their connectors now reference
+tile-shape memlets / transients. The converter (next pass) fixes the
+invalidity by rewriting the tasklets into Tile* lib nodes.
 
 After this pass, every downstream pass is **shape-clean**:
 
@@ -870,6 +949,43 @@ of section 8 covers it at full extent), its conjunct is the constant `true`
 and folds away at expansion. The same lib node is used regardless of
 which dim is being predicated.
 
+#### Placement (2026-06-10): inside the body NSDFG
+
+`GenerateTileIterationMask` emits the `TileMaskGen` lib node + the
+`_tile_iter_mask` transient AccessNode **INSIDE the body NSDFG**, not
+in the outer state. The walker (`StageInsideBody`) and converter
+(`ConvertTaskletsToTileOps`) traverse the body NSDFG's arrays and
+nodes to find the mask; placing it outside would mean the per-lib-node
+`_mask` wiring couldn't see it.
+
+The mask is a transient `Array(shape=widths, dtype=bool_,
+storage=Register, transient=True)` registered on the body NSDFG's
+inner SDFG. The TileMaskGen + its output AccessNode go into the body
+NSDFG's start state.
+
+#### Walker + converter wiring
+
+Both `StageInsideBody` and `ConvertTaskletsToTileOps` look up the
+inner mask name + the AccessNode that `TileMaskGen._o` writes to,
+then for each lib node they mint:
+
+* Set `has_mask=True` on the constructor.
+* Wire `mask_producer_AN -> lib_node._mask` with memlet
+  `_tile_iter_mask[0:W_0, ..., 0:W_{K-1}]`.
+
+All consumer `_mask` edges read from the SAME AccessNode (the
+producer's output AN). This is the SDFG-scheduling invariant of
+section 3: fresh `add_access` calls per consumer would produce orphan
+AccessNodes that DaCe's scheduler orders independently from the
+producer.
+
+Coverage (as of 2026-06-10):
+
+| Pass | Lib nodes wired with `has_mask` + `_mask` |
+|---|---|
+| `StageInsideBody` (walker) | `TileLoad`, `TileStore` (structured + gather + scatter modes) |
+| `ConvertTaskletsToTileOps` (converter) | `TileBinop` (plain + Symbol variant), `TileUnop`, `TileITE`, `TileReduce` |
+
 ### 7.5 Intra-tile (branch) masks
 
 Branch normalisation produces `TileITE` with an explicit condition
@@ -877,6 +993,30 @@ tile. The iteration mask (`_iter_mask`) and the condition mask combine
 inside the expansion to a single effective mask. No separate
 `TileMaskAnd` / `Or` / `Not` lib nodes are needed for the common case;
 they remain out of scope until a kernel demands them (section 10.5).
+
+#### Cond-mask broadcasting (pending design slice, per user direction)
+
+When a condition depends only on a SUBSET of tile dims -- e.g.
+``if A[i] > 0.0:`` inside a K=2 widths `(W_0, W_1)` body, where the
+condition depends on `i` (dim 0) but not `j` (dim 1) -- the
+condition's natural shape is `(W_0,)`. The lib-node operand contract
+requires the full `(W_0, W_1)` shape, so the condition must be
+**broadcast** along the unused dim(s).
+
+Two sub-cases for the cond-mask generation pass (NOT YET
+IMPLEMENTED):
+
+1. **Free-symbol-dependency analysis**: identify which tile dims the
+   condition expression references (via the begin string + iter_var
+   free symbols, same machinery the classifier uses).
+
+2. **Per-dim shape + broadcast**: generate the partial-shape mask
+   at the natural width (e.g. `bool[W_0]`), then broadcast along the
+   dims it doesn't depend on (e.g. tile to `bool[W_0, W_1]`).
+
+The mask wiring on `TileITE` already supports the full-shape `_cond`
+operand; the gap is the pre-pass that generates the partial cond-mask
++ the broadcast lowering.
 
 ---
 
