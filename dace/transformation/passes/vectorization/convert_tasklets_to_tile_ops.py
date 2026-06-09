@@ -1028,6 +1028,22 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
         b_edge = in_edges[b_conn]
+        # Per user direction 2026-06-10: mixed-dtype operands are NOT supported. The
+        # walker-primary pipeline locks operand dtypes to a single type per lib node
+        # (the lib node's tile transient + bridge + downstream copy chain all assume
+        # uniform dtype). Refuse and raise NotImplementedError so callers know to
+        # rewrite the kernel with explicit casts.
+        sdfg = inner_state.sdfg
+        a_dtype = sdfg.arrays[a_edge.data.data].dtype if a_edge.data and a_edge.data.data else None
+        b_dtype = sdfg.arrays[b_edge.data.data].dtype if b_edge.data and b_edge.data.data else None
+        c_dtype = sdfg.arrays[out_edge.data.data].dtype if out_edge.data and out_edge.data.data else None
+        operand_dtypes = {d for d in (a_dtype, b_dtype, c_dtype) if d is not None}
+        if len(operand_dtypes) > 1:
+            raise NotImplementedError(
+                f"vec(K-dim): mixed-dtype binop NOT supported. Tasklet {tasklet.label!r} body "
+                f"{tasklet.code.as_string!r} mixes dtypes {operand_dtypes}. Per design 6.2 + user "
+                f"direction the walker-primary path locks a single dtype per lib node. Rewrite the "
+                f"kernel with an explicit cast tasklet upstream OR widen the destination dtype.")
         # Operand-kind classification from the source's descriptor: Scalar / length-1 Array
         # source = broadcast Scalar operand kind on the lib node (design section 6.5).
         kind_a = self._operand_kind(inner_state, a_edge)

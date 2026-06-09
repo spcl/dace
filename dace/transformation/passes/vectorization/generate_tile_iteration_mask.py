@@ -147,8 +147,13 @@ class GenerateTileIterationMask(ppl.Pass):
             storage=dace.dtypes.StorageType.Register,
             transient=True,
         )
-        # Insert TileMaskGen + access node into the body NSDFG's FIRST state.
-        inner_state = inner_sdfg.start_state
+        # Insert TileMaskGen + access node into the body NSDFG's first SDFGState.
+        # When the body has nested CFG structure (``insert_copies`` /
+        # ``fuse_overlapping_loads`` may produce this), ``start_state`` returns a
+        # ControlFlowRegion -- which can't host AccessNodes / library nodes. Walk
+        # the flat ``states()`` iterator (which already flattens CFG regions to
+        # their leaf SDFGStates) and pick the first one.
+        inner_state = next(iter(inner_sdfg.states()))
         mask_node = TileMaskGen(
             name="_tile_iter_mask_gen",
             widths=spec.widths,
