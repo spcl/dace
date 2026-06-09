@@ -453,3 +453,66 @@ def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
     desc = inner.arrays["mid_t"]
     assert tuple(desc.shape) == (1, ), \
         f"expected mid_t to stay length-1 for all-Scalar op (Scalar output), got {tuple(desc.shape)}"
+
+
+# ---- Symbol operand kind --------------------------------------------------
+
+
+def _build_inner_body_with_symbol_binop(body_str):
+    """Body NSDFG with a single in-connector tasklet whose body references an outer symbol."""
+    sdfg = dace.SDFG("symbol_binop_fixture")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    instate = inner.add_state("body")
+    a_in = instate.add_access("A")
+    c_in = instate.add_access("C")
+    tasklet = instate.add_tasklet("body_t", {"_a"}, {"_o"}, body_str)
+    instate.add_edge(a_in, None, tasklet, "_a", Memlet("A[ii]"))
+    instate.add_edge(tasklet, "_o", c_in, None, Memlet("C[ii]"))
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"C"}, symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    c_outer = state.add_access("C")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
+    return sdfg, inner
+
+
+def test_converter_handles_symbol_operand_on_right():
+    """``_o = _a + 5`` -> TileBinop(kind_a=Tile, kind_b=Symbol, expr_b="5")."""
+    sdfg, inner = _build_inner_body_with_symbol_binop("_o = _a + 5")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.kind_a == "Tile"
+    assert binop.kind_b == "Symbol"
+    assert binop.expr_b == "5"
+    assert binop.op == "+"
+
+
+def test_converter_handles_symbol_operand_on_left():
+    """``_o = 2 * _a`` -> TileBinop(kind_a=Symbol, expr_a="2", kind_b=Tile)."""
+    sdfg, inner = _build_inner_body_with_symbol_binop("_o = 2 * _a")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.kind_a == "Symbol"
+    assert binop.kind_b == "Tile"
+    assert binop.expr_a == "2"
+    assert binop.op == "*"
+
+
+def test_converter_handles_symbol_in_min_function():
+    """``_o = min(_a, 0.5)`` -> TileBinop(op=min, kind_a=Tile, kind_b=Symbol, expr_b="0.5")."""
+    sdfg, inner = _build_inner_body_with_symbol_binop("_o = min(_a, 0.5)")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
+    assert binop.op == "min"
+    assert binop.kind_a == "Tile"
+    assert binop.kind_b == "Symbol"
+    assert binop.expr_b == "0.5"

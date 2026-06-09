@@ -147,6 +147,61 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     return out_conn, a, b, op
         return None
 
+    def _detect_binop_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
+        """Detect a binop with ONE Tile/Scalar operand and ONE Symbol operand.
+
+        Matches ``_out = _a <op> <expr>`` or ``_out = <expr> <op> _a`` where ``<expr>``
+        is an outer-scope symbol or numeric literal (not a tasklet connector). Returns
+        ``(out_conn, tile_or_scalar_conn, op, symbol_side, symbol_expr)`` where
+        ``symbol_side`` is "a" (symbol on the LHS) or "b" (symbol on the RHS) of the op.
+
+        This complements the connector-counting detector ``_detect_binop`` which
+        requires two in-connectors. The Symbol case has only ONE in-connector but is
+        still a binop (the second operand is an inline string).
+        """
+        if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
+            return None
+        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = body.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        a_conn = next(iter(tasklet.in_connectors))
+        # Strip outer parens (DaCe wraps the RHS).
+        rhs = body[len(f"{out_conn} = "):]
+        if rhs.startswith("(") and rhs.endswith(")"):
+            rhs = rhs[1:-1]
+        # Try every op; for each, see whether the rhs splits into ``<a_conn> <op> <expr>``
+        # or ``<expr> <op> <a_conn>``. Function-form ops (min/max) handled via the
+        # explicit ``min(x, y)`` parsing below.
+        for op in _SUPPORTED_BINOPS:
+            if op in ("min", "max"):
+                # min(_a, expr) / min(expr, _a) -- accept both orderings.
+                for sym_side in ("b", "a"):
+                    if sym_side == "b":
+                        prefix, sep = f"{op}({a_conn}, ", ")"
+                    else:
+                        prefix, sep = f"{op}(", f", {a_conn})"
+                    if rhs.startswith(prefix) and rhs.endswith(sep):
+                        expr = rhs[len(prefix):-len(sep)] if sep else rhs[len(prefix):]
+                        expr = expr.strip()
+                        if expr and a_conn not in expr.split():
+                            return out_conn, a_conn, op, sym_side, expr
+            else:
+                sep = f" {op} "
+                if sep not in rhs:
+                    continue
+                lhs_part, rhs_part = rhs.split(sep, 1)
+                if lhs_part.strip() == a_conn:
+                    # Form ``_a <op> <expr>``; symbol on side b.
+                    expr = rhs_part.strip()
+                    if expr and a_conn not in expr.split():
+                        return out_conn, a_conn, op, "b", expr
+                if rhs_part.strip() == a_conn:
+                    # Form ``<expr> <op> _a``; symbol on side a.
+                    expr = lhs_part.strip()
+                    if expr and a_conn not in expr.split():
+                        return out_conn, a_conn, op, "a", expr
+        return None
+
     def _detect_unop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
         """If ``tasklet`` is a simple unary ``_out = <op>(_a)`` body (or ``_out = -_a``),
         return ``(out_conn, a_conn, op_label)``. Otherwise ``None``.
@@ -293,9 +348,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         :returns: ``True`` on rewrite.
         """
+        # Unop first (single in-connector unary call); then binop-with-symbol (single
+        # in-connector but body has a Symbol second operand); then reduction (2 in conns,
+        # in-place RMW); then plain binop (2 in conns, non-RMW).
         unop = self._detect_unop(tasklet)
         if unop is not None:
             return self._convert_unop(inner_state, tasklet, unop)
+        symbol_binop = self._detect_binop_with_symbol(tasklet)
+        if symbol_binop is not None:
+            return self._convert_binop_with_symbol(inner_state, tasklet, symbol_binop)
         reduction = self._detect_reduction(tasklet)
         if reduction is not None:
             return self._convert_reduction(inner_state, tasklet, reduction)
@@ -376,6 +437,45 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_node(binop)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
+        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        for edge in list(in_edges.values()) + out_edges:
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
+
+    def _convert_binop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        """Emit a TileBinop whose second operand is an embedded Symbol expression.
+
+        Per design 6.2 the Symbol operand kind has NO connector -- the expression is
+        embedded in the lib node body via ``expr_a`` / ``expr_b``. Pass ``kind_b=Symbol``
+        + ``expr_b=<expr>`` (or kind_a / expr_a depending on symbol_side).
+        """
+        out_conn, a_conn, op, symbol_side, symbol_expr = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if a_conn not in in_edges or not out_edges:
+            return False
+        out_edge = out_edges[0]
+        a_edge = in_edges[a_conn]
+        kind_tile_side = self._operand_kind(inner_state, a_edge)
+        if symbol_side == "b":
+            binop = TileBinop(name=f"{tasklet.label}_binop_sym",
+                              widths=tuple(self.widths),
+                              op=op,
+                              kind_a=kind_tile_side,
+                              kind_b="Symbol",
+                              expr_b=symbol_expr)
+            inner_state.add_node(binop)
+            inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
+        else:
+            binop = TileBinop(name=f"{tasklet.label}_binop_sym",
+                              widths=tuple(self.widths),
+                              op=op,
+                              kind_a="Symbol",
+                              kind_b=kind_tile_side,
+                              expr_a=symbol_expr)
+            inner_state.add_node(binop)
+            inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
