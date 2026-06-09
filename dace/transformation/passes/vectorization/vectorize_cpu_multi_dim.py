@@ -17,7 +17,7 @@ Refer to the v2 plan for the locked knobs:
 * ``remainder_strategy = MASKED_TAIL`` (one map, mask covers the tail).
 * ``branch_normalization = True``, ``use_fp_factor = False`` (v2 only
   consumes ``merge``-form output; the path is reserved for the
-  post-MVP :class:`TileMerge` slice).
+  post-MVP :class:`TileITE` slice).
 
 Refuses every other combination with ``NotImplementedError`` so the
 caller is pointed at the supported config.
@@ -60,17 +60,17 @@ from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
 # Walker-primary pipeline -- no legacy descent / emit_tile_ops imports. The walker
 # (StageInsideBody + PreparePerLaneIndices) replaces both PromoteNSDFGBodyToTiles and the legacy
-# EmitTileOps boundary emission. Tasklet-to-TileBinop / TileMerge / TileReduce conversion is
+# EmitTileOps boundary emission. Tasklet-to-TileBinop / TileITE / TileReduce conversion is
 # pending; for now the SDFG returns with raw tasklets between staged tile transients and lib-node
 # expansion handles only TileLoad / TileStore / TileMaskGen.
 from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
 from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.libraries.tileops.nodes import (TileBinop, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore, TileUnop)
+from dace.libraries.tileops.nodes import (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-_TILE_NODE_TYPES = (TileBinop, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore, TileUnop)
+_TILE_NODE_TYPES = (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
 
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
@@ -192,7 +192,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             plus a step-1 sequential scalar tail. ``scalar_postamble`` and
             ``branch_mode="fp_factor"`` are K=1-only; both raise at K>=2.
         :param branch_mode: Branch lowering. ``"merge"`` (default) lowers a
-            same-write-set if/else to a per-lane :class:`TileMerge` select;
+            same-write-set if/else to a per-lane :class:`TileITE` select;
             ``"fp_factor"`` (K=1 only, requires ``scalar_postamble``) lowers it
             to ``c*x + (1-c)*y`` tile-binop arithmetic.
         :param insert_copies: NO-OP under the multi-dim design (kept for harness parity with the 1D
@@ -268,7 +268,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # same-write-set if/else to ``a = c*x + (1-c)*y`` arithmetic,
             # fold the condition into a tasklet, then split the multi-op RHS
             # into single-op binop tasklets so ``EmitTileOps`` lowers each to a
-            # ``TileBinop`` (no merge/TileMerge). Pairs with scalar_postamble.
+            # ``TileBinop`` (no merge/TileITE). Pairs with scalar_postamble.
             #
             # ``permissive=True`` is REQUIRED for the vectorisation pipeline:
             # the default ``can_be_applied`` refuses any conditional whose
@@ -308,7 +308,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # compute-then / compute-else / apply-merge dataflow states carrying
             # ``ITE(c, t, e)`` tasklets. Flattens the ConditionalBlock so
             # PromoteNSDFGBodyToTiles can descend; the ITE tasklets lower to a
-            # per-lane TileMerge select (the K-dim analogue of the 1D
+            # per-lane TileITE select (the K-dim analogue of the 1D
             # ``vector_select`` blend), gated by the tile map's iteration mask.
             # SameWriteSetIfElseToITECFG handles two-arm same-write-set
             # if/else by emitting per-target ITE tasklets; the residual

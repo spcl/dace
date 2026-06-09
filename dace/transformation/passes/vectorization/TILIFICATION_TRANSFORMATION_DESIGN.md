@@ -543,7 +543,7 @@ the general gather path.
 | `TileStore` | Unified tile write -- structured, scatter, or mixed. |
 | `TileBinop` | Elementwise binary op. |
 | `TileUnop` | Elementwise unary op. |
-| `TileMerge` | `where(mask, t, e)`. |
+| `TileITE` | `where(mask, t, e)`. |
 | `TileReduce` | Cross-lane reduction (tile -> scalar only; section 10.3). |
 | `TileMaskGen` | ANY-dim-OOB conjunction -> bool tile (section 7.4). |
 | `TileIota` | `arange`-style 1-D index tile for diagonal / transpose gather encoding (section 5.3). |
@@ -555,7 +555,7 @@ Per the design pivot, separate `TileGather` / `TileScatter` nodes are
 
 ### 6.2 Uniform operand contract
 
-Every elementwise node (`TileBinop`, `TileUnop`, `TileMerge`) and
+Every elementwise node (`TileBinop`, `TileUnop`, `TileITE`) and
 every store-style node accepts each operand as one of:
 
 | Kind | Connector | Source | Lowering |
@@ -794,7 +794,7 @@ which dim is being predicated.
 
 ### 7.5 Intra-tile (branch) masks
 
-Branch normalisation produces `TileMerge` with an explicit condition
+Branch normalisation produces `TileITE` with an explicit condition
 tile. The iteration mask (`_iter_mask`) and the condition mask combine
 inside the expansion to a single effective mask. No separate
 `TileMaskAnd` / `Or` / `Not` lib nodes are needed for the common case;
@@ -1308,7 +1308,7 @@ These are deliberately excluded from this design; revisit only when a
 concrete kernel demands them:
 
 - **Mask combinators as lib nodes** (`TileMaskAnd` / `Or` / `Not`).
-  Branch normalisation produces `TileMerge` which is sufficient for
+  Branch normalisation produces `TileITE` which is sufficient for
   the current kernel corpus.
 - **Cross-tile (across-Map-invocations) reductions**. `TileReduce`
   reduces within one tile; across-tile is a separate concern handled
@@ -1411,7 +1411,7 @@ concrete kernel demands them:
 | Mask `(K_0, ..., K_{K-1})` | yes | yes | yes | always full-tile shape |
 | Remainder regions | 2 | 3 | 4 | interior + K boundaries (section 8.2) |
 | `TileReduce` (tile -> scalar) | yes | yes | yes | axis-keep refused (section 10.3) |
-| `TileMerge` | yes | yes | yes | shape-agnostic |
+| `TileITE` | yes | yes | yes | shape-agnostic |
 | Diagonal / transpose | n/a | yes | yes | fold to per-dim GATHER (section 5.4) |
 | MODULAR -> LINEAR reduction | yes | yes | yes | when `N | c * W_p` (section 4.2) |
 | NestedSDFG body (required) | opt | **req** | **req** | inlining permitted only for K=1 |
@@ -1437,7 +1437,7 @@ concrete kernel demands them:
 | `TileBinop` (Tile/Scalar) | yes `_set1` + op | yes `vdupq` + op | yes `svdup` + op | yes | yes scalar binop |
 | `TileBinop` (Tile/Symbol) | yes inline literal | yes inline literal| yes inline literal | yes | yes inline literal |
 | `TileUnop` all ops | yes | yes | yes | yes | yes |
-| `TileMerge` | yes `_mask_blend` | yes `vbslq_*` | yes `svsel_*` | yes | yes `ct.where` |
+| `TileITE` | yes `_mask_blend` | yes `vbslq_*` | yes `svsel_*` | yes | yes `ct.where` |
 | `TileMaskGen` | yes -> `__mmask8` | yes -> bool vector | yes -> predicate reg | yes | yes -> bool tile |
 | `TileReduce` (tile->scalar)| yes `_reduce_*` | yes `vaddvq_*` | yes `svaddv_*` | yes scalar loop | yes `ct.reduce` |
 | `TileIota` | yes `_set_*` constant| yes constant init | yes `svindex_*` | yes | yes `ct.arange` |
@@ -1454,7 +1454,7 @@ intrinsic exists. `n/a` = the feature is meaningless for that backend.
 These are explicitly flagged as undetermined. Each is currently
 deferred behind a real kernel signal:
 
-- **TileMerge nested branches**. The branch-normalisation pipeline
+- **TileITE nested branches**. The branch-normalisation pipeline
   produces a single-level `merge(c, t, e)`. Nested merges (`merge(c0,
   merge(c1, t, e1), e0)`) compose naturally but the SVE expansion
   has not been measured for the predicate-stack cost. Lift when a

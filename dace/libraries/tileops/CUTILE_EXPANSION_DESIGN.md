@@ -235,7 +235,7 @@ nonexistent symbol (see *Raise policy*).
 
 ---
 
-### 5. TileMerge — `ExpandTileMergeCutile` EXISTS, RISKY (depends on `ct.where`)
+### 5. TileITE — `ExpandTileITECutile` EXISTS, RISKY (depends on `ct.where`)
 
 **Correctness today**: emits `__output = ct.where(__cond, __then,
 __else)`. This is the **single most fragile** expansion because
@@ -276,7 +276,7 @@ unselected branch may be non-finite, the fallback must instead use a
 gather/scatter-style masked select — but that requires materialised
 indices and is heavyweight; therefore:
 
-**Decision**: TileMerge's cutile expansion chooses at expansion time:
+**Decision**: TileITE's cutile expansion chooses at expansion time:
 
 1. Try `ct.where` (primary) — gated behind a `_CT_HAS_WHERE` capability
    flag resolved by probing the installed package once.
@@ -542,7 +542,7 @@ exist and are correct:
 **Must raise `NotImplementedError` (cannot be faithfully lowered with
 current confirmed primitives):**
 
-- TileMerge when `ct.where` is absent AND output is float with possibly
+- TileITE when `ct.where` is absent AND output is float with possibly
   non-finite branches.
 - TileReduce `has_mask=True` with `op in {min, max}` when `ct.where` is
   absent.
@@ -596,7 +596,7 @@ binop rhs paren-wrapped). The cuTile runtime is never executed.
   symbol operand → expression inlined.
 - assert no `__mask` reference for `has_mask=True`.
 
-**TileMerge (new)**
+**TileITE (new)**
 - primary: body == `ct.where(__cond, __then, __else)`; parses; Python.
 - fallback (force capability flag off via a kwarg/monkeypatch): body
   contains `__then`, `__else`, a multiply and an add (`* __then`,
@@ -639,9 +639,9 @@ Before any of these expansions are trusted at runtime, confirm in the
 actually installed package (the design assumes presence on CI but must be
 checked once a GPU/cuTile environment exists):
 
-1. **`ct.where(cond, a, b)` exists** and its arg order. (Blocks: TileMerge
+1. **`ct.where(cond, a, b)` exists** and its arg order. (Blocks: TileITE
    primary, TileReduce masked min/max, gather/scatter OOB-index fallback.)
-   Fallback if absent: arithmetic blend (TileMerge int/finite, TileReduce
+   Fallback if absent: arithmetic blend (TileITE int/finite, TileReduce
    `+`/`*`); raise for min/max and non-finite float merge.
 2. **`ct.gather(..., mask=...)` and `ct.scatter(..., mask=...)` accept the
    `mask=` kwarg** (L-gs-mask: strongly indicated, not confirmed).

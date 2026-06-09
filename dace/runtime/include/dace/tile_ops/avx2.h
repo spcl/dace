@@ -267,12 +267,12 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 }
 
 // ===================================================================
-// tile_merge : out[i] = cond[i] ? t : e ; ZERO-FILL inactive.
+// tile_ite : out[i] = cond[i] ? t : e ; ZERO-FILL inactive.
 // The select is via blendv (per-lane high-bit), with cond built as an
 // all-ones/zero vector mask from the cond tile.
 // ===================================================================
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
-inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
   auto scalar_tail = [&](int i) {
     const T tv = (!BroadcastThen) ? t[i] : t[0];
@@ -389,9 +389,9 @@ inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* 
 }
 
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
-inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask) {
-  tile_merge<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
+  tile_ite<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
 }
 
 // ===================================================================

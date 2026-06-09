@@ -10,7 +10,7 @@ was deleted, ``VectorizeCPUMultiDim`` runs a walker-primary pipeline:
 This file pins minimum-viable invariants on the walker-primary
 orchestrator -- it imports, instantiates, and runs without crashing
 on a trivial SDFG. Numerical equivalence end-to-end will land once
-the walker handles tasklet -> TileBinop / TileMerge / TileReduce
+the walker handles tasklet -> TileBinop / TileITE / TileReduce
 conversion (currently in scope).
 """
 import dace

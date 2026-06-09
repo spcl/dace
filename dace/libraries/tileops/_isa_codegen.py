@@ -215,8 +215,8 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     )
 
 
-def make_merge_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
-    """CPP tasklet calling ``dace::tileops::tile_merge`` (per-lane select).
+def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
+    """CPP tasklet calling ``dace::tileops::tile_ite`` (per-lane select).
 
     ``_cond`` / ``_t`` / ``_e`` are all tile operands (Broadcast=false);
     ``CondT`` is the condition tile's element type.
@@ -227,7 +227,7 @@ def make_merge_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_cond")
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
-    call = (f"dace::tileops::tile_merge<{out_dtype}, {cond_dtype}, {vlen}, false, false, {masked}>"
+    call = (f"dace::tileops::tile_ite<{out_dtype}, {cond_dtype}, {vlen}, false, false, {masked}>"
             f"(_o, _cond, _t, _e, {mask_arg});")
     inputs = {"_cond", "_t", "_e"} | ({"_mask"} if node.has_mask else set())
     return nodes.Tasklet(

@@ -34,7 +34,7 @@ import pytest
 def branch_mode(request) -> str:
     """Branch lowering variant the K=1 tile path must support:
 
-    - ``"merge"`` — same-write-set if/else -> per-lane ``TileMerge`` select.
+    - ``"merge"`` — same-write-set if/else -> per-lane ``TileITE`` select.
     - ``"fp_factor"`` — ``c*x + (1-c)*y`` arithmetic (the legacy
       ``EliminateBranches`` form), lowered on the tile path via tile binops.
 
@@ -323,7 +323,7 @@ def vectorize_config(request) -> str:
 
     - ``"tile_nodes"`` — the K-dim tile-op routing through
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
-      (TileBinop / TileLoad / TileStore / TileMerge / TileLoad (gather) /
+      (TileBinop / TileLoad / TileStore / TileITE / TileLoad (gather) /
       TileStore (scatter)), expanded to the per-ISA backend (scalar reference in
       the harness). Body-nesting is controlled per-test via the
       ``tile_emit_mode`` fixture (or an explicit ``nest_map_bodies``

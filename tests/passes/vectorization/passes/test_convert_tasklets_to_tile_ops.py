@@ -159,3 +159,68 @@ def test_converter_unop_preserves_memlets_on_rewired_edges():
     c_edge = next(e for e in body_state.out_edges(unop) if e.src_conn == "_c")
     assert str(a_edge.data) == "A[ii]"
     assert str(c_edge.data) == "C[ii]"
+
+
+# ---- ternary if-then-else (TileITE) -----------------------------------------
+
+
+def _build_inner_body_with_ite():
+    """Build an SDFG whose body NSDFG has a ternary ``_o = _t if _cond else _e`` tasklet."""
+    sdfg = dace.SDFG("ite_fixture")
+    sdfg.add_array("Cond", (8, ), dace.bool_, transient=False)
+    sdfg.add_array("T", (8, ), dace.float64, transient=False)
+    sdfg.add_array("E", (8, ), dace.float64, transient=False)
+    sdfg.add_array("O", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("Cond", (8, ), dace.bool_, transient=False)
+    inner.add_array("T", (8, ), dace.float64, transient=False)
+    inner.add_array("E", (8, ), dace.float64, transient=False)
+    inner.add_array("O", (8, ), dace.float64, transient=False)
+    instate = inner.add_state("body")
+    c_inner = instate.add_access("Cond")
+    t_inner = instate.add_access("T")
+    e_inner = instate.add_access("E")
+    o_inner = instate.add_access("O")
+    tasklet = instate.add_tasklet("ite_tasklet", {"_cond", "_t", "_e"}, {"_o"}, "_o = _t if _cond else _e")
+    instate.add_edge(c_inner, None, tasklet, "_cond", Memlet("Cond[ii]"))
+    instate.add_edge(t_inner, None, tasklet, "_t", Memlet("T[ii]"))
+    instate.add_edge(e_inner, None, tasklet, "_e", Memlet("E[ii]"))
+    instate.add_edge(tasklet, "_o", o_inner, None, Memlet("O[ii]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"Cond", "T", "E"}, {"O"}, symbol_mapping={"ii": "ii"})
+    for name, an in (("Cond", state.add_access("Cond")), ("T", state.add_access("T")), ("E", state.add_access("E"))):
+        state.add_memlet_path(an, me, nsdfg, dst_conn=name, memlet=Memlet(f"{name}[0:8]"))
+    o_outer = state.add_access("O")
+    state.add_memlet_path(nsdfg, mx, o_outer, src_conn="O", memlet=Memlet("O[0:8]"))
+    return sdfg, inner
+
+
+def test_converter_replaces_ternary_tasklet_with_tileite():
+    """A Python ternary ``_o = _t if _cond else _e`` gets converted to a TileITE."""
+    from dace.libraries.tileops import TileITE
+    sdfg, inner = _build_inner_body_with_ite()
+    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    body_state = next(s for s in inner.states())
+    ites = [n for n in body_state.nodes() if isinstance(n, TileITE)]
+    assert len(ites) == 1
+
+
+def test_converter_ite_wires_cond_t_e_connectors_correctly():
+    """``_cond`` / ``_t`` / ``_e`` end up on the right connectors with the right memlets."""
+    from dace.libraries.tileops import TileITE
+    sdfg, inner = _build_inner_body_with_ite()
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    ite = next(n for n in body_state.nodes() if isinstance(n, TileITE))
+    cond_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_cond")
+    t_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_t")
+    e_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_e")
+    out_edge = next(e for e in body_state.out_edges(ite) if e.src_conn == "_o")
+    assert str(cond_edge.data) == "Cond[ii]"
+    assert str(t_edge.data) == "T[ii]"
+    assert str(e_edge.data) == "E[ii]"
+    assert str(out_edge.data) == "O[ii]"

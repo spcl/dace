@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileMerge`` per-lane select on K-dim register tiles.
+"""``TileITE`` per-lane select on K-dim register tiles.
 
 The lib node lowers a branch-normalized ``merge(cond, then, else)``
 tasklet (see :mod:`dace.runtime.include.dace.merge`) to a per-lane
@@ -44,16 +44,16 @@ except Exception:  # pragma: no cover - the CI path (no cuTile install)
 
 
 @library.expansion
-class ExpandTileMergePure(ExpandTransformation):
-    """Correctness-only CPP tasklet lowering of ``TileMerge``."""
+class ExpandTileITEPure(ExpandTransformation):
+    """Correctness-only CPP tasklet lowering of ``TileITE``."""
 
     environments = []
 
     @staticmethod
-    def expansion(node: "TileMerge", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    def expansion(node: "TileITE", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         """Return a single CPP tasklet that walks the flattened tile.
 
-        :param node: The ``TileMerge`` lib node being expanded.
+        :param node: The ``TileITE`` lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A CPP tasklet replacing the lib node in place.
@@ -83,8 +83,8 @@ class ExpandTileMergePure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandTileMergeCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileMerge`.
+class ExpandTileITECutile(ExpandTransformation):
+    """``cuda.tile``-Python expansion of :class:`TileITE`.
 
     Primary (CI default): ``__output = ct.where(__cond, __then,
     __else)`` — the cuTile select primitive. The surrounding iteration
@@ -104,15 +104,15 @@ class ExpandTileMergeCutile(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node: "TileMerge", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    def expansion(node: "TileITE", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         raise NotImplementedError(
-            "ExpandTileMergeCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "ExpandTileITECutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
             "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
         )
 
 
 @library.expansion
-class ExpandTileMergeScalar(ExpandTransformation):
+class ExpandTileITEScalar(ExpandTransformation):
     """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
     the other ISA backends, differing only in the included header."""
 
@@ -120,11 +120,11 @@ class ExpandTileMergeScalar(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_merge_tasklet(node, parent_state, parent_sdfg, "scalar")
+        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "scalar")
 
 
 @library.expansion
-class ExpandTileMergeAVX512(ExpandTransformation):
+class ExpandTileITEAVX512(ExpandTransformation):
     """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
     the other ISA backends, differing only in the included header."""
 
@@ -132,11 +132,11 @@ class ExpandTileMergeAVX512(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_merge_tasklet(node, parent_state, parent_sdfg, "avx512")
+        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "avx512")
 
 
 @library.expansion
-class ExpandTileMergeAVX2(ExpandTransformation):
+class ExpandTileITEAVX2(ExpandTransformation):
     """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
     the other ISA backends, differing only in the included header."""
 
@@ -144,11 +144,11 @@ class ExpandTileMergeAVX2(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_merge_tasklet(node, parent_state, parent_sdfg, "avx2")
+        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "avx2")
 
 
 @library.expansion
-class ExpandTileMergeNeon(ExpandTransformation):
+class ExpandTileITENeon(ExpandTransformation):
     """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
     the other ISA backends, differing only in the included header."""
 
@@ -156,11 +156,11 @@ class ExpandTileMergeNeon(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_merge_tasklet(node, parent_state, parent_sdfg, "neon")
+        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "neon")
 
 
 @library.expansion
-class ExpandTileMergeSVE(ExpandTransformation):
+class ExpandTileITESVE(ExpandTransformation):
     """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
     the other ISA backends, differing only in the included header."""
 
@@ -168,11 +168,11 @@ class ExpandTileMergeSVE(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_merge_tasklet(node, parent_state, parent_sdfg, "sve")
+        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
 @library.node
-class TileMerge(nodes.LibraryNode):
+class TileITE(nodes.LibraryNode):
     """Per-lane select ``_o = _cond ? _t : _e`` on K-dim register tiles.
 
     Lowers the ``merge(cond, then, else)`` tasklet that branch
@@ -188,13 +188,13 @@ class TileMerge(nodes.LibraryNode):
     """
 
     implementations = {
-        "pure": ExpandTileMergePure,
-        "cutile": ExpandTileMergeCutile,
-        "scalar": ExpandTileMergeScalar,
-        "avx512": ExpandTileMergeAVX512,
-        "avx2": ExpandTileMergeAVX2,
-        "neon": ExpandTileMergeNeon,
-        "sve": ExpandTileMergeSVE
+        "pure": ExpandTileITEPure,
+        "cutile": ExpandTileITECutile,
+        "scalar": ExpandTileITEScalar,
+        "avx512": ExpandTileITEAVX512,
+        "avx2": ExpandTileITEAVX2,
+        "neon": ExpandTileITENeon,
+        "sve": ExpandTileITESVE
     }
     default_implementation = "pure"
 
@@ -220,7 +220,7 @@ class TileMerge(nodes.LibraryNode):
     )
 
     def __init__(self, name: str, widths: Tuple[int, ...], has_mask: bool = False, location: Optional[str] = None):
-        """Construct a ``TileMerge`` node.
+        """Construct a ``TileITE`` node.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
@@ -229,7 +229,7 @@ class TileMerge(nodes.LibraryNode):
         :raises ValueError: On invalid ``widths`` length.
         """
         if not (1 <= len(widths) <= 3):
-            raise ValueError(f"TileMerge: widths must have length in {{1, 2, 3}}, got {widths!r}")
+            raise ValueError(f"TileITE: widths must have length in {{1, 2, 3}}, got {widths!r}")
         inputs = {"_cond", "_t", "_e"}
         if has_mask:
             inputs.add("_mask")
@@ -260,5 +260,5 @@ class TileMerge(nodes.LibraryNode):
         e_arr = sdfg.arrays[in_e["_e"].data.data]
         if {o_arr.dtype, t_arr.dtype, e_arr.dtype} != {o_arr.dtype}:
             raise NotImplementedError(
-                f"{self.label}: TileMerge requires uniform dtype across _t, _e and _o "
+                f"{self.label}: TileITE requires uniform dtype across _t, _e and _o "
                 f"(got {o_arr.dtype}, {t_arr.dtype}, {e_arr.dtype}); cast via separate tasklet first.")

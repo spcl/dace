@@ -99,7 +99,7 @@ extensions only:
 | `tile_scatter.py` (~290) | Same as gather. |
 | `tile_binop.py` (~485) | Keep. |
 | `tile_unop.py` (~370) | Keep. |
-| `tile_merge.py` (~300) | Keep. |
+| `tile_ite.py` (~300) | Keep. |
 | `tile_mask_gen.py` (~180) | Tighten output validator (section 10.2). |
 | `tile_iota.py` (~175) | Keep. |
 | `tile_reduce.py` (~365) | Refuse `axis` / `keepdims` (section 10.3). |

@@ -172,7 +172,7 @@ inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* 
 }
 
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
-inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask) {
   for (int i = 0; i < VLEN; ++i) {
     const T tv = BroadcastThen ? t[0] : t[i];

@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Convert in-body tasklets to ``TileBinop`` / ``TileUnop`` / ``TileMerge``.
+"""Convert in-body tasklets to ``TileBinop`` / ``TileUnop`` / ``TileITE``.
 
 After :class:`StageInsideBody` walks every tile-tagged body NSDFG and
 stages non-transient AccessNode reads through tile transients, the
@@ -20,7 +20,7 @@ First-slice scope (this commit):
 Deferred to subsequent slices:
 
 * UNARY tasklets -> :class:`TileUnop` (mechanical follow-up).
-* TERNARY / merge tasklets -> :class:`TileMerge`.
+* TERNARY / merge tasklets -> :class:`TileITE`.
 * Reduction tasklets -> :class:`TileReduce`.
 * Scalar / Symbol operand kinds (currently only Tile + Tile binops).
 * Tasklets nested inside multi-state bodies / RMW chains.
@@ -29,7 +29,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop, TileUnop
+from dace.libraries.tileops import TileBinop, TileITE, TileUnop
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -174,9 +174,34 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         return out_conn, a_conn, op
         return None
 
+    def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
+        """If ``tasklet`` is a ternary if-then-else body, return
+        ``(out_conn, cond_conn, t_conn, e_conn)``. Otherwise ``None``.
+
+        Matches the Python ternary form (DaCe parenthesises the RHS):
+        ``_o = _t if _cond else _e`` -> ``_o = (_t if _cond else _e)``.
+
+        Three in-connectors are required; their roles are inferred from the
+        position in the expression (``_t``, ``_cond``, ``_e``).
+        """
+        if len(tasklet.in_connectors) != 3 or len(tasklet.out_connectors) != 1:
+            return None
+        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = body.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        in_conns = list(tasklet.in_connectors)
+        # Try every (t, cond, e) ordering of the three connectors; accept both the parenthesised
+        # and bare forms.
+        from itertools import permutations
+        for t, cond, e in permutations(in_conns, 3):
+            for form in (f"{out_conn} = {t} if {cond} else {e}", f"{out_conn} = ({t} if {cond} else {e})"):
+                if body == form:
+                    return out_conn, cond, t, e
+        return None
+
     def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet) -> bool:
-        """Replace ``tasklet`` with a :class:`TileBinop` or :class:`TileUnop` lib
-        node if its body matches a recognised binary or unary op shape.
+        """Replace ``tasklet`` with a :class:`TileBinop` / :class:`TileUnop` /
+        :class:`TileITE` lib node if its body matches a recognised op shape.
 
         :returns: ``True`` on rewrite.
         """
@@ -187,7 +212,33 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         binop = self._detect_binop(tasklet)
         if binop is not None:
             return self._convert_binop(inner_state, tasklet, binop)
+        ite = self._detect_ite(tasklet)
+        if ite is not None:
+            return self._convert_ite(inner_state, tasklet, ite)
         return False
+
+    def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        out_conn, cond_conn, t_conn, e_conn = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if any(c not in in_edges for c in (cond_conn, t_conn, e_conn)) or not out_edges:
+            return False
+        out_edge = out_edges[0]
+        ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths))
+        inner_state.add_node(ite)
+        # TileITE connectors: _cond / _t / _e -> _o.
+        for src_conn_name, dst_conn_name in (
+            (cond_conn, "_cond"),
+            (t_conn, "_t"),
+            (e_conn, "_e"),
+        ):
+            edge = in_edges[src_conn_name]
+            inner_state.add_edge(edge.src, edge.src_conn, ite, dst_conn_name, dace.Memlet.from_memlet(edge.data))
+        inner_state.add_edge(ite, "_o", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        for edge in list(in_edges.values()) + out_edges:
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
 
     def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         out_conn, a_conn, b_conn, op = detected

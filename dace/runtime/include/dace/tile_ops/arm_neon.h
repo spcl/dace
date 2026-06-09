@@ -281,13 +281,13 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   tile_binop<T, Op, BroadcastA, BroadcastB, Masked>(out, a, b, mask, VLEN);
 }
 
-// ----------------------------- tile_merge -----------------------------
+// ----------------------------- tile_ite -----------------------------
 // out[i] = cond[i] ? t : e ; ZERO-FILL inactive. Vector blend when CondT == T
 // and T is a NEON type AND both operands are full tiles (matching lane widths);
 // every other shape (broadcast operands, mismatched cond width, non-NEON T)
 // falls to the scalar ternary.
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
-inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
   int i = 0;
   constexpr bool kSameWidth = std::is_same<CondT, T>::value;
@@ -365,9 +365,9 @@ inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* 
 }
 
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
-inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask) {
-  tile_merge<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
+  tile_ite<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
 }
 
 // ----------------------------- tile_load ------------------------------

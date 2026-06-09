@@ -115,10 +115,10 @@ inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* 
   }
 }
 
-// ----------------------------- tile_merge -----------------------------
+// ----------------------------- tile_ite -----------------------------
 // out[i] = cond[i] ? t : e ; ZERO-FILL inactive.
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
-inline void tile_merge(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask) {
   _dace_tile_vectorize(VLEN) for (int i = 0; i < VLEN; ++i) {
     const T tv = BroadcastThen ? t[0] : t[i];
@@ -259,11 +259,11 @@ tile_unop(Out&& out, A&& a, const bool* __restrict__ mask) {
   else tile_store_value<T>(out, rv);
 }
 
-// VLEN=1 tile_merge.
+// VLEN=1 tile_ite.
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked,
           typename Out, typename C, typename TThen, typename EElse>
 inline std::enable_if_t<VLEN == 1, void>
-tile_merge(Out&& out, C&& cond, TThen&& t, EElse&& e, const bool* __restrict__ mask) {
+tile_ite(Out&& out, C&& cond, TThen&& t, EElse&& e, const bool* __restrict__ mask) {
   const CondT cv = tile_load_value<CondT>(cond);
   const T tv = tile_load_value<T>(t);
   const T ev = tile_load_value<T>(e);

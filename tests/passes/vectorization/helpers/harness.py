@@ -392,7 +392,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # ``nest_map_bodies`` is now passed through directly from tests
         # (typically via the ``tile_emit_mode`` fixture).
         # v2 tile-op path (VectorizeCPUMultiDim), unified for K=1 and K>=2: the
-        # tile lib nodes (TileBinop / TileLoad / TileStore / TileMerge / ...)
+        # tile lib nodes (TileBinop / TileLoad / TileStore / TileITE / ...)
         # are emitted for every K and then expanded to tasklets (the ``pure``
         # expansion). K=1 is the degenerate single-tile-dim case — it is NOT
         # routed to the legacy 1D ``VectorizeCPU`` here; that mature
