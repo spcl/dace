@@ -100,11 +100,10 @@ _OP_CPP = {
     "&": ("(", " & ", ")"),
     "|": ("(", " | ", ")"),
     "^": ("(", " ^ ", ")"),
-    # Per user direction 2026-06-09: prefer ``dace::math::min/max`` (typeless wrappers in
-    # ``dace/math.h``) over ``std::min/max`` (dtype-strict; fails on auto-promoted output
-    # dtypes). The DaCe headers handle the cross-dtype promotion uniformly.
-    "min": ("dace::math::min(", ", ", ")"),
-    "max": ("dace::math::max(", ", ", ")"),
+    # Use ``std::`` for elemental functions: matches the K=1 ISA backend's
+    # tile_binop_apply (which calls ``std::min`` / ``std::max``).
+    "min": ("std::min(", ", ", ")"),
+    "max": ("std::max(", ", ", ")"),
 }
 
 
