@@ -99,3 +99,63 @@ def test_converter_refuses_invalid_widths():
         ConvertTaskletsToTileOps(widths=())
     with pytest.raises(ValueError, match=r"widths length"):
         ConvertTaskletsToTileOps(widths=(8, 8, 8, 8))
+
+
+# ---- unary tasklet conversion (TileUnop) ----------------------------------
+
+
+def _build_inner_body_with_unop(op="abs"):
+    """Build an SDFG with one tile-tagged Map containing a body NSDFG whose state
+    has a single unary tasklet ``_o = <op>(_a)`` (or ``_o = -_a`` for ``neg``)."""
+    sdfg = dace.SDFG(f"unop_{op}_fixture")
+    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+
+    inner = dace.SDFG("body")
+    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner.add_array("C", (8, ), dace.float64, transient=False)
+    instate = inner.add_state("body")
+    a_inner = instate.add_access("A")
+    c_inner = instate.add_access("C")
+    if op == "neg":
+        body_str = "_o = -_a"
+    else:
+        body_str = f"_o = math.{op}(_a)"
+    tasklet = instate.add_tasklet("body_tasklet", {"_a"}, {"_o"}, body_str)
+    instate.add_edge(a_inner, None, tasklet, "_a", Memlet("A[ii]"))
+    instate.add_edge(tasklet, "_o", c_inner, None, Memlet("C[ii]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"C"}, symbol_mapping={"ii": "ii"})
+    a_outer = state.add_access("A")
+    c_outer = state.add_access("C")
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:8]"))
+    state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
+    return sdfg, inner
+
+
+@pytest.mark.parametrize("op", ["neg", "abs", "exp", "log", "sqrt", "floor", "ceil", "tanh"])
+def test_converter_replaces_unary_tasklet_with_tileunop(op):
+    """Each supported unary op gets converted to a TileUnop."""
+    from dace.libraries.tileops import TileUnop
+    sdfg, inner = _build_inner_body_with_unop(op=op)
+    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    body_state = next(s for s in inner.states())
+    unops = [n for n in body_state.nodes() if isinstance(n, TileUnop)]
+    assert len(unops) == 1
+    assert unops[0].op == op
+
+
+def test_converter_unop_preserves_memlets_on_rewired_edges():
+    """Rewired ``_a`` / ``_c`` memlets keep their per-iteration subset shape."""
+    from dace.libraries.tileops import TileUnop
+    sdfg, inner = _build_inner_body_with_unop(op="abs")
+    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
+    a_edge = next(e for e in body_state.in_edges(unop) if e.dst_conn == "_a")
+    c_edge = next(e for e in body_state.out_edges(unop) if e.src_conn == "_c")
+    assert str(a_edge.data) == "A[ii]"
+    assert str(c_edge.data) == "C[ii]"

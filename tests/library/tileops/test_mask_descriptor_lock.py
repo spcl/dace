@@ -122,7 +122,7 @@ def _build_store_with_mask(mask_shape, **mask_kwargs):
     state.add_node(node)
     state.add_edge(src_an, None, node, "_src", Memlet("Src[0:4, 0:8]"))
     state.add_edge(m_an, None, node, "_mask", Memlet(f"M[{','.join(f'0:{w}' for w in mask_shape)}]"))
-    state.add_edge(node, "_dst", dst_an, None, Memlet("Dst[0:16, 0:32]"))
+    state.add_edge(node, "_dst", dst_an, None, Memlet("Dst[0:4, 0:8]"))
     return sdfg, state, node
 
 

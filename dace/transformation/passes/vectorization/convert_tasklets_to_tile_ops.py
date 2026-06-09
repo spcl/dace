@@ -29,7 +29,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop
+from dace.libraries.tileops import TileBinop, TileUnop
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -38,6 +38,23 @@ from dace.transformation.passes.vectorization.utils.map_predicates import is_inn
 
 #: Subset of binary operators that map directly onto :class:`TileBinop`.
 _SUPPORTED_BINOPS = {"+", "-", "*", "/", "min", "max"}
+
+#: Mapping ``tasklet-body form`` -> ``TileUnop op label``. Each value names the
+#: ``TileUnop.op`` keyword to instantiate; each key form is matched against the
+#: tasklet body (after the DaCe paren wrap is stripped). The leading ``-`` form
+#: aliases ``neg``.
+_SUPPORTED_UNOPS = {
+    "neg",
+    "abs",
+    "exp",
+    "log",
+    "sqrt",
+    "sin",
+    "cos",
+    "floor",
+    "ceil",
+    "tanh",
+}
 
 
 @properties.make_properties
@@ -126,20 +143,59 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     return out_conn, a, b, op
         return None
 
-    def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet) -> bool:
-        """Replace ``tasklet`` with a :class:`TileBinop` lib node if it is a
-        simple Tile+Tile binary op. Returns ``True`` on rewrite.
+    def _detect_unop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
+        """If ``tasklet`` is a simple unary ``_out = <op>(_a)`` body (or ``_out = -_a``),
+        return ``(out_conn, a_conn, op_label)``. Otherwise ``None``.
+
+        Accepts both the DaCe-emitted parenthesised RHS form and the bare form.
+        ``op_label`` is one of :data:`_SUPPORTED_UNOPS`.
         """
-        detected = self._detect_binop(tasklet)
-        if detected is None:
-            return False
+        if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
+            return None
+        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = body.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        a_conn = next(iter(tasklet.in_connectors))
+        # Negation: ``_o = -_a`` / ``_o = (-_a)`` / ``_o = (- _a)`` (DaCe sometimes inserts a
+        # space between the unary minus and the operand).
+        for form in (f"{out_conn} = -{a_conn}", f"{out_conn} = (-{a_conn})", f"{out_conn} = (- {a_conn})"):
+            if body == form:
+                return out_conn, a_conn, "neg"
+        # Function-call ops: ``_o = abs(_a)`` / ``_o = math.exp(_a)`` / etc. Accept both bare
+        # name and ``math.`` / ``std::`` prefixes (RemoveMathCall strips ``math.`` upstream;
+        # this handles the case where it didn't run or wasn't needed).
+        for op in _SUPPORTED_UNOPS:
+            if op == "neg":
+                continue
+            prefixes = (op, f"math.{op}", f"std::{op}")
+            for pref in prefixes:
+                for form in (f"{out_conn} = {pref}({a_conn})", f"{out_conn} = ({pref}({a_conn}))"):
+                    if body == form:
+                        return out_conn, a_conn, op
+        return None
+
+    def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet) -> bool:
+        """Replace ``tasklet`` with a :class:`TileBinop` or :class:`TileUnop` lib
+        node if its body matches a recognised binary or unary op shape.
+
+        :returns: ``True`` on rewrite.
+        """
+        # Try unary first (single in connector) -- cheaper detection short-circuits.
+        unop = self._detect_unop(tasklet)
+        if unop is not None:
+            return self._convert_unop(inner_state, tasklet, unop)
+        binop = self._detect_binop(tasklet)
+        if binop is not None:
+            return self._convert_binop(inner_state, tasklet, binop)
+        return False
+
+    def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         out_conn, a_conn, b_conn, op = detected
         in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
         out_edges = list(inner_state.out_edges(tasklet))
         if a_conn not in in_edges or b_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
-        # Mint the lib node + wire its connectors from the tasklet's edges.
         binop = TileBinop(name=f"{tasklet.label}_binop", widths=tuple(self.widths), op=op)
         inner_state.add_node(binop)
         a_edge = in_edges[a_conn]
@@ -147,6 +203,23 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        for edge in list(in_edges.values()) + out_edges:
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
+
+    def _convert_unop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        out_conn, a_conn, op = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if a_conn not in in_edges or not out_edges:
+            return False
+        out_edge = out_edges[0]
+        unop = TileUnop(name=f"{tasklet.label}_unop", widths=tuple(self.widths), op=op)
+        inner_state.add_node(unop)
+        a_edge = in_edges[a_conn]
+        inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))
+        inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)

@@ -393,3 +393,35 @@ class TileStore(nodes.LibraryNode):
             if desc.dtype not in allowed_dtypes:
                 raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
                                  f"{{int32, int64}} (design section 10.4)")
+        # Full-tile write contract (per user direction 2026-06-09): the destination memlet's
+        # per-dim subset extents must match ``widths`` exactly under the ``dst_dims`` permutation.
+        # Anything else -- partial-tile writes, single-element writes, scalar writes to global --
+        # raises NotImplementedError so the orchestrator surfaces the gap loudly. Reductions
+        # (scalar transient -> single-element global write) will be lowered via a dedicated
+        # reduction path; non-full structured writes will land via a per-lane Python tasklet or
+        # a single-element tile load once the design is final. Skip the check when
+        # ``gather_dims`` is non-empty (scatter mode: the dest memlet covers the full dest array
+        # and the per-lane addressing comes from the ``_idx_<k>`` connectors instead).
+        if not self.gather_dims:
+            dst_subset = out_e["_dst"].data.subset
+            K = len(widths)
+            # The dst memlet's subset spans the full dest array; extract its per-dim size and
+            # compare to widths under the ``dst_dims`` permutation. ``dst_dims`` defaults to the
+            # innermost K dims in order.
+            dims = list(self.dst_dims) if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape)))
+            try:
+                subset_sizes = tuple(dst_subset.size())
+            except Exception:  # noqa: BLE001 -- symbolic / non-Range subsets currently allowed (refused at codegen)
+                subset_sizes = None
+            if subset_sizes is not None:
+                expected = tuple(widths[i] for i in range(K))
+                actual = tuple(subset_sizes[d] for d in dims) if max(dims, default=-1) < len(subset_sizes) else None
+                if actual is None or any(bool(dace.symbolic.simplify(a - e)) != 0 for a, e in zip(actual, expected)):
+                    raise NotImplementedError(
+                        f"{self.label}: non-full-tile structured store -- dest memlet "
+                        f"subset sizes {subset_sizes} on dims {dims} != widths {expected}. Per user "
+                        f"direction (design section 6.7 phasing): scalar / partial-tile / single-element "
+                        f"writes to a global array raise NotImplementedError until the reduction "
+                        f"(scalar transient -> single element) and single-element tile-load paths "
+                        f"are designed. Use a scalar transient + TileReduce for accumulator stores; "
+                        f"single-element writes are deferred.")
