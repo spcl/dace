@@ -10,6 +10,7 @@ from dace.transformation.interstate import StateFusionExtended
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import InsertExplicitGPUGlobalMemoryCopies
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name)
@@ -211,8 +212,10 @@ def test_three_kernels_dependent_and_independent():
         Pipeline([InsertExplicitGPUGlobalMemoryCopies()]).apply_pass(sdfg, {})
 
         # Step 2: run the remaining stream-specialization passes.
+        strategy = NaiveGPUStreamScheduler()
         Pipeline([
-            NaiveGPUStreamScheduler(),
+            strategy,
+            GPUStreamWiring(strategy),
         ]).apply_pass(sdfg, {})
 
         kernel_states = []
@@ -308,8 +311,10 @@ def test_single_copy_library_node():
     state.add_edge(a, None, cp, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("A[0:128]"))
     state.add_edge(cp, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
+    strategy = NaiveGPUStreamScheduler()
     Pipeline([
-        NaiveGPUStreamScheduler(),
+        strategy,
+        GPUStreamWiring(strategy),
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
@@ -338,8 +343,10 @@ def test_single_memset_library_node():
     state.add_node(ms)
     state.add_edge(ms, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
+    strategy = NaiveGPUStreamScheduler()
     Pipeline([
-        NaiveGPUStreamScheduler(),
+        strategy,
+        GPUStreamWiring(strategy),
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
@@ -427,8 +434,10 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     state.add_edge(matmul, "_c", c, None, dace.Memlet(f"C[0:{M}, 0:{N}]"))
 
     # Run the GPU stream pipeline on the un-expanded SDFG.
+    strategy = NaiveGPUStreamScheduler()
     Pipeline([
-        NaiveGPUStreamScheduler(),
+        strategy,
+        GPUStreamWiring(strategy),
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays, ("Stream array must be present after the pipeline runs")
@@ -486,8 +495,10 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     # Recursive expand first (the unified pipeline does this), then run the
     # scheduler on the post-expansion shape.
     sdfg.expand_library_nodes(recursive=True)
+    strategy = NaiveGPUStreamScheduler()
     Pipeline([
-        NaiveGPUStreamScheduler(),
+        strategy,
+        GPUStreamWiring(strategy),
     ]).apply_pass(sdfg, {})
 
     # Every runtime Tasklet (post-expansion) that takes a stream must have
