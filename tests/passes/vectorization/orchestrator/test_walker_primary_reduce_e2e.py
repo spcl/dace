@@ -29,12 +29,13 @@ def k1_sum(A: dace.float64[N_SYM], acc: dace.float64[1]):
 
 
 @pytest.mark.parametrize("N", [8, 16, 24])
-@pytest.mark.xfail(reason="Reductions through WCR memlets: the walker doesn't yet recognise the"
-                   " ``MapExit(WCR memlet) -> acc`` pattern. The standard DaCe reduction shape has the"
-                   " WCR on the edge through MapExit, not on an in-body tasklet -- so"
-                   " ``_detect_reduction`` (which looks for ``_acc = _acc + _val`` shape) never fires."
-                   " Needs WCR-edge detection in the converter or pre-pass synthesis -- see design"
-                   " Appendix E.")
+@pytest.mark.xfail(reason="Per user direction 2026-06-10: the auto-vectorizer does NOT touch the"
+                   " scalar-WCR -> MapExit -> WCR -> node pattern. Reductions should be expressed"
+                   " via an in-NSDFG RMW pattern (a tasklet with inout connectors INSIDE an NSDFG"
+                   " that writes to a scalar transient). This @dace.program emits the WCR-boundary"
+                   " shape that the vectorizer intentionally leaves alone. The test kernel needs to"
+                   " be rewritten using the in-NSDFG RMW pattern -- OR a pre-pass needs to convert"
+                   " WCR-boundary reductions into in-NSDFG RMW form before the walker runs.")
 def test_k1_sum_matches_reference(N):
     """``acc = sum(A)`` -- bit-equal to the unvectorised reference. K=1, varying N."""
     rng = np.random.default_rng(seed=N)

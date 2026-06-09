@@ -1672,46 +1672,66 @@ intrinsic exists. `n/a` = the feature is meaningless for that backend.
 These are explicitly flagged as undetermined. Each is currently
 deferred behind a real kernel signal:
 
-- **Reductions through WCR memlets**. Standard DaCe reduction shape
-  is a tasklet that outputs a per-iteration value via a WCR-decorated
-  memlet (``acc[0] += a[i]`` rendered as
-  ``add_memlet_path(t, mx, acc, src_conn='_out',
-  memlet=Memlet('acc[0]', wcr='lambda x,y: x+y'))``). The converter's
-  current ``_detect_reduction`` requires an in-body RMW tasklet shape
-  (``_acc = _acc <op> _val``) where the output connector matches an
-  input connector -- but DaCe rejects inout connectors on plain
-  Tasklets (``construction_utils:48``), so the natural reduction
-  shape NEVER reaches the converter. Two options:
+- **Reductions** (locked design, per user direction 2026-06-10).
+  The auto-vectorizer **DOES NOT** touch the
+  ``scalar -> WCR(MapExit) -> WCR -> AccessNode`` pattern. That
+  shape is the DaCe standard reduction form but it lives at the
+  outer-state level and is the auto-vectorizer's domain to leave
+  alone.
 
-  1. New pre-pass that walks every WCR memlet edge and synthesises an
-     in-body NSDFG with a recognisable RMW tasklet, then routes that
-     through the standard converter.
-  2. Direct WCR-memlet detection in the converter: walk every
-     non-transient AN's incoming edges, check ``.wcr is not None``,
-     and emit a ``TileReduce`` lib node consuming the upstream
-     tile-shape bridge.
+  Reductions that the walker-primary path WILL handle must be
+  expressed as an in-NSDFG RMW pattern: a body NSDFG with a transient
+  scalar accumulator, an RMW tasklet (inout connector via the NSDFG's
+  in/out connectors), and a final write to the boundary accumulator.
 
-  Option 2 is cleaner. NOT YET IMPLEMENTED. Reduction tests are
-  blocked until this lands.
+  ``@dace.program`` kernels using the ``with dace.tasklet: ... o >>
+  acc(1, lambda x, y: x + y)[0]`` shape emit the WCR-boundary form,
+  which is OUT OF SCOPE. They need either:
 
-- **Gather / scatter with the python frontend or fixture builder**.
-  ``StageInsideBody`` has the GATHER dispatch path (lines 480-505 with
-  ``materialise_per_lane_index_tile``), and TileLoad supports
-  ``gather_dims`` + ``_idx_<k>`` connectors. But constructing valid
-  manual SDFGs for gather kernels is brittle (the index array's
-  data-dependency edge must be wired through the MapEntry, and bare
-  ``add_memlet_path`` calls fail with "Input connector None does not
-  exist"). Either:
+  1. To be rewritten using the in-NSDFG RMW pattern, OR
+  2. A pre-pass that converts WCR-boundary reductions into in-NSDFG
+     RMW form BEFORE the walker runs.
 
-  1. Build gather kernels via the python frontend (``@dace.program``)
-     instead of manual SDFG construction.
-  2. Extend the test-harness helpers with a ``build_gather_kernel``
-     fixture.
+  Path 2 is the integration-friendly story (lets existing kernels
+  flow through unchanged) but is a separate slice that's not yet
+  scoped.
 
-  Until then, gather end-to-end numerical coverage stays a gap. The
-  walker-side gather path is unit-tested in
-  ``tests/passes/vectorization/passes/test_stage_inside_body.py`` but
-  not exercised numerically through the full pipeline.
+- **Gather / scatter design** (locked, per user direction 2026-06-10).
+  A scalar load of ``A[sym]`` where ``sym`` is lane-dependent should
+  trigger a full-body read into a tasklet that gathers using the
+  laneid-expanded syms, which then writes to a full tile. Symmetric
+  design for SCATTER (write-side variant).
+
+  Implementation gap: ``@dace.program`` hides the gather behind a
+  connector mapping. For ``B[i] = A[idx[i]]``:
+
+  * ``A_conn`` maps to ``A(1)[0:N]`` on the outer edge.
+  * Body NSDFG sees ``A_conn[__sym]`` where ``__sym`` is set by an
+    interstate edge ``__sym = idx_conn[0]``.
+  * Inside the body, ``__sym`` references no iter_var directly --
+    the lane-dependency is hidden behind the NSDFG boundary.
+
+  The classifier's ``_is_tile_dependent`` check needs to walk across
+  the NSDFG boundary: ``__sym`` is defined via ``idx_conn[0]``, and
+  ``idx_conn`` maps to ``idx[i]`` outside the NSDFG (lane-dependent).
+
+  Two implementation paths:
+
+  1. **Inline the outer mapping into the inner subset** before the
+     walker runs. After inlining: inner subset reads ``A[idx[i]]``
+     directly, and the existing classifier triggers GATHER. Risk:
+     loses the NSDFG's locality optimisation.
+  2. **Extend lane-dependency detection across NSDFG boundaries**.
+     The classifier walks: for each non-iter-var symbol in the
+     inner subset, trace its definition (interstate edge or
+     connector mapping); if any step references an outer iter_var,
+     flag as lane-dependent.
+
+  Path 2 is cleaner; preserves the NSDFG hierarchy.
+
+  Once detection works, the walker side ALREADY handles GATHER:
+  ``materialise_per_lane_index_tile`` emits the per-lane indices,
+  and TileLoad consumes ``gather_dims`` + ``_idx_<k>`` connectors.
 
 - **TileITE nested branches**. The branch-normalisation pipeline
   produces a single-level `merge(c, t, e)`. Nested merges (`merge(c0,

@@ -24,16 +24,18 @@ def k1_gather(A: dace.float64[N_SYM], idx: dace.int64[N_SYM], B: dace.float64[N_
 
 
 @pytest.mark.parametrize("N", [8, 16])
-@pytest.mark.xfail(reason="GATHER de-classified at the @dace.program level: the frontend lifts"
-                   " ``idx[i]`` to an interstate scalar ``__sym_tmp = idx[i]`` BEFORE the walker sees"
-                   " the body. So the inner access becomes ``A[__sym_tmp]`` where __sym_tmp is a"
-                   " scalar symbol with no DIRECT iter_var reference -- the classifier's"
-                   " ``_is_tile_dependent`` should fire (since __sym_tmp's defining expression"
-                   " references ``i``), but the body NSDFG isn't even present (NestInnermost may skip"
-                   " the single-tasklet gather kernel). Net result: the walker emits a SCALAR gather"
-                   " per outer tile-iteration (CopyND<1>) instead of a per-lane gather. Needs:"
-                   " (a) ensure NestInnermost wraps single-tasklet bodies that contain gather, OR"
-                   " (b) make the classifier detect interstate-RHS gather even outside an NSDFG.")
+@pytest.mark.xfail(reason="Per user direction 2026-06-10: a scalar load of ``A[sym]`` where ``sym``"
+                   " is lane-dependent should trigger a full-body read into a tasklet that gathers"
+                   " using the laneid-expanded syms, which then writes to a full tile. The"
+                   " ``@dace.program`` frontend hides the gather behind a connector mapping"
+                   " (``A_conn`` maps to ``A(1)[0:N]``), so the inner state sees ``A_conn[__sym]``"
+                   " where ``__sym`` is set via an interstate edge BEFORE the body state. The"
+                   " classifier's ``_is_tile_dependent`` needs to walk across the NSDFG boundary"
+                   " to see that ``__sym``'s defining expression (``idx_conn[0]``) maps to"
+                   " ``idx[i]`` outside, hence is lane-dependent. Two implementation paths: (a)"
+                   " inline the outer mapping into the inner subset before the walker runs, OR"
+                   " (b) extend the lane-dependency walker to cross NSDFG boundaries."
+                   " Same design for SCATTER (write-side variant of the same pattern).")
 def test_k1_gather_matches_reference(N):
     """K=1 ``B[i] = A[idx[i]]`` -- bit-equal to unvectorised reference. Exercises the
     GATHER walker path + the per-lane index materialiser."""
