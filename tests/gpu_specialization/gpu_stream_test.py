@@ -5,8 +5,13 @@ import pytest
 import dace
 from dace.codegen import common
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 
-gpu_stream_pipeline = GPUStreamPipeline()
+# These tests pin Naive-specific behaviour (per-WCC streams + end-of-state fused sync tasklet
+# wired inside the same state). The pipeline's default is now
+# :class:`AutoSingleStreamGPUScheduler`, which uses stream 0 only and places syncs in a
+# dedicated sync state, so the assertions here would fire. Wire Naive explicitly.
+gpu_stream_pipeline = GPUStreamPipeline(scheduling_strategy=NaiveGPUStreamScheduler())
 
 backend = common.get_gpu_backend()
 
