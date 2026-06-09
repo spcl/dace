@@ -127,22 +127,78 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         * an invariant ``Symbol`` -- ``(kind="Symbol", expr=<expr>, an_name=None)``,
         * a lane-id-dependent ``Tile`` -- ``(kind="Tile", expr=None, an_name=<tile_name>)``.
 
-        The lane-id-dependent case materialises a per-lane tile via the shared helper
-        :func:`materialise_per_lane_index_tile`. The materialised tile's element type
-        is the iter_var's int type (int32 / int64); arithmetic on it composes with
-        the Tile operand contract at expansion time.
+        For the lane-id-dependent case, materialises a per-lane tile via
+        :meth:`_materialise_lane_id_tile`. The materialised tile's element type
+        is ``int64``; arithmetic on it composes with the Tile operand contract at
+        expansion time.
+
+        Key distinction vs the gather-index materialiser
+        (``materialise_per_lane_index_tile``): for lane-id Symbols, the iter_var
+        ``ii`` represents the OUTER tile start (post-stride), and the per-lane
+        value is ``ii + __l``. The gather-index materialiser SUBSTITUTES
+        ``ii -> __l`` (correct for gather lookups where ``ii`` is the lane offset),
+        which would lose the outer tile's start value.
         """
         if not iter_vars or not self._is_lane_id_dependent(expr, iter_vars):
             return "Symbol", expr, None
-        K_tile = len(iter_vars)
-        an_name = materialise_per_lane_index_tile(
-            inner_state,
-            name_hint=f"_sym_tile",
-            gather_expr=expr,
-            tile_iter_vars=iter_vars[0] if K_tile == 1 else iter_vars,
-            tile_widths=int(self.widths[0]) if K_tile == 1 else tuple(int(w) for w in self.widths),
-        )
+        an_name = self._materialise_lane_id_tile(inner_state, expr, iter_vars)
         return "Tile", None, an_name
+
+    def _materialise_lane_id_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...]) -> str:
+        """Mint a per-lane int64 tile containing the evaluation of ``expr`` at
+        ``(iter_var_k -> iter_var_k + __l_k)`` for each tile dim ``k``.
+
+        For K=1 with iter_var ``ii`` and expr ``"ii"``: produces
+        ``_lane_tile[l] = (ii) + l``.
+
+        For K=2 with iter_vars ``(ii, jj)`` and expr ``"2 * ii + jj"``: produces
+        ``_lane_tile[l_0, l_1] = 2 * (ii + l_0) + (jj + l_1)``.
+        """
+        import dace.dtypes as _dtypes
+        from dace.memlet import Memlet as _Memlet
+        sdfg = inner_state.sdfg
+        widths = tuple(int(w) for w in self.widths)
+        K = len(widths)
+        # Rewrite each iter_var ``v`` in ``expr`` to ``(v + __l<k>)``.
+        body_expr = expr
+        for k, v in enumerate(iter_vars):
+            # Word-boundary aware replacement to avoid clobbering substring matches.
+            import re
+            body_expr = re.sub(rf"\b{re.escape(v)}\b", f"({v} + __l{k})", body_expr)
+        # Pick a unique transient name for the materialised tile.
+        arr_name, _ = sdfg.add_array(
+            "_sym_tile",
+            shape=widths,
+            dtype=dace.int64,
+            transient=True,
+            storage=_dtypes.StorageType.Register,
+            find_new_name=True,
+        )
+        # Compute the row-major flat offset string.
+        parts = []
+        for i in range(K):
+            inner = 1
+            for q in range(i + 1, K):
+                inner *= widths[q]
+            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
+        flat = " + ".join(parts) if parts else "0"
+        code_lines = []
+        for d in range(K):
+            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+        code_lines.append(f"{'    ' * K}_out[{flat}] = (int64_t)({body_expr});")
+        for d in reversed(range(K)):
+            code_lines.append(f"{'    ' * d}}}")
+        tasklet = inner_state.add_tasklet(
+            name=f"lane_id_mat_{arr_name}",
+            inputs=set(),
+            outputs={"_out"},
+            code="\n".join(code_lines),
+            language=_dtypes.Language.CPP,
+        )
+        out_an = inner_state.add_access(arr_name)
+        out_subset = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
+        return arr_name
 
     def _find_mask_an(self, inner_state: SDFGState):
         """Find the AccessNode that :class:`TileMaskGen` WRITES to (its ``_o`` target).
