@@ -574,6 +574,43 @@ and SVE all provide single-cycle broadcast intrinsics from a scalar
 register; cuTile auto-broadcasts in its DSL. Routing a length-1 read
 through a per-lane Tile would waste both a register and an extra load.
 
+#### Output kind rule (per user direction 2026-06-09)
+
+Every elementwise op also produces a typed output (the `_c` connector).
+The output kind is determined by the input kinds:
+
+| Inputs | Output kind | Output descriptor |
+|---|---|---|
+| **Any** input is `Tile` | `Tile` | `Array(shape=widths)` |
+| **All** inputs are `Scalar` / `Symbol` (no Tile) | `Scalar` (allowed) **or** `Tile` (also allowed for compositional flexibility) | `Scalar` / length-1 `Array` **or** `Array(shape=widths)` |
+
+Verbatim from the user:
+
+> Scalar-Scalar or Symbol-Scalar or Symbol-Symbol op: the output is allowed
+> to be Scalar again.
+>
+> Scalar-Tile or Symbol-Tile -> full tile output.
+
+Concretely:
+
+* `TileBinop(kind_a=Scalar, kind_b=Symbol)` → may write a Scalar `_c`.
+* `TileBinop(kind_a=Scalar, kind_b=Tile)` → must write a Tile `_c`.
+* `TileBinop(kind_a=Tile, kind_b=Tile)` → must write a Tile `_c`.
+* `TileUnop(kind_a=Scalar)` → may write a Scalar `_c`.
+* `TileUnop(kind_a=Tile)` → must write a Tile `_c`.
+
+Why this matters: a chain of pure scalar / symbolic ops (e.g. computing a
+loop-invariant clamp threshold from outer-scope symbols) need not
+materialise an intermediate tile-shape transient. The walker's Scalar
+bridges can flow through Scalar-Scalar / Scalar-Symbol binops and
+unops without paying the broadcast-to-tile cost until they actually
+meet a tile-shape operand.
+
+Validate enforces the contract: `_c` descriptor shape must equal
+`widths` when any input is `Tile`; when all inputs are non-Tile, `_c`
+may be either Scalar / length-1 Array (preferred for cheap chains) or
+Tile-shape (allowed when downstream wants a broadcast register).
+
 ### 6.3 Symbolic broadcast
 
 `Symbol` is not a degenerate `Scalar`. It is a *compile-time* constant
