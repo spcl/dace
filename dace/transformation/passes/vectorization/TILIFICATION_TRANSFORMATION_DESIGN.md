@@ -1672,6 +1672,47 @@ intrinsic exists. `n/a` = the feature is meaningless for that backend.
 These are explicitly flagged as undetermined. Each is currently
 deferred behind a real kernel signal:
 
+- **Reductions through WCR memlets**. Standard DaCe reduction shape
+  is a tasklet that outputs a per-iteration value via a WCR-decorated
+  memlet (``acc[0] += a[i]`` rendered as
+  ``add_memlet_path(t, mx, acc, src_conn='_out',
+  memlet=Memlet('acc[0]', wcr='lambda x,y: x+y'))``). The converter's
+  current ``_detect_reduction`` requires an in-body RMW tasklet shape
+  (``_acc = _acc <op> _val``) where the output connector matches an
+  input connector -- but DaCe rejects inout connectors on plain
+  Tasklets (``construction_utils:48``), so the natural reduction
+  shape NEVER reaches the converter. Two options:
+
+  1. New pre-pass that walks every WCR memlet edge and synthesises an
+     in-body NSDFG with a recognisable RMW tasklet, then routes that
+     through the standard converter.
+  2. Direct WCR-memlet detection in the converter: walk every
+     non-transient AN's incoming edges, check ``.wcr is not None``,
+     and emit a ``TileReduce`` lib node consuming the upstream
+     tile-shape bridge.
+
+  Option 2 is cleaner. NOT YET IMPLEMENTED. Reduction tests are
+  blocked until this lands.
+
+- **Gather / scatter with the python frontend or fixture builder**.
+  ``StageInsideBody`` has the GATHER dispatch path (lines 480-505 with
+  ``materialise_per_lane_index_tile``), and TileLoad supports
+  ``gather_dims`` + ``_idx_<k>`` connectors. But constructing valid
+  manual SDFGs for gather kernels is brittle (the index array's
+  data-dependency edge must be wired through the MapEntry, and bare
+  ``add_memlet_path`` calls fail with "Input connector None does not
+  exist"). Either:
+
+  1. Build gather kernels via the python frontend (``@dace.program``)
+     instead of manual SDFG construction.
+  2. Extend the test-harness helpers with a ``build_gather_kernel``
+     fixture.
+
+  Until then, gather end-to-end numerical coverage stays a gap. The
+  walker-side gather path is unit-tested in
+  ``tests/passes/vectorization/passes/test_stage_inside_body.py`` but
+  not exercised numerically through the full pipeline.
+
 - **TileITE nested branches**. The branch-normalisation pipeline
   produces a single-level `merge(c, t, e)`. Nested merges (`merge(c0,
   merge(c1, t, e1), e0)`) compose naturally but the SVE expansion
