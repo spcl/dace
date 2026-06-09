@@ -100,8 +100,11 @@ _OP_CPP = {
     "&": ("(", " & ", ")"),
     "|": ("(", " | ", ")"),
     "^": ("(", " ^ ", ")"),
-    "min": ("std::min(", ", ", ")"),
-    "max": ("std::max(", ", ", ")"),
+    # Per user direction 2026-06-09: prefer ``dace::math::min/max`` (typeless wrappers in
+    # ``dace/math.h``) over ``std::min/max`` (dtype-strict; fails on auto-promoted output
+    # dtypes). The DaCe headers handle the cross-dtype promotion uniformly.
+    "min": ("dace::math::min(", ", ", ")"),
+    "max": ("dace::math::max(", ", ", ")"),
 }
 
 

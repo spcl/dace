@@ -368,17 +368,16 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``fuse_overlapping_loads`` is a no-op under multi-dim (full-subset boundary makes fusion
         # structurally unnecessary; see the constructor's :param: doc). It no longer gates
         # NestInnermostMapBodyIntoNSDFG.
-        if nest_map_bodies:
-            # Single-emit-path mode: nest EVERY innermost map body into one
-            # NestedSDFG so the descent (PromoteNSDFGBodyToTiles) tiles all
-            # bodies — a flat axpy-style body and a reused-scalar (vbor) body
-            # then look identical to the tiler, and EmitTileOps is a no-op. This
-            # nests unconditionally and is K-dim-agnostic: it wraps the body of
-            # whatever innermost map exists, including the collapsed multi-param
-            # ``(i, j[, k])`` map. ``nest_provably_divisible=True`` disables the
-            # (single-dim, ``range[-1]``-only) divisibility skip — we always
-            # nest, so ``vector_width`` is unused and deliberately left default.
-            passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
+        # Always-on under walker-primary: every innermost map body must be nested in a body
+        # NSDFG so the walker (StageInsideBody) has something to traverse. The walker is the
+        # ONLY emit path now -- the legacy ``EmitTileOps`` / ``PromoteNSDFGBodyToTiles``
+        # descents were deleted. A flat (bare-tasklet) body without an NSDFG wrapper would
+        # leave the walker with nothing to do; the orchestrator would strip the map step
+        # to W but never produce a real per-tile body, resulting in silently wrong numerics.
+        # ``nest_provably_divisible=True`` disables the legacy single-dim divisibility skip;
+        # we always nest. The ``nest_map_bodies`` knob is kept on the constructor for harness
+        # parity with the legacy 1D path but is otherwise unused.
+        passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
         passes += [
             MarkTileDims(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
@@ -451,12 +450,28 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # Inline wrapper NSDFGs + collapse adjacent perfectly-nested single-param maps so the K-dim
         # tile spans K genuine map dims.
         normalize_loop_nests(sdfg)
-        # ExpandNestedSDFGInputs establishes the section 2.4 boundary contract: every body NSDFG's
-        # in/out connector reads/writes the full outer array; inner descriptors mirror outer shape.
-        # All downstream classification / staging / lowering runs inside the body against the inner
-        # full-shape mirror.
-        sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
-        result = super().apply_pass(sdfg, pipeline_results)
+        # Two-half pipeline split: the walker (StageInsideBody) walks body NSDFGs which only
+        # exist AFTER NestInnermostMapBodyIntoNSDFG runs. ExpandNestedSDFGInputs MUST run
+        # AFTER NestInnermostMapBodyIntoNSDFG so it widens the per-iteration boundary memlets
+        # to the full source-array subset (design section 2.4); otherwise the walker classifies
+        # inner ``A[0]`` memlets as CONSTANT and stages them via Scalar bridges, breaking
+        # numerics. Run the passes list up through the nest pass, then ExpandNestedSDFGInputs,
+        # then the rest.
+        try:
+            nest_idx = next(i for i, p in enumerate(self.passes) if isinstance(p, NestInnermostMapBodyIntoNSDFG))
+        except StopIteration:
+            nest_idx = -1
+        if nest_idx >= 0:
+            head, tail = self.passes[:nest_idx + 1], self.passes[nest_idx + 1:]
+            self.passes = head
+            super().apply_pass(sdfg, pipeline_results)
+            sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+            self.passes = tail
+            result = super().apply_pass(sdfg, pipeline_results)
+            self.passes = head + tail
+        else:
+            sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+            result = super().apply_pass(sdfg, pipeline_results)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
         # to the caller — the SDFG returns with tile lib nodes still
         # present (for inspection / saving / further transformations).

@@ -31,18 +31,26 @@ _SCALAR = "Scalar"
 _VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
 
 # op -> (prefix, suffix) for the pure (K>=2) inline C++ form ``<pre>operand<suf>``.
+#: Op -> (prefix, suffix) for the pure inline C++ form ``<pre>operand<suf>``.
+#: Per user direction 2026-06-09: always use ``dace::math::`` (canonical DaCe runtime header)
+#: instead of ``std::`` for elemental functions. ``dace/math.h`` provides typeless wrappers
+#: that round-trip every DaCe dtype (including float16, complex), while ``std::`` overloads
+#: are dtype-strict and fail on the auto-promoted output dtypes seen in lib-node bodies.
 _UNOP_CPP = {
     "neg": ("(-", ")"),
     "not": ("(!", ")"),
-    "abs": ("std::abs(", ")"),
-    "exp": ("std::exp(", ")"),
-    "log": ("std::log(", ")"),
-    "sqrt": ("std::sqrt(", ")"),
-    "sin": ("std::sin(", ")"),
-    "cos": ("std::cos(", ")"),
+    "abs": ("dace::math::abs(", ")"),
+    "exp": ("dace::math::exp(", ")"),
+    "log": ("dace::math::log(", ")"),
+    "sqrt": ("dace::math::sqrt(", ")"),
+    "sin": ("dace::math::sin(", ")"),
+    "cos": ("dace::math::cos(", ")"),
+    # ``floor`` / ``ceil`` have no dace::math template wrapper; fall back to ``std::`` (the
+    # dace::math namespace defines ``int_floor`` / ``int_ceil`` for the integer-divisor case
+    # which is a different shape).
     "floor": ("std::floor(", ")"),
     "ceil": ("std::ceil(", ")"),
-    "tanh": ("std::tanh(", ")"),
+    "tanh": ("dace::math::tanh(", ")"),
 }
 
 # op -> the cuTile-Python expression (operand placeholder ``{a}``).
