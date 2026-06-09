@@ -59,7 +59,8 @@ from dace.transformation.passes.vectorization.utils.name_schemes import (
     assert_no_laneid_in_tile_path, )
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
-from dace.transformation.passes.vectorization.fuse_overlapping_tile_loads import FuseOverlappingTileLoads
+# NOTE: FuseOverlappingTileLoads is intentionally not imported here; the multi-dim path runs full-
+# subset boundaries so overlapping fusion is structurally unnecessary (constructor docstring details).
 from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
 from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
@@ -198,10 +199,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             path). The inside-body staging (design section 3) inserts every copy intrinsically via
             tile transients on each non-transient access.
         :param fuse_overlapping_loads: Accepted for harness parity with the
-            legacy ``VectorizeCPU``. The tile path does not yet fuse
-            overlapping loads (every ``TileLoad`` emits its own window); this
-            knob is a no-op here, kept on the constructor for the same
-            harness-parity reason as ``insert_copies``.
+            legacy ``VectorizeCPU``; **always a no-op** under the multi-dim
+            design. With ``ExpandNestedSDFGInputs`` widening every body-NSDFG
+            boundary memlet to the full source-array subset (section 2.4),
+            every inner ``TileLoad`` reads the same full-array connector --
+            there are no per-tile windows to fuse. Multiple non-transient
+            AccessNodes referring to the same outer array each get their own
+            tile-bridge transient via the walker; this is benign SDFG bloat,
+            not a correctness issue. Fusion is overengineering until a kernel
+            proves it matters.
         :param nest_map_bodies: Emit-path selector. ``False`` (default) keeps
             the hybrid path — a flat (bare-tasklet) map body tiles via
             :class:`EmitTileOps`, and only a body that is *already* a NestedSDFG
@@ -359,15 +365,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             else:
                 tail_mode = "masked"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
-        # ``fuse_overlapping_loads`` requires a NestedSDFG body to fuse inside
-        # (the fusion pass walks ``TileLoad`` groups in a single state — the
-        # body-NSDFG shape that ``PromoteNSDFGBodyToTiles`` produces). Promote
-        # only fires on already-NSDFG bodies, so when the knob is on we also
-        # nest the body so a flat axpy / jacobi body becomes one too. Applies
-        # at every K (the fuse pass keeps per-load dense tile transients;
-        # binop consumers stay on dense (W,)/(W_0, W_1) views regardless of
-        # whether the source ``<base>_vec`` boundary is 1D or N-D).
-        if nest_map_bodies or fuse_overlapping_loads:
+        # ``fuse_overlapping_loads`` is a no-op under multi-dim (full-subset boundary makes fusion
+        # structurally unnecessary; see the constructor's :param: doc). It no longer gates
+        # NestInnermostMapBodyIntoNSDFG.
+        if nest_map_bodies:
             # Single-emit-path mode: nest EVERY innermost map body into one
             # NestedSDFG so the descent (PromoteNSDFGBodyToTiles) tiles all
             # bodies — a flat axpy-style body and a reused-scalar (vbor) body
@@ -398,15 +399,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # NSDFG bodies (the carried-dep LoopRegion cases stay clean skips).
             PromoteNSDFGBodyToTiles(widths=widths_t),
         ]
-        if fuse_overlapping_loads:
-            # Collapse overlapping per-lane TileLoad fans (the stencil pattern
-            # ``A[i:i+W], A[i+1:i+W+1], ...``) into one wider union transient
-            # ``<base>_vec`` shared across the consumers. Runs after Promote
-            # (when the per-subset TileLoad nodes exist in the body NSDFG) and
-            # before ``EmitTileOps`` (which would otherwise rewrite the body
-            # again). See ``fuse_overlapping_tile_loads.py`` for the structural
-            # contract.
-            passes.append(FuseOverlappingTileLoads())
+        # NOTE: ``fuse_overlapping_loads`` is intentionally NOT honoured here. Under the multi-dim
+        # design ``ExpandNestedSDFGInputs`` widens every body-NSDFG boundary memlet to the full
+        # source-array subset (section 2.4), so every inner TileLoad already reads the same
+        # full-array connector -- there are no per-tile windows to fuse. The constructor
+        # docstring documents this; the knob is kept on the constructor for harness parity
+        # with the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
             EmitTileOps(widths=widths_t),
         ]
