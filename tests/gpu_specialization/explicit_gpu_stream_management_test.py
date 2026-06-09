@@ -15,7 +15,11 @@ from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_me
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name)
 
-gpu_stream_pipeline = GPUStreamPipeline()
+# These tests pin behaviour specific to :class:`NaiveGPUStreamScheduler` (per-WCC streams,
+# end-of-state fused sync tasklets). The pipeline's default is now
+# :class:`AutoSingleStreamGPUScheduler` (stream 0 + sync-state insertion), so we wire Naive
+# explicitly here.
+gpu_stream_pipeline = GPUStreamPipeline(scheduling_strategy=NaiveGPUStreamScheduler())
 
 backend = common.get_gpu_backend()
 

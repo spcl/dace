@@ -12,16 +12,19 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (GPUStreamSchedulingStrategy,
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
+                                                                                 GPUStreamSchedulingStrategy,
                                                                                  MonolithicSingleStreamGPUScheduler,
                                                                                  NaiveGPUStreamScheduler)
 
 # Pipeline-level config.
 
 
-def test_pipeline_default_strategy_is_naive():
+def test_pipeline_default_strategy_is_auto():
+    """The pipeline's default strategy is the auto/single-stream classifier; it falls back to
+    :class:`NaiveGPUStreamScheduler` internally when its analysis says so."""
     pipe = GPUStreamPipeline()
-    assert isinstance(pipe._scheduling_strategy, NaiveGPUStreamScheduler)
+    assert isinstance(pipe._scheduling_strategy, AutoSingleStreamGPUScheduler)
 
 
 def test_pipeline_accepts_explicit_strategy_instance():

@@ -8,24 +8,29 @@ A strategy is a scheduling-only pass: it walks the SDFG and writes
 the root SDFG only; nested SDFGs share its decisions and a non-root
 :meth:`apply_pass` raises.
 """
+import warnings
 from dataclasses import dataclass
+from enum import Enum
 from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
+import dace
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.config import Config
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import Graph, NodeT
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
-                                                                               find_inner_gpu_consumers,
-                                                                               is_already_lowered_gpu_runtime_call,
-                                                                               is_gpu_copy_or_memset_libnode,
-                                                                               is_gpu_relevant_node)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name, is_already_lowered_gpu_runtime_call,
+    is_gpu_copy_or_memset_libnode, is_gpu_relevant_node, is_gpu_stream_consumer)
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (insert_per_node_syncs,
+from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (_make_sync_tasklet,
+                                                                                   _stream_connector_name,
+                                                                                   insert_per_node_syncs,
                                                                                    insert_state_end_syncs)
 
 
@@ -390,3 +395,327 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                    'hipMemcpyHostToDevice' in code or 'hipMemcpyDeviceToHost' in code:
                     return True
         return False
+
+
+# Auto single-stream strategy -- state-classified single stream + naive fallback
+
+
+class _Kind(Enum):
+    """Compute kind of a node, state, or interstate edge."""
+    NEUTRAL = 0  # memory-only or paired node -- no compute, no influence on class
+    GPU = 1  # runs on the GPU
+    CPU = 2  # runs on the host
+    MIXED = 3  # contains both -- triggers global fallback
+
+
+def _fold_kinds(kinds) -> _Kind:
+    """Collapse an iterable of node kinds into one summary.
+
+    ``NEUTRAL`` is dropped; an empty / all-neutral set returns ``NEUTRAL``; a single non-neutral
+    kind returns itself; two distinct non-neutral kinds (or any propagated ``MIXED``) returns
+    ``MIXED``.
+    """
+    has_gpu = has_cpu = mixed = False
+    for k in kinds:
+        if k == _Kind.MIXED:
+            mixed = True
+        elif k == _Kind.GPU:
+            has_gpu = True
+        elif k == _Kind.CPU:
+            has_cpu = True
+    if mixed or (has_gpu and has_cpu):
+        return _Kind.MIXED
+    if has_gpu:
+        return _Kind.GPU
+    if has_cpu:
+        return _Kind.CPU
+    return _Kind.NEUTRAL
+
+
+def _classify_node(node, sdfg: SDFG, state: SDFGState) -> _Kind:
+    """Classify a top-level dataflow node by where its compute runs.
+
+    AccessNodes / MapExits are ``NEUTRAL``. Tasklets / LibraryNodes inside a ``GPU_Device``
+    scope are ``GPU``; otherwise ``CPU``. MapEntries with ``GPU_Device`` schedule are ``GPU``
+    (their body inherits); other schedules recurse into the scope body. NestedSDFGs already
+    inside a ``GPU_Device`` map are ``GPU``; otherwise recurse via :func:`_classify_sdfg`.
+    """
+    if isinstance(node, (nodes.AccessNode, nodes.MapExit, nodes.ConsumeExit)):
+        return _Kind.NEUTRAL
+    if isinstance(node, nodes.Tasklet):
+        if is_devicelevel_gpu(sdfg, state, node) or is_already_lowered_gpu_runtime_call(node):
+            return _Kind.GPU
+        return _Kind.CPU
+    if isinstance(node, nodes.LibraryNode):
+        if is_gpu_stream_consumer(node, sdfg, state) or is_devicelevel_gpu(sdfg, state, node):
+            return _Kind.GPU
+        return _Kind.CPU
+    if isinstance(node, (nodes.MapEntry, nodes.ConsumeEntry)):
+        sched = getattr(node, 'schedule', None) or getattr(getattr(node, 'map', None), 'schedule', None)
+        if sched == dtypes.ScheduleType.GPU_Device:
+            return _Kind.GPU
+        # Sequential / CPU schedule -- recurse over the scope body.
+        try:
+            body_nodes = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+        except Exception:
+            body_nodes = []
+        return _fold_kinds(_classify_node(child, sdfg, state) for child in body_nodes)
+    if isinstance(node, nodes.NestedSDFG):
+        # Heuristic check via parent scope first; fall through to recursive classification.
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_inside_gpu_device_kernel
+        try:
+            if is_inside_gpu_device_kernel(node.sdfg):
+                return _Kind.GPU
+        except Exception:
+            pass
+        return _classify_sdfg(node.sdfg)
+    return _Kind.NEUTRAL
+
+
+def _classify_state_top_level(state: SDFGState) -> _Kind:
+    """Classify a state by folding its top-level dataflow nodes."""
+    sdfg = state.sdfg
+    return _fold_kinds(_classify_node(n, sdfg, state) for n in state.nodes())
+
+
+def _classify_sdfg(sdfg: SDFG) -> _Kind:
+    """Classify an SDFG by folding every top-level block (states + CF region payload)."""
+    kinds: List[_Kind] = []
+    for state in sdfg.all_states():
+        kinds.append(_classify_state_top_level(state))
+    # Codeblock meta on regions (loop init / condition / update, conditional branch conditions)
+    # only runs on the host -- it doesn't add GPU compute. We classify those as NEUTRAL for the
+    # purposes of MIXED detection: their CPU work is fine to pair with surrounding states.
+    return _fold_kinds(kinds)
+
+
+def _iedge_reads_gpu_array(edge_data, sdfg: SDFG, gpu_written: Set[str]) -> bool:
+    """True iff this interstate edge's condition/assignment reads a GPU-written array.
+
+    Uses ``InterstateEdge.read_symbols()`` (symbols in condition + assignment values) intersected
+    with ``sdfg.arrays``. If any of those array names overlap with arrays the GPU writes, the
+    host-side iedge eval depends on GPU output and needs a sync before it fires.
+    """
+    try:
+        read = edge_data.read_symbols()
+    except Exception:
+        return False
+    return bool(read & sdfg.arrays.keys() & gpu_written)
+
+
+def _collect_gpu_written_arrays(sdfg: SDFG) -> Set[str]:
+    """Names of arrays a GPU-classified state writes anywhere in the hierarchy."""
+    out: Set[str] = set()
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for state in nsdfg.states():
+            if _classify_state_top_level(state) != _Kind.GPU:
+                continue
+            try:
+                _, ws = state.read_and_write_sets()
+            except Exception:
+                continue
+            out |= ws
+    return out
+
+
+def _make_state_end_sync_state(parent_region, gpu_streams_name: str, label_hint: str) -> SDFGState:
+    """Create a one-tasklet state that calls ``cudaStreamSynchronize(stream 0)``.
+
+    Built inside ``parent_region`` so we land in the right ControlFlowRegion (LoopRegion /
+    ConditionalBlock branch / root SDFG). The tasklet's ``__stream_0`` connector is wired to a
+    fresh ``gpu_streams[0]`` AccessNode -- :class:`GPUStreamWiring` already propagates the array
+    into nested SDFGs, but this state lives in the same region as its source, so the local
+    AccessNode is sufficient.
+    """
+    label = f"__gpu_sync_after_{label_hint}"
+    sync_state = parent_region.add_state(label)
+    tasklet = _make_sync_tasklet(sync_state, "gpu_streams_synchronization", [0])
+    access = sync_state.add_access(gpu_streams_name)
+    sync_state.add_edge(access, None, tasklet, _stream_connector_name(0), Memlet(f"{gpu_streams_name}[0]"))
+    return sync_state
+
+
+def _splice_sync_state_on_edge(parent_region, edge, sdfg: SDFG, gpu_streams_name: str):
+    """Insert a sync state on the iedge ``src -> dst`` while preserving cond / assigns on the
+    outgoing leg, so the original semantics ride after the sync."""
+    src, dst, data = edge.src, edge.dst, edge.data
+    sync_state = _make_state_end_sync_state(parent_region, gpu_streams_name, label_hint=getattr(src, 'label', 'gpu'))
+    parent_region.remove_edge(edge)
+    parent_region.add_edge(src, sync_state, dace.InterstateEdge())
+    parent_region.add_edge(sync_state, dst, data)
+    return sync_state
+
+
+def _append_program_end_sync_state(parent_region, gpu_state, gpu_streams_name: str):
+    """Append a sync state after ``gpu_state`` when it is a region-level sink."""
+    sync_state = _make_state_end_sync_state(parent_region,
+                                            gpu_streams_name,
+                                            label_hint=getattr(gpu_state, 'label', 'gpu'))
+    parent_region.add_edge(gpu_state, sync_state, dace.InterstateEdge())
+    return sync_state
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
+    """Smart default GPU stream strategy: stream 0 everywhere, syncs only at CPU/GPU
+    state-machine boundaries.
+
+    Classifies every top-level node in the SDFG hierarchy (recursively descending into
+    NestedSDFGs that are not already inside a GPU_Device map) as ``CPU`` / ``GPU`` /
+    ``MIXED``. If any node is ``MIXED`` (e.g. a NestedSDFG that internally interleaves CPU and
+    GPU work that this strategy can't single-stream), the strategy delegates to
+    :class:`NaiveGPUStreamScheduler` for the whole SDFG and emits a warning.
+
+    Otherwise every GPU consumer is bound to stream 0, and :meth:`insert_sync_tasklets` walks
+    the interstate edges, splicing a one-tasklet *sync state* between any GPU state and
+    (a) a CPU successor, (b) a successor reached via an iedge whose condition / assignment
+    reads a GPU-written array, or (c) a region-level sink. The original iedge condition and
+    assignments ride on the outgoing leg of the splice so they execute after the sync.
+
+    The CPU -> GPU direction needs no sync: the host is sequential, so the kernel launch on
+    stream 0 queues after the CPU work naturally.
+    """
+
+    def __init__(self):
+        # State / iedge analysis is rebuilt every ``assign_streams`` call. Both scheduling and
+        # wiring run on a single SDFG, so cached state is per-instance and re-derived on reuse.
+        self._fell_back: bool = False
+        self._naive_fallback: Optional['NaiveGPUStreamScheduler'] = None
+        self._state_kinds: Dict[SDFGState, _Kind] = {}
+        self._gpu_written: Set[str] = set()
+
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
+        # ``SplitStateByGPUClass`` is the preparation step for this strategy: it lifts CPU-only
+        # WCCs / CPU prefixes out of mixed states so the classifier sees pure states, reducing
+        # how often we have to fall back to Naive. Imported locally to avoid the circular
+        # dependency (split pass imports ``_classify_node`` / ``_Kind`` from this module).
+        from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import (SplitStateByGPUClass)
+        return super().depends_on() | {SplitStateByGPUClass}
+
+    def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
+        # If a stream pipeline (Auto or otherwise) has already run on this SDFG (e.g. the user
+        # called ``GPUStreamPipeline`` explicitly and is now invoking ``sdfg.compile()`` which
+        # re-enters via ``ExperimentalCUDACodeGen.preprocess``), reuse the persisted
+        # ``Node.gpu_stream_id`` assignments and skip classification + sync insertion. The
+        # wiring pass is single-shot and will also no-op via ``is_stream_wiring_applied``.
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_stream_wiring_applied
+        if is_stream_wiring_applied(sdfg):
+            self._fell_back = False
+            self._naive_fallback = None
+            self._state_kinds = {}
+            self._gpu_written = set()
+            return {
+                n: n.gpu_stream_id
+                for nsdfg in sdfg.all_sdfgs_recursive()
+                for state in nsdfg.states()
+                for n in state.nodes() if n.gpu_stream_id is not None
+            }
+
+        # Classification: walk every nested SDFG's top-level nodes. The first MIXED top-level
+        # node triggers global fallback to Naive (whose WCC partitioning handles the general
+        # case correctly, at the cost of multi-stream overhead).
+        offenders: List[str] = []
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for node in state.nodes():
+                    if _classify_node(node, nsdfg, state) == _Kind.MIXED:
+                        offenders.append(f"{type(node).__name__} '{getattr(node, 'label', node)}' in state "
+                                         f"'{state.label}' (SDFG '{nsdfg.name}')")
+
+        if offenders:
+            warnings.warn(
+                f"AutoSingleStreamGPUScheduler: {len(offenders)} top-level node(s) classified as MIXED "
+                f"(first: {offenders[0]}); falling back to NaiveGPUStreamScheduler.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._fell_back = True
+            self._naive_fallback = NaiveGPUStreamScheduler()
+            return self._naive_fallback.assign_streams(sdfg)
+
+        # Cache per-state classification + GPU write set for the sync pass.
+        self._fell_back = False
+        self._naive_fallback = None
+        self._state_kinds = {
+            state: _classify_state_top_level(state)
+            for nsdfg in sdfg.all_sdfgs_recursive()
+            for state in nsdfg.states()
+        }
+        self._gpu_written = _collect_gpu_written_arrays(sdfg)
+
+        assignments: Dict[nodes.Node, int] = {}
+        for node, _, _ in find_inner_gpu_consumers(sdfg):
+            assignments[node] = 0
+            if node.gpu_stream_id is None:
+                node.gpu_stream_id = 0
+
+        # AccessNodes for GPU_Global storage also need a stream id even though they aren't
+        # "consumers" in the launcher / runtime-call sense -- pool-backed transients route
+        # ``cudaMallocAsync`` / ``cudaFreeAsync`` through the AccessNode's assigned stream
+        # (see ``experimental_cuda.py``'s pool branch). Naive picks this up implicitly via WCC
+        # membership; the Auto strategy stamps stream 0 on every relevant AccessNode to match.
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for node in state.nodes():
+                    if not isinstance(node, nodes.AccessNode):
+                        continue
+                    if node.desc(nsdfg).storage != dtypes.StorageType.GPU_Global:
+                        continue
+                    assignments[node] = 0
+                    if node.gpu_stream_id is None:
+                        node.gpu_stream_id = 0
+        return assignments
+
+    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
+        """Splice sync states between GPU and CPU iedges; append after GPU sinks.
+
+        Sync placement rules:
+        - ``gpu_state -> cpu_state`` (any iedge): splice.
+        - ``gpu_state -> gpu_state`` whose iedge's condition / assignment reads a GPU-written
+          array: splice (host-side iedge eval depends on GPU output).
+        - region-level sink that is GPU and not yet succeeded by a sync state: append sync state.
+        Iedges out of CPU states never get a sync (host work is sequential).
+        """
+        if self._fell_back and self._naive_fallback is not None:
+            self._naive_fallback.insert_sync_tasklets(sdfg, assignments)
+            return
+        if not self._state_kinds:
+            # ``assign_streams`` short-circuited (stream pipeline already applied), so we have
+            # no cached classification to drive sync insertion. The existing syncs from the
+            # earlier pipeline are still in place; nothing to do.
+            return
+
+        stream_array_name = get_gpu_stream_array_name()
+
+        # Snapshot iedges first; splicing mutates each region's edge set.
+        edges_to_splice: List[Tuple['AbstractControlFlowRegion', any]] = []
+        for region in sdfg.all_control_flow_regions(recursive=True):
+            for edge in list(region.edges()):
+                src, dst = edge.src, edge.dst
+                if not (isinstance(src, SDFGState) and isinstance(dst, SDFGState)):
+                    continue
+                if self._state_kinds.get(src) != _Kind.GPU:
+                    continue
+                # GPU -> non-GPU: always splice. GPU -> GPU: splice only when the iedge reads
+                # a GPU-written array (host-side condition / assignment depending on kernel output).
+                dst_kind = self._state_kinds.get(dst, _Kind.CPU)
+                if dst_kind == _Kind.GPU and not _iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
+                    continue
+                edges_to_splice.append((region, edge))
+
+        for region, edge in edges_to_splice:
+            _splice_sync_state_on_edge(region, edge, sdfg, stream_array_name)
+
+        # Region-level sinks (GPU states with no outgoing iedge in their own region) get a
+        # trailing sync state. We iterate per region rather than only root sinks so a GPU sink
+        # at the bottom of a LoopRegion / ConditionalBlock branch also picks up a sync.
+        for region in sdfg.all_control_flow_regions(recursive=True):
+            for state in list(region.nodes()):
+                if not isinstance(state, SDFGState):
+                    continue
+                if self._state_kinds.get(state) != _Kind.GPU:
+                    continue
+                if region.out_degree(state) != 0:
+                    continue
+                _append_program_end_sync_state(region, state, stream_array_name)
