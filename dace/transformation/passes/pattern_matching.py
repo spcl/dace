@@ -80,8 +80,8 @@ class PatternMatchAndApply(ppl.Pass):
         self.print_report = print_report
         self.progress = progress
 
-    def depends_on(self) -> List[Type[ppl.Pass]]:
-        deps = functools.reduce(lambda a, b: a + b, [p.depends_on() for p in self.transformations], [])
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        deps = functools.reduce(lambda a, b: a + list(b), [p.depends_on() for p in self.transformations], [])
         return list(dict.fromkeys(deps))  # Remove duplicates while preserving order
 
     def modifies(self) -> ppl.Modifies:

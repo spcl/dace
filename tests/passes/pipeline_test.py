@@ -104,7 +104,48 @@ def test_pipeline_modification_rerun():
     assert result == {'MyAnalysis': 1, 'PassA': 1, 'PassB': 1, 'PassC': 1}
 
 
+def test_pipeline_dependency_order():
+    # Regression test for deterministic dependency ordering: when a pass returns multiple
+    # independent dependencies, they must be applied in the exact order they are listed.
+    order = []
+
+    class RecordingPass(ppl.Pass):
+
+        def modifies(self) -> ppl.Modifies:
+            return ppl.Modifies.Nothing
+
+        def should_reapply(self, _) -> bool:
+            return False
+
+        def apply_pass(self, sdfg, _):
+            order.append(type(self).__name__)
+            return 1
+
+    class DepA(RecordingPass):
+        pass
+
+    class DepB(RecordingPass):
+        pass
+
+    class DepC(RecordingPass):
+        pass
+
+    class Dependent(RecordingPass):
+
+        def depends_on(self):
+            return [DepB, DepC, DepA]
+
+    pipe = ppl.Pipeline([Dependent()])
+    sdfg = empty.to_sdfg()
+
+    pipe.apply_pass(sdfg, {})
+
+    # Dependencies run in the listed order, before the dependent pass itself.
+    assert order == ['DepB', 'DepC', 'DepA', 'Dependent']
+
+
 if __name__ == '__main__':
     test_simple_pipeline()
     test_pipeline_with_dependencies()
     test_pipeline_modification_rerun()
+    test_pipeline_dependency_order()

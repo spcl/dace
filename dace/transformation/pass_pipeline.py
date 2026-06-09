@@ -484,8 +484,8 @@ class Pipeline(Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return any(p.should_reapply(modified) for p in self.passes)
 
-    def depends_on(self) -> List[Type[Pass]]:
-        deps = functools.reduce(lambda a, b: a + b, [p.depends_on() for p in self.passes], [])
+    def depends_on(self) -> List[Union[Type[Pass], Pass]]:
+        deps = functools.reduce(lambda a, b: a + list(b), [p.depends_on() for p in self.passes], [])
         return list(dict.fromkeys(deps))
 
     def _make_dependency_graph(self) -> gr.OrderedDiGraph:
