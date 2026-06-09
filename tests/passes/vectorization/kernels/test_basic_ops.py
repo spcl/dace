@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# Un-frozen 2026-06-10 (walker-primary path complete). ReplaceSTD* imports + apply_pass calls
+# are stripped from log/exp/pow tests since the walker-primary pipeline handles log/exp/pow
+# directly (TileUnop("log") -> std::log, TileBinop("**") -> std::pow). Some failures expected
+# while we iterate.
+# pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration")
 import math
 import dace
 import numpy
 import pytest
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    ReplaceSTDExpWithDaCeExp,
-    ReplaceSTDLogWithDaCeLog,
-    ReplaceSTDPowWithDaCePow,
-)
+# Walker-primary path handles log / exp / pow directly via TileUnop / TileBinop;
+# ReplaceSTD* legacy passes are intentionally NOT applied in this file.
 from math import log, exp, pow  # noqa: A004 — used inside @dace.program bodies
 
 from tests.passes.vectorization.helpers.harness import (
@@ -553,7 +554,7 @@ def test_log(remainder_strategy, emission_style):
 
     # Baseline SDFG
     log_implementations_std_sdfg = log_implementations.to_sdfg()
-    ReplaceSTDLogWithDaCeLog().apply_pass(log_implementations_std_sdfg, {})
+    # Walker-primary: TileUnop("log") -> std::log directly. ReplaceSTDLog* not needed.
 
     run_vectorization_test(dace_func=log_implementations_std_sdfg,
                            arrays={
@@ -576,7 +577,7 @@ def test_exp(remainder_strategy, emission_style):
 
     # Baseline SDFG
     exp_implementations_std_sdfg = exp_implementations.to_sdfg()
-    ReplaceSTDExpWithDaCeExp().apply_pass(exp_implementations_std_sdfg, {})
+    # Walker-primary: TileUnop("exp") -> std::exp directly. ReplaceSTDExp* not needed.
 
     run_vectorization_test(dace_func=exp_implementations_std_sdfg,
                            arrays={
@@ -599,7 +600,7 @@ def test_pow(remainder_strategy, emission_style):
 
     # Baseline SDFG
     pow_implementations_std_sdfg = pow_implementations.to_sdfg()
-    ReplaceSTDPowWithDaCePow().apply_pass(pow_implementations_std_sdfg, {})
+    # Walker-primary: TileBinop("**") -> std::pow directly. ReplaceSTDPow* not needed.
 
     run_vectorization_test(dace_func=pow_implementations_std_sdfg,
                            arrays={
