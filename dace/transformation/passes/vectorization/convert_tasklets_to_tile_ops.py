@@ -262,8 +262,26 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _detect_binop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
         """If ``tasklet`` is a simple binary ``_out = _a <op> _b`` body, return
         ``(out_conn, a_conn, b_conn, op)``. Otherwise ``None``.
+
+        Accepts the 1-in-connector ``_out = _a <op> _a`` shape (same connector both
+        sides) -- ``PowerOperatorExpansion`` emits this for ``x**2``.
         """
-        if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
+        if len(tasklet.out_connectors) != 1:
+            return None
+        if len(tasklet.in_connectors) == 1:
+            # Same-connector-twice shape: ``_out = _a <op> _a``.
+            body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+            body = body.strip().rstrip(";").strip()
+            out_conn = next(iter(tasklet.out_connectors))
+            a_conn = next(iter(tasklet.in_connectors))
+            for op in _SUPPORTED_BINOPS:
+                if op in ("min", "max"):
+                    continue
+                for form in (f"{out_conn} = {a_conn} {op} {a_conn}", f"{out_conn} = ({a_conn} {op} {a_conn})"):
+                    if body == form:
+                        return out_conn, a_conn, a_conn, op
+            return None
+        if len(tasklet.in_connectors) != 2:
             return None
         body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
         body = body.strip().rstrip(";").strip()
@@ -340,6 +358,67 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     if expr and a_conn not in expr.split():
                         return out_conn, a_conn, op, "a", expr
         return None
+
+    def _detect_const_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
+        """If ``tasklet`` is a 0-in-connector pure constant / Symbol assignment
+        (``_o = <expr>`` with no operator -- just a literal or a Symbol), return
+        ``(out_conn, expr)``. Otherwise ``None``.
+
+        This is the simplest output-side Symbol case: memset / broadcast / set-to-zero
+        kernels. The lib node side is a TileUnop with kind_a=Symbol + op="copy" -- but
+        since TileUnop has no "copy" op, we emit a constant-fill tasklet via
+        ``_materialise_invariant_to_tile`` and feed it as the output.
+        """
+        if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
+            return None
+        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = body.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        if not body.startswith(f"{out_conn} = "):
+            return None
+        rhs = body[len(f"{out_conn} = "):].strip()
+        if rhs.startswith("(") and rhs.endswith(")"):
+            rhs = rhs[1:-1].strip()
+        if not rhs:
+            return None
+        # Reject anything that looks like an op shape -- those are handled by the other
+        # detectors. Heuristic: a constant has no binary operator at top level and no
+        # function-call shape with comma-separated args.
+        for op_token in (" + ", " - ", " * ", " / ", " % ", " ** ", " < ", " > ", " == ", " != ", " <= ", " >= ", " and ",
+                         " or "):
+            if op_token in rhs:
+                return None
+        # Reject function-form binops / ITE.
+        for fn in ("min(", "max(", "pow(", "ITE("):
+            if rhs.startswith(fn):
+                return None
+        # Reject leading minus (handled by _detect_unop_with_symbol negation case).
+        if rhs.startswith("-") and not rhs.startswith("-"):  # never triggers; placeholder
+            return None
+        return out_conn, rhs
+
+    def _convert_const_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected,
+                              iter_vars: Tuple[str, ...]) -> bool:
+        """Replace ``_o = <const_expr>`` with a constant-fill tasklet that writes the
+        full-tile output transient. Functionally equivalent to ``TileBroadcastSymbol``
+        but emitted as a raw CPP tasklet (the broadcast lib node lands in a follow-up
+        slice; this gets memset / broadcast kernels working today)."""
+        out_conn, expr = detected
+        out_edges = list(inner_state.out_edges(tasklet))
+        if not out_edges:
+            return False
+        out_edge = out_edges[0]
+        an_name = self._materialise_invariant_to_tile(inner_state, expr, out_edge)
+        from dace.sdfg.nodes import AccessNode
+        existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == an_name), None)
+        src_an = existing if existing is not None else inner_state.add_access(an_name)
+        # Wire the materialised tile straight into the output via a direct copy edge.
+        # The materialised tile shape matches the output bridge shape (full tile).
+        subset = ", ".join(f"0:{w}" for w in self.widths)
+        inner_state.add_edge(src_an, None, out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{an_name}[{subset}]"))
+        inner_state.remove_edge(out_edge)
+        inner_state.remove_node(tasklet)
+        return True
 
     def _detect_unop_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
         """If ``tasklet`` is a 0-in-connector unary symbol body (``_o = <op>(<expr>)`` or
@@ -680,13 +759,17 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         :returns: ``True`` on rewrite.
         """
-        # 0 in-conn tasklets first (purely Symbol-driven).
+        # 0 in-conn tasklets first (purely Symbol-driven). Order: const-assign, then
+        # 0-in unary (with a function call shape), then 0-in binop (two operands).
         unop_sym = self._detect_unop_with_symbol(tasklet)
         if unop_sym is not None:
             return self._convert_unop_with_symbol(inner_state, tasklet, unop_sym, iter_vars)
         binop_two_sym = self._detect_binop_with_two_symbols(tasklet)
         if binop_two_sym is not None:
             return self._convert_binop_with_two_symbols(inner_state, tasklet, binop_two_sym, iter_vars)
+        const_assign = self._detect_const_assign(tasklet)
+        if const_assign is not None:
+            return self._convert_const_assign(inner_state, tasklet, const_assign, iter_vars)
         # 1 in-conn tasklets.
         assign = self._detect_assign(tasklet)
         if assign is not None:
