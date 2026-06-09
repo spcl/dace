@@ -865,9 +865,10 @@ def isolate_nested_sdfg(
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
     #  The first is that the node does not belong to any other set.
-    post_nodes: list[nodes.Node] = [
-        node for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
-    ]
+    post_nodes: Set[nodes.Node] = {
+        node
+        for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
+    }
 
     # The second reason, are read dependencies, for this we have to look at the incoming
     #  edges and add any node that we need.
@@ -880,7 +881,7 @@ def isolate_nested_sdfg(
                         if test_if_applicable:
                             return False
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
-                    post_nodes.append(node)
+                    post_nodes.add(node)
 
     if test_if_applicable:
         return True
