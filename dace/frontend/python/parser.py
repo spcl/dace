@@ -6,7 +6,7 @@ import copy
 import os
 import sympy
 import sys
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union, TYPE_CHECKING
 from typing import get_origin, get_args
 import warnings
 
