@@ -38,7 +38,22 @@ from dace import subsets
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
+# _is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
+# migration). The matcher is inlined below.
+
+
+def _is_assign_tasklet(t) -> bool:
+    """True iff ``t`` is a tasklet with a single in / out connector and a body
+    of the form ``<out_conn> = <in_conn>`` (no arithmetic, no calls).
+    """
+    if not hasattr(t, "code") or not hasattr(t, "in_connectors") or not hasattr(t, "out_connectors"):
+        return False
+    if len(t.in_connectors) != 1 or len(t.out_connectors) != 1:
+        return False
+    in_conn = next(iter(t.in_connectors))
+    out_conn = next(iter(t.out_connectors))
+    body = (t.code.as_string if hasattr(t.code, "as_string") else str(t.code)).strip().rstrip(";")
+    return body == f"{out_conn} = {in_conn}"
 
 
 def _assign_triple(istate: SDFGState, t: dace.nodes.Tasklet) -> Optional[Tuple]:

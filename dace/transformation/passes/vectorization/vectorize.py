@@ -23,8 +23,22 @@ from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
     _setup_multi_element_strided_inside_nsdfg,
     emit_staging_copy,
 )
-from dace.transformation.passes.vectorization.utils.post_descent_invariants import (assert_post_descent_invariants,
-                                                                                    cleanup_an_to_an_edges)
+
+
+# NOTE: post_descent_invariants was deleted with the legacy descent (PromoteNSDFGBodyToTiles).
+# The walker-primary path (StageInsideBody + ClearPerLaneIndexSymbols audit) replaces both.
+# Local stubs below preserve the surface for any 1D-legacy ``vectorize.py`` callers that still
+# reach for the descent invariants helper -- they become no-ops since the descent is gone.
+def assert_post_descent_invariants(*args, **kwargs):
+    """No-op stub -- legacy descent was deleted in the walker-primary migration."""
+    return None
+
+
+def cleanup_an_to_an_edges(*args, **kwargs):
+    """No-op stub -- legacy descent was deleted in the walker-primary migration."""
+    return None
+
+
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 import dace.sdfg.tasklet_utils as tutil
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names, free_symbols

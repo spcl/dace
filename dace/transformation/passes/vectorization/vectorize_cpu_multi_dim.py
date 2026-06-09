@@ -30,14 +30,13 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
+from dace.transformation.passes.vectorization.clear_per_lane_index_symbols import ClearPerLaneIndexSymbols
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
-from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
-    PromoteNSDFGBodyToTiles, )
+from dace.transformation.passes.vectorization.prepare_per_lane_indices import PreparePerLaneIndices
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, )
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
@@ -46,6 +45,7 @@ from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
     LowerInterstateConditionalAssignmentsToTasklets, )
+from dace.transformation.passes.vectorization.stage_inside_body import StageInsideBody
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
     RemoveFPTypeCasts,
@@ -55,17 +55,16 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
-from dace.transformation.passes.vectorization.utils.name_schemes import (
-    assert_no_laneid_in_tile_path, )
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
-# NOTE: FuseOverlappingTileLoads is intentionally not imported here; the multi-dim path runs full-
-# subset boundaries so overlapping fusion is structurally unnecessary (constructor docstring details).
+# Walker-primary pipeline -- no legacy descent / emit_tile_ops imports. The walker
+# (StageInsideBody + PreparePerLaneIndices) replaces both PromoteNSDFGBodyToTiles and the legacy
+# EmitTileOps boundary emission. Tasklet-to-TileBinop / TileMerge / TileReduce conversion is
+# pending; for now the SDFG returns with raw tasklets between staged tile transients and lib-node
+# expansion handles only TileLoad / TileStore / TileMaskGen.
 from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
 from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.transformation.passes.vectorization.split_multi_slice_boundary_connectors import (
-    SplitMultiSliceBoundaryConnectors, )
 from dace.libraries.tileops.nodes import (TileBinop, TileLoad, TileMaskGen, TileMerge, TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 
@@ -387,26 +386,23 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # Pre-emit: split a body-NSDFG boundary connector whose propagated
         # outer subset has a non-tiled dim of extent > 1 (heat3d-style
         # stencil pattern: ``j, k`` tiled, ``i`` carries 3-point stencil at
-        # ``i-1, i, i+1``) into per-slice connectors. Promote's downstream
-        # widening then sees clean extent-1 non-tiled dims per slice and
-        # handles them via the existing degenerate path. Runs after
-        # ``StrideMapByTileWidths`` (so the tile-var classification matches
-        # the post-stride spec) and before Promote.
-        passes.append(SplitMultiSliceBoundaryConnectors(widths=widths_t))
-        passes += [
-            # Tile a flat body-NSDFG (vbor-style scalar chain) in place so
-            # EmitTileOps can skip it; EmitTileOps still raises for un-handled
-            # NSDFG bodies (the carried-dep LoopRegion cases stay clean skips).
-            PromoteNSDFGBodyToTiles(widths=widths_t),
-        ]
+        # Walker-primary tiling (replaces SplitMultiSliceBoundaryConnectors + PromoteNSDFGBodyToTiles
+        # + EmitTileOps boundary emission). The walker stages every non-transient AccessNode inside
+        # tile-tagged body NSDFGs through TileLoad / TileStore based on the per-dim lattice
+        # (CONSTANT -> Scalar bridge; LINEAR/AFFINE/REPLICATE/MODULAR -> tile bridge; GATHER ->
+        # materialised _idx_<k> + gather_dims). PreparePerLaneIndices runs in parallel as the
+        # standalone gather-index materialiser; for the canonical case the walker inlines its
+        # logic, so this pass is a no-op for bodies the walker already handled (it's kept here for
+        # pipelines that prefer the standalone materialisation step).
         # NOTE: ``fuse_overlapping_loads`` is intentionally NOT honoured here. Under the multi-dim
         # design ``ExpandNestedSDFGInputs`` widens every body-NSDFG boundary memlet to the full
         # source-array subset (section 2.4), so every inner TileLoad already reads the same
         # full-array connector -- there are no per-tile windows to fuse. The constructor
-        # docstring documents this; the knob is kept on the constructor for harness parity
-        # with the legacy 1D path but has no effect on the multi-dim pipeline.
+        # docstring documents this; the knob is kept on the constructor for harness parity with
+        # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            EmitTileOps(widths=widths_t),
+            PreparePerLaneIndices(widths=widths_t),
+            StageInsideBody(widths=widths_t),
         ]
         super().__init__(passes)
         self._widths = widths_t
@@ -459,13 +455,14 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
         # to the caller — the SDFG returns with tile lib nodes still
         # present (for inspection / saving / further transformations).
-        # The ``assert_no_laneid_in_tile_path`` audit runs only after
-        # expansion (it walks lowered tasklets); skip it on the deferred
-        # path.
+        # The :class:`ClearPerLaneIndexSymbols` audit (design section 10.6)
+        # runs only after expansion -- it walks lowered tasklets so any
+        # ``_laneid_<i>``-style leak would be visible. Skip it on the
+        # deferred path.
         if self._expand_tile_nodes:
             self._select_tile_implementations(sdfg)
             sdfg.expand_library_nodes()
-            assert_no_laneid_in_tile_path(sdfg)
+            ClearPerLaneIndexSymbols().apply_pass(sdfg, {})
         return result
 
     def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:
