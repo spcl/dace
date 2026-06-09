@@ -169,11 +169,16 @@ inside the body NSDFG.
 > staged through a fresh transient. The shape of the transient is
 > chosen from the per-tile classification of the memlet's subset:
 
-| Memlet's per-dim classification | Transient shape | Lib node emitted |
+| Memlet's per-dim classification | Read side | Write side |
 |---|---|---|
-| **CONSTANT on every tile dim** | `Scalar` or `Array(shape=(1,))` | none -- direct `AN -> AN` scalar copy. Consumed via the `Scalar` operand kind (section 6.2; hardware splat at codegen). |
-| At least one dim in `{LINEAR, AFFINE, REPLICATE, MODULAR}` | `Array(shape=widths, storage=Register, transient=True)` | `TileLoad` (read) / `TileStore` (write). |
-| Any dim is `GATHER` | same `(K_0, ..., K_{K-1})` tile | `TileLoad` (read) / `TileStore` (write) with `gather_dims` + `_idx_<d>` connectors. |
+| **CONSTANT on every tile dim** | direct `AN -> AN(Scalar)` copy. Consumed via the `Scalar` operand kind (section 6.2; hardware splat at codegen). No `TileLoad` lib node. | direct producer `-> AN` copy (NO `TileStore`). Symmetric to the read path -- the loop-invariant write target is just a single-element store; the existing producer edge handles it. |
+| At least one dim in `{LINEAR, AFFINE, REPLICATE, MODULAR}` | bridge `Array(shape=widths, storage=Register, transient=True)` + `TileLoad`. | bridge `Array(shape=widths)` + `TileStore`. |
+| Any dim is `GATHER` | bridge `Array(shape=widths)` + `TileLoad` with `gather_dims` + `_idx_<d>` connectors. | bridge `Array(shape=widths)` + `TileStore` with `gather_dims` (scatter; **deferred**). |
+
+Per user direction 2026-06-09: the CONSTANT row is a symmetric pair -- "scalar
+load stays as a copy" and "constant-only write is the same". Neither side
+goes through a lib node; both are handled at staging time as direct AN-edge
+copies. The lib node and the per-arch lowering never see these patterns.
 
 The boundary outside the NSDFG stays at full-array subsets
 (established by `ExpandNestedSDFGInputs`); the inner descriptor

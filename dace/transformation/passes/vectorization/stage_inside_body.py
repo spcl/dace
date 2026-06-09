@@ -368,10 +368,19 @@ class StageInsideBody(ppl.Pass):
                     if not wrecord.per_dim_kind:
                         continue
                     wkinds = set(wrecord.per_dim_kind)
-                    if PerDimKind.GATHER in wkinds or wkinds == {PerDimKind.CONSTANT}:
-                        # Deferred: scatter writes (gather_dims set on TileStore) + single-scalar
-                        # writes via a Scalar bridge. The TileStore non-full-tile-write lock
-                        # (commit b9173e366) will fire at validate() time if reached.
+                    if wkinds == {PerDimKind.CONSTANT}:
+                        # Per user direction 2026-06-09: CONSTANT-only writes stay as the
+                        # original direct producer -> AN copy. Symmetric to the read side
+                        # where CONSTANT-only reads stay as a direct AN -> Scalar copy
+                        # (no TileLoad lib node). No transformation required; the writer's
+                        # output already targets a single element (loop-invariant subset),
+                        # and the existing producer edge handles it correctly.
+                        continue
+                    if PerDimKind.GATHER in wkinds:
+                        # Deferred: scatter writes (gather_dims set on TileStore). The
+                        # TileStore non-full-tile-write lock (commit b9173e366) will fire
+                        # at validate() time if a partial-tile structured write slips
+                        # past dispatch.
                         continue
                     dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
                     dim_strides_w = tuple(s if s is not None else 1 for s in wrecord.dim_strides)

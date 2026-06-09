@@ -527,3 +527,43 @@ def test_walker_tilestore_feeds_into_original_an():
     target = dst_edges[0].dst
     assert isinstance(target, dace.nodes.AccessNode)
     assert target.data == "B"
+
+
+def _build_constant_write_fixture():
+    """Body NSDFG: ``B[0] = src_t[0]`` -- CONSTANT-only write to a non-transient B."""
+    sdfg = dace.SDFG("walker_const_write_fixture")
+    sdfg.add_array("B", (32, ), dace.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:8"})
+    inner = dace.SDFG("body_nsdfg")
+    inner.add_array("B", (32, ), dace.float64, transient=False)
+    inner.add_array("src_t", (1, ), dace.float64, transient=True)
+    instate = inner.add_state("body")
+    src_inner = instate.add_access("src_t")
+    b_inner = instate.add_access("B")
+    tasklet = instate.add_tasklet("st", {"_s"}, {"_b"}, "_b = _s")
+    instate.add_edge(src_inner, None, tasklet, "_s", Memlet("src_t[0]"))
+    instate.add_edge(tasklet, "_b", b_inner, None, Memlet("B[0]"))
+    nsdfg = state.add_nested_sdfg(inner, set(), {"B"}, symbol_mapping={"ii": "ii"})
+    b_outer = state.add_access("B")
+    state.add_nedge(me, nsdfg, Memlet())
+    state.add_memlet_path(nsdfg, mx, b_outer, src_conn="B", memlet=Memlet("B[0:32]"))
+    return sdfg, inner
+
+
+def test_walker_leaves_constant_only_write_as_direct_copy():
+    """Per user direction 2026-06-09: CONSTANT-only writes stay as the original direct
+    producer -> AN copy (symmetric to CONSTANT-only reads on the load side). The walker
+    does NOT insert a TileStore for this pattern."""
+    from dace.libraries.tileops import TileStore
+    sdfg, inner = _build_constant_write_fixture()
+    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    body_state = next(s for s in inner.states())
+    stores = [n for n in body_state.nodes() if isinstance(n, TileStore)]
+    assert len(stores) == 0, "expected NO TileStore for CONSTANT-only write -- direct copy is the contract"
+    tasklets = [n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert len(tasklets) == 1
+    out_edges = list(body_state.out_edges(tasklets[0]))
+    assert len(out_edges) == 1
+    assert isinstance(out_edges[0].dst, dace.nodes.AccessNode)
+    assert out_edges[0].dst.data == "B"
