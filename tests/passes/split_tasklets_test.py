@@ -960,3 +960,59 @@ if __name__ == "__main__":
         test_single_tasklet_symbol_only_split(expression_str, expected_num_statements)
     test_complex_expression()
     test_complex_expression_with_scalars()
+
+# Per user direction 2026-06-09: ensure SplitTasklets handles ANY function call by lifting
+# arguments to SSA. The legacy allowlist (``log`` / ``exp`` / ...) made unfamiliar function
+# names (``sqrt``, ``tanh``, user-defined) leak as stale input connectors -- now fixed via
+# AST-detection of function-position names in ``_get_vars``.
+
+
+@pytest.mark.parametrize(
+    "body_expr",
+    [
+        "_c = sqrt(_a + _b)",  # function over binop
+        "_c = sqrt(_a * _a + _b * _b)",  # function over nested expr (the user's exact example)
+        "_c = tanh(_a) * _b",  # function output feeds another binop
+        "_c = my_custom_func(_a, _b)",  # arbitrary user function name
+        "_c = sin(cos(_a + _b))",  # nested function calls
+    ],
+)
+def test_split_handles_arbitrary_function_calls(body_expr):
+    """SplitTasklets handles ANY function call by lifting each argument sub-expression to
+    its own intermediate transient. The function name is detected via AST (no allowlist
+    required).
+
+    For ``_c = sqrt(_a * _a + _b * _b)`` the expected split is:
+       __t0 = _a * _a
+       __t1 = _b * _b
+       __t2 = __t0 + __t1
+       _c = sqrt(__t2)
+
+    Per user direction 2026-06-09: "Ensure that we split all function expressions like
+    this regardless of what function it was".
+    """
+    import dace as _d
+    from dace.transformation.passes.split_tasklets import SplitTasklets
+    sdfg = _d.SDFG("split_func_fixture")
+    sdfg.add_array("A", (4, ), _d.float64, transient=False)
+    sdfg.add_array("B", (4, ), _d.float64, transient=False)
+    sdfg.add_array("C", (4, ), _d.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:4"})
+    a = state.add_access("A")
+    b = state.add_access("B")
+    c = state.add_access("C")
+    t = state.add_tasklet("body", {"_a", "_b"}, {"_c"}, body_expr)
+    state.add_memlet_path(a, me, t, dst_conn="_a", memlet=_d.Memlet("A[ii]"))
+    state.add_memlet_path(b, me, t, dst_conn="_b", memlet=_d.Memlet("B[ii]"))
+    state.add_memlet_path(t, mx, c, src_conn="_c", memlet=_d.Memlet("C[ii]"))
+    # Pass should run without raising. validate() at the tail of apply_pass is the gate.
+    SplitTasklets().apply_pass(sdfg, {})
+    # No tasklet should have an "_<func>" or function-name in-connector.
+    for n in state.nodes():
+        if isinstance(n, _d.nodes.Tasklet):
+            for in_conn in n.in_connectors.keys():
+                # Connector names that match a known function name suggest the function
+                # leaked through as a variable.
+                assert in_conn not in {"sqrt", "tanh", "sin", "cos", "my_custom_func"}, \
+                    f"function name {in_conn!r} leaked as an in-connector on {n.label!r}"
