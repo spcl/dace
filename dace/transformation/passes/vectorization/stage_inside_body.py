@@ -42,6 +42,8 @@ Status (incremental landing):
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
+import dace
+
 from dace import data, dtypes, properties, subsets
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.memlet import Memlet
@@ -593,9 +595,20 @@ class StageInsideBody(ppl.Pass):
                 out_edges = pre_stage_out_edges
                 if not out_edges:
                     continue
+                # Per Priority 2D / user direction 2026-06-10: dispatch with
+                # explicit knowledge of both endpoints. ``infer_edge_endpoints``
+                # gives the real array names + subsets on both sides; we feed
+                # the AN-side subset into the classifier (current behaviour) but
+                # the dst-side info is now available for future enhancements
+                # (e.g. detecting when the consumer is a Scalar bridge and the
+                # AN-side gather subset is load-bearing despite an ``[0]``
+                # other_subset shadow).
                 try:
-                    subset = an_side_subset(out_edges[0], an, inner_sdfg)
+                    src_data, src_subset, _dst_data, _dst_subset = infer_edge_endpoints(out_edges[0], inner_sdfg)
                 except Exception:  # noqa: BLE001 -- helper may refuse on edge shapes outside scope.
+                    continue
+                subset = src_subset if src_data == an.data else an_side_subset(out_edges[0], an, inner_sdfg)
+                if subset is None:
                     continue
                 record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
                 if not record.per_dim_kind:
@@ -616,16 +629,27 @@ class StageInsideBody(ppl.Pass):
                     idx_sources: Dict[int, AccessNode] = {}
                     for k in gather_source_dims:
                         begin_str = str(subset.ranges[k][0])
-                        # Pass all tile iter-vars + widths to the helper; it substitutes each in
-                        # the expression and produces an index tile of shape ``widths`` rank K_tile.
-                        # When the expression depends on a subset of iter-vars, the helper still
-                        # produces a full-rank tile (the missing vars are broadcast in the body).
+                        # Priority 2F (user direction 2026-06-10): detect WHICH tile iter-vars
+                        # the gather expression actually depends on -- a K=2 gather like
+                        # ``A[idx[i], j]`` (only the row index is lane-dep on ``i``) should
+                        # materialise a ``(W_0, ONE)`` idx tile instead of the full
+                        # ``(W_0, W_1, ONE)``. The non-dependent dims become ``ONE`` markers
+                        # via the materialiser's implicit broadcast tail.
+                        try:
+                            free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(begin_str).free_symbols}
+                        except Exception:  # noqa: BLE001 -- conservative fallback to full-K
+                            free_syms = set(iter_vars)
+                        dep_iter_vars = tuple(v for v in iter_vars if v in free_syms)
+                        if not dep_iter_vars:
+                            # No tile dep at all -- treat as K=1 scalar broadcast (single lane).
+                            dep_iter_vars = (iter_vars[0], )
+                        dep_widths = tuple(int(self.widths[iter_vars.index(v)]) for v in dep_iter_vars)
                         idx_name = materialise_per_lane_index_tile(
                             inner_state,
                             name_hint=f"_idx_{an.data}_{k}",
                             gather_expr=begin_str,
-                            tile_iter_vars=iter_vars[0] if K_tile == 1 else iter_vars,
-                            tile_widths=int(self.widths[0]) if K_tile == 1 else tuple(int(w) for w in self.widths),
+                            tile_iter_vars=dep_iter_vars[0] if len(dep_iter_vars) == 1 else dep_iter_vars,
+                            tile_widths=dep_widths[0] if len(dep_widths) == 1 else dep_widths,
                         )
                         idx_an = next(n for n in inner_state.nodes()
                                       if isinstance(n, AccessNode) and n.data == idx_name)
