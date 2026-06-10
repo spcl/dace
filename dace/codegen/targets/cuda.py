@@ -2694,6 +2694,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
                     block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
+                elif i == 1 and len(brange) == 2:
+                    block_expr = 'threadIdx.%s' % _named_idx(i+1)
                 else:
                     block_expr = 'threadIdx.%s' % _named_idx(i)
 
