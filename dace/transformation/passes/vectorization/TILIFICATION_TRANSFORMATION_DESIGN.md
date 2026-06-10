@@ -490,6 +490,15 @@ rule. Two modes:
   and ``GatherLift._get_tile_widths_from_out_edge`` that need the
   structural-equivalent view.
 
+**Scope lock (user direction 2026-06-10)**: ``ONE`` must ONLY appear in
+gather idx array shapes (the materialised ``_idx_<d>`` tiles produced by
+:func:`materialise_per_lane_index_tile`). Every other descriptor / memlet
+in the pipeline carries literal-1 dims at most, and those literal-1 dims
+get collapsed by the default-mode ``collapse_one_dims`` (or by DaCe's own
+sympy-driven simplification). The gather-only constraint keeps the
+sentinel's identity meaningful: any non-gather descriptor that contains
+``ONE`` is a bug.
+
 #### 3.8.3 Memlet ``other_subset`` invariant (lib-node-boundary rule)
 
 User direction 2026-06-10: keep ``other_subset`` as the contract as

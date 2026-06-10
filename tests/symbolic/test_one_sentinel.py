@@ -108,6 +108,41 @@ def test_collapse_one_dims_opt_in_treats_one_symbol_as_one():
     assert collapse_one_dims((M, K), treat_one_symbol_as_one=True) == (M, K)  # neither -- pass through
 
 
+def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
+    """Audit (user direction 2026-06-10): after running the walker on a K=1
+    gather kernel, ``ONE`` must appear in the descriptor shapes of gather idx
+    tiles ONLY (the materialised ``_idx_<d>`` tiles). Every other transient /
+    non-transient must NOT carry ``ONE`` in its shape.
+
+    The gather-only constraint keeps the sentinel's identity meaningful:
+    finding ``ONE`` on a non-gather descriptor would mean a staging step
+    accidentally leaked the broadcast marker outside its intended scope.
+    """
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+    from dace.symbolic import ONE
+
+    N = dace.symbol("N_GATHER_AUDIT")
+
+    @dace.program
+    def k1_gather_audit(A: dace.float64[N], idx: dace.int64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[idx[i]]
+
+    sdfg = k1_gather_audit.to_sdfg(simplify=True)
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(sdfg, {})
+
+    offenders = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for name, desc in sd.arrays.items():
+            if not hasattr(desc, "shape"):
+                continue
+            shape_has_one = any(hasattr(s, "free_symbols") and ONE in s.free_symbols for s in desc.shape)
+            if shape_has_one and not name.startswith("_idx_"):
+                offenders.append(f"{sd.name}::{name} shape={tuple(desc.shape)}")
+    assert not offenders, ("ONE found on non-gather descriptors (should appear only on _idx_<d> "
+                           f"gather tiles per design 3.8.2): {offenders}")
+
+
 def test_collapse_one_dims_preserves_order():
     """The helper preserves source order of the surviving dims."""
     from dace.symbolic import collapse_one_dims
