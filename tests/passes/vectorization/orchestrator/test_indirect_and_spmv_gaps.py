@@ -19,13 +19,13 @@ replaced by an end-to-end numerical equivalence assertion.
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="K=2 indirect-stencil + 2D scatter tests trip multiple downstream"
-                              " issues (compilation crashes, dimensionality mismatches, output-kind"
-                              " rule violations). Gather K=1 single-tile passes end-to-end (see"
-                              " test_walker_primary_gather_e2e.py); K=2 with the ONE-marker design"
-                              " is a separate slice -- see TILIFICATION_TRANSFORMATION_DESIGN.md"
-                              " Appendix F + section 3.8.1. Unfreeze incrementally per kernel as"
-                              " the K=2 path lands.")
+pytestmark = pytest.mark.skip(reason="1D indirect-stencil + elementwise tests trip a StopIteration in"
+                              " DaCe codegen's strided-copy shape detection (cpp.py:486) -- likely"
+                              " interaction with the (W, ONE)-shape gather idx tile. The kernel"
+                              " ``a[i] = b[idx[i]] + 1.0`` is a strict superset of the K=1 gather"
+                              " test that passes (test_walker_primary_gather_e2e.py); the codegen"
+                              " interaction is a separate fix. 2D + SpMV + WCR-reduction tests fail"
+                              " further downstream (compilation crashes, output-kind violations).")
 import numpy as np
 
 import dace
