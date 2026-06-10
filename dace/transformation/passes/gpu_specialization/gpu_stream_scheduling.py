@@ -761,11 +761,16 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 else:
                     # The node is nested inside a Map. We have to check if one of these Map
                     #  is a GPU Map. Otherwise we do not need to descend into it.
+                    # Walk up the scope chain via ``scope_dict``; without the per-iter step
+                    # the loop spins forever when no parent map carries a GPU schedule
+                    # (e.g. ``tests/transformations/gpu_grid_stride_tiling_test.py::
+                    # test_gpu_grid_stride_tiling_with_indirection``).
                     enclosing_scope = scope_dict[node]
                     while enclosing_scope is not None:
                         assert isinstance(enclosing_scope, nodes.MapEntry)
                         if enclosing_scope.map.schedule in dtypes.GPU_SCHEDULES:
                             break
+                        enclosing_scope = scope_dict[enclosing_scope]
                     else:
                         # It is not in a GPU scope, so we must process it.
                         self._add_sync_state(node.sdfg, stream_array_name)
