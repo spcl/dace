@@ -42,8 +42,6 @@ Status (incremental landing):
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
-import dace
-
 from dace import data, dtypes, properties, subsets
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.memlet import Memlet
@@ -638,27 +636,19 @@ class StageInsideBody(ppl.Pass):
                     idx_sources: Dict[int, AccessNode] = {}
                     for k in gather_source_dims:
                         begin_str = str(subset.ranges[k][0])
-                        # Priority 2F (user direction 2026-06-10): detect WHICH tile iter-vars
-                        # the gather expression actually depends on -- a K=2 gather like
-                        # ``A[idx[i], j]`` (only the row index is lane-dep on ``i``) should
-                        # materialise a ``(W_0, ONE)`` idx tile instead of the full
-                        # ``(W_0, W_1, ONE)``. The non-dependent dims become ``ONE`` markers
-                        # via the materialiser's implicit broadcast tail.
-                        try:
-                            free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(begin_str).free_symbols}
-                        except Exception:  # noqa: BLE001 -- conservative fallback to full-K
-                            free_syms = set(iter_vars)
-                        dep_iter_vars = tuple(v for v in iter_vars if v in free_syms)
-                        if not dep_iter_vars:
-                            # No tile dep at all -- treat as K=1 scalar broadcast (single lane).
-                            dep_iter_vars = (iter_vars[0], )
-                        dep_widths = tuple(int(self.widths[iter_vars.index(v)]) for v in dep_iter_vars)
+                        # Per user direction 2026-06-10 (cuTile semantics): the idx tile shape
+                        # MUST match the K-D output tile shape ``(W_0, ..., W_{K-1})`` (plus
+                        # the trailing ``ONE`` marker). The earlier partial-K_dep optimization
+                        # (filtering iter_vars by free_symbols) was reverted because it broke
+                        # the cuTile broadcast contract -- the gather result tile shape is the
+                        # full output tile, so the idx tile must address every lane in that
+                        # tile (with redundant values on non-dep dims, broadcast at fill time).
                         idx_name = materialise_per_lane_index_tile(
                             inner_state,
                             name_hint=f"_idx_{an.data}_{k}",
                             gather_expr=begin_str,
-                            tile_iter_vars=dep_iter_vars[0] if len(dep_iter_vars) == 1 else dep_iter_vars,
-                            tile_widths=dep_widths[0] if len(dep_widths) == 1 else dep_widths,
+                            tile_iter_vars=iter_vars[0] if K_tile == 1 else iter_vars,
+                            tile_widths=int(self.widths[0]) if K_tile == 1 else tuple(int(w) for w in self.widths),
                         )
                         idx_an = next(n for n in inner_state.nodes()
                                       if isinstance(n, AccessNode) and n.data == idx_name)

@@ -139,7 +139,12 @@ def test_walker_materialises_index_tile_for_gather_access():
 
 
 def test_e2e_2d_lane_index():
-    """Multi-dim dependency: ``2*i + j`` materialises a ``(W_i, W_j)`` index tile."""
+    """Full K=2 dep: ``2*i + j`` materialises ``(W_i, W_j)`` -- no trailing ONE.
+
+    Per user direction 2026-06-10 (cuTile contract): the idx tile shape matches
+    the output tile rank. When both iter-vars appear in the gather expression,
+    both dims are lane-dep -- shape has no ONE markers.
+    """
     sdfg = dace.SDFG("two_dim_lane_index")
     W_i, W_j = 4, 8
     sdfg.add_array("Out", (W_i, W_j), dace.int64, transient=False)
@@ -160,7 +165,7 @@ def test_e2e_2d_lane_index():
 
 
 def test_e2e_3d_lane_index():
-    """K=3 dependency: ``i + j + k`` materialises a ``(W_i, W_j, W_k)`` index tile."""
+    """Full K=3 dep: ``i + j + k`` materialises ``(W_i, W_j, W_k)`` -- no trailing ONE."""
     sdfg = dace.SDFG("three_dim_lane_index")
     W_i, W_j, W_k = 2, 4, 8
     sdfg.add_array("Out", (W_i, W_j, W_k), dace.int64, transient=False)
@@ -185,7 +190,7 @@ def test_e2e_3d_lane_index():
 
 
 def test_e2e_k1_short_form_str_int_args_still_work():
-    """K=1 short form (str + int) still works for backwards compatibility."""
+    """K=1 short form (str + int) still works; emits ``(W,)`` shape (no ONE)."""
     sdfg = dace.SDFG("k1_short_form")
     W = 8
     sdfg.add_array("Out", (W, ), dace.int64, transient=False)
@@ -199,6 +204,80 @@ def test_e2e_k1_short_form_str_int_args_still_work():
     out = np.zeros(W, dtype=np.int64)
     sdfg(Out=out)
     np.testing.assert_array_equal(out, np.arange(W, dtype=np.int64))
+
+
+def test_k2_partial_k_dep_dim_marker_per_position():
+    """K=2 partial-K_dep gather: shape is K-D with ONE in the non-dep position.
+
+    Per user direction 2026-06-10:
+    * ``idx[i]`` on (i,j) tile -> shape ``(W_0, ONE)``.
+    * ``idx[j]`` on (i,j) tile -> shape ``(ONE, W_1)``.
+    * ``idx[i, j]`` on (i,j) tile -> shape ``(W_0, W_1)``.
+
+    No trailing ONE; the rank matches the output tile rank exactly.
+    """
+    from dace.symbolic import ONE
+    sdfg = dace.SDFG("k2_partial_kdep")
+    W_i, W_j = 4, 8
+    state = sdfg.add_state("s")
+
+    # Dep on i only -> (W_i, ONE)
+    name_i = materialise_per_lane_index_tile(state,
+                                             name_hint="idx_i_only",
+                                             gather_expr="i",
+                                             tile_iter_vars=("i", "j"),
+                                             tile_widths=(W_i, W_j))
+    desc_i = sdfg.arrays[name_i]
+    assert len(desc_i.shape) == 2, f"expected 2-D, got {desc_i.shape}"
+    assert int(desc_i.shape[0]) == W_i
+    assert ONE in desc_i.shape[1].free_symbols, f"expected ONE in dim 1, got {desc_i.shape}"
+
+    # Dep on j only -> (ONE, W_j)
+    name_j = materialise_per_lane_index_tile(state,
+                                             name_hint="idx_j_only",
+                                             gather_expr="j",
+                                             tile_iter_vars=("i", "j"),
+                                             tile_widths=(W_i, W_j))
+    desc_j = sdfg.arrays[name_j]
+    assert len(desc_j.shape) == 2, f"expected 2-D, got {desc_j.shape}"
+    assert ONE in desc_j.shape[0].free_symbols, f"expected ONE in dim 0, got {desc_j.shape}"
+    assert int(desc_j.shape[1]) == W_j
+
+    # Dep on both -> (W_i, W_j), no ONE.
+    name_full = materialise_per_lane_index_tile(state,
+                                                name_hint="idx_full",
+                                                gather_expr="i + j",
+                                                tile_iter_vars=("i", "j"),
+                                                tile_widths=(W_i, W_j))
+    desc_full = sdfg.arrays[name_full]
+    assert len(desc_full.shape) == 2
+    assert int(desc_full.shape[0]) == W_i and int(desc_full.shape[1]) == W_j
+    import sympy
+    for dim in desc_full.shape:
+        assert not (isinstance(dim, sympy.Basic) and ONE in dim.free_symbols), \
+            f"unexpected ONE in {desc_full.shape}"
+
+
+def test_materialise_indirect_lane_dep_treated_as_full_dep():
+    """Indirect lane-dep (per-lane symbol like ``__sym``) -> conservatively
+    full-dep shape.
+
+    The walker is the dispatch point that decides CONSTANT vs GATHER (it has
+    inner_sdfg context to walk interstate edges). The materialiser trusts the
+    caller: if the expression has free symbols but none of them are direct
+    iter-vars, assume full-dep on every dim.
+    """
+    sdfg = dace.SDFG("indirect_lane_dep")
+    sdfg.add_symbol("__sym_x", dace.int64)
+    state = sdfg.add_state("s")
+    name = materialise_per_lane_index_tile(state,
+                                           name_hint="idx_indirect",
+                                           gather_expr="__sym_x",
+                                           tile_iter_vars=("i", ),
+                                           tile_widths=(8, ))
+    desc = sdfg.arrays[name]
+    # Full-dep fallback -> shape (W,) (no ONE).
+    assert tuple(int(s) for s in desc.shape) == (8, )
 
 
 def test_refuse_misaligned_iter_vars_and_widths():

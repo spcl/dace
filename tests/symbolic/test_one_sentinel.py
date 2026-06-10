@@ -134,9 +134,9 @@ def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
     offenders = []
     for sd in sdfg.all_sdfgs_recursive():
         for name, desc in sd.arrays.items():
-            if not hasattr(desc, "shape"):
+            if not isinstance(desc, dace.data.Array):
                 continue
-            shape_has_one = any(hasattr(s, "free_symbols") and ONE in s.free_symbols for s in desc.shape)
+            shape_has_one = any(isinstance(s, sympy.Basic) and ONE in s.free_symbols for s in desc.shape)
             if shape_has_one and not name.startswith("_idx_"):
                 offenders.append(f"{sd.name}::{name} shape={tuple(desc.shape)}")
     assert not offenders, ("ONE found on non-gather descriptors (should appear only on _idx_<d> "

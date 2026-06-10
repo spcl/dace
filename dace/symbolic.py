@@ -256,7 +256,7 @@ def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
     def _is_dropped(s):
         if s == 1:
             return True
-        if treat_one_symbol_as_one and hasattr(s, "free_symbols") and ONE in s.free_symbols:
+        if treat_one_symbol_as_one and isinstance(s, sympy.Basic) and ONE in s.free_symbols:
             return True
         return False
 

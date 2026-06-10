@@ -91,22 +91,53 @@ def materialise_per_lane_index_tile(state: SDFGState,
     if len(iter_vars) != len(widths):
         raise ValueError(f"materialise_per_lane_index_tile: tile_iter_vars (len={len(iter_vars)}) "
                          f"and tile_widths (len={len(widths)}) must align")
-    # Per user direction 2026-06-10: append a trailing ``ONE`` dim to the tile
-    # shape so the materialised idx tile is structurally K+1-D, with ``ONE``
-    # marking the broadcast dim. The trailing dim is a runtime no-op (sympy
-    # keeps ``ONE`` opaque against literal-1 comparisons; codegen folds it to
-    # 1 via the ``constexpr int ONE = 1`` constant emission). The same shape
-    # generalises to K=2 partial-K_dep as ``(W_0, ONE)`` -- the ONE marker
-    # indicates which dim broadcasts in the per-arch gather expansion.
-    from dace.symbolic import ONE as _ONE
-    shape_with_one = tuple(widths) + (_ONE, )
+    # Per user direction 2026-06-10: the idx tile shape is K-D, where each
+    # dim is either ``widths[d]`` (lane-dependent) or ``ONE`` (collapsed /
+    # broadcast). No trailing ONE. The per-dim lane-dependency is detected
+    # by parsing the gather expression's free symbols.
+    #
+    # K=2 examples for an output tile of shape (W_0, W_1):
+    #
+    #   * gather expr depends on i AND j: idx shape ``(W_0, W_1)``.
+    #   * gather expr depends only on i:  idx shape ``(W_0, ONE)``.
+    #   * gather expr depends only on j:  idx shape ``(ONE, W_1)``.
+    #
+    # The all-non-dep case (gather expr has no lane dep) is NOT handled here
+    # -- such accesses are CONSTANT per the design 3.1 lattice and stage
+    # through :func:`stage_constant_access` (Scalar bridge), not the gather
+    # materialiser. The walker dispatch refuses to call this helper for the
+    # all-CONST case; the assertion below guards against accidental invocation.
+    #
+    # The cuTile lowering relies on this shape contract: the idx tile rank
+    # matches the result tile rank, and ONE-marked dims broadcast at gather
+    # time. ONE survives sympy operations (firewall) and codegen folds it via
+    # the ``constexpr int ONE = 1;`` emission.
+    from dace.symbolic import ONE
+    # Per-dim dep detection: if the gather expression directly references an
+    # iter-var, that dim is lane-dep and gets ``widths[d]``; otherwise the dim
+    # is broadcast and gets ``ONE``. Loop-invariant accesses (whether literal
+    # constants or symbols that don't transitively depend on iter-vars) should
+    # be CONSTANT-staged via :func:`stage_constant_access` BEFORE reaching
+    # this helper -- the walker's classifier (which has inner_sdfg context for
+    # interstate-edge lookup via :func:`_is_tile_dependent`) is the dispatch
+    # point. This helper trusts the caller and emits the shape per the direct
+    # dep mask; indirect lane-dep symbols (e.g. per-lane ``__sym`` defined by
+    # an interstate edge) are conservatively treated as full-dep on every dim
+    # since per-dim decomposition requires interstate-edge inspection.
+    try:
+        expr_free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(gather_expr).free_symbols}
+    except Exception:  # noqa: BLE001 -- conservative fallback to all-dep.
+        expr_free_syms = set(iter_vars)
+    direct_dep_mask = tuple(v in expr_free_syms for v in iter_vars)
+    dep_mask = direct_dep_mask if any(direct_dep_mask) else tuple(True for _ in iter_vars)
+    shape = tuple(widths[d] if dep_mask[d] else ONE for d in range(len(iter_vars)))
     # Register ``ONE`` as a compile-time constant so ``generate_constants``
     # emits ``constexpr int ONE = 1`` at file scope and the C++ compiler folds
     # it to a literal everywhere it appears in the generated code.
     if "ONE" not in sdfg.constants_prop:
         sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
     arr_name, _ = sdfg.add_array(name_hint,
-                                 shape=shape_with_one,
+                                 shape=shape,
                                  dtype=idx_dtype,
                                  storage=dtypes.StorageType.Register,
                                  transient=True,
@@ -115,23 +146,29 @@ def materialise_per_lane_index_tile(state: SDFGState,
     body_expr = gather_expr
     for d, var in enumerate(iter_vars):
         body_expr = body_expr.replace(var, f"(__l{d})")
-    # Build the K-fold nested loop. The flat offset is row-major over the K
-    # tile dims; the trailing ``ONE`` dim contributes a constant ``0`` (the
-    # ``constexpr`` reduces the multiplier to a no-op).
-    K = len(widths)
+    # Build the nested loops -- only over the dep dims. Non-dep dims have
+    # shape ONE and use ``__l_d = 0`` (the broadcast lane).
+    dep_dims = [d for d, is_dep in enumerate(dep_mask) if is_dep]
+    # Row-major flat offset uses dep-dim strides; non-dep dims contribute 0.
     parts = []
-    for i in range(K):
-        inner = 1  # multiply by the trailing ONE = 1 (folded).
-        for q in range(i + 1, K):
+    for i, d in enumerate(dep_dims):
+        inner = 1
+        for q in dep_dims[i + 1:]:
             inner *= widths[q]
-        parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
+        parts.append(f"__l{d}" if inner == 1 else f"(__l{d} * {inner})")
     flat = " + ".join(parts) if parts else "0"
     code_lines = []
-    for d in range(K):
-        code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
-    code_lines.append(f"{'    ' * K}_out[{flat}] = ({idx_dtype.ctype})({body_expr});")
-    for d in reversed(range(K)):
-        code_lines.append(f"{'    ' * d}}}")
+    for d in dep_dims:
+        depth = dep_dims.index(d)
+        code_lines.append(f"{'    ' * depth}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+    # Non-dep dims fixed at lane 0 for the broadcast write.
+    for d, is_dep in enumerate(dep_mask):
+        if not is_dep:
+            indent = '    ' * len(dep_dims)
+            code_lines.append(f"{indent}std::size_t __l{d} = 0;")
+    code_lines.append(f"{'    ' * len(dep_dims)}_out[{flat}] = ({idx_dtype.ctype})({body_expr});")
+    for depth in reversed(range(len(dep_dims))):
+        code_lines.append(f"{'    ' * depth}}}")
     tasklet = state.add_tasklet(
         name=f"materialise_{arr_name}",
         inputs=set(),
@@ -140,7 +177,7 @@ def materialise_per_lane_index_tile(state: SDFGState,
         language=dtypes.Language.CPP,
     )
     out_an = state.add_access(arr_name)
-    out_subset = ", ".join(f"0:{w}" for w in widths) + ", 0:ONE"
+    out_subset = ", ".join(f"0:{widths[d]}" if dep_mask[d] else "0:ONE" for d in range(len(iter_vars)))
     state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
     return arr_name
 
