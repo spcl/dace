@@ -55,17 +55,33 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         change the caller's contract).
     :param transient_only: Restrict the top-level rewrite to transient
         arrays (default ``False`` -- both signature and local rewrites).
+    :param filter: When ``None`` (default), the pass scalarizes every
+        eligible top-level array as governed by ``transient_only``. When
+        a set is provided, the pass scalarizes *only* arrays whose name
+        appears in it -- and **being in the filter overrides
+        ``transient_only``**, i.e. a named array is always scalarized
+        regardless of its ``transient`` flag. The filter has no effect
+        on the nested-SDFG transient-only recursion; inner descriptors
+        keep following the recursion rule.
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient arrays.")
+    filter = properties.SetProperty(
+        element_type=str,
+        default=None,
+        allow_none=True,
+        desc="If ``None``, no filtering -- every eligible array is scalarized. If a set is "
+        "provided, only top-level arrays whose name appears in it are scalarized, and being "
+        "in the filter overrides the ``transient_only`` check.")
 
-    def __init__(self, recursive: bool = True, transient_only: bool = False):
+    def __init__(self, recursive: bool = True, transient_only: bool = False, filter: 'Optional[Set[str]]' = None):
         super().__init__()
         self.recursive = recursive
         self.transient_only = transient_only
+        self.filter = None if filter is None else frozenset(filter)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols
@@ -73,20 +89,37 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
+    def _rewrite(self, sdfg: dace.SDFG, transient_only: bool, apply_filter: bool) -> Set[str]:
+        """Scalarize length-1 arrays in ``sdfg``.
+
+        :param sdfg: Target SDFG (modified in place).
+        :param transient_only: Restrict to transient arrays.
+        :param apply_filter: Whether the top-level ``filter`` set should gate the rewrite at
+                             this level. ``False`` for the nested-SDFG recursion: the filter
+                             refers to outer-level names, not inner descriptors.
+        :returns: Names of the arrays that were scalarized.
+        """
         scalarized: Set[str] = set()
-        for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
-            if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1]):
-                if (not transient_only) or arr.transient:
-                    sdfg.remove_data(arr_name, validate=False)
-                    sdfg.add_scalar(name=arr_name,
-                                    dtype=arr.dtype,
-                                    storage=arr.storage,
-                                    transient=arr.transient,
-                                    lifetime=arr.lifetime,
-                                    debuginfo=arr.debuginfo,
-                                    find_new_name=False)
-                    scalarized.add(arr_name)
+        for arr_name, arr in list(sdfg.arrays.items()):
+            if not (isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1])):
+                continue
+            # ``filter`` semantics: ``None`` -> no filtering (default behaviour);
+            # ``set`` -> only names in the set are scalarized, and being in the filter
+            # overrides the ``transient_only`` check.
+            in_filter = apply_filter and self.filter is not None and arr_name in self.filter
+            if apply_filter and self.filter is not None and not in_filter:
+                continue
+            if transient_only and not arr.transient and not in_filter:
+                continue
+            sdfg.remove_data(arr_name, validate=False)
+            sdfg.add_scalar(name=arr_name,
+                            dtype=arr.dtype,
+                            storage=arr.storage,
+                            transient=arr.transient,
+                            lifetime=arr.lifetime,
+                            debuginfo=arr.debuginfo,
+                            find_new_name=False)
+            scalarized.add(arr_name)
 
         # Strip ``[0]`` from interstate-edge assignment RHSs.
         for edge in sdfg.all_interstate_edges():
@@ -145,12 +178,14 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             for state in sdfg.all_states():
                 for node in state.nodes():
                     if isinstance(node, dace.nodes.NestedSDFG):
-                        self._rewrite(node.sdfg, transient_only=True)
+                        # ``apply_filter=False`` -- the filter is only meaningful at the root
+                        # SDFG level. Inner descriptors follow the transient-only rule.
+                        self._rewrite(node.sdfg, transient_only=True, apply_filter=False)
 
         return scalarized
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict) -> Optional[Set[str]]:
-        rewritten = self._rewrite(sdfg, self.transient_only)
+        rewritten = self._rewrite(sdfg, self.transient_only, apply_filter=True)
         return rewritten or None
 
 
