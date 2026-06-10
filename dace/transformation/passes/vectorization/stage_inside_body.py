@@ -538,7 +538,14 @@ class StageInsideBody(ppl.Pass):
                         idx_an = next(n for n in inner_state.nodes()
                                       if isinstance(n, AccessNode) and n.data == idx_name)
                         idx_sources[k] = idx_an
-                    src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
+                    # For gather, ``_src`` must be wired as the FULL source array (not
+                    # the original single-element gather subset). DaCe codegen passes a
+                    # length-1 connector by-value (``T _src``), which is unindexable;
+                    # the gather expansion needs a pointer (``T*``) it can subscript by
+                    # the per-lane indices. Widen the src memlet to the full descriptor
+                    # extent on every dim so the connector lowers as an array view.
+                    full_subset_str = ", ".join(f"0:{s}" for s in desc.shape)
+                    src_subset_memlet = Memlet(data=an.data, subset=full_subset_str)
                     bridge_name, _ = stage_tile_access(inner_state,
                                                        an,
                                                        widths=tuple(self.widths),

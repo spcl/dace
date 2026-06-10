@@ -13,7 +13,6 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 
-
 N_SYM = dace.symbol("N_GATHER")
 
 
@@ -23,25 +22,23 @@ def k1_gather(A: dace.float64[N_SYM], idx: dace.int64[N_SYM], B: dace.float64[N_
         B[i] = A[idx[i]]
 
 
-@pytest.mark.parametrize("N", [8, 16])
-@pytest.mark.xfail(reason="CORRECTED diagnosis 2026-06-10 via bisect probe (location-keyed, not"
-                   " data-name-keyed -- the previous probe was misreading the wrong memlet): the"
-                   " lane-dep symbol ``__sym___tmp_*_r`` PRESERVES through ALL my pipeline passes"
-                   " (NestInnermost, ExpandNestedSDFGInputs, MarkTileDims, StrideMapByTileWidths,"
-                   " InferBodyTransientShapes, GenerateTileIterationMask, PreparePerLaneIndices,"
-                   " StageInsideBody). After full pipeline: ``data='A' subset='__sym___tmp_*_r'``"
-                   " -- the gather memlet is intact. The walker's GATHER dispatch IS being called."
-                   " The actual numerical failure (lane 0 gets a value, lanes 1-7 get 0) is caused"
-                   " by ``materialise_per_lane_index_tile`` substituting ``iter_var -> __l<k>``"
-                   " (losing the outer tile-start ``i``) AND not inlining the iedge RHS into the"
-                   " gather_expr. The materialiser receives ``gather_expr='__sym___tmp_*_r'`` which"
-                   " contains no iter_var, so the substitution is a no-op -- every lane gets the"
-                   " same value ``A[__sym]`` (where ``__sym = idx[i]`` for the current outer i)."
-                   " Fix (per locked design): per-lane symbol fan-out (Slices A+B from earlier"
-                   " session): the gather lift pass inlines the iedge RHS into per-lane expressions"
-                   " ``idx[i + 0], idx[i + 1], ..., idx[i + W-1]`` via per-lane symbols using"
-                   " ``LaneIdScheme.make_dim``, then fills the index tile from those symbols."
-                   " ``RemoveUnusedPerLaneSymbols`` (commit b27f02d1f) sweeps any unused.")
+@pytest.mark.parametrize(
+    "N",
+    [
+        8,
+        pytest.param(
+            16,
+            marks=pytest.mark.xfail(reason="N=16 (2 outer tile iters at stride W=8): first tile (lanes 0-7)"
+                                    " produces bit-equal output but the second tile (lanes 8-15) writes"
+                                    " zero. The per-lane iedge re-evaluates ``__sym_lane0id_<l> = idx[(i +"
+                                    " l)]`` correctly per outer iteration, but the destination write path"
+                                    " (B[i:i+W] tile store) is not being re-issued for the second outer"
+                                    " tile. Distinct slice from the gather lowering -- the bridge tile"
+                                    " transient is allocated once at the body NSDFG and the store side"
+                                    " needs separate handling to repeat per outer iter."),
+        ),
+    ],
+)
 def test_k1_gather_matches_reference(N):
     """K=1 ``B[i] = A[idx[i]]`` -- bit-equal to unvectorised reference. Exercises the
     GATHER walker path + the per-lane index materialiser."""

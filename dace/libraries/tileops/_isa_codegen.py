@@ -259,7 +259,15 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     ``stride`` argument; the header SIMD-loads when it is 1 and falls back to a
     scalar gathered read otherwise.
 
+    When ``gather_dims`` is set the runtime ``tile_load`` does not apply -- it
+    has no per-lane index input -- so the lowering delegates to
+    :class:`ExpandTileLoadPure`, which emits the per-lane indirect read using
+    the ``_idx_<d>`` connectors (design section 9.3). Mirrors the
+    non-``Tile``-``src_kind`` fallback in :func:`make_store_tasklet`.
     """
+    if node.gather_dims:
+        from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
+        return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
     dst_dtype = _out_ctype(node, parent_state, parent_sdfg, "_dst")

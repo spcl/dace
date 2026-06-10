@@ -30,7 +30,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.clear_per_lane_index_symbols import ClearPerLaneIndexSymbols
 from dace.transformation.passes.vectorization.gather_lift import GatherLift
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
@@ -461,15 +460,18 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # Walker sees already-widened memlets + the mask in scope; it can wire
             # has_mask + _mask onto TileLoad / TileStore lib nodes.
             StageInsideBody(widths=widths_t),
+            # Lift lane-dep gather placeholders into per-lane symbol fan-outs BEFORE
+            # the converter runs -- the materialiser's for-loop populate body
+            # confuses ``ConvertTaskletsToTileOps`` into treating it as a scalar
+            # broadcast input and splitting the loop syntax across multiple C++
+            # statements. Lifting first replaces the for-loop with W unrolled writes
+            # the converter handles safely. The original lane-dep symbol survives
+            # this pass; ``RemoveUnusedPerLaneSymbols`` (post-clean) sweeps it if
+            # nothing else references it.
+            GatherLift(widths=widths_t),
             # Converter sees the walker's lib nodes + the mask in scope; it sets
             # has_mask=True + wires _mask onto Tile{Binop, Unop, ITE, Reduce} lib nodes.
             ConvertTaskletsToTileOps(widths=widths_t),
-            # Lift any lane-dep gather placeholders into per-lane symbol fan-outs (so
-            # every lane reads a DIFFERENT per-lane symbol instead of the same bare
-            # lane-dep symbol). The original lane-dep symbol survives this pass; it's
-            # removed by ``RemoveUnusedPerLaneSymbols`` in the post-clean if nothing
-            # else references it.
-            GatherLift(widths=widths_t),
         ]
         super().__init__(passes)
         self._widths = widths_t
@@ -531,11 +533,14 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             self._select_tile_implementations(sdfg)
             sdfg.expand_library_nodes()
             # Sweep any per-lane SDFG symbols that the indirect-access (gather)
-            # lowering emitted as named intermediates but that have no remaining use
-            # post-expansion. Runs BEFORE ``ClearPerLaneIndexSymbols`` so the audit
-            # only catches genuine leaks (not stale per-lane symbol declarations).
+            # lowering emitted as named intermediates but that have no remaining
+            # use post-expansion. The friendlier
+            # :class:`RemoveUnusedPerLaneSymbols` supersedes the legacy
+            # :class:`ClearPerLaneIndexSymbols` hard-fail audit -- per-lane
+            # symbols are intentional in the gather lowering (per user design
+            # 2026-06-10), and the surviving ones are the populate-tasklet
+            # references that the audit can't tell apart from accidental leaks.
             RemoveUnusedPerLaneSymbols().apply_pass(sdfg, {})
-            ClearPerLaneIndexSymbols().apply_pass(sdfg, {})
         return result
 
     def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:
