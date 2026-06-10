@@ -212,6 +212,24 @@ class symbol(sympy.Symbol):
         # yapf: enable
 
 
+#: Sentinel symbol for tile-shape broadcast dimensions in the K-dim
+#: vectorisation track (design section 3.8.1).
+#:
+#: A descriptor with shape ``(W_0, ONE, W_2)`` declares that dim 1 is a
+#: broadcast (size-1) dimension that downstream codegen must address as
+#: replicated -- not collapse-and-fold-out. Transformations that special-case
+#: literal-1 dims (length-1-array-to-scalar conversion, soft-squeeze in cpp
+#: codegen, ``to_unsqueeze`` in schedule trees) skip dims marked ``ONE`` via
+#: a sympy free-symbol identity check (``ONE in shape.free_symbols``).
+#:
+#: Final lowering substitutes ``ONE -> 1`` at the bottom of the per-arch
+#: codegen pipeline, so the C++ literal is unchanged for actual indexing.
+#: User direction 2026-06-10: name is literally ``"ONE"``; full-tile idx
+#: arrays always carry ``ONE`` for non-dependent dims so the gather lib
+#: nodes' broadcast lowering is uniform across CPU and GPU expansions.
+ONE = symbol('ONE', dtype=dtypes.int32, integer=True, positive=True)
+
+
 class UndefinedSymbol(symbol):
     """ Defines an undefined symbolic expression whose value is deferred to runtime.
 

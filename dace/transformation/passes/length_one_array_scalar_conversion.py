@@ -70,6 +70,13 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             if isinstance(arr.dtype, dace.dtypes.opaque):
                 continue
             if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1]):
+                # Firewall: a length-1 dim marked with the ``ONE`` broadcast sentinel
+                # (design 3.8.2) must stay an Array -- scalarising would erase the
+                # broadcast intent that downstream gather / scatter lib-node lowerings
+                # need. The identity check survives sympy round-trips.
+                from dace.symbolic import ONE
+                if any(ONE in dim.free_symbols for dim in arr.shape if hasattr(dim, "free_symbols")):
+                    continue
                 if (not transient_only) or arr.transient:
                     sdfg.remove_data(arr_name, validate=False)
                     sdfg.add_scalar(name=arr_name,

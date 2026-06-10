@@ -375,34 +375,109 @@ audit is OBSOLETE under this design and was removed from the
 orchestrator -- it cannot distinguish intentional lift fanout from
 accidental leaks.
 
-#### 3.8.1 Gather idx tile shape -- ``gather_idx_form`` knob
+#### 3.8.1 Gather idx tile shape -- full-tile with ``ONE`` broadcast marker
 
-For K=1 the idx tile shape is always ``(W,)`` -- no ambiguity. For
-K>=2 the choice has trade-offs (per user direction 2026-06-10);
-exposed via the orchestrator knob ``gather_idx_form``:
+User direction 2026-06-10: **always emit full-K-D idx tiles**, with the
+sentinel symbol :data:`dace.symbolic.ONE` marking dims along which the
+tile broadcasts (no per-cell variation). No knob -- one uniform contract.
 
-| Value | Idx tile shape | Use case |
-|-------|----------------|----------|
-| ``"per_dim"`` (default) | ``(W_deps_d, ...)`` per source dim ``d``, where the shape's rank equals the count of tile iter-vars the dim's gather expression depends on. ``B[ii, jj] = A[idx[ii], jj]`` produces one 1-D tile ``(W_0,)`` for dim 0; dim 1 is contiguous/strided and not gathered. | Partial-K_dep kernels (SpMV row-permute, scattered-stencil) where only a subset of dims gather. Smaller idx tiles; allows AVX-512 ``_mm512_i64gather_pd`` for the gather dim + standard contiguous load for the non-gather dim. |
-| ``"full_tile"`` | ``(W_0, ..., W_{K-1})`` full K-D per gather source dim, regardless of K_dep. ``B[ii, jj] = A[idx[ii], jj]`` produces a ``(W_0, W_1)`` tile for dim 0 with values broadcast along ``l_1``. | Full-K_dep kernels (``A[idx_a[ii, jj], idx_b[ii, jj]]``), and kernels where the per-dim semantic would be ambiguous (mixed gather/linear in the same access expression, e.g. ``A[idx[ii] * jj + offset]``). Uniform lib-node interface; one Cartesian-product loop in codegen. |
+For K=2 with K_dep=1 along dim 0 (e.g. ``B[ii, jj] = A[idx[ii], jj]``):
 
-Symmetric for scatter: ``TileStore`` with ``scatter_dims`` accepts
-the same knob; per-dim emits a per-source-dim 1-D idx tile, full-tile
-emits a K-D idx tile per scatter source dim.
+* Idx tile for source dim 0: shape ``(W_0, ONE)`` -- ``ONE`` declares dim
+  1 is broadcast (every cell at ``l_1`` reads the same value).
+* Populate tasklet:
+  ``__sym_lane0id_<l_0> = idx[ii + l_0]`` for ``l_0 in 0..W_0-1`` (W_0
+  per-lane symbols, NOT W_0 * W_1).
+* Codegen reads the tile via ``_idx_0[l_0, 0]`` (the ``ONE`` dim is
+  always indexed by 0 in the lowered code) OR equivalently
+  ``_idx_0[l_0, l_1 % 1]``; the per-arch expansion picks the cheaper
+  form depending on whether the ISA supports a broadcast load.
 
-Default rationale: per-dim. Most real K=2 gather/scatter patterns
-have partial K_dep, and Option 1 generates the smaller tile in the
-common case. Force ``full_tile`` per kernel when the per-dim
-heterogeneous semantics break (e.g. mixed-arithmetic gather
-expressions). The knob is checked by:
+For K=2 with full K_dep (e.g. ``B[ii, jj] = A[idx_a[ii, jj], idx_b[ii,
+jj]]``):
 
-* ``GatherLift`` and ``PreparePerLaneIndices`` -- decide the idx tile
-  shape + populate-tasklet body.
-* The walker's GATHER dispatch -- chooses what ``_idx_<d>`` connector
-  shape to wire.
-* ``TileLoad`` / ``TileStore`` lib nodes -- validate the connector
-  shape against the knob (rejected for mismatch) and pick the
-  appropriate pure / ISA expansion body.
+* Idx tile per source dim: shape ``(W_0, W_1)`` -- no ``ONE`` marker.
+* Per-lane fan-out covers the full Cartesian product.
+
+For K=1: shape ``(W_0,)`` -- no ``ONE`` marker needed.
+
+Symmetric on scatter (``TileStore.scatter_dims``): same shape contract,
+``ONE`` marks broadcast dims of the scatter index tile.
+
+Why full-tile always (vs the earlier per-dim proposal):
+
+* **Uniform lib-node contract**. ``_idx_<d>`` is always a K-D tile
+  matching the bridge tile's rank. Lib-node validation reduces to
+  shape equality (modulo ``ONE``) on every dim.
+* **Codegen simplicity**. One Cartesian-product loop in the pure
+  expansion; ISA expansions pick broadcast or per-cell load based on
+  per-dim inspection of the connector descriptor.
+* **CPU + GPU symmetry**. CPU pure / SIMD expansions and the (future)
+  cuTile expansion all read the same shape; the GPU path's broadcast
+  intrinsic (``cuda.tile.broadcast_to`` or equivalent) consumes a
+  ``ONE``-marked tile directly.
+
+The ``ONE`` symbol must survive every DaCe pass that special-cases
+literal-1 dims (length-1-array-to-scalar conversion, schedule-tree
+unsqueeze). Section 3.8.2 documents the firewall guards. **Codegen is
+untouched** -- the symbol reaches C++ via DaCe's existing constant
+emission: whichever transformation introduces ``ONE`` into a shape
+also registers it via
+
+```python
+sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
+```
+
+The frame codegen's ``generate_constants`` emits ``constexpr int ONE
+= 1;`` at file scope (already verified by smoke test). The C++
+compiler folds every reference to ``ONE`` to literal 1; no per-arch
+codegen substitution hook is needed. The existing soft-squeeze checks
+(``s == 1`` on a symbolic ``ONE``) naturally return False, so the dim
+is treated as a non-broadcast loop with trip 1 -- the safe default
+for non-cuTile lowerings.
+
+#### 3.8.2 ``ONE``-shape firewall guards (transformations only)
+
+The sentinel ``ONE`` lives in ``dace.symbolic`` (module-level
+declaration; identity-comparable across imports). Per user direction
+2026-06-10, **codegen is not modified**; the only firewall lives in
+transformations that would otherwise collapse ``ONE``-marked dims.
+
+Currently guarded:
+
+* ``ConvertLengthOneArraysToScalars`` (``length_one_array_scalar_conversion.py``)
+  -- skip when ``ONE in arr.shape.free_symbols``. Scalarising would
+  erase the broadcast intent.
+
+Symbol-safe already (no guard needed):
+
+* ``cpp.py`` soft-squeeze and the per-arch codegen paths -- the
+  equality check ``s == 1`` returns False on ``ONE`` (sympy keeps it
+  opaque); the dim is treated as a non-broadcast loop with trip 1,
+  which is the conservative default.
+* ``propagation.py`` ``unsqueeze_memlet`` -- sympy-symbolic throughout.
+* ``RedundantArrayCopying*`` -- shape comparison goes through sympy
+  ``simplify`` which preserves ``ONE``.
+
+Future candidates if a real kernel needs them (NOT speculatively
+patched today):
+
+* ``Data.squeezed_shape()`` family -- if a transformation calls it on
+  a ``ONE``-marked descriptor and silently drops the broadcast dim,
+  add a guard then.
+* ``sdfg_to_tree.py`` ``to_unsqueeze`` -- only a concern for cuTile
+  scheduling round-trips.
+
+The check is identity-based:
+
+```python
+from dace.symbolic import ONE
+if any(ONE in dim.free_symbols for dim in arr.shape if hasattr(dim, "free_symbols")):
+    continue  # don't scalarise / collapse
+```
+
+NOT a string-name match -- identity protects against sympy ever
+re-creating a generic ``Symbol('ONE')`` without our metadata.
 
 ### 3.4 Staged-transient scoping
 
