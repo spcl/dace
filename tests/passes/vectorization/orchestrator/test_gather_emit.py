@@ -10,9 +10,14 @@ unvectorized reference and asserts the gather/scatter lib nodes are emitted.
 """
 
 import pytest
-pytest.importorskip("dace.transformation.passes.vectorization.emit_tile_ops", reason="legacy descent module deleted -- this test is frozen")
-import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+
+pytestmark = pytest.mark.skip(reason="Walker-primary K=1 gather end-to-end passes (see"
+                              " test_walker_primary_gather_e2e.py::test_k1_gather_matches_reference[8]);"
+                              " the legacy K=2 emission-style tests in this file fail downstream"
+                              " (dimensionality mismatches, NameError on deleted EmitTileOps,"
+                              " 2D scatter compilation crashes). The K=2 path with the ONE-marker"
+                              " design (TILIFICATION_TRANSFORMATION_DESIGN.md section 3.8.1) is a"
+                              " separate slice; unfreeze incrementally as it lands.")
 import copy
 
 import numpy as np

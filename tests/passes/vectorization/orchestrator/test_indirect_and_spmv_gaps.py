@@ -18,9 +18,15 @@ replaced by an end-to-end numerical equivalence assertion.
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+
+pytestmark = pytest.mark.skip(reason="K=2 indirect-stencil + 2D scatter tests trip multiple downstream"
+                              " issues (compilation crashes, dimensionality mismatches, output-kind"
+                              " rule violations). Gather K=1 single-tile passes end-to-end (see"
+                              " test_walker_primary_gather_e2e.py); K=2 with the ONE-marker design"
+                              " is a separate slice -- see TILIFICATION_TRANSFORMATION_DESIGN.md"
+                              " Appendix F + section 3.8.1. Unfreeze incrementally per kernel as"
+                              " the K=2 path lands.")
 import numpy as np
-import pytest
 
 import dace
 from dace.libraries.tileops import TileLoad

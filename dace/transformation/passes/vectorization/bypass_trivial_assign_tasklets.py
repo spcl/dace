@@ -201,20 +201,22 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 continue
             if src_desc.transient and istate.in_edges(src_an):
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
-                # Carry BOTH sides of the bypassed chain on the new memlet: the
-                # producer's source subset on ``data`` / ``subset`` (so the
-                # source AN's downstream classifiers see the original read
-                # pattern, e.g. a lane-dep gather ``A[__sym]``) and the
-                # destination AN's write subset on ``other_subset``. Without
-                # the latter, ``an_side_subset`` falls back to the full
-                # descriptor shape on the dst side and the surrounding
-                # walker / classifier loses any non-trivial read subset.
+                # Carry BOTH sides of the bypassed chain on the new memlet so
+                # ``an_side_subset`` can return the lane-dep subset for the
+                # source AN downstream (instead of falling back to the full
+                # descriptor shape). The memlet's ``data`` must reference one
+                # of the actual endpoints (DaCe validates this); pick the
+                # endpoint that has an AccessNode side -- for Tasklet -> AN
+                # the only AccessNode endpoint is ``dst_an``, so use that.
                 for pe in list(istate.in_edges(src_an)):
-                    new_memlet = dace.Memlet(
-                        data=pe.data.data if pe.data.data is not None else dst_an.data,
-                        subset=subsets.Range(list(pe.data.subset.ranges)) if pe.data.subset is not None else None,
-                        other_subset=subsets.Range(list(out_e.data.subset.ranges))
-                        if out_e.data.subset is not None else None)
+                    pe_subset = subsets.Range(list(pe.data.subset.ranges)) if pe.data.subset is not None else None
+                    out_subset = subsets.Range(list(
+                        out_e.data.subset.ranges)) if out_e.data.subset is not None else None
+                    if isinstance(pe.src, dace.nodes.AccessNode):
+                        new_memlet = dace.Memlet(data=pe.src.data, subset=pe_subset, other_subset=out_subset)
+                    else:
+                        # Tasklet -> AN: ``data`` must be the AN side (no other_subset).
+                        new_memlet = dace.Memlet(data=dst_an.data, subset=out_subset)
                     istate.add_edge(pe.src, pe.src_conn, dst_an, out_e.dst_conn, new_memlet)
                     istate.remove_edge(pe)
                 for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
@@ -225,14 +227,16 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     istate.remove_node(src_an)
             elif dst_desc.transient:
                 # AN(src) -> [_out=_in] -> AN(dst) -> C becomes AN(src) -> C.
-                # Symmetric to the src-transient branch: carry BOTH sides --
-                # the source AN's subset on ``data``/``subset``, the consumer's
-                # subset on ``other_subset``.
+                # Symmetric to the src-transient branch -- pick ``data``
+                # endpoint based on whether C is an AccessNode or a Tasklet.
                 for de in list(istate.out_edges(dst_an)):
-                    new_memlet = dace.Memlet(
-                        data=in_e.data.data if in_e.data.data is not None else src_an.data,
-                        subset=subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None,
-                        other_subset=subsets.Range(list(de.data.subset.ranges)) if de.data.subset is not None else None)
+                    in_subset = subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None
+                    de_subset = subsets.Range(list(de.data.subset.ranges)) if de.data.subset is not None else None
+                    if isinstance(de.dst, dace.nodes.AccessNode):
+                        new_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=de_subset)
+                    else:
+                        # AN -> Tasklet: ``data`` must be the AN side (no other_subset).
+                        new_memlet = dace.Memlet(data=src_an.data, subset=in_subset)
                     istate.add_edge(src_an, in_e.src_conn, de.dst, de.dst_conn, new_memlet)
                     istate.remove_edge(de)
                 for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):

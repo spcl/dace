@@ -51,13 +51,12 @@ from dace.transformation.passes.vectorization.utils.tile_access import _is_tile_
 #: Tasklet-name prefix emitted by :func:`materialise_per_lane_index_tile`.
 _MATERIALISE_PREFIX = "materialise_"
 
-#: Regex for the K=1 placeholder body emitted by ``materialise_per_lane_index_tile``:
-#: ``for (...; __l0 < W; ...) { _out[__l0] = (<dtype>)(<expr>); }``. The tasklet-name
-#: prefix is the primary detection gate; this regex parses ``W``, dtype, and the source
-#: expression out of an already-confirmed materialiser body.
-_K1_BODY_RE = re.compile(
-    r"for\s*\(\s*[^)]*?__l0\s*<\s*(?P<width>\d+)\s*;[^)]*?\)\s*\{\s*"
-    r"_out\[\s*__l0\s*\]\s*=\s*\(\s*(?P<dtype>[a-zA-Z_][\w:]*)\s*\)\s*\(\s*(?P<expr>[^)]+?)\s*\)\s*;\s*\}",
+#: K-agnostic regex matching the innermost ``_out[<flat>] = (<dtype>)(<expr>);``
+#: write of a materialiser body. Widths come from the tile transient's descriptor
+#: (looked up via the ``_out`` output edge); the regex is only used to extract the
+#: source ``<expr>`` and the cast dtype.
+_INNER_WRITE_RE = re.compile(
+    r"_out\[[^\]]+\]\s*=\s*\(\s*(?P<dtype>[a-zA-Z_][\w:]*)\s*\)\s*\(\s*(?P<expr>[^)]+?)\s*\)\s*;",
     re.DOTALL,
 )
 
@@ -88,20 +87,66 @@ def _shift_expr_by_lane(rhs_expr: str, iter_var: str, lane: int) -> str:
         return rhs_expr
 
 
+def _get_tile_widths_from_out_edge(inner_state: SDFGState, tasklet: Tasklet) -> Optional[Tuple[int, ...]]:
+    """Return the materialised tile's per-dim widths by inspecting the ``_out``
+    output edge's destination AccessNode descriptor. ``None`` if not found."""
+    from dace.sdfg.nodes import AccessNode
+    inner_sdfg = inner_state.sdfg
+    for e in inner_state.out_edges(tasklet):
+        if e.src_conn != "_out":
+            continue
+        if not isinstance(e.dst, AccessNode):
+            continue
+        desc = inner_sdfg.arrays.get(e.dst.data)
+        if desc is None or not hasattr(desc, "shape"):
+            continue
+        try:
+            return tuple(int(s) for s in desc.shape)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _shift_expr_by_multi_lane(rhs_expr: str, iter_var_to_lane: Dict[str, int]) -> str:
+    """Substitute each ``iter_var -> (iter_var + lane)`` in ``rhs_expr`` via sympy.
+    Identity fallback when the expression doesn't parse."""
+    try:
+        expr = symbolic.pystr_to_symbolic(rhs_expr)
+        repl = {symbolic.symbol(iv): symbolic.symbol(iv) + lane for iv, lane in iter_var_to_lane.items()}
+        return str(expr.xreplace(repl))
+    except Exception:  # noqa: BLE001
+        return rhs_expr
+
+
 def _lift_one_placeholder_tasklet(inner_state: SDFGState, tasklet: Tasklet, iter_vars: Tuple[str, ...]) -> bool:
-    """Detect and expand a single placeholder K=1 gather populate tasklet.
+    """Detect and expand a single placeholder gather populate tasklet (any K).
+
+    The materialiser emits a K-fold nested loop with one inner write
+    ``_out[<flat>] = (<dtype>)(<expr>);``. We gate on the tasklet label prefix
+    + a single inner-write match, then look up the tile widths from the
+    transient descriptor (no need to parse the for-loop headers).
+
+    For K_dep < K (partial dependency) the per-lane symbols are generated only
+    over the dependent dims; the populate body broadcasts each symbol across
+    the non-dependent dims (each non-dep cell at the same dep-indices sources
+    from the SAME symbol). This is the full-tile-always design with per-dim
+    fan-out collapsing where ``ONE`` would mark the broadcast dim once the
+    ``ONE``-marker optimisation lands as a follow-up.
 
     Returns True if the tasklet was a lifted placeholder; False otherwise.
     """
+    import itertools
     if not tasklet.label.startswith(_MATERIALISE_PREFIX):
         return False
     body = tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code)
-    match = _K1_BODY_RE.search(body)
+    match = _INNER_WRITE_RE.search(body)
     if match is None:
         return False
     expr_str = match.group("expr").strip()
     dtype_str = match.group("dtype").strip()
-    width = int(match.group("width"))
+    widths = _get_tile_widths_from_out_edge(inner_state, tasklet)
+    if widths is None or len(widths) == 0:
+        return False
     inner_sdfg = inner_state.sdfg
     try:
         free_syms = set(map(str, symbolic.pystr_to_symbolic(expr_str).free_symbols))
@@ -120,21 +165,54 @@ def _lift_one_placeholder_tasklet(inner_state: SDFGState, tasklet: Tasklet, iter
         rhs_free = set(map(str, symbolic.pystr_to_symbolic(rhs_template).free_symbols))
     except Exception:  # noqa: BLE001
         return False
-    dep_iter_vars = [iv for iv in iter_vars if iv in rhs_free]
-    if len(dep_iter_vars) != 1:
-        # K_dep != 1: multi-dim dependency, deferred to a follow-up slice.
+    # Dependent dims are the iter-var indices whose names appear in the iedge
+    # RHS. ``dep_dims`` is the source-order index list; ``dep_widths`` is the
+    # corresponding width tuple used to size the per-lane symbol fan-out.
+    K = len(iter_vars)
+    dep_dims = [d for d, iv in enumerate(iter_vars) if iv in rhs_free]
+    if not dep_dims:
+        # No iter-var dependency: nothing to fan out, the expression is
+        # genuinely constant -- leave the placeholder as-is (the existing
+        # for-loop already produces the right value for every lane).
         return False
-    dep_iter_var = dep_iter_vars[0]
-    per_lane_syms: List[str] = []
-    for lane in range(width):
-        sym_name = LaneIdScheme.make_multi(lane_dep_sym, ((0, lane), ))
-        per_lane_syms.append(sym_name)
+    if len(dep_dims) != len(widths):
+        # Partial K_dep: only fan out over the dependent dims; the non-dep dims
+        # broadcast (each non-dep cell at the same dep-indices sources from the
+        # SAME symbol, which the unrolled writes below replicate).
+        pass
+    dep_widths = tuple(widths[d] for d in dep_dims)
+    dep_iter_vars = tuple(iter_vars[d] for d in dep_dims)
+
+    # Mint one per-lane SDFG symbol per Cartesian-product cell of the dep dims;
+    # name encodes only the dependent-dim indices (``LaneIdScheme.make_multi``
+    # with the (dim, lane) chunks in source order).
+    per_lane_syms: Dict[Tuple[int, ...], str] = {}
+    for dep_indices in itertools.product(*(range(w) for w in dep_widths)):
+        chunks = tuple(zip(dep_dims, dep_indices))
+        sym_name = LaneIdScheme.make_multi(lane_dep_sym, chunks)
+        per_lane_syms[dep_indices] = sym_name
         if sym_name not in inner_sdfg.symbols:
             origin_dtype = inner_sdfg.symbols.get(lane_dep_sym, dace.int64)
             inner_sdfg.add_symbol(sym_name, origin_dtype)
-        iedge.data.assignments[sym_name] = _shift_expr_by_lane(rhs_template, dep_iter_var, lane)
-    unrolled = "\n".join(f"_out[{lane}] = ({dtype_str})({per_lane_syms[lane]});" for lane in range(width))
-    tasklet.code = dace.properties.CodeBlock(unrolled, dace.dtypes.Language.CPP)
+        iter_var_to_lane = dict(zip(dep_iter_vars, dep_indices))
+        iedge.data.assignments[sym_name] = _shift_expr_by_multi_lane(rhs_template, iter_var_to_lane)
+
+    # Build the unrolled populate body: one write per (l_0, ..., l_{K-1}) cell.
+    # Non-dep cells at the same dep-indices source from the SAME symbol -- the
+    # broadcast semantic the ONE-marker would express structurally.
+    lines: List[str] = []
+    for all_indices in itertools.product(*(range(w) for w in widths)):
+        dep_key = tuple(all_indices[d] for d in dep_dims)
+        sym_name = per_lane_syms[dep_key]
+        # Flat row-major offset (matches the materialiser's emission convention).
+        flat_off = 0
+        for k, idx in enumerate(all_indices):
+            stride = 1
+            for q in range(k + 1, len(widths)):
+                stride *= widths[q]
+            flat_off += idx * stride
+        lines.append(f"_out[{flat_off}] = ({dtype_str})({sym_name});")
+    tasklet.code = dace.properties.CodeBlock("\n".join(lines), dace.dtypes.Language.CPP)
     return True
 
 
