@@ -152,6 +152,36 @@ def test_transformation_unifies_ranges_and_guards_smaller_body():
     sdfg.validate()
 
 
+def test_transformation_only_guards_dimensions_actually_extended():
+    """The if-guard must contain only checks for dimensions whose ``orig`` range
+    differs from the unified ``new`` range. A dim that already matches the union
+    contributes nothing to the guard, and an unchanged ``start`` (resp. ``end``)
+    drops the ``>=`` (resp. ``<=``) clause."""
+    from dace.transformation.passes.unify_close_iteration_domains import _bounds_check_expr
+
+    N = dace.symbol('N')
+    I = dace.symbol('I')
+
+    # Only dim 0's end changes (J vs J-1 inclusive); dim 1 (I) is identical.
+    orig = dace.subsets.Range.from_string(f'0:{N}, 0:{I}')
+    new = dace.subsets.Range.from_string(f'0:{N} + 1, 0:{I}')
+    expr = _bounds_check_expr(['j', 'i'], orig, new)
+    # Dim 1 has identical bounds -> drop entirely. Dim 0's start is unchanged -> drop ``>=``.
+    # Only ``j <= N - 1`` remains.
+    assert expr is not None and '>=' not in expr and 'i' not in expr, expr
+    assert 'j' in expr and '<=' in expr, expr
+
+
+def test_transformation_no_guard_when_range_unchanged():
+    """When the new range equals the original on every dimension, ``_bounds_check_expr``
+    returns ``None`` and ``_wrap_map_body_in_bounds_check`` emits no guard at all."""
+    from dace.transformation.passes.unify_close_iteration_domains import _bounds_check_expr
+
+    N = dace.symbol('N')
+    rng = dace.subsets.Range.from_string(f'0:{N}, 0:{N}')
+    assert _bounds_check_expr(['j', 'i'], rng, rng) is None
+
+
 def test_transformation_refuses_when_ranges_already_identical():
     """Identical ranges -> nothing to unify -> ``can_be_applied`` returns ``False``."""
     sdfg = _build_vertical_chain_close_ranges(end_a_extra=0, end_b_extra=0)
@@ -212,14 +242,14 @@ def test_pass_noop_when_no_close_pairs():
 # ----- Combined: unify + MapFusion vertical -----
 
 
-def test_combined_unify_establishes_map_fusion_precondition():
-    """After ``UnifyCloseIterationDomainsPass``, the two maps share an identical
-    iteration range -- the precondition that allows vertical :class:`MapFusion` to fuse
-    them. Whether MapFusion actually fires depends on the specific intermediate-buffer
-    handling (the smaller map's body is now an NSDFG with an if-guard), which is
-    MapFusion's own concern; this test verifies only that the precondition holds and
-    the post-unify SDFG is structurally sound.
+def test_combined_unify_then_map_fusion_collapses_to_single_map():
+    """End-to-end: ``UnifyCloseIterationDomainsPass`` widens the smaller map to the
+    union range, and vertical :class:`MapFusionVertical` then fuses the two now-same-
+    range maps into a single Map with the union range. The smaller map's per-iteration
+    body lives under an if-bound-check so it only fires for the original iterations.
     """
+    from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+
     sdfg = _build_vertical_chain_close_ranges(end_a_extra=1, end_b_extra=0)
     UnifyCloseIterationDomainsPass().apply_pass(sdfg, {})
 
@@ -227,13 +257,11 @@ def test_combined_unify_establishes_map_fusion_precondition():
     me_a, me_b = _map_entries(state)
     assert str(me_a.map.range) == str(me_b.map.range), (str(me_a.map.range), str(me_b.map.range))
 
-    # The chain ``map_a -> T -> map_b`` is preserved -- the AccessNode is still the
-    # bridge between the two same-range maps.
-    t_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == 'T')
-    pre = {e.src for e in state.in_edges(t_node)}
-    post = {e.dst for e in state.out_edges(t_node)}
-    assert any(isinstance(p, dace.nodes.MapExit) and state.entry_node(p) is me_a for p in pre)
-    assert me_b in post
+    n_fused = sdfg.apply_transformations_repeated(MapFusionVertical, permissive=True)
+    assert n_fused == 1, n_fused
+
+    top_map_entries = [n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is None]
+    assert len(top_map_entries) == 1, [m.label for m in top_map_entries]
 
     sdfg.validate()
 

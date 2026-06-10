@@ -116,8 +116,27 @@ def _build_failed_validation_shape() -> dace.SDFG:
 
     me, mx = stmt_0.add_map('map_0_fieldop', dict(i_Edge='0:N'), schedule=dace.dtypes.ScheduleType.GPU_Device)
 
-    # NestedSDFG ``reduce_with_skip_values_0`` placed INSIDE the GPU_Device map -- this is
-    # the structure that the previous recursive sync walk used to splice a sync state into.
+    # Per-lane scratch transients chaining the four kernel-body stages.
+    sdfg.add_scalar('lane_in', dace.float64, transient=True, storage=dace.dtypes.StorageType.Register)
+    sdfg.add_array('lane_buf', [4], dace.float64, transient=True, storage=dace.dtypes.StorageType.Register)
+    sdfg.add_scalar('lane_mid', dace.float64, transient=True, storage=dace.dtypes.StorageType.Register)
+    sdfg.add_scalar('lane_out', dace.float64, transient=True, storage=dace.dtypes.StorageType.Register)
+
+    # Stage 1 (in-map Tasklet, BEFORE the inner sequential map) -- pre-multiplication.
+    tlet_pre = stmt_0.add_tasklet('tlet_pre_deref', {'_a': dace.float64}, {'_l': dace.float64}, '_l = _a * 2.0')
+    lane_in_acc = stmt_0.add_access('lane_in')
+
+    # Stage 2: a short ``Sequential`` map nested inside the ``GPU_Device`` map -- mirroring
+    # the ICON ``tlet_6_V2E_neighbors_map[0:7]`` neighbour-iteration shape. It writes per-k
+    # entries into a small per-lane register buffer.
+    seq_me, seq_mx = stmt_0.add_map('seq_neighbors_map', dict(k='0:4'), schedule=dace.dtypes.ScheduleType.Sequential)
+    seq_t = stmt_0.add_tasklet('seq_neighbors_inner', {'_li': dace.float64}, {'_bk': dace.float64}, '_bk = _li + k')
+    lane_buf_acc = stmt_0.add_access('lane_buf')
+    stmt_0.add_memlet_path(lane_in_acc, seq_me, seq_t, dst_conn='_li', memlet=dace.Memlet('lane_in[0]'))
+    stmt_0.add_memlet_path(seq_t, seq_mx, lane_buf_acc, src_conn='_bk', memlet=dace.Memlet('lane_buf[k]'))
+
+    # Stage 3 (NestedSDFG ``reduce_with_skip_values_0``) -- the structure that the previous
+    # recursive sync walk used to splice a sync state into.
     inner = dace.SDFG('reduce_with_skip_values_0')
     inner.add_array('a_in', [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
     inner.add_array('b_out', [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
@@ -127,12 +146,25 @@ def _build_failed_validation_shape() -> dace.SDFG:
     rt = reduce_state.add_tasklet('reduce_add', {'_a': dace.float64}, {'_b': dace.float64}, '_b = _a + 1.0')
     reduce_state.add_edge(reduce_state.add_read('a_in'), None, rt, '_a', dace.Memlet('a_in[0]'))
     reduce_state.add_edge(rt, '_b', reduce_state.add_write('b_out'), None, dace.Memlet('b_out[0]'))
-
     nsdfg = stmt_0.add_nested_sdfg(inner, {'a_in'}, {'b_out'}, {})
+    lane_mid_acc = stmt_0.add_access('lane_mid')
+
+    # Stage 4 (in-map Tasklet, AFTER the NSDFG) -- finalize.
+    tlet_post = stmt_0.add_tasklet('tlet_post_finalize', {'_m': dace.float64}, {'_o': dace.float64}, '_o = _m - 1.0')
+    lane_out_acc = stmt_0.add_access('lane_out')
+
     a_read = stmt_0.add_read('A')
     b_write = stmt_0.add_write('B')
-    stmt_0.add_memlet_path(a_read, me, nsdfg, dst_conn='a_in', memlet=dace.Memlet('A[i_Edge]'))
-    stmt_0.add_memlet_path(nsdfg, mx, b_write, src_conn='b_out', memlet=dace.Memlet('B[i_Edge]'))
+
+    # Map -> pre-Tasklet -> lane_in -> Sequential(k=0:4) -> lane_buf -> NSDFG -> lane_mid
+    # -> post-Tasklet -> lane_out -> Map exit.
+    stmt_0.add_memlet_path(a_read, me, tlet_pre, dst_conn='_a', memlet=dace.Memlet('A[i_Edge]'))
+    stmt_0.add_edge(tlet_pre, '_l', lane_in_acc, None, dace.Memlet('lane_in[0]'))
+    stmt_0.add_edge(lane_buf_acc, None, nsdfg, 'a_in', dace.Memlet('lane_buf[0]'))
+    stmt_0.add_edge(nsdfg, 'b_out', lane_mid_acc, None, dace.Memlet('lane_mid[0]'))
+    stmt_0.add_edge(lane_mid_acc, None, tlet_post, '_m', dace.Memlet('lane_mid[0]'))
+    stmt_0.add_edge(tlet_post, '_o', lane_out_acc, None, dace.Memlet('lane_out[0]'))
+    stmt_0.add_memlet_path(lane_out_acc, mx, b_write, memlet=dace.Memlet('B[i_Edge]'))
 
     metrics_exit = _add_metrics_timer_block(sdfg, 'metrics_exit', start=False)
 

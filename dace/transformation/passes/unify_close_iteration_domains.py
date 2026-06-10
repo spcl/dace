@@ -68,18 +68,34 @@ def _union_range(range_a, range_b) -> 'dace.subsets.Range':
     return dace.subsets.Range(out)
 
 
-def _bounds_check_expr(params, orig_range) -> str:
-    """Build the Python ``and``-joined bounds-check expression for a map's params.
+def _bounds_check_expr(params, orig_range, new_range) -> Optional[str]:
+    """Build the minimal Python ``and``-joined bounds-check for a map's params.
+
+    Per dim, emit ``p >= orig_start`` **only when** ``new_start < orig_start`` and
+    emit ``p <= orig_end`` **only when** ``new_end > orig_end`` -- those are the
+    cases where the extension introduced iterations that the original range did
+    not cover. Dimensions whose ``orig`` bound equals ``new`` are dropped entirely.
 
     :param params: Iteration parameter names.
     :param orig_range: The map's original (smaller) range that the body must respect.
-    :return: A string of the form ``(p0 >= b0 and p0 <= e0) and (p1 >= b1 and p1 <= e1) ...``.
+    :param new_range: The post-extension range; what the map will actually iterate.
+    :return: The bounds-check expression, or ``None`` when every dimension's original
+             range is equal to the new range (no guard needed).
     """
-    return " and ".join([f"({p} >= {b} and {p} <= {e})" for p, (b, e, _s) in zip(params, orig_range)])
+    parts = []
+    for p, (ob, oe, _os), (nb, ne, _ns) in zip(params, orig_range, new_range):
+        per_dim = []
+        if sympy.simplify(nb - ob) != 0:
+            per_dim.append(f"({p} >= {ob})")
+        if sympy.simplify(ne - oe) != 0:
+            per_dim.append(f"({p} <= {oe})")
+        if per_dim:
+            parts.append(" and ".join(per_dim))
+    return " and ".join(parts) if parts else None
 
 
-def _wrap_map_body_in_bounds_check(state: SDFGState, map_entry: nodes.MapEntry,
-                                   orig_range: 'dace.subsets.Range') -> None:
+def _wrap_map_body_in_bounds_check(state: SDFGState, map_entry: nodes.MapEntry, orig_range: 'dace.subsets.Range',
+                                   new_range: 'dace.subsets.Range') -> None:
     """Wrap the body of ``map_entry`` in a ``NestedSDFG`` whose top-level block is a
     :class:`ConditionalBlock` guarded by ``orig_range`` on ``map_entry.map.params``.
 
@@ -94,6 +110,12 @@ def _wrap_map_body_in_bounds_check(state: SDFGState, map_entry: nodes.MapEntry,
     :param map_entry: MapEntry whose body should be guarded.
     :param orig_range: The pre-extension range; the if-guard re-imposes it.
     """
+    bounds_expr = _bounds_check_expr(map_entry.map.params, orig_range, new_range)
+    if bounds_expr is None:
+        # Every dimension's original range matches the new range -- no guard needed,
+        # i.e. extending this map's range introduced no extra iterations.
+        return
+
     map_exit = state.exit_node(map_entry)
     body_nodes = [n for n in state.all_nodes_between(map_entry, map_exit) if n is not map_entry and n is not map_exit]
     if not body_nodes:
@@ -101,11 +123,15 @@ def _wrap_map_body_in_bounds_check(state: SDFGState, map_entry: nodes.MapEntry,
 
     # Standard helper: encapsulate the body into a NestedSDFG; properly wires the
     # boundary memlets through MapEntry/MapExit.
+    # ``full_data=False`` keeps the per-iteration boundary subset (e.g. ``arr[i, j]``)
+    # instead of promoting it to the full-array shape. Promotion would break vertical
+    # ``MapFusion``'s producer-covers-consumer check downstream: the producer writes one
+    # element per iteration but the consumer would appear to read the whole array.
     nsdfg_node = nest_state_subgraph(state.sdfg,
                                      state,
                                      SubgraphView(state, body_nodes),
                                      name=f"unify_close_{map_entry.label}",
-                                     full_data=True)
+                                     full_data=False)
     inner_sdfg = nsdfg_node.sdfg
 
     # nest_state_subgraph leaves the inner SDFG with one state holding the original body.
@@ -122,7 +148,7 @@ def _wrap_map_body_in_bounds_check(state: SDFGState, map_entry: nodes.MapEntry,
     branch_region.add_node(body_state, is_start_block=True)
     body_state.parent_graph = branch_region
 
-    if_block.add_branch(condition=CodeBlock(_bounds_check_expr(map_entry.map.params, orig_range)), branch=branch_region)
+    if_block.add_branch(condition=CodeBlock(bounds_expr), branch=branch_region)
     inner_sdfg.add_node(if_block, is_start_block=True)
 
     # Thread the map's own iteration params -- the if-guard references them.
@@ -191,10 +217,10 @@ class UnifyCloseIterationDomains(transformation.SingleStateTransformation):
 
         if not _same(unified, orig_first):
             first_entry.map.range = copy.deepcopy(unified)
-            _wrap_map_body_in_bounds_check(state, first_entry, orig_first)
+            _wrap_map_body_in_bounds_check(state, first_entry, orig_first, unified)
         if not _same(unified, orig_second):
             second_entry.map.range = copy.deepcopy(unified)
-            _wrap_map_body_in_bounds_check(state, second_entry, orig_second)
+            _wrap_map_body_in_bounds_check(state, second_entry, orig_second, unified)
 
 
 def _flatten_range(rng) -> List:

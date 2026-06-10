@@ -29,9 +29,7 @@ def _build_outer_with_two_sibling_inner_gpu_kernels() -> dace.SDFG:
     sdfg.add_array('B', [K, J, I], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
 
     state = sdfg.add_state('s')
-    outer_me, outer_mx = state.add_map('vertical_loop',
-                                       dict(__k='0:K'),
-                                       schedule=dace.dtypes.ScheduleType.GPU_Device)
+    outer_me, outer_mx = state.add_map('vertical_loop', dict(__k='0:K'), schedule=dace.dtypes.ScheduleType.GPU_Device)
 
     inner = dace.SDFG('nested_sdfg')
     inner.add_symbol('__k', dace.int32)
