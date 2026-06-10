@@ -8,3 +8,4 @@ from .tile_unop import TileUnop
 from .tile_ite import TileITE
 from .tile_reduce import TileReduce
 from .tile_iota import TileIota
+from .tile_mma import TileMMA

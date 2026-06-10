@@ -1878,6 +1878,99 @@ deferred behind a real kernel signal:
 
 ---
 
+## Appendix G -- Blocked-GEMM auto-vectorization via `TileMMA`
+
+User question 2026-06-10: how do we auto-vectorize GEMM when we need to tile
+3 loops with different shapes?
+
+GEMM ``C[i, j] = sum_k(alpha * A[i, k] * B[k, j]) + beta * C[i, j]`` has
+three loops -- ``i`` (M), ``j`` (N), ``k`` (K). The general K-dim tile
+contract assumes the K innermost dims of a SINGLE map are tile dims with
+uniform per-dim semantics. GEMM doesn't fit: M and N are parallel output
+dims (independent per outer iteration), K is a sequential accumulation
+(reduction) dim. ``MarkTileDims`` would refuse to tag M and K together --
+the contract conflates them as "tile dims of the same map" while their
+semantics differ.
+
+### G.1 Recommended design: pattern matcher + structural rewrite
+
+A dedicated transformation ``RecognizeBlockedGEMM`` runs BEFORE
+``MarkTileDims`` and detects the canonical GEMM body shape:
+
+```python
+for i in dace.map[0:M]:
+    for j in dace.map[0:N]:
+        for k in range(K):              # ``range``, not ``dace.map`` -- accumulation
+            C[i, j] = (alpha * A[i, k] * B[k, j]) + beta * C[i, j]
+```
+
+When matched, it replaces the entire 3-loop nest with a tiled blocked-GEMM
+SDFG that uses ``TileMMA``:
+
+```python
+for i_outer in dace.map[0:M:M_tile]:           # parallel; M_tile per iter
+    for j_outer in dace.map[0:N:N_tile]:       # parallel; N_tile per iter
+        C_tile : float[M_tile, N_tile]         # accumulator (zero-init when beta=0)
+        for k_outer in range(0, K, K_tile):    # sequential; K_tile per iter
+            A_tile = TileLoad(A[i_outer:i_outer+M_tile, k_outer:k_outer+K_tile])
+            B_tile = TileLoad(B[k_outer:k_outer+K_tile, j_outer:j_outer+N_tile])
+            TileMMA(_a=A_tile, _b=B_tile, _cin=C_tile,
+                    widths=(M_tile, K_tile, N_tile),
+                    alpha=alpha, beta=(1 if k_outer > 0 else beta))  # accumulate after first iter
+            # writes back to C_tile
+        TileStore(C_tile -> C[i_outer:i_outer+M_tile, j_outer:j_outer+N_tile])
+```
+
+Three tile shapes -- one per loop dim -- come from orchestrator knobs:
+
+* ``mma_M_tile``: 8 (default), pinned to a power of 2 on cuTile targets.
+* ``mma_N_tile``: 8.
+* ``mma_K_tile``: 8 (the inner accumulation tile -- can differ from M / N).
+
+### G.2 Why not extend the general K-dim contract
+
+The K-dim contract treats every tile dim as the innermost dim of ONE map
+with a uniform width tuple. GEMM has:
+
+* M, N as parallel output dims (orthogonal to each other).
+* K as a sequential accumulation dim.
+* Three different tile widths (M_tile, N_tile, K_tile) -- not from a single
+  ``widths`` tuple.
+* The accumulator tile (``C_tile``) lives across outer K iterations -- the
+  existing "all transients are full-tile or scalar, live one outer iter"
+  rule (design 3.4) doesn't apply.
+
+Trying to fold GEMM into the generic K-dim contract would force every map
+classifier to learn parallel-vs-accumulation, break the tile-shape
+uniformity invariant, and complicate ``MarkTileDims`` / ``StrideMapByTileWidths``
+for the 95% of non-GEMM kernels. A dedicated pattern matcher is the
+cleaner separation -- GEMM is a specialised shape, ``TileMMA`` is its
+specialised lib node.
+
+### G.3 What the pattern matcher needs to check
+
+For ``RecognizeBlockedGEMM`` to fire on a kernel:
+
+1. Three-loop nest, two outer ``dace.map`` (parallel) + one inner ``range``
+   (accumulation).
+2. Inner-most assignment shape ``C[i, j] = alpha * A[i, k] * B[k, j] + beta
+   * C[i, j]`` (with sympy-normalised arithmetic).
+3. The K dim only appears in A's and B's subsets, not in C's -- confirms
+   K is the accumulation dim.
+4. Symbolic A.shape == (M, K), B.shape == (K, N), C.shape == (M, N) where
+   M, N, K are SDFG-level symbols or constants.
+5. ``alpha`` and ``beta`` are constants (or constant-foldable expressions);
+   non-constant prefactors stay on the slow ``Gemm`` lib node path.
+
+### G.4 Status
+
+Not implemented yet. ``TileMMA`` lib node landed (commit pending), so the
+target of the rewrite exists. ``RecognizeBlockedGEMM`` is a separate
+slice. Test target: cloudsc / icon / ECRAD GEMM kernels and the canonical
+NPBench matmul.
+
+---
+
 ## Appendix F -- 2026-06-10 progress: walker-primary gather end-to-end
 
 This appendix records the slices landed for the gather lowering and the
