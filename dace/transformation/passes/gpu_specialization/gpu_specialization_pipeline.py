@@ -82,6 +82,10 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             AssignmentAndCopyKernelToMemsetAndMemcpy(),
             InsertExplicitGPUGlobalMemoryCopies(),
             ExpandLibraryNodes(),
+            # NOTE: This is a bit strange since the `strategy` is called on its own and then as
+            #   a proper strategy, i.e. a subobject encapsulating something. Data should be
+            #   transmitted through the second argument of `apply_pass()`. Also this explains
+            #   the need for the ``naive_fallback`  property.
             strategy,
             GPUStreamWiring(strategy),
             LiftSharedOutOfNestedSDFG(),
