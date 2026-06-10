@@ -203,7 +203,15 @@ def stage_tile_access(state: SDFGState,
                     gather_dims=gather_dims,
                     has_mask=has_mask_wired)
     state.add_node(load)
-    state.add_edge(an, None, load, "_src", src_subset)
+    # Build a clean memlet for the AN -> TileLoad._src edge: keep ``subset`` and
+    # ``data`` from the caller-provided memlet, but drop ``other_subset``. Per
+    # user direction 2026-06-10, within the body NSDFG ``wcr`` is always None
+    # (WCR appears only at the outer-Map boundary) and ``volume`` is inferred
+    # from the subset by DaCe -- pass neither so the values are derived
+    # correctly. With ``other_subset=None`` DaCe also infers the destination
+    # shape from the TileLoad connector descriptor.
+    src_memlet_clean = Memlet(data=src_subset.data, subset=src_subset.subset)
+    state.add_edge(an, None, load, "_src", src_memlet_clean)
     for d in gather_dims:
         idx_an = idx_sources[d]
         idx_desc = sdfg.arrays[idx_an.data]
@@ -286,7 +294,14 @@ def stage_tile_store(state: SDFGState,
     if has_mask_wired:
         mask_subset_str = ", ".join(f"0:{w}" for w in widths)
         state.add_edge(mask_an, None, store, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
-    state.add_edge(store, "_dst", an, None, dst_subset)
+    # Symmetric to stage_tile_access: build a clean memlet for the TileStore._dst
+    # -> AN edge. Per user direction 2026-06-10, neither half of the split
+    # ``AN -> Store -> AN`` chain needs ``other_subset`` -- each memlet's
+    # ``subset`` describes the AN side, and the lib node's connector descriptor
+    # implicitly defines the tile extent on the other side. ``wcr`` is always
+    # None within the body NSDFG; ``volume`` is inferred from the subset by DaCe.
+    dst_memlet_clean = Memlet(data=dst_subset.data, subset=dst_subset.subset)
+    state.add_edge(store, "_dst", an, None, dst_memlet_clean)
     return bridge_name, store
 
 
@@ -694,6 +709,13 @@ class StageInsideBody(ppl.Pass):
         :class:`TileStore` to ``original_an``. Reuses the existing bridge AN (the source
         of the TileStore._src edge) so the scheduler sees ``producer -> bridge -> TileStore``
         as a chain.
+
+        Per user direction 2026-06-10 (symmetric to the read side): when the
+        original producer edge carried ``Memlet(data=Z, subset=X,
+        other_subset=Y)``, the new producer-to-bridge half should keep the
+        producer-side subset (``X`` if ``Z`` matches the producer; ``Y``
+        otherwise) with ``data`` pointing at the producer's data side -- no
+        ``other_subset`` left.
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
         # The staging helper added `bridge_an -> TileStore._src`. That's the AN with OUT
@@ -704,8 +726,18 @@ class StageInsideBody(ppl.Pass):
             if hasattr(old_edge.src, "label") and old_edge.src_conn == "_dst":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
-            inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn,
-                                 Memlet.from_memlet(bridge_memlet_template))
+            # Build the producer-side memlet from the original edge's
+            # producer-side subset. If the original carried ``other_subset``
+            # and ``data`` pointed at the destination (``original_an``), the
+            # producer side lives on ``other_subset`` (symmetric to the read
+            # rewire); otherwise reuse the bridge-full-extent template.
+            orig = old_edge.data
+            if (orig is not None and orig.other_subset is not None and isinstance(old_edge.src, AccessNode)
+                    and orig.data != old_edge.src.data):
+                new_memlet = Memlet(data=old_edge.src.data, subset=orig.other_subset, wcr=orig.wcr, volume=orig.volume)
+            else:
+                new_memlet = Memlet.from_memlet(bridge_memlet_template)
+            inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
     def _rewire_consumers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
