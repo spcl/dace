@@ -28,6 +28,43 @@ from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdSc
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import subs
 
 
+def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG):
+    """Return the (src_data_name, src_subset, dst_data_name, dst_subset) tuple
+    for a memlet edge with both endpoints inferred.
+
+    Per user direction 2026-06-10 (design 3.7 + 3.8.3): classifiers and
+    validators should ALWAYS know both real array names + subsets, not just the
+    one matching ``memlet.data``. This helper centralises the "which side is
+    which" reasoning so call sites don't reimplement the lookup.
+
+    Returns ``None`` for ``data_name`` when the corresponding endpoint is not
+    an :class:`AccessNode` (e.g. a lib node connector or a tasklet); in that
+    case the matching ``subset`` is also ``None`` (the connector descriptor
+    defines the shape on that side, not the memlet).
+
+    :param edge: A memlet-carrying edge.
+    :param sdfg: SDFG owning the endpoint descriptors.
+    :returns: ``(src_data_name, src_subset, dst_data_name, dst_subset)`` where
+        the ``subset`` fields are fresh :class:`Range` copies (safe to mutate)
+        or ``None`` for non-AN endpoints.
+    """
+    from dace.sdfg.nodes import AccessNode as _AccessNode
+    mem = edge.data
+    if mem is None:
+        raise ValueError(f"infer_edge_endpoints: edge {edge} has no memlet")
+    src_an = edge.src if isinstance(edge.src, _AccessNode) else None
+    dst_an = edge.dst if isinstance(edge.dst, _AccessNode) else None
+    src_data = src_an.data if src_an is not None else None
+    dst_data = dst_an.data if dst_an is not None else None
+    src_subset: Optional[Range] = None
+    dst_subset: Optional[Range] = None
+    if src_an is not None:
+        src_subset = an_side_subset(edge, src_an, sdfg)
+    if dst_an is not None:
+        dst_subset = an_side_subset(edge, dst_an, sdfg)
+    return src_data, src_subset, dst_data, dst_subset
+
+
 def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG) -> Range:
     """Return the subset belonging to ``an`` on the AN-incident ``edge``.
 

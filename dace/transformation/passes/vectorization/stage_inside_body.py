@@ -51,7 +51,7 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.prepare_per_lane_indices import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
+from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
@@ -99,9 +99,11 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
             # transient (CONSTANT bridge produced by ``stage_constant_access``).
             both_scalar_or_one_scalar = (isinstance(src_desc, data.Scalar) or isinstance(dst_desc, data.Scalar))
             if not both_scalar_or_one_scalar:
+                src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
                 raise AssertionError(f"design 3.8.3 (2) violation: AN -> AN edge survives staging "
-                                     f"but neither endpoint is a Scalar bridge (src={edge.src.data!r} "
-                                     f"-> dst={edge.dst.data!r}, data={mem.data!r}, subset={mem.subset!r}) "
+                                     f"but neither endpoint is a Scalar bridge. "
+                                     f"src={src_data!r}[{src_subset}] -> dst={dst_data!r}[{dst_subset}] "
+                                     f"(memlet data={mem.data!r}, subset={mem.subset!r}) "
                                      f"in state {state.label!r}. Non-Scalar AN -> AN edges must be "
                                      f"routed through a tile lib node (TileLoad / TileStore).")
 

@@ -84,3 +84,34 @@ def test_empty_memlet_falls_back_to_descriptor():
     edge = state.add_edge(a, None, b, None, Memlet())
     out = an_side_subset(edge, a, sdfg)
     assert out == subsets.Range([(0, 5, 1)])
+
+
+def test_infer_edge_endpoints_an_to_an():
+    """``infer_edge_endpoints`` returns both src and dst data names + subsets
+    for an AN -> AN edge regardless of which side ``memlet.data`` points at.
+    """
+    from dace.transformation.passes.vectorization.utils.subsets import infer_edge_endpoints
+    sdfg, state, a, b = _build_an_to_an()
+    mem = Memlet(data="A", subset=subsets.Range([(2, 5, 1)]))
+    mem.other_subset = subsets.Range([(0, 3, 1)])
+    edge = state.add_edge(a, None, b, None, mem)
+    src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
+    assert src_data == "A"
+    assert src_subset == subsets.Range([(2, 5, 1)])
+    assert dst_data == "B"
+    assert dst_subset == subsets.Range([(0, 3, 1)])
+
+
+def test_infer_edge_endpoints_non_an_endpoint_returns_none():
+    """When one endpoint is NOT an AccessNode (e.g. a Tasklet), the helper
+    reports ``None`` for that side's data name + subset.
+    """
+    from dace.transformation.passes.vectorization.utils.subsets import infer_edge_endpoints
+    sdfg, state, a, _b = _build_an_to_an()
+    t = state.add_tasklet("t", inputs={"_in"}, outputs=set(), code="pass")
+    edge = state.add_edge(a, None, t, "_in", Memlet("A[0:8]"))
+    src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
+    assert src_data == "A"
+    assert src_subset == subsets.Range([(0, 7, 1)])
+    assert dst_data is None
+    assert dst_subset is None
