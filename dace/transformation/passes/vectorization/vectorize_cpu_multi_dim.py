@@ -31,6 +31,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.clear_per_lane_index_symbols import ClearPerLaneIndexSymbols
+from dace.transformation.passes.vectorization.gather_lift import GatherLift
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.infer_body_transient_shapes import (
@@ -463,6 +464,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # Converter sees the walker's lib nodes + the mask in scope; it sets
             # has_mask=True + wires _mask onto Tile{Binop, Unop, ITE, Reduce} lib nodes.
             ConvertTaskletsToTileOps(widths=widths_t),
+            # Lift any lane-dep gather placeholders into per-lane symbol fan-outs (so
+            # every lane reads a DIFFERENT per-lane symbol instead of the same bare
+            # lane-dep symbol). The original lane-dep symbol survives this pass; it's
+            # removed by ``RemoveUnusedPerLaneSymbols`` in the post-clean if nothing
+            # else references it.
+            GatherLift(widths=widths_t),
         ]
         super().__init__(passes)
         self._widths = widths_t
