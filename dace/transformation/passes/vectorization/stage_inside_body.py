@@ -42,7 +42,7 @@ Status (incremental landing):
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
-from dace import dtypes, properties
+from dace import data, dtypes, properties, subsets
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
@@ -55,36 +55,55 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
-def _assert_no_other_subset_at_libnode_boundary(state: SDFGState) -> None:
-    """Loud-fail audit of the design 3.8.3 invariant after staging completes.
+def _assert_post_stage_invariants(state: SDFGState) -> None:
+    """Loud-fail audit of the design 3.8.3 invariants after staging completes.
 
-    For every edge in ``state`` whose endpoint is a tile lib-node connector
-    (``TileLoad`` / ``TileStore``), the memlet MUST NOT carry ``other_subset``
-    -- the connector descriptor defines the shape on the connector side, so a
-    leaked ``other_subset`` is a stale value (typically ``[0]`` from a former
-    Scalar bridge) that would clash with the descriptor.
+    Two invariants enforced per user direction 2026-06-10:
+
+    (1) **Lib-node-boundary rule**: edges adjacent to ``TileLoad`` / ``TileStore``
+        connectors MUST NOT carry ``other_subset`` -- the connector descriptor
+        defines the shape on the connector side, so a leaked ``other_subset``
+        (typically ``[0]`` from a former Scalar bridge) clashes with the
+        descriptor.
+
+    (2) **AN -> AN survivors must be Scalar bridges**: per the stronger 3.8.3
+        invariant, the only AN -> AN edges that survive in the post-stage body
+        are those produced by :func:`stage_constant_access` (CONSTANT staging
+        through Scalar transients). Every other AN -> AN edge means the walker
+        missed a staging opportunity and the body contains a non-bridge
+        AccessNode read/write that should have gone through a tile lib node.
 
     Raises :class:`AssertionError` (loud failure, surfaces the offending edge
     at staging time rather than letting it propagate into codegen).
     """
+    sdfg = state.sdfg
     for edge in state.edges():
         mem = edge.data
-        if mem is None or mem.other_subset is None:
+        if mem is None:
             continue
-        # Only audit lib-node-adjacent edges. AN -> AN edges legitimately
-        # carry ``other_subset`` (per design 3.8.3 first row of the table).
         src_is_libnode = isinstance(edge.src, (TileLoad, TileStore))
         dst_is_libnode = isinstance(edge.dst, (TileLoad, TileStore))
-        if not (src_is_libnode or dst_is_libnode):
-            continue
-        node_label = edge.dst.label if dst_is_libnode else edge.src.label
-        conn = edge.dst_conn if dst_is_libnode else edge.src_conn
-        raise AssertionError(f"design 3.8.3 violation: lib-node-adjacent edge "
-                             f"carries stale ``other_subset`` (other_subset={mem.other_subset!r}, "
-                             f"data={mem.data!r}, subset={mem.subset!r}); offending node "
-                             f"{node_label!r} connector {conn!r} in state {state.label!r}. "
-                             f"Use :func:`_libnode_boundary_memlet` when constructing memlets "
-                             f"at lib-node connector boundaries.")
+        if (src_is_libnode or dst_is_libnode) and mem.other_subset is not None:
+            node_label = edge.dst.label if dst_is_libnode else edge.src.label
+            conn = edge.dst_conn if dst_is_libnode else edge.src_conn
+            raise AssertionError(f"design 3.8.3 (1) violation: lib-node-adjacent edge "
+                                 f"carries stale ``other_subset`` (other_subset={mem.other_subset!r}, "
+                                 f"data={mem.data!r}, subset={mem.subset!r}); offending node "
+                                 f"{node_label!r} connector {conn!r} in state {state.label!r}. "
+                                 f"Use :func:`_libnode_boundary_memlet` when constructing memlets "
+                                 f"at lib-node connector boundaries.")
+        if isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode):
+            src_desc = sdfg.arrays.get(edge.src.data)
+            dst_desc = sdfg.arrays.get(edge.dst.data)
+            # Allow AN -> AN only when at least one endpoint is a Scalar
+            # transient (CONSTANT bridge produced by ``stage_constant_access``).
+            both_scalar_or_one_scalar = (isinstance(src_desc, data.Scalar) or isinstance(dst_desc, data.Scalar))
+            if not both_scalar_or_one_scalar:
+                raise AssertionError(f"design 3.8.3 (2) violation: AN -> AN edge survives staging "
+                                     f"but neither endpoint is a Scalar bridge (src={edge.src.data!r} "
+                                     f"-> dst={edge.dst.data!r}, data={mem.data!r}, subset={mem.subset!r}) "
+                                     f"in state {state.label!r}. Non-Scalar AN -> AN edges must be "
+                                     f"routed through a tile lib node (TileLoad / TileStore).")
 
 
 def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
@@ -190,17 +209,17 @@ def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "co
     return bridge_name
 
 
-def stage_tile_access(state: SDFGState,
-                      an: AccessNode,
-                      widths: Tuple[int, ...],
-                      src_subset: Memlet,
-                      name_hint: str = "tile_bridge",
-                      dim_strides: Optional[Tuple[int, ...]] = None,
-                      replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
-                      src_dims: Optional[Tuple[int, ...]] = None,
-                      gather_dims: Tuple[int, ...] = (),
-                      idx_sources: Optional[Dict[int, AccessNode]] = None,
-                      mask_an: Optional[AccessNode] = None) -> Tuple[str, "TileLoad"]:
+def stage_tile_load(state: SDFGState,
+                    an: AccessNode,
+                    widths: Tuple[int, ...],
+                    src_subset: Memlet,
+                    name_hint: str = "tile_bridge",
+                    dim_strides: Optional[Tuple[int, ...]] = None,
+                    replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
+                    src_dims: Optional[Tuple[int, ...]] = None,
+                    gather_dims: Tuple[int, ...] = (),
+                    idx_sources: Optional[Dict[int, AccessNode]] = None,
+                    mask_an: Optional[AccessNode] = None) -> Tuple[str, "TileLoad"]:
     """Stage a tile-shaped access on ``an`` through a fresh `(widths,)` Array transient.
 
     Mints a transient ``Array(shape=widths, ...)`` of ``an``'s element
@@ -276,9 +295,12 @@ def stage_tile_access(state: SDFGState,
     return bridge_name, load
 
 
-# Backwards-compat alias: callers that already wrote against ``stage_gather_access`` keep working.
-# The unified ``stage_tile_access`` above handles both shapes via the optional ``gather_dims`` arg.
-stage_gather_access = stage_tile_access
+# Backwards-compat aliases. Per user direction 2026-06-10: ``stage_tile_load``
+# is the symmetric name to ``stage_tile_store`` (read vs write side, both small
+# focused passes). ``stage_tile_access`` and ``stage_gather_access`` were
+# earlier names; keep them as aliases so callers don't break across the rename.
+stage_tile_access = stage_tile_load
+stage_gather_access = stage_tile_load
 
 
 def stage_tile_store(state: SDFGState,
@@ -614,14 +636,14 @@ class StageInsideBody(ppl.Pass):
                     # extent on every dim so the connector lowers as an array view.
                     full_subset_str = ", ".join(f"0:{s}" for s in desc.shape)
                     src_subset_memlet = Memlet(data=an.data, subset=full_subset_str)
-                    bridge_name, _ = stage_tile_access(inner_state,
-                                                       an,
-                                                       widths=tuple(self.widths),
-                                                       src_subset=src_subset_memlet,
-                                                       name_hint=f"{an.data}_gather",
-                                                       gather_dims=gather_source_dims,
-                                                       idx_sources=idx_sources,
-                                                       mask_an=mask_an_for_this)
+                    bridge_name, _ = stage_tile_load(inner_state,
+                                                     an,
+                                                     widths=tuple(self.widths),
+                                                     src_subset=src_subset_memlet,
+                                                     name_hint=f"{an.data}_gather",
+                                                     gather_dims=gather_source_dims,
+                                                     idx_sources=idx_sources,
+                                                     mask_an=mask_an_for_this)
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
                     continue
@@ -636,14 +658,14 @@ class StageInsideBody(ppl.Pass):
                     # we reuse its memlet so the lib node downstream sees the same subset).
                     src_subset_memlet = Memlet.from_memlet(out_edges[0].data)
                     dim_strides, replicate = self._pad_to_tile_dims(record, iter_vars)
-                    bridge_name, _ = stage_tile_access(inner_state,
-                                                       an,
-                                                       widths=tuple(self.widths),
-                                                       src_subset=src_subset_memlet,
-                                                       name_hint=f"{an.data}_tile",
-                                                       dim_strides=dim_strides,
-                                                       replicate_factor_per_dim=replicate,
-                                                       mask_an=mask_an_for_this)
+                    bridge_name, _ = stage_tile_load(inner_state,
+                                                     an,
+                                                     widths=tuple(self.widths),
+                                                     src_subset=src_subset_memlet,
+                                                     name_hint=f"{an.data}_tile",
+                                                     dim_strides=dim_strides,
+                                                     replicate_factor_per_dim=replicate,
+                                                     mask_an=mask_an_for_this)
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
                     staged += 1
         return staged
@@ -756,33 +778,28 @@ class StageInsideBody(ppl.Pass):
         of the TileStore._src edge) so the scheduler sees ``producer -> bridge -> TileStore``
         as a chain.
 
-        Per user direction 2026-06-10 (symmetric to the read side): when the
-        original producer edge carried ``Memlet(data=Z, subset=X,
-        other_subset=Y)``, the new producer-to-bridge half should keep the
-        producer-side subset (``X`` if ``Z`` matches the producer; ``Y``
-        otherwise) with ``data`` pointing at the producer's data side -- no
-        ``other_subset`` left.
+        Per design 3.8.3 row 1: when the producer (``old_edge.src``) is another
+        AccessNode, the resulting ``bridge_an -> producer_AN`` -- wait, it's
+        ``producer -> bridge_an`` -- IS an ``AN -> AN`` edge and must preserve
+        the original ``other_subset`` (the destination-side Y). Other destination
+        kinds (lib nodes, tasklets) drop ``other_subset`` per rows 2-4.
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
-        # The staging helper added `bridge_an -> TileStore._src`. That's the AN with OUT
-        # edges. Reuse it so producers write to the SAME AN.
         shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="write")
         for old_edge in original_in_edges:
-            # Skip the new TileStore._dst -> original_an edge that stage_tile_store added.
             if hasattr(old_edge.src, "label") and old_edge.src_conn == "_dst":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
-            # Build the producer-side memlet from the original edge's
-            # producer-side subset. If the original carried ``other_subset``
-            # and ``data`` pointed at the destination (``original_an``), the
-            # producer side lives on ``other_subset`` (symmetric to the read
-            # rewire); otherwise reuse the bridge-full-extent template.
-            orig = old_edge.data
-            if (orig is not None and orig.other_subset is not None and isinstance(old_edge.src, AccessNode)
-                    and orig.data != old_edge.src.data):
-                new_memlet = Memlet(data=old_edge.src.data, subset=orig.other_subset, wcr=orig.wcr, volume=orig.volume)
-            else:
-                new_memlet = Memlet.from_memlet(bridge_memlet_template)
+            new_memlet = Memlet.from_memlet(bridge_memlet_template)
+            # Per 3.8.3 row 1 (refined per user direction 2026-06-10):
+            # ``AN -> AN`` edges only survive when the destination is a
+            # Scalar bridge (CONSTANT staging output). For Array tile bridges
+            # the consumer reads the FULL tile -- the bridge_memlet_template
+            # already encodes that and ``other_subset`` would carry a stale
+            # value (e.g. ``[0]`` from a former Scalar bridge).
+            if (isinstance(old_edge.src, AccessNode) and old_edge.data.other_subset is not None
+                    and isinstance(inner_state.sdfg.arrays.get(old_edge.src.data), data.Scalar)):
+                new_memlet.other_subset = subsets.Range(list(old_edge.data.other_subset.ranges))
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
@@ -790,23 +807,33 @@ class StageInsideBody(ppl.Pass):
                                     original_out_edges) -> None:
         """Redirect each consumer edge that previously read from ``original_an`` to read from
         the SAME bridge AccessNode that the staging helper produced (the TileLoad._dst target).
+
+        Per design 3.8.3 row 1: when the consumer (``old_edge.dst``) is another
+        AccessNode, the resulting ``bridge_an -> consumer_AN`` is an ``AN -> AN``
+        edge and must preserve the original ``other_subset`` (the consumer-side
+        Y). Other destination kinds (lib nodes, tasklets) drop ``other_subset``
+        per rows 2-4 -- the existing ``bridge_memlet_template`` carries no
+        ``other_subset`` by default.
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
-        # The staging helper added `TileLoad._dst -> bridge_an`. That's the AN with IN
-        # edges. Reuse it so consumers read from the SAME AN.
         shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="read")
         for old_edge in original_out_edges:
-            # Skip the edge that the staging helper just added (an -> tile bridge / scalar bridge);
-            # that edge is part of the staging structure, not a consumer.
             if isinstance(old_edge.dst, AccessNode) and old_edge.dst.data == bridge_name:
                 continue
-            # Skip edges that go through a tile lib node (TileLoad / TileMaskGen / etc.) directly
-            # from the staging helper -- those are also part of the staging plumbing.
             if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
-            inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn,
-                                 Memlet.from_memlet(bridge_memlet_template))
+            new_memlet = Memlet.from_memlet(bridge_memlet_template)
+            # Per 3.8.3 row 1 (refined per user direction 2026-06-10):
+            # ``AN -> AN`` edges only survive when the destination is a
+            # Scalar bridge (CONSTANT staging output). For Array tile bridges
+            # the consumer reads the FULL tile -- the bridge_memlet_template
+            # already encodes that and ``other_subset`` would carry a stale
+            # value (e.g. ``[0]`` from a former Scalar bridge).
+            if (isinstance(old_edge.dst, AccessNode) and old_edge.data.other_subset is not None
+                    and isinstance(inner_state.sdfg.arrays.get(old_edge.dst.data), data.Scalar)):
+                new_memlet.other_subset = subsets.Range(list(old_edge.data.other_subset.ranges))
+            inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
@@ -827,5 +854,5 @@ class StageInsideBody(ppl.Pass):
             # propagate into codegen (where it manifests as ``StopIteration``
             # in the strided-copy shape inference).
             for inner_state in nsdfg_node.sdfg.states():
-                _assert_no_other_subset_at_libnode_boundary(inner_state)
+                _assert_post_stage_invariants(inner_state)
         return total or None

@@ -500,15 +500,31 @@ Rule:
 
 | Edge shape | ``other_subset`` |
 |-----------|------------------|
-| ``AN -> AN`` (no lib node between) | **PRESERVE** -- carries the destination-side subset that downstream ``an_side_subset`` reads (``BypassTrivialAssignTasklets`` populates it for exactly this reason). |
+| ``AN -> AN`` where ONE endpoint is a Scalar bridge | **PRESERVE** -- carries the destination-side subset that downstream ``an_side_subset`` reads (``BypassTrivialAssignTasklets`` populates it for exactly this reason). |
+| ``AN -> AN`` where NEITHER endpoint is a Scalar bridge | **FORBIDDEN** -- the walker must route this through a tile lib node (TileLoad / TileStore). A non-Scalar AN -> AN edge in the post-stage body means the walker missed a staging opportunity. The post-stage validator refuses these. |
 | ``AN -> tile lib node connector`` (e.g. ``A -> TileLoad._src``) | **DROP** -- the connector descriptor defines the shape on the connector side. Leaving a stale ``other_subset`` from a former Scalar bridge (``[0]``) clashes with the descriptor. |
 | ``tile lib node connector -> AN`` (e.g. ``TileLoad._dst -> bridge_an``) | **DROP** -- symmetric. |
 | ``AN -> Tasklet`` / ``Tasklet -> AN`` | **DROP** -- tasklet sides have no descriptor; the AN-side ``subset`` describes the access. |
+
+Per user direction 2026-06-10: ``AN -> AN`` edges only survive in the
+post-stage body when the source or destination is a Scalar transient
+(the CONSTANT staging output from :func:`stage_constant_access`). All
+other accesses must flow through a tile lib node -- the walker's
+LINEAR / AFFINE / REPLICATE / MODULAR / GATHER dispatches always emit
+TileLoad/TileStore boundaries, leaving only Scalar bridges as
+"surviving" plain AN -> AN edges.
 
 The shared helper :func:`stage_inside_body._libnode_boundary_memlet`
 encodes the lib-node-boundary case. ``wcr`` is intentionally omitted
 (WCR appears only at the outer-Map boundary, never inside the body
 NSDFG); ``volume`` is inferred from ``subset`` by DaCe.
+
+The post-stage validator :func:`_assert_post_stage_invariants` enforces
+both rules: it runs at the end of :meth:`StageInsideBody.apply_pass` on
+every body NSDFG state and refuses any (1) lib-node-adjacent edge with
+``other_subset`` set, or (2) AN -> AN edge where neither endpoint is a
+Scalar bridge. Loud-failure surfaces these at staging time rather than
+letting them propagate into codegen.
 
 ### 3.4 Staged-transient scoping
 
