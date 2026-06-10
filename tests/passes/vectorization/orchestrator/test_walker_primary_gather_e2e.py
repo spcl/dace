@@ -24,21 +24,26 @@ def k1_gather(A: dace.float64[N_SYM], idx: dace.int64[N_SYM], B: dace.float64[N_
 
 
 @pytest.mark.parametrize("N", [8, 16])
-@pytest.mark.xfail(reason="Confirmed 2026-06-10 via gather_walker_probe: the @dace.program frontend"
-                   " decomposes ``B[i] = A[idx[i]]`` into (1) an INTERSTATE-EDGE scalar lift"
-                   " ``__sym = idx[i]`` and (2) an INNER-STATE scalar-to-scalar copy ``A -> A_const"
-                   " -> B`` with memlet ``A[0]``. By the time the walker runs, NO gather subset"
-                   " remains in any memlet -- the lane-dependency is hidden in the iedge"
-                   " assignment, and the inner body looks like a pure CONSTANT scalar copy."
-                   " Fix paths (deferred to a separate slice -- requires either a pre-pass that"
-                   " UNCOMPILES the frontend's scalar-lift back into explicit gather memlets, OR"
-                   " a walker enhancement that detects scalar bridges sourced from iedge-defined"
-                   " loop-dep symbols and rewrites them into TileLoad-with-gather_dims): both are"
-                   " substantial walker-side work, NOT the per-lane-symbol fan-out from earlier"
-                   " design discussion (the fan-out helper machinery would only work AFTER the"
-                   " gather pattern has been recovered). RemoveUnusedPerLaneSymbols (commit"
-                   " 83822f4f2) is the post-clean infrastructure ready for use once the gather"
-                   " recovery lands.")
+@pytest.mark.xfail(reason="Confirmed 2026-06-10 via deep probe (BEFORE/AFTER vectorize): the frontend"
+                   " DOES emit a proper gather memlet ``__tmp_15_15_r[__sym___tmp_15_17_r]`` with the"
+                   " lane-dep symbol PRESENT in the subset. AFTER VectorizeCPUMultiDim runs, the"
+                   " same memlet's subset has been concretised to ``Range (0)`` -- the lane-dep"
+                   " symbol got substituted away even though it's still declared in"
+                   " ``inner_sdfg.symbols``. Per user direction 2026-06-10: 'Symbols added to the"
+                   " inner SDFG from outside need to have entries in symbol mapping. If symbol is"
+                   " declared and not assigned to and not in symbol mapping -> it will be"
+                   " considered free symbol' -- the symbol likely lacks a ``symbol_mapping`` entry"
+                   " on the NSDFG node, and the substitution treats it as a free var defaulting to"
+                   " 0. Fix path (next session): find which pass (suspect"
+                   " ``ExpandNestedSDFGInputs._uncollapse_scalar`` or"
+                   " ``InferBodyTransientShapes._widen_non_transient_memlets``) does the concretising"
+                   " and preserve the lane-dep symbol. Then the classifier's ``_is_tile_dependent``"
+                   " (already in place) detects GATHER via the iedge ``__sym = idx[i]`` chain; the"
+                   " walker's existing GATHER dispatch + per-lane-symbol fan-out (design 7.5) +"
+                   " ``RemoveUnusedPerLaneSymbols`` post-clean (commit b27f02d1f) complete the"
+                   " lowering. Tile shape rule per user clarification 2026-06-10: ALWAYS broadcast"
+                   " per-lane symbols to FULL tile dimensions (W_0, ..., W_{K-1}) even when the"
+                   " dependent-dim count is less than K.")
 def test_k1_gather_matches_reference(N):
     """K=1 ``B[i] = A[idx[i]]`` -- bit-equal to unvectorised reference. Exercises the
     GATHER walker path + the per-lane index materialiser."""
