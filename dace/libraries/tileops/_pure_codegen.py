@@ -90,6 +90,17 @@ def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_
     return " + ".join(parts)
 
 
+def _collapse_one(shape):
+    """Drop any ``dace.symbolic.ONE`` (broadcast-marker) entries from ``shape``.
+
+    Per user direction 2026-06-10: ``(W_0, ONE)`` is structurally equivalent to
+    ``(W_0,)`` for all shape-comparing passes. Comparisons should always
+    collapse the sentinel before matching widths.
+    """
+    from dace.symbolic import ONE
+    return tuple(s for s in shape if not (hasattr(s, "free_symbols") and ONE in s.free_symbols))
+
+
 def resolve_gather_deps(idx_shape, widths):
     """Find the sorted subset of tile dims whose widths spell out ``idx_shape``.
 
@@ -100,8 +111,11 @@ def resolve_gather_deps(idx_shape, widths):
     subset exists. The special ``(1,)`` shape (scalar gather index, no lane
     dep) returns the empty tuple ``()``.
 
+    Per user direction 2026-06-10: ``ONE``-marked broadcast dims are collapsed
+    out before matching, so a ``(W_0, ONE)`` shape is treated as ``(W_0,)``.
+
     :param idx_shape: The descriptor shape of an ``_idx_<d>`` connector
-        (e.g. ``(4,)`` or ``(4, 8)``).
+        (e.g. ``(4,)`` or ``(4, 8)`` or ``(4, ONE)``).
     :param widths: The lib node's full tile widths ``(W_0, ..., W_{K-1})``.
     :returns: Sorted tuple of tile dim indices, ``()`` for the scalar case,
         or ``None`` when no Cartesian product of widths matches.
@@ -109,10 +123,14 @@ def resolve_gather_deps(idx_shape, widths):
     from itertools import combinations
     if tuple(idx_shape) == (1, ):
         return ()
+    collapsed = _collapse_one(idx_shape)
+    if collapsed == ():
+        # All dims were ``ONE`` -- treat as a scalar (no lane dep).
+        return ()
     K = len(widths)
     for k in range(1, K + 1):
         for combo in combinations(range(K), k):
-            if tuple(idx_shape) == tuple(widths[p] for p in combo):
+            if collapsed == tuple(widths[p] for p in combo):
                 return combo
     return None
 

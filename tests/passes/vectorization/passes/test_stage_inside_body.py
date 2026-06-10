@@ -13,6 +13,19 @@ from dace.transformation.passes.vectorization.stage_inside_body import (
 )
 
 
+def _shape_eq_ignoring_one(actual, expected):
+    """Compare two shape tuples treating ``ONE`` broadcast-marker dims as
+    structurally absent (per user direction 2026-06-10 / design 3.8.1).
+
+    A descriptor shape ``(W_0, ONE)`` is equivalent to ``(W_0,)`` for all
+    structural comparisons. The helper drops any sympy-symbolic dim whose
+    ``free_symbols`` contains :data:`dace.symbolic.ONE`, then compares.
+    """
+    from dace.symbolic import ONE
+    collapsed = tuple(s for s in actual if not (hasattr(s, "free_symbols") and ONE in s.free_symbols))
+    return tuple(int(s) for s in collapsed) == tuple(expected)
+
+
 def _build_state_with_an(shape=(16, ), dtype=dace.float64, name="A"):
     sdfg = dace.SDFG("stage_const_fixture")
     sdfg.add_array(name, shape, dtype, transient=False)
@@ -354,9 +367,8 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
     assert result == 1
     after_int_arrays = sum(1 for d in inner.arrays.values()
                            if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
-    after_float_tiles = sum(
-        1 for d in inner.arrays.values()
-        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, ))
+    after_float_tiles = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
+                            and d.dtype == dace.float64 and _shape_eq_ignoring_one(d.shape, (8, )))
     assert after_int_arrays == before_int_arrays + 1, "expected one int64 index tile materialised"
     assert after_float_tiles == before_float_tiles + 1, "expected one float64 tile bridge"
     body_state = next(s for s in inner.states())
@@ -412,12 +424,10 @@ def test_walker_stages_K2_multi_tile_dim_gather():
         if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, 16))
     result = StageInsideBody(widths=(8, 16)).apply_pass(sdfg, {})
     assert result == 1
-    after_int_arrays = sum(
-        1 for d in inner.arrays.values()
-        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64 and tuple(d.shape) == (8, 16))
-    after_float_tiles = sum(
-        1 for d in inner.arrays.values()
-        if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, 16))
+    after_int_arrays = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
+                           and d.dtype == dace.int64 and _shape_eq_ignoring_one(d.shape, (8, 16)))
+    after_float_tiles = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
+                            and d.dtype == dace.float64 and _shape_eq_ignoring_one(d.shape, (8, 16)))
     assert after_int_arrays == before_int_arrays + 1, "expected one (8, 16)-shape int64 index tile"
     assert after_float_tiles == before_float_tiles + 1, "expected one (8, 16) float64 tile bridge"
     body_state = next(s for s in inner.states())

@@ -91,8 +91,22 @@ def materialise_per_lane_index_tile(state: SDFGState,
     if len(iter_vars) != len(widths):
         raise ValueError(f"materialise_per_lane_index_tile: tile_iter_vars (len={len(iter_vars)}) "
                          f"and tile_widths (len={len(widths)}) must align")
+    # Per user direction 2026-06-10: append a trailing ``ONE`` dim to the tile
+    # shape so the materialised idx tile is structurally K+1-D, with ``ONE``
+    # marking the broadcast dim. The trailing dim is a runtime no-op (sympy
+    # keeps ``ONE`` opaque against literal-1 comparisons; codegen folds it to
+    # 1 via the ``constexpr int ONE = 1`` constant emission). The same shape
+    # generalises to K=2 partial-K_dep as ``(W_0, ONE)`` -- the ONE marker
+    # indicates which dim broadcasts in the per-arch gather expansion.
+    from dace.symbolic import ONE as _ONE
+    shape_with_one = tuple(widths) + (_ONE, )
+    # Register ``ONE`` as a compile-time constant so ``generate_constants``
+    # emits ``constexpr int ONE = 1`` at file scope and the C++ compiler folds
+    # it to a literal everywhere it appears in the generated code.
+    if "ONE" not in sdfg.constants_prop:
+        sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
     arr_name, _ = sdfg.add_array(name_hint,
-                                 shape=widths,
+                                 shape=shape_with_one,
                                  dtype=idx_dtype,
                                  storage=dtypes.StorageType.Register,
                                  transient=True,
@@ -101,12 +115,13 @@ def materialise_per_lane_index_tile(state: SDFGState,
     body_expr = gather_expr
     for d, var in enumerate(iter_vars):
         body_expr = body_expr.replace(var, f"(__l{d})")
-    # Build the K-fold nested loop. The flat offset is row-major:
-    # __l0 * (W_1 * W_2 * ...) + __l1 * (W_2 * ...) + ... + __l_{K-1}.
+    # Build the K-fold nested loop. The flat offset is row-major over the K
+    # tile dims; the trailing ``ONE`` dim contributes a constant ``0`` (the
+    # ``constexpr`` reduces the multiplier to a no-op).
     K = len(widths)
     parts = []
     for i in range(K):
-        inner = 1
+        inner = 1  # multiply by the trailing ONE = 1 (folded).
         for q in range(i + 1, K):
             inner *= widths[q]
         parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
@@ -125,7 +140,7 @@ def materialise_per_lane_index_tile(state: SDFGState,
         language=dtypes.Language.CPP,
     )
     out_an = state.add_access(arr_name)
-    out_subset = ", ".join(f"0:{w}" for w in widths)
+    out_subset = ", ".join(f"0:{w}" for w in widths) + ", 0:ONE"
     state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
     return arr_name
 

@@ -89,8 +89,14 @@ def _shift_expr_by_lane(rhs_expr: str, iter_var: str, lane: int) -> str:
 
 def _get_tile_widths_from_out_edge(inner_state: SDFGState, tasklet: Tasklet) -> Optional[Tuple[int, ...]]:
     """Return the materialised tile's per-dim widths by inspecting the ``_out``
-    output edge's destination AccessNode descriptor. ``None`` if not found."""
+    output edge's destination AccessNode descriptor.
+
+    Per user direction 2026-06-10: ``ONE``-marked broadcast dims are collapsed
+    out -- a ``(W_0, ONE)`` shape is reported as ``(W_0,)`` to the lift logic.
+    ``None`` if not found / shape contains non-integer non-``ONE`` symbols.
+    """
     from dace.sdfg.nodes import AccessNode
+    from dace.symbolic import ONE as _ONE
     inner_sdfg = inner_state.sdfg
     for e in inner_state.out_edges(tasklet):
         if e.src_conn != "_out":
@@ -100,10 +106,15 @@ def _get_tile_widths_from_out_edge(inner_state: SDFGState, tasklet: Tasklet) -> 
         desc = inner_sdfg.arrays.get(e.dst.data)
         if desc is None or not hasattr(desc, "shape"):
             continue
-        try:
-            return tuple(int(s) for s in desc.shape)
-        except (TypeError, ValueError):
-            return None
+        collapsed = []
+        for s in desc.shape:
+            if hasattr(s, "free_symbols") and _ONE in s.free_symbols:
+                continue
+            try:
+                collapsed.append(int(s))
+            except (TypeError, ValueError):
+                return None
+        return tuple(collapsed)
     return None
 
 
