@@ -31,6 +31,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.clear_per_lane_index_symbols import ClearPerLaneIndexSymbols
+from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.infer_body_transient_shapes import (
     InferBodyTransientShapes, )
@@ -522,6 +523,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         if self._expand_tile_nodes:
             self._select_tile_implementations(sdfg)
             sdfg.expand_library_nodes()
+            # Sweep any per-lane SDFG symbols that the indirect-access (gather)
+            # lowering emitted as named intermediates but that have no remaining use
+            # post-expansion. Runs BEFORE ``ClearPerLaneIndexSymbols`` so the audit
+            # only catches genuine leaks (not stale per-lane symbol declarations).
+            RemoveUnusedPerLaneSymbols().apply_pass(sdfg, {})
             ClearPerLaneIndexSymbols().apply_pass(sdfg, {})
         return result
 
