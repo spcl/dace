@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
+import networkx as nx
+
 import dace
-from dace import SDFG, SDFGState, dtypes, properties
+from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -211,24 +213,13 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                 gpu_stream = self._next_stream(gpu_stream)
 
     def _weakly_connected(self, graph: Graph) -> List[Set[NodeT]]:
-        visited: Set[NodeT] = set()
-        components: List[Set[NodeT]] = []
-        for node in graph.nodes():
-            if node in visited:
-                continue
-            component: Set[NodeT] = set()
-            stack = [node]
-            while stack:
-                current = stack.pop()
-                if current in visited:
-                    continue
-                visited.add(current)
-                component.add(current)
-                for neighbor in graph.neighbors(current):
-                    if neighbor not in visited:
-                        stack.append(neighbor)
-            components.append(component)
-        return components
+        """Weakly connected components of ``graph``'s dataflow.
+
+        Uses the underlying networkx ``DiGraph`` exposed by :attr:`OrderedDiGraph.nx`
+        so the implementation tracks DaCe's own graph internals (matches the same
+        refactor in :mod:`split_state_by_gpu_class`).
+        """
+        return [set(c) for c in nx.weakly_connected_components(graph.nx)]
 
     def _next_stream(self, gpu_stream: int) -> int:
         if self._max_concurrent_streams == 0:
@@ -333,11 +324,11 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         if isinstance(node, nodes.LibraryNode):
             if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)):
                 return None
-            if getattr(node, 'schedule', None) == dtypes.ScheduleType.GPU_Device:
+            if node.schedule == dtypes.ScheduleType.GPU_Device:
                 return None
             if is_devicelevel_gpu(nsdfg, state, node):
                 return None
-            return f"LibraryNode with schedule {getattr(node, 'schedule', None)} outside a GPU_Device scope"
+            return f"LibraryNode with schedule {node.schedule} outside a GPU_Device scope"
         return None
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
@@ -391,7 +382,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                    (src.storage in gpu_storages and dst.storage in cpu_storages):
                     return True
             elif isinstance(node, nodes.Tasklet):
-                code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
+                code = node.code.as_string
                 if 'cudaMemcpyHostToDevice' in code or 'cudaMemcpyDeviceToHost' in code or \
                    'hipMemcpyHostToDevice' in code or 'hipMemcpyDeviceToHost' in code:
                     return True
@@ -452,14 +443,12 @@ def _classify_node(node, sdfg: SDFG, state: SDFGState) -> _Kind:
             return _Kind.GPU
         return _Kind.CPU
     if isinstance(node, (nodes.MapEntry, nodes.ConsumeEntry)):
-        sched = getattr(node, 'schedule', None) or getattr(getattr(node, 'map', None), 'schedule', None)
-        if sched == dtypes.ScheduleType.GPU_Device:
+        # MapEntry carries the schedule on ``.map``; ConsumeEntry on ``.consume``.
+        scope_descriptor = node.map if isinstance(node, nodes.MapEntry) else node.consume
+        if scope_descriptor.schedule == dtypes.ScheduleType.GPU_Device:
             return _Kind.GPU
         # Sequential / CPU schedule -- recurse over the scope body.
-        try:
-            body_nodes = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-        except Exception:
-            body_nodes = []
+        body_nodes = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
         return _fold_kinds(_classify_node(child, sdfg, state) for child in body_nodes)
     if isinstance(node, nodes.NestedSDFG):
         # If this NestedSDFG already sits inside a ``GPU_Device`` map, every tasklet inside it
@@ -487,18 +476,19 @@ def _classify_sdfg(sdfg: SDFG) -> _Kind:
     return _fold_kinds(kinds)
 
 
-def _iedge_reads_gpu_array(edge_data, sdfg: SDFG, gpu_written: Set[str]) -> bool:
+def _iedge_reads_gpu_array(edge_data: 'dace.InterstateEdge', sdfg: SDFG, gpu_written: Set[str]) -> bool:
     """True iff this interstate edge's condition/assignment reads a GPU-written array.
 
-    Uses ``InterstateEdge.read_symbols()`` (symbols in condition + assignment values) intersected
-    with ``sdfg.arrays``. If any of those array names overlap with arrays the GPU writes, the
-    host-side iedge eval depends on GPU output and needs a sync before it fires.
+    Uses :meth:`dace.InterstateEdge.read_symbols` (symbols in condition + assignment values)
+    intersected with ``sdfg.arrays``. If any of those array names overlap with arrays the GPU
+    writes, the host-side iedge eval depends on GPU output and needs a sync before it fires.
+
+    :param edge_data: The ``InterstateEdge`` data instance.
+    :param sdfg: The owning SDFG (used to look up array names).
+    :param gpu_written: Pre-computed set of GPU-written array names.
+    :return: ``True`` iff the iedge reads a GPU-written array.
     """
-    try:
-        read = edge_data.read_symbols()
-    except Exception:
-        return False
-    return bool(read & sdfg.arrays.keys() & gpu_written)
+    return bool(edge_data.read_symbols() & sdfg.arrays.keys() & gpu_written)
 
 
 def _classify_root_block(block) -> _Kind:
@@ -674,7 +664,10 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                     if not isinstance(node, nodes.AccessNode):
                         continue
                     desc = node.desc(nsdfg)
-                    if desc.storage != dtypes.StorageType.GPU_Global or not getattr(desc, 'pool', False):
+                    # Only ``data.Array`` carries a ``pool`` property; ``Scalar`` /
+                    # ``Stream`` don't, and would never be poolable anyway.
+                    if not (isinstance(desc, data.Array) and desc.storage == dtypes.StorageType.GPU_Global
+                            and desc.pool):
                         continue
                     assignments[node] = 0
                     if node.gpu_stream_id is None:
