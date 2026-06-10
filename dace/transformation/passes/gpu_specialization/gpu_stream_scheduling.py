@@ -729,8 +729,12 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         for region in sdfg.all_control_flow_regions(recursive=True):
             for edge in list(region.edges()):
                 src, dst = edge.src, edge.dst
-                if not (isinstance(src, SDFGState) and isinstance(dst, SDFGState)):
-                    continue
+                # Src can be any block kind -- a state directly, or a control-flow region
+                # (``LoopRegion``, ``ConditionalBlock``) whose payload contains GPU work --
+                # ``_classify_root_block`` already returns the union of the block's
+                # descendant kinds. Likewise dst can be any block kind: a GPU state followed
+                # by a ConditionalBlock / LoopRegion whose payload runs on the host still
+                # needs a sync inserted on the edge.
                 if self._state_kinds.get(src) != _Kind.GPU:
                     continue
                 # GPU -> non-GPU: always splice. GPU -> GPU: splice only when the iedge reads
@@ -740,8 +744,10 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                     continue
                 edges_to_splice.append((region, edge))
 
-        for edge in edges_to_splice:
-            _splice_sync_state_on_edge(sdfg, edge, sdfg, stream_array_name)
+        # ``edges_to_splice`` carries ``(region, edge)`` tuples so the splicer can mutate the
+        # owning region's edge set (which may be a nested CFG, not the root SDFG).
+        for region, edge in edges_to_splice:
+            _splice_sync_state_on_edge(region, edge, sdfg, stream_array_name)
 
         self._add_sync_state(sdfg, stream_array_name)
 
@@ -757,7 +763,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 # Find the scope the node is in.
                 if scope_dict[node] is None:
                     # The nested SDFG is directly on the top level, so we have to check it.
-                    self._recursive(node.sdfg, stream_array_name)
+                    self._add_sync_state(node.sdfg, stream_array_name)
 
                 else:
                     # The node is nested inside a Map. We have to check if one of these Map
@@ -769,13 +775,16 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                             break
                     else:
                         # It is not in a GPU scope, so we must process it.
-                        self._recursive(node.sdfg, stream_array_name)
+                        self._add_sync_state(node.sdfg, stream_array_name)
 
-            # We need a sync after a GPU state. This is needed because stream assignment
-            #  only considers a single edge. If it would consider multiple edges it is not
-            #  needed.
+            # Append a program-end sync only at GPU *sink* states (those with no out-edges
+            # in their parent region). Non-sink GPU states are already covered by the
+            # edge-splicing loop in ``insert_sync_tasklets`` which inserts a sync state on
+            # every GPU -> non-GPU iedge; appending another trailing sync here would be
+            # redundant and produces the spurious extra ``__gpu_sync_after_*`` blocks
+            # observed after ``*_copyin`` / ``*_copyout`` scaffold states.
             if self._state_kinds.get(state) != _Kind.GPU:
                 continue
-
-            # Now append the sync.
+            if state.parent_graph.out_degree(state) > 0:
+                continue
             _append_program_end_sync_state(state.parent_graph, state, stream_array_name)
