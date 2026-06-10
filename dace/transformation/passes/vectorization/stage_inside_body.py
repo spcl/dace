@@ -102,9 +102,9 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
             # the edge writes a tile-shape transient out to a non-transient
             # output array (the legitimate ``tile_bridge -> output_array``
             # pattern when the kernel's write side is not yet staged through
-            # ``TileStore``). The destination-side TileStore staging is a
-            # separate planned slice; until then this pattern is the
-            # documented exception.
+            # ``TileStore``). The destination-side TileStore staging needs
+            # outer-iter context to compute the W-extent dst_subset; deferred
+            # as Phase A1 in ``~/.claude/plans/multi-dim-tileops-full-vec-plan.md``.
             either_is_scalar = (isinstance(src_desc, data.Scalar) or isinstance(dst_desc, data.Scalar))
             bridge_to_output = (src_desc is not None and getattr(src_desc, "transient", False) and dst_desc is not None
                                 and not getattr(dst_desc, "transient", False))
