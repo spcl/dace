@@ -2,16 +2,28 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
-import functools
 
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
 from enum import Flag, auto
-from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+
+def unique_dependencies(passes: Iterable['Pass']) -> List[Union[Type['Pass'], 'Pass']]:
+    """
+    Collects the dependencies of the given passes, preserving their listed order and removing duplicates.
+
+    :param passes: An iterable of passes whose ``depends_on`` results should be combined.
+    :return: A list of the combined dependencies, in order and without duplicates.
+    """
+    deps = []
+    for p in passes:
+        deps.extend(p.depends_on())
+    return list(dict.fromkeys(deps))  # Remove duplicates while preserving order
 
 
 class Modifies(Flag):
@@ -485,8 +497,7 @@ class Pipeline(Pass):
         return any(p.should_reapply(modified) for p in self.passes)
 
     def depends_on(self) -> List[Union[Type[Pass], Pass]]:
-        deps = functools.reduce(lambda a, b: a + list(b), [p.depends_on() for p in self.passes], [])
-        return list(dict.fromkeys(deps))
+        return unique_dependencies(self.passes)
 
     def _make_dependency_graph(self) -> gr.OrderedDiGraph:
         """
