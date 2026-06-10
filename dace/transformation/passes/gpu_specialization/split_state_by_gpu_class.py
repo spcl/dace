@@ -144,22 +144,21 @@ class SplitStateByGPUClass(ppl.Pass):
         # Skip when the stream pipeline has already run on this SDFG -- the SDFG already
         # carries ``gpu_streams`` (and consumers carry ``gpu_stream_id``), so a second split
         # would corrupt the now-wired structure.
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_inside_gpu_device_kernel,
-                                                                                       is_stream_wiring_applied)
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_stream_wiring_applied
         if is_stream_wiring_applied(sdfg):
             return None
+        # Only attempt to split root-level ``SDFGState`` blocks. Other top-level block kinds
+        # (``LoopRegion``, ``ConditionalBlock``, anything yielded by an inner ``NestedSDFG``)
+        # are opaque to this pass: ``state_fission`` operates on dataflow nodes, and the
+        # AutoSingleStreamGPUScheduler classifies these other blocks as a whole, so the
+        # GPU/CPU boundary is handled at their parent iedges rather than by lifting inner
+        # subgraphs.
         states_split = 0
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            # NSDFGs that live inside a ``GPU_Device`` map execute on the kernel's stream;
-            # ``gpu_streams`` is never propagated into them. ``state_fission`` would otherwise
-            # create new NSDFG-wrapped substates with ``gpu_streams[0]`` references and no
-            # connector, breaking NSDFG validation.
-            if is_inside_gpu_device_kernel(nsdfg):
+        for block in list(sdfg.nodes()):
+            if not isinstance(block, SDFGState):
                 continue
-            # Snapshot states() -- state_fission mutates the CFG.
-            for state in list(nsdfg.states()):
-                if self._split_one_state(state, nsdfg):
-                    states_split += 1
+            if self._split_one_state(block, sdfg):
+                states_split += 1
         return {'states_split': states_split} if states_split else None
 
     @staticmethod
