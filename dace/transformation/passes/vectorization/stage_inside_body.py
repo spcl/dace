@@ -55,6 +55,62 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
+def _assert_no_other_subset_at_libnode_boundary(state: SDFGState) -> None:
+    """Loud-fail audit of the design 3.8.3 invariant after staging completes.
+
+    For every edge in ``state`` whose endpoint is a tile lib-node connector
+    (``TileLoad`` / ``TileStore``), the memlet MUST NOT carry ``other_subset``
+    -- the connector descriptor defines the shape on the connector side, so a
+    leaked ``other_subset`` is a stale value (typically ``[0]`` from a former
+    Scalar bridge) that would clash with the descriptor.
+
+    Raises :class:`AssertionError` (loud failure, surfaces the offending edge
+    at staging time rather than letting it propagate into codegen).
+    """
+    for edge in state.edges():
+        mem = edge.data
+        if mem is None or mem.other_subset is None:
+            continue
+        # Only audit lib-node-adjacent edges. AN -> AN edges legitimately
+        # carry ``other_subset`` (per design 3.8.3 first row of the table).
+        src_is_libnode = isinstance(edge.src, (TileLoad, TileStore))
+        dst_is_libnode = isinstance(edge.dst, (TileLoad, TileStore))
+        if not (src_is_libnode or dst_is_libnode):
+            continue
+        node_label = edge.dst.label if dst_is_libnode else edge.src.label
+        conn = edge.dst_conn if dst_is_libnode else edge.src_conn
+        raise AssertionError(f"design 3.8.3 violation: lib-node-adjacent edge "
+                             f"carries stale ``other_subset`` (other_subset={mem.other_subset!r}, "
+                             f"data={mem.data!r}, subset={mem.subset!r}); offending node "
+                             f"{node_label!r} connector {conn!r} in state {state.label!r}. "
+                             f"Use :func:`_libnode_boundary_memlet` when constructing memlets "
+                             f"at lib-node connector boundaries.")
+
+
+def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
+    """Build a memlet for an edge adjacent to a tile lib node (AN -> Load._src,
+    TileStore._dst -> AN, etc.).
+
+    Per design 3.8.2 (the "lib-node-boundary" invariant): edges that cross from
+    an AccessNode into a tile lib node connector (or vice versa) MUST carry
+    only ``data`` + ``subset``. The lib node's connector descriptor implicitly
+    defines the shape on the connector side, so ``other_subset`` is redundant
+    -- and if it inherits a stale value from the caller's input memlet
+    (typically ``[0]`` from a former Scalar bridge), it would clash with the
+    connector descriptor and trigger downstream codegen surprises.
+
+    AN -> AN edges (the bypass output and the rewire-bridge edges) are NOT
+    routed through this helper -- they preserve ``other_subset`` as part of
+    DaCe's normal Memlet contract. The collapse to ``data + subset`` only
+    happens at the lib-node boundary.
+
+    ``wcr`` and ``volume`` are intentionally omitted: WCR appears only at the
+    outer-Map boundary (never inside the body NSDFG that the walker stages
+    through), and ``volume`` is inferred from the subset by DaCe.
+    """
+    return Memlet(data=other_memlet.data, subset=other_memlet.subset)
+
+
 def _topo_sort_access_nodes(state: SDFGState) -> List[AccessNode]:
     """Topo-sort AccessNodes by intra-state dataflow predecessors.
 
@@ -203,15 +259,10 @@ def stage_tile_access(state: SDFGState,
                     gather_dims=gather_dims,
                     has_mask=has_mask_wired)
     state.add_node(load)
-    # Build a clean memlet for the AN -> TileLoad._src edge: keep ``subset`` and
-    # ``data`` from the caller-provided memlet, but drop ``other_subset``. Per
-    # user direction 2026-06-10, within the body NSDFG ``wcr`` is always None
-    # (WCR appears only at the outer-Map boundary) and ``volume`` is inferred
-    # from the subset by DaCe -- pass neither so the values are derived
-    # correctly. With ``other_subset=None`` DaCe also infers the destination
-    # shape from the TileLoad connector descriptor.
-    src_memlet_clean = Memlet(data=src_subset.data, subset=src_subset.subset)
-    state.add_edge(an, None, load, "_src", src_memlet_clean)
+    # ``AN -> TileLoad._src`` is a lib-node-boundary edge: per design 3.8.2
+    # it MUST drop ``other_subset`` (the TileLoad connector descriptor defines
+    # the destination shape).
+    state.add_edge(an, None, load, "_src", _libnode_boundary_memlet(src_subset))
     for d in gather_dims:
         idx_an = idx_sources[d]
         idx_desc = sdfg.arrays[idx_an.data]
@@ -294,14 +345,9 @@ def stage_tile_store(state: SDFGState,
     if has_mask_wired:
         mask_subset_str = ", ".join(f"0:{w}" for w in widths)
         state.add_edge(mask_an, None, store, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
-    # Symmetric to stage_tile_access: build a clean memlet for the TileStore._dst
-    # -> AN edge. Per user direction 2026-06-10, neither half of the split
-    # ``AN -> Store -> AN`` chain needs ``other_subset`` -- each memlet's
-    # ``subset`` describes the AN side, and the lib node's connector descriptor
-    # implicitly defines the tile extent on the other side. ``wcr`` is always
-    # None within the body NSDFG; ``volume`` is inferred from the subset by DaCe.
-    dst_memlet_clean = Memlet(data=dst_subset.data, subset=dst_subset.subset)
-    state.add_edge(store, "_dst", an, None, dst_memlet_clean)
+    # ``TileStore._dst -> AN`` is a lib-node-boundary edge (symmetric to
+    # the read side at stage_tile_access).
+    state.add_edge(store, "_dst", an, None, _libnode_boundary_memlet(dst_subset))
     return bridge_name, store
 
 
@@ -775,4 +821,11 @@ class StageInsideBody(ppl.Pass):
         for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
             iter_vars = tuple(map_entry.map.params[-K:])
             total += self._stage_inner_body(_state, nsdfg_node.sdfg, iter_vars)
+            # Audit the design 3.8.3 lib-node-boundary invariant on every
+            # body NSDFG state we just touched. Loud-failure surfaces stale
+            # ``other_subset`` at staging time rather than letting it
+            # propagate into codegen (where it manifests as ``StopIteration``
+            # in the strided-copy shape inference).
+            for inner_state in nsdfg_node.sdfg.states():
+                _assert_no_other_subset_at_libnode_boundary(inner_state)
         return total or None

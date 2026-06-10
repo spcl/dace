@@ -90,17 +90,6 @@ def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_
     return " + ".join(parts)
 
 
-def _collapse_one(shape):
-    """Drop any ``dace.symbolic.ONE`` (broadcast-marker) entries from ``shape``.
-
-    Per user direction 2026-06-10: ``(W_0, ONE)`` is structurally equivalent to
-    ``(W_0,)`` for all shape-comparing passes. Comparisons should always
-    collapse the sentinel before matching widths.
-    """
-    from dace.symbolic import ONE
-    return tuple(s for s in shape if not (hasattr(s, "free_symbols") and ONE in s.free_symbols))
-
-
 def resolve_gather_deps(idx_shape, widths):
     """Find the sorted subset of tile dims whose widths spell out ``idx_shape``.
 
@@ -113,6 +102,7 @@ def resolve_gather_deps(idx_shape, widths):
 
     Per user direction 2026-06-10: ``ONE``-marked broadcast dims are collapsed
     out before matching, so a ``(W_0, ONE)`` shape is treated as ``(W_0,)``.
+    Uses :func:`dace.symbolic.collapse_one_dims` (shared helper -- design 3.8.2).
 
     :param idx_shape: The descriptor shape of an ``_idx_<d>`` connector
         (e.g. ``(4,)`` or ``(4, 8)`` or ``(4, ONE)``).
@@ -121,9 +111,14 @@ def resolve_gather_deps(idx_shape, widths):
         or ``None`` when no Cartesian product of widths matches.
     """
     from itertools import combinations
+    from dace.symbolic import collapse_one_dims
     if tuple(idx_shape) == (1, ):
         return ()
-    collapsed = _collapse_one(idx_shape)
+    # Opt into the ``treat_one_symbol_as_one`` mode: this lookup compares the
+    # idx-tile descriptor shape against the tile widths, so a ``(W_0, ONE)``
+    # tile shape must match ``widths=(W_0,)``. The ``ONE`` symbol acts as a
+    # broadcast marker, structurally equivalent to literal 1 for this match.
+    collapsed = collapse_one_dims(idx_shape, treat_one_symbol_as_one=True)
     if collapsed == ():
         # All dims were ``ONE`` -- treat as a scalar (no lane dep).
         return ()

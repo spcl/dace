@@ -479,6 +479,37 @@ if any(ONE in dim.free_symbols for dim in arr.shape if hasattr(dim, "free_symbol
 NOT a string-name match -- identity protects against sympy ever
 re-creating a generic ``Symbol('ONE')`` without our metadata.
 
+The shared utility :func:`dace.symbolic.collapse_one_dims(shape,
+treat_one_symbol_as_one=False)` is the canonical place for the collapse
+rule. Two modes:
+
+* **Default** (``treat_one_symbol_as_one=False``): drop literal ``1``
+  entries only. ``ONE`` survives so the firewall above keeps working.
+* **Opt-in** (``treat_one_symbol_as_one=True``): also drop ``ONE``-symbol
+  entries. Used by shape-matching callers like ``resolve_gather_deps``
+  and ``GatherLift._get_tile_widths_from_out_edge`` that need the
+  structural-equivalent view.
+
+#### 3.8.3 Memlet ``other_subset`` invariant (lib-node-boundary rule)
+
+User direction 2026-06-10: keep ``other_subset`` as the contract as
+long as possible, and only drop it when an edge crosses into a tile
+lib-node connector (or out of one).
+
+Rule:
+
+| Edge shape | ``other_subset`` |
+|-----------|------------------|
+| ``AN -> AN`` (no lib node between) | **PRESERVE** -- carries the destination-side subset that downstream ``an_side_subset`` reads (``BypassTrivialAssignTasklets`` populates it for exactly this reason). |
+| ``AN -> tile lib node connector`` (e.g. ``A -> TileLoad._src``) | **DROP** -- the connector descriptor defines the shape on the connector side. Leaving a stale ``other_subset`` from a former Scalar bridge (``[0]``) clashes with the descriptor. |
+| ``tile lib node connector -> AN`` (e.g. ``TileLoad._dst -> bridge_an``) | **DROP** -- symmetric. |
+| ``AN -> Tasklet`` / ``Tasklet -> AN`` | **DROP** -- tasklet sides have no descriptor; the AN-side ``subset`` describes the access. |
+
+The shared helper :func:`stage_inside_body._libnode_boundary_memlet`
+encodes the lib-node-boundary case. ``wcr`` is intentionally omitted
+(WCR appears only at the outer-Map boundary, never inside the body
+NSDFG); ``volume`` is inferred from ``subset`` by DaCe.
+
 ### 3.4 Staged-transient scoping
 
 Every transient introduced by the staging pipeline lives in **one

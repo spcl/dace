@@ -15,15 +15,12 @@ from dace.transformation.passes.vectorization.stage_inside_body import (
 
 def _shape_eq_ignoring_one(actual, expected):
     """Compare two shape tuples treating ``ONE`` broadcast-marker dims as
-    structurally absent (per user direction 2026-06-10 / design 3.8.1).
-
-    A descriptor shape ``(W_0, ONE)`` is equivalent to ``(W_0,)`` for all
-    structural comparisons. The helper drops any sympy-symbolic dim whose
-    ``free_symbols`` contains :data:`dace.symbolic.ONE`, then compares.
+    structurally absent (design 3.8.1 / 3.8.2). Uses
+    :func:`dace.symbolic.collapse_one_dims` with ``treat_one_symbol_as_one=True``
+    -- the test asserts the structural-equivalent view.
     """
-    from dace.symbolic import ONE
-    collapsed = tuple(s for s in actual if not (hasattr(s, "free_symbols") and ONE in s.free_symbols))
-    return tuple(int(s) for s in collapsed) == tuple(expected)
+    from dace.symbolic import collapse_one_dims
+    return tuple(int(s) for s in collapse_one_dims(actual, treat_one_symbol_as_one=True)) == tuple(expected)
 
 
 def _build_state_with_an(shape=(16, ), dtype=dace.float64, name="A"):

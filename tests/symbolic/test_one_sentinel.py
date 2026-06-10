@@ -76,6 +76,49 @@ def test_convert_length_one_arrays_scalarises_literal_one():
         "literal-1 array should still scalarise"
 
 
+def test_collapse_one_dims_default_drops_literal_one_only():
+    """Default mode: drops literal ``1`` entries; ``ONE`` symbol survives.
+
+    Per user direction 2026-06-10: by default the helper acts like sympy's
+    natural simplification (``Mul(8, 1) == 8``). The ``ONE`` symbol stays
+    intact so transformations that key on its identity (e.g. the firewall
+    in :class:`ConvertLengthOneArraysToScalars`) keep working.
+    """
+    from dace.symbolic import collapse_one_dims
+    M = dace.symbol("M")
+    K = dace.symbol("K")
+    assert collapse_one_dims((8, 1)) == (8, )
+    assert collapse_one_dims((1, 1)) == ()
+    assert collapse_one_dims((M, 1, K)) == (M, K)
+    assert collapse_one_dims((M, ONE, K)) == (M, ONE, K)  # ONE survives
+    assert collapse_one_dims(()) == ()
+
+
+def test_collapse_one_dims_opt_in_treats_one_symbol_as_one():
+    """Opt-in mode (``treat_one_symbol_as_one=True``): also drops ``ONE``-symbol
+    dims. Used by sites that need the structural-equivalent view (shape
+    matching, gather-dep lookup, test assertions).
+    """
+    from dace.symbolic import collapse_one_dims
+    M = dace.symbol("M")
+    K = dace.symbol("K")
+    assert collapse_one_dims((M, ONE, K), treat_one_symbol_as_one=True) == (M, K)
+    assert collapse_one_dims((ONE, ONE), treat_one_symbol_as_one=True) == ()
+    assert collapse_one_dims((8, 1, ONE), treat_one_symbol_as_one=True) == (8, )
+    assert collapse_one_dims((M, K), treat_one_symbol_as_one=True) == (M, K)  # neither -- pass through
+
+
+def test_collapse_one_dims_preserves_order():
+    """The helper preserves source order of the surviving dims."""
+    from dace.symbolic import collapse_one_dims
+    A = dace.symbol("A")
+    B = dace.symbol("B")
+    C = dace.symbol("C")
+    assert collapse_one_dims((A, ONE, B, ONE, C), treat_one_symbol_as_one=True) == (A, B, C)
+    assert collapse_one_dims((1, A, 1, B), treat_one_symbol_as_one=False) == (A, B)
+    assert collapse_one_dims((ONE, A, ONE, B), treat_one_symbol_as_one=True) == (A, B)
+
+
 def test_sdfg_roundtrip_with_one_marked_shape():
     """Save -> load -> save: ``ONE`` survives serialisation."""
     sdfg = dace.SDFG("rt_one")

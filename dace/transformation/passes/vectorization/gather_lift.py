@@ -91,12 +91,13 @@ def _get_tile_widths_from_out_edge(inner_state: SDFGState, tasklet: Tasklet) -> 
     """Return the materialised tile's per-dim widths by inspecting the ``_out``
     output edge's destination AccessNode descriptor.
 
-    Per user direction 2026-06-10: ``ONE``-marked broadcast dims are collapsed
-    out -- a ``(W_0, ONE)`` shape is reported as ``(W_0,)`` to the lift logic.
-    ``None`` if not found / shape contains non-integer non-``ONE`` symbols.
+    Uses :func:`dace.symbolic.collapse_one_dims` to drop ``ONE``-marked
+    broadcast dims (design 3.8.2 -- ``(W_0, ONE)`` is reported as ``(W_0,)``).
+    Returns ``None`` if not found or the shape contains non-integer
+    non-``ONE`` symbols.
     """
     from dace.sdfg.nodes import AccessNode
-    from dace.symbolic import ONE as _ONE
+    from dace.symbolic import collapse_one_dims
     inner_sdfg = inner_state.sdfg
     for e in inner_state.out_edges(tasklet):
         if e.src_conn != "_out":
@@ -106,10 +107,11 @@ def _get_tile_widths_from_out_edge(inner_state: SDFGState, tasklet: Tasklet) -> 
         desc = inner_sdfg.arrays.get(e.dst.data)
         if desc is None or not hasattr(desc, "shape"):
             continue
+        # Opt into ``treat_one_symbol_as_one``: ``ONE`` is a broadcast marker
+        # added by ``materialise_per_lane_index_tile``; the lift logic operates
+        # over the structurally-equivalent ``(W_0, ..., W_{K-1})`` shape.
         collapsed = []
-        for s in desc.shape:
-            if hasattr(s, "free_symbols") and _ONE in s.free_symbols:
-                continue
+        for s in collapse_one_dims(desc.shape, treat_one_symbol_as_one=True):
             try:
                 collapsed.append(int(s))
             except (TypeError, ValueError):

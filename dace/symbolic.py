@@ -230,6 +230,39 @@ class symbol(sympy.Symbol):
 ONE = symbol('ONE', dtype=dtypes.int32, integer=True, positive=True)
 
 
+def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
+    """Drop literal-1 dims (and optionally :data:`ONE`-marked dims) from a shape.
+
+    Two modes per user direction 2026-06-10:
+
+    * **Default** (``treat_one_symbol_as_one=False``): drops literal Python
+      ``1`` entries only. The sympy :data:`ONE` sentinel survives so
+      transformations that special-case its identity (per design 3.8.2 the
+      ``ONE``-marker firewall in :class:`ConvertLengthOneArraysToScalars`)
+      keep working. ``(8, 1)`` -> ``(8,)``; ``(8, ONE)`` -> ``(8, ONE)``.
+
+    * **Opt-in** (``treat_one_symbol_as_one=True``): also drops dims whose
+      ``free_symbols`` contains :data:`ONE`. Used by sites that need the
+      "structural-equivalent" view (e.g. ``resolve_gather_deps`` in
+      :mod:`dace.libraries.tileops._pure_codegen`, the GatherLift tile-shape
+      lookup, and test assertions). ``(8, ONE)`` -> ``(8,)`` here.
+
+    :param shape: A shape tuple / list / sequence; entries may be Python
+        ints, sympy ``Basic`` instances, or :class:`SymExpr`.
+    :param treat_one_symbol_as_one: Whether to also drop ``ONE``-symbol dims.
+    :returns: A new tuple with the requested entries removed in source order.
+    """
+
+    def _is_dropped(s):
+        if s == 1:
+            return True
+        if treat_one_symbol_as_one and hasattr(s, "free_symbols") and ONE in s.free_symbols:
+            return True
+        return False
+
+    return tuple(s for s in shape if not _is_dropped(s))
+
+
 class UndefinedSymbol(symbol):
     """ Defines an undefined symbolic expression whose value is deferred to runtime.
 
