@@ -474,7 +474,14 @@ class StageInsideBody(ppl.Pass):
                             idx_an = next(n for n in inner_state.nodes()
                                           if isinstance(n, AccessNode) and n.data == idx_name)
                             idx_sources_w[k] = idx_an
-                        dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
+                        # For scatter, ``_dst`` must be wired as the FULL destination
+                        # array (mirror of the gather widening at line 541). DaCe
+                        # codegen passes a length-1 connector by-value (``T _dst``),
+                        # which is unindexable; the scatter expansion needs a
+                        # pointer (``T*``) it can subscript by the per-lane indices.
+                        # Widen the dst memlet to the full descriptor extent.
+                        full_dst_subset = ", ".join(f"0:{s}" for s in desc.shape)
+                        dst_subset_memlet = Memlet(data=an.data, subset=full_dst_subset)
                         bridge_name, _ = stage_tile_store(inner_state,
                                                           an,
                                                           widths=tuple(self.widths),

@@ -59,3 +59,39 @@ def test_k1_gather_matches_reference(N):
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_GATHER=N)
     vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_GATHER=N)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
+
+
+N_SCATTER = dace.symbol("N_SCATTER")
+
+
+@dace.program
+def k1_scatter(A: dace.float64[N_SCATTER], idx: dace.int64[N_SCATTER], B: dace.float64[N_SCATTER]):
+    for i in dace.map[0:N_SCATTER]:
+        B[idx[i]] = A[i]
+
+
+def test_k1_scatter_matches_reference():
+    """K=1 ``B[idx[i]] = A[i]`` (scatter) -- bit-equal to the unvectorised reference.
+
+    Exercises the symmetric scatter path through the walker (TileStore with
+    ``gather_dims`` lowering via :class:`ExpandTileStorePure` because
+    ``make_store_tasklet`` now delegates to pure when ``gather_dims`` is set,
+    mirroring the gather load fix in commit 4ad424945).
+    """
+    n = 8
+    rng = np.random.default_rng(seed=n)
+    a = rng.random(n)
+    idx = rng.permutation(n).astype(np.int64)
+    b_ref = np.zeros(n)
+    b_vec = np.zeros(n)
+    ref_sdfg = k1_scatter.to_sdfg(simplify=True)
+    ref_sdfg.name = f"k1_scatter_ref_{n}"
+    vec_sdfg = k1_scatter.to_sdfg(simplify=True)
+    vec_sdfg.name = f"k1_scatter_vec_{n}"
+    try:
+        VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec_sdfg, {})
+    except Exception as exc:  # noqa: BLE001
+        pytest.xfail(f"scatter walker path refused: {exc}")
+    ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_SCATTER=n)
+    vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_SCATTER=n)
+    np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)

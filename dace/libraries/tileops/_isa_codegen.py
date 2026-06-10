@@ -294,8 +294,15 @@ def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     Symbol literal or a Scalar length-1 read) has no per-lane source
     pointer, so the pure expansion's per-lane store is the right
     lowering for those shapes. Delegate to it instead.
+
+    When ``gather_dims`` is set the runtime ``tile_store`` does not apply
+    either -- it has no per-lane index input -- so the lowering delegates
+    to :class:`ExpandTileStorePure`, which emits the per-lane indirect
+    store using the ``_idx_<d>`` connectors (design section 9.3 scatter).
+    Symmetric to the ``make_load_tasklet`` gather fallback added in
+    commit 4ad424945.
     """
-    if node.src_kind != "Tile":
+    if node.src_kind != "Tile" or node.gather_dims:
         from dace.libraries.tileops.nodes.tile_store import ExpandTileStorePure
         return ExpandTileStorePure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
