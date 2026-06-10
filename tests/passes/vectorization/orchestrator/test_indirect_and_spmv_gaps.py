@@ -20,12 +20,14 @@ replaced by an end-to-end numerical equivalence assertion.
 import pytest
 
 pytestmark = pytest.mark.skip(reason="1D indirect-stencil + elementwise tests trip a StopIteration in"
-                              " DaCe codegen's strided-copy shape detection (cpp.py:486) -- likely"
-                              " interaction with the (W, ONE)-shape gather idx tile. The kernel"
-                              " ``a[i] = b[idx[i]] + 1.0`` is a strict superset of the K=1 gather"
-                              " test that passes (test_walker_primary_gather_e2e.py); the codegen"
-                              " interaction is a separate fix. 2D + SpMV + WCR-reduction tests fail"
-                              " further downstream (compilation crashes, output-kind violations).")
+                              " DaCe codegen's 1D-strided-copy shape inference (cpp.py:486). The"
+                              " function looks for a non-1 dim in ``dst_subset.size_exact()`` but the"
+                              " kernel's post-vec SDFG presents a copy where ``copy_shape`` has one"
+                              " non-1 dim while ``dst_copy_shape`` is all-1s -- an SDFG-side shape"
+                              " mismatch from staging, not a codegen bug. Fix belongs upstream in the"
+                              " walker / materialiser to produce memlets whose dst extent matches"
+                              " src. 2D + SpMV + WCR-reduction tests fail further downstream"
+                              " (compilation crashes, output-kind violations) -- distinct slices.")
 import numpy as np
 
 import dace
