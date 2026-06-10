@@ -195,10 +195,7 @@ class UnifyCloseIterationDomains(transformation.SingleStateTransformation):
         if not _ranges_are_close(first_entry.map.range, self.second_map_entry.map.range, int(self.max_constant_diff)):
             return False
         # Refuse if the ranges are already identical -- nothing to unify.
-        if all(
-                sympy.simplify(a - b) == 0
-                for (a,
-                     b) in zip(_flatten_range(first_entry.map.range), _flatten_range(self.second_map_entry.map.range))):
+        if _ranges_equal(first_entry.map.range, self.second_map_entry.map.range):
             return False
         return True
 
@@ -212,23 +209,31 @@ class UnifyCloseIterationDomains(transformation.SingleStateTransformation):
         # Extend each map's range and wrap the body where the original range was strictly
         # smaller -- when the union equals the original on every dim the if-guard would
         # always evaluate true, so skip the wrap.
-        def _same(r_a, r_b) -> bool:
-            return all(sympy.simplify(a - b) == 0 for a, b in zip(_flatten_range(r_a), _flatten_range(r_b)))
-
-        if not _same(unified, orig_first):
+        if not _ranges_equal(unified, orig_first):
             first_entry.map.range = copy.deepcopy(unified)
             _wrap_map_body_in_bounds_check(state, first_entry, orig_first, unified)
-        if not _same(unified, orig_second):
+        if not _ranges_equal(unified, orig_second):
             second_entry.map.range = copy.deepcopy(unified)
             _wrap_map_body_in_bounds_check(state, second_entry, orig_second, unified)
 
 
-def _flatten_range(rng) -> List:
-    """Flatten a ``Range`` to a list of (start, end, step) symbols in order."""
-    out = []
-    for (b, e, s) in rng:
-        out += [b, e, s]
-    return out
+def _ranges_equal(range_a, range_b) -> bool:
+    """Symbolic ``Range`` equality check that delegates the per-dim symbolic comparison
+    to :func:`dace.symbolic.equal` (the standard DaCe helper, which returns ``True`` /
+    ``False`` / ``None`` for inconclusive). A conservative ``True`` requires every per-dim
+    bound and stride to be symbolically equal; anything else (including inconclusive
+    comparisons) yields ``False``.
+    """
+    if len(range_a) != len(range_b):
+        return False
+    for (ba, ea, sa), (bb, eb, sb) in zip(range_a, range_b):
+        if dace.symbolic.equal(ba, bb) is not True:
+            return False
+        if dace.symbolic.equal(ea, eb) is not True:
+            return False
+        if dace.symbolic.equal(sa, sb) is not True:
+            return False
+    return True
 
 
 @properties.make_properties

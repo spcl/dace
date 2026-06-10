@@ -32,9 +32,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_pipeline_sync_tasklet
 
 pytestmark = [pytest.mark.gpu, pytest.mark.new_gpu_codegen_only]
 
@@ -42,19 +42,14 @@ _N = dace.symbol('_N', dtype=dace.int64)
 
 
 def _count_sync_tasklets(sdfg: dace.SDFG) -> int:
-    """Count ``cudaStreamSynchronize`` / ``hipStreamSynchronize`` tasklets across the
-    SDFG hierarchy. Mirrors the helper in ``monolithic_single_stream_test.py`` so the
-    GPU-backend prefix is resolved through the canonical
-    :func:`dace.codegen.common.get_gpu_backend`."""
-    backend = common.get_gpu_backend()
-    needle = f"{backend}StreamSynchronize("
-    count = 0
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.Tasklet) and needle in node.code.as_string:
-                    count += 1
-    return count
+    """Count pipeline-emitted sync tasklets across the SDFG hierarchy.
+
+    Uses :func:`is_pipeline_sync_tasklet` (the canonical predicate the pipeline emits
+    against) instead of string-matching the tasklet code, so this stays correct if the
+    backend prefix or code shape changes.
+    """
+    return sum(1 for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for node in state.nodes()
+               if is_pipeline_sync_tasklet(node))
 
 
 def _build_gpu_sdfg(program) -> dace.SDFG:

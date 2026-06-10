@@ -5,10 +5,10 @@ import dace
 import numpy as np
 import pytest
 
-from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import MonolithicSingleStreamGPUScheduler
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_pipeline_sync_tasklet
 
 N = dace.symbol('N')
 
@@ -34,16 +34,10 @@ def heat_3d(TSTEPS: dace.int64, A: dace.float64[N, N, N], B: dace.float64[N, N, 
 
 
 def _count_sync_tasklets(sdfg):
-    """Count sync tasklets across the whole SDFG hierarchy."""
-    backend = common.get_gpu_backend()
-    needle = f"{backend}StreamSynchronize("
-    count = 0
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.Tasklet) and needle in node.code.as_string:
-                    count += 1
-    return count
+    """Count pipeline-emitted sync tasklets across the SDFG hierarchy via the canonical
+    :func:`is_pipeline_sync_tasklet` predicate."""
+    return sum(1 for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for node in state.nodes()
+               if is_pipeline_sync_tasklet(node))
 
 
 def _build_gpu_sdfg(program, *, monolithic: bool):
