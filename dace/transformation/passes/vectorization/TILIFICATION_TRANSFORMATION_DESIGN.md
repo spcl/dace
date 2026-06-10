@@ -330,33 +330,79 @@ reconstructs from the descriptor.) Every consumer of an AN -> AN
 edge -- classifier, staging pass, lib-node emitter -- routes
 through this helper.
 
-### 3.8 Per-lane index materialisation (pre-pass)
+### 3.8 Per-lane index materialisation (pre-pass + post-walker lift)
 
 A gather expression `idx[i, k]` with `i` a tile iter-var and `k` an
 outer-constant is, before lowering, just a symbolic memlet. The
 modern equivalent of the legacy 1D `_laneid_<i>` symbol fan-out is a
-structural **pre-pass** `PreparePerLaneIndices` that materialises
-every such expression into an integer index tile:
+structural **pre-pass** `PreparePerLaneIndices` followed by a
+**post-walker lift** `GatherLift` (2026-06-10) that together
+materialise every such expression into an integer index tile.
+
+Pre-pass `PreparePerLaneIndices` (the classifier-driven half):
 
 ```
 for each gather memlet with index expression I (per dim d):
   deps = sorted tile iter-var indices that I depends on
-  shape = tuple(widths[p] for p in deps)             # see section 9.2
+  shape = (see 3.8.1 below -- depends on the gather_idx_form knob)
   mint a transient `_idx_<d>_<unique>` of shape + int dtype
-  emit a constant-assignment tasklet that fills the tile per lane:
+  emit a placeholder populate tasklet that fills the tile per lane:
       for each lane offset l = (l_0, ..., l_{|deps|-1}):
           tile[l] = I  with  iter_var_p -> base_p + l_idx_of_p
   wire the tile to the lib node's _idx_<d> connector
 ```
 
 This runs after staging (section 3.3) and before lib-node emission.
-Every classifier read of a gather expression is replaced by a tile
-the lib node can broadcast across the lane space at expansion time;
-no per-lane symbol survives into the post-emit SDFG.
 
-The corresponding post-emit audit (section 10.6) asserts the
-absence of `_laneid_<i>`-style symbols, the same loud-failure
-contract the legacy pipeline had.
+Post-walker `GatherLift` (the lane-dep iedge-symbol half) — handles
+the case where the gather index appears as a scalar lifted via an
+interstate edge ``__sym = idx[i]`` in the body NSDFG (typical
+``@dace.program`` output for ``A[idx[i]]`` is exactly this shape).
+The walker stages a placeholder tile filled with the bare ``__sym``
+value (every lane reads the same address); ``GatherLift`` detects the
+placeholder, fans out W per-lane SDFG symbols using
+``LaneIdScheme.make_multi(base, ((0, lane), ...))`` for the dependent
+tile dims, emits per-lane interstate-edge assignments shifting the
+RHS by the lane (sympy ``xreplace``, NOT regex -- DaCe's ``Subscript``
+wrapper requires a real sympy expression), and rewrites the populate
+tasklet into W unrolled writes sourcing the per-lane symbols.
+
+Per-lane symbols are intentional in this design (per user direction
+2026-06-10). They survive the lift and are swept by the
+:class:`RemoveUnusedPerLaneSymbols` post-clean when no consumer
+references them. The legacy ``ClearPerLaneIndexSymbols`` hard-fail
+audit is OBSOLETE under this design and was removed from the
+orchestrator -- it cannot distinguish intentional lift fanout from
+accidental leaks.
+
+#### 3.8.1 Gather idx tile shape -- ``gather_idx_form`` knob
+
+For K=1 the idx tile shape is always ``(W,)`` -- no ambiguity. For
+K>=2 the choice has trade-offs (per user direction 2026-06-10);
+exposed via the orchestrator knob ``gather_idx_form``:
+
+| Value | Idx tile shape | Use case |
+|-------|----------------|----------|
+| ``"per_dim"`` (default) | ``(W_deps_d, ...)`` per source dim ``d``, where the shape's rank equals the count of tile iter-vars the dim's gather expression depends on. ``B[ii, jj] = A[idx[ii], jj]`` produces one 1-D tile ``(W_0,)`` for dim 0; dim 1 is contiguous/strided and not gathered. | Partial-K_dep kernels (SpMV row-permute, scattered-stencil) where only a subset of dims gather. Smaller idx tiles; allows AVX-512 ``_mm512_i64gather_pd`` for the gather dim + standard contiguous load for the non-gather dim. |
+| ``"full_tile"`` | ``(W_0, ..., W_{K-1})`` full K-D per gather source dim, regardless of K_dep. ``B[ii, jj] = A[idx[ii], jj]`` produces a ``(W_0, W_1)`` tile for dim 0 with values broadcast along ``l_1``. | Full-K_dep kernels (``A[idx_a[ii, jj], idx_b[ii, jj]]``), and kernels where the per-dim semantic would be ambiguous (mixed gather/linear in the same access expression, e.g. ``A[idx[ii] * jj + offset]``). Uniform lib-node interface; one Cartesian-product loop in codegen. |
+
+Symmetric for scatter: ``TileStore`` with ``scatter_dims`` accepts
+the same knob; per-dim emits a per-source-dim 1-D idx tile, full-tile
+emits a K-D idx tile per scatter source dim.
+
+Default rationale: per-dim. Most real K=2 gather/scatter patterns
+have partial K_dep, and Option 1 generates the smaller tile in the
+common case. Force ``full_tile`` per kernel when the per-dim
+heterogeneous semantics break (e.g. mixed-arithmetic gather
+expressions). The knob is checked by:
+
+* ``GatherLift`` and ``PreparePerLaneIndices`` -- decide the idx tile
+  shape + populate-tasklet body.
+* The walker's GATHER dispatch -- chooses what ``_idx_<d>`` connector
+  shape to wire.
+* ``TileLoad`` / ``TileStore`` lib nodes -- validate the connector
+  shape against the knob (rejected for mismatch) and pick the
+  appropriate pure / ISA expansion body.
 
 ### 3.4 Staged-transient scoping
 
@@ -1754,3 +1800,58 @@ deferred behind a real kernel signal:
   outer-Map's `wcr` carries inter-iteration accumulation. If a kernel
   wants a fused inter-tile reduction without going through the outer
   Map's WCR codegen, design a dedicated `TileGroupReduce` lib node.
+
+---
+
+## Appendix F -- 2026-06-10 progress: walker-primary gather end-to-end
+
+This appendix records the slices landed for the gather lowering and the
+remaining work. Commits referenced are on the ``multi-dim-tileops``
+branch (tip ``4ad424945`` at time of writing).
+
+### F.1 Slices landed
+
+| Slice | Commit | Block |
+|-------|--------|-------|
+| C: Post-clean | ``b27f02d1f`` | ``RemoveUnusedPerLaneSymbols`` sweeps per-lane SDFG symbols with no remaining consumer. Uses DaCe utility APIs (``symbolic.symbols_in_code``, ``Memlet.free_symbols``, ``InterstateEdge.used_symbols``, ``Data.free_symbols``); recursive into NestedSDFGs; idempotent. 7 unit tests. |
+| B: GatherLift | ``dc8a31aa8`` | Post-walker pass that detects placeholder gather populate tasklets (gated on ``materialise_`` label prefix + K=1 body regex), fans out W per-lane SDFG symbols via ``LaneIdScheme.make_multi(base, ((0, lane),))``, emits per-lane interstate-edge assignments shifting iter_vars via sympy ``xreplace`` (``Subscript`` wrappers require real sympy expressions), rewrites the populate tasklet to W unrolled writes. 4 unit tests. |
+| A: Walker topo + Bypass other_subset | ``7bfe7bdae`` | ``_topo_sort_access_nodes`` (Kahn's) orders AccessNodes source-first within each state so source ANs (the gather's ``A``) are classified before transient bridges (``A_const``) absorb the gather edge. ``BypassTrivialAssignTasklets`` populates BOTH ``subset`` and ``other_subset`` on bypassed memlets so ``an_side_subset`` correctly returns the lane-dep subset for both sides instead of falling back to full-descriptor shape. |
+| TileLoad gather end-to-end | ``4ad424945`` | (1) ``make_load_tasklet`` (ISA path) delegates to ``ExpandTileLoadPure`` when ``gather_dims`` is set -- the ISA ``tile_load`` C++ primitive has no per-lane index input. Mirrors ``make_store_tasklet`` line 290-292's non-``Tile``-``src_kind`` fallback. (2) Walker GATHER staging widens ``_src`` memlet to full descriptor extent so codegen passes ``T* _src`` (pointer) instead of ``T _src`` (by-value scalar). (3) Pipeline reorder: ``GatherLift`` runs BEFORE ``ConvertTaskletsToTileOps``. The materialiser's CPP for-loop body confused the converter into scalar-broadcast splitting; the lift's unrolled writes are converter-safe. (4) Drop ``ClearPerLaneIndexSymbols`` hard-fail audit (obsolete; per-lane symbols are intentional). |
+
+### F.2 Current status -- K=1 gather kernel
+
+``test_walker_primary_gather_e2e.py::test_k1_gather_matches_reference[8]``:
+**PASSES**. The walker's GATHER staging + per-lane symbol fan-out + TileLoad
+pure expansion produce bit-identical output to the unvectorised reference
+for ``B[i] = A[idx[i]]`` with N=W=8.
+
+``[16]`` (two outer tile iterations): **xfailed** for a separate
+store-side issue -- first tile (lanes 0-7) bit-equal; second tile (lanes
+8-15) writes zero. The per-lane iedge re-evaluates ``__sym_lane0id_<l> =
+idx[(i + l)]`` per outer iter correctly, but the destination write isn't
+repeated for the second outer tile. Bridge tile transient is allocated
+once at the body NSDFG; store-side needs to repeat per outer iter.
+Distinct slice on the store side.
+
+### F.3 Open work
+
+* **K=1 multi-tile (N > W)**: store-side repeat per outer iter.
+* **K=2 / K_dep>=2 gather**: ``GatherLift`` returns False on
+  ``len(dep_iter_vars) != 1``. Extension per section 3.8.1 below.
+* **Scatter**: symmetric design; ``GatherLift``-equivalent for
+  ``TileStore``-with-``scatter_dims`` lowering.
+
+### F.4 ``gather_idx_form`` knob -- locked design
+
+Section 3.8.1 above specifies the knob. Default ``"per_dim"``;
+``"full_tile"`` available for partial-K_dep kernels where per-dim
+semantics break.
+
+Threaded to: orchestrator → ``GatherLift(gather_idx_form=...)`` /
+``PreparePerLaneIndices(gather_idx_form=...)`` → walker's GATHER
+staging (chooses ``_idx_<d>`` connector tile shape) → TileLoad /
+TileStore validation + per-arch expansion.
+
+Symmetric on scatter. The K=1 case ignores the knob (1-D idx tile
+either way). K>=2 cases (the unfrozen K=2 stencil + gather kernels)
+are the immediate test targets once the knob lands.
