@@ -691,9 +691,20 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
         stream_array_name = get_gpu_stream_array_name()
 
-        # Snapshot iedges first; splicing mutates each region's edge set.
+        # ``gpu_streams`` is a host-side array; the wiring pass deliberately does not propagate
+        # it into NSDFGs that live inside a ``GPU_Device`` map (those execute on the kernel's
+        # stream, not via the host-side ``gpu_streams``). Splicing a sync state into any CFR
+        # whose owning SDFG is device-internal would reference a ``gpu_streams[0]`` memlet that
+        # has no corresponding inner ``gpu_streams`` array, breaking NSDFG validation. Mirror
+        # the same gate ``wire_stream_connectors`` uses.
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_inside_gpu_device_kernel)
+
+        host_regions = [
+            r for r in sdfg.all_control_flow_regions(recursive=True) if not is_inside_gpu_device_kernel(r.sdfg)
+        ]
+
         edges_to_splice: List[Tuple['AbstractControlFlowRegion', any]] = []
-        for region in sdfg.all_control_flow_regions(recursive=True):
+        for region in host_regions:
             for edge in list(region.edges()):
                 src, dst = edge.src, edge.dst
                 if not (isinstance(src, SDFGState) and isinstance(dst, SDFGState)):
@@ -711,9 +722,9 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             _splice_sync_state_on_edge(region, edge, sdfg, stream_array_name)
 
         # Region-level sinks (GPU states with no outgoing iedge in their own region) get a
-        # trailing sync state. We iterate per region rather than only root sinks so a GPU sink
-        # at the bottom of a LoopRegion / ConditionalBlock branch also picks up a sync.
-        for region in sdfg.all_control_flow_regions(recursive=True):
+        # trailing sync state. Iterate per host-side region so a GPU sink at the bottom of a
+        # ``LoopRegion`` / ``ConditionalBlock`` branch picks up a sync too.
+        for region in host_regions:
             for state in list(region.nodes()):
                 if not isinstance(state, SDFGState):
                     continue

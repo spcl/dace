@@ -144,11 +144,18 @@ class SplitStateByGPUClass(ppl.Pass):
         # Skip when the stream pipeline has already run on this SDFG -- the SDFG already
         # carries ``gpu_streams`` (and consumers carry ``gpu_stream_id``), so a second split
         # would corrupt the now-wired structure.
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_stream_wiring_applied
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_inside_gpu_device_kernel,
+                                                                                       is_stream_wiring_applied)
         if is_stream_wiring_applied(sdfg):
             return None
         states_split = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
+            # NSDFGs that live inside a ``GPU_Device`` map execute on the kernel's stream;
+            # ``gpu_streams`` is never propagated into them. ``state_fission`` would otherwise
+            # create new NSDFG-wrapped substates with ``gpu_streams[0]`` references and no
+            # connector, breaking NSDFG validation.
+            if is_inside_gpu_device_kernel(nsdfg):
+                continue
             # Snapshot states() -- state_fission mutates the CFG.
             for state in list(nsdfg.states()):
                 if self._split_one_state(state, nsdfg):
