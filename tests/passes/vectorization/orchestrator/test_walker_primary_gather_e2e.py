@@ -24,18 +24,21 @@ def k1_gather(A: dace.float64[N_SYM], idx: dace.int64[N_SYM], B: dace.float64[N_
 
 
 @pytest.mark.parametrize("N", [8, 16])
-@pytest.mark.xfail(reason="Per user direction 2026-06-10: a scalar load of ``A[sym]`` where ``sym``"
-                   " is lane-dependent should trigger a full-body read into a tasklet that gathers"
-                   " using the laneid-expanded syms, which then writes to a full tile. The"
-                   " ``@dace.program`` frontend hides the gather behind a connector mapping"
-                   " (``A_conn`` maps to ``A(1)[0:N]``), so the inner state sees ``A_conn[__sym]``"
-                   " where ``__sym`` is set via an interstate edge BEFORE the body state. The"
-                   " classifier's ``_is_tile_dependent`` needs to walk across the NSDFG boundary"
-                   " to see that ``__sym``'s defining expression (``idx_conn[0]``) maps to"
-                   " ``idx[i]`` outside, hence is lane-dependent. Two implementation paths: (a)"
-                   " inline the outer mapping into the inner subset before the walker runs, OR"
-                   " (b) extend the lane-dependency walker to cross NSDFG boundaries."
-                   " Same design for SCATTER (write-side variant of the same pattern).")
+@pytest.mark.xfail(reason="Confirmed 2026-06-10 via gather_walker_probe: the @dace.program frontend"
+                   " decomposes ``B[i] = A[idx[i]]`` into (1) an INTERSTATE-EDGE scalar lift"
+                   " ``__sym = idx[i]`` and (2) an INNER-STATE scalar-to-scalar copy ``A -> A_const"
+                   " -> B`` with memlet ``A[0]``. By the time the walker runs, NO gather subset"
+                   " remains in any memlet -- the lane-dependency is hidden in the iedge"
+                   " assignment, and the inner body looks like a pure CONSTANT scalar copy."
+                   " Fix paths (deferred to a separate slice -- requires either a pre-pass that"
+                   " UNCOMPILES the frontend's scalar-lift back into explicit gather memlets, OR"
+                   " a walker enhancement that detects scalar bridges sourced from iedge-defined"
+                   " loop-dep symbols and rewrites them into TileLoad-with-gather_dims): both are"
+                   " substantial walker-side work, NOT the per-lane-symbol fan-out from earlier"
+                   " design discussion (the fan-out helper machinery would only work AFTER the"
+                   " gather pattern has been recovered). RemoveUnusedPerLaneSymbols (commit"
+                   " 83822f4f2) is the post-clean infrastructure ready for use once the gather"
+                   " recovery lands.")
 def test_k1_gather_matches_reference(N):
     """K=1 ``B[i] = A[idx[i]]`` -- bit-equal to unvectorised reference. Exercises the
     GATHER walker path + the per-lane index materialiser."""
