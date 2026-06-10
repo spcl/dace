@@ -630,6 +630,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for node in state.nodes():
+                    # NOTE: This does not check "top level" for that the `scope_dict` would need to be inspected.
                     if _classify_node(node, nsdfg, state) == _Kind.MIXED:
                         offenders.append(f"{type(node).__name__} '{getattr(node, 'label', node)}' in state "
                                          f"'{state.label}' (SDFG '{nsdfg.name}')")
@@ -720,13 +721,61 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 continue
             edges_to_splice.append(edge)
 
+        # Snapshot iedges first; splicing mutates each region's edge set.
+        # NOTE: This ignores edges between Regions. Essentially it assumes a flat state machine,
+        #   because it assumes that it can get the producing state by checking `edge.src`. However,
+        #   this might be an `AbstractControlflowRegion` with multiple terminal states.
+        edges_to_splice: List[Tuple['AbstractControlFlowRegion', any]] = []
+        for region in sdfg.all_control_flow_regions(recursive=True):
+            for edge in list(region.edges()):
+                src, dst = edge.src, edge.dst
+                if not (isinstance(src, SDFGState) and isinstance(dst, SDFGState)):
+                    continue
+                if self._state_kinds.get(src) != _Kind.GPU:
+                    continue
+                # GPU -> non-GPU: always splice. GPU -> GPU: splice only when the iedge reads
+                # a GPU-written array (host-side condition / assignment depending on kernel output).
+                dst_kind = self._state_kinds.get(dst, _Kind.CPU)
+                if dst_kind == _Kind.GPU and not _iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
+                    continue
+                edges_to_splice.append((region, edge))
+
         for edge in edges_to_splice:
             _splice_sync_state_on_edge(sdfg, edge, sdfg, stream_array_name)
 
-        # Root-SDFG sinks that are GPU get a trailing sync state. Restricted to root sinks --
-        # going deeper would inject a sync inside a ``LoopRegion`` body (one per iteration) or
-        # inside an NSDFG, neither of which is the right place for an end-of-program sync.
-        for block in list(sdfg.sink_nodes()):
-            if self._state_kinds.get(block) != _Kind.GPU:
+        self._add_sync_state(sdfg, stream_array_name)
+
+    def _add_sync_state(self, sdfg: dace.SDFG, stream_array_name: str):
+        for state in list(sdfg.states()):
+            scope_dict = state.scope_dict()
+
+            # Descend into nested SDFGs if needed (I think it should be before the `continue`).
+            for node in state.nodes():
+                if not isinstance(node, nodes.NestedSDFG):
+                    continue
+
+                # Find the scope the node is in.
+                if scope_dict[node] is None:
+                    # The nested SDFG is directly on the top level, so we have to check it.
+                    self._recursive(node.sdfg, stream_array_name)
+
+                else:
+                    # The node is nested inside a Map. We have to check if one of these Map
+                    #  is a GPU Map. Otherwise we do not need to descend into it.
+                    enclosing_scope = scope_dict[node]
+                    while enclosing_scope is not None:
+                        assert isinstance(enclosing_scope, nodes.MapEntry)
+                        if enclosing_scope.map.schedule in dtypes.GPU_SCHEDULES:
+                            break
+                    else:
+                        # It is not in a GPU scope, so we must process it.
+                        self._recursive(node.sdfg, stream_array_name)
+
+            # We need a sync after a GPU state. This is needed because stream assignment
+            #  only considers a single edge. If it would consider multiple edges it is not
+            #  needed.
+            if self._state_kinds.get(state) != _Kind.GPU:
                 continue
-            _append_program_end_sync_state(sdfg, block, stream_array_name)
+
+            # Now append the sync.
+            _append_program_end_sync_state(state.parent_graph, state, stream_array_name)
