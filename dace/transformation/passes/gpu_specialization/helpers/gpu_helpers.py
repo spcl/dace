@@ -153,8 +153,7 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
         return False
     if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
         return True
-    code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-    return LEGACY_AMBIENT_STREAM in code
+    return LEGACY_AMBIENT_STREAM in node.code.as_string
 
 
 SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization")

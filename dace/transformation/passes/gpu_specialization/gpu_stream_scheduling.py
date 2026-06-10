@@ -290,7 +290,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 for node in state.nodes():
                     why = self._not_acceptable_reason(node, nsdfg, state)
                     if why is not None:
-                        offenders.append(f"{type(node).__name__} '{getattr(node, 'label', node)}' in state "
+                        offenders.append(f"{type(node).__name__} '{node.label}' in state "
                                          f"'{state.label}' (SDFG '{nsdfg.name}'): {why}")
         if offenders:
             raise ValueError("MonolithicSingleStreamGPUScheduler requires every Tasklet/LibraryNode "
@@ -622,7 +622,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 for node in state.nodes():
                     # NOTE: This does not check "top level" for that the `scope_dict` would need to be inspected.
                     if _classify_node(node, nsdfg, state) == _Kind.MIXED:
-                        offenders.append(f"{type(node).__name__} '{getattr(node, 'label', node)}' in state "
+                        offenders.append(f"{type(node).__name__} '{node.label}' in state "
                                          f"'{state.label}' (SDFG '{nsdfg.name}')")
 
         if offenders:
@@ -702,22 +702,10 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
         stream_array_name = get_gpu_stream_array_name()
 
-        edges_to_splice = []
-        for edge in list(sdfg.edges()):
-            src, dst = edge.src, edge.dst
-            if self._state_kinds.get(src) != _Kind.GPU:
-                continue
-            # GPU -> non-GPU: always splice. GPU -> GPU: splice only when the iedge reads a
-            # GPU-written array (host-side condition / assignment depending on kernel output).
-            dst_kind = self._state_kinds.get(dst, _Kind.CPU)
-            if dst_kind == _Kind.GPU and not _iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
-                continue
-            edges_to_splice.append(edge)
-
         # Snapshot iedges first; splicing mutates each region's edge set.
-        # NOTE: This ignores edges between Regions. Essentially it assumes a flat state machine,
-        #   because it assumes that it can get the producing state by checking `edge.src`. However,
-        #   this might be an `AbstractControlflowRegion` with multiple terminal states.
+        # NOTE: This walks every nested CFG, so a sync inserted on an edge inside a
+        # ``LoopRegion`` / ``ConditionalBlock`` body lands in that owning region rather than
+        # in the root SDFG -- which is what we want for per-iteration sync semantics.
         edges_to_splice: List[Tuple['AbstractControlFlowRegion', any]] = []
         for region in sdfg.all_control_flow_regions(recursive=True):
             for edge in list(region.edges()):
