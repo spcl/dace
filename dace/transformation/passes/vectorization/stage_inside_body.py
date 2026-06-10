@@ -39,7 +39,8 @@ Status (incremental landing):
 * Step 4 (follow-up): Pass walker drives the helpers across every
   body NSDFG.
 """
-from typing import Any, Dict, Optional, Tuple
+from collections import deque
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import dtypes, properties
 from dace.libraries.tileops import TileLoad, TileStore
@@ -52,6 +53,47 @@ from dace.transformation.passes.vectorization.prepare_per_lane_indices import ma
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+
+
+def _topo_sort_access_nodes(state: SDFGState) -> List[AccessNode]:
+    """Topo-sort AccessNodes by intra-state dataflow predecessors.
+
+    Sources (no AccessNode predecessor) come first; each AccessNode is processed
+    only after every AccessNode that writes into it. This is the iteration order
+    the walker's staging requires -- a transient bridge AccessNode (e.g. a Scalar
+    sink of a gather like ``A_const = A[__sym]``) must be classified AFTER its
+    upstream non-transient source ``A`` has been staged, otherwise the bridge's
+    own subset (``[0]``, classified CONSTANT) would absorb the gather edge before
+    the walker sees it.
+
+    Cycles among AccessNodes (not expected in well-formed SDFGs) are tolerated:
+    any AccessNode left out of the topological order after Kahn's algorithm is
+    appended at the end.
+    """
+    ans = [n for n in state.nodes() if isinstance(n, AccessNode)]
+    in_deg = {n: 0 for n in ans}
+    for n in ans:
+        for e in state.in_edges(n):
+            if isinstance(e.src, AccessNode) and e.src in in_deg:
+                in_deg[n] += 1
+    queue = deque(n for n in ans if in_deg[n] == 0)
+    sorted_ans: List[AccessNode] = []
+    seen: set = set()
+    while queue:
+        cur = queue.popleft()
+        if cur in seen:
+            continue
+        sorted_ans.append(cur)
+        seen.add(cur)
+        for e in state.out_edges(cur):
+            if isinstance(e.dst, AccessNode) and e.dst in in_deg:
+                in_deg[e.dst] -= 1
+                if in_deg[e.dst] == 0:
+                    queue.append(e.dst)
+    for n in ans:
+        if n not in seen:
+            sorted_ans.append(n)
+    return sorted_ans
 
 
 def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "constant_bridge") -> str:
@@ -361,9 +403,12 @@ class StageInsideBody(ppl.Pass):
         # so the read edge is unambiguous.
         mask_name = self._find_inner_mask_name(inner_sdfg)
         for inner_state in inner_sdfg.states():
-            for an in list(inner_state.nodes()):
-                if not isinstance(an, AccessNode):
-                    continue
+            # Topo iteration: process AccessNodes in dataflow order (sources first).
+            # A transient bridge whose value comes from a lane-dep memlet (e.g.
+            # ``A_const = A[__sym]``) must be reached AFTER its upstream source has
+            # been staged; otherwise the bridge's local subset (``A_const[0]``,
+            # CONSTANT) absorbs the gather edge before the walker sees it.
+            for an in _topo_sort_access_nodes(inner_state):
                 desc = inner_sdfg.arrays.get(an.data)
                 if desc is None or desc.transient:
                     continue
