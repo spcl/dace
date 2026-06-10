@@ -88,12 +88,20 @@ def replace_dict(subgraph: 'StateSubgraphView',
                 if state.in_degree(node) == 0 and not desc.transient and isinstance(desc, data.Scalar):
                     node_data_symbolic = dace.symbolic.pystr_to_symbolic(node.data)
                     if node_data_symbolic in symrepl:
+                        repl_val = symrepl[node_data_symbolic]
+                        # Skip when the replacement is a sympy symbol / expression (representing
+                        # another array name, not a literal constant) -- wrapping in a constant
+                        # tasklet is the wrong transformation, and ``dtypes.typeclass(type(...))``
+                        # would raise ``KeyError`` on the sympy class anyway. The branch is for
+                        # literal-constant scalar inputs only.
+                        if isinstance(repl_val, (sp.Basic, dace.symbolic.SymExpr)):
+                            continue
                         tasklet = state.add_tasklet(name="constant",
                                                     inputs={},
                                                     outputs={f'{node.data}_value'},
-                                                    code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
+                                                    code=f'{node.data}_value = {repl_val}')
                         access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
-                                                                 dtypes.typeclass(type(symrepl[node_data_symbolic])),
+                                                                 dtypes.typeclass(type(repl_val)),
                                                                  find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
