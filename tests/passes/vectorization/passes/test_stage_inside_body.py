@@ -5,8 +5,8 @@ import pytest
 import dace
 from dace.libraries.tileops import TileLoad
 from dace.memlet import Memlet
-from dace.transformation.passes.vectorization.stage_inside_body import (
-    StageInsideBody,
+from dace.transformation.passes.vectorization.insert_tile_load_store import (
+    InsertTileLoadStore,
     stage_constant_access,
     stage_gather_access,
     stage_tile_access,
@@ -68,16 +68,16 @@ def test_pass_returns_none_on_empty_sdfg():
     """Empty SDFG -> no tile-tagged maps -> no stages -> ``None``."""
     sdfg = dace.SDFG("empty")
     sdfg.add_state("s")
-    assert StageInsideBody(widths=(8, )).apply_pass(sdfg, {}) is None
+    assert InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {}) is None
 
 
 def test_pass_refuses_widths_outside_k_range():
     """Constructor refuses K outside {1, 2, 3}."""
     import pytest as _pt
     with _pt.raises(ValueError, match=r"widths length"):
-        StageInsideBody(widths=())
+        InsertTileLoadStore(widths=())
     with _pt.raises(ValueError, match=r"widths length"):
-        StageInsideBody(widths=(8, 8, 8, 8))
+        InsertTileLoadStore(widths=(8, 8, 8, 8))
 
 
 # ---- stage_tile_access (G7 step 2) ----------------------------------------
@@ -222,7 +222,7 @@ def test_gather_helper_refuses_idx_sources_mismatch():
                             idx_sources={0: idx_an})
 
 
-# ---- StageInsideBody walker (G7 step 4) ----------------------------------
+# ---- InsertTileLoadStore walker (G7 step 4) ----------------------------------
 
 
 def _build_const_only_tile_fixture():
@@ -257,7 +257,7 @@ def test_walker_stages_constant_only_access_in_body_nsdfg():
     CONSTANT-only AN ``B``."""
     sdfg, inner = _build_const_only_tile_fixture()
     before_scalars = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Scalar) and d.transient)
-    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    result = InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     assert result == 1
     after_scalars = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Scalar) and d.transient)
     assert after_scalars == before_scalars + 1, "expected one staged Scalar bridge"
@@ -269,13 +269,13 @@ def test_walker_skips_non_innermost_maps():
     sdfg.add_array("B", (16, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     state.add_map("outer", {"o": "0:4"})
-    assert StageInsideBody(widths=(8, )).apply_pass(sdfg, {}) is None
+    assert InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {}) is None
 
 
 def test_walker_skips_maps_with_fewer_dims_than_K():
     """K=2 walker skips a K=1 innermost map (len(params) < K)."""
     sdfg, _ = _build_const_only_tile_fixture()
-    assert StageInsideBody(widths=(8, 8)).apply_pass(sdfg, {}) is None
+    assert InsertTileLoadStore(widths=(8, 8)).apply_pass(sdfg, {}) is None
 
 
 def _build_linear_tile_fixture():
@@ -308,7 +308,7 @@ def test_walker_stages_linear_access_via_tile_branch():
     sdfg, inner = _build_linear_tile_fixture()
     before_arrays = sum(1 for d in inner.arrays.values()
                         if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
-    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    result = InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     assert result == 1
     after_arrays = sum(1 for d in inner.arrays.values()
                        if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
@@ -362,7 +362,7 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
     before_float_tiles = sum(
         1 for d in inner.arrays.values()
         if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, ))
-    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    result = InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     assert result == 1
     after_int_arrays = sum(1 for d in inner.arrays.values()
                            if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
@@ -428,7 +428,7 @@ def test_walker_stages_K2_multi_tile_dim_gather():
     before_float_tiles = sum(
         1 for d in inner.arrays.values()
         if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.float64 and tuple(d.shape) == (8, 16))
-    result = StageInsideBody(widths=(8, 16)).apply_pass(sdfg, {})
+    result = InsertTileLoadStore(widths=(8, 16)).apply_pass(sdfg, {})
     assert result == 1
     after_int_arrays = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
                            and d.dtype == dace.int64 and _shape_eq_ignoring_one(d.shape, (8, 16)))
@@ -450,7 +450,7 @@ def test_walker_rewires_consumers_to_bridge_for_tile_branch():
     """After staging a LINEAR access, the downstream tasklet's ``_b`` connector must read
     from the bridge transient, not the original non-transient AccessNode."""
     sdfg, inner = _build_linear_tile_fixture()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
     b_edges = [e for e in body_state.in_edges(tasklet) if e.dst_conn == "_b"]
@@ -465,7 +465,7 @@ def test_walker_rewires_consumers_to_bridge_for_tile_branch():
 def test_walker_rewires_consumers_to_bridge_for_constant_branch():
     """After staging a CONSTANT access, downstream consumers read from the Scalar bridge."""
     sdfg, inner = _build_const_only_tile_fixture()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
     b_edges = [e for e in body_state.in_edges(tasklet) if e.dst_conn == "_b"]
@@ -511,7 +511,7 @@ def test_walker_stages_linear_write_via_tilestore():
     """LINEAR write ``B[ii] = ...`` stages through a tile bridge + TileStore."""
     from dace.libraries.tileops import TileStore
     sdfg, inner = _build_linear_write_fixture()
-    result = StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    result = InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     assert result is not None and result >= 1
     body_state = next(s for s in inner.states())
     stores = [n for n in body_state.nodes() if isinstance(n, TileStore)]
@@ -521,7 +521,7 @@ def test_walker_stages_linear_write_via_tilestore():
 def test_walker_rewires_producers_to_bridge_for_tile_write():
     """The original tasklet's ``_b`` connector writes to a bridge transient, not directly to B."""
     sdfg, inner = _build_linear_write_fixture()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
     out_edges = [e for e in body_state.out_edges(tasklet) if e.src_conn == "_b"]
@@ -537,7 +537,7 @@ def test_walker_tilestore_feeds_into_original_an():
     """The TileStore's ``_dst`` edge writes into the original non-transient AN."""
     from dace.libraries.tileops import TileStore
     sdfg, inner = _build_linear_write_fixture()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     store = next(n for n in body_state.nodes() if isinstance(n, TileStore))
     dst_edges = [e for e in body_state.out_edges(store) if e.src_conn == "_dst"]
@@ -575,7 +575,7 @@ def test_walker_leaves_constant_only_write_as_direct_copy():
     does NOT insert a TileStore for this pattern."""
     from dace.libraries.tileops import TileStore
     sdfg, inner = _build_constant_write_fixture()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     stores = [n for n in body_state.nodes() if isinstance(n, TileStore)]
     assert len(stores) == 0, "expected NO TileStore for CONSTANT-only write -- direct copy is the contract"
@@ -598,7 +598,7 @@ def test_stage_tile_store_helper_emits_tilestore_with_gather_dims_and_wires_idx_
     exercised by the read-side gather tests (the classifier doesn't care which direction
     the access is). This test pins the WRITE-side helper's contract directly.
     """
-    from dace.transformation.passes.vectorization.stage_inside_body import stage_tile_store
+    from dace.transformation.passes.vectorization.insert_tile_load_store import stage_tile_store
     sdfg = dace.SDFG("scatter_partial")
     sdfg.add_array("Dst", (32, ), dace.float64, transient=False)
     sdfg.add_array("Idx0", (8, ), dace.int64, transient=True)
@@ -629,7 +629,7 @@ def test_stage_tile_store_helper_emits_tilestore_with_gather_dims_and_wires_idx_
 
 def test_stage_tile_store_helper_rejects_mismatched_idx_sources():
     """The helper validates gather_dims set matches idx_sources keys exactly."""
-    from dace.transformation.passes.vectorization.stage_inside_body import stage_tile_store
+    from dace.transformation.passes.vectorization.insert_tile_load_store import stage_tile_store
     sdfg = dace.SDFG("scatter_bad")
     sdfg.add_array("Dst", (32, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
@@ -656,11 +656,11 @@ def test_walker_scatter_dispatch_uses_stage_tile_store_helper():
     which DaCe's parser doesn't accept verbatim; the helper-level tests above pin the
     contract of ``stage_tile_store(gather_dims=...)`` and the walker reuses it via the
     same shared materialise_per_lane_index_tile path that the read-side gather branch uses.
-    This test is a thin smoke that the StageInsideBody class itself imports the helpers
+    This test is a thin smoke that the InsertTileLoadStore class itself imports the helpers
     without breaking when scatter dispatch is reachable.
     """
-    from dace.transformation.passes.vectorization.stage_inside_body import (StageInsideBody, stage_tile_store)
+    from dace.transformation.passes.vectorization.insert_tile_load_store import (InsertTileLoadStore, stage_tile_store)
     # Smoke: both names import + Pass class constructs cleanly.
     assert stage_tile_store is not None
-    p = StageInsideBody(widths=(8, ))
+    p = InsertTileLoadStore(widths=(8, ))
     assert tuple(p.widths) == (8, )

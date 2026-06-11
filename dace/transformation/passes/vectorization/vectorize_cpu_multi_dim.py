@@ -51,13 +51,10 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
     LowerInterstateConditionalAssignmentsToTasklets, )
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
-from dace.transformation.passes.vectorization.stage_inside_body import StageInsideBody
-# New staging-first replacement passes (LANDED 2026-06-10 but NOT YET WIRED).
-# To be enabled after InsertTileLoadStore gains GATHER dispatch + Scalar bridge
-# handling. Until then, the legacy ``InferBodyTransientShapes + StageInsideBody``
-# pair below stays in the pipeline.
+from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
+# WidenScalarsToTiles is ready as a standalone pass but not yet compatible with
+# InsertTileLoadStore's full dispatch -- kept available for future re-wiring.
 from dace.transformation.passes.vectorization.widen_scalars_to_tiles import WidenScalarsToTiles  # noqa: F401
-from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore  # noqa: F401
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
     RemoveFPTypeCasts,
@@ -70,7 +67,7 @@ from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
 # Walker-primary pipeline -- no legacy descent / emit_tile_ops imports. The walker
-# (StageInsideBody + PreparePerLaneIndices) replaces both PromoteNSDFGBodyToTiles and the legacy
+# (InsertTileLoadStore + PreparePerLaneIndices) replaces both PromoteNSDFGBodyToTiles and the legacy
 # EmitTileOps boundary emission. Tasklet-to-TileBinop / TileITE / TileReduce conversion is
 # pending; for now the SDFG returns with raw tasklets between staged tile transients and lib-node
 # expansion handles only TileLoad / TileStore / TileMaskGen.
@@ -97,7 +94,7 @@ _MAX_REFINE_ITERS = 8
 class _RunExpandNestedSDFGInputs(ppl.Pass):
     """Pipeline-embedded wrapper that runs :class:`ExpandNestedSDFGInputs` to fixed point.
 
-    The walker (:class:`StageInsideBody`) traverses body NSDFGs which only exist AFTER
+    The walker (:class:`InsertTileLoadStore`) traverses body NSDFGs which only exist AFTER
     :class:`NestInnermostMapBodyIntoNSDFG` runs. ``ExpandNestedSDFGInputs`` widens the
     body NSDFG's per-iteration boundary memlets to the full source-array subset
     (design section 2.4). It MUST run between Nest and the walker; otherwise the
@@ -411,7 +408,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # structurally unnecessary; see the constructor's :param: doc). It no longer gates
         # NestInnermostMapBodyIntoNSDFG.
         # Always-on under walker-primary: every innermost map body must be nested in a body
-        # NSDFG so the walker (StageInsideBody) has something to traverse. The walker is the
+        # NSDFG so the walker (InsertTileLoadStore) has something to traverse. The walker is the
         # ONLY emit path now -- the legacy ``EmitTileOps`` / ``PromoteNSDFGBodyToTiles``
         # descents were deleted. A flat (bare-tasklet) body without an NSDFG wrapper would
         # leave the walker with nothing to do; the orchestrator would strip the map step
@@ -462,15 +459,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            # Staging-first pipeline (user direction 2026-06-10, "remove StageInsideBody"):
+            # Staging-first pipeline (user direction 2026-06-10, "remove InsertTileLoadStore"):
             # 1. InferBodyTransientShapes: kept temporarily -- the legacy widening
-            #    that StageInsideBody (called from InsertTileLoadStore) relies on.
+            #    that InsertTileLoadStore (called from InsertTileLoadStore) relies on.
             #    Will be replaced by WidenScalarsToTiles once the latter is
             #    compatible with the staging walker.
             # 2. GenerateTileIterationMask + PreparePerLaneIndices: emit mask + idx tiles.
             # 3. InsertTileLoadStore: boundary lib-node insertion. Currently delegates to
-            #    StageInsideBody's dispatch; cleanup target is to inline that dispatch and
-            #    delete StageInsideBody.
+            #    InsertTileLoadStore's dispatch; cleanup target is to inline that dispatch and
+            #    delete InsertTileLoadStore.
             InferBodyTransientShapes(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             PreparePerLaneIndices(widths=widths_t),

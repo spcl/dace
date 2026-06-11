@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Integration tests: ``StageInsideBody`` followed by ``ConvertTaskletsToTileOps``.
+"""Integration tests: ``InsertTileLoadStore`` followed by ``ConvertTaskletsToTileOps``.
 
 Per user direction 2026-06-09: "we should be able to extend tile accesses
 and then replace all tasklets with the new libnodes." This file pins the
 contract that the two passes compose end-to-end:
 
-1. ``StageInsideBody`` walks every tile-tagged body NSDFG and stages every
+1. ``InsertTileLoadStore`` walks every tile-tagged body NSDFG and stages every
    non-transient AccessNode read through a tile (or Scalar) transient
    bridge, rewiring downstream consumers to read from the bridge.
 
@@ -22,7 +22,7 @@ import dace
 from dace.libraries.tileops import TileBinop, TileReduce, TileUnop
 from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (ConvertTaskletsToTileOps)
-from dace.transformation.passes.vectorization.stage_inside_body import StageInsideBody
+from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
 
 
 def _build_binop_kernel():
@@ -118,13 +118,13 @@ def _count(state, cls):
 
 
 def test_walker_then_converter_binop_kernel():
-    """Compose StageInsideBody + ConvertTaskletsToTileOps on a binop kernel.
+    """Compose InsertTileLoadStore + ConvertTaskletsToTileOps on a binop kernel.
 
     After both passes: the body has a TileBinop reading from tile-shape bridges,
     and the original raw tasklet is gone.
     """
     sdfg, inner = _build_binop_kernel()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0, "expected the raw tasklet to be gone"
@@ -134,7 +134,7 @@ def test_walker_then_converter_binop_kernel():
 def test_walker_then_converter_unop_kernel():
     """Compose passes on a unary kernel -> TileUnop, no raw tasklets."""
     sdfg, inner = _build_unop_kernel()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0
@@ -144,7 +144,7 @@ def test_walker_then_converter_unop_kernel():
 def test_walker_then_converter_reduction_kernel():
     """Compose passes on an in-place RMW reduction -> TileReduce, no raw tasklets."""
     sdfg, inner = _build_reduction_kernel()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0
@@ -165,7 +165,7 @@ def test_walker_extends_then_converter_replaces_all_recognised_tasklets():
         (_build_reduction_kernel, TileReduce),
     ):
         sdfg, inner = builder()
-        StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+        InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
         ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
         body = _body_state(inner)
         assert _count(body, dace.nodes.Tasklet) == 0, (f"{builder.__name__}: expected no raw tasklets after "
@@ -214,7 +214,7 @@ def test_walker_extends_load_and_store_then_converter_replaces_tasklet():
     """
     from dace.libraries.tileops import TileLoad, TileStore
     sdfg, inner = _build_full_io_binop_kernel()
-    StageInsideBody(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0, "expected no raw tasklets after composed pipeline"
