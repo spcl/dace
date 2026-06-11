@@ -673,12 +673,20 @@ class StageInsideBody(ppl.Pass):
                                                      gather_dims=gather_source_dims,
                                                      idx_sources=idx_sources,
                                                      mask_an=mask_an_for_this)
-                    self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
+                    self._rewire_consumers_to_bridge(inner_state,
+                                                     an,
+                                                     bridge_name,
+                                                     pre_stage_out_edges,
+                                                     iter_vars=iter_vars)
                     staged += 1
                     continue
                 if kinds == {PerDimKind.CONSTANT}:
                     bridge_name = stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
-                    self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
+                    self._rewire_consumers_to_bridge(inner_state,
+                                                     an,
+                                                     bridge_name,
+                                                     pre_stage_out_edges,
+                                                     iter_vars=iter_vars)
                     staged += 1
                 else:
                     # Tile case (LINEAR / AFFINE / REPLICATE / MODULAR; possibly mixed with
@@ -695,7 +703,11 @@ class StageInsideBody(ppl.Pass):
                                                      dim_strides=dim_strides,
                                                      replicate_factor_per_dim=replicate,
                                                      mask_an=mask_an_for_this)
-                    self._rewire_consumers_to_bridge(inner_state, an, bridge_name, pre_stage_out_edges)
+                    self._rewire_consumers_to_bridge(inner_state,
+                                                     an,
+                                                     bridge_name,
+                                                     pre_stage_out_edges,
+                                                     iter_vars=iter_vars)
                     staged += 1
         return staged
 
@@ -832,8 +844,12 @@ class StageInsideBody(ppl.Pass):
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
-    def _rewire_consumers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
-                                    original_out_edges) -> None:
+    def _rewire_consumers_to_bridge(self,
+                                    inner_state: SDFGState,
+                                    original_an: AccessNode,
+                                    bridge_name: str,
+                                    original_out_edges,
+                                    iter_vars: Tuple[str, ...] = ()) -> None:
         """Redirect each consumer edge that previously read from ``original_an`` to read from
         the SAME bridge AccessNode that the staging helper produced (the TileLoad._dst target).
 
