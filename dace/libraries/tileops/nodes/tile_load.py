@@ -399,14 +399,28 @@ class TileLoad(nodes.LibraryNode):
                 raise ValueError(f"TileLoad: replicate_factor_per_dim length "
                                  f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
             for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
-                # Symbolic factors (e.g. ``DV`` in ``c[i // DV]``) can't be
-                # statically validated. Skip the int-only checks for them;
-                # the codegen falls back to the pure expansion which handles
-                # both int and symbolic cases via string interpolation.
+                # Per user direction 2026-06-10: ``We can ask to ensure W % 2
+                # == 0, if we can't provide it then we reject``. The codegen
+                # formula ``__l / k`` is correct ONLY when ``W % k == 0``.
+                # * Static factor: validate ``W % k == 0`` here; refuse
+                #   construction on violation.
+                # * Symbolic factor (e.g. ``DV`` in ``c[i // DV]``): cannot
+                #   prove ``W % DV == 0`` at compile time -- REFUSE the
+                #   construction with a clear error pointing the user at
+                #   the alternatives (substitute the symbol, use a literal,
+                #   or rewrite the kernel without ``// symbol``).
                 try:
                     k_int = int(k)
                 except (TypeError, ValueError):
-                    continue  # symbolic — skip static checks
+                    raise NotImplementedError(
+                        f"TileLoad: replicate_factor_per_dim[{d}] = {k!r} is symbolic; "
+                        f"cannot statically verify ``widths[{d}] % {k!r} == 0`` "
+                        f"which the codegen formula ``__l / {k!r}`` requires for "
+                        f"correctness. Refusing per user direction 2026-06-10. Workarounds: "
+                        f"substitute the divisor symbol with a concrete int before vectorising, "
+                        f"or rewrite the kernel without the ``// symbol`` pattern (e.g. via "
+                        f"gather-encoded access)."
+                    )
                 if k_int < 1:
                     raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must be >= 1")
                 if k_int > 1 and w % k_int != 0:
