@@ -537,7 +537,10 @@ class InsertTileLoadStore(ppl.Pass):
                 continue
             # Structured tile load: LINEAR / AFFINE / REPLICATE / MODULAR (possibly mixed with CONSTANT).
             src_subset_memlet = Memlet.from_memlet(pre_stage_out_edges[0].data)
-            dim_strides, replicate = self._pad_to_tile_dims(record, iter_vars)
+            # Pass src array strides so the diagonal-as-affine path can combine
+            # per-dim strides when the same iter-var dominates multiple source dims.
+            src_arr_strides = tuple(desc.strides) if desc.strides else None
+            dim_strides, replicate = self._pad_to_tile_dims(record, iter_vars, src_arr_strides=src_arr_strides)
             bridge_name, _ = stage_tile_load(inner_state,
                                              an,
                                              widths=tuple(self.widths),
@@ -612,7 +615,8 @@ class InsertTileLoadStore(ppl.Pass):
                 continue
             # Structured tile store: LINEAR / AFFINE / REPLICATE / MODULAR.
             dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
-            dim_strides_w, _ = self._pad_to_tile_dims(wrecord, iter_vars)
+            dst_arr_strides = tuple(desc.strides) if desc.strides else None
+            dim_strides_w, _ = self._pad_to_tile_dims(wrecord, iter_vars, src_arr_strides=dst_arr_strides)
             bridge_name, _ = stage_tile_store(inner_state,
                                               an,
                                               widths=tuple(self.widths),
@@ -624,7 +628,7 @@ class InsertTileLoadStore(ppl.Pass):
             staged += 1
         return staged
 
-    def _pad_to_tile_dims(self, record, iter_vars: Tuple[str, ...]):
+    def _pad_to_tile_dims(self, record, iter_vars: Tuple[str, ...], src_arr_strides=None):
         """Pad classifier's per-source-dim arrays (``dim_strides``,
         ``replicate_factor_per_dim``) to full per-tile-dim length ``K``.
 
@@ -638,24 +642,66 @@ class InsertTileLoadStore(ppl.Pass):
         either full tile or scalar" invariant. By padding here, the resulting tile
         transient stays full-tile shape ``(W_0, ..., W_{K-1})`` regardless of how
         many source dims the access touches.
+
+        Diagonal-as-affine (user direction 2026-06-10 / design 5.3 revised):
+        when the same iter-var dominates MULTIPLE source dims (e.g. ``A[2*i, i]``
+        for K=1, or ``A[i, i]`` for K=2), combine the per-dim affine coefficients
+        into a single effective stride using the source array's strides:
+
+            combined_stride = sum_d (per_dim_stride[d] * src_arr_strides[d])
+
+        This avoids the gather encoding (which would allocate per-dim ``_idx_<d>``
+        tiles holding arithmetic progressions) and instead emits a normal strided
+        TileLoad. Refused with NotImplementedError when any per-dim stride is
+        symbolic-only-or-None -- non-affine diagonals cannot be expressed as a
+        single linear stride.
+
+        :param src_arr_strides: per-source-dim strides of the array being staged.
+            When None, falls back to picking the first dim (legacy behaviour).
         """
+        from collections import defaultdict
         K = len(iter_vars)
         widths = tuple(int(w) for w in self.widths)
-        # Build reverse map: iter_var -> source dim index that this iter_var dominates.
-        iv_to_src_dim: Dict[str, int] = {}
+        # Multi-map: iter_var -> list of source dim indices it dominates.
+        iv_to_src_dims: Dict[str, List[int]] = defaultdict(list)
         for d, iv_name in enumerate(record.dim_iter_var):
-            if iv_name is not None and iv_name not in iv_to_src_dim:
-                iv_to_src_dim[iv_name] = d
+            if iv_name is not None:
+                iv_to_src_dims[iv_name].append(d)
         padded_strides = []
         padded_replicate = []
         for k in range(K):
             iv = iter_vars[k]
-            if iv in iv_to_src_dim:
-                d = iv_to_src_dim[iv]
-                s = record.dim_strides[d]
-                padded_strides.append(s if s is not None else 1)
-                r = record.replicate_factor_per_dim[d]
-                padded_replicate.append(r if r is not None else 1)
+            if iv in iv_to_src_dims:
+                dims_for_iv = iv_to_src_dims[iv]
+                if len(dims_for_iv) == 1:
+                    # Standard single-dim case.
+                    d = dims_for_iv[0]
+                    s = record.dim_strides[d]
+                    padded_strides.append(s if s is not None else 1)
+                    r = record.replicate_factor_per_dim[d]
+                    padded_replicate.append(r if r is not None else 1)
+                else:
+                    # Diagonal: combine strides across source dims.
+                    if src_arr_strides is None:
+                        # Legacy fallback: pick the first dim (matches pre-fix behaviour).
+                        d = dims_for_iv[0]
+                        s = record.dim_strides[d]
+                        padded_strides.append(s if s is not None else 1)
+                        r = record.replicate_factor_per_dim[d]
+                        padded_replicate.append(r if r is not None else 1)
+                    else:
+                        # Compute combined affine stride.
+                        all_affine = all(record.dim_strides[d] is not None for d in dims_for_iv)
+                        if not all_affine:
+                            raise NotImplementedError(
+                                f"diagonal access on iter-var {iv!r} spans dims {dims_for_iv}; "
+                                f"at least one per-dim stride is None (non-affine) -- "
+                                f"cannot express as a single linear stride. Refusing per the "
+                                f"diagonal-as-affine design (no gather fallback)."
+                            )
+                        combined = sum(record.dim_strides[d] * src_arr_strides[d] for d in dims_for_iv)
+                        padded_strides.append(combined)
+                        padded_replicate.append(1)
             else:
                 # BROADCAST tile dim -- this iter_var doesn't appear in the subset.
                 padded_strides.append(0)
