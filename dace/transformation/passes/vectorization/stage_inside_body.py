@@ -52,7 +52,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.prepare_per_lane_indices import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
-from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
+                                                                        compute_per_iter_var_dep_mask)
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:
@@ -636,19 +637,22 @@ class StageInsideBody(ppl.Pass):
                     idx_sources: Dict[int, AccessNode] = {}
                     for k in gather_source_dims:
                         begin_str = str(subset.ranges[k][0])
-                        # Per user direction 2026-06-10 (cuTile semantics): the idx tile shape
-                        # MUST match the K-D output tile shape ``(W_0, ..., W_{K-1})`` (plus
-                        # the trailing ``ONE`` marker). The earlier partial-K_dep optimization
-                        # (filtering iter_vars by free_symbols) was reverted because it broke
-                        # the cuTile broadcast contract -- the gather result tile shape is the
-                        # full output tile, so the idx tile must address every lane in that
-                        # tile (with redundant values on non-dep dims, broadcast at fill time).
+                        # Phase A2 (user direction 2026-06-10): compute the per-iter-var
+                        # dep mask by walking interstate edges via
+                        # :func:`compute_per_iter_var_dep_mask`. This resolves
+                        # post-Bypass per-lane symbols (e.g. ``__sym_<> = idx[i]``)
+                        # so the materialiser can emit the positional ONE marker
+                        # at the right dim (e.g. ``(W_0, ONE)`` for ``idx[i]`` on
+                        # an (i, j) tile, NOT ``(W_0, W_1)``). The materialiser is
+                        # caller-trusts-mask when ``dep_mask`` is supplied.
+                        dep_mask = compute_per_iter_var_dep_mask(begin_str, iter_vars, inner_sdfg)
                         idx_name = materialise_per_lane_index_tile(
                             inner_state,
                             name_hint=f"_idx_{an.data}_{k}",
                             gather_expr=begin_str,
                             tile_iter_vars=iter_vars[0] if K_tile == 1 else iter_vars,
                             tile_widths=int(self.widths[0]) if K_tile == 1 else tuple(int(w) for w in self.widths),
+                            dep_mask=dep_mask[:1] if K_tile == 1 else dep_mask,
                         )
                         idx_an = next(n for n in inner_state.nodes()
                                       if isinstance(n, AccessNode) and n.data == idx_name)

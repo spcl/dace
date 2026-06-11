@@ -310,6 +310,44 @@ def classify_symbols(expr: sympy.Expr, iter_vars: Sequence[str], inner_sdfg: Opt
     return out
 
 
+def compute_per_iter_var_dep_mask(gather_expr: str, iter_vars: Sequence[str],
+                                  inner_sdfg: Optional[SDFG]) -> Tuple[bool, ...]:
+    """Per-iter-var dependency mask for a gather expression.
+
+    For each tile iter-var, returns ``True`` iff the gather expression
+    transitively depends on it (via interstate-edge assignments inside
+    ``inner_sdfg``). Walks back through per-lane symbols introduced by
+    :class:`BypassTrivialAssignTasklets` -- e.g. ``__sym_<>`` defined by
+    ``__sym_<> = idx[i]`` is tracked as dep on ``i``, not on ``j``.
+
+    This is the post-Bypass-aware version of the direct ``free_symbols``
+    check the materialiser does on its own. The walker calls this helper
+    BEFORE invoking :func:`materialise_per_lane_index_tile` so the per-dim
+    ONE-marker emission has the correct dep mask.
+
+    :param gather_expr: The gather expression string (e.g. ``"__sym_x"``
+        or ``"idx[i]"``).
+    :param iter_vars: Tile iter-var names in order.
+    :param inner_sdfg: Body NSDFG carrying interstate assignments. When
+        ``None`` the function falls back to the direct iter-var membership
+        check (no transitive walk).
+    :returns: A tuple ``(dep_i, dep_j, ...)`` of length ``len(iter_vars)``.
+    """
+    expr = _safe_sympify(gather_expr)
+    if expr is None:
+        return tuple(True for _ in iter_vars)
+    mask: List[bool] = []
+    for v in iter_vars:
+        any_dep = False
+        memo: Dict[str, bool] = {}
+        for fs in expr.free_symbols:
+            if _is_tile_dependent(str(fs), {v}, inner_sdfg, memo):
+                any_dep = True
+                break
+        mask.append(any_dep)
+    return tuple(mask)
+
+
 def _gather_subscripts(expr: sympy.Expr) -> List[symbolic.Subscript]:
     """Every :class:`Subscript` node anywhere in ``expr``. Used to
     detect data-dependent indices (``arr[idx[i]]``)."""

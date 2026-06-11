@@ -46,7 +46,8 @@ def materialise_per_lane_index_tile(state: SDFGState,
                                     gather_expr: str,
                                     tile_iter_vars,
                                     tile_widths,
-                                    idx_dtype: dtypes.typeclass = dace.int64) -> str:
+                                    idx_dtype: dtypes.typeclass = dace.int64,
+                                    dep_mask=None) -> str:
     """Materialise a per-lane gather index tile.
 
     Creates an integer transient of shape ``tuple(tile_widths)`` and
@@ -113,23 +114,26 @@ def materialise_per_lane_index_tile(state: SDFGState,
     # time. ONE survives sympy operations (firewall) and codegen folds it via
     # the ``constexpr int ONE = 1;`` emission.
     from dace.symbolic import ONE
-    # Per-dim dep detection: if the gather expression directly references an
-    # iter-var, that dim is lane-dep and gets ``widths[d]``; otherwise the dim
-    # is broadcast and gets ``ONE``. Loop-invariant accesses (whether literal
-    # constants or symbols that don't transitively depend on iter-vars) should
-    # be CONSTANT-staged via :func:`stage_constant_access` BEFORE reaching
-    # this helper -- the walker's classifier (which has inner_sdfg context for
-    # interstate-edge lookup via :func:`_is_tile_dependent`) is the dispatch
-    # point. This helper trusts the caller and emits the shape per the direct
-    # dep mask; indirect lane-dep symbols (e.g. per-lane ``__sym`` defined by
-    # an interstate edge) are conservatively treated as full-dep on every dim
-    # since per-dim decomposition requires interstate-edge inspection.
-    try:
-        expr_free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(gather_expr).free_symbols}
-    except Exception:  # noqa: BLE001 -- conservative fallback to all-dep.
-        expr_free_syms = set(iter_vars)
-    direct_dep_mask = tuple(v in expr_free_syms for v in iter_vars)
-    dep_mask = direct_dep_mask if any(direct_dep_mask) else tuple(True for _ in iter_vars)
+    # Per-dim dep detection: each dim is either ``widths[d]`` (lane-dep) or
+    # ``ONE`` (broadcast / non-lane-dep). When the caller passes ``dep_mask``
+    # (the walker uses :func:`compute_per_iter_var_dep_mask` from
+    # ``utils.tile_access`` which walks interstate edges to resolve per-lane
+    # symbols like ``__sym_<>``), that mask is authoritative. Otherwise the
+    # helper falls back to the direct iter-var-membership check, with
+    # conservative full-dep when no iter-var appears directly (the
+    # post-Bypass-naive form).
+    if dep_mask is not None:
+        if len(dep_mask) != len(iter_vars):
+            raise ValueError(f"materialise_per_lane_index_tile: dep_mask length {len(dep_mask)} "
+                             f"!= iter_vars length {len(iter_vars)}")
+        dep_mask = tuple(bool(b) for b in dep_mask)
+    else:
+        try:
+            expr_free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(gather_expr).free_symbols}
+        except Exception:  # noqa: BLE001 -- conservative fallback to all-dep.
+            expr_free_syms = set(iter_vars)
+        direct_dep_mask = tuple(v in expr_free_syms for v in iter_vars)
+        dep_mask = direct_dep_mask if any(direct_dep_mask) else tuple(True for _ in iter_vars)
     shape = tuple(widths[d] if dep_mask[d] else ONE for d in range(len(iter_vars)))
     # Register ``ONE`` as a compile-time constant so ``generate_constants``
     # emits ``constexpr int ONE = 1`` at file scope and the C++ compiler folds

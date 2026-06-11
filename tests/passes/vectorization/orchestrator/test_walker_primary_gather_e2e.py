@@ -107,20 +107,16 @@ def k2_partial_kdep_gather(A: dace.float64[M_K2, N_K2], idx: dace.int64[M_K2], B
         B[i, j] = A[idx[i], j]
 
 
-@pytest.mark.xfail(reason="Materialiser sees post-Bypass per-lane symbol ``__sym_<>`` instead of the"
-                   " original ``idx[i]`` expression -- direct iter-var refs are gone, so per-dim"
-                   " dep detection falls back to full-dep (8, 8) instead of (8, ONE). Fix needs"
-                   " walker to compute the dep mask BEFORE the per-lane symbol substitution and"
-                   " pass it to the materialiser (or move detection upstream of the bypass-induced"
-                   " indirection). Tracked as Priority 2A (or A2 in the foundation phase plan).")
 def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
-    """K=2 partial-K_dep gather (``A[idx[i], j]``) -- exercises the post-refactor
-    materialiser contract (commit 6c67ff859): the idx tile shape MUST be
-    ``(W_0, ONE)``, NOT ``(W_0, W_1)``, because the gather expression depends
-    only on ``i`` (the row iter-var).
+    """K=2 partial-K_dep gather (``A[idx[i], j]``) -- the idx tile shape is
+    ``(W_0, ONE)`` because the gather expression depends only on ``i`` (the
+    row iter-var).
 
-    Currently xfailing because Bypass substitutes ``idx[i]`` with a per-lane
-    symbol before the materialiser runs. Documents the next-slice blocker.
+    Resolved by Phase A2: the walker now computes the per-iter-var dep mask
+    via :func:`compute_per_iter_var_dep_mask` which walks interstate edges
+    to resolve post-Bypass per-lane symbols (``__sym_<> = idx[i]`` becomes
+    "dep on i, not on j"). The materialiser receives the mask explicitly
+    and emits ``(W_0, ONE)`` per the cuTile contract.
     """
     from dace.symbolic import ONE
     m, n = 8, 8
