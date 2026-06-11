@@ -22,7 +22,7 @@ Refer to the v2 plan for the locked knobs:
 Refuses every other combination with ``NotImplementedError`` so the
 caller is pointed at the supported config.
 """
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional, Set, Tuple
 
 import dace
 from dace import properties
@@ -590,6 +590,46 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                 continue
             preexisting_rmw_chain = id(node) in pre and bool(set(node.in_connectors) & set(node.out_connectors))
             if preexisting_rmw_chain:
+                continue
+            # Skip RefineNestedAccess when the body NSDFG has interstate
+            # assignments that reference symbols also used in the parent map's
+            # scope -- per user-investigated bug 2026-06-10 (scatter_loop_permissive_tile):
+            # for ``dst[idx[i]] = src[i] + 1.0`` the body has
+            # ``dst_slice_0 = idx[i]`` as an interstate assignment.
+            # RefineNestedAccess incorrectly substitutes ``i`` with ``0`` in
+            # this assignment, breaking the scatter (every tile reads idx[0]
+            # instead of idx[i + lane]). Detect: any interstate edge in the
+            # body NSDFG whose assignment RHS contains a symbol present in
+            # the parent state's scope (typically a Map iter-var).
+            has_parent_sym_in_assignment = False
+            # Collect symbols visible at the NSDFG's invocation in the parent.
+            parent_state = graph
+            if isinstance(parent_state, dace.SDFGState):
+                # Symbols defined by the enclosing Map scope of this NSDFG.
+                scope_dict = parent_state.scope_dict()
+                cur = scope_dict.get(node)
+                parent_iter_syms: Set[str] = set()
+                while cur is not None:
+                    if isinstance(cur, dace.nodes.MapEntry):
+                        parent_iter_syms.update(cur.map.params)
+                    cur = scope_dict.get(cur)
+                if parent_iter_syms:
+                    for iedge in node.sdfg.all_interstate_edges():
+                        if not iedge.data.assignments:
+                            continue
+                        for _k, v in iedge.data.assignments.items():
+                            v_str = str(v)
+                            for sym in parent_iter_syms:
+                                # Match whole-word; avoid substring matches like "ii" matching "i".
+                                import re
+                                if re.search(rf"\b{re.escape(sym)}\b", v_str):
+                                    has_parent_sym_in_assignment = True
+                                    break
+                            if has_parent_sym_in_assignment:
+                                break
+                        if has_parent_sym_in_assignment:
+                            break
+            if has_parent_sym_in_assignment:
                 continue
             parent = graph.sdfg
             # One application refines every candidate connector; the bounded
