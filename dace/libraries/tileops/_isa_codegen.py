@@ -268,6 +268,28 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     if node.gather_dims:
         from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
         return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
+    # REPLICATE codegen (user direction 2026-06-10): the K=1 intrinsic
+    # ``tile_load<T, VLEN, Masked>(_dst, _src, mask, stride)`` does
+    # ``dst[i] = src[i * stride]`` -- no per-lane replicate divisor. When
+    # ``replicate_factor_per_dim[d] > 1`` (e.g. ``c[i // 2]`` -> factor 2
+    # means lanes 0,1 share c[i//2], lanes 2,3 share c[i//2+1], ...), the
+    # intrinsic produces wrong values. Fall back to the pure expansion,
+    # which emits ``src[(__l/replicate) * stride]`` per lane.
+    if node.replicate_factor_per_dim:
+        needs_pure = False
+        for r in node.replicate_factor_per_dim:
+            try:
+                if int(r) > 1:
+                    needs_pure = True
+                    break
+            except (TypeError, ValueError):
+                # Symbolic factor (e.g. ``DV``): always fall back to pure --
+                # we can't prove it's 1 at compile time, so route safely.
+                needs_pure = True
+                break
+        if needs_pure:
+            from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
+            return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
     dst_dtype = _out_ctype(node, parent_state, parent_sdfg, "_dst")

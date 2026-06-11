@@ -443,14 +443,25 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     if len(expr.args) != 2:
         return None
     dividend, divisor = expr.args
-    # Divisor must be a concrete positive integer for the replicate
-    # factor to be meaningful.
+    # Divisor must be a positive integer OR a symbolic expression (e.g.
+    # ``DV`` in ``i // DV``). Per user direction 2026-06-10: ``We can
+    # enforce tile dim needs to be multiple of replicate factor``.
+    # * Static factor: TileLoad construction validates ``W % k == 0`` and
+    #   refuses with ValueError when violated.
+    # * Symbolic factor: cannot be statically verified; the codegen emits
+    #   ``__l / DV`` which is CORRECT only when ``W % DV == 0`` at runtime.
+    #   User responsibility (documented in the TileLoad property): pass a
+    #   divisor that divides ``W``. Tests with non-dividing symbolic divisors
+    #   (e.g. ``test_div_index_symbol[3]`` with DV=3, W=8) produce incorrect
+    #   results -- this is by-design refusal, not a codegen bug.
     try:
         k = int(divisor)
+        if k <= 1:
+            return None
     except (TypeError, ValueError):
-        return None
-    if k <= 1:
-        return None
+        if divisor is None:
+            return None
+        k = divisor  # symbolic -- preserve through pipeline
     # Dividend must be affine in ``var_name`` (so the replication is
     # regular -- ``int_floor(idx[i], 2)`` is data-dependent and lowers
     # as GATHER, not REPLICATE).

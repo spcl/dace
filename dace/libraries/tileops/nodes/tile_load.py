@@ -120,7 +120,12 @@ class ExpandTileLoadPure(ExpandTransformation):
                     elif k in src_to_tile:
                         d = src_to_tile[k]
                         lane = f"__l{d}"
-                        if replicate[d] > 1:
+                        # Symbolic replicate factor: emit runtime division.
+                        try:
+                            emit_div = int(replicate[d]) > 1
+                        except (TypeError, ValueError):
+                            emit_div = True
+                        if emit_div:
                             lane = f"({lane} / {replicate[d]})"
                         parts.append(f"({coeff[d]} * ({s}) * {lane})")
                     # else: source dim k has no per-lane contribution; outer base pointer covers it.
@@ -315,7 +320,11 @@ class TileLoad(nodes.LibraryNode):
         desc="Literal / symbolic expression for ``src_kind='Symbol'``; ignored otherwise.",
     )
     replicate_factor_per_dim = properties.ListProperty(
-        element_type=int,
+        # ``pystr_to_symbolic`` accepts both int and symbolic (e.g. ``DV``
+        # in ``c[i // DV]``) values, mirroring the symbolic-stride fix in
+        # commit 3e1dc18c0. The pure expansion uses string interpolation on
+        # each element, so a symbolic value inlines correctly as a C++ var.
+        element_type=dace.symbolic.pystr_to_symbolic,
         default=[],
         desc="Per-tile-dim replicate factor (lanes-per-distinct-value within "
         "the dim). ``1`` (or empty) = no replication, the contiguous endpoint "
@@ -390,10 +399,18 @@ class TileLoad(nodes.LibraryNode):
                 raise ValueError(f"TileLoad: replicate_factor_per_dim length "
                                  f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
             for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
-                if k < 1:
-                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k} must be >= 1")
-                if k > 1 and w % k != 0:
-                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k} must divide "
+                # Symbolic factors (e.g. ``DV`` in ``c[i // DV]``) can't be
+                # statically validated. Skip the int-only checks for them;
+                # the codegen falls back to the pure expansion which handles
+                # both int and symbolic cases via string interpolation.
+                try:
+                    k_int = int(k)
+                except (TypeError, ValueError):
+                    continue  # symbolic — skip static checks
+                if k_int < 1:
+                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must be >= 1")
+                if k_int > 1 and w % k_int != 0:
+                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must divide "
                                      f"widths[{d}] = {w} (contracted-box load is W/k elements)")
         # Validate gather_dims: sorted, unique, non-negative source-dim indices.
         # The upper bound (max(gather_dims) < src_ndim) is checked at validate() time since

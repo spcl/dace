@@ -84,8 +84,19 @@ def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_
     parts = []
     for d, (c, s) in enumerate(zip(coeffs, strides)):
         lane = f"__l{d}"
-        if d < len(replicate_factors) and replicate_factors[d] > 1:
-            lane = f"({lane} / {replicate_factors[d]})"
+        if d < len(replicate_factors):
+            r = replicate_factors[d]
+            # Symbolic replicate factors (e.g. ``DV`` in ``c[i // DV]``)
+            # can't be compared via ``> 1`` (sympy raises TypeError).
+            # Coerce to int when possible; symbolic falls through to the
+            # runtime divisor emission -- ``__l / DV`` evaluates safely
+            # at any DV >= 1.
+            try:
+                emit_div = int(r) > 1
+            except (TypeError, ValueError):
+                emit_div = True
+            if emit_div:
+                lane = f"({lane} / {r})"
         parts.append(f"({c} * ({s}) * {lane})")
     return " + ".join(parts)
 
