@@ -103,19 +103,78 @@ def test_widens_length_one_array_to_tile():
         assert str(edge.data.subset) == "0:8"
 
 
-def test_widens_every_transient_scalar_in_body():
-    """Per staging-first design: every transient Scalar / (1,) Array in a
-    tile-tagged body widens. Loop-invariant data never becomes a transient
-    Scalar after :class:`StageGlobalArrayThroughScalars` (it stays as a
-    direct non-transient read), so the pass doesn't need a CONSTANT filter.
-    Widening one extra Scalar is safe -- every lane just holds the same value.
+def test_skips_loop_invariant_scalar_constant_init():
+    """Per user direction 2026-06-10: ``scalar - scalar -> scalar`` (if symbols
+    loop-invariant). A transient ``Scalar`` initialised by a tasklet ``_out = 3.14``
+    (no input data, no iter-var ref) stays a ``Scalar``.
+
+    The user's rule: only widen if the lineage reaches a non-CONSTANT non-transient
+    OR the producing tasklet references a tile iter-var.
     """
     sdfg, inner = _build_tagged_body(scalar_kind="scalar", subset="0", with_constant=True)
     result = WidenScalarsToTiles(widths=(8, )).apply_pass(sdfg, {})
-    # Both ``t`` and ``k`` widen (no loop-invariant filter in this pass).
-    assert result == 2
+    # ``t`` widens (lineage: A[i] is LINEAR -> tlet1 -> t).
+    # ``k`` stays Scalar (no input data, no iter-var ref).
+    assert result == 1
     assert tuple(inner.arrays["t"].shape) == (8, )
-    assert tuple(inner.arrays["k"].shape) == (8, )
+    assert isinstance(inner.arrays["k"], data.Scalar), \
+        "loop-invariant Scalar must not widen per user direction 2026-06-10"
+
+
+def _build_input_driven_body(tasklet_code: str, inputs):
+    """Build a tagged body where a single tasklet computes scalar ``t``
+    using ``tasklet_code`` (no data input by default; ``inputs`` listed if any),
+    then a passthrough tasklet writes ``A[i]`` from ``t``.
+    """
+    sdfg = dace.SDFG("test")
+    N = dace.symbol("N")
+    sdfg.add_array("A", shape=(N, ), dtype=dace.float64, transient=False)
+    state = sdfg.add_state("outer")
+    me, mx = state.add_map("outer", {"i": "0:N:8"})
+    inner = dace.SDFG("inner")
+    inner.add_array("A", shape=(N, ), dtype=dace.float64, transient=False)
+    inner.add_scalar("t", dtype=dace.float64, transient=True)
+    inner_state = inner.add_state("body")
+    a_in = inner_state.add_read("A")
+    a_out = inner_state.add_write("A")
+    t_an = inner_state.add_access("t")
+    tlet = inner_state.add_tasklet("compute", set(inputs), {"_out"}, tasklet_code)
+    out_tlet = inner_state.add_tasklet("pt", {"_in", "_a"}, {"_out"}, "_out = _in + _a")
+    for inp in inputs:
+        inner_state.add_edge(a_in, None, tlet, inp, dace.Memlet("A[i]"))
+    inner_state.add_edge(tlet, "_out", t_an, None, dace.Memlet("t[0]"))
+    inner_state.add_edge(t_an, None, out_tlet, "_in", dace.Memlet("t[0]"))
+    inner_state.add_edge(a_in, None, out_tlet, "_a", dace.Memlet("A[i]"))
+    inner_state.add_edge(out_tlet, "_out", a_out, None, dace.Memlet("A[i]"))
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"A"}, {"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("A"), me, nsdfg, dst_conn="A", memlet=dace.Memlet("A[0:N]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("A"), src_conn="A", memlet=dace.Memlet("A[0:N]"))
+    return sdfg, inner
+
+
+def test_tasklet_referencing_iter_var_widens_output():
+    """A tasklet whose code references a tile iter-var (``i``) produces a
+    lane-dep output, even with no data input (the user's
+    ``symbol - symbol -> scalar (if symbol is loop-invariant; if loop-variant
+    meaning tile-dependent -> tile)`` rule).
+    """
+    sdfg, inner = _build_input_driven_body("_out = i * 2.0", inputs=[])
+    result = WidenScalarsToTiles(widths=(8, )).apply_pass(sdfg, {})
+    assert result == 1
+    assert tuple(inner.arrays["t"].shape) == (8, ), "iter-var-driven scalar must widen to tile"
+
+
+def test_scalar_minus_loop_invariant_symbol_stays_scalar():
+    """``scalar - symbol`` where the symbol is loop-invariant -> stays scalar.
+
+    The tasklet uses ``N`` (loop-invariant) only -- no iter-var, no data input.
+    """
+    sdfg, inner = _build_input_driven_body("_out = 5.0 - N", inputs=[])
+    result = WidenScalarsToTiles(widths=(8, )).apply_pass(sdfg, {})
+    # ``t`` does not widen: no data input, body uses ``N`` (loop-invariant) only.
+    assert result is None or result == 0
+    assert isinstance(inner.arrays["t"], data.Scalar), \
+        "scalar fed only by loop-invariant symbol must stay scalar"
 
 
 def test_noop_when_no_tile_tagged_map():
