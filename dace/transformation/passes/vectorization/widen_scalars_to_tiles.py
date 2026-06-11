@@ -88,7 +88,7 @@ class WidenScalarsToTiles(ppl.Pass):
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
 
-        Same predicate as :class:`StageInsideBody` and :class:`InferBodyTransientShapes`.
+        Same predicate as :class:`InsertTileLoadStore` and :class:`InferBodyTransientShapes`.
         """
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():

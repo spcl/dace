@@ -5,7 +5,7 @@ After the legacy ``PromoteNSDFGBodyToTiles`` + ``EmitTileOps`` descent
 was deleted, ``VectorizeCPUMultiDim`` runs a walker-primary pipeline:
 ``MarkTileDims`` -> ``GenerateTileIterationMask`` ->
 ``StrideMapByTileWidths`` -> ``PreparePerLaneIndices`` ->
-``StageInsideBody`` -> lib-node expansion -> ``ClearPerLaneIndexSymbols``.
+``InsertTileLoadStore`` -> lib-node expansion -> ``ClearPerLaneIndexSymbols``.
 
 This file pins minimum-viable invariants on the walker-primary
 orchestrator -- it imports, instantiates, and runs without crashing

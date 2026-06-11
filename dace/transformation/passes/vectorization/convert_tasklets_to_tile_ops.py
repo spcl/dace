@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Convert in-body tasklets to ``TileBinop`` / ``TileUnop`` / ``TileITE``.
 
-After :class:`StageInsideBody` walks every tile-tagged body NSDFG and
+After :class:`InsertTileLoadStore` walks every tile-tagged body NSDFG and
 stages non-transient AccessNode reads through tile transients, the
 body still holds raw tasklets that operate on per-lane scalar values.
 This pass walks the same body NSDFGs and replaces each tasklet with
@@ -74,7 +74,7 @@ _SUPPORTED_UNOPS = {
 class ConvertTaskletsToTileOps(ppl.Pass):
     """Convert in-body tasklets to tile lib nodes (first slice: binary Tile+Tile only).
 
-    :ivar widths: Per-tile-dim widths; mirrors :class:`StageInsideBody`.
+    :ivar widths: Per-tile-dim widths; mirrors :class:`InsertTileLoadStore`.
     """
 
     CATEGORY: str = "Vectorization"
@@ -234,7 +234,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
 
-        Mirror of the walker shape used by :class:`StageInsideBody` and
+        Mirror of the walker shape used by :class:`InsertTileLoadStore` and
         :class:`PreparePerLaneIndices`.
         """
         K = len(self.widths)

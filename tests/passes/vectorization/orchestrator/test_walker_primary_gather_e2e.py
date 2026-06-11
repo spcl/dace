@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """End-to-end numerical tests for indirect-access (gather) kernels.
 
-The walker's :class:`StageInsideBody` GATHER dispatch is exercised through real
+The walker's :class:`InsertTileLoadStore` GATHER dispatch is exercised through real
 ``@dace.program`` kernels rather than manually-built SDFGs (the manual construction
 of an idx data-dependency edge through MapEntry is brittle, per design Appendix E).
 

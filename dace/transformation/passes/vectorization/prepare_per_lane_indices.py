@@ -197,7 +197,7 @@ class PreparePerLaneIndices(ppl.Pass):
     walker calls :func:`materialise_per_lane_index_tile` to mint a
     fresh integer transient holding the per-lane index values, ready
     to be wired into the corresponding :class:`TileLoad` ``_idx_<k>``
-    connector by :class:`StageInsideBody` (G7 step 4c).
+    connector by :class:`InsertTileLoadStore` (G7 step 4c).
 
     The materialised tile's shape follows the design section 9.2 lane-
     dependency rule: the tuple of widths over the tile dims the gather
@@ -205,7 +205,7 @@ class PreparePerLaneIndices(ppl.Pass):
     this walker emits a 1-D index of shape ``(W_p,)`` for the most
     common single-tile-iter-var case (``a[idx[i]]``).
 
-    :ivar widths: Per-tile-dim widths, mirroring :class:`StageInsideBody`.
+    :ivar widths: Per-tile-dim widths, mirroring :class:`InsertTileLoadStore`.
     """
 
     CATEGORY: str = "Vectorization"

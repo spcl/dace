@@ -7,7 +7,7 @@ don't need to narrow afterwards. Depending on the copy-in's / writes /
 access patterns of the non-transients [pick] scalar / len-1 array or
 full tile."
 
-This pass runs **before** :class:`StageInsideBody`. For every tile-tagged
+This pass runs **before** :class:`InsertTileLoadStore`. For every tile-tagged
 body NSDFG, it walks the inner dataflow graph forward, propagating the
 non-transient ANs' access classifications (CONSTANT vs non-CONSTANT) through
 every tasklet, and assigns each intermediate transient one of:
@@ -21,7 +21,7 @@ every tasklet, and assigns each intermediate transient one of:
 
 After this pass runs:
 
-* The walker (:class:`StageInsideBody`) sees correctly-shaped intermediate
+* The walker (:class:`InsertTileLoadStore`) sees correctly-shaped intermediate
   transients and the existing `_widen_output_transient_for_tile` reactive
   widening in :class:`ConvertTaskletsToTileOps` becomes a no-op (the
   transients are already the right shape).
@@ -81,7 +81,7 @@ class InferBodyTransientShapes(ppl.Pass):
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
 
-        Same predicate as :class:`StageInsideBody`.
+        Same predicate as :class:`InsertTileLoadStore`.
         """
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
@@ -165,7 +165,7 @@ class InferBodyTransientShapes(ppl.Pass):
         # NOTE: A direct AN -> AN propagation rule was tried (post-Bypass chains can
         # have ``src -> __tmp_slice`` with no Tasklet between them) but it CONFLICTS
         # with the staging-time elision (``_maybe_elide_scalar_passthrough`` in
-        # ``StageInsideBody``). Widening here leaves a non-Scalar AN -> AN edge that
+        # ``InsertTileLoadStore``). Widening here leaves a non-Scalar AN -> AN edge that
         # the design 3.8.3 (2) validator rejects. The staging elision (A5) handles
         # this case more cleanly by removing the redundant bridge entirely; this
         # propagator deliberately leaves Bypass-collapsed AN->AN chains alone.

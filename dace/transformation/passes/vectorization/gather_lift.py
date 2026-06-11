@@ -244,7 +244,7 @@ class GatherLift(ppl.Pass):
     defined it stays intact). :class:`RemoveUnusedPerLaneSymbols`, which runs as the
     final post-clean, sweeps it when no remaining consumer references it.
 
-    :ivar widths: Per-tile-dim widths, mirroring :class:`StageInsideBody` /
+    :ivar widths: Per-tile-dim widths, mirroring :class:`InsertTileLoadStore` /
         :class:`ConvertTaskletsToTileOps`. Used to size the fan-out per dim.
     """
 

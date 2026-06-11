@@ -26,7 +26,7 @@ from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
 
 
 # NOTE: post_descent_invariants was deleted with the legacy descent (PromoteNSDFGBodyToTiles).
-# The walker-primary path (StageInsideBody + ClearPerLaneIndexSymbols audit) replaces both.
+# The walker-primary path (InsertTileLoadStore + ClearPerLaneIndexSymbols audit) replaces both.
 # Local stubs below preserve the surface for any 1D-legacy ``vectorize.py`` callers that still
 # reach for the descent invariants helper -- they become no-ops since the descent is gone.
 def assert_post_descent_invariants(*args, **kwargs):
