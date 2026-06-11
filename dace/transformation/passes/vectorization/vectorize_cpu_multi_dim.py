@@ -38,7 +38,6 @@ from dace.transformation.passes.vectorization.generate_tile_iteration_mask impor
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
-from dace.transformation.passes.vectorization.prepare_per_lane_indices import PreparePerLaneIndices
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, )
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
@@ -446,10 +445,9 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # + EmitTileOps boundary emission). The walker stages every non-transient AccessNode inside
         # tile-tagged body NSDFGs through TileLoad / TileStore based on the per-dim lattice
         # (CONSTANT -> Scalar bridge; LINEAR/AFFINE/REPLICATE/MODULAR -> tile bridge; GATHER ->
-        # materialised _idx_<k> + gather_dims). PreparePerLaneIndices runs in parallel as the
-        # standalone gather-index materialiser; for the canonical case the walker inlines its
-        # logic, so this pass is a no-op for bodies the walker already handled (it's kept here for
-        # pipelines that prefer the standalone materialisation step).
+        # materialised _idx_<k> + gather_dims). The per-lane idx materialiser is folded into
+        # WidenAccesses (step 5); InsertTileLoadStore wires the resulting tiles into the
+        # ``_idx_<k>`` connectors of TileLoad / TileStore.
         # NOTE: ``fuse_overlapping_loads`` is intentionally NOT honoured here. Under the multi-dim
         # design ``ExpandNestedSDFGInputs`` widens every body-NSDFG boundary memlet to the full
         # source-array subset (section 2.4), so every inner TileLoad already reads the same
@@ -457,14 +455,17 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            # Unified WidenAccesses pass (user direction 2026-06-10) -- replaces
-            # InferBodyTransientShapes + WidenScalarsToTiles. Single pass widens
-            # non-transient boundary subsets (``A[ii]`` -> ``A[ii:ii+W]``) AND
-            # lane-dep transient descriptors (Scalar / (1,) Array -> tile) in
-            # one go. Symmetric on gather (read) and scatter (write) sides.
+            # Unified WidenAccesses pass (user direction 2026-06-10/11) --
+            # replaces InferBodyTransientShapes + WidenScalarsToTiles +
+            # PreparePerLaneIndices. Single pass widens non-transient boundary
+            # subsets (``A[ii]`` -> ``A[ii:ii+W]``, both ``subset`` AND
+            # ``other_subset``), widens lane-dep transient descriptors
+            # (Scalar / (1,) Array -> tile), and materialises per-lane idx
+            # tiles for every GATHER per-dim. Symmetric on gather (read) and
+            # scatter (write) sides. InsertTileLoadStore then wires the
+            # materialised tiles into the _idx_<k> connectors directly.
             WidenAccesses(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
-            PreparePerLaneIndices(widths=widths_t),
             InsertTileLoadStore(widths=widths_t),
             # Lift lane-dep gather placeholders into per-lane symbol fan-outs BEFORE
             # the converter runs -- the materialiser's for-loop populate body

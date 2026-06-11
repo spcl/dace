@@ -48,7 +48,7 @@ from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.vectorization.prepare_per_lane_indices import materialise_per_lane_index_tile
+from dace.transformation.passes.vectorization.widen_accesses import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,

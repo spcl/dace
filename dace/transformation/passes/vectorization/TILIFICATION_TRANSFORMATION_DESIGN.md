@@ -330,21 +330,23 @@ reconstructs from the descriptor.) Every consumer of an AN -> AN
 edge -- classifier, staging pass, lib-node emitter -- routes
 through this helper.
 
-### 3.8 Per-lane index materialisation (pre-pass + post-walker lift)
+### 3.8 Per-lane index materialisation (folded into WidenAccesses + post-walker lift)
 
 A gather expression `idx[i, k]` with `i` a tile iter-var and `k` an
 outer-constant is, before lowering, just a symbolic memlet. The
-modern equivalent of the legacy 1D `_laneid_<i>` symbol fan-out is a
-structural **pre-pass** `PreparePerLaneIndices` followed by a
-**post-walker lift** `GatherLift` (2026-06-10) that together
-materialise every such expression into an integer index tile.
+modern equivalent of the legacy 1D `_laneid_<i>` symbol fan-out is the
+**`WidenAccesses` step 5** (per user direction 2026-06-11; previously a
+standalone `PreparePerLaneIndices` pre-pass) followed by a **post-walker
+lift** `GatherLift` (2026-06-10) that together materialise every such
+expression into an integer index tile.
 
-Pre-pass `PreparePerLaneIndices` (the classifier-driven half):
+WidenAccesses step 5 (the classifier-driven half, runs after subset /
+other_subset / descriptor widening within the same pass):
 
 ```
 for each gather memlet with index expression I (per dim d):
   deps = sorted tile iter-var indices that I depends on
-  shape = (see 3.8.1 below -- depends on the gather_idx_form knob)
+  shape = (see 3.8.1 below)
   mint a transient `_idx_<d>_<unique>` of shape + int dtype
   emit a placeholder populate tasklet that fills the tile per lane:
       for each lane offset l = (l_0, ..., l_{|deps|-1}):
@@ -352,7 +354,9 @@ for each gather memlet with index expression I (per dim d):
   wire the tile to the lib node's _idx_<d> connector
 ```
 
-This runs after staging (section 3.3) and before lib-node emission.
+This runs after staging (section 3.3) and before lib-node emission. The
+helper :func:`materialise_per_lane_index_tile` lives in
+``widen_accesses.py`` (was ``prepare_per_lane_indices.py``).
 
 Post-walker `GatherLift` (the lane-dep iedge-symbol half) — handles
 the case where the gather index appears as a scalar lifted via an

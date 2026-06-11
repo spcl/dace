@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional, Tuple
 import dace
 from dace import properties
 from dace.libraries.tileops import TileBinop, TileITE, TileMaskGen, TileReduce, TileUnop
-from dace.transformation.passes.vectorization.prepare_per_lane_indices import materialise_per_lane_index_tile
+from dace.transformation.passes.vectorization.widen_accesses import materialise_per_lane_index_tile
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -1048,7 +1048,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # source = broadcast Scalar operand kind on the lib node (design section 6.5).
         kind_a = self._operand_kind(inner_state, a_edge)
         kind_b = self._operand_kind(inner_state, b_edge)
-        # Output transient shape is pre-determined by InferBodyTransientShapes (forward
+        # Output transient shape is pre-determined by WidenAccesses (forward
         # analysis pre-pass per design 6.2). The output kind on the lib node is implied by
         # the descriptor on ``out_edge``'s destination; validate() enforces consistency.
         mask_an = self._find_mask_an(inner_state)
@@ -1203,7 +1203,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
         kind_a = self._operand_kind(inner_state, a_edge)
-        # Output transient shape is pre-determined by InferBodyTransientShapes.
+        # Output transient shape is pre-determined by WidenAccesses.
         mask_an = self._find_mask_an(inner_state)
         unop = TileUnop(name=f"{tasklet.label}_unop",
                         widths=tuple(self.widths),

@@ -50,6 +50,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import dace
 from dace import data as dd
 from dace import dtypes, properties, subsets
+from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -57,6 +58,103 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+
+
+def materialise_per_lane_index_tile(state: SDFGState,
+                                    name_hint: str,
+                                    gather_expr: str,
+                                    tile_iter_vars,
+                                    tile_widths,
+                                    idx_dtype: dtypes.typeclass = dace.int64,
+                                    dep_mask=None) -> str:
+    """Materialise a per-lane gather index tile (design 3.8 + 3.8.1).
+
+    Creates an integer transient of shape derived from ``tile_widths`` and
+    emits a CPP tasklet at ``state`` that fills it with the per-lane
+    evaluation of ``gather_expr``. Per-dim lane dependency is encoded with
+    :data:`dace.symbolic.ONE` on broadcast dims (no per-cell variation).
+
+    Owned by :mod:`widen_accesses` per user direction 2026-06-11 (was a
+    standalone ``PreparePerLaneIndices`` pre-pass before the fold).
+
+    :param state: State that owns the gather AccessNode (the materialiser
+        emits its populate tasklet into the same state).
+    :param name_hint: Hint for the transient name; uniquified via
+        ``find_new_name=True``.
+    :param gather_expr: Gather expression with ``tile_iter_vars`` free.
+    :param tile_iter_vars: Name(s) of the tile iter-vars the expression
+        depends on. ``str`` for K=1; iterable for K>=2.
+    :param tile_widths: Tile width(s); shape matches ``tile_iter_vars``.
+    :param idx_dtype: Descriptor dtype; ``int32`` or ``int64`` per design 10.4.
+    :param dep_mask: Optional per-dim dependency mask (overrides direct iter-
+        var-membership detection); see :func:`compute_per_iter_var_dep_mask`.
+    :returns: Name of the materialised transient (AccessNode added to ``state``).
+    """
+    sdfg = state.sdfg
+    if isinstance(tile_iter_vars, str):
+        iter_vars = (tile_iter_vars, )
+        widths = (int(tile_widths), )
+    else:
+        iter_vars = tuple(tile_iter_vars)
+        widths = tuple(int(w) for w in tile_widths)
+    if len(iter_vars) != len(widths):
+        raise ValueError(f"materialise_per_lane_index_tile: tile_iter_vars (len={len(iter_vars)}) "
+                         f"and tile_widths (len={len(widths)}) must align")
+    from dace.symbolic import ONE
+    if dep_mask is not None:
+        if len(dep_mask) != len(iter_vars):
+            raise ValueError(f"materialise_per_lane_index_tile: dep_mask length {len(dep_mask)} "
+                             f"!= iter_vars length {len(iter_vars)}")
+        dep_mask = tuple(bool(b) for b in dep_mask)
+    else:
+        try:
+            expr_free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(gather_expr).free_symbols}
+        except Exception:  # noqa: BLE001
+            expr_free_syms = set(iter_vars)
+        direct_dep_mask = tuple(v in expr_free_syms for v in iter_vars)
+        dep_mask = direct_dep_mask if any(direct_dep_mask) else tuple(True for _ in iter_vars)
+    shape = tuple(widths[d] if dep_mask[d] else ONE for d in range(len(iter_vars)))
+    if "ONE" not in sdfg.constants_prop:
+        sdfg.add_constant("ONE", 1, dd.Scalar(dace.int32))
+    arr_name, _ = sdfg.add_array(name_hint,
+                                 shape=shape,
+                                 dtype=idx_dtype,
+                                 storage=dtypes.StorageType.Register,
+                                 transient=True,
+                                 find_new_name=True)
+    body_expr = gather_expr
+    for d, var in enumerate(iter_vars):
+        body_expr = body_expr.replace(var, f"(__l{d})")
+    dep_dims = [d for d, is_dep in enumerate(dep_mask) if is_dep]
+    parts = []
+    for i, d in enumerate(dep_dims):
+        inner = 1
+        for q in dep_dims[i + 1:]:
+            inner *= widths[q]
+        parts.append(f"__l{d}" if inner == 1 else f"(__l{d} * {inner})")
+    flat = " + ".join(parts) if parts else "0"
+    code_lines = []
+    for d in dep_dims:
+        depth = dep_dims.index(d)
+        code_lines.append(f"{'    ' * depth}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+    for d, is_dep in enumerate(dep_mask):
+        if not is_dep:
+            indent = '    ' * len(dep_dims)
+            code_lines.append(f"{indent}std::size_t __l{d} = 0;")
+    code_lines.append(f"{'    ' * len(dep_dims)}_out[{flat}] = ({idx_dtype.ctype})({body_expr});")
+    for depth in reversed(range(len(dep_dims))):
+        code_lines.append(f"{'    ' * depth}}}")
+    tasklet = state.add_tasklet(
+        name=f"materialise_{arr_name}",
+        inputs=set(),
+        outputs={"_out"},
+        code="\n".join(code_lines),
+        language=dtypes.Language.CPP,
+    )
+    out_an = state.add_access(arr_name)
+    out_subset = ", ".join(f"0:{widths[d]}" if dep_mask[d] else "0:ONE" for d in range(len(iter_vars)))
+    state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
+    return arr_name
 
 
 @properties.make_properties
@@ -157,58 +255,74 @@ class WidenAccesses(ppl.Pass):
         return lane_dep
 
     # --- Step 2: widen non-transient boundary memlets -----------------------
+    def _widen_subset_inplace(self, sub, iter_vars: Tuple[str, ...]) -> Optional["subsets.Range"]:
+        """Widen iter-var-dominated single-element dims of a subset.
+
+        Returns a new :class:`subsets.Range` if any dim widened, else ``None``.
+        Centralised so :attr:`Memlet.subset` and :attr:`Memlet.other_subset`
+        share the exact same widening logic (user direction 2026-06-11:
+        WidenAccesses must extend BOTH subset and other_subset).
+        """
+        widths = tuple(self.widths)
+        K = len(iter_vars)
+        if sub is None:
+            return None
+        try:
+            ranges = list(sub.ranges)
+        except Exception:  # noqa: BLE001
+            return None
+        modified = False
+        for d in range(len(ranges)):
+            beg, end, step = ranges[d]
+            try:
+                is_single = bool(dace.symbolic.simplify(end - beg) == 0)
+            except Exception:  # noqa: BLE001
+                is_single = False
+            if not is_single:
+                continue
+            try:
+                beg_syms = dace.symbolic.SymExpr(str(beg)).free_symbols
+            except Exception:  # noqa: BLE001
+                beg_syms = set()
+            dominating_k = None
+            for k in range(K):
+                if dace.symbolic.pystr_to_symbolic(iter_vars[k]) in beg_syms:
+                    dominating_k = k
+                    break
+            if dominating_k is None:
+                continue
+            w = widths[dominating_k]
+            new_end = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1")
+            ranges[d] = (beg, new_end, step)
+            modified = True
+        return subsets.Range(ranges) if modified else None
+
     def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str,
                                      iter_vars: Tuple[str, ...]) -> bool:
         """Widen single-element memlets on edges incident to a non-transient AN.
 
-        SYMMETRIC: identical for read-side and write-side edges. For each
-        edge whose memlet's data is ``name`` and whose subset is
-        single-element on dims dominated by a tile iter-var, widen those
-        dims to ``[beg : beg + W_k - 1]``.
+        SYMMETRIC: identical for read-side and write-side edges and for
+        :attr:`Memlet.subset` / :attr:`Memlet.other_subset`. For each edge
+        whose memlet's data is ``name``, widen any iter-var-dominated single-
+        element dim on BOTH subsets to ``[beg : beg + W_k - 1]``.
         """
-        widths = tuple(self.widths)
-        K = len(iter_vars)
         changed = False
         for inner_state in inner_sdfg.states():
             for edge in inner_state.edges():
                 if edge.data is None or edge.data.data != name:
                     continue
-                if edge.data.subset is None:
-                    continue
-                try:
-                    ranges = list(edge.data.subset.ranges)
-                except Exception:  # noqa: BLE001
-                    continue
-                modified = False
-                for d in range(len(ranges)):
-                    beg, end, step = ranges[d]
-                    try:
-                        is_single = bool(dace.symbolic.simplify(end - beg) == 0)
-                    except Exception:  # noqa: BLE001
-                        is_single = False
-                    if not is_single:
-                        continue
-                    try:
-                        beg_syms = dace.symbolic.SymExpr(str(beg)).free_symbols
-                    except Exception:  # noqa: BLE001
-                        beg_syms = set()
-                    dominating_k = None
-                    for k in range(K):
-                        if dace.symbolic.pystr_to_symbolic(iter_vars[k]) in beg_syms:
-                            dominating_k = k
-                            break
-                    if dominating_k is None:
-                        # Subset begin doesn't reference any iter_var -- CONSTANT
-                        # / Symbol access on this dim. Leave it alone.
-                        continue
-                    w = widths[dominating_k]
-                    new_end = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1")
-                    ranges[d] = (beg, new_end, step)
-                    modified = True
-                if modified:
-                    new_subset = subsets.Range(ranges)
-                    edge.data.subset = new_subset
-                    edge.data.volume = new_subset.num_elements()
+                edge_changed = False
+                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars)
+                if new_sub is not None:
+                    edge.data.subset = new_sub
+                    edge_changed = True
+                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars)
+                if new_other is not None:
+                    edge.data.other_subset = new_other
+                    edge_changed = True
+                if edge_changed:
+                    if edge.data.subset is not None:
+                        edge.data.volume = edge.data.subset.num_elements()
                     changed = True
         return changed
 
@@ -310,6 +424,63 @@ class WidenAccesses(ppl.Pass):
                 return False
         return False
 
+    # --- Step 5: materialise per-lane idx tiles for GATHER dims -------------
+    def _materialise_gather_indices(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
+        """Mint per-lane idx tiles for every GATHER per-dim of every non-transient AN.
+
+        Folds in the prior ``PreparePerLaneIndices`` step per user direction
+        2026-06-11: ``WidenAccesses should generate per lane indices``. The
+        downstream ``InsertTileLoadStore`` wires the materialised tile into
+        the ``_idx_<k>`` connector of ``TileLoad`` / ``TileStore``.
+
+        SYMMETRIC: applies identically to read-side (gather) and write-side
+        (scatter) edges via :func:`an_side_subset`.
+
+        :returns: Number of materialised idx tiles.
+        """
+        K = len(self.widths)
+        widths = tuple(self.widths)
+        if K != 1:
+            # Multi-tile-dim GATHER materialisation deferred -- the legacy
+            # ``PreparePerLaneIndices`` slice handled K=1 only; the multi-dim
+            # case lands in a follow-up.
+            return 0
+        minted = 0
+        iter_var = iter_vars[0]
+        for inner_state in inner_sdfg.states():
+            for an in list(inner_state.nodes()):
+                if not isinstance(an, AccessNode):
+                    continue
+                desc = inner_sdfg.arrays.get(an.data)
+                if desc is None or desc.transient:
+                    continue
+                out_edges = list(inner_state.out_edges(an))
+                if not out_edges:
+                    continue
+                try:
+                    subset = an_side_subset(out_edges[0], an, inner_sdfg)
+                except Exception:  # noqa: BLE001
+                    continue
+                try:
+                    record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not record.per_dim_kind or PerDimKind.GATHER not in record.per_dim_kind:
+                    continue
+                for k, kind in enumerate(record.per_dim_kind):
+                    if kind != PerDimKind.GATHER:
+                        continue
+                    begin_str = str(subset.ranges[k][0])
+                    materialise_per_lane_index_tile(
+                        inner_state,
+                        name_hint=f"_idx_{an.data}_{k}",
+                        gather_expr=begin_str,
+                        tile_iter_vars=iter_var,
+                        tile_widths=widths[0],
+                    )
+                    minted += 1
+        return minted
+
     def _widen_transient(self, inner_sdfg: SDFG, name: str) -> bool:
         """Swap descriptor to ``Array(widths)`` + rewrite touching memlets.
 
@@ -360,4 +531,9 @@ class WidenAccesses(ppl.Pass):
             for name in to_widen:
                 if self._widen_transient(inner_sdfg, name):
                     total += 1
+            # Step 5: materialise per-lane idx tiles for GATHER dims (fold of
+            # legacy PreparePerLaneIndices pass per user direction 2026-06-11
+            # -- one pass widens accesses AND emits the idx tiles ready for
+            # InsertTileLoadStore to wire into _idx_<k> connectors).
+            total += self._materialise_gather_indices(inner_sdfg, iter_vars)
         return total if total else None

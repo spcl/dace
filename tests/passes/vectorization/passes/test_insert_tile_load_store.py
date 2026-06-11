@@ -3,7 +3,7 @@
 
 Validates the staging-first replacement chain end-to-end:
 
-  ``StageGlobalArrayThroughScalars  ->  WidenScalarsToTiles  ->
+  ``StageGlobalArrayThroughScalars  ->  WidenAccesses  ->
    InsertTileLoadStore``
 
 on simple Python kernels. Each test confirms:
@@ -20,7 +20,7 @@ from dace.transformation.passes.vectorization.nest_innermost_map_body import Nes
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
-from dace.transformation.passes.vectorization.widen_scalars_to_tiles import WidenScalarsToTiles
+from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
 
 N = dace.symbol("N")
@@ -33,7 +33,7 @@ def _stage_widen_insert(prog):
     NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs)
     StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
-    WidenScalarsToTiles(widths=(8, )).apply_pass(sdfg, {})
+    WidenAccesses(widths=(8, )).apply_pass(sdfg, {})
     InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = None
     for sd in sdfg.all_sdfgs_recursive():

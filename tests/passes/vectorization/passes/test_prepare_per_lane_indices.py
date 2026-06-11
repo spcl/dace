@@ -9,10 +9,8 @@ import numpy as np
 
 import dace
 from dace.memlet import Memlet
-from dace.transformation.passes.vectorization.prepare_per_lane_indices import (
-    PreparePerLaneIndices,
-    materialise_per_lane_index_tile,
-)
+from dace.transformation.passes.vectorization.widen_accesses import (
+    materialise_per_lane_index_tile, )
 
 
 def test_helper_mints_transient_and_tasklet():
@@ -80,25 +78,26 @@ def test_helper_supports_int32_dtype():
     assert sdfg.arrays[name].dtype == dace.int32
 
 
-def test_pass_returns_none_on_empty_sdfg():
-    """No tile-tagged maps -> no gather memlets -> ``None``."""
+def test_widen_accesses_returns_none_on_empty_sdfg():
+    """No tile-tagged maps -> no widening / gather materialisation -> ``None``.
+
+    Folds the prior ``PreparePerLaneIndices`` Pass-level test into the
+    unified ``WidenAccesses`` per user direction 2026-06-11.
+    """
+    from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
     sdfg = dace.SDFG("empty")
     sdfg.add_state("s")
-    assert PreparePerLaneIndices(widths=(8, )).apply_pass(sdfg, {}) is None
+    assert WidenAccesses(widths=(8, )).apply_pass(sdfg, {}) is None
 
 
-def test_pass_refuses_widths_outside_k_range():
-    """Constructor refuses K outside {1, 2, 3}."""
-    import pytest as _pt
-    with _pt.raises(ValueError, match=r"widths length"):
-        PreparePerLaneIndices(widths=())
-    with _pt.raises(ValueError, match=r"widths length"):
-        PreparePerLaneIndices(widths=(8, 8, 8, 8))
+def test_widen_accesses_materialises_index_tile_for_gather_access():
+    """``a[idx[ii]]`` (1D gather) -> WidenAccesses mints one per-lane index tile.
 
-
-def test_walker_materialises_index_tile_for_gather_access():
-    """``a[idx[ii]]`` (1D gather) -> walker mints one per-lane index tile of shape ``(8,)``."""
+    Folds the prior ``PreparePerLaneIndices`` walker test into the unified
+    ``WidenAccesses`` (per user direction 2026-06-11).
+    """
     from dace.memlet import Memlet as _Memlet
+    from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 
     sdfg = dace.SDFG("walker_gather_fixture")
     sdfg.add_array("A", (32, ), dace.float64, transient=False)
@@ -115,7 +114,6 @@ def test_walker_materialises_index_tile_for_gather_access():
     t_inner = instate.add_access("out_t")
     tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
     # Gather: A[idx[ii]]. Per-tile subset on A is [idx[ii]:idx[ii]+1] -- GATHER on dim 0.
-    # Build via Subscript expression since the nested-bracket form confuses Memlet's parser.
     from dace.subsets import Range as _Range
     from dace.symbolic import pystr_to_symbolic as _to_sym
     instate.add_edge(a_inner, None, tasklet, "_a",
@@ -131,8 +129,7 @@ def test_walker_materialises_index_tile_for_gather_access():
 
     before_int_arrays = sum(1 for d in inner.arrays.values()
                             if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
-    result = PreparePerLaneIndices(widths=(8, )).apply_pass(sdfg, {})
-    assert result == 1
+    WidenAccesses(widths=(8, )).apply_pass(sdfg, {})
     after_int_arrays = sum(1 for d in inner.arrays.values()
                            if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
     assert after_int_arrays == before_int_arrays + 1, "expected one new int64 index transient"
