@@ -39,7 +39,6 @@ Status (incremental landing):
 * Step 4 (follow-up): Pass walker drives the helpers across every
   body NSDFG.
 """
-from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import data, dtypes, properties, subsets
@@ -145,45 +144,12 @@ def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
     return Memlet(data=other_memlet.data, subset=other_memlet.subset)
 
 
-def _topo_sort_access_nodes(state: SDFGState) -> List[AccessNode]:
-    """Topo-sort AccessNodes by intra-state dataflow predecessors.
-
-    Sources (no AccessNode predecessor) come first; each AccessNode is processed
-    only after every AccessNode that writes into it. This is the iteration order
-    the walker's staging requires -- a transient bridge AccessNode (e.g. a Scalar
-    sink of a gather like ``A_const = A[__sym]``) must be classified AFTER its
-    upstream non-transient source ``A`` has been staged, otherwise the bridge's
-    own subset (``[0]``, classified CONSTANT) would absorb the gather edge before
-    the walker sees it.
-
-    Cycles among AccessNodes (not expected in well-formed SDFGs) are tolerated:
-    any AccessNode left out of the topological order after Kahn's algorithm is
-    appended at the end.
-    """
-    ans = [n for n in state.nodes() if isinstance(n, AccessNode)]
-    in_deg = {n: 0 for n in ans}
-    for n in ans:
-        for e in state.in_edges(n):
-            if isinstance(e.src, AccessNode) and e.src in in_deg:
-                in_deg[n] += 1
-    queue = deque(n for n in ans if in_deg[n] == 0)
-    sorted_ans: List[AccessNode] = []
-    seen: set = set()
-    while queue:
-        cur = queue.popleft()
-        if cur in seen:
-            continue
-        sorted_ans.append(cur)
-        seen.add(cur)
-        for e in state.out_edges(cur):
-            if isinstance(e.dst, AccessNode) and e.dst in in_deg:
-                in_deg[e.dst] -= 1
-                if in_deg[e.dst] == 0:
-                    queue.append(e.dst)
-    for n in ans:
-        if n not in seen:
-            sorted_ans.append(n)
-    return sorted_ans
+# Phase A4 (commit chain ending 2026-06-10): the legacy ``_topo_sort_access_nodes``
+# was deleted -- the two-phase staging refactor (commit 2412eea00) plus the
+# classifier-side inference (``infer_edge_endpoints`` +
+# ``compute_per_iter_var_dep_mask``) make the iteration order irrelevant for
+# correctness. Plain ``state.nodes()`` enumeration is used at the read-phase /
+# write-phase callsites.
 
 
 def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "constant_bridge") -> str:
@@ -507,7 +473,7 @@ class StageInsideBody(ppl.Pass):
         AFTER its upstream non-transient source has been staged.
         """
         staged = 0
-        for an in _topo_sort_access_nodes(inner_state):
+        for an in [n for n in inner_state.nodes() if isinstance(n, AccessNode)]:
             desc = inner_sdfg.arrays.get(an.data)
             if desc is None or desc.transient:
                 continue
@@ -586,7 +552,7 @@ class StageInsideBody(ppl.Pass):
         TileStore during the bridge -> output rewire.
         """
         staged = 0
-        for an in _topo_sort_access_nodes(inner_state):
+        for an in [n for n in inner_state.nodes() if isinstance(n, AccessNode)]:
             desc = inner_sdfg.arrays.get(an.data)
             if desc is None or desc.transient:
                 continue
