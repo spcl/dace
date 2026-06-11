@@ -265,7 +265,11 @@ class TileLoad(nodes.LibraryNode):
         desc="Per-dim tile widths, innermost-last.",
     )
     dim_strides = properties.ListProperty(
-        element_type=int,
+        # ``pystr_to_symbolic`` accepts both int and symbolic (e.g. ``ssym``)
+        # values, so ``a[i * ssym]`` AFFINE patterns can preserve the symbolic
+        # stride through serialization. Codegen uses string interpolation on
+        # each element, so a symbolic value inlines correctly as a C++ var.
+        element_type=dace.symbolic.pystr_to_symbolic,
         default=[],
         desc="Per-tile-dim index coefficient; all 1s ⇒ unit step along each tile dim.",
     )

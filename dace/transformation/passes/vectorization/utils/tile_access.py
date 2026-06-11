@@ -669,13 +669,17 @@ def classify_tile_access(subset: Range, iter_vars: Sequence[str], inner_sdfg: Op
                     dim_to_canonical_iter_var.append(None)
                     continue
                 # Affine in one iter-var. Coerce to int when possible
-                # (the emitter wants a concrete stride for the lib node).
+                # (the emitter prefers concrete strides). When the coefficient
+                # is symbolic and tile-independent (the ``tile_dep_coeff``
+                # check above ruled out tile-dep), keep the sympy expression
+                # so the lib node's ListProperty (element_type=pystr_to_symbolic)
+                # serialises it and the codegen inlines it as a C++ variable.
                 try:
-                    int_coeff = int(coeff)
+                    stride_value = int(coeff)
                 except (TypeError, ValueError):
-                    int_coeff = None
+                    stride_value = coeff
                 per_dim_kind.append(PerDimKind.AFFINE)
-                dim_strides.append(int_coeff)
+                dim_strides.append(stride_value)
                 dim_iter_var.append(tvar)
                 gather_index_per_dim.append(None)
                 dim_offset.append(offset)
