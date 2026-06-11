@@ -95,3 +95,53 @@ def test_k1_scatter_matches_reference():
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_SCATTER=n)
     vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_SCATTER=n)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
+
+
+M_K2 = dace.symbol("M_K2")
+N_K2 = dace.symbol("N_K2")
+
+
+@dace.program
+def k2_partial_kdep_gather(A: dace.float64[M_K2, N_K2], idx: dace.int64[M_K2], B: dace.float64[M_K2, N_K2]):
+    for i, j in dace.map[0:M_K2, 0:N_K2]:
+        B[i, j] = A[idx[i], j]
+
+
+@pytest.mark.xfail(reason="Materialiser sees post-Bypass per-lane symbol ``__sym_<>`` instead of the"
+                   " original ``idx[i]`` expression -- direct iter-var refs are gone, so per-dim"
+                   " dep detection falls back to full-dep (8, 8) instead of (8, ONE). Fix needs"
+                   " walker to compute the dep mask BEFORE the per-lane symbol substitution and"
+                   " pass it to the materialiser (or move detection upstream of the bypass-induced"
+                   " indirection). Tracked as Priority 2A (or A2 in the foundation phase plan).")
+def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
+    """K=2 partial-K_dep gather (``A[idx[i], j]``) -- exercises the post-refactor
+    materialiser contract (commit 6c67ff859): the idx tile shape MUST be
+    ``(W_0, ONE)``, NOT ``(W_0, W_1)``, because the gather expression depends
+    only on ``i`` (the row iter-var).
+
+    Currently xfailing because Bypass substitutes ``idx[i]`` with a per-lane
+    symbol before the materialiser runs. Documents the next-slice blocker.
+    """
+    from dace.symbolic import ONE
+    m, n = 8, 8
+    vec_sdfg = k2_partial_kdep_gather.to_sdfg(simplify=True)
+    vec_sdfg.name = "k2_partial_kdep_shape_audit"
+    try:
+        VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR").apply_pass(vec_sdfg, {})
+    except Exception as exc:  # noqa: BLE001 -- K=2 walker may still refuse some shapes.
+        pytest.xfail(f"K=2 walker path refused: {exc}")
+    # Inspect every nested SDFG for ``_idx_*`` tiles produced by the gather
+    # materialiser. Each must have shape ``(8, ONE)`` -- the row dim is
+    # lane-dep, the col dim is broadcast.
+    import sympy
+    idx_descs = []
+    for sd in vec_sdfg.all_sdfgs_recursive():
+        for name, desc in sd.arrays.items():
+            if name.startswith("_idx_") and isinstance(desc, dace.data.Array):
+                idx_descs.append((name, tuple(desc.shape)))
+    assert idx_descs, "expected at least one ``_idx_*`` tile from the K=2 gather materialiser"
+    for name, shape in idx_descs:
+        assert len(shape) == 2, f"{name!r}: expected K=2 shape, got {shape}"
+        assert int(shape[0]) == 8, f"{name!r}: expected W_0=8 on lane-dep dim, got {shape}"
+        assert isinstance(shape[1], sympy.Basic) and ONE in shape[1].free_symbols, \
+            f"{name!r}: expected ONE on broadcast dim 1, got {shape}"
