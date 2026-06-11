@@ -312,7 +312,9 @@ def test_walker_stages_linear_access_via_tile_branch():
     assert result == 1
     after_arrays = sum(1 for d in inner.arrays.values()
                        if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
-    assert after_arrays == before_arrays + 1, "expected one new (8,)-shape tile bridge transient"
+    # Phase A6: +2 (TileLoad bridge + resized passthrough downstream).
+    assert after_arrays == before_arrays + 2, \
+        "expected two (8,)-shape tile transients (TileLoad bridge + A6-resized passthrough)"
     # The new TileLoad is wired between B and the bridge.
     body_state = next(s for s in inner.states())
     tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
@@ -367,7 +369,14 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
     after_float_tiles = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
                             and d.dtype == dace.float64 and _shape_eq_ignoring_one(d.shape, (8, )))
     assert after_int_arrays == before_int_arrays + 1, "expected one int64 index tile materialised"
-    assert after_float_tiles == before_float_tiles + 1, "expected one float64 tile bridge"
+    # Phase A6 (user direction 2026-06-10): after the read-staging chain resize,
+    # every transient that was originally Scalar / (1,) and downstream of a
+    # tile-input tasklet is now tile-shape (W,). For the gather fixture this
+    # adds one extra float64 tile (the resized post-Bypass scalar bridge),
+    # so the post-stage count is +2 (TileLoad bridge + resized passthrough)
+    # not +1.
+    assert after_float_tiles == before_float_tiles + 2, \
+        "expected two float64 tile-shape transients (TileLoad bridge + A6-resized passthrough)"
     body_state = next(s for s in inner.states())
     tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
     assert len(tile_loads) == 1
@@ -426,7 +435,9 @@ def test_walker_stages_K2_multi_tile_dim_gather():
     after_float_tiles = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
                             and d.dtype == dace.float64 and _shape_eq_ignoring_one(d.shape, (8, 16)))
     assert after_int_arrays == before_int_arrays + 1, "expected one (8, 16)-shape int64 index tile"
-    assert after_float_tiles == before_float_tiles + 1, "expected one (8, 16) float64 tile bridge"
+    # Phase A6: +2 (TileLoad bridge + resized passthrough).
+    assert after_float_tiles == before_float_tiles + 2, \
+        "expected two (8, 16) float64 tile-shape transients (TileLoad bridge + A6-resized passthrough)"
     body_state = next(s for s in inner.states())
     tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
     assert len(tile_loads) == 1

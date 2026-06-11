@@ -461,6 +461,13 @@ class StageInsideBody(ppl.Pass):
         mask_name = self._find_inner_mask_name(inner_sdfg)
         for inner_state in inner_sdfg.states():
             staged += self._stage_reads_in_state(inner_state, inner_sdfg, iter_vars, mask_name)
+            # Phase A6 (user direction 2026-06-10): between phase 1 (reads) and phase 2 (writes),
+            # resize every Scalar / (1,) Array transient AN that's downstream of a
+            # tile-input tasklet to tile-shape (W,). Recursive BFS so multi-hop
+            # scalar chains all get resized. Required so that
+            # ConvertTaskletsToTileOps emits TileBinop with kind=Tile output on
+            # every link of the chain, not just the first link.
+            self._resize_scalar_chain_downstream_of_tiles(inner_state)
             staged += self._stage_writes_in_state(inner_state, inner_sdfg, iter_vars, mask_name)
         return staged
 
@@ -799,6 +806,84 @@ class StageInsideBody(ppl.Pass):
         inner_state.add_edge(bridge_an, None, store, "_src", Memlet(f"{bridge_an.data}[{src_subset_str}]"))
         inner_state.add_edge(store, "_dst", consumer_an, None, Memlet(data=consumer_an.data, subset=dst_subset_str))
         return True
+
+    def _resize_scalar_chain_downstream_of_tiles(self, inner_state: SDFGState) -> int:
+        """Phase A6 (user direction 2026-06-10): for the kernel pattern
+        ``dst[idx[i]] = src[i] + 1.0`` where ``i`` is the vector param, the
+        WHOLE chain should be tile-shape -- no scalar transients between the
+        tile source (TileLoad output) and the tile sink (TileStore input).
+
+        After phase 1's A5 elision wires tile bridges directly into tasklets,
+        any Scalar / (1,) Array transient AN that's downstream of a tile-input
+        tasklet should be resized to tile-shape ``(W,)``. Recursive: after
+        resizing, any tasklets downstream of the resized AN also have tile
+        inputs, so THEIR scalar outputs need resizing too.
+
+        Follows the analyze-then-apply pattern: BFS to collect all ANs to
+        resize + all memlets to update, then apply in a single batch.
+
+        Returns count of resized ANs.
+        """
+        from dace.sdfg.nodes import Tasklet
+        sdfg = inner_state.sdfg
+        widths = tuple(self.widths)
+        target_shape = (widths[0], ) if len(widths) == 1 else tuple(widths)
+        target_subset = ", ".join(f"0:{w}" for w in widths)
+
+        def _has_tile_shaped_input(node) -> bool:
+            for e in inner_state.in_edges(node):
+                if e.data is None:
+                    continue
+                src_desc = sdfg.arrays.get(e.data.data)
+                if not isinstance(src_desc, data.Array):
+                    continue
+                src_shape = tuple(src_desc.shape)
+                for s, w in zip(src_shape, widths):
+                    try:
+                        if int(s) == w:
+                            return True
+                    except (TypeError, ValueError):
+                        continue
+            return False
+
+        # ANALYZE: BFS from tile-input tasklets, collect ANs to resize.
+        to_resize: List[str] = []
+        memlets_to_update: List = []
+        queue: List = [n for n in inner_state.nodes() if isinstance(n, Tasklet) and _has_tile_shaped_input(n)]
+        seen_tasklets = set(id(t) for t in queue)
+        while queue:
+            tasklet = queue.pop(0)
+            for e in inner_state.out_edges(tasklet):
+                if not isinstance(e.dst, AccessNode):
+                    continue
+                desc = sdfg.arrays.get(e.dst.data)
+                if desc is None or not desc.transient:
+                    continue
+                if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1, ))):
+                    continue
+                if e.dst.data not in to_resize:
+                    to_resize.append(e.dst.data)
+                memlets_to_update.append(e)
+                # Walk downstream of this AN: capture all out-edges, queue any
+                # further tasklets so we resize THEIR scalar outputs too.
+                for downstream in inner_state.out_edges(e.dst):
+                    memlets_to_update.append(downstream)
+                    if isinstance(downstream.dst, Tasklet) and id(downstream.dst) not in seen_tasklets:
+                        seen_tasklets.add(id(downstream.dst))
+                        queue.append(downstream.dst)
+        if not to_resize:
+            return 0
+        # APPLY: batched mutation.
+        for scalar_data in to_resize:
+            old_desc = sdfg.arrays[scalar_data]
+            new_desc = data.Array(dtype=old_desc.dtype,
+                                  shape=target_shape,
+                                  transient=True,
+                                  storage=dtypes.StorageType.Register)
+            sdfg.arrays[scalar_data] = new_desc
+        for edge in memlets_to_update:
+            edge.data.subset = subsets.Range.from_string(target_subset)
+        return len(to_resize)
 
     def _maybe_elide_scalar_passthrough(self, inner_state: SDFGState, bridge_an: AccessNode, scalar_an: AccessNode,
                                         old_edge) -> bool:
