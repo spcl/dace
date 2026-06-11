@@ -460,13 +460,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
             # Staging-first pipeline:
-            # 1. InferBodyTransientShapes: legacy widening (pre-stage propagation).
-            # 2. WidenScalarsToTiles: new lane-dep gated widening, runs AFTER
-            #    InferBodyTransientShapes as a refinement. Defensive on the
-            #    post-staging graph: any Scalar / (1,) Array that InferBody missed
-            #    due to AN->AN propagation gaps gets widened here.
-            # 3. GenerateTileIterationMask + PreparePerLaneIndices: emit mask + idx tiles.
-            # 4. InsertTileLoadStore: boundary lib-node insertion + dispatch.
+            # 1. InferBodyTransientShapes: widens BOTH transient descriptors AND
+            #    boundary memlets (``A[ii]`` -> ``A[ii:ii+W]``). The memlet
+            #    widening part is essential and not yet provided by WidenScalarsToTiles.
+            # 2. WidenScalarsToTiles: lane-dep gated descriptor widening.
+            #    Complements InferBody by handling Scalar / (1,) Array cases
+            #    InferBody misses due to AN -> AN propagation gaps.
             InferBodyTransientShapes(widths=widths_t),
             WidenScalarsToTiles(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
