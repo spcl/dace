@@ -52,6 +52,12 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
 from dace.transformation.passes.vectorization.stage_inside_body import StageInsideBody
+# New staging-first replacement passes (LANDED 2026-06-10 but NOT YET WIRED).
+# To be enabled after InsertTileLoadStore gains GATHER dispatch + Scalar bridge
+# handling. Until then, the legacy ``InferBodyTransientShapes + StageInsideBody``
+# pair below stays in the pipeline.
+from dace.transformation.passes.vectorization.widen_scalars_to_tiles import WidenScalarsToTiles  # noqa: F401
+from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore  # noqa: F401
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
     RemoveFPTypeCasts,

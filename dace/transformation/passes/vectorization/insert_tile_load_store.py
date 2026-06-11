@@ -127,6 +127,33 @@ class InsertTileLoadStore(ppl.Pass):
         )
         return name
 
+    def _find_inner_mask_name(self, inner_sdfg: SDFG) -> Optional[str]:
+        """Find the body-NSDFG's iteration mask array name, or None if no mask is in scope."""
+        from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
+        base = TileNameScheme.ITER_MASK
+        if base in inner_sdfg.arrays:
+            return base
+        for name in inner_sdfg.arrays:
+            if name.startswith(f"{base}_"):
+                return name
+        return None
+
+    def _find_mask_producer_an(self, state: SDFGState, mask_name: str) -> Optional[AccessNode]:
+        """Find the AccessNode that TileMaskGen writes to (the shared mask source).
+
+        Every downstream consumer's ``_mask`` edge MUST read from this SAME
+        AccessNode so the scheduler orders TileMaskGen before the consumers.
+        """
+        from dace.libraries.tileops import TileMaskGen
+        for n in state.nodes():
+            if not isinstance(n, TileMaskGen):
+                continue
+            for out_edge in state.out_edges(n):
+                if (out_edge.src_conn == "_o" and isinstance(out_edge.dst, AccessNode)
+                        and out_edge.dst.data == mask_name):
+                    return out_edge.dst
+        return None
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Insert TileLoad/TileStore on every lane-dep non-transient boundary edge."""
         K = len(self.widths)
@@ -136,9 +163,11 @@ class InsertTileLoadStore(ppl.Pass):
         for _outer_state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
             inner_sdfg = nsdfg_node.sdfg
             iter_vars = tuple(map_entry.map.params[-K:])
+            mask_name = self._find_inner_mask_name(inner_sdfg)
             for state in list(inner_sdfg.states()):
+                mask_an = self._find_mask_producer_an(state, mask_name) if mask_name else None
+                has_mask = mask_an is not None
                 # ANALYZE: collect edges to rewrite (read side + write side).
-                # Snapshot the AN list first; we'll add nodes during APPLY.
                 ans = [n for n in list(state.nodes()) if isinstance(n, AccessNode)]
                 read_actions: List[Tuple[AccessNode, Any, Tuple]] = []
                 write_actions: List[Tuple[AccessNode, Any, Tuple]] = []
@@ -146,20 +175,15 @@ class InsertTileLoadStore(ppl.Pass):
                     desc = inner_sdfg.arrays.get(an.data)
                     if desc is None or desc.transient:
                         continue
-                    # Read side: out-edges to Tasklets/lib nodes.
                     for edge in list(state.out_edges(an)):
                         if isinstance(edge.dst, (TileLoad, TileStore)):
-                            continue  # already wrapped
+                            continue
                         is_lane_dep, kinds = self._is_lane_dep_edge(edge, an, inner_sdfg, iter_vars)
                         if not is_lane_dep:
-                            continue  # CONSTANT -- direct edge stays
-                        if kinds and PerDimKind.GATHER in kinds:
-                            # GATHER deferred: PreparePerLaneIndices materialises
-                            # _idx_<d>; this pass would wire gather_dims. Skip
-                            # for v1.
                             continue
+                        if kinds and PerDimKind.GATHER in kinds:
+                            continue  # GATHER deferred to follow-up
                         read_actions.append((an, edge, kinds))
-                    # Write side: in-edges from Tasklets/lib nodes.
                     for edge in list(state.in_edges(an)):
                         if isinstance(edge.src, (TileLoad, TileStore)):
                             continue
@@ -170,19 +194,19 @@ class InsertTileLoadStore(ppl.Pass):
                             continue
                         write_actions.append((an, edge, kinds))
                 # APPLY: batched mutation.
+                mask_subset = ", ".join(f"0:{w}" for w in widths)
                 for an, old_edge, _kinds in read_actions:
                     desc = inner_sdfg.arrays[an.data]
                     bridge_name = self._allocate_tile_bridge(inner_sdfg, an.data, desc.dtype)
                     bridge_an = state.add_access(bridge_name)
-                    load_node = TileLoad(name=f"load_{an.data}", widths=widths, has_mask=False)
+                    load_node = TileLoad(name=f"load_{an.data}", widths=widths, has_mask=has_mask)
                     state.add_node(load_node)
-                    # AN-side memlet (carries the source-array subset, e.g. A[i:i+W]).
                     an_subset = an_side_subset(old_edge, an, inner_sdfg)
                     state.add_edge(an, None, load_node, "_src", Memlet(data=an.data, subset=an_subset))
-                    # Tile-side memlet on TileLoad._dst.
                     state.add_edge(load_node, "_dst", bridge_an, None, Memlet(data=bridge_name, subset=tile_subset))
-                    # Rewire the consumer: was AN -> consumer, now bridge -> consumer
-                    # with tile subset.
+                    if has_mask:
+                        state.add_edge(mask_an, None, load_node, "_mask",
+                                       Memlet(data=mask_an.data, subset=mask_subset))
                     state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn,
                                    Memlet(data=bridge_name, subset=tile_subset))
                     state.remove_edge(old_edge)
@@ -191,15 +215,14 @@ class InsertTileLoadStore(ppl.Pass):
                     desc = inner_sdfg.arrays[an.data]
                     bridge_name = self._allocate_tile_bridge(inner_sdfg, an.data, desc.dtype)
                     bridge_an = state.add_access(bridge_name)
-                    store_node = TileStore(name=f"store_{an.data}", widths=widths, has_mask=False)
+                    store_node = TileStore(name=f"store_{an.data}", widths=widths, has_mask=has_mask)
                     state.add_node(store_node)
-                    # Rewire the producer: was producer -> AN, now producer -> bridge
-                    # with tile subset.
                     state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, None,
                                    Memlet(data=bridge_name, subset=tile_subset))
-                    # Tile-side memlet on TileStore._src.
                     state.add_edge(bridge_an, None, store_node, "_src", Memlet(data=bridge_name, subset=tile_subset))
-                    # AN-side memlet on TileStore._dst.
+                    if has_mask:
+                        state.add_edge(mask_an, None, store_node, "_mask",
+                                       Memlet(data=mask_an.data, subset=mask_subset))
                     an_subset = an_side_subset(old_edge, an, inner_sdfg)
                     state.add_edge(store_node, "_dst", an, None, Memlet(data=an.data, subset=an_subset))
                     state.remove_edge(old_edge)
