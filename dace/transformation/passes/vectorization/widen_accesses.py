@@ -289,15 +289,25 @@ class WidenAccesses(ppl.Pass):
     # --- Step 4: widen lane-dep transient descriptors -----------------------
     @staticmethod
     def _is_widenable(desc) -> bool:
-        """``Scalar`` or ``(1,)``-shape ``Array`` transient -> widenable to tile.
+        """``Scalar`` or any length-1 ``Array`` transient -> widenable to tile.
 
-        User direction 2026-06-10: ``(1,)`` arrays are common Python frontend
-        artifacts that semantically behave as scalars; treat them identically.
+        Per user direction 2026-06-10: ``Lane dep length 1 arrays should be
+        treated same way as lane-dep scalars``. Length-1 includes the literal
+        ``(1,)`` shape AND any multi-dim shape that simplifies to all-1
+        (e.g. ``(1, 1)``, ``(k,)`` where ``k`` is statically 1, etc.). Common
+        Python frontend artifacts that semantically behave as scalars get
+        the identical treatment as ``dd.Scalar``.
         """
         if isinstance(desc, dd.Scalar):
             return True
-        if isinstance(desc, dd.Array) and tuple(desc.shape) == (1, ):
-            return True
+        if isinstance(desc, dd.Array):
+            shape = tuple(desc.shape)
+            if not shape:
+                return False
+            try:
+                return all(bool(dace.symbolic.simplify(s - 1) == 0) for s in shape)
+            except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
+                return False
         return False
 
     def _widen_transient(self, inner_sdfg: SDFG, name: str) -> bool:
