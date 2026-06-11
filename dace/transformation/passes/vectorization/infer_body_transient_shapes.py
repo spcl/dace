@@ -161,6 +161,14 @@ class InferBodyTransientShapes(ppl.Pass):
         # Iterate to fixed point. Each iteration walks every tasklet; if any input is
         # tile-shape (non-transient with tile classification OR transient already marked),
         # the output's transient is tile.
+        #
+        # NOTE: A direct AN -> AN propagation rule was tried (post-Bypass chains can
+        # have ``src -> __tmp_slice`` with no Tasklet between them) but it CONFLICTS
+        # with the staging-time elision (``_maybe_elide_scalar_passthrough`` in
+        # ``StageInsideBody``). Widening here leaves a non-Scalar AN -> AN edge that
+        # the design 3.8.3 (2) validator rejects. The staging elision (A5) handles
+        # this case more cleanly by removing the redundant bridge entirely; this
+        # propagator deliberately leaves Bypass-collapsed AN->AN chains alone.
         changed = True
         max_iters = 32
         while changed and max_iters > 0:
