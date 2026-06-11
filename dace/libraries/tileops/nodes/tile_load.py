@@ -136,9 +136,37 @@ class ExpandTileLoadPure(ExpandTransformation):
         else:
             body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
+        # Per user direction 2026-06-10: ``For SYM we can add a runtime check
+        # and check for error ensuring W % SYM``. Emit a runtime ``W % SYM == 0``
+        # assertion for each tile dim whose ``replicate_factor`` is symbolic.
+        # The codegen formula ``__l / SYM`` is correct only when ``SYM`` divides
+        # the tile width; statically-known factors are validated in
+        # ``TileLoad.__init__``. The runtime check is added once (per
+        # expansion), prepended to the per-lane loops so a mis-sized divisor
+        # fails loudly with a descriptive abort message.
+        if node.replicate_factor_per_dim:
+            runtime_checks = []
+            for d, k in enumerate(node.replicate_factor_per_dim):
+                try:
+                    int(k)
+                    continue  # static -- already validated at construction
+                except (TypeError, ValueError):
+                    pass
+                if k is None:
+                    continue
+                w_d = int(widths[d])
+                runtime_checks.append(
+                    f'if (({w_d}) % ({k}) != 0) {{ '
+                    f'fprintf(stderr, "TileLoad runtime check failed: width[{d}]=%d not divisible by '
+                    f'replicate_factor=%lld (formula __l/factor requires W %% factor == 0)\\n", '
+                    f'{w_d}, (long long)({k})); '
+                    f'std::abort(); }}'
+                )
+            if runtime_checks:
+                code = "\n".join(runtime_checks) + "\n" + code
         inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
         inputs |= {f"_idx_{d}" for d in node.gather_dims}
-        return nodes.Tasklet(
+        tasklet = nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
                     for c in inputs},
@@ -146,6 +174,7 @@ class ExpandTileLoadPure(ExpandTransformation):
             code=code,
             language=dace.dtypes.Language.CPP,
         )
+        return tasklet
 
 
 @library.expansion
@@ -399,28 +428,18 @@ class TileLoad(nodes.LibraryNode):
                 raise ValueError(f"TileLoad: replicate_factor_per_dim length "
                                  f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
             for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
-                # Per user direction 2026-06-10: ``We can ask to ensure W % 2
-                # == 0, if we can't provide it then we reject``. The codegen
+                # Per user direction 2026-06-10: ``For SYM we can add a runtime
+                # check and check for error ensuring W % SYM``. The codegen
                 # formula ``__l / k`` is correct ONLY when ``W % k == 0``.
                 # * Static factor: validate ``W % k == 0`` here; refuse
                 #   construction on violation.
                 # * Symbolic factor (e.g. ``DV`` in ``c[i // DV]``): cannot
-                #   prove ``W % DV == 0`` at compile time -- REFUSE the
-                #   construction with a clear error pointing the user at
-                #   the alternatives (substitute the symbol, use a literal,
-                #   or rewrite the kernel without ``// symbol``).
+                #   statically verify; defer to a runtime check emitted in
+                #   the pure expansion (see ExpandTileLoadPure).
                 try:
                     k_int = int(k)
                 except (TypeError, ValueError):
-                    raise NotImplementedError(
-                        f"TileLoad: replicate_factor_per_dim[{d}] = {k!r} is symbolic; "
-                        f"cannot statically verify ``widths[{d}] % {k!r} == 0`` "
-                        f"which the codegen formula ``__l / {k!r}`` requires for "
-                        f"correctness. Refusing per user direction 2026-06-10. Workarounds: "
-                        f"substitute the divisor symbol with a concrete int before vectorising, "
-                        f"or rewrite the kernel without the ``// symbol`` pattern (e.g. via "
-                        f"gather-encoded access)."
-                    )
+                    continue  # symbolic -- runtime check handles it
                 if k_int < 1:
                     raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must be >= 1")
                 if k_int > 1 and w % k_int != 0:
