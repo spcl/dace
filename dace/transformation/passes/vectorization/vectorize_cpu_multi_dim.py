@@ -49,6 +49,8 @@ from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
     LowerInterstateConditionalAssignmentsToTasklets, )
+from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
+    StageGlobalArrayThroughScalars, )
 from dace.transformation.passes.vectorization.stage_inside_body import StageInsideBody
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
@@ -416,6 +418,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # subset (design section 2.4). MUST run between Nest and the walker; see the class
         # docstring for the rationale.
         passes.append(_RunExpandNestedSDFGInputs())
+        # Stage every ``Tasklet -> non-transient -> Tasklet`` bridge through
+        # per-subset transient scalars (user direction 2026-06-10). Width-
+        # independent normalization: one scalar per distinct subset, RMW
+        # subsets fold onto one scalar, sibling-write-and-sibling-read pairs
+        # join via W x R dep edges. After this pass, no global access node
+        # mediates intermediate computation -- every non-transient is a
+        # boundary source or sink. Downstream tile widening + lib-node
+        # insertion see a clean, uniform graph.
+        passes.append(StageGlobalArrayThroughScalars())
         # Conceptual order (per user direction 2026-06-09):
         #   MarkTileDims                (tag the outer map with TileDimSpec)
         #   StrideMapByTileWidths       (map step 1 -> W; iter_var now means "tile start")
