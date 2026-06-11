@@ -800,6 +800,65 @@ class StageInsideBody(ppl.Pass):
         inner_state.add_edge(store, "_dst", consumer_an, None, Memlet(data=consumer_an.data, subset=dst_subset_str))
         return True
 
+    def _maybe_elide_scalar_passthrough(self, inner_state: SDFGState, bridge_an: AccessNode, scalar_an: AccessNode,
+                                        old_edge) -> bool:
+        """Phase A5 (user direction 2026-06-10): elide pass-through scalar bridges.
+
+        When the read-side rewire would create
+        ``tile_bridge(W,) -> scalar_bridge(1,) -> tile_libnode_or_tasklet``,
+        the post-Bypass scalar bridge is a vestige -- the tile bridge already
+        holds W elements per outer iter. Wire the tile bridge directly to the
+        scalar bridge's downstream consumers with a full-tile memlet so that
+        :class:`ConvertTaskletsToTileOps` sees the tile source and emits the
+        downstream lib node with ``kind=Tile`` (not ``kind=Scalar``).
+
+        This avoids the
+        ``InvalidSDFGEdgeError: Dimensionality mismatch (src[0:W] -> [0])``
+        validator firing on the bridge->scalar edge.
+
+        Takes full ownership of cleanup: removes ``old_edge``, removes
+        scalar_an's downstream edges, removes ``scalar_an`` itself, and
+        drops the array descriptor when unused. Caller must NOT touch
+        ``old_edge`` or ``scalar_an`` after this returns ``True``.
+
+        Returns ``True`` when the elision was applied; ``False`` otherwise.
+        """
+        sdfg = inner_state.sdfg
+        desc = sdfg.arrays.get(scalar_an.data)
+        if desc is None or not desc.transient:
+            return False
+        if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1, ))):
+            return False
+        # ANALYZE: collect edges to remove + edges to add. No mutations during
+        # this phase (per the staged-batch invariant -- see feedback_atomic_edit_pattern).
+        in_edges_for_scalar = list(inner_state.in_edges(scalar_an))
+        if len(in_edges_for_scalar) != 1 or in_edges_for_scalar[0] is not old_edge:
+            return False
+        downstream = list(inner_state.out_edges(scalar_an))
+        if not downstream:
+            return False
+        widths = tuple(self.widths)
+        tile_subset = ", ".join(f"0:{w}" for w in widths)
+        edges_to_remove = list(downstream) + [old_edge]
+        edges_to_add = [(bridge_an, None, dn.dst, dn.dst_conn, Memlet(data=bridge_an.data, subset=tile_subset))
+                        for dn in downstream]
+        # APPLY: batched mutation.
+        for e in edges_to_remove:
+            inner_state.remove_edge(e)
+        for src, src_conn, dst, dst_conn, memlet in edges_to_add:
+            inner_state.add_edge(src, src_conn, dst, dst_conn, memlet)
+        inner_state.remove_node(scalar_an)
+        # Drop the array descriptor when no other AN in any state references it.
+        scalar_data = scalar_an.data
+        any_remaining = any(
+            isinstance(n, AccessNode) and n.data == scalar_data for st in sdfg.states() for n in st.nodes())
+        if not any_remaining:
+            try:
+                sdfg.remove_data(scalar_data, validate=False)
+            except Exception:  # noqa: BLE001 -- ignore when descriptor lookup fails
+                pass
+        return True
+
     def _rewire_consumers_to_bridge(self,
                                     inner_state: SDFGState,
                                     original_an: AccessNode,
@@ -824,6 +883,15 @@ class StageInsideBody(ppl.Pass):
             if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
+            # Phase A5: elide pass-through scalar bridges. When the consumer is
+            # a transient Scalar / (1,) Array AN that just funnels the value to
+            # downstream lib nodes / tasklets, skip it -- wire the tile bridge
+            # directly to its consumers with a full-tile memlet. The helper
+            # owns full cleanup (removes ``old_edge``, the scalar AN, and the
+            # descriptor); caller must NOT touch them when this returns True.
+            if (isinstance(old_edge.dst, AccessNode)
+                    and self._maybe_elide_scalar_passthrough(inner_state, bridge_an, old_edge.dst, old_edge)):
+                continue
             # Phase A1 (user direction 2026-06-10): non-Scalar consumer Arrays
             # MUST flow through a TileStore so the lowering goes through the
             # tile-ops intrinsic, NOT via DaCe's CopyND auto-emission. The
