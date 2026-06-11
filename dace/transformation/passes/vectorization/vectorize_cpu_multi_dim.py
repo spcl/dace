@@ -459,16 +459,16 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            # Staging-first pipeline (user direction 2026-06-10, "remove InsertTileLoadStore"):
-            # 1. InferBodyTransientShapes: kept temporarily -- the legacy widening
-            #    that InsertTileLoadStore (called from InsertTileLoadStore) relies on.
-            #    Will be replaced by WidenScalarsToTiles once the latter is
-            #    compatible with the staging walker.
-            # 2. GenerateTileIterationMask + PreparePerLaneIndices: emit mask + idx tiles.
-            # 3. InsertTileLoadStore: boundary lib-node insertion. Currently delegates to
-            #    InsertTileLoadStore's dispatch; cleanup target is to inline that dispatch and
-            #    delete InsertTileLoadStore.
+            # Staging-first pipeline:
+            # 1. InferBodyTransientShapes: legacy widening (pre-stage propagation).
+            # 2. WidenScalarsToTiles: new lane-dep gated widening, runs AFTER
+            #    InferBodyTransientShapes as a refinement. Defensive on the
+            #    post-staging graph: any Scalar / (1,) Array that InferBody missed
+            #    due to AN->AN propagation gaps gets widened here.
+            # 3. GenerateTileIterationMask + PreparePerLaneIndices: emit mask + idx tiles.
+            # 4. InsertTileLoadStore: boundary lib-node insertion + dispatch.
             InferBodyTransientShapes(widths=widths_t),
+            WidenScalarsToTiles(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             PreparePerLaneIndices(widths=widths_t),
             InsertTileLoadStore(widths=widths_t),
