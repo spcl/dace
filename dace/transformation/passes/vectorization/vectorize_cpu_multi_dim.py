@@ -462,21 +462,19 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            # PROACTIVE forward-analysis widening pre-pass (per user direction 2026-06-09;
-            # design section 6.2). Runs AFTER StrideMapByTileWidths (iter_var means "tile
-            # start") and BEFORE GenerateTileIterationMask + walker + converter. Widens:
-            #   * Non-transient AN edge memlets: ``A[ii]`` -> ``A[ii:ii+W]`` for non-CONSTANT
-            #     classifications. CONSTANT / Scalar / Symbol stay as-is.
-            #   * Intermediate transient descriptors: length-1 -> ``(widths,)`` when
-            #     producer chain reaches a tile source; Scalar / length-1 otherwise.
+            # Staging-first pipeline (user direction 2026-06-10, "remove StageInsideBody"):
+            # 1. InferBodyTransientShapes: kept temporarily -- the legacy widening
+            #    that StageInsideBody (called from InsertTileLoadStore) relies on.
+            #    Will be replaced by WidenScalarsToTiles once the latter is
+            #    compatible with the staging walker.
+            # 2. GenerateTileIterationMask + PreparePerLaneIndices: emit mask + idx tiles.
+            # 3. InsertTileLoadStore: boundary lib-node insertion. Currently delegates to
+            #    StageInsideBody's dispatch; cleanup target is to inline that dispatch and
+            #    delete StageInsideBody.
             InferBodyTransientShapes(widths=widths_t),
-            # Mask reflects the FINAL tile shape; emit after stride + widening so the body
-            # is in canonical tile form.
             GenerateTileIterationMask(widths=widths_t),
             PreparePerLaneIndices(widths=widths_t),
-            # Walker sees already-widened memlets + the mask in scope; it can wire
-            # has_mask + _mask onto TileLoad / TileStore lib nodes.
-            StageInsideBody(widths=widths_t),
+            InsertTileLoadStore(widths=widths_t),
             # Lift lane-dep gather placeholders into per-lane symbol fan-outs BEFORE
             # the converter runs -- the materialiser's for-loop populate body
             # confuses ``ConvertTaskletsToTileOps`` into treating it as a scalar

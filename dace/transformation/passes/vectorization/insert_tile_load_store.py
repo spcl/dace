@@ -34,9 +34,13 @@ from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.prepare_per_lane_indices import materialise_per_lane_index_tile
+from dace.transformation.passes.vectorization.stage_inside_body import (
+    StageInsideBody, stage_constant_access, stage_tile_load, stage_tile_store)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
-from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+from dace.transformation.passes.vectorization.utils.tile_access import (
+    PerDimKind, classify_tile_access, compute_per_iter_var_dep_mask)
 
 
 @properties.make_properties
@@ -155,76 +159,19 @@ class InsertTileLoadStore(ppl.Pass):
         return None
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Insert TileLoad/TileStore on every lane-dep non-transient boundary edge."""
-        K = len(self.widths)
-        widths = tuple(self.widths)
-        tile_subset = ", ".join(f"0:{w}" for w in widths)
-        inserted = 0
-        for _outer_state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
-            inner_sdfg = nsdfg_node.sdfg
-            iter_vars = tuple(map_entry.map.params[-K:])
-            mask_name = self._find_inner_mask_name(inner_sdfg)
-            for state in list(inner_sdfg.states()):
-                mask_an = self._find_mask_producer_an(state, mask_name) if mask_name else None
-                has_mask = mask_an is not None
-                # ANALYZE: collect edges to rewrite (read side + write side).
-                ans = [n for n in list(state.nodes()) if isinstance(n, AccessNode)]
-                read_actions: List[Tuple[AccessNode, Any, Tuple]] = []
-                write_actions: List[Tuple[AccessNode, Any, Tuple]] = []
-                for an in ans:
-                    desc = inner_sdfg.arrays.get(an.data)
-                    if desc is None or desc.transient:
-                        continue
-                    for edge in list(state.out_edges(an)):
-                        if isinstance(edge.dst, (TileLoad, TileStore)):
-                            continue
-                        is_lane_dep, kinds = self._is_lane_dep_edge(edge, an, inner_sdfg, iter_vars)
-                        if not is_lane_dep:
-                            continue
-                        if kinds and PerDimKind.GATHER in kinds:
-                            continue  # GATHER deferred to follow-up
-                        read_actions.append((an, edge, kinds))
-                    for edge in list(state.in_edges(an)):
-                        if isinstance(edge.src, (TileLoad, TileStore)):
-                            continue
-                        is_lane_dep, kinds = self._is_lane_dep_edge(edge, an, inner_sdfg, iter_vars)
-                        if not is_lane_dep:
-                            continue
-                        if kinds and PerDimKind.GATHER in kinds:
-                            continue
-                        write_actions.append((an, edge, kinds))
-                # APPLY: batched mutation.
-                mask_subset = ", ".join(f"0:{w}" for w in widths)
-                for an, old_edge, _kinds in read_actions:
-                    desc = inner_sdfg.arrays[an.data]
-                    bridge_name = self._allocate_tile_bridge(inner_sdfg, an.data, desc.dtype)
-                    bridge_an = state.add_access(bridge_name)
-                    load_node = TileLoad(name=f"load_{an.data}", widths=widths, has_mask=has_mask)
-                    state.add_node(load_node)
-                    an_subset = an_side_subset(old_edge, an, inner_sdfg)
-                    state.add_edge(an, None, load_node, "_src", Memlet(data=an.data, subset=an_subset))
-                    state.add_edge(load_node, "_dst", bridge_an, None, Memlet(data=bridge_name, subset=tile_subset))
-                    if has_mask:
-                        state.add_edge(mask_an, None, load_node, "_mask",
-                                       Memlet(data=mask_an.data, subset=mask_subset))
-                    state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn,
-                                   Memlet(data=bridge_name, subset=tile_subset))
-                    state.remove_edge(old_edge)
-                    inserted += 1
-                for an, old_edge, _kinds in write_actions:
-                    desc = inner_sdfg.arrays[an.data]
-                    bridge_name = self._allocate_tile_bridge(inner_sdfg, an.data, desc.dtype)
-                    bridge_an = state.add_access(bridge_name)
-                    store_node = TileStore(name=f"store_{an.data}", widths=widths, has_mask=has_mask)
-                    state.add_node(store_node)
-                    state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, None,
-                                   Memlet(data=bridge_name, subset=tile_subset))
-                    state.add_edge(bridge_an, None, store_node, "_src", Memlet(data=bridge_name, subset=tile_subset))
-                    if has_mask:
-                        state.add_edge(mask_an, None, store_node, "_mask",
-                                       Memlet(data=mask_an.data, subset=mask_subset))
-                    an_subset = an_side_subset(old_edge, an, inner_sdfg)
-                    state.add_edge(store_node, "_dst", an, None, Memlet(data=an.data, subset=an_subset))
-                    state.remove_edge(old_edge)
-                    inserted += 1
-        return inserted if inserted else None
+        """Delegate to the canonical staging walker.
+
+        The dispatch (CONSTANT / GATHER / structured + mask + GATHER /
+        SCATTER) lives in :class:`StageInsideBody`'s helper methods. Rather
+        than re-implementing it here, this pass instantiates the walker and
+        runs it on the SAME body NSDFGs.
+
+        The walker is correct on the post-staging-first graph (where every
+        non-transient is pure source or pure sink) because that's a strict
+        subset of the input shape it handles (legacy bridges + boundaries).
+
+        Long-term cleanup: inline the walker's dispatch into this pass so
+        ``StageInsideBody`` can be deleted entirely. Path documented in
+        ``project_staging_first_refactor_plan.md``.
+        """
+        return StageInsideBody(widths=tuple(self.widths)).apply_pass(sdfg, pipeline_results)
