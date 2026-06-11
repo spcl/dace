@@ -528,6 +528,13 @@ class StageInsideBody(ppl.Pass):
                 # case). Gather / scatter writes and CONSTANT-only writes are not yet handled
                 # here; they are deferred to subsequent slices.
                 if pre_stage_in_edges and not pre_stage_out_edges:
+                    # Phase A1: skip write-side staging when the in-edges already
+                    # come from a tile lib node (TileStore inserted upstream by
+                    # ``_maybe_stage_tilestore_to_output``). Avoids the
+                    # double-stage that would create two TileStore writes to
+                    # the same output.
+                    if any(isinstance(e.src, (TileLoad, TileStore)) for e in pre_stage_in_edges):
+                        continue
                     try:
                         wsubset = an_side_subset(pre_stage_in_edges[0], an, inner_sdfg)
                     except Exception:  # noqa: BLE001
@@ -847,6 +854,56 @@ class StageInsideBody(ppl.Pass):
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
+    def _maybe_stage_tilestore_to_output(self, inner_state: SDFGState, bridge_an: AccessNode, consumer_an: AccessNode,
+                                         iter_vars: Tuple[str, ...]) -> bool:
+        """Phase A1: insert :class:`TileStore` between a tile-shape bridge and a
+        non-transient output AN.
+
+        Per user direction 2026-06-10: TileLoad/TileStore always lower to a
+        tile-ops intrinsic; CopyND-based paths must not survive at staging.
+        The AN -> AN bridge_to_output edge IS handled by DaCe's CopyND codegen
+        otherwise, but that violates the design constraint. This helper
+        inserts a TileStore so the chain becomes ``bridge -> TileStore ->
+        consumer``, removing the AN -> AN edge.
+
+        The ``dst_subset`` is the per-outer-iter W-extent slice of the
+        consumer array: maps the K iter-vars to the consumer's last K dims
+        as ``consumer[..., iter_var_0:iter_var_0+W_0, ...,
+        iter_var_{K-1}:iter_var_{K-1}+W_{K-1}]``. Outer non-tile dims of the
+        consumer are full-extent.
+
+        Returns ``True`` when the TileStore was inserted (caller skips the
+        direct edge), ``False`` for Scalar / non-Array destinations (caller
+        takes the default rewire path -- the only AN -> AN edges that
+        survive in the post-stage body).
+        """
+        sdfg = inner_state.sdfg
+        bridge_desc = sdfg.arrays.get(bridge_an.data)
+        consumer_desc = sdfg.arrays.get(consumer_an.data)
+        if bridge_desc is None or consumer_desc is None:
+            return False
+        if not isinstance(bridge_desc, data.Array) or not isinstance(consumer_desc, data.Array):
+            return False
+        if bridge_desc.transient is False:
+            return False
+        if consumer_desc.transient is True:
+            return False
+        K = len(iter_vars)
+        widths = tuple(self.widths)
+        consumer_shape = tuple(consumer_desc.shape)
+        D = len(consumer_shape)
+        if D < K:
+            return False
+        prefix_parts = [f"0:{consumer_shape[d]}" for d in range(D - K)]
+        tile_parts = [f"{iter_vars[k]}:{iter_vars[k]} + {widths[k]}" for k in range(K)]
+        dst_subset_str = ", ".join(prefix_parts + tile_parts)
+        store = TileStore(name=f"store_{bridge_an.data}_to_{consumer_an.data}", widths=widths, has_mask=False)
+        inner_state.add_node(store)
+        src_subset_str = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(bridge_an, None, store, "_src", Memlet(f"{bridge_an.data}[{src_subset_str}]"))
+        inner_state.add_edge(store, "_dst", consumer_an, None, Memlet(data=consumer_an.data, subset=dst_subset_str))
+        return True
+
     def _rewire_consumers_to_bridge(self,
                                     inner_state: SDFGState,
                                     original_an: AccessNode,
@@ -871,6 +928,15 @@ class StageInsideBody(ppl.Pass):
             if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
+            # Phase A1 (user direction 2026-06-10): non-Scalar consumer Arrays
+            # MUST flow through a TileStore so the lowering goes through the
+            # tile-ops intrinsic, NOT via DaCe's CopyND auto-emission. The
+            # AN -> AN bridge_to_output edge would otherwise lower as a CopyND
+            # call, which violates the design constraint.
+            if (iter_vars and isinstance(old_edge.dst, AccessNode)
+                    and self._maybe_stage_tilestore_to_output(inner_state, bridge_an, old_edge.dst, iter_vars)):
+                inner_state.remove_edge(old_edge)
+                continue
             new_memlet = Memlet.from_memlet(bridge_memlet_template)
             # Per 3.8.3 row 1 (refined per user direction 2026-06-10):
             # ``AN -> AN`` edges only survive when the destination is a

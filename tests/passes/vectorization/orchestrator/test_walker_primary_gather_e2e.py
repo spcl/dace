@@ -22,23 +22,7 @@ def k1_gather(A: dace.float64[N_SYM], idx: dace.int64[N_SYM], B: dace.float64[N_
         B[i] = A[idx[i]]
 
 
-@pytest.mark.parametrize(
-    "N",
-    [
-        8,
-        pytest.param(
-            16,
-            marks=pytest.mark.xfail(reason="N=16 (2 outer tile iters at stride W=8): first tile (lanes 0-7)"
-                                    " produces bit-equal output but the second tile (lanes 8-15) writes"
-                                    " zero. The per-lane iedge re-evaluates ``__sym_lane0id_<l> = idx[(i +"
-                                    " l)]`` correctly per outer iteration, but the destination write path"
-                                    " (B[i:i+W] tile store) is not being re-issued for the second outer"
-                                    " tile. Distinct slice from the gather lowering -- the bridge tile"
-                                    " transient is allocated once at the body NSDFG and the store side"
-                                    " needs separate handling to repeat per outer iter."),
-        ),
-    ],
-)
+@pytest.mark.parametrize("N", [8, 16])
 def test_k1_gather_matches_reference(N):
     """K=1 ``B[i] = A[idx[i]]`` -- bit-equal to unvectorised reference. Exercises the
     GATHER walker path + the per-lane index materialiser."""
