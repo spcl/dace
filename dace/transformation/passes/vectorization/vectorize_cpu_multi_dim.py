@@ -585,59 +585,31 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # indexed by the iteration var, which non-permissive LoopToMap refuses) so
         # the tile path can vectorise it. Default off keeps the conservative form.
         sdfg.apply_transformations_repeated(loop_to_map, permissive=self._loop_to_map_permissive, validate=False)
-        for node, graph in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, dace.nodes.NestedSDFG):
-                continue
-            preexisting_rmw_chain = id(node) in pre and bool(set(node.in_connectors) & set(node.out_connectors))
-            if preexisting_rmw_chain:
-                continue
-            # Skip RefineNestedAccess when the body NSDFG has interstate
-            # assignments that reference symbols also used in the parent map's
-            # scope -- per user-investigated bug 2026-06-10 (scatter_loop_permissive_tile):
-            # for ``dst[idx[i]] = src[i] + 1.0`` the body has
-            # ``dst_slice_0 = idx[i]`` as an interstate assignment.
-            # RefineNestedAccess incorrectly substitutes ``i`` with ``0`` in
-            # this assignment, breaking the scatter (every tile reads idx[0]
-            # instead of idx[i + lane]). Detect: any interstate edge in the
-            # body NSDFG whose assignment RHS contains a symbol present in
-            # the parent state's scope (typically a Map iter-var).
-            has_parent_sym_in_assignment = False
-            # Collect symbols visible at the NSDFG's invocation in the parent.
-            parent_state = graph
-            if isinstance(parent_state, dace.SDFGState):
-                # Symbols defined by the enclosing Map scope of this NSDFG.
-                scope_dict = parent_state.scope_dict()
-                cur = scope_dict.get(node)
-                parent_iter_syms: Set[str] = set()
-                while cur is not None:
-                    if isinstance(cur, dace.nodes.MapEntry):
-                        parent_iter_syms.update(cur.map.params)
-                    cur = scope_dict.get(cur)
-                if parent_iter_syms:
-                    for iedge in node.sdfg.all_interstate_edges():
-                        if not iedge.data.assignments:
-                            continue
-                        for _k, v in iedge.data.assignments.items():
-                            v_str = str(v)
-                            for sym in parent_iter_syms:
-                                # Match whole-word; avoid substring matches like "ii" matching "i".
-                                import re
-                                if re.search(rf"\b{re.escape(sym)}\b", v_str):
-                                    has_parent_sym_in_assignment = True
-                                    break
-                            if has_parent_sym_in_assignment:
-                                break
-                        if has_parent_sym_in_assignment:
-                            break
-            if has_parent_sym_in_assignment:
-                continue
-            parent = graph.sdfg
-            # One application refines every candidate connector; the bounded
-            # re-check converges (each pass tightens strictly fewer dims).
-            for _ in range(_MAX_REFINE_ITERS):
-                if not refine_nested_access.can_be_applied_to(parent, nsdfg=node):
-                    break
-                refine_nested_access.apply_to(parent, nsdfg=node, save=False)
+        # Per user direction 2026-06-10 (architectural audit): under the
+        # staging-first design, ``RefineNestedAccess`` is REDUNDANT and
+        # actively harmful:
+        #
+        # * ``LoopToMap`` emits whole-array boundary memlets (``e[0:N]``).
+        # * ``RefineNestedAccess`` narrows them to per-iter (``e[i]``).
+        # * ``ExpandNestedSDFGInputs`` (next in the pipeline) widens them
+        #   back to whole-array (``e[0:N]``) -- contradicting RefineNestedAccess.
+        #
+        # Worse, ``RefineNestedAccess`` substitutes parent-Map iter-vars into
+        # interstate assignments inside body NSDFGs. For the canonical gather
+        # / scatter form (``__sym = idx[i]`` -- exactly the @dace.program
+        # output that section 3.8 of the design names as canonical), it
+        # rewrites the assignment to ``__sym = idx[0]``, destroying the
+        # per-lane index semantics that ``GatherLift`` is designed to
+        # materialise downstream.
+        #
+        # The old "tile-load widening expects per-iter boundary memlets" rationale
+        # for RefineNestedAccess is OBSOLETE under the staging-first design
+        # (``StageGlobalArrayThroughScalars`` + tile-bridge staging handle the
+        # whole-array boundary form directly).
+        #
+        # So: skip RefineNestedAccess entirely on the K-dim path. The
+        # downstream pipeline handles whole-array boundary memlets natively
+        # via ExpandNestedSDFGInputs + the staging chain.
 
     def _select_tile_implementations(self, sdfg: dace.SDFG) -> None:
         """Stamp ``target_isa`` on every emitted tile lib node and resolve its
