@@ -33,8 +33,6 @@ from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets imp
 from dace.transformation.passes.vectorization.gather_lift import GatherLift
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
-from dace.transformation.passes.vectorization.infer_body_transient_shapes import (
-    InferBodyTransientShapes, )
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
@@ -52,9 +50,9 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
 from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
-# WidenScalarsToTiles is ready as a standalone pass but not yet compatible with
-# InsertTileLoadStore's full dispatch -- kept available for future re-wiring.
-from dace.transformation.passes.vectorization.widen_scalars_to_tiles import WidenScalarsToTiles  # noqa: F401
+# Unified WidenAccesses pass (replaces InferBodyTransientShapes + WidenScalarsToTiles
+# per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
+from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
     RemoveFPTypeCasts,
@@ -459,15 +457,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # docstring documents this; the knob is kept on the constructor for harness parity with
         # the legacy 1D path but has no effect on the multi-dim pipeline.
         passes += [
-            # Staging-first pipeline:
-            # 1. InferBodyTransientShapes: widens BOTH transient descriptors AND
-            #    boundary memlets (``A[ii]`` -> ``A[ii:ii+W]``). The memlet
-            #    widening part is essential and not yet provided by WidenScalarsToTiles.
-            # 2. WidenScalarsToTiles: lane-dep gated descriptor widening.
-            #    Complements InferBody by handling Scalar / (1,) Array cases
-            #    InferBody misses due to AN -> AN propagation gaps.
-            InferBodyTransientShapes(widths=widths_t),
-            WidenScalarsToTiles(widths=widths_t),
+            # Unified WidenAccesses pass (user direction 2026-06-10) -- replaces
+            # InferBodyTransientShapes + WidenScalarsToTiles. Single pass widens
+            # non-transient boundary subsets (``A[ii]`` -> ``A[ii:ii+W]``) AND
+            # lane-dep transient descriptors (Scalar / (1,) Array -> tile) in
+            # one go. Symmetric on gather (read) and scatter (write) sides.
+            WidenAccesses(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             PreparePerLaneIndices(widths=widths_t),
             InsertTileLoadStore(widths=widths_t),
