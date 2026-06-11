@@ -100,10 +100,13 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
             # (CONSTANT bridge produced by ``stage_constant_access``) OR when
             # the edge writes a tile-shape transient out to a non-transient
             # output array (the legitimate ``tile_bridge -> output_array``
-            # pattern when the kernel's write side is not yet staged through
-            # ``TileStore``). The destination-side TileStore staging needs
-            # outer-iter context to compute the W-extent dst_subset; deferred
-            # as Phase A1 in ``~/.claude/plans/multi-dim-tileops-full-vec-plan.md``.
+            # pattern). Investigation 2026-06-10: DaCe codegen handles this
+            # AN -> AN edge correctly by auto-generating ``CopyND<T, dim,
+            # async, vecW>`` with the memlet's subset (e.g. ``B[i:i+W]``) for
+            # the per-outer-iter offset. The TileStore destination staging
+            # (Phase A1 in the plan) would be a design-cleanliness improvement
+            # (routing every write through a tile lib node), not a correctness
+            # fix -- the existing path produces correct code.
             either_is_scalar = (isinstance(src_desc, data.Scalar) or isinstance(dst_desc, data.Scalar))
             bridge_to_output = (src_desc is not None and getattr(src_desc, "transient", False) and dst_desc is not None
                                 and not getattr(dst_desc, "transient", False))
