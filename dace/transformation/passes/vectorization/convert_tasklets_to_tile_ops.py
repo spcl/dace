@@ -449,8 +449,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         from dace.sdfg.nodes import AccessNode
         existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == an_name), None)
         src_an = existing if existing is not None else inner_state.add_access(an_name)
-        # Wire the materialised tile straight into the output via a direct copy edge.
-        # The materialised tile shape matches the output bridge shape (full tile).
+        # Widen the destination transient + memlets to (W,) so the AN -> AN
+        # copy is valid (without this the dst stays Scalar (1,) and the
+        # tile (W,) -> Scalar copy trips DaCe codegen with StopIteration on
+        # the 1D-strided-copy dim-pick).
+        self._ensure_output_widened(inner_state, out_edge)
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(src_an, None, out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{an_name}[{subset}]"))
         inner_state.remove_edge(out_edge)
@@ -941,7 +944,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 inner_state.add_edge(bcast_an, None, ite, "_e", dace.Memlet(f"{bcast_name}[{subset}]"))
             else:
                 inner_state.add_edge(e_edge.src, e_edge.src_conn, ite, "_e", dace.Memlet.from_memlet(e_edge.data))
-        inner_state.add_edge(ite, "_o", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        if self._ensure_output_widened(inner_state, out_edge, ite):
+            subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{subset_str}]")
+        else:
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+        inner_state.add_edge(ite, "_o", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
@@ -1126,7 +1134,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         self._wire_mask(inner_state, binop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
-        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
+
+        if _was_widened:
+
+            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
+
+        else:
+
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+
+        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
@@ -1180,7 +1200,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             if sym_kind == "Tile":
                 self._wire_materialised_tile(inner_state, binop, "_a", sym_an_name)
         self._wire_mask(inner_state, binop, mask_an)
-        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
+
+        if _was_widened:
+
+            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
+
+        else:
+
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+
+        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
@@ -1194,6 +1226,67 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         an = existing if existing is not None else inner_state.add_access(tile_name)
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(an, None, lib_node, dst_conn, dace.Memlet(f"{tile_name}[{subset}]"))
+
+    def _ensure_output_widened(self, inner_state: SDFGState, out_edge, lib_node=None) -> bool:
+        """Widen the destination transient + memlets to ``(W_0, ..., W_{K-1})``.
+
+        Only fires when the destination is a WIDENABLE TRANSIENT (Scalar or
+        length-1 Array) AND at least one input to ``lib_node`` is a
+        tile-shape ``(W,)`` array. Per user direction: all-Scalar /
+        Scalar-Symbol / Symbol-Symbol op -> Scalar output stays Scalar.
+        """
+        from dace import data as _dd
+        from dace import subsets as _subsets
+        from dace.sdfg.nodes import AccessNode
+        if not isinstance(out_edge.dst, AccessNode):
+            return False
+        sdfg = inner_state.sdfg
+        desc = sdfg.arrays.get(out_edge.dst.data)
+        if desc is None or not desc.transient:
+            return False
+        widths = tuple(self.widths)
+        if lib_node is not None:
+            any_tile_in = False
+            for e in inner_state.in_edges(lib_node):
+                if not isinstance(e.src, AccessNode):
+                    continue
+                src_desc = sdfg.arrays.get(e.src.data)
+                if src_desc is None or isinstance(src_desc, _dd.Scalar):
+                    continue
+                if isinstance(src_desc, _dd.Array) and tuple(src_desc.shape) == widths:
+                    any_tile_in = True
+                    break
+            if not any_tile_in:
+                return False
+        is_widenable = False
+        if isinstance(desc, _dd.Scalar):
+            is_widenable = True
+        elif isinstance(desc, _dd.Array):
+            shape = tuple(desc.shape)
+            if shape:
+                if tuple(shape) == widths:
+                    return True
+                try:
+                    is_widenable = all(bool(dace.symbolic.simplify(s - 1) == 0) for s in shape)
+                except Exception:  # noqa: BLE001
+                    is_widenable = False
+        if not is_widenable:
+            return False
+        new_desc = _dd.Array(dtype=desc.dtype,
+                             shape=widths,
+                             transient=True,
+                             storage=getattr(desc, "storage", dace.dtypes.StorageType.Register))
+        sdfg.arrays[out_edge.dst.data] = new_desc
+        target_subset = ", ".join(f"0:{w}" for w in widths)
+        target_range = _subsets.Range.from_string(target_subset)
+        for state in sdfg.states():
+            for edge in state.edges():
+                if edge.data is None or edge.data.data != out_edge.dst.data:
+                    continue
+                new_sub = _subsets.Range(list(target_range.ranges))
+                edge.data.subset = new_sub
+                edge.data.volume = new_sub.num_elements()
+        return True
 
     def _convert_unop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                   iter_vars: Tuple[str, ...]) -> bool:
@@ -1220,7 +1313,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if sym_kind == "Tile":
             self._wire_materialised_tile(inner_state, unop, "_a", sym_an_name)
         self._wire_mask(inner_state, unop, mask_an)
-        inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        _was_widened = self._ensure_output_widened(inner_state, out_edge, unop)
+
+        if _was_widened:
+
+            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
+
+        else:
+
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+
+        inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
@@ -1255,7 +1360,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if kind_b == "Tile":
             self._wire_materialised_tile(inner_state, binop, "_b", an_b)
         self._wire_mask(inner_state, binop, mask_an)
-        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
+
+        if _was_widened:
+
+            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
+
+        else:
+
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+
+        inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
@@ -1281,7 +1398,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_node(unop)
         self._wire_mask(inner_state, unop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))
-        inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        _was_widened = self._ensure_output_widened(inner_state, out_edge, unop)
+
+        if _was_widened:
+
+            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
+
+        else:
+
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+
+        inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
