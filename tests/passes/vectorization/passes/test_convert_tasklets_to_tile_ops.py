@@ -569,30 +569,30 @@ def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
     return sdfg, inner
 
 
-def test_converter_wires_mask_on_binop_when_mask_in_scope():
-    """Binop ``_o = _a + _b`` with iter mask in scope -> TileBinop.has_mask=True + _mask edge."""
+def test_converter_drops_mask_on_pure_arithmetic_binop():
+    """Option C masking (user direction 2026-06-11): pure-arithmetic
+    :class:`TileBinop` has NO iter-mask -- the downstream :class:`TileStore` at
+    the global-write boundary discards inactive lanes. Tile transients are
+    register-private."""
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
-    assert binop.has_mask is True, f"expected has_mask=True, got {binop.has_mask}"
+    assert binop.has_mask is False, f"Option C: pure binop has_mask must be False, got {binop.has_mask}"
     mask_edges = [e for e in body_state.in_edges(binop) if e.dst_conn == "_mask"]
-    assert len(mask_edges) == 1
-    assert isinstance(mask_edges[0].src, dace.nodes.AccessNode)
-    assert mask_edges[0].src.data == "_tile_iter_mask"
+    assert len(mask_edges) == 0
 
 
-def test_converter_wires_mask_on_unop_when_mask_in_scope():
-    """Unop with iter mask in scope -> TileUnop.has_mask=True + _mask edge."""
+def test_converter_drops_mask_on_pure_arithmetic_unop():
+    """Option C: :class:`TileUnop` (pure arithmetic) has no iter-mask."""
     from dace.libraries.tileops import TileUnop
     sdfg, inner = _build_body_with_mask("_o = abs(_a)", n_in_conns=1, has_b_arr=False)
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
-    assert unop.has_mask is True
+    assert unop.has_mask is False
     mask_edges = [e for e in body_state.in_edges(unop) if e.dst_conn == "_mask"]
-    assert len(mask_edges) == 1
-    assert mask_edges[0].src.data == "_tile_iter_mask"
+    assert len(mask_edges) == 0
 
 
 def test_converter_skips_mask_when_no_mask_in_scope():
@@ -606,21 +606,16 @@ def test_converter_skips_mask_when_no_mask_in_scope():
     assert len(mask_edges) == 0
 
 
-def test_converter_reuses_same_mask_producer_an_for_scheduling():
-    """All consumer ``_mask`` edges read from the SAME AccessNode that TileMaskGen writes to,
-    so the SDFG scheduler orders TileMaskGen before the consumers."""
-    from dace.libraries.tileops import TileMaskGen, TileUnop
+def test_converter_keeps_mask_producer_an_alive_for_reductions():
+    """Option C: pure-arithmetic ops drop the iter-mask, but ``TileMaskGen`` still
+    produces the mask transient for the side-effect-boundary consumers
+    (:class:`TileReduce`, :class:`TileStore`)."""
+    from dace.libraries.tileops import TileMaskGen
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
-    mask_gen = next(n for n in body_state.nodes() if isinstance(n, TileMaskGen))
-    # Find the AN the TileMaskGen writes to.
-    producer_an = next(e.dst for e in body_state.out_edges(mask_gen) if e.src_conn == "_o")
-    # Every consumer's _mask edge must read from this AccessNode (not a fresh add_access).
-    binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
-    mask_edge = next(e for e in body_state.in_edges(binop) if e.dst_conn == "_mask")
-    assert mask_edge.src is producer_an, \
-        "consumer _mask edge must reuse the TileMaskGen output AN (not a fresh access)"
+    # TileMaskGen still emitted (consumed downstream by TileStore at the global write).
+    assert any(isinstance(n, TileMaskGen) for n in body_state.nodes())
 
 
 # ---- Symbol operand: data-independent vs lane-id-dependent -----------------
