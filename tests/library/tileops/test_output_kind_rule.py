@@ -151,7 +151,7 @@ def test_ite_validate_refuses_scalar_output():
     state = sdfg.add_state("s")
     node = TileITE("ite", widths=(8, ))
     state.add_node(node)
-    state.add_edge(state.add_access("Cond"), None, node, "_cond", Memlet("Cond[0:8]"))
+    state.add_edge(state.add_access("Cond"), None, node, "_mask", Memlet("Cond[0:8]"))
     state.add_edge(state.add_access("T"), None, node, "_t", Memlet("T[0:8]"))
     state.add_edge(state.add_access("E"), None, node, "_e", Memlet("E[0:8]"))
     state.add_edge(node, "_o", state.add_access("O"), None, Memlet("O"))

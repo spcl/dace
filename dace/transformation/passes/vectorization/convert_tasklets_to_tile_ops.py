@@ -224,10 +224,37 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _wire_mask(self, inner_state: SDFGState, lib_node, mask_an) -> None:
-        """If ``mask_an`` is non-None, wire ``mask_an -> lib_node._mask`` with a full-tile
-        subset memlet matching the mask's widths shape."""
+        """Wire ``mask_an -> lib_node._mask`` with a full-tile subset memlet
+        matching the mask's widths shape.
+
+        Mask-combine contract (user direction 2026-06-12: ``When we emit new
+        conditions we should check a cond connector exist, if it exist we
+        should provide an &, new condition should appear before``):
+        when a ``_mask`` edge is ALREADY wired on ``lib_node``, the new
+        condition must be AND-combined with the existing one BEFORE the
+        consumer. The combinator (``TileMaskAnd`` lib node) is not yet
+        implemented -- the current pipeline only wires the iter-mask, never
+        re-wires, so collisions can't occur today. If a collision arises,
+        we raise loudly so the design fix lands here.
+
+        Connector name contract (user direction 2026-06-12: ``Unifiy mask
+        connectors in the multi dim pass globally``): every gating
+        predicate on every K-dim tile lib node is wired via ``_mask`` --
+        :class:`TileLoad`, :class:`TileStore`, :class:`TileBinop`,
+        :class:`TileUnop`, :class:`TileReduce`, and :class:`TileITE` (whose
+        select-arm predicate was previously ``_cond``).
+        """
         if mask_an is None:
             return
+        existing = [e for e in inner_state.in_edges(lib_node) if e.dst_conn == "_mask"]
+        if existing:
+            raise NotImplementedError(
+                f"_wire_mask: ``_mask`` already wired on {lib_node.label!r} "
+                f"(existing src={existing[0].src!r}). Per the AND-combine contract, "
+                f"emit a ``TileMaskAnd`` lib node combining {existing[0].src!r} with "
+                f"the new ``mask_an``={mask_an.data!r} and wire the AND output here. "
+                f"``TileMaskAnd`` is not yet implemented; this case is not exercised "
+                f"by the current pipeline.")
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
 
@@ -853,11 +880,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if not e_is_sym and e_arg not in in_edges:
             return False
         out_edge = out_edges[0]
-        # ITE owns its own ``_cond`` input (the comparison result); inactive
-        # iter-mask lanes are discarded by the downstream masked TileStore.
-        # No iter-mask on ITE (user direction 2026-06-12: ``Does ITE really
-        # need mask? I thought ITE already uses the mask?``).
-        ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths), has_mask=False)
+        # TileITE select-arm predicate is wired via the unified ``_mask``
+        # connector (user direction 2026-06-12: ``Unifiy mask connectors in
+        # the multi dim pass globally``). Downstream global TileStore
+        # handles iter-mask gating; no separate iter-mask connector.
+        ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths))
         inner_state.add_node(ite)
         # cond is always a connector (the result of the comparison upstream). If it's
         # a Scalar transient (from an all-Symbol comparison like ``FLAG > 0``), broadcast
@@ -871,9 +898,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                             None)
             cond_an = existing if existing is not None else inner_state.add_access(broadcast_name)
             subset = ", ".join(f"0:{w}" for w in self.widths)
-            inner_state.add_edge(cond_an, None, ite, "_cond", dace.Memlet(f"{broadcast_name}[{subset}]"))
+            inner_state.add_edge(cond_an, None, ite, "_mask", dace.Memlet(f"{broadcast_name}[{subset}]"))
         else:
-            inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_cond",
+            inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
                                  dace.Memlet.from_memlet(cond_edge.data))
         # t arm: connector OR Symbol-materialised tile.
         if t_is_sym:

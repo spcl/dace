@@ -3,17 +3,21 @@
 
 The lib node lowers a branch-normalized ``merge(cond, then, else)``
 tasklet (see :mod:`dace.runtime.include.dace.merge`) to a per-lane
-blend ``_o[l] = _cond[l] ? _t[l] : _e[l]``. It is the K-dim tile
+blend ``_o[l] = _mask[l] ? _t[l] : _e[l]``. It is the K-dim tile
 counterpart of the 1D ``vector_select`` blend the merge tasklet would
 otherwise lower to.
 
-The three inputs ``_cond`` / ``_t`` / ``_e`` are all tiles; ``_cond`` may
+The three inputs ``_mask`` / ``_t`` / ``_e`` are all tiles; ``_mask`` may
 carry any dtype (the lifted condition is stored as ``0.0`` / ``1.0`` when
 the branch normalization typed it after a float operand, or ``bool``),
-while ``_t`` / ``_e`` / ``_o`` share the output element type. With
-``has_mask=True`` an additional ``_mask`` input gates the write per lane
-(the iteration mask of the surrounding tile map), so an out-of-bounds
-lane keeps the destination's zero-fill.
+while ``_t`` / ``_e`` / ``_o`` share the output element type.
+
+Per user direction 2026-06-12 (``Unifiy mask connectors in the multi
+dim pass globally``), the predicate connector is named ``_mask`` -- the
+same name every other tile lib node uses for its gating predicate. No
+separate iter-mask gate connector (per user: ``ITE write to global array
+should be further masked so it should be fine``); the surrounding
+:class:`TileStore` discards inactive iter-mask lanes.
 
 The pure expansion returns a CPP tasklet whose body is a single
 ``for``-loop over the flattened tile (correctness-only).
@@ -63,15 +67,14 @@ class ExpandTileITEPure(ExpandTransformation):
         off = tile_offset(widths)
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_o").data.data].dtype.ctype
-        select = f"(_cond[{off}] ? _t[{off}] : _e[{off}])"
-        if node.has_mask:
-            body = f"_o[{off}] = _mask[{off}] ? {select} : {out_dtype}(0);"
-        else:
-            body = f"_o[{off}] = {select};"
+        # Unified mask connector contract (user direction 2026-06-12: ``Unifiy
+        # mask connectors in the multi dim pass globally``). ``_mask`` is the
+        # select-arm predicate for ITE (which lane gets ``_t`` vs ``_e``).
+        # The downstream global TileStore handles iter-mask gating; no
+        # separate execution-gate connector is needed.
+        body = f"_o[{off}] = (_mask[{off}] ? _t[{off}] : _e[{off}]);"
         code = nested_loops(widths, body)
-        inputs = {"_cond", "_t", "_e"}
-        if node.has_mask:
-            inputs.add("_mask")
+        inputs = {"_mask", "_t", "_e"}
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
@@ -86,13 +89,13 @@ class ExpandTileITEPure(ExpandTransformation):
 class ExpandTileITECutile(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileITE`.
 
-    Primary (CI default): ``__output = ct.where(__cond, __then,
+    Primary (CI default): ``__output = ct.where(__mask, __then,
     __else)`` — the cuTile select primitive. The surrounding iteration
     mask is applied at the downstream ``ct.scatter`` store, not at the
     select (matching the reference cuTile kernels).
 
     Fallback (``ct.where`` known absent): an arithmetic blend
-    ``__m = __cond.astype(__then.dtype); __output = __m * __then +
+    ``__m = __mask.astype(__then.dtype); __output = __m * __then +
     (1.0 - __m) * __else``. This is exact for the ``0.0`` / ``1.0`` (or
     ``bool``) condition encoding, but ``0.0 * inf = NaN`` would leak a
     non-finite *unselected* lane into the result. So the fallback is
@@ -173,13 +176,16 @@ class ExpandTileITESVE(ExpandTransformation):
 
 @library.node
 class TileITE(nodes.LibraryNode):
-    """Per-lane select ``_o = _cond ? _t : _e`` on K-dim register tiles.
+    """Per-lane select ``_o = _mask ? _t : _e`` on K-dim register tiles.
 
     Lowers the ``merge(cond, then, else)`` tasklet that branch
-    normalization emits for a same-write-set ``if/else``. With
-    ``has_mask=True`` the optional ``_mask`` input gates the write per
-    lane (the surrounding tile map's iteration mask), keeping inactive
-    lanes at the destination's zero-fill.
+    normalization emits for a same-write-set ``if/else``. Per user
+    direction 2026-06-12 (``Unifiy mask connectors in the multi dim pass
+    globally``), the predicate connector is ``_mask`` -- the same name
+    every other tile lib node uses. No separate iter-mask gate connector
+    (per user: ``ITE write to global array should be further masked so
+    it should be fine``); the downstream global :class:`TileStore` discards
+    inactive iter-mask lanes.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
         flattened CPP-loop correctness fallback. ``"cutile"`` emits the
@@ -212,30 +218,18 @@ class TileITE(nodes.LibraryNode):
         default=[],
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
-    has_mask = properties.Property(
-        dtype=bool,
-        allow_none=False,
-        default=False,
-        desc="When True, the ``_mask`` input connector is required.",
-    )
-
-    def __init__(self, name: str, widths: Tuple[int, ...], has_mask: bool = False, location: Optional[str] = None):
+    def __init__(self, name: str, widths: Tuple[int, ...], location: Optional[str] = None):
         """Construct a ``TileITE`` node.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
-        :param has_mask: When True, declare the ``_mask`` input connector.
         :param location: Optional DaCe node location override.
         :raises ValueError: On invalid ``widths`` length.
         """
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileITE: widths must have length in {{1, 2, 3}}, got {widths!r}")
-        inputs = {"_cond", "_t", "_e"}
-        if has_mask:
-            inputs.add("_mask")
-        super().__init__(name, location=location, inputs=inputs, outputs={"_o"})
+        super().__init__(name, location=location, inputs={"_mask", "_t", "_e"}, outputs={"_o"})
         self.widths = list(widths)
-        self.has_mask = has_mask
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Validate connector counts and the then/else/out dtype agreement.
@@ -250,11 +244,9 @@ class TileITE(nodes.LibraryNode):
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
         if "_o" not in out_e:
             raise ValueError(f"{self.label}: required output '_o' not connected")
-        for conn in ("_cond", "_t", "_e"):
+        for conn in ("_mask", "_t", "_e"):
             if conn not in in_e:
                 raise ValueError(f"{self.label}: required input {conn!r} not connected")
-        if self.has_mask and "_mask" not in in_e:
-            raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         o_arr = sdfg.arrays[out_e["_o"].data.data]
         t_arr = sdfg.arrays[in_e["_t"].data.data]
         # Output-kind rule (design 6.2): TileITE inputs are implicitly Tile (no kind

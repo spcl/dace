@@ -216,7 +216,7 @@ def test_converter_ite_wires_cond_t_e_connectors_correctly():
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     ite = next(n for n in body_state.nodes() if isinstance(n, TileITE))
-    cond_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_cond")
+    cond_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_mask")
     t_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_t")
     e_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_e")
     out_edge = next(e for e in body_state.out_edges(ite) if e.src_conn == "_o")

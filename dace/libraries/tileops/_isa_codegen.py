@@ -218,22 +218,19 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
 def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_ite`` (per-lane select).
 
-    ``_cond`` / ``_t`` / ``_e`` are all tile operands (Broadcast=false);
-    ``CondT`` is the condition tile's element type.
+    Unified-mask connector contract (user direction 2026-06-12): ``_mask``
+    is the select-arm predicate; downstream global TileStore handles
+    iter-mask gating. ``MaskT`` is the predicate tile's element type.
     """
     node.validate(parent_sdfg, parent_state)
     vlen = _require_k1(node)
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_o")
-    cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_cond")
-    masked = "true" if node.has_mask else "false"
-    mask_arg = "_mask" if node.has_mask else "nullptr"
-    call = (f"dace::tileops::tile_ite<{out_dtype}, {cond_dtype}, {vlen}, false, false, {masked}>"
-            f"(_o, _cond, _t, _e, {mask_arg});")
-    inputs = {"_cond", "_t", "_e"} | ({"_mask"} if node.has_mask else set())
+    cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_mask")
+    call = (f"dace::tileops::tile_ite<{out_dtype}, {cond_dtype}, {vlen}, false, false, false>"
+            f"(_o, _mask, _t, _e, nullptr);")
     return nodes.Tasklet(
         label=f"{node.label}_{suffix}",
-        inputs={c: None
-                for c in inputs},
+        inputs={c: None for c in ("_mask", "_t", "_e")},
         outputs={"_o": None},
         code=call,
         language=dace.dtypes.Language.CPP,
