@@ -30,7 +30,12 @@ from dace.transformation.passes.vectorization.for_loop_to_masked_while import Fo
 
 N = dace.symbol("N")
 
-from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy  # noqa: E402 (dedup)
+@dace.program
+def axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    """``c = a + 2 * b`` -- inlined fixture (previously imported from the
+    deleted ``test_tile_map_by_num_cores.py``)."""
+    for i in dace.map[0:N]:
+        c[i] = a[i] + 2.0 * b[i]
 
 
 def _mask_fill_bodies(sdfg):

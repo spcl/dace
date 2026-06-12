@@ -32,10 +32,17 @@ from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy
 from tests.passes.vectorization.passes.test_nest_innermost_map_body import bare_tasklet_body as scale
 
 N = dace.symbol("N")
+
+
+@dace.program
+def axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    """``c = a + 2 * b`` -- inlined fixture (previously imported from the
+    deleted ``test_tile_map_by_num_cores.py``)."""
+    for i in dace.map[0:N]:
+        c[i] = a[i] + 2.0 * b[i]
 
 
 @dace.program
