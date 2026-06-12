@@ -132,22 +132,41 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
 
     inner_sdfg.replace_dict({inner_name: outer_name})
 
-    # Replace connectors
+    # Replace connectors. When the rename target ``outer_name`` already has
+    # an edge on this side (because a previous iteration of this helper
+    # already merged ANOTHER inner connector binding the same outer array,
+    # e.g. ``A[1,i,j]`` -> ``__tmp_a`` AND ``A[0,i,j]`` -> ``__tmp_b`` BOTH
+    # bind to outer ``A``), keep ONE merged edge and REMOVE the duplicate.
+    # The merged edge's subset is the full-array slice ``_full_subset`` so
+    # the post-widening contract holds regardless of which inner connector
+    # contributed which slice.
     assert direction in ('in', 'out')
     if direction == 'in':
-        for iedge in state.in_edges(nsdfg_node):
+        existing_target = any(e.dst_conn == outer_name and e.dst_conn != inner_name for e in state.in_edges(nsdfg_node))
+        for iedge in list(state.in_edges(nsdfg_node)):
             if iedge.dst_conn == inner_name:
-                iedge.dst_conn = outer_name
-                iedge.data.subset = _full_subset(state.sdfg, outer_name)
+                if existing_target:
+                    # Drop this edge -- the existing ``outer_name`` edge
+                    # already covers the full-array subset.
+                    state.remove_edge(iedge)
+                else:
+                    iedge.dst_conn = outer_name
+                    iedge.data.subset = _full_subset(state.sdfg, outer_name)
         nsdfg_node.remove_in_connector(inner_name)
-        nsdfg_node.add_in_connector(outer_name, force=True)
+        if outer_name not in nsdfg_node.in_connectors:
+            nsdfg_node.add_in_connector(outer_name, force=True)
     else:
-        for oedge in state.out_edges(nsdfg_node):
+        existing_target = any(e.src_conn == outer_name and e.src_conn != inner_name for e in state.out_edges(nsdfg_node))
+        for oedge in list(state.out_edges(nsdfg_node)):
             if oedge.src_conn == inner_name:
-                oedge.src_conn = outer_name
-                oedge.data.subset = _full_subset(state.sdfg, outer_name)
+                if existing_target:
+                    state.remove_edge(oedge)
+                else:
+                    oedge.src_conn = outer_name
+                    oedge.data.subset = _full_subset(state.sdfg, outer_name)
         nsdfg_node.remove_out_connector(inner_name)
-        nsdfg_node.add_out_connector(outer_name, force=True)
+        if outer_name not in nsdfg_node.out_connectors:
+            nsdfg_node.add_out_connector(outer_name, force=True)
 
     # Uncollapse dims (memlets)
     for state in inner_sdfg.all_states():
