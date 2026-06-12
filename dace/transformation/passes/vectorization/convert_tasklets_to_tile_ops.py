@@ -270,7 +270,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         if len(tasklet.in_connectors) == 1:
             # Same-connector-twice shape: ``_out = _a <op> _a``.
-            body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+            body = tasklet.code.as_string
             body = body.strip().rstrip(";").strip()
             out_conn = next(iter(tasklet.out_connectors))
             a_conn = next(iter(tasklet.in_connectors))
@@ -283,7 +283,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         if len(tasklet.in_connectors) != 2:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
@@ -318,7 +318,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
@@ -371,7 +371,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         if not body.startswith(f"{out_conn} = "):
@@ -429,7 +429,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         rhs = body[len(f"{out_conn} = "):]
@@ -466,7 +466,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         rhs = body[len(f"{out_conn} = "):]
@@ -526,7 +526,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
@@ -605,7 +605,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if len(other_conns) != 1:
             return None
         other_conn = other_conns[0]
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         for op in _SUPPORTED_REDUCE_OPS:
             if op in ("min", "max"):
@@ -645,7 +645,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         n_in = len(tasklet.in_connectors)
         if n_in not in (2, 3) or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
@@ -712,7 +712,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = (tasklet.code.as_string if hasattr(tasklet.code, "as_string") else str(tasklet.code))
+        body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))

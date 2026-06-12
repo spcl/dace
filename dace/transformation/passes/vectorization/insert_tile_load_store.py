@@ -757,7 +757,7 @@ class InsertTileLoadStore(ppl.Pass):
         """Build a memlet for the WHOLE bridge transient (matches the converter's contract
         that rewired edges feed the entire tile)."""
         desc = inner_sdfg.arrays[bridge_name]
-        shape = tuple(desc.shape) if hasattr(desc, "shape") and desc.shape else None
+        shape = tuple(desc.shape) if desc.shape else None
         if shape and len(shape) > 0:
             subset = ", ".join(f"0:{s}" for s in shape)
             return Memlet(f"{bridge_name}[{subset}]")
@@ -801,8 +801,9 @@ class InsertTileLoadStore(ppl.Pass):
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
         shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="write")
+        from dace.sdfg.nodes import LibraryNode
         for old_edge in original_in_edges:
-            if hasattr(old_edge.src, "label") and old_edge.src_conn == "_dst":
+            if isinstance(old_edge.src, LibraryNode) and old_edge.src_conn == "_dst":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
             new_memlet = Memlet.from_memlet(bridge_memlet_template)
@@ -1026,7 +1027,8 @@ class InsertTileLoadStore(ppl.Pass):
         for old_edge in original_out_edges:
             if isinstance(old_edge.dst, AccessNode) and old_edge.dst.data == bridge_name:
                 continue
-            if hasattr(old_edge.dst, "label") and old_edge.dst_conn == "_src":
+            from dace.sdfg.nodes import LibraryNode
+            if isinstance(old_edge.dst, LibraryNode) and old_edge.dst_conn == "_src":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
             # Phase A5: elide pass-through scalar bridges. When the consumer is
