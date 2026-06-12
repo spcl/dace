@@ -115,6 +115,48 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
     return write_subsets
 
 
+def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims: List[sympy.Basic],
+                                  collapsed_dims: List[bool]) -> None:
+    """Rewrite every memlet referencing ``inner_name`` to add ``offset_dims``
+    and uncollapse the ``collapsed_dims``. Runs BEFORE the inner SDFG's
+    ``replace_dict({inner_name: outer_name})`` so the rewrite only matches
+    memlets that originated from THIS inner_name -- avoiding the
+    cross-iteration clobber where two inner connectors bind the same outer
+    array with different constant-dim offsets (e.g. ``A[1,i,j]`` AND
+    ``A[0,i,j]``).
+    """
+    for state in inner_sdfg.all_states():
+        for edge in state.edges():
+            memlet = edge.data
+            if memlet is None or memlet.data != inner_name:
+                continue
+            new_range_list = []
+            memlet_access_idx = 0
+            inner_subset = memlet.subset.ranges
+            for offset, collapsed in zip(offset_dims, collapsed_dims):
+                if collapsed is True:
+                    new_range_list.append((offset, offset, 1))
+                else:
+                    (lo, hi, stp) = inner_subset[memlet_access_idx]
+                    new_range_list.append((lo + offset, hi + offset, stp))
+                    memlet_access_idx += 1
+            assert memlet.wcr is None
+            if memlet.other_subset is not None:
+                src = edge.src
+                dst = edge.dst
+                if (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)
+                        and (memlet.other_subset == subsets.Range([(0, 0, 1)]) and memlet.data == src.data)):
+                    new_memlet = Memlet(data=memlet.data,
+                                        subset=subsets.Range(new_range_list),
+                                        other_subset=subsets.Range([(0, 0, 1)]))
+                    edge.data = new_memlet
+                else:
+                    raise NotImplementedError("Unsupported other subset case for memlet with data == outer array")
+            else:
+                new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list))
+                edge.data = new_memlet
+
+
 def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGState, inner_name: str, outer_name: str,
                                       desc: data.Array, collapsed_dims: List[bool], offset_dims: List[sympy.Basic],
                                       direction: str) -> None:
@@ -129,6 +171,18 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
     copy_desc.transient = False
     if outer_name not in inner_sdfg.arrays:
         inner_sdfg.add_datadesc(outer_name, copy_desc)
+
+    # Rewrite inner memlets BEFORE the rename so the offset_dims apply ONLY to
+    # memlets that belonged to THIS inner_name. If we rewrote AFTER renaming,
+    # memlets from a previous iteration of this helper (binding the SAME
+    # outer_name from a different inner_name with a different offset_dims)
+    # would get clobbered. Concretely: for kernel ``B = A[1,i,j] + A[0,i,j]``
+    # we get two inner connectors ``__tmp_a`` (offset [1,0,0]) and ``__tmp_b``
+    # (offset [0,0,0]). Iteration 1 renames ``__tmp_a`` -> ``A`` + offsets by
+    # [1,0,0]. Iteration 2 would then rename ``__tmp_b`` -> ``A`` and match
+    # BOTH already-A memlets, re-applying offset [0,0,0] and erasing the [1]
+    # offset from iteration 1.
+    _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims)
 
     inner_sdfg.replace_dict({inner_name: outer_name})
 
@@ -168,40 +222,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
         if outer_name not in nsdfg_node.out_connectors:
             nsdfg_node.add_out_connector(outer_name, force=True)
 
-    # Uncollapse dims (memlets)
-    for state in inner_sdfg.all_states():
-        for edge in state.edges():
-            memlet = edge.data
-            if memlet.data == outer_name:
-                new_range_list = []
-                # Increment when we iterate over uncollapsed time
-                memlet_access_idx = 0
-                inner_subset = memlet.subset.ranges
-                for offset, collapsed in zip(offset_dims, collapsed_dims):
-                    if collapsed is True:
-                        new_range_list.append((offset, offset, 1))
-                    else:
-                        (lo, hi, stp) = inner_subset[memlet_access_idx]
-                        new_range_list.append((lo + offset, hi + offset, stp))
-                        memlet_access_idx += 1
-                assert memlet.wcr is None
-
-                # We support one case of other subset:
-                # Array [i, j, k] -> scalar[0] with memlet data == Array
-                if memlet.other_subset is not None:
-                    src = edge.src
-                    dst = edge.dst
-                    if (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)
-                            and (memlet.other_subset == subsets.Range([(0, 0, 1)]) and memlet.data == src.data)):
-                        new_memlet = Memlet(data=memlet.data,
-                                            subset=subsets.Range(new_range_list),
-                                            other_subset=subsets.Range([(0, 0, 1)]))
-                        edge.data = new_memlet
-                    else:
-                        raise NotImplementedError("Unsupported other subset case for memlet with data == outer array")
-                else:
-                    new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list))
-                    edge.data = new_memlet
+    # (Inner memlets were already rewritten above with the per-inner_name
+    # offsets, BEFORE replace_dict, to avoid clobbering previous iterations.)
 
     # Transform Subscript nodes during ``expr.replace(SubscriptClass, fn)``.
     # SymPy invokes ``fn(*matched.args)`` (the matched expression's args
