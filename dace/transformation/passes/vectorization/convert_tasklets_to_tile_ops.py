@@ -229,13 +229,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         Mask-combine contract (user direction 2026-06-12: ``When we emit new
         conditions we should check a cond connector exist, if it exist we
-        should provide an &, new condition should appear before``):
-        when a ``_mask`` edge is ALREADY wired on ``lib_node``, the new
-        condition must be AND-combined with the existing one BEFORE the
-        consumer. The combinator (``TileMaskAnd`` lib node) is not yet
-        implemented -- the current pipeline only wires the iter-mask, never
-        re-wires, so collisions can't occur today. If a collision arises,
-        we raise loudly so the design fix lands here.
+        should provide an &, new condition should appear before``): when a
+        ``_mask`` edge is ALREADY wired on ``lib_node``, the new condition
+        must be AND-combined with the existing one BEFORE the consumer. The
+        combinator is just :class:`TileBinop` with ``op='&'`` over two bool
+        tiles -- no dedicated ``TileMaskAnd`` lib node needed (user
+        direction 2026-06-12: ``Cant we just have binop that accepts 2
+        bool tiles performs & and returns bool tile?``). The current
+        pipeline only wires iter-mask once, never re-wires, so collisions
+        can't occur today. If a collision arises, we raise loudly so the
+        design fix lands here.
 
         Connector name contract (user direction 2026-06-12: ``Unifiy mask
         connectors in the multi dim pass globally``): every gating
@@ -250,11 +253,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if existing:
             raise NotImplementedError(
                 f"_wire_mask: ``_mask`` already wired on {lib_node.label!r} "
-                f"(existing src={existing[0].src!r}). Per the AND-combine contract, "
-                f"emit a ``TileMaskAnd`` lib node combining {existing[0].src!r} with "
-                f"the new ``mask_an``={mask_an.data!r} and wire the AND output here. "
-                f"``TileMaskAnd`` is not yet implemented; this case is not exercised "
-                f"by the current pipeline.")
+                f"(existing src={existing[0].src!r}). Per the AND-combine "
+                f"contract, emit a ``TileBinop(op='&')`` combining "
+                f"{existing[0].src!r} with the new ``mask_an``={mask_an.data!r} "
+                f"(both bool tiles) and wire its ``_c`` output here. The "
+                f"current pipeline doesn't exercise this case -- no "
+                f"second-mask wiring happens, so this raise is a defensive "
+                f"guard rather than a missing implementation.")
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
 
