@@ -535,8 +535,6 @@ class WidenAccesses(ppl.Pass):
                 for node in state.nodes():
                     if not isinstance(node, Tasklet):
                         continue
-                    # Lane-dep output iff any input is lane-dep OR code uses
-                    # tile iter-var (e.g. ``_out = i + 1`` widens to per-lane).
                     is_lane_dep = self._tasklet_references_iter_var(node, iter_vars)
                     if not is_lane_dep:
                         for e in state.in_edges(node):
@@ -659,7 +657,14 @@ class WidenAccesses(ppl.Pass):
             for edge in state.edges():
                 if edge.data is None or edge.data.data != name:
                     continue
-                edge.data.subset = subsets.Range(list(target_range.ranges))
+                new_sub = subsets.Range(list(target_range.ranges))
+                edge.data.subset = new_sub
+                # CRITICAL: update ``volume`` too -- codegen reads it (NOT
+                # ``subset.num_elements()``) to size the CopyND emission. A
+                # stale ``volume=1`` from the original Scalar memlet would
+                # cause AN -> AN bridge copies to move only 1 element of the
+                # widened W-element tile.
+                edge.data.volume = new_sub.num_elements()
         return True
 
     # --- Driver --------------------------------------------------------------
