@@ -107,9 +107,24 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
             # (routing every write through a tile lib node), not a correctness
             # fix -- the existing path produces correct code.
             either_is_scalar = (isinstance(src_desc, data.Scalar) or isinstance(dst_desc, data.Scalar))
-            bridge_to_output = (src_desc is not None and getattr(src_desc, "transient", False) and dst_desc is not None
-                                and not getattr(dst_desc, "transient", False))
-            if not (either_is_scalar or bridge_to_output):
+            bridge_to_output = (src_desc is not None and src_desc.transient and dst_desc is not None
+                                and not dst_desc.transient)
+            # Symmetric input-staging case (user direction 2026-06-11): the
+            # input bridge ``non-transient -> widened-tile transient`` mirrors
+            # the existing ``transient -> non-transient`` output writeback.
+            # Both are CopyND-handled by DaCe codegen using the memlet's
+            # subset (e.g. ``src[i:i+W]``) -- design-clean for staging-first.
+            input_staging = (src_desc is not None and not src_desc.transient
+                             and dst_desc is not None and dst_desc.transient)
+            # Intra-staging chain: tile bridge -> next tile transient, where
+            # both endpoints are widened to the same K-D tile shape (no
+            # Scalar). CopyND emits a direct W-element copy.
+            intra_staging = False
+            if src_desc is not None and dst_desc is not None:
+                src_is_tile = src_desc.transient and not isinstance(src_desc, data.Scalar)
+                dst_is_tile = dst_desc.transient and not isinstance(dst_desc, data.Scalar)
+                intra_staging = src_is_tile and dst_is_tile
+            if not (either_is_scalar or bridge_to_output or input_staging or intra_staging):
                 src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
                 raise AssertionError(f"design 3.8.3 (2) violation: AN -> AN edge survives staging "
                                      f"but neither endpoint is a Scalar bridge or a transient->output "

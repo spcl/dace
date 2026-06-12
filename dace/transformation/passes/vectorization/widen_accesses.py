@@ -540,16 +540,24 @@ class WidenAccesses(ppl.Pass):
 
     def _propagate_lane_dep(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...],
                             nt_lane_dep: Set[str]) -> Set[str]:
-        """Forward-propagate lane-dep through Tasklets to a fixed point.
+        """Forward-propagate lane-dep through Tasklets AND AN -> AN copies.
 
-        Per user direction 2026-06-10: ``we need to DFS this so that we
-        traverse correctly``. Each iteration walks all tasklets; tasklets
-        whose lane-dep inputs are already classified propagate to their
-        outputs. Iteration continues until no new transient is added
-        (fixed point) -- guarantees the topological ordering DFS would
-        give us, without requiring an explicit graph topo sort (which is
-        complicated by NSDFG boundary edges and dataflow cycles via
-        AccessNodes).
+        Per user direction 2026-06-10/11: ``we need to DFS this so that we
+        traverse correctly``. Two propagation rules per fixed-point step:
+
+        1. **AN -> AN copy** (e.g. ``src --[src[i:i+W]]--> src_index``): if
+           the source data name is lane-dep, the destination transient
+           becomes lane-dep. Required when staging-first
+           (:class:`StageGlobalArrayThroughScalars`) routes a lane-dep non-
+           transient through a bridge Scalar; the tasklet then reads the
+           bridge, not the non-transient directly. Widening the bridge to a
+           tile lets the existing input-staging audit case in
+           :class:`InsertTileLoadStore` accept the CopyND-handled
+           ``src[i:i+W] -> bridge[0:W]`` edge.
+        2. **Tasklet**: any lane-dep input data OR tile-iter-var in the code
+           body marks every output transient as lane-dep.
+
+        Iteration continues until no new transient is added (fixed point).
 
         :returns: set of transient data names that need tile-shape widening.
         """
@@ -560,6 +568,25 @@ class WidenAccesses(ppl.Pass):
             changed = False
             max_iters -= 1
             for state in inner_sdfg.states():
+                # Rule 1: AN -> AN copies.
+                for edge in state.edges():
+                    if edge.data is None or edge.data.data is None:
+                        continue
+                    if not isinstance(edge.src, AccessNode) or not isinstance(edge.dst, AccessNode):
+                        continue
+                    src_name = edge.src.data
+                    dst_name = edge.dst.data
+                    if src_name not in nt_lane_dep and src_name not in lane_dep_transients:
+                        continue
+                    desc = inner_sdfg.arrays.get(dst_name)
+                    if desc is None or not desc.transient:
+                        continue
+                    if not self._is_widenable(desc):
+                        continue
+                    if dst_name not in lane_dep_transients:
+                        lane_dep_transients.add(dst_name)
+                        changed = True
+                # Rule 2: Tasklets.
                 for node in state.nodes():
                     if not isinstance(node, Tasklet):
                         continue
@@ -679,7 +706,7 @@ class WidenAccesses(ppl.Pass):
             dtype=desc.dtype,
             shape=widths,
             transient=True,
-            storage=desc.storage if hasattr(desc, "storage") else dtypes.StorageType.Register,
+            storage=desc.storage,
         )
         for state in inner_sdfg.states():
             for edge in state.edges():
