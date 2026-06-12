@@ -72,8 +72,11 @@ def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str):
     return None, None
 
 
-def emit_per_lane_symbol_fanout(sdfg: SDFG, sym_name: str, iter_vars,
-                                widths) -> Optional[Dict[Tuple[int, ...], str]]:
+def emit_per_lane_symbol_fanout(sdfg: SDFG,
+                                sym_name: str,
+                                iter_vars,
+                                widths,
+                                iter_var_ubs: Optional[Dict[str, Any]] = None) -> Optional[Dict[Tuple[int, ...], str]]:
     """Emit per-lane SDFG symbols + iedge assignments for a Bypass-form gather.
 
     Idempotent: if the per-lane symbols already exist (an earlier call has
@@ -87,10 +90,19 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG, sym_name: str, iter_vars,
     the original symbol etc)``. WidenAccesses owns this so the lane-id
     expansion is a sibling of subset / other_subset widening.
 
+    Remainder-loop safety: when ``iter_var_ubs`` is provided, the per-lane
+    shift ``iv -> iv + lane`` is clamped to ``Min(iv + lane, ub)`` so the
+    per-lane read of e.g. ``idx[i + lane]`` never reaches past the array
+    bound on the masked-tail remainder. Caller is responsible for passing
+    each tile iter-var's inclusive upper bound (from
+    ``map_entry.map.range[d][1]``).
+
     :param sdfg: Inner SDFG that hosts the bare symbol.
     :param sym_name: Bare interstate symbol (e.g. ``__sym``).
     :param iter_vars: Tile iter-var names (length K, innermost-last).
     :param widths: Per-dim tile widths (length K).
+    :param iter_var_ubs: Optional ``{iter_var_name: ub_expr}`` map; when
+        provided the per-lane shift is clamped to ``Min(iv + lane, ub)``.
     :returns: ``{dep_idx_tuple: plane_sym_name}`` mapping for every
         Cartesian-product cell of the dep dims, or ``None`` when the
         symbol isn't defined by an interstate edge / has no iter-var
@@ -115,6 +127,7 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG, sym_name: str, iter_vars,
         rhs_sym = _sym.pystr_to_symbolic(rhs_template)
     except Exception:  # noqa: BLE001
         return None
+    import sympy as _sp
     for dep_idx in _itertools.product(*(range(w) for w in dep_widths_iter)):
         chunks = tuple(zip(dep_iter_var_indices, dep_idx))
         plane = LaneIdScheme.make_multi(sym_name, chunks)
@@ -123,7 +136,15 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG, sym_name: str, iter_vars,
             origin_dtype = sdfg.symbols.get(sym_name, dace.int64)
             sdfg.add_symbol(plane, origin_dtype)
         if plane not in iedge.data.assignments:
-            repl = {_sym.symbol(iv): _sym.symbol(iv) + lane for iv, lane in zip(dep_iter_var_names, dep_idx)}
+            repl: Dict[Any, Any] = {}
+            for iv, lane in zip(dep_iter_var_names, dep_idx):
+                shifted = _sym.symbol(iv) + lane
+                if iter_var_ubs is not None and iv in iter_var_ubs:
+                    # Clamp to in-bounds element so the lane-fanout never reads past
+                    # the source array on the masked-tail remainder. The mask still
+                    # gates the SCATTER write -- this is purely a safe-read clamp.
+                    shifted = _sp.Min(shifted, iter_var_ubs[iv])
+                repl[_sym.symbol(iv)] = shifted
             iedge.data.assignments[plane] = str(rhs_sym.xreplace(repl))
     return per_lane_syms
 
@@ -564,7 +585,10 @@ class WidenAccesses(ppl.Pass):
         return False
 
     # --- Step 5: seed per-lane symbols for Bypass-form gathers --------------
-    def _seed_per_lane_symbols(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
+    def _seed_per_lane_symbols(self,
+                               inner_sdfg: SDFG,
+                               iter_vars: Tuple[str, ...],
+                               iter_var_ubs: Optional[Dict[str, Any]] = None) -> int:
         """Walk every gather memlet on a non-transient AN; for the Bypass form
         (begin is a bare interstate symbol defined by ``__sym = idx[i]``-shape
         iedge), seed per-lane symbols + iedge assignments via
@@ -609,7 +633,8 @@ class WidenAccesses(ppl.Pass):
                         begin_str = str(sub.ranges[k][0]).strip()
                         if _re.fullmatch(r"[A-Za-z_]\w*", begin_str) is None:
                             continue
-                        if emit_per_lane_symbol_fanout(inner_sdfg, begin_str, iter_vars, widths) is not None:
+                        if emit_per_lane_symbol_fanout(inner_sdfg, begin_str, iter_vars, widths,
+                                                       iter_var_ubs=iter_var_ubs) is not None:
                             seeded += 1
         return seeded
 
@@ -649,6 +674,15 @@ class WidenAccesses(ppl.Pass):
         for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
             iter_vars = tuple(map_entry.map.params[-K:])
             inner_sdfg = nsdfg_node.sdfg
+            # Per-iter-var inclusive upper bound for the lane-fanout clamp
+            # (remainder-loop safety: ``idx[i + lane]`` -> ``idx[Min(i + lane, ub)]``).
+            iter_var_ubs: Dict[str, Any] = {}
+            try:
+                for d in range(K):
+                    full_d = len(map_entry.map.params) - K + d
+                    iter_var_ubs[iter_vars[d]] = map_entry.map.range[full_d][1]
+            except Exception:  # noqa: BLE001
+                iter_var_ubs = {}
             # Step 1: classify non-transients (which need lane-dep treatment).
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)
             # Step 2: widen non-transient boundary memlets. SYMMETRIC on
@@ -668,5 +702,6 @@ class WidenAccesses(ppl.Pass):
             # symbols``). InsertTileLoadStore / materialiser consume the
             # pre-seeded symbols downstream -- idempotent helper, safe to
             # call again if the materialiser re-encounters the same gather.
-            total += self._seed_per_lane_symbols(inner_sdfg, iter_vars)
+            # Pass per-iter-var ub for the remainder-loop OOB-clamp.
+            total += self._seed_per_lane_symbols(inner_sdfg, iter_vars, iter_var_ubs=iter_var_ubs)
         return total if total else None
