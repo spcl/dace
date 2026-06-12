@@ -90,11 +90,12 @@ def test_widen_accesses_returns_none_on_empty_sdfg():
     assert WidenAccesses(widths=(8, )).apply_pass(sdfg, {}) is None
 
 
-def test_widen_accesses_materialises_index_tile_for_gather_access():
-    """``a[idx[ii]]`` (1D gather) -> WidenAccesses mints one per-lane index tile.
-
-    Folds the prior ``PreparePerLaneIndices`` walker test into the unified
-    ``WidenAccesses`` (per user direction 2026-06-11).
+def test_widen_accesses_does_not_materialise_idx_tile_for_gather_access():
+    """Per user direction 2026-06-11: per-lane idx materialisation is owned
+    by :class:`InsertTileLoadStore` at TileLoad emission time -- WidenAccesses
+    handles widening only (subset / other_subset / transients), NOT
+    materialisation. The standalone ``GatherLift`` pass is folded into
+    :func:`materialise_per_lane_index_tile` itself.
     """
     from dace.memlet import Memlet as _Memlet
     from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
@@ -113,7 +114,6 @@ def test_widen_accesses_materialises_index_tile_for_gather_access():
     a_inner = instate.add_access("A")
     t_inner = instate.add_access("out_t")
     tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
-    # Gather: A[idx[ii]]. Per-tile subset on A is [idx[ii]:idx[ii]+1] -- GATHER on dim 0.
     from dace.subsets import Range as _Range
     from dace.symbolic import pystr_to_symbolic as _to_sym
     instate.add_edge(a_inner, None, tasklet, "_a",
@@ -132,7 +132,8 @@ def test_widen_accesses_materialises_index_tile_for_gather_access():
     WidenAccesses(widths=(8, )).apply_pass(sdfg, {})
     after_int_arrays = sum(1 for d in inner.arrays.values()
                            if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
-    assert after_int_arrays == before_int_arrays + 1, "expected one new int64 index transient"
+    assert after_int_arrays == before_int_arrays, (
+        "WidenAccesses must NOT materialise idx tiles -- InsertTileLoadStore owns that step")
 
 
 def test_e2e_2d_lane_index():

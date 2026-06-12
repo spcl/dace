@@ -30,7 +30,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.gather_lift import GatherLift
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
@@ -467,15 +466,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             WidenAccesses(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             InsertTileLoadStore(widths=widths_t),
-            # Lift lane-dep gather placeholders into per-lane symbol fan-outs BEFORE
-            # the converter runs -- the materialiser's for-loop populate body
-            # confuses ``ConvertTaskletsToTileOps`` into treating it as a scalar
-            # broadcast input and splitting the loop syntax across multiple C++
-            # statements. Lifting first replaces the for-loop with W unrolled writes
-            # the converter handles safely. The original lane-dep symbol survives
-            # this pass; ``RemoveUnusedPerLaneSymbols`` (post-clean) sweeps it if
-            # nothing else references it.
-            GatherLift(widths=widths_t),
             # Converter sees the walker's lib nodes + the mask in scope; it sets
             # has_mask=True + wires _mask onto Tile{Binop, Unop, ITE, Reduce} lib nodes.
             ConvertTaskletsToTileOps(widths=widths_t),
@@ -594,8 +584,9 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # / scatter form (``__sym = idx[i]`` -- exactly the @dace.program
         # output that section 3.8 of the design names as canonical), it
         # rewrites the assignment to ``__sym = idx[0]``, destroying the
-        # per-lane index semantics that ``GatherLift`` is designed to
-        # materialise downstream.
+        # per-lane index semantics that the materialiser's inline lift
+        # (folded GatherLift, in :func:`materialise_per_lane_index_tile`)
+        # depends on.
         #
         # The old "tile-load widening expects per-iter boundary memlets" rationale
         # for RefineNestedAccess is OBSOLETE under the staging-first design

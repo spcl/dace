@@ -56,8 +56,95 @@ from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+
+
+def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str):
+    """Return ``(interstate_edge, rhs_str)`` for the iedge defining ``sym_name``,
+    or ``(None, None)``. Used by :func:`materialise_per_lane_index_tile` to
+    detect the Bypass form ``__sym = idx[i]`` for the inline per-lane fan-out
+    (folded GatherLift logic per user direction 2026-06-11)."""
+    for iedge in inner_sdfg.all_interstate_edges():
+        if sym_name in iedge.data.assignments:
+            return iedge, iedge.data.assignments[sym_name]
+    return None, None
+
+
+def _emit_unrolled_lift_or_loop(sdfg: SDFG, gather_expr_orig: str, body_expr: str,
+                                 widths, dep_mask, dep_dims, iter_vars, flat, idx_dtype):
+    """Emit either the unrolled per-lane fan-out (Bypass form) or the loop body.
+
+    Bypass form: ``gather_expr_orig`` is a single bare interstate symbol
+    ``__sym`` defined by an iedge ``__sym = idx[i]`` (RHS references at least
+    one tile iter-var). We mint per-lane SDFG symbols
+    ``LaneIdScheme.make_multi(__sym, ((dep_dim, lane), ...))``, add iedge
+    assignments shifted by lane, and emit unrolled writes per Cartesian-
+    product cell of the dep dims. Folds the prior :class:`GatherLift` post-
+    walker pass into the materialiser per user direction 2026-06-11.
+
+    Non-Bypass form: emit the K-fold for-loop the materialiser originally
+    produced.
+    """
+    import re as _re
+    import itertools as _itertools
+    expr_strip = gather_expr_orig.strip()
+    bare_sym = _re.fullmatch(r"[A-Za-z_]\w*", expr_strip)
+    if bare_sym is not None:
+        sym_name = bare_sym.group(0)
+        iedge, rhs_template = _find_iedge_defining_symbol(sdfg, sym_name)
+        if iedge is not None and rhs_template is not None:
+            try:
+                from dace import symbolic as _sym
+                rhs_free = set(map(str, _sym.pystr_to_symbolic(rhs_template).free_symbols))
+            except Exception:  # noqa: BLE001
+                rhs_free = set()
+            dep_iter_var_indices = [d for d, iv in enumerate(iter_vars) if iv in rhs_free]
+            if dep_iter_var_indices:
+                dep_widths_iter = tuple(widths[d] for d in dep_iter_var_indices)
+                dep_iter_var_names = tuple(iter_vars[d] for d in dep_iter_var_indices)
+                lines = []
+                per_lane_syms = {}
+                for dep_idx in _itertools.product(*(range(w) for w in dep_widths_iter)):
+                    chunks = tuple(zip(dep_iter_var_indices, dep_idx))
+                    plane = LaneIdScheme.make_multi(sym_name, chunks)
+                    per_lane_syms[dep_idx] = plane
+                    if plane not in sdfg.symbols:
+                        origin_dtype = sdfg.symbols.get(sym_name, dace.int64)
+                        sdfg.add_symbol(plane, origin_dtype)
+                    try:
+                        rhs_sym = _sym.pystr_to_symbolic(rhs_template)
+                        repl = {
+                            _sym.symbol(iv): _sym.symbol(iv) + lane
+                            for iv, lane in zip(dep_iter_var_names, dep_idx)
+                        }
+                        iedge.data.assignments[plane] = str(rhs_sym.xreplace(repl))
+                    except Exception:  # noqa: BLE001
+                        iedge.data.assignments[plane] = rhs_template
+                for all_idx in _itertools.product(*(range(w) for w in widths)):
+                    dep_key = tuple(all_idx[d] for d in dep_iter_var_indices)
+                    plane = per_lane_syms[dep_key]
+                    off = 0
+                    for k, idx in enumerate(all_idx):
+                        stride = 1
+                        for q in range(k + 1, len(widths)):
+                            stride *= widths[q]
+                        off += idx * stride
+                    lines.append(f"_out[{off}] = ({idx_dtype.ctype})({plane});")
+                return lines
+    code_lines = []
+    for d in dep_dims:
+        depth = dep_dims.index(d)
+        code_lines.append(f"{'    ' * depth}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+    for d, is_dep in enumerate(dep_mask):
+        if not is_dep:
+            indent = '    ' * len(dep_dims)
+            code_lines.append(f"{indent}std::size_t __l{d} = 0;")
+    code_lines.append(f"{'    ' * len(dep_dims)}_out[{flat}] = ({idx_dtype.ctype})({body_expr});")
+    for depth in reversed(range(len(dep_dims))):
+        code_lines.append(f"{'    ' * depth}}}")
+    return code_lines
 
 
 def materialise_per_lane_index_tile(state: SDFGState,
@@ -127,6 +214,7 @@ def materialise_per_lane_index_tile(state: SDFGState,
     # contain ``var`` as a substring (e.g. ``dst_slice_0`` -> ``dst_sl(__l0)ce_0``
     # when ``var == "i"``). Use ``\b`` so only standalone tokens match.
     import re as _re
+    import itertools as _itertools
     body_expr = gather_expr
     for d, var in enumerate(iter_vars):
         body_expr = _re.sub(rf"\b{_re.escape(var)}\b", f"(__l{d})", body_expr)
@@ -138,17 +226,22 @@ def materialise_per_lane_index_tile(state: SDFGState,
             inner *= widths[q]
         parts.append(f"__l{d}" if inner == 1 else f"(__l{d} * {inner})")
     flat = " + ".join(parts) if parts else "0"
-    code_lines = []
-    for d in dep_dims:
-        depth = dep_dims.index(d)
-        code_lines.append(f"{'    ' * depth}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
-    for d, is_dep in enumerate(dep_mask):
-        if not is_dep:
-            indent = '    ' * len(dep_dims)
-            code_lines.append(f"{indent}std::size_t __l{d} = 0;")
-    code_lines.append(f"{'    ' * len(dep_dims)}_out[{flat}] = ({idx_dtype.ctype})({body_expr});")
-    for depth in reversed(range(len(dep_dims))):
-        code_lines.append(f"{'    ' * depth}}}")
+    # GatherLift fold (user direction 2026-06-11: ``We can remove gather lift
+    # because we already have to do it when emitting loads``): when
+    # ``gather_expr`` is a single bare interstate symbol that's lane-dep, emit
+    # UNROLLED per-lane writes sourcing from per-lane symbols here -- avoids
+    # the placeholder loop body that confuses ConvertTaskletsToTileOps.
+    code_lines = _emit_unrolled_lift_or_loop(
+        sdfg=sdfg,
+        gather_expr_orig=gather_expr,
+        body_expr=body_expr,
+        widths=widths,
+        dep_mask=dep_mask,
+        dep_dims=dep_dims,
+        iter_vars=iter_vars,
+        flat=flat,
+        idx_dtype=idx_dtype,
+    )
     tasklet = state.add_tasklet(
         name=f"materialise_{arr_name}",
         inputs=set(),
@@ -429,63 +522,6 @@ class WidenAccesses(ppl.Pass):
                 return False
         return False
 
-    # --- Step 5: materialise per-lane idx tiles for GATHER dims -------------
-    def _materialise_gather_indices(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
-        """Mint per-lane idx tiles for every GATHER per-dim of every non-transient AN.
-
-        Folds in the prior ``PreparePerLaneIndices`` step per user direction
-        2026-06-11: ``WidenAccesses should generate per lane indices``. The
-        downstream ``InsertTileLoadStore`` wires the materialised tile into
-        the ``_idx_<k>`` connector of ``TileLoad`` / ``TileStore``.
-
-        SYMMETRIC: applies identically to read-side (gather) and write-side
-        (scatter) edges via :func:`an_side_subset`.
-
-        :returns: Number of materialised idx tiles.
-        """
-        K = len(self.widths)
-        widths = tuple(self.widths)
-        if K != 1:
-            # Multi-tile-dim GATHER materialisation deferred -- the legacy
-            # ``PreparePerLaneIndices`` slice handled K=1 only; the multi-dim
-            # case lands in a follow-up.
-            return 0
-        minted = 0
-        iter_var = iter_vars[0]
-        for inner_state in inner_sdfg.states():
-            for an in list(inner_state.nodes()):
-                if not isinstance(an, AccessNode):
-                    continue
-                desc = inner_sdfg.arrays.get(an.data)
-                if desc is None or desc.transient:
-                    continue
-                out_edges = list(inner_state.out_edges(an))
-                if not out_edges:
-                    continue
-                try:
-                    subset = an_side_subset(out_edges[0], an, inner_sdfg)
-                except Exception:  # noqa: BLE001
-                    continue
-                try:
-                    record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
-                except Exception:  # noqa: BLE001
-                    continue
-                if not record.per_dim_kind or PerDimKind.GATHER not in record.per_dim_kind:
-                    continue
-                for k, kind in enumerate(record.per_dim_kind):
-                    if kind != PerDimKind.GATHER:
-                        continue
-                    begin_str = str(subset.ranges[k][0])
-                    materialise_per_lane_index_tile(
-                        inner_state,
-                        name_hint=f"_idx_{an.data}_{k}",
-                        gather_expr=begin_str,
-                        tile_iter_vars=iter_var,
-                        tile_widths=widths[0],
-                    )
-                    minted += 1
-        return minted
-
     def _widen_transient(self, inner_sdfg: SDFG, name: str) -> bool:
         """Swap descriptor to ``Array(widths)`` + rewrite touching memlets.
 
@@ -536,9 +572,4 @@ class WidenAccesses(ppl.Pass):
             for name in to_widen:
                 if self._widen_transient(inner_sdfg, name):
                     total += 1
-            # Step 5: materialise per-lane idx tiles for GATHER dims (fold of
-            # legacy PreparePerLaneIndices pass per user direction 2026-06-11
-            # -- one pass widens accesses AND emits the idx tiles ready for
-            # InsertTileLoadStore to wire into _idx_<k> connectors).
-            total += self._materialise_gather_indices(inner_sdfg, iter_vars)
         return total if total else None
