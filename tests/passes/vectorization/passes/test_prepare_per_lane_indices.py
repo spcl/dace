@@ -91,11 +91,12 @@ def test_widen_accesses_returns_none_on_empty_sdfg():
 
 
 def test_widen_accesses_does_not_materialise_idx_tile_for_gather_access():
-    """Per user direction 2026-06-11: per-lane idx materialisation is owned
-    by :class:`InsertTileLoadStore` at TileLoad emission time -- WidenAccesses
-    handles widening only (subset / other_subset / transients), NOT
-    materialisation. The standalone ``GatherLift`` pass is folded into
-    :func:`materialise_per_lane_index_tile` itself.
+    """Per user direction 2026-06-11: per-lane idx tile materialisation is
+    owned by :class:`InsertTileLoadStore` at TileLoad emission time --
+    WidenAccesses handles widening + per-lane SYMBOL fanout (step 5), NOT
+    tile materialisation. ``GatherLift`` is folded into
+    :func:`materialise_per_lane_index_tile` (idempotent w.r.t. WidenAccesses's
+    pre-seeded per-lane symbols).
     """
     from dace.memlet import Memlet as _Memlet
     from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
