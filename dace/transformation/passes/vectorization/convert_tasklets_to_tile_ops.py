@@ -234,9 +234,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
 
-        Mirror of the walker shape used by :class:`InsertTileLoadStore` and
-        :class:`PreparePerLaneIndices`.
+        Mirror of the walker shape used by :class:`InsertTileLoadStore`.
+        Skips ``__scalar_tail`` (postamble step-1 loop) and ``__tile_k1_tail``
+        (pinned-K=1 postamble) since neither runs the K-D tile-op chain.
         """
+        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                            TILE_K1_TAIL_MARKER)
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
@@ -249,6 +252,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             except (StopIteration, ValueError):
                 continue
             if len(node.map.params) < K:
+                continue
+            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
             try:
                 scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
@@ -848,11 +853,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if not e_is_sym and e_arg not in in_edges:
             return False
         out_edge = out_edges[0]
-        # Option C masking (user direction 2026-06-11): drop iter-mask wiring on
-        # pure-arithmetic ops -- the final TileStore at the global-write boundary
-        # masks the result. TileITE selects per lane; for inactive lanes the
-        # selected value lives in a tile transient and is discarded by the
-        # downstream masked store. The cond_mask input is independent (still wired).
+        # ITE owns its own ``_cond`` input (the comparison result); inactive
+        # iter-mask lanes are discarded by the downstream masked TileStore.
+        # No iter-mask on ITE (user direction 2026-06-12: ``Does ITE really
+        # need mask? I thought ITE already uses the mask?``).
         ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths), has_mask=False)
         inner_state.add_node(ite)
         # cond is always a connector (the result of the comparison upstream). If it's
@@ -1054,9 +1058,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Output transient shape is pre-determined by WidenAccesses (forward
         # analysis pre-pass per design 6.2). The output kind on the lib node is implied by
         # the descriptor on ``out_edge``'s destination; validate() enforces consistency.
-        # Option C masking (user direction 2026-06-11): no iter-mask on pure-
-        # arithmetic TileBinop -- the downstream TileStore at the global-write
-        # boundary discards inactive lanes. Tile transients are register-private.
+        # Option C masking (user direction 2026-06-11/12 confirmed): pure
+        # arithmetic on tile transients; the downstream TileStore at the
+        # global-write boundary masks inactive lanes. TileReduce keeps
+        # iter-mask (cross-lane aggregate). TileITE has its own cond input.
         binop = TileBinop(name=f"{tasklet.label}_binop",
                           widths=tuple(self.widths),
                           op=op,
@@ -1093,9 +1098,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         a_edge = in_edges[a_conn]
         kind_tile_side = self._operand_kind(inner_state, a_edge)
         sym_kind, sym_expr, sym_an_name = self._resolve_symbol_operand(inner_state, symbol_expr, iter_vars)
-        # Option C masking: TileBinop is pure arithmetic on transient inputs; no
-        # iter-mask. Downstream TileStore at the global-write boundary discards
-        # inactive lanes.
+        # Option C: pure-arithmetic TileBinop -- no iter-mask.
         if symbol_side == "b":
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
                               widths=tuple(self.widths),
@@ -1148,7 +1151,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         out_edge = out_edges[0]
         sym_kind, sym_expr, sym_an_name = self._resolve_symbol_operand(inner_state, symbol_expr, iter_vars)
-        # Option C masking: pure-arithmetic TileUnop -- no iter-mask.
+        # Option C: pure-arithmetic TileUnop -- no iter-mask.
         unop = TileUnop(name=f"{tasklet.label}_unop_sym",
                         widths=tuple(self.widths),
                         op=op,
@@ -1177,7 +1180,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         kind_a, sym_expr_a, an_a = self._resolve_symbol_operand(inner_state, expr_a_str, iter_vars)
         kind_b, sym_expr_b, an_b = self._resolve_symbol_operand(inner_state, expr_b_str, iter_vars)
-        # Option C masking: pure-arithmetic TileBinop -- no iter-mask.
+        # Option C: pure-arithmetic TileBinop -- no iter-mask.
         binop = TileBinop(name=f"{tasklet.label}_binop_two_sym",
                           widths=tuple(self.widths),
                           op=op,
@@ -1207,7 +1210,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         a_edge = in_edges[a_conn]
         kind_a = self._operand_kind(inner_state, a_edge)
         # Output transient shape is pre-determined by WidenAccesses.
-        # Option C masking: pure-arithmetic TileUnop -- no iter-mask.
+        # Option C: pure-arithmetic TileUnop -- no iter-mask.
         unop = TileUnop(name=f"{tasklet.label}_unop",
                         widths=tuple(self.widths),
                         op=op,

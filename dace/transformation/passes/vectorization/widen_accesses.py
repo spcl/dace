@@ -352,8 +352,12 @@ class WidenAccesses(ppl.Pass):
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
 
-        Same predicate as :class:`InsertTileLoadStore`.
+        Same predicate as :class:`InsertTileLoadStore`. Skips the
+        ``__scalar_tail`` postamble (step-1 sequential body) and the
+        ``__tile_k1_tail`` postamble (pinned at K=1).
         """
+        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                            TILE_K1_TAIL_MARKER)
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
@@ -366,6 +370,8 @@ class WidenAccesses(ppl.Pass):
             except (StopIteration, ValueError):
                 continue
             if len(node.map.params) < K:
+                continue
+            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
             try:
                 scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()

@@ -570,15 +570,15 @@ def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
 
 
 def test_converter_drops_mask_on_pure_arithmetic_binop():
-    """Option C masking (user direction 2026-06-11): pure-arithmetic
-    :class:`TileBinop` has NO iter-mask -- the downstream :class:`TileStore` at
-    the global-write boundary discards inactive lanes. Tile transients are
-    register-private."""
+    """Option C (user direction 2026-06-11/12): pure-arithmetic
+    :class:`TileBinop` has NO iter-mask -- the downstream :class:`TileStore`
+    at the global-write boundary discards inactive lanes. Tile transients
+    are register-private."""
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
-    assert binop.has_mask is False, f"Option C: pure binop has_mask must be False, got {binop.has_mask}"
+    assert binop.has_mask is False
     mask_edges = [e for e in body_state.in_edges(binop) if e.dst_conn == "_mask"]
     assert len(mask_edges) == 0
 

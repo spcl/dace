@@ -435,6 +435,8 @@ class InsertTileLoadStore(ppl.Pass):
         single-NSDFG body. This walker walks every state and yields any
         innermost map whose body is exactly one NestedSDFG.
         """
+        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                            TILE_K1_TAIL_MARKER)
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
@@ -447,6 +449,12 @@ class InsertTileLoadStore(ppl.Pass):
             except (StopIteration, ValueError):
                 continue
             if len(node.map.params) < K:
+                continue
+            # Skip the postamble tails: ``__scalar_tail`` is a step-1 sequential
+            # loop running the original (non-tile) body -- no tile load/store
+            # needed. ``__tile_k1_tail`` runs at K=1 widths=(1,) (handled by a
+            # separate pinned path); the standard K-D walker skips it too.
+            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
             try:
                 scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
