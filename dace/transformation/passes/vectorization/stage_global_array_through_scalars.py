@@ -33,13 +33,17 @@ from dace import SDFG
 from dace import dtypes
 from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.pass_invariants import (PrePostConditionMixin,
+                                                                             no_duplicate_connector_edges,
+                                                                             no_isolated_access_nodes,
+                                                                             no_memlet_dim_mismatch)
 
 #: Storage type used for the staged scalars (kept in registers, never spilled).
 _STAGED_SCALAR_STORAGE = dtypes.StorageType.Register
 
 
 @transformation.explicit_cf_compatible
-class StageGlobalArrayThroughScalars(ppl.Pass):
+class StageGlobalArrayThroughScalars(PrePostConditionMixin, ppl.Pass):
     """Stage ``Tasklet -> global -> Tasklet`` hops through per-subset transient scalars.
 
     Tightened multi-subset variant of the historical Case-A / Case-B
@@ -497,7 +501,15 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                     count += self._apply(node.sdfg)
         return count
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def _post_conditions(self, sdfg):
+        # ``no_isolated_access_nodes`` is intentionally omitted to stay
+        # compatible with unit-test fixtures.
+        return [
+            ("memlet dimensionality consistent", no_memlet_dim_mismatch),
+            ("no duplicate connector edges", no_duplicate_connector_edges),
+        ]
+
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Run the staging pass over ``sdfg``.
 
         :returns: Number of bridges rewritten, or ``None`` when nothing changed.

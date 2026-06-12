@@ -57,6 +57,9 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
+from dace.transformation.passes.vectorization.utils.pass_invariants import (PrePostConditionMixin,
+                                                                             no_memlet_dim_mismatch,
+                                                                             no_isolated_access_nodes)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
@@ -319,7 +322,7 @@ def materialise_per_lane_index_tile(state: SDFGState,
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class WidenAccesses(ppl.Pass):
+class WidenAccesses(PrePostConditionMixin, ppl.Pass):
     """Unified widening: non-transient boundary subsets + transient descriptors,
     lane-dep gated, symmetric between gather and scatter.
 
@@ -741,7 +744,16 @@ class WidenAccesses(ppl.Pass):
         return True
 
     # --- Driver --------------------------------------------------------------
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    # Pre/post-condition invariants per user direction 2026-06-12.
+    # ``no_isolated_access_nodes`` is deliberately NOT included -- unit-test
+    # fixtures exercise the pass in isolation and may leave bridge ANs
+    # without surrounding consumers/producers.
+    def _post_conditions(self, sdfg):
+        return [
+            ("memlet subset and other_subset have matching dimensionality", no_memlet_dim_mismatch),
+        ]
+
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Run the unified widening over every tile-tagged body NSDFG.
 
         :returns: Total number of widenings (descriptor swaps + memlet rewrites

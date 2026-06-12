@@ -18,6 +18,9 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
+from dace.transformation.passes.vectorization.utils.pass_invariants import (PrePostConditionMixin,
+                                                                             no_isolated_access_nodes,
+                                                                             no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
@@ -44,7 +47,7 @@ def _mask_array_name_for(parent_sdfg: dace.SDFG) -> str:
 
 
 @properties.make_properties
-class GenerateTileIterationMask(ppl.Pass):
+class GenerateTileIterationMask(PrePostConditionMixin, ppl.Pass):
     """Attach a K-dim iteration mask to every K-dim eligible inner map.
 
     For each inner map: adds ``_tile_iter_mask : bool[widths]`` (a
@@ -172,7 +175,14 @@ class GenerateTileIterationMask(ppl.Pass):
         )
         return True
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
+    def _post_conditions(self, sdfg):
+        # ``no_isolated_access_nodes`` is intentionally omitted to stay
+        # compatible with unit-test fixtures that exercise this pass alone.
+        return [
+            ("memlet dimensionality consistent", no_memlet_dim_mismatch),
+        ]
+
+    def _apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
         """Walk every innermost map and attach the mask to its scope.
 
         :param sdfg: SDFG to transform in place.

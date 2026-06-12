@@ -36,6 +36,11 @@ from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.pass_invariants import (PrePostConditionMixin,
+                                                                             no_duplicate_connector_edges,
+                                                                             no_isolated_access_nodes,
+                                                                             no_memlet_dim_mismatch,
+                                                                             sdfg_validates)
 
 #: Subset of binary operators that map directly onto :class:`TileBinop`. Includes
 #: comparison (``<``, ``<=``, ``>``, ``>=``, ``==``, ``!=``) which produce bool tile
@@ -71,7 +76,7 @@ _SUPPORTED_UNOPS = {
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class ConvertTaskletsToTileOps(ppl.Pass):
+class ConvertTaskletsToTileOps(PrePostConditionMixin, ppl.Pass):
     """Convert in-body tasklets to tile lib nodes (first slice: binary Tile+Tile only).
 
     :ivar widths: Per-tile-dim widths; mirrors :class:`InsertTileLoadStore`.
@@ -1436,7 +1441,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     converted += 1
         return converted
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def _post_conditions(self, sdfg):
+        # ``sdfg_validates`` and ``no_isolated_access_nodes`` are intentionally
+        # NOT included here -- both trip on unit-test fixtures that exercise
+        # the converter in isolation (without the full staging chain that
+        # connects the bridge ANs in a real pipeline run). The targeted
+        # invariants below catch the specific patterns that have broken in
+        # past cloudsc / kernel debugging.
+        return [
+            ("memlet dimensionality consistent", no_memlet_dim_mismatch),
+            ("no duplicate connector edges on lib nodes", no_duplicate_connector_edges),
+        ]
+
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Walk every tile-tagged body NSDFG; convert recognised tasklets to tile lib nodes.
 
         :param sdfg: Top-level SDFG.
