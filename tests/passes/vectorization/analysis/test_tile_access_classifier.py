@@ -312,14 +312,25 @@ def test_replicate_data_dependent_falls_to_gather():
     assert ta.per_dim_kind == (PerDimKind.GATHER, )
 
 
-def test_replicate_non_integer_divisor_falls_to_affine():
-    """If the divisor isn't a concrete integer (``i // K`` with K
-    symbolic), REPLICATE doesn't apply; falls back to AFFINE/GATHER."""
+def test_replicate_symbolic_divisor_stays_replicate_with_runtime_check():
+    """Symbolic divisor (``i // K`` with K symbolic) classifies as REPLICATE
+    per design 2c7b88e26 (runtime check ``W % K == 0`` emitted at codegen,
+    replacing the prior compile-time refusal). Floats are still refused
+    outright -- access expressions are integer-valued by contract."""
     r = _R(("i // K", "i // K"))
     ta = classify_tile_access(r, iter_vars=("i", ))
-    # ``K`` is a symbol, not a concrete int -> not REPLICATE.
-    assert ta.per_dim_kind[0] in (PerDimKind.AFFINE, PerDimKind.GATHER)
-    assert ta.replicate_factor_per_dim[0] is None
+    assert ta.per_dim_kind[0] == PerDimKind.REPLICATE
+    assert ta.replicate_factor_per_dim[0] is not None
+
+
+def test_replicate_float_divisor_refused():
+    """Float divisor in an access expression is illegal -- the classifier
+    refuses (no silent truncation to int) so the dim falls to AFFINE/GATHER."""
+    import sympy as _sp
+    from dace.transformation.passes.vectorization.utils.tile_access import _detect_replicate_factor
+    # _detect_replicate_factor should refuse a float divisor.
+    expr = _sp.Function("int_floor")(_sp.Symbol("i"), _sp.Float(2.5))
+    assert _detect_replicate_factor(expr, "i") is None
 
 
 if __name__ == "__main__":

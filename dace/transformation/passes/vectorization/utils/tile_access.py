@@ -454,6 +454,11 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     #   divisor that divides ``W``. Tests with non-dividing symbolic divisors
     #   (e.g. ``test_div_index_symbol[3]`` with DV=3, W=8) produce incorrect
     #   results -- this is by-design refusal, not a codegen bug.
+    # Refuse floats outright -- access expressions are integer-valued by
+    # definition; a float divisor means an upstream pass leaked a numeric
+    # type. Fall to AFFINE/GATHER rather than silently truncating to int.
+    if isinstance(divisor, (sympy.Float, float)):
+        return None
     try:
         k = int(divisor)
         if k <= 1:
@@ -461,7 +466,7 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     except (TypeError, ValueError):
         if divisor is None:
             return None
-        k = divisor  # symbolic -- preserve through pipeline
+        k = divisor  # symbolic -- runtime check (W % k == 0) at codegen per 2c7b88e26.
     # Dividend must be affine in ``var_name`` (so the replication is
     # regular -- ``int_floor(idx[i], 2)`` is data-dependent and lowers
     # as GATHER, not REPLICATE).

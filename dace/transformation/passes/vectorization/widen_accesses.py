@@ -122,9 +122,14 @@ def materialise_per_lane_index_tile(state: SDFGState,
                                  storage=dtypes.StorageType.Register,
                                  transient=True,
                                  find_new_name=True)
+    # Word-boundary substitution: naive ``str.replace(var, ...)`` is
+    # character-level and mangles unrelated identifiers that happen to
+    # contain ``var`` as a substring (e.g. ``dst_slice_0`` -> ``dst_sl(__l0)ce_0``
+    # when ``var == "i"``). Use ``\b`` so only standalone tokens match.
+    import re as _re
     body_expr = gather_expr
     for d, var in enumerate(iter_vars):
-        body_expr = body_expr.replace(var, f"(__l{d})")
+        body_expr = _re.sub(rf"\b{_re.escape(var)}\b", f"(__l{d})", body_expr)
     dep_dims = [d for d, is_dep in enumerate(dep_mask) if is_dep]
     parts = []
     for i, d in enumerate(dep_dims):
