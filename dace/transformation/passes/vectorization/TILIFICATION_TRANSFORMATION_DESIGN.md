@@ -385,25 +385,30 @@ User direction 2026-06-10: **always emit full-K-D idx tiles**, with the
 sentinel symbol :data:`dace.symbolic.ONE` marking dims along which the
 tile broadcasts (no per-cell variation). No knob -- one uniform contract.
 
-For K=2 with K_dep=1 along dim 0 (e.g. ``B[ii, jj] = A[idx[ii], jj]``):
+Per user direction 2026-06-12: ``we dont need to always prepend or append
+ONE, it completely depends on the tile shape of the load or store, we just
+need to have same dimensionality``. The idx tile rank ALWAYS equals K
+(the load/store tile rank). Each per-dim slot is independently ``W_d``
+(lane-dependent) or ``ONE`` (broadcast) -- no positional rule.
 
-* Idx tile for source dim 0: shape ``(W_0, ONE)`` -- ``ONE`` declares dim
-  1 is broadcast (every cell at ``l_1`` reads the same value).
-* Populate tasklet:
-  ``__sym_lane0id_<l_0> = idx[ii + l_0]`` for ``l_0 in 0..W_0-1`` (W_0
-  per-lane symbols, NOT W_0 * W_1).
-* Codegen reads the tile via ``_idx_0[l_0, 0]`` (the ``ONE`` dim is
-  always indexed by 0 in the lowered code) OR equivalently
-  ``_idx_0[l_0, l_1 % 1]``; the per-arch expansion picks the cheaper
-  form depending on whether the ISA supports a broadcast load.
+For K=2 with the dep-mask varying:
 
-For K=2 with full K_dep (e.g. ``B[ii, jj] = A[idx_a[ii, jj], idx_b[ii,
-jj]]``):
+* Dep dims = ``{0}`` (e.g. ``A[idx[ii], jj]``): shape ``(W_0, ONE)``.
+* Dep dims = ``{1}`` (e.g. ``A[ii, idx[jj]]``): shape ``(ONE, W_1)``.
+* Dep dims = ``{0, 1}`` (e.g. ``A[idx_a[ii, jj], idx_b[ii, jj]]``):
+  shape ``(W_0, W_1)`` -- no ``ONE`` marker on either dim.
 
-* Idx tile per source dim: shape ``(W_0, W_1)`` -- no ``ONE`` marker.
-* Per-lane fan-out covers the full Cartesian product.
+For K=3 with dep dims = ``{0, 2}``: shape ``(W_0, ONE, W_2)``.
 
-For K=1: shape ``(W_0,)`` -- no ``ONE`` marker needed.
+For K=1 with dep dim = ``{0}``: shape ``(W_0,)`` -- no ``ONE`` marker.
+
+* Populate tasklet emits ``__sym_lane<d>id_<l_d>`` per-lane symbols only
+  over the dep dims (``∏_{d ∈ dep} W_d`` symbols, not the full Cartesian
+  product over K dims).
+* Codegen reads the tile via ``_idx[l_0, ..., l_{K-1}]``; ``ONE`` dims
+  are indexed by ``0`` (or equivalently ``l_d % 1``) in the lowered
+  code; the per-arch expansion picks broadcast vs per-cell load based on
+  per-dim inspection.
 
 Symmetric on scatter (``TileStore.scatter_dims``): same shape contract,
 ``ONE`` marks broadcast dims of the scatter index tile.

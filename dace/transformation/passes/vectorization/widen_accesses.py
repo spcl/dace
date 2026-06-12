@@ -430,10 +430,14 @@ class WidenAccesses(ppl.Pass):
         until we add gathers``. GATHER dims (whose begin is itself an array
         subscript referencing the iter-var, e.g. ``idx[i]``) are LEFT
         UNCHANGED -- ``InsertTileLoadStore`` then routes them through the
-        scatter / gather emission with the materialised idx tile holding
-        ``idx[i:i+W]`` as ``(ONE*, W, ONE*)`` per design 3.8.1. The
-        per-dim classifier returns ``PerDimKind.GATHER`` for these and
-        we skip widening them here.
+        scatter / gather emission with the materialised idx tile sized as
+        a K-D tile (same rank as the load/store tile shape) where each
+        per-dim slot is independently ``W_d`` (lane-dep) or ``ONE``
+        (broadcast). Per user direction 2026-06-12: ``we dont need to
+        always prepend or append ONE, it completely depends on the tile
+        shape of the load or store, we just need to have same
+        dimensionality``. The per-dim classifier returns
+        ``PerDimKind.GATHER`` for these and we skip widening them here.
         """
         widths = tuple(self.widths)
         K = len(iter_vars)
