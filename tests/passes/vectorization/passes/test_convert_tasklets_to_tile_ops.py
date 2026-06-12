@@ -569,30 +569,33 @@ def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
     return sdfg, inner
 
 
-def test_converter_drops_mask_on_pure_arithmetic_binop():
-    """Option C (user direction 2026-06-11/12): pure-arithmetic
-    :class:`TileBinop` has NO iter-mask -- the downstream :class:`TileStore`
-    at the global-write boundary discards inactive lanes. Tile transients
-    are register-private."""
+def test_converter_wires_mask_on_binop_when_mask_in_scope():
+    """Mask-when-partial (user direction 2026-06-12: ``dont we need to emit
+    mask on all tasklets if the iter mask is not full?``): iter-mask in
+    scope -> every :class:`TileBinop` gets ``has_mask=True`` + wired
+    ``_mask`` edge. Inactive lanes would otherwise hold garbage that can
+    trap (div-by-0, log-of-neg) or propagate NaN."""
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
-    assert binop.has_mask is False
+    assert binop.has_mask is True
     mask_edges = [e for e in body_state.in_edges(binop) if e.dst_conn == "_mask"]
-    assert len(mask_edges) == 0
+    assert len(mask_edges) == 1
+    assert mask_edges[0].src.data == "_tile_iter_mask"
 
 
-def test_converter_drops_mask_on_pure_arithmetic_unop():
-    """Option C: :class:`TileUnop` (pure arithmetic) has no iter-mask."""
+def test_converter_wires_mask_on_unop_when_mask_in_scope():
+    """Mask-when-partial: :class:`TileUnop` also gets the iter-mask."""
     from dace.libraries.tileops import TileUnop
     sdfg, inner = _build_body_with_mask("_o = abs(_a)", n_in_conns=1, has_b_arr=False)
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
-    assert unop.has_mask is False
+    assert unop.has_mask is True
     mask_edges = [e for e in body_state.in_edges(unop) if e.dst_conn == "_mask"]
-    assert len(mask_edges) == 0
+    assert len(mask_edges) == 1
+    assert mask_edges[0].src.data == "_tile_iter_mask"
 
 
 def test_converter_skips_mask_when_no_mask_in_scope():
