@@ -730,6 +730,14 @@ class WidenAccesses(ppl.Pass):
                 # cause AN -> AN bridge copies to move only 1 element of the
                 # widened W-element tile.
                 edge.data.volume = new_sub.num_elements()
+                # When the memlet carries ``other_subset`` (the OTHER endpoint
+                # of the edge, e.g. an AN -> AN copy ``a[i] -> b[0]``), widen
+                # it symmetrically. Per user direction 2026-06-12: ``WidenAccess
+                # might make scalars into tiles, in that case subset and other
+                # subset needs to be widened``. Without this the validator
+                # trips on ``Dimensionality mismatch between src/dst subsets``.
+                if edge.data.other_subset is not None:
+                    edge.data.other_subset = subsets.Range(list(target_range.ranges))
         return True
 
     # --- Driver --------------------------------------------------------------

@@ -1286,15 +1286,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 new_sub = _subsets.Range(list(target_range.ranges))
                 edge.data.subset = new_sub
                 edge.data.volume = new_sub.num_elements()
-                # When the original memlet had ``other_subset`` describing a
-                # single-element destination ``[0]``, it now mismatches the
-                # widened W-element source subset. Drop it -- a full-tile
-                # copy ``[0:W] -> [0:W]`` is implied. If the other endpoint
-                # is itself a widenable transient consumed downstream,
-                # ``_ensure_output_widened`` will be called there too and
-                # widen it consistently.
+                # Per user direction 2026-06-12: ``WidenAccess might make scalars
+                # into tiles, in that case subset and other subset needs to be
+                # widened``. Widen ``other_subset`` symmetrically so the AN -> AN
+                # bridge ``a[0:W] -> b[0:W]`` is well-formed.
                 if edge.data.other_subset is not None:
-                    edge.data.other_subset = None
+                    edge.data.other_subset = _subsets.Range(list(target_range.ranges))
         return True
 
     def _convert_unop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected,
