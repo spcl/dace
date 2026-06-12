@@ -415,13 +415,25 @@ class WidenAccesses(ppl.Pass):
         return lane_dep
 
     # --- Step 2: widen non-transient boundary memlets -----------------------
-    def _widen_subset_inplace(self, sub, iter_vars: Tuple[str, ...]) -> Optional["subsets.Range"]:
-        """Widen iter-var-dominated single-element dims of a subset.
+    def _widen_subset_inplace(self,
+                              sub,
+                              iter_vars: Tuple[str, ...],
+                              inner_sdfg: Optional[SDFG] = None) -> Optional["subsets.Range"]:
+        """Widen LINEAR/AFFINE/REPLICATE/MODULAR single-element dims of a subset.
 
         Returns a new :class:`subsets.Range` if any dim widened, else ``None``.
         Centralised so :attr:`Memlet.subset` and :attr:`Memlet.other_subset`
-        share the exact same widening logic (user direction 2026-06-11:
-        WidenAccesses must extend BOTH subset and other_subset).
+        share the exact same widening logic.
+
+        Per user direction 2026-06-11: ``[X, idx[i]:idx[i]+W, 0:N] is
+        incorrect, we can't widen like that ... idx[i] should stay idx[i]
+        until we add gathers``. GATHER dims (whose begin is itself an array
+        subscript referencing the iter-var, e.g. ``idx[i]``) are LEFT
+        UNCHANGED -- ``InsertTileLoadStore`` then routes them through the
+        scatter / gather emission with the materialised idx tile holding
+        ``idx[i:i+W]`` as ``(ONE*, W, ONE*)`` per design 3.8.1. The
+        per-dim classifier returns ``PerDimKind.GATHER`` for these and
+        we skip widening them here.
         """
         widths = tuple(self.widths)
         K = len(iter_vars)
@@ -431,6 +443,17 @@ class WidenAccesses(ppl.Pass):
             ranges = list(sub.ranges)
         except Exception:  # noqa: BLE001
             return None
+        # Per-dim classification (when we have the inner SDFG context). The
+        # classifier returns ``PerDimKind`` per dim of the subset; we skip
+        # widening dims classified as GATHER (their begin is itself an
+        # array subscript referencing an iter-var).
+        per_dim_kinds = None
+        if inner_sdfg is not None:
+            try:
+                record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                per_dim_kinds = record.per_dim_kind
+            except Exception:  # noqa: BLE001
+                per_dim_kinds = None
         modified = False
         for d in range(len(ranges)):
             beg, end, step = ranges[d]
@@ -450,6 +473,11 @@ class WidenAccesses(ppl.Pass):
                     dominating_k = k
                     break
             if dominating_k is None:
+                continue
+            # Skip GATHER dims -- begin is ``idx[i]`` etc.; widening to
+            # ``idx[i]:idx[i]+W-1`` would be a contiguous-range claim that
+            # is FALSE (lanes 0..W-1 access W different addresses).
+            if per_dim_kinds is not None and d < len(per_dim_kinds) and per_dim_kinds[d] == PerDimKind.GATHER:
                 continue
             w = widths[dominating_k]
             new_end = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1")
@@ -472,11 +500,11 @@ class WidenAccesses(ppl.Pass):
                 if edge.data is None or edge.data.data != name:
                     continue
                 edge_changed = False
-                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars)
+                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg)
                 if new_sub is not None:
                     edge.data.subset = new_sub
                     edge_changed = True
-                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars)
+                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg)
                 if new_other is not None:
                     edge.data.other_subset = new_other
                     edge_changed = True
