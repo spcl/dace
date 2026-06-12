@@ -907,22 +907,40 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         else:
             inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
                                  dace.Memlet.from_memlet(cond_edge.data))
-        # t arm: connector OR Symbol-materialised tile.
+        # t arm: connector OR Symbol-materialised tile. When the connector is
+        # a Scalar (e.g. else-arm of ``if c: D[i,j]=expr else: D[i,j]=0.0``
+        # gives ``D=0.0`` -- a Scalar literal), broadcast to a full tile so
+        # the ITE pure expansion's per-lane index ``_t[...]`` is well-typed.
+        out_dtype = inner_state.sdfg.arrays[out_edge.data.data].dtype
         if t_is_sym:
             t_an = self._materialise_symbol_to_tile(inner_state, t_arg, iter_vars, out_edge)
             subset = ", ".join(f"0:{w}" for w in self.widths)
             inner_state.add_edge(t_an, None, ite, "_t", dace.Memlet(f"{t_an.data}[{subset}]"))
         else:
             t_edge = in_edges[t_arg]
-            inner_state.add_edge(t_edge.src, t_edge.src_conn, ite, "_t", dace.Memlet.from_memlet(t_edge.data))
-        # e arm: connector OR Symbol-materialised tile.
+            if self._is_scalar_or_len1_source(inner_state, t_edge):
+                bcast_name = self._broadcast_scalar_to_tile(inner_state, t_edge, dtype=out_dtype)
+                from dace.sdfg.nodes import AccessNode
+                bcast_an = next(n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == bcast_name)
+                subset = ", ".join(f"0:{w}" for w in self.widths)
+                inner_state.add_edge(bcast_an, None, ite, "_t", dace.Memlet(f"{bcast_name}[{subset}]"))
+            else:
+                inner_state.add_edge(t_edge.src, t_edge.src_conn, ite, "_t", dace.Memlet.from_memlet(t_edge.data))
+        # e arm: same treatment.
         if e_is_sym:
             e_an = self._materialise_symbol_to_tile(inner_state, e_arg, iter_vars, out_edge)
             subset = ", ".join(f"0:{w}" for w in self.widths)
             inner_state.add_edge(e_an, None, ite, "_e", dace.Memlet(f"{e_an.data}[{subset}]"))
         else:
             e_edge = in_edges[e_arg]
-            inner_state.add_edge(e_edge.src, e_edge.src_conn, ite, "_e", dace.Memlet.from_memlet(e_edge.data))
+            if self._is_scalar_or_len1_source(inner_state, e_edge):
+                bcast_name = self._broadcast_scalar_to_tile(inner_state, e_edge, dtype=out_dtype)
+                from dace.sdfg.nodes import AccessNode
+                bcast_an = next(n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == bcast_name)
+                subset = ", ".join(f"0:{w}" for w in self.widths)
+                inner_state.add_edge(bcast_an, None, ite, "_e", dace.Memlet(f"{bcast_name}[{subset}]"))
+            else:
+                inner_state.add_edge(e_edge.src, e_edge.src_conn, ite, "_e", dace.Memlet.from_memlet(e_edge.data))
         inner_state.add_edge(ite, "_o", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
