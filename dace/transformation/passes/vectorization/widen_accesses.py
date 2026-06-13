@@ -411,7 +411,7 @@ class WidenAccesses(ppl.Pass):
                         lane_dep.add(an.data)  # conservative
                         break
                     try:
-                        record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                        record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=state)
                     except Exception:  # noqa: BLE001
                         lane_dep.add(an.data)
                         break
@@ -427,7 +427,8 @@ class WidenAccesses(ppl.Pass):
     def _widen_subset_inplace(self,
                               sub,
                               iter_vars: Tuple[str, ...],
-                              inner_sdfg: Optional[SDFG] = None) -> Optional["subsets.Range"]:
+                              inner_sdfg: Optional[SDFG] = None,
+                              state=None) -> Optional["subsets.Range"]:
         """Widen LINEAR/AFFINE/REPLICATE/MODULAR single-element dims of a subset.
 
         Returns a new :class:`subsets.Range` if any dim widened, else ``None``.
@@ -463,7 +464,7 @@ class WidenAccesses(ppl.Pass):
         per_dim_kinds = None
         if inner_sdfg is not None:
             try:
-                record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=state)
                 per_dim_kinds = record.per_dim_kind
             except Exception:  # noqa: BLE001
                 per_dim_kinds = None
@@ -513,11 +514,11 @@ class WidenAccesses(ppl.Pass):
                 if edge.data is None or edge.data.data != name:
                     continue
                 edge_changed = False
-                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg)
+                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg, state=inner_state)
                 if new_sub is not None:
                     edge.data.subset = new_sub
                     edge_changed = True
-                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg)
+                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg, state=inner_state)
                 if new_other is not None:
                     edge.data.other_subset = new_other
                     edge_changed = True
@@ -551,6 +552,32 @@ class WidenAccesses(ppl.Pass):
             names.append(edge.data.data)
         return names
 
+    @staticmethod
+    def _index_promoted_names(inner_sdfg: SDFG) -> Set[str]:
+        """Data names that are consumed as *index symbols* — i.e. appear as a
+        free symbol in some interstate-edge assignment RHS (``__sym_i_plus_offset1
+        = i_plus_offset1`` promotes the scalar ``i_plus_offset1`` to an index
+        symbol used in memlet subsets).
+
+        Such a transient is an address/index, not a data operand, so it must NOT
+        be widened to a tile even when its defining tasklet references an
+        iter-var: the tile load consumes it as the per-lane base, keeping it a
+        scalar. Excluding these prevents the index scalar from being widened to
+        ``int64_t*`` and breaking the ``__sym = i_plus_offset1`` symbol
+        assignment in codegen.
+        """
+        promoted: Set[str] = set()
+        names = set(inner_sdfg.arrays.keys())
+        for edge in inner_sdfg.all_interstate_edges():
+            assigns = edge.data.assignments if edge.data is not None else {}
+            for rhs in assigns.values():
+                try:
+                    expr = dace.symbolic.pystr_to_symbolic(str(rhs))
+                    promoted |= {str(s) for s in expr.free_symbols} & names
+                except Exception:  # noqa: BLE001 -- unparseable RHS -> token fallback
+                    promoted |= {tok for tok in re.findall(r"\b[A-Za-z_]\w*\b", str(rhs)) if tok in names}
+        return promoted
+
     def _propagate_lane_dep(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...],
                             nt_lane_dep: Set[str]) -> Set[str]:
         """Forward-propagate lane-dep through Tasklets AND AN -> AN copies.
@@ -575,6 +602,10 @@ class WidenAccesses(ppl.Pass):
         :returns: set of transient data names that need tile-shape widening.
         """
         lane_dep_transients: Set[str] = set()
+        # Index symbols (scalars promoted to symbols and used in subsets) are
+        # addresses, never data — they must stay scalar. Exclude them from the
+        # widen set even when their defining tasklet references an iter-var.
+        index_symbols = self._index_promoted_names(inner_sdfg)
         changed = True
         max_iters = 32
         while changed and max_iters > 0:
@@ -596,6 +627,8 @@ class WidenAccesses(ppl.Pass):
                         continue
                     if not self._is_widenable(desc):
                         continue
+                    if dst_name in index_symbols:
+                        continue  # index/address symbol -> stays scalar
                     if dst_name not in lane_dep_transients:
                         lane_dep_transients.add(dst_name)
                         changed = True
@@ -621,6 +654,8 @@ class WidenAccesses(ppl.Pass):
                                 continue
                             if not self._is_widenable(desc):
                                 continue
+                            if nm in index_symbols:
+                                continue  # index/address symbol -> stays scalar
                             if nm not in lane_dep_transients:
                                 lane_dep_transients.add(nm)
                                 changed = True
@@ -688,7 +723,7 @@ class WidenAccesses(ppl.Pass):
                     if sub is None:
                         continue
                     try:
-                        record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+                        record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
                     except Exception:  # noqa: BLE001
                         continue
                     if not record.per_dim_kind or PerDimKind.GATHER not in record.per_dim_kind:

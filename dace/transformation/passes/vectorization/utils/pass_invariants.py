@@ -154,6 +154,32 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
     return None
 
 
+def cfg_is_flat_states(scope) -> Optional[str]:
+    """Every control-flow block in ``scope`` is a plain :class:`SDFGState`
+    (no nested :class:`ControlFlowRegion` / :class:`ConditionalBlock` /
+    :class:`LoopRegion`). After if-condition mask lowering the body CFG is a
+    single-level line graph of states, which lets the index-symbol resolver's
+    reaching-def use a one-level backward state walk (no parent-CFG ascent).
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
+    or a description of the first non-state block.
+    """
+    from dace.sdfg.state import ControlFlowRegion
+    if isinstance(scope, SDFGState):
+        return None
+    sdfgs = scope.all_sdfgs_recursive() if isinstance(scope, SDFG) else [scope]
+    for sd in sdfgs:
+        for region in sd.all_control_flow_regions(recursive=True):
+            for block in region.nodes():
+                if isinstance(block, SDFGState):
+                    continue
+                if isinstance(block, ControlFlowRegion):
+                    return (f"{sd.name}: control-flow block ``{block.label}`` is a "
+                            f"{type(block).__name__}, not a flat SDFGState (expected single-level "
+                            f"states after if-condition mask lowering)")
+    return None
+
+
 def memlet_subset_matches_descriptor(scope) -> Optional[str]:
     """Every memlet's ``subset`` rank must match the rank of the descriptor it
     accesses (``len(sdfg.arrays[memlet.data].shape)``). A memlet that reads a

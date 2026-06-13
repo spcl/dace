@@ -51,6 +51,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.widen_accesses import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             cfg_is_flat_states,
                                                                              memlet_subset_matches_descriptor,
                                                                              no_duplicate_connector_edges,
                                                                              no_memlet_dim_mismatch)
@@ -522,7 +523,7 @@ class InsertTileLoadStore(ppl.Pass):
             subset = (src_subset if src_data == an.data else an_side_subset(pre_stage_out_edges[0], an, inner_sdfg))
             if subset is None:
                 continue
-            record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+            record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
             if not record.per_dim_kind:
                 continue
             kinds = set(record.per_dim_kind)
@@ -604,7 +605,7 @@ class InsertTileLoadStore(ppl.Pass):
                 wsubset = an_side_subset(pre_stage_in_edges[0], an, inner_sdfg)
             except Exception:  # noqa: BLE001
                 continue
-            wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg)
+            wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
             if not wrecord.per_dim_kind:
                 continue
             wkinds = set(wrecord.per_dim_kind)
@@ -1085,6 +1086,11 @@ class InsertTileLoadStore(ppl.Pass):
         total = 0
         for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
             iter_vars = tuple(map_entry.map.params[-K:])
+            # Pre-condition: the body CFG must be a single level of plain states
+            # (if-conditions already lowered to masks). The index-symbol resolver
+            # relies on this for its single-level reaching-def walk.
+            assert_invariant(cfg_is_flat_states(nsdfg_node.sdfg), "InsertTileLoadStore",
+                             "body NSDFG is a flat single-level state graph")
             total += self._stage_inner_body(_state, nsdfg_node.sdfg, iter_vars)
             # Audit the design 3.8.3 lib-node-boundary invariant on every
             # body NSDFG state we just touched. Loud-failure surfaces stale
