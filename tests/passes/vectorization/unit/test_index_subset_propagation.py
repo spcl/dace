@@ -122,5 +122,33 @@ def test_gather_index_not_inlined():
     assert not any('idx[' in s for s in subs), f"gather index wrongly inlined into subset: {subs}"
 
 
+def test_iplusoffset_kernel_emits_no_gather():
+    """End-to-end: the `a[i+offset1, j+offset2]` contiguous pattern must vectorize to a
+    DENSE load — no gather. Asserts the multi-dim pipeline emits no TileLoad/TileStore
+    with gather_dims and mints no per-lane index tile (`_idx_*`)."""
+    import copy
+    from tests.passes.vectorization.kernels.test_nested import tasklet_in_nested_sdfg
+    from tests.passes.vectorization.helpers.harness import _auto_tile_widths
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+    from dace.libraries.tileops import TileLoad, TileStore
+
+    sdfg = tasklet_in_nested_sdfg.to_sdfg(simplify=True)
+    widths = _auto_tile_widths(sdfg, 8)
+    cs = copy.deepcopy(sdfg)
+    cs.name = "iplusoffset_nogather"
+    VectorizeCPUMultiDim(widths=widths, expand_tile_nodes=False).apply_pass(cs, {})
+
+    gather_nodes = []
+    idx_tiles = []
+    for sd in cs.all_sdfgs_recursive():
+        idx_tiles += [n for n in sd.arrays if n.startswith('_idx_')]
+        for st in sd.states():
+            for n in st.nodes():
+                if isinstance(n, (TileLoad, TileStore)) and getattr(n, 'gather_dims', ()):
+                    gather_nodes.append((type(n).__name__, n.gather_dims))
+    assert not gather_nodes, f"contiguous a[i+offset] emitted a gather: {gather_nodes}"
+    assert not idx_tiles, f"contiguous a[i+offset] minted per-lane index tiles: {idx_tiles}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -29,6 +29,9 @@ from dace import properties
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
+from dace.transformation.passes.symbol_propagation import SymbolPropagation
+from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
@@ -426,6 +429,20 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # boundary source or sink. Downstream tile widening + lib-node
         # insertion see a clean, uniform graph.
         passes.append(StageGlobalArrayThroughScalars())
+        # Index-subset propagation (per user direction): the frontend promotes a
+        # computed index ``i + offset`` to a scalar then a symbol ``__sym`` used in
+        # the memlet subset (``A[__sym]``), hiding the iter-var from the tile-access
+        # classifier. Undo that here so the subset reads ``A[i + offset]`` directly
+        # and widens to a dense load. Order: SymbolPropagation (folds ``__sym`` ->
+        # the scalar) -> PropagateIndexSubsets (resolver last hop: scalar -> i+offset,
+        # crossing the defining tasklet; leaves data-dependent gather indices) ->
+        # RemoveUnusedSymbols (sweeps the now-dead promotion symbols). Runs after
+        # branch-lowering (flat states) + int-cast removal and before the tiling passes.
+        passes += [
+            SymbolPropagation(),
+            PropagateIndexSubsets(),
+            RemoveUnusedSymbols(),
+        ]
         # Conceptual order (per user direction 2026-06-09):
         #   MarkTileDims                (tag the outer map with TileDimSpec)
         #   StrideMapByTileWidths       (map step 1 -> W; iter_var now means "tile start")
