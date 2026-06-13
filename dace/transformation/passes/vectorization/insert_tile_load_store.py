@@ -51,6 +51,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.widen_accesses import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             memlet_subset_matches_descriptor,
                                                                              no_duplicate_connector_edges,
                                                                              no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
@@ -1097,4 +1098,6 @@ class InsertTileLoadStore(ppl.Pass):
                          "memlet subset and other_subset have matching dimensionality")
         assert_invariant(no_duplicate_connector_edges(sdfg), "InsertTileLoadStore",
                          "no duplicate connector edges (lib-node / NSDFG / tasklet)")
+        assert_invariant(memlet_subset_matches_descriptor(sdfg), "InsertTileLoadStore",
+                         "every memlet subset rank matches its descriptor rank")
         return total or None

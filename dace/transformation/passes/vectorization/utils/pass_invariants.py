@@ -154,6 +154,35 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
     return None
 
 
+def memlet_subset_matches_descriptor(scope) -> Optional[str]:
+    """Every memlet's ``subset`` rank must match the rank of the descriptor it
+    accesses (``len(sdfg.arrays[memlet.data].shape)``). A memlet that reads a
+    ``(1,)`` scalar bridge with a 2-D ``[0:8, 0:8]`` tile subset (or vice
+    versa) is invalid — the descriptor and the access disagree on rank, which
+    ``sdfg.validate()`` later rejects. Surfacing it as a pass post-condition
+    localizes which pass widened the memlet without widening the descriptor (or
+    staged a too-narrow bridge under a widened consumer).
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
+    or a description of the first offender.
+    """
+    for sd, state in _iter_states(scope):
+        for edge in state.edges():
+            mem = edge.data
+            if mem is None or mem.data is None or mem.subset is None:
+                continue
+            desc = sd.arrays.get(mem.data)
+            if desc is None:
+                continue
+            if len(mem.subset.size()) != len(desc.shape):
+                src = getattr(edge.src, "label", type(edge.src).__name__)
+                dst = getattr(edge.dst, "label", type(edge.dst).__name__)
+                return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset rank "
+                        f"{len(mem.subset.size())} != descriptor rank {len(desc.shape)} "
+                        f"(shape {tuple(desc.shape)}) on edge {src} -> {dst}")
+    return None
+
+
 def logical_binops_are_bool(scope) -> Optional[str]:
     """Every ``TileBinop`` with a logical op (``&&`` / ``||``) must have two
     ``bool`` inputs (``_a``, ``_b``) and a ``bool`` output (``_c``). A logical
