@@ -518,6 +518,13 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         :param pipeline_results: Carry-in from any enclosing pipeline.
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
+        # Always simplify the input first (user direction): callers may hand us an
+        # un-simplified SDFG (``to_sdfg(simplify=False)``) that still carries
+        # FunctionCallRegions / redundant states / un-inlined wrappers. Simplifying
+        # up front gives every downstream pass a canonical, flat-state body
+        # (FunctionCallRegions inlined, dead dataflow swept) regardless of how the
+        # SDFG was built — already-simplified inputs are a near no-op.
+        sdfg.simplify()
         # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction shape into an
         # in-place RMW tasklet. The recognised tile-path reductions (post-NormalizeWCRSource in the
         # constructor pipeline) land as `tile -> scalar -[wcr]-> sink` and are left alone -- they're
