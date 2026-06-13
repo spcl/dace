@@ -28,8 +28,6 @@ back to the naive strategy.
 """
 from typing import Dict, List, Optional, Set, Tuple
 
-import networkx as nx
-
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
@@ -37,18 +35,13 @@ from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (_classify_node, _fold_kinds, _Kind)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import weakly_connected_node_sets
 
 
 def _weakly_connected_components(state: SDFGState) -> List[Set[nodes.Node]]:
-    """Compute the weakly connected components of ``state``'s dataflow graph.
-
-    Uses the underlying networkx ``DiGraph`` (``state.nx``) so the implementation tracks any
-    future graph-internal changes in DaCe.
-
-    :param state: The dataflow state to decompose.
-    :return: A list of node sets, one per component.
-    """
-    return [set(c) for c in nx.weakly_connected_components(state.nx)]
+    """Weakly connected components of ``state``'s dataflow (delegates to the shared
+    :func:`~...helpers.gpu_helpers.weakly_connected_node_sets`)."""
+    return weakly_connected_node_sets(state)
 
 
 def _wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> _Kind:

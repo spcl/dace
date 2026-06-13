@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
-import networkx as nx
-
 import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.config import Config
@@ -28,7 +26,7 @@ from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name, is_already_lowered_gpu_runtime_call,
     is_gpu_copy_or_memset_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
-    is_stream_wiring_applied)
+    is_stream_wiring_applied, weakly_connected_node_sets)
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (_make_sync_tasklet,
@@ -213,13 +211,9 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                 gpu_stream = self._next_stream(gpu_stream)
 
     def _weakly_connected(self, graph: Graph) -> List[Set[NodeT]]:
-        """Weakly connected components of ``graph``'s dataflow.
-
-        Uses the underlying networkx ``DiGraph`` exposed by :attr:`OrderedDiGraph.nx`
-        so the implementation tracks DaCe's own graph internals (matches the same
-        refactor in :mod:`split_state_by_gpu_class`).
-        """
-        return [set(c) for c in nx.weakly_connected_components(graph.nx)]
+        """Weakly connected components of ``graph``'s dataflow (delegates to the shared
+        :func:`~...helpers.gpu_helpers.weakly_connected_node_sets`)."""
+        return weakly_connected_node_sets(graph)
 
     def _next_stream(self, gpu_stream: int) -> int:
         if self._max_concurrent_streams == 0:
@@ -362,12 +356,8 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         shape).
         """
         from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-        cpu_storages = {
-            dtypes.StorageType.CPU_Heap,
-            dtypes.StorageType.CPU_Pinned,
-            dtypes.StorageType.CPU_ThreadLocal,
-        }
-        gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
+        cpu_storages = dtypes.CPU_RESIDENT_STORAGES
+        gpu_storages = dtypes.GPU_RESIDENT_STORAGES
         for node in state.nodes():
             if isinstance(node, CopyLibraryNode):
                 in_e = [e for e in state.in_edges(node) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
@@ -574,7 +564,7 @@ def _sink_writes_host_visible_output(state) -> bool:
     Sinks whose outputs are all GPU-resident (or transient) have no host reader inside the SDFG,
     so their exit sync is only needed for cross-stream ordering after return -- which the host
     application owns when it shares one stream."""
-    gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
+    gpu_storages = dtypes.GPU_RESIDENT_STORAGES
     for node in state.data_nodes():
         if state.in_degree(node) == 0:
             continue  # read-only here, not a written output
@@ -801,20 +791,11 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                     self._add_sync_state(node.sdfg, stream_array_name)
 
                 else:
-                    # The node is nested inside a Map. We have to check if one of these Map
-                    #  is a GPU Map. Otherwise we do not need to descend into it.
-                    # Walk up the scope chain via ``scope_dict``; without the per-iter step
-                    # the loop spins forever when no parent map carries a GPU schedule
-                    # (e.g. ``tests/transformations/gpu_grid_stride_tiling_test.py::
-                    # test_gpu_grid_stride_tiling_with_indirection``).
-                    enclosing_scope = scope_dict[node]
-                    while enclosing_scope is not None:
-                        assert isinstance(enclosing_scope, nodes.MapEntry)
-                        if enclosing_scope.map.schedule in dtypes.GPU_SCHEDULES:
-                            break
-                        enclosing_scope = scope_dict[enclosing_scope]
-                    else:
-                        # It is not in a GPU scope, so we must process it.
+                    # The node is nested inside a Map: descend into the nested SDFG only when it is
+                    # NOT inside a GPU kernel scope. ``is_within_schedule_types`` walks the enclosing
+                    # scopes safely, replacing a manual ``scope_dict`` climb that spun forever when no
+                    # parent map carried a GPU schedule.
+                    if not is_within_schedule_types(state, node, dtypes.GPU_SCHEDULES):
                         self._add_sync_state(node.sdfg, stream_array_name)
 
             # Append a program-end sync only at GPU *sink* states (those with no out-edges

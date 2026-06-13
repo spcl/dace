@@ -5,7 +5,7 @@ Canonical stream-threading names, node/connector predicates (single
 source of truth so passes don't reimplement scope walks), and the
 :func:`is_gpu_lowering_applied` idempotency signal.
 """
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -88,6 +88,16 @@ def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
             return True
         cur = cur.parent_sdfg
     return False
+
+
+def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
+    """Weakly-connected components of ``graph``'s dataflow, as node sets.
+
+    Single source of truth for the WCC partition used by both the stream scheduler and the
+    state-splitter, via the networkx ``DiGraph`` exposed by ``OrderedDiGraph.nx`` (tracks DaCe's
+    own graph internals rather than re-deriving connectivity)."""
+    import networkx as nx
+    return [set(c) for c in nx.weakly_connected_components(graph.nx)]
 
 
 # Storages that mark a copy/memset library node as "GPU-relevant" -- i.e.
