@@ -33,7 +33,7 @@ from dace import SDFG
 from dace import dtypes
 from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.vectorization.utils.pass_invariants import (PrePostConditionMixin,
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                              no_duplicate_connector_edges,
                                                                              no_isolated_access_nodes,
                                                                              no_memlet_dim_mismatch)
@@ -43,7 +43,7 @@ _STAGED_SCALAR_STORAGE = dtypes.StorageType.Register
 
 
 @transformation.explicit_cf_compatible
-class StageGlobalArrayThroughScalars(PrePostConditionMixin, ppl.Pass):
+class StageGlobalArrayThroughScalars(ppl.Pass):
     """Stage ``Tasklet -> global -> Tasklet`` hops through per-subset transient scalars.
 
     Tightened multi-subset variant of the historical Case-A / Case-B
@@ -501,18 +501,16 @@ class StageGlobalArrayThroughScalars(PrePostConditionMixin, ppl.Pass):
                     count += self._apply(node.sdfg)
         return count
 
-    def _post_conditions(self, sdfg):
-        # ``no_isolated_access_nodes`` is intentionally omitted to stay
-        # compatible with unit-test fixtures.
-        return [
-            ("memlet dimensionality consistent", no_memlet_dim_mismatch),
-            ("no duplicate connector edges", no_duplicate_connector_edges),
-        ]
-
-    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Run the staging pass over ``sdfg``.
 
         :returns: Number of bridges rewritten, or ``None`` when nothing changed.
         """
         count = self._apply(sdfg)
+        assert_invariant(no_memlet_dim_mismatch(sdfg), "StageGlobalArrayThroughScalars",
+                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(no_duplicate_connector_edges(sdfg), "StageGlobalArrayThroughScalars",
+                         "every connector has <=1 edge per direction")
+        assert_invariant(no_isolated_access_nodes(sdfg), "StageGlobalArrayThroughScalars",
+                         "no AccessNode left isolated after staging")
         return count if count > 0 else None

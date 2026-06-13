@@ -1,76 +1,88 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pre- and post-condition invariant checks for K-dim vectorization passes.
+"""Invariant checker functions for K-dim vectorization passes.
 
-Per user direction 2026-06-12: ``To improve testing we can have post-condition
-and pre-condition checks to each subpass implemented``.
+Per user direction 2026-06-12: ``We should have pre condition and post
+condition checks for all passes and by default and always and always run
+them.`` + ``Does pre condition really need to pass? Can't be just a
+function that checks the condition holds true in a graph / subgraph etc?``
 
-Each K-dim pass overrides ``_pre_conditions`` and ``_post_conditions`` to
-return a list of ``(description, predicate)`` tuples. The predicate
-receives the SDFG and returns ``True`` when the invariant holds; on
-violation, the pass raises :class:`AssertionError` with the description
-and the offending node / edge / state printed.
+This module exposes plain functions:
 
-Invariants are gated by the env var ``DACE_VEC_KDIM_VALIDATE=1`` so
-production runs (without the var) skip the checks. Test runners + dev
-should opt in to surface regressions early.
+* Each checker takes an SDFG (and optionally other args) and returns
+  ``None`` if the invariant holds, or a string describing the violation.
+* :func:`assert_invariant` raises ``AssertionError`` on violation with a
+  formatted message including the pass name + checker description +
+  offending node / edge / state.
 
-Reusable invariant checkers live below as module-level helpers; passes
-import them by name to keep the per-pass invariant table compact.
+Each pass calls the checkers directly from its ``apply_pass``:
+
+.. code-block:: python
+
+    def apply_pass(self, sdfg, _):
+        result = self._do_work(sdfg)
+        assert_invariant(no_memlet_dim_mismatch(sdfg),
+                         "WidenAccesses", "memlet dim consistent")
+        return result
+
+No mixin, no inheritance, no env gate. Always runs.
 """
-import os
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import dace
-from dace.sdfg import SDFG
-from dace.sdfg.nodes import AccessNode, NestedSDFG, Tasklet
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 
 
-_ENV_FLAG = "DACE_VEC_KDIM_VALIDATE"
+def assert_invariant(violation: Optional[str], pass_name: str, description: str) -> None:
+    """Raise :class:`AssertionError` if ``violation`` is non-None.
 
-
-def invariants_enabled() -> bool:
-    """True iff invariant checks should run (``DACE_VEC_KDIM_VALIDATE=1``)."""
-    return os.environ.get(_ENV_FLAG, "0") == "1"
-
-
-# ---------------------------------------------------------------------------
-# Generic structural invariants (composable across passes).
-# ---------------------------------------------------------------------------
-
-
-def _all_states_recursive(sdfg: SDFG):
-    """Yield ``(sub_sdfg, state)`` for every state in ``sdfg`` and every
-    nested SDFG reachable from it."""
-    for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.states():
-            yield sd, state
-
-
-def no_memlet_dim_mismatch(sdfg: SDFG) -> Optional[str]:
-    """Every memlet's ``subset`` and ``other_subset`` (when both present)
-    must have matching dimensionality. Returns ``None`` on success or a
-    description string identifying the first offender.
+    :param violation: The checker's return value (``None`` on success or
+        the offending-node description).
+    :param pass_name: The pass name to include in the error message.
+    :param description: One-line description of the invariant.
     """
-    for sd, state in _all_states_recursive(sdfg):
+    if violation is None:
+        return
+    raise AssertionError(f"{pass_name}: invariant violated -- {description}: {violation}")
+
+
+# ---------------------------------------------------------------------------
+# Generic structural invariants (work at SDFG or per-state level).
+# ---------------------------------------------------------------------------
+
+
+def no_memlet_dim_mismatch(scope) -> Optional[str]:
+    """For memlets connecting a tasklet / lib-node / NSDFG connector to
+    an AccessNode (or two such connectors), ``subset`` and ``other_subset``
+    must have matching rank. Accepts an SDFG OR a single :class:`SDFGState`.
+    Returns ``None`` on success or a description.
+
+    AN -> AN memlets are exempt: they describe pure copies between two
+    descriptors that may have different ranks (e.g. a 4D slice copied
+    into a 1D flat buffer) so the two subsets are intentionally
+    different-rank when the descriptors are.
+    """
+    states = _iter_states(scope)
+    for sd, state in states:
         for edge in state.edges():
             mem = edge.data
-            if mem is None:
+            if mem is None or mem.subset is None or mem.other_subset is None:
                 continue
-            if mem.subset is None or mem.other_subset is None:
+            # Pure AN -> AN copies are allowed to carry different-rank
+            # subsets when the two descriptors have different ranks.
+            if isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode):
                 continue
             if len(mem.subset.size()) != len(mem.other_subset.size()):
                 return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset dim={len(mem.subset.size())} "
-                        f"!= other_subset dim={len(mem.other_subset.size())} on edge "
-                        f"{type(edge.src).__name__}->{type(edge.dst).__name__}")
+                        f"!= other_subset dim={len(mem.other_subset.size())}")
     return None
 
 
-def no_isolated_access_nodes(sdfg: SDFG) -> Optional[str]:
-    """No AccessNode may have zero in-edges AND zero out-edges in its
-    state. Returns ``None`` on success or a description string for the
-    first offender.
+def no_isolated_access_nodes(scope) -> Optional[str]:
+    """No AccessNode may have zero in-edges AND zero out-edges. Accepts
+    an SDFG or a single state.
     """
-    for sd, state in _all_states_recursive(sdfg):
+    for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, AccessNode):
                 continue
@@ -79,30 +91,35 @@ def no_isolated_access_nodes(sdfg: SDFG) -> Optional[str]:
     return None
 
 
-def no_duplicate_connector_edges(sdfg: SDFG) -> Optional[str]:
-    """Every NSDFG / Tasklet / lib-node connector must have at most ONE
-    incoming edge and at most ONE outgoing edge. Returns ``None`` on
-    success or a description identifying the first offender.
+def no_duplicate_connector_edges(scope) -> Optional[str]:
+    """Every NSDFG / Tasklet / lib-node connector has <=1 edge per direction.
+
+    :class:`~dace.sdfg.nodes.MapEntry` and :class:`~dace.sdfg.nodes.MapExit`
+    are skipped: their pass-through connectors are designed to fan-out
+    (entry's ``OUT_X``) and fan-in (exit's ``IN_X``).
     """
-    for sd, state in _all_states_recursive(sdfg):
+    from dace.sdfg.nodes import MapEntry, MapExit
+    for sd, state in _iter_states(scope):
         for node in state.nodes():
-            in_conns = {}
+            if isinstance(node, (MapEntry, MapExit)):
+                continue
+            in_counts = {}
             for e in state.in_edges(node):
                 if e.dst_conn is None:
                     continue
-                in_conns.setdefault(e.dst_conn, 0)
-                in_conns[e.dst_conn] += 1
-            for conn, count in in_conns.items():
+                in_counts.setdefault(e.dst_conn, 0)
+                in_counts[e.dst_conn] += 1
+            for conn, count in in_counts.items():
                 if count > 1:
                     return (f"{sd.name}.{state.label}: {type(node).__name__} ``{getattr(node, 'label', node)}`` "
                             f"in-connector ``{conn}`` has {count} edges (max 1)")
-            out_conns = {}
+            out_counts = {}
             for e in state.out_edges(node):
                 if e.src_conn is None:
                     continue
-                out_conns.setdefault(e.src_conn, 0)
-                out_conns[e.src_conn] += 1
-            for conn, count in out_conns.items():
+                out_counts.setdefault(e.src_conn, 0)
+                out_counts[e.src_conn] += 1
+            for conn, count in out_counts.items():
                 if count > 1:
                     return (f"{sd.name}.{state.label}: {type(node).__name__} ``{getattr(node, 'label', node)}`` "
                             f"out-connector ``{conn}`` has {count} edges (max 1)")
@@ -110,9 +127,7 @@ def no_duplicate_connector_edges(sdfg: SDFG) -> Optional[str]:
 
 
 def sdfg_validates(sdfg: SDFG) -> Optional[str]:
-    """The SDFG passes ``sdfg.validate()``. Returns ``None`` on success
-    or the validator's error message.
-    """
+    """``sdfg.validate()`` succeeds."""
     try:
         sdfg.validate()
         return None
@@ -121,53 +136,136 @@ def sdfg_validates(sdfg: SDFG) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Pass mixin.
+# K-dim pipeline invariants (require widths / K context).
 # ---------------------------------------------------------------------------
 
 
-class PrePostConditionMixin:
-    """Mixin that wraps ``apply_pass`` with pre/post-condition checks.
+def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:
+    """Every lane-dependent transient in a tile-tagged body NSDFG is at
+    the tile shape ``widths`` OR is an exempt bridge name (gather idx
+    tile / ITE materialised tile / cond broadcast tile / Scalar bridge).
 
-    Subclasses override ``_pre_conditions`` and ``_post_conditions`` to
-    return ``[(description, predicate), ...]``. Each predicate takes the
-    SDFG and returns ``None`` on success or a string describing the
-    violation; the mixin raises :class:`AssertionError` with the pass
-    name + description on the first violation.
-
-    Subclasses must implement ``_apply_pass`` with the actual work;
-    ``apply_pass`` becomes a thin wrapper that runs pre-check ->
-    ``_apply_pass`` -> post-check.
-
-    Checks only run when :func:`invariants_enabled` returns ``True``
-    (env var ``DACE_VEC_KDIM_VALIDATE=1``); otherwise ``apply_pass``
-    passes through to ``_apply_pass``.
+    Per user example 2026-06-12: ``all non-scalar non-gather dims are
+    widened``.
     """
+    import dace.data as _dd
+    for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
+        inner_sdfg = nsdfg_node.sdfg
+        for name, desc in inner_sdfg.arrays.items():
+            if not desc.transient:
+                continue
+            if name.startswith("_idx_") or name.startswith("_ite_sym_tile") or name.startswith("_cond_bcast"):
+                continue
+            if isinstance(desc, _dd.Scalar):
+                continue
+            if not isinstance(desc, _dd.Array):
+                continue
+            shape = tuple(desc.shape)
+            if shape == tuple(widths):
+                continue
+            try:
+                if all(bool(dace.symbolic.simplify(s - 1) == 0) for s in shape):
+                    continue
+            except Exception:  # noqa: BLE001
+                pass
+            return (f"{inner_sdfg.name}: lane-dep transient ``{name}`` has shape {shape} "
+                    f"!= widths {tuple(widths)} (expected widened or Scalar bridge)")
+    return None
 
-    def _pre_conditions(self, sdfg: SDFG) -> List[Tuple[str, Callable[[SDFG], Optional[str]]]]:
-        """Override to return ``[(description, predicate), ...]``. Each
-        predicate takes the SDFG and returns ``None`` on success or a
-        violation message.
-        """
-        return []
 
-    def _post_conditions(self, sdfg: SDFG) -> List[Tuple[str, Callable[[SDFG], Optional[str]]]]:
-        """Symmetric to ``_pre_conditions`` -- post-conditions checked
-        AFTER ``_apply_pass`` runs."""
-        return []
+def innermost_map_has_body_nsdfg(sdfg: SDFG, K: int) -> Optional[str]:
+    """Every tile-tagged innermost map's scope contains exactly one NestedSDFG."""
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                        TILE_K1_TAIL_MARKER)
+    from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not isinstance(node, MapEntry):
+                    continue
+                try:
+                    if not is_innermost_map(state, node):
+                        continue
+                except (StopIteration, ValueError):
+                    continue
+                if len(node.map.params) < K:
+                    continue
+                if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
+                    continue
+                try:
+                    scope = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+                except (StopIteration, ValueError):
+                    continue
+                nsdfgs = [n for n in scope if isinstance(n, NestedSDFG)]
+                if len(nsdfgs) != 1:
+                    return (f"{sd.name}.{state.label}: tile-tagged innermost map ``{node.map.label}`` "
+                            f"has {len(nsdfgs)} NestedSDFGs in scope (expected 1)")
+    return None
 
-    def _check_conditions(self, sdfg: SDFG, kind: str) -> None:
-        conds = self._pre_conditions(sdfg) if kind == "pre" else self._post_conditions(sdfg)
-        for desc, predicate in conds:
-            err = predicate(sdfg)
-            if err is not None:
-                raise AssertionError(f"{type(self).__name__} {kind}-condition violated -- {desc}: {err}")
 
-    def apply_pass(self, sdfg, pipeline_results):
-        """Thin wrapper around ``_apply_pass`` that runs pre/post-checks
-        when the env var is set."""
-        if invariants_enabled():
-            self._check_conditions(sdfg, "pre")
-        result = self._apply_pass(sdfg, pipeline_results)
-        if invariants_enabled():
-            self._check_conditions(sdfg, "post")
-        return result
+def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:
+    """Every TILE_MAIN map has its last-K dim steps == ``widths``."""
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not isinstance(node, MapEntry):
+                    continue
+                if not node.map.label.endswith(TILE_MAIN_MARKER):
+                    continue
+                if len(node.map.range) < K:
+                    continue
+                tail_steps = tuple(node.map.range[-K + d][2] for d in range(K))
+                if tuple(str(s) for s in tail_steps) != tuple(str(s) for s in widths):
+                    return (f"{sd.name}.{state.label}: TILE_MAIN map ``{node.map.label}`` last-K steps "
+                            f"{tail_steps} != expected widths {tuple(widths)}")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Helpers (private).
+# ---------------------------------------------------------------------------
+
+
+def _iter_states(scope):
+    """Yield ``(sub_sdfg, state)`` for an SDFG (every state recursively)
+    OR a single state passed directly.
+    """
+    if isinstance(scope, SDFGState):
+        yield scope.sdfg, scope
+        return
+    if isinstance(scope, SDFG):
+        for sd in scope.all_sdfgs_recursive():
+            for state in sd.states():
+                yield sd, state
+        return
+    raise TypeError(f"Invariant scope must be SDFG or SDFGState, got {type(scope).__name__}")
+
+
+def _tile_tagged_bodies(sdfg: SDFG, K: int):
+    """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG."""
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                        TILE_K1_TAIL_MARKER)
+    from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not isinstance(node, MapEntry):
+                    continue
+                try:
+                    if not is_innermost_map(state, node):
+                        continue
+                except (StopIteration, ValueError):
+                    continue
+                if len(node.map.params) < K:
+                    continue
+                if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
+                    continue
+                try:
+                    scope = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+                except (StopIteration, ValueError):
+                    continue
+                nsdfgs = [n for n in scope if isinstance(n, NestedSDFG)]
+                if len(nsdfgs) != 1:
+                    continue
+                yield state, nsdfgs[0], node

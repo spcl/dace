@@ -47,6 +47,7 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 
 # Label suffix marking the all-main (fully-in-bounds, divisible) interior region
 # a tile-remainder split produces. GenerateTileIterationMask recognises it and
@@ -233,4 +234,6 @@ class SplitMapForTileRemainder(ppl.Pass):
             # later passes (and ``expand_library_nodes``) can resolve the new
             # nested CFGs.
             sdfg.reset_cfg_list()
+        assert_invariant(no_memlet_dim_mismatch(sdfg), "SplitMapForTileRemainder",
+                         "memlet subset and other_subset have matching dimensionality")
         return applied or None

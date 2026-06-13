@@ -15,6 +15,8 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             no_memlet_dim_mismatch)
 
 
 @properties.make_properties
@@ -122,4 +124,6 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             # :class:`NormalizeWCRSource` to keep the reduction visible.
             from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
             NormalizeWCRSource().apply_pass(sdfg, {})
+        assert_invariant(no_memlet_dim_mismatch(sdfg), "NestInnermostMapBodyIntoNSDFG",
+                         "memlet subset and other_subset have matching dimensionality")
         return nested or None

@@ -120,13 +120,54 @@ def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int):
         K=2; K=3 is supported by the lib nodes but not auto-picked. The K
         is taken after a probe ``MapCollapse`` so a perfectly-nested 2D
         kernel picks K=2 (not the un-collapsed-map K=1).
+
+        K=2 is rejected — and the chooser drops to K=1 — when the outer
+        tiled dim's trip is statically known and < 8 (the outer tile width).
+        E.g. ``[4, 8192]`` returns ``(vector_width,)`` because a (8, W)
+        tile cannot fit the 4-wide outer dim. The inner dim still tiles
+        at W; the outer dim sequentialises (CLOUDSC ``klon, 5, 5`` pattern).
     """
     K = _collapsible_innermost_K(sdfg)
     if K is None or K < 1:
         return (vector_width, )
     if K == 1:
         return (vector_width, )
+    # K >= 2: verify the outer tiled dim's static trip can fit the outer
+    # tile width (8). If it can't, drop to K=1 — the inner W-wide dim
+    # still tiles, the outer dim sequentialises.
+    if not _outer_tiled_dim_fits(sdfg, outer_tile_width=8):
+        return (vector_width, )
     return (8, vector_width)
+
+
+def _outer_tiled_dim_fits(sdfg: dace.SDFG, outer_tile_width: int) -> bool:
+    """Return ``False`` when the post-collapse innermost map's second-from-
+    last dim has a statically-known trip < ``outer_tile_width``.
+
+    Symbolic trips return ``True`` (assumed to fit; the runtime guard
+    emitted by :class:`MarkTileDims` catches a runtime violation). Returns
+    ``True`` when no map is found (caller already handled K via
+    ``_collapsible_innermost_K``).
+    """
+    from dace.transformation.dataflow import MapCollapse
+    probe = copy.deepcopy(sdfg)
+    probe.apply_transformations_repeated(MapCollapse(), permissive=False, validate=False)
+    for n, g in probe.all_nodes_recursive():
+        if not (isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)):
+            continue
+        between = g.all_nodes_between(n, g.exit_node(n)) or set()
+        if any(isinstance(m, dace.nodes.MapEntry) for m in between):
+            continue
+        ranges = list(n.map.range.ranges)
+        if len(ranges) < 2:
+            return True  # K=1 only, no outer dim to check
+        lb, ub, _ = ranges[-2]
+        try:
+            trip = int(dace.symbolic.simplify(ub - lb + 1))
+        except (TypeError, ValueError):
+            return True  # symbolic — assume fits
+        return trip >= outer_tile_width
+    return True
 
 
 def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strategy: str, emission_style: str,

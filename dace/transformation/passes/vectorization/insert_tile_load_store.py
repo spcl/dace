@@ -50,9 +50,8 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.widen_accesses import materialise_per_lane_index_tile
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-from dace.transformation.passes.vectorization.utils.pass_invariants import (PrePostConditionMixin,
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                              no_duplicate_connector_edges,
-                                                                             no_isolated_access_nodes,
                                                                              no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
@@ -375,7 +374,7 @@ def stage_tile_store(state: SDFGState,
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class InsertTileLoadStore(PrePostConditionMixin, ppl.Pass):
+class InsertTileLoadStore(ppl.Pass):
     """InsertTileLoadStore -- boundary lib-node insertion + scalar bridge dispatch (design section 3.3).
 
     Walks every tile-tagged Map's body NSDFG. For each non-transient
@@ -1074,17 +1073,7 @@ class InsertTileLoadStore(PrePostConditionMixin, ppl.Pass):
             inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
-    def _post_conditions(self, sdfg):
-        # ``no_isolated_access_nodes`` is intentionally omitted -- unit-test
-        # fixtures exercise the pass in isolation and may leave bridge ANs
-        # without surrounding consumers/producers; the full pipeline cleans
-        # them up later.
-        return [
-            ("memlet dimensionality consistent", no_memlet_dim_mismatch),
-            ("no duplicate connector edges (lib-node / NSDFG / tasklet)", no_duplicate_connector_edges),
-        ]
-
-    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Walk every tile-tagged body NSDFG; stage CONSTANT-only ANs.
 
         :param sdfg: Top-level SDFG.
@@ -1103,4 +1092,9 @@ class InsertTileLoadStore(PrePostConditionMixin, ppl.Pass):
             # in the strided-copy shape inference).
             for inner_state in nsdfg_node.sdfg.states():
                 _assert_post_stage_invariants(inner_state)
+        # Post-conditions.
+        assert_invariant(no_memlet_dim_mismatch(sdfg), "InsertTileLoadStore",
+                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(no_duplicate_connector_edges(sdfg), "InsertTileLoadStore",
+                         "no duplicate connector edges (lib-node / NSDFG / tasklet)")
         return total or None

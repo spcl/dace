@@ -16,6 +16,9 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             no_memlet_dim_mismatch,
+                                                                             tile_main_map_step_is_widths)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
@@ -119,4 +122,9 @@ class StrideMapByTileWidths(ppl.Pass):
                 continue
             if self._stride_one(n):
                 rewritten += 1
+        K = len(self.widths)
+        assert_invariant(no_memlet_dim_mismatch(sdfg), "StrideMapByTileWidths",
+                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(tile_main_map_step_is_widths(sdfg, K, tuple(self.widths)), "StrideMapByTileWidths",
+                         "TILE_MAIN map's last-K dim steps equal widths")
         return rewritten or None

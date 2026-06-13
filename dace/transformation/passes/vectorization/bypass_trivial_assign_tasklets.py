@@ -38,6 +38,9 @@ from dace import subsets
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             no_duplicate_connector_edges,
+                                                                             no_memlet_dim_mismatch)
 # _is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
 # migration). The matcher is inlined below.
 
@@ -108,6 +111,10 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             for state in list(nsdfg.states()):
                 total += self._dedup_identity_assigns(state)
                 total += self._bypass_transient_assigns(state)
+        assert_invariant(no_memlet_dim_mismatch(sdfg), "BypassTrivialAssignTasklets",
+                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(no_duplicate_connector_edges(sdfg), "BypassTrivialAssignTasklets",
+                         "every connector has <=1 edge per direction")
         return total if total > 0 else None
 
     @staticmethod
