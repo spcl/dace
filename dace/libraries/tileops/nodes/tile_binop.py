@@ -175,6 +175,11 @@ class ExpandTileBinopPure(ExpandTransformation):
             return out_dtype
 
         operand_dtype = _operand_dtype()
+        # Never emit a ``(bool)X`` cast: a logical op's operands are already
+        # bool tiles, and casting a value to bool truncates it. The cast only
+        # exists to resolve type-strict overloads (``std::min(int, double)``),
+        # which are never bool; so suppress it when the operand dtype is bool.
+        _cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
 
         def _operand_ref(kind, conn, expr):
             """Return the per-lane C++ reference for one operand.
@@ -183,10 +188,11 @@ class ExpandTileBinopPure(ExpandTransformation):
             (see above) so ``std::min`` / ``std::max`` (and any other
             type-strict overload) sees both operands at the same type — and a
             comparison's symbol operand keeps its numeric type rather than
-            being truncated to the ``bool`` output.
+            being truncated to the ``bool`` output. The cast is suppressed when
+            the operand dtype is bool (logical ops; no ``(bool)X`` is emitted).
             """
             if kind == _SYMBOL:
-                return f"({operand_dtype})({expr})"
+                return f"{_cast}({expr})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
             # Scalar broadcast operand. DaCe passes a tasklet connector by
@@ -199,7 +205,7 @@ class ExpandTileBinopPure(ExpandTransformation):
             is_len1_array = (isinstance(desc, dace.data.Array)
                              and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
             ref = f"{conn}[0]" if is_len1_array else conn
-            return f"({operand_dtype})({ref})"
+            return f"{_cast}({ref})"
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b)

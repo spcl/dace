@@ -154,6 +154,34 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
     return None
 
 
+def logical_binops_are_bool(scope) -> Optional[str]:
+    """Every ``TileBinop`` with a logical op (``&&`` / ``||``) must have two
+    ``bool`` inputs (``_a``, ``_b``) and a ``bool`` output (``_c``). A logical
+    op over non-bool operands is invalid — the operands are predicates / masks
+    and the result is a predicate.
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on
+    success or a description of the first offender.
+    """
+    import dace.dtypes as _dt
+    from dace.libraries.tileops import TileBinop
+    for sd, state in _iter_states(scope):
+        for node in state.nodes():
+            if not isinstance(node, TileBinop) or node.op not in ("&&", "||"):
+                continue
+            for conn in ("_a", "_b", "_c"):
+                edges = ([e for e in state.in_edges(node) if e.dst_conn == conn]
+                         + [e for e in state.out_edges(node) if e.src_conn == conn])
+                for e in edges:
+                    if e.data is None or e.data.data is None:
+                        continue
+                    desc = sd.arrays.get(e.data.data)
+                    if desc is not None and desc.dtype != _dt.bool_:
+                        return (f"{sd.name}.{state.label}: logical TileBinop ``{node.label}`` (op {node.op}) "
+                                f"connector ``{conn}`` is ``{e.data.data}`` of dtype {desc.dtype} (must be bool)")
+    return None
+
+
 def sdfg_validates(sdfg: SDFG) -> Optional[str]:
     """``sdfg.validate()`` succeeds."""
     try:

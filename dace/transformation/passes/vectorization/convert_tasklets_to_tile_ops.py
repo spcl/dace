@@ -38,6 +38,7 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             logical_binops_are_bool,
                                                                              mask_connectors_are_bool,
                                                                              no_duplicate_connector_edges,
                                                                              no_memlet_dim_mismatch)
@@ -1525,4 +1526,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                          "no duplicate connector edges on lib nodes")
         assert_invariant(mask_connectors_are_bool(sdfg), "ConvertTaskletsToTileOps",
                          "every tile-op _mask connector is fed by a bool array")
+        assert_invariant(logical_binops_are_bool(sdfg), "ConvertTaskletsToTileOps",
+                         "every logical (&& / ||) TileBinop has bool inputs and bool output")
         return total or None

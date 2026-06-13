@@ -121,16 +121,21 @@ class ExpandTileUnopPure(ExpandTransformation):
 
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_c").data.data].dtype.ctype
+        # Never emit a ``(bool)X`` cast (``not`` has a bool output + bool
+        # operand; casting a value to bool truncates it). Unary ops preserve
+        # the operand dtype, so the cast only matters for int-literal -> typed
+        # resolution, never bool. Suppress it when the dtype is bool.
+        _cast = "" if out_dtype == "bool" else f"({out_dtype})"
         if node.kind_a == _SYMBOL:
             # Cast to out_dtype so a literal / symbolic int operand resolves
             # cleanly against a typed unop call (mirrors the binop fix).
-            operand = f"({out_dtype})({node.expr_a})"
+            operand = f"{_cast}({node.expr_a})"
         elif node.kind_a == _TILE:
             operand = f"_a[{off}]"
         else:  # Scalar: length-1 Array reads ``_a[0]``, a dace.data.Scalar is ``_a``.
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
             ref = "_a" if isinstance(desc, dace.data.Scalar) else "_a[0]"
-            operand = f"({out_dtype})({ref})"
+            operand = f"{_cast}({ref})"
 
         pre, post = _UNOP_CPP[node.op]
         rhs_expr = f"{pre}{operand}{post}"
