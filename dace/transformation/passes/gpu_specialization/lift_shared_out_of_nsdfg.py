@@ -87,8 +87,9 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
 
         inner_desc = inner_sdfg.arrays[name]
 
-        outer_name = self._pick_outer_name(name, outer_sdfg)
-        outer_sdfg.add_datadesc(outer_name, inner_desc, find_new_name=False)
+        # find_new_name=True returns the (possibly renamed) unique name, so the lift never
+        # overwrites an existing outer descriptor -- no hand-rolled name search needed.
+        outer_name = outer_sdfg.add_datadesc(name, inner_desc, find_new_name=True)
         inner_param_desc = copy.deepcopy(inner_desc)
         inner_param_desc.transient = False
         del inner_sdfg.arrays[name]
@@ -120,17 +121,6 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         # in the same state doesn't read it stale.
         outer_state._clear_scopedict_cache()
         return True
-
-    @staticmethod
-    def _pick_outer_name(name: str, outer_sdfg: SDFG) -> str:
-        """Return ``name`` if it's free in ``outer_sdfg``, else ``name_0``,
-        ``name_1``, ... so the lift never overwrites an existing descriptor."""
-        if name not in outer_sdfg.arrays:
-            return name
-        i = 0
-        while f'{name}_{i}' in outer_sdfg.arrays:
-            i += 1
-        return f'{name}_{i}'
 
 
 def _classify_inner_usage(inner_sdfg: SDFG, name: str) -> Tuple[bool, bool]:

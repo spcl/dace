@@ -161,12 +161,11 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         # the rewritten arrays are now dead.  Drop them so the signature
         # shrinks and codegen doesn't pass unused parameters.  Keep
         # symbols still referenced by another array's shape / bounds.
-        referenced: Set[str] = set()
-        for desc in sdfg.arrays.values():
-            for s in getattr(desc, 'shape', ()):
-                referenced.update(str(x) for x in dace.symbolic.symlist(s).values())
-            for s in getattr(desc, 'offset', ()):
-                referenced.update(str(x) for x in dace.symbolic.symlist(s).values())
+        # A symbol is still needed if it is used anywhere the SDFG references symbols (array
+        # shapes / bounds, tasklets, memlets, interstate edges); ``used_symbols(all_symbols=True)``
+        # captures all of those, so only the offset/dimension symbols that scalarization left
+        # genuinely dead are dropped.
+        referenced: Set[str] = {str(s) for s in sdfg.used_symbols(all_symbols=True)}
         for nm in list(sdfg.symbols):
             if nm in referenced:
                 continue
