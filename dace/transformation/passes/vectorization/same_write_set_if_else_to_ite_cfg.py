@@ -24,6 +24,37 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 
 
+def _rhs_is_predicate(rhs: str) -> bool:
+    """Whether the interstate-assignment RHS string ``rhs`` is itself a
+    boolean predicate — a comparison (``a > b``) or a boolean combination
+    (``a or b``, ``a and b``, ``not a``).
+
+    Used to decide the dtype of the lifted condition transient: a predicate
+    RHS produces a ``bool`` element (consumed by downstream boolean ops and
+    the ITE mask), whereas a bare-value RHS (``b[i]`` feeding a downstream
+    ``b[i] > 0``) keeps its operand dtype. Upstream simplification may have
+    rewritten the Python operators into C form (``||`` / ``&&`` / ``!``), so
+    normalise back before parsing.
+
+    :param rhs: The RHS expression text from the interstate edge.
+    :returns: ``True`` if the top-level expression is a Compare / BoolOp /
+        ``not`` UnaryOp; ``False`` otherwise (including unparseable RHS).
+    """
+    import ast as _ast
+    text = re.sub(r"\|\|", " or ", str(rhs))
+    text = re.sub(r"&&", " and ", text)
+    text = re.sub(r"!\s*\(", "not (", text)
+    try:
+        node = _ast.parse(text.strip(), mode="eval").body
+    except SyntaxError:
+        return False
+    if isinstance(node, (_ast.Compare, _ast.BoolOp)):
+        return True
+    if isinstance(node, _ast.UnaryOp) and isinstance(node.op, _ast.Not):
+        return True
+    return False
+
+
 def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge, skip_cb=None) -> bool:
     """Whether ``sym_name`` is consumed outside its own defining edge.
 
@@ -679,11 +710,19 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # ``b[i] > 0.0``). Typing this array ``bool`` truncates that
         # float operand to ``b != 0`` and the comparison becomes wrong
         # (TSVC s271 ``if b[i] > 0.0`` -> all negative-b lanes wrongly
-        # taken). Carry the RHS's actual dtype (the first array read's);
-        # a genuine bool-valued RHS stored as ``0.0``/``1.0`` is still
-        # correct for the downstream comparison/ITE. ``_cond_compound``
-        # (the final boolean) stays ``bool`` separately.
-        if arr_reads:
+        # taken). So for a bare-value RHS, carry the RHS's actual dtype
+        # (the first array read's).
+        #
+        # BUT when the RHS is *itself* a predicate — a comparison
+        # (``c1 > c0``) or a boolean combination (``a or b``, ``not a``) —
+        # the lifted element holds a boolean result that downstream
+        # boolean ops (and the ``_cond_compound`` combine / the ITE mask)
+        # consume. Typing it after the operand dtype (e.g. ``int64`` from
+        # ``c0``) then collides with the ``bool`` combine output and the
+        # walker-primary tile-op converter rejects the mixed-dtype binop.
+        # Type predicate RHSs ``bool`` so the whole boolean chain is
+        # single-dtype.
+        if arr_reads and not _rhs_is_predicate(rhs):
             template = sdfg.arrays[arr_reads[0]]
             cond_dtype = template.dtype
             # Size the lifted transient to the cond range's TOTAL element
@@ -702,6 +741,15 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 shape = (int(total), ) if int(total) > 0 else (1, )
             except Exception:
                 shape = template.shape
+        elif arr_reads:
+            # Predicate RHS with array reads: bool result, range-sized.
+            cond_dtype = dace.bool_
+            try:
+                subset_obj = dace.subsets.Range.from_string(subset_str)
+                total = subset_obj.num_elements_exact()
+                shape = (int(total), ) if int(total) > 0 else (1, )
+            except Exception:
+                shape = (1, )
         else:
             shape = (1, )
             cond_dtype = dace.bool_

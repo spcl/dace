@@ -25,6 +25,7 @@ Deferred to subsequent slices:
 * Scalar / Symbol operand kinds (currently only Tile + Tile binops).
 * Tasklets nested inside multi-state bodies / RMW chains.
 """
+import re
 from typing import Any, Dict, Optional, Tuple
 
 import dace
@@ -37,6 +38,7 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                             mask_connectors_are_bool,
                                                                              no_duplicate_connector_edges,
                                                                              no_memlet_dim_mismatch)
 
@@ -50,6 +52,11 @@ _SUPPORTED_BINOPS = {
     "+", "-", "*", "/", "%", "**", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"
 }
 
+#: Comparison ops whose result dtype is ``bool`` *by language semantics*, distinct
+#: from the operand dtype (``double > double -> bool``). The mixed-dtype guard in
+#: :meth:`_convert_binop` excludes the output dtype from operand-uniformity for these.
+_COMPARISON_BINOPS = {"<", "<=", ">", ">=", "==", "!="}
+
 #: Subset of reduction operators that map directly onto :class:`TileReduce`.
 #: Subset of :data:`_SUPPORTED_BINOPS` excluding non-associative ``-`` and ``/``.
 _SUPPORTED_REDUCE_OPS = {"+", "*", "min", "max"}
@@ -60,6 +67,7 @@ _SUPPORTED_REDUCE_OPS = {"+", "*", "min", "max"}
 #: aliases ``neg``.
 _SUPPORTED_UNOPS = {
     "neg",
+    "not",
     "abs",
     "exp",
     "log",
@@ -70,6 +78,40 @@ _SUPPORTED_UNOPS = {
     "ceil",
     "tanh",
 }
+
+
+def _normalize_python_tasklet_body(body: str) -> Optional[str]:
+    """Rewrite raw-Python binary boolean tasklet syntax (``or`` / ``and``)
+    into the C-equivalent forms (``||`` / ``&&``) the binop detectors
+    below match against.
+
+    Lift-emitted tasklets — e.g. ``SameWriteSetIfElseToITECFG``'s
+    ``combine_cond`` — write Python source (``_o = (_c_0 or _c_1)``). Without
+    this normalisation the detectors miss them (``_SUPPORTED_BINOPS`` only
+    holds C-syntax keys ``||`` / ``&&``), the raw tasklet escapes
+    conversion, and codegen emits a scalar-bool assignment to a
+    ``bool*`` register tile after widening — a hard compile error.
+
+    Unary ``not`` is left untouched: ``_detect_unop`` matches it directly as
+    ``TileUnop(op='!')``. Mapping ``not x`` to a binary ``x ^ 1`` would be
+    semantically indirect (XOR with the integer literal 1, not a logical
+    NOT) and would also miss when ``x`` is a scalar bool whose C codegen
+    rejects the integer comparand.
+
+    Refuses bodies containing ``@`` (Python matrix multiply); ``TileBinop``
+    is per-lane element-wise and matmul is not, so the matmul has to be
+    refused explicitly rather than fall through to a wrong elementwise
+    expansion.
+
+    :param body: The stripped tasklet body (no trailing ``;``).
+    :returns: The normalised body, or ``None`` when the body contains
+        ``@`` (refused — caller should not classify the tasklet).
+    """
+    if '@' in body:
+        return None
+    out = re.sub(r'\bor\b', '||', body)
+    out = re.sub(r'\band\b', '&&', out)
+    return out
 
 
 @properties.make_properties
@@ -314,6 +356,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             body = body.strip().rstrip(";").strip()
             out_conn = next(iter(tasklet.out_connectors))
             a_conn = next(iter(tasklet.in_connectors))
+            body = _normalize_python_tasklet_body(body)
+            if body is None:
+                return None
             for op in _SUPPORTED_BINOPS:
                 if op in ("min", "max"):
                     continue
@@ -327,6 +372,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
+        body = _normalize_python_tasklet_body(body)
+        if body is None:
+            return None
         # Try every op in _SUPPORTED_BINOPS against the two operand orderings. DaCe wraps the
         # RHS of an assignment tasklet in parentheses (``_o = (_a + _b)``); accept both forms.
         # The function-form ops (``min``, ``max``, ``pow``) accept the bare-name function syntax
@@ -362,6 +410,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
+        body = _normalize_python_tasklet_body(body)
+        if body is None:
+            return None
         # Strip outer parens (DaCe wraps the RHS).
         rhs = body[len(f"{out_conn} = "):]
         if rhs.startswith("(") and rhs.endswith(")"):
@@ -578,11 +629,18 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         for form in (f"{out_conn} = -{a_conn}", f"{out_conn} = (-{a_conn})", f"{out_conn} = (- {a_conn})"):
             if body == form:
                 return out_conn, a_conn, "neg"
+        # Logical NOT: Python ``not _a`` (keyword-prefix, not function-call).
+        # ``SameWriteSetIfElseToITECFG`` emits this form (``_o = (not _c_0)``);
+        # after widening it becomes a per-lane TileUnop(op='!'). The tasklet body
+        # is Python source, so only the ``not`` keyword appears (never C ``!``).
+        for form in (f"{out_conn} = not {a_conn}", f"{out_conn} = (not {a_conn})"):
+            if body == form:
+                return out_conn, a_conn, "not"
         # Function-call ops: ``_o = abs(_a)`` / ``_o = math.exp(_a)`` / etc. Accept both bare
         # name and ``math.`` / ``std::`` prefixes (RemoveMathCall strips ``math.`` upstream;
         # this handles the case where it didn't run or wasn't needed).
         for op in _SUPPORTED_UNOPS:
-            if op == "neg":
+            if op in ("neg", "not"):
                 continue
             prefixes = (op, f"math.{op}", f"std::{op}")
             for pref in prefixes:
@@ -1101,15 +1159,24 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # (the lib node's tile transient + bridge + downstream copy chain all assume
         # uniform dtype). Refuse and raise NotImplementedError so callers know to
         # rewrite the kernel with explicit casts.
+        #
+        # Comparison ops (``< <= > >= == !=``) are the principled exception: the
+        # result dtype is ``bool`` by language semantics, distinct from the operand
+        # dtype (``double > double -> bool``). For those, enforce uniformity on the
+        # OPERANDS only and let the output be ``bool``; the comparison's bool output
+        # feeds a downstream mask / boolean combine that is itself single-dtype.
         sdfg = inner_state.sdfg
         a_dtype = sdfg.arrays[a_edge.data.data].dtype if a_edge.data and a_edge.data.data else None
         b_dtype = sdfg.arrays[b_edge.data.data].dtype if b_edge.data and b_edge.data.data else None
         c_dtype = sdfg.arrays[out_edge.data.data].dtype if out_edge.data and out_edge.data.data else None
-        operand_dtypes = {d for d in (a_dtype, b_dtype, c_dtype) if d is not None}
-        if len(operand_dtypes) > 1:
+        if op in _COMPARISON_BINOPS:
+            checked_dtypes = {d for d in (a_dtype, b_dtype) if d is not None}
+        else:
+            checked_dtypes = {d for d in (a_dtype, b_dtype, c_dtype) if d is not None}
+        if len(checked_dtypes) > 1:
             raise NotImplementedError(
                 f"vec(K-dim): mixed-dtype binop NOT supported. Tasklet {tasklet.label!r} body "
-                f"{tasklet.code.as_string!r} mixes dtypes {operand_dtypes}. Per design 6.2 + user "
+                f"{tasklet.code.as_string!r} mixes dtypes {checked_dtypes}. Per design 6.2 + user "
                 f"direction the walker-primary path locks a single dtype per lib node. Rewrite the "
                 f"kernel with an explicit cast tasklet upstream OR widen the destination dtype.")
         # Operand-kind classification from the source's descriptor: Scalar / length-1 Array
@@ -1456,4 +1523,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                          "memlet subset and other_subset have matching dimensionality")
         assert_invariant(no_duplicate_connector_edges(sdfg), "ConvertTaskletsToTileOps",
                          "no duplicate connector edges on lib nodes")
+        assert_invariant(mask_connectors_are_bool(sdfg), "ConvertTaskletsToTileOps",
+                         "every tile-op _mask connector is fed by a bool array")
         return total or None

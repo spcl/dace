@@ -150,19 +150,43 @@ class ExpandTileBinopPure(ExpandTransformation):
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_c").data.data].dtype.ctype
 
+        # The dtype the VALUE operands share. A ``_SYMBOL`` / ``_SCALAR``
+        # operand is cast to this so a type-strict binop (``std::min`` etc.)
+        # resolves both operands at one type. This is the OPERAND dtype, NOT
+        # ``out_dtype``: a comparison (``ZLI > RLMIN``) has a ``bool`` output
+        # but ``double`` operands, so casting the symbol to ``out_dtype`` would
+        # emit ``(bool)RLMIN`` — truncating ``RLMIN=1e-12`` to ``1`` and
+        # corrupting the comparison. Prefer a data operand's descriptor dtype;
+        # else the symbol's own declared dtype from ``sdfg.symbols``; else
+        # fall back to ``out_dtype`` (all-Symbol case with no resolvable type).
+        def _operand_dtype():
+            for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b")):
+                if k in (_TILE, _SCALAR) and c in in_e:
+                    return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
+            for expr in (node.expr_a, node.expr_b):
+                if not expr:
+                    continue
+                try:
+                    for s in dace.symbolic.symlist(dace.symbolic.pystr_to_symbolic(expr)):
+                        if str(s) in parent_sdfg.symbols:
+                            return parent_sdfg.symbols[str(s)].ctype
+                except Exception:  # noqa: BLE001
+                    pass
+            return out_dtype
+
+        operand_dtype = _operand_dtype()
+
         def _operand_ref(kind, conn, expr):
             """Return the per-lane C++ reference for one operand.
 
-            A ``_SYMBOL`` / ``_SCALAR`` operand is cast to ``out_dtype`` so
-            ``std::min`` / ``std::max`` (and any other type-strict overload) sees
-            both operands at the same type — without this cast a ``min`` between
-            an int literal ``(1)`` and a ``double _b[off]`` fails to resolve
-            (``no matching function for call to 'min(int, double&)'``). The
-            ``_TILE`` operand's dtype already matches ``out_dtype`` (validate()
-            enforces it).
+            A ``_SYMBOL`` / ``_SCALAR`` operand is cast to ``operand_dtype``
+            (see above) so ``std::min`` / ``std::max`` (and any other
+            type-strict overload) sees both operands at the same type — and a
+            comparison's symbol operand keeps its numeric type rather than
+            being truncated to the ``bool`` output.
             """
             if kind == _SYMBOL:
-                return f"({out_dtype})({expr})"
+                return f"({operand_dtype})({expr})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
             # Scalar broadcast operand. DaCe passes a tasklet connector by
@@ -170,12 +194,12 @@ class ExpandTileBinopPure(ExpandTransformation):
             # single-element access into a larger array (``a[j]`` ->
             # ``double conn = a[j]``); only a genuine length-1 *array*
             # connector is a pointer (``T* conn``) needing ``conn[0]``. Cast
-            # to ``out_dtype`` so a typed binop (``std::min`` etc.) resolves.
+            # to ``operand_dtype`` so a typed binop (``std::min`` etc.) resolves.
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             is_len1_array = (isinstance(desc, dace.data.Array)
                              and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
             ref = f"{conn}[0]" if is_len1_array else conn
-            return f"({out_dtype})({ref})"
+            return f"({operand_dtype})({ref})"
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b)

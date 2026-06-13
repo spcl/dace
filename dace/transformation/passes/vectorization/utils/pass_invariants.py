@@ -126,6 +126,34 @@ def no_duplicate_connector_edges(scope) -> Optional[str]:
     return None
 
 
+def mask_connectors_are_bool(scope) -> Optional[str]:
+    """Every edge feeding a tile lib-node ``_mask`` connector must be sourced
+    from a ``bool`` array. A mask selects per-lane, so a non-bool mask (e.g. a
+    ``double`` 1.0/0.0 value mask) is invalid — comparison ops and lifted
+    if-conditions produce ``bool``, and every mask consumer (TileBinop /
+    TileUnop / TileITE ``_mask``) is defined over a boolean tile.
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on
+    success or a description identifying the first non-bool mask source.
+    """
+    import dace.dtypes as _dt
+    for sd, state in _iter_states(scope):
+        for edge in state.edges():
+            if edge.dst_conn != "_mask":
+                continue
+            mem = edge.data
+            if mem is None or mem.data is None:
+                continue
+            desc = sd.arrays.get(mem.data)
+            if desc is None:
+                continue
+            if desc.dtype != _dt.bool_:
+                return (f"{sd.name}.{state.label}: ``_mask`` connector on "
+                        f"{type(edge.dst).__name__} ``{getattr(edge.dst, 'label', edge.dst)}`` is fed by "
+                        f"``{mem.data}`` of dtype {desc.dtype} (must be bool)")
+    return None
+
+
 def sdfg_validates(sdfg: SDFG) -> Optional[str]:
     """``sdfg.validate()`` succeeds."""
     try:
