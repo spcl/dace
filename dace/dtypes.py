@@ -15,7 +15,6 @@ from dace.config import Config
 from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
 from dace.registry import undefined_safe_enum
-from dace.version import __version__
 
 
 @undefined_safe_enum
@@ -871,6 +870,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Data):
                 pass
             elif isinstance(arg, str):
+                from dace.version import __version__  # Avoid circular import
                 arg = json_to_typeclass(arg, {'version': __version__})
             else:
                 raise TypeError("Cannot resolve type from: {}".format(arg))
