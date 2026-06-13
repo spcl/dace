@@ -453,6 +453,77 @@ def resolve_index_expr(expr: sympy.Expr,
     return cur
 
 
+def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
+    """Whether ``expr`` is a *data-dependent* index — it reads an array value
+    (a gather like ``idx[i]``), so it must NOT be inlined into a memlet subset
+    (it stays the gather form and flows to the gather machinery).
+
+    Detected two ways: a :class:`~dace.symbolic.Subscript` node anywhere in the
+    expression, or a free symbol that names a non-Scalar :class:`~dace.data.Array`
+    descriptor (the resolver rewrites a gather scalar's defining tasklet to read
+    the source array name, so ``idx`` shows up as a free symbol).
+    """
+    if expr is None:
+        return False
+    import dace.data as _dd
+    try:
+        if expr.atoms(symbolic.Subscript):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    for s in expr.free_symbols:
+        desc = sdfg.arrays.get(str(s))
+        if isinstance(desc, _dd.Array) and not isinstance(desc, _dd.Scalar):
+            return True
+    return False
+
+
+def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
+    """Rewrite a memlet ``subset`` by inlining promoted index symbols back to
+    their original arithmetic (``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i+offset]``)
+    so the access pattern is direct and widens to a dense load.
+
+    Each range bound is resolved via :func:`resolve_index_expr` (crossing
+    interstate-edge assignments + scalar-defining tasklets, reaching-def via
+    ``state``). A bound is left untouched when its resolved form is
+    **data-dependent** (:func:`expr_is_data_dependent`) — that is a genuine
+    gather index and must keep its symbol/Subscript for the gather machinery.
+
+    :param subset: The memlet :class:`~dace.subsets.Range` to rewrite.
+    :param inner_sdfg: Body SDFG carrying the symbol/scalar definitions.
+    :param state: Access state for reaching-def disambiguation.
+    :returns: A new :class:`~dace.subsets.Range` if anything changed, else ``None``.
+    """
+    if inner_sdfg is None or subset is None or not hasattr(subset, "ranges"):
+        return None
+    defs = _build_symbol_definition_map(inner_sdfg, state)
+    if not defs:
+        return None
+
+    def _rewrite(bound):
+        e = _safe_sympify(bound)
+        if e is None:
+            return bound, False
+        resolved = resolve_index_expr(e, inner_sdfg, _defs=defs)
+        if resolved == e:
+            return bound, False
+        if expr_is_data_dependent(resolved, inner_sdfg):
+            return bound, False  # gather index -> keep original
+        return resolved, True
+
+    new_ranges = []
+    changed = False
+    for (lo, hi, step) in subset.ranges:
+        nlo, c1 = _rewrite(lo)
+        nhi, c2 = _rewrite(hi)
+        new_ranges.append((nlo, nhi, step))
+        changed = changed or c1 or c2
+    if not changed:
+        return None
+    from dace.subsets import Range as _Range
+    return _Range(new_ranges)
+
+
 def _is_tile_dependent(symbol: str,
                        iter_vars: Set[str],
                        inner_sdfg: Optional[SDFG],
