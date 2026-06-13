@@ -1163,6 +1163,30 @@ class mod(sympy.Function):
         return self.args[0].is_integer and self.args[1].is_integer
 
 
+class fortran_mod(sympy.Function):
+    """Floored modulus for use in symbolic expressions / memlet subsets.
+
+    Two-arg ``fortran_mod(a, b)`` -- the Fortran ``MODULO`` semantics:
+    the result has the sign of ``b`` and lies in ``[0, b)`` for ``b > 0``,
+    UNLIKE sympy's ``Mod`` which lowers to the bare C ``%`` operator
+    (truncating on signed integers, so ``(-1) % 5 == -1``).
+
+    A distinct ``Function`` subclass (not ``sympy.Mod``) so it is NOT
+    simplified back to ``Mod`` and survives to C++ codegen, where the
+    printer emits the self-contained floored form
+    ``(((a) % (b)) + (b)) % (b)`` (see ``_print_Function``).  Added for
+    sign-correct array-index wraps (e.g. CSHIFT) without touching the
+    existing ``Mod`` / ``mod`` lowering."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return x - y * sympy.floor(x / y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
 class bitwise_and(sympy.Function):
     pass
 
@@ -1844,6 +1868,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
+        'fortran_mod': fortran_mod,
         'Attr': Attr,
         'BitwiseAnd': bitwise_and,
         'BitwiseOr': bitwise_or,
@@ -2208,6 +2233,7 @@ _PYSTR2SYM_locals = {
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
     'Mod': sympy.Mod,
+    'fortran_mod': fortran_mod,
     'Attr': Attr,
     'conj': conj,
     'Subscript': Subscript,
@@ -2322,6 +2348,23 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        # ``fortran_mod(a, b)`` -- a FLOORED modulus (Fortran ``MODULO``
+        # semantics): result lies in ``[0, b)`` for ``b > 0`` for any
+        # sign of ``a`` (``fortran_mod(-1, 5) == 4``).  Distinct from
+        # sympy's ``Mod`` (printed as the bare C ``%`` operator, which
+        # TRUNCATES on signed integers: ``(-1) % 5 == -1``).  Emitted as
+        # the self-contained form ``(((a) % (b)) + (b)) % (b)`` -- pure C
+        # ``%`` (works in the memlet-subset codegen context, where
+        # ``dace::math::`` qualified CALLS don't resolve, only operators
+        # do; and robust to a value/modulus of DIFFERENT integer types,
+        # e.g. ``__i0 - 1`` vs a shape symbol ``n``).  Floored for any
+        # sign.  Added (NOT a change to the existing ``Mod`` / ``mod``
+        # lowering) for sign-correct array-index wraps, e.g. a CSHIFT
+        # source subset ``_x[fortran_mod(i + shift, n)]``.
+        if self.cpp_mode and str(expr.func) == 'fortran_mod':
+            a = self._print(expr.args[0])
+            b = self._print(expr.args[1])
+            return '((((%s) %% (%s)) + (%s)) %% (%s))' % (a, b, b, b)
         # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
             return 'dace::math::conj(%s)' % self._print(expr.args[0])
