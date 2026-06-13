@@ -491,6 +491,15 @@ def _iedge_reads_gpu_array(edge_data: 'dace.InterstateEdge', sdfg: SDFG, gpu_wri
     return bool(edge_data.read_symbols() & sdfg.arrays.keys() & gpu_written)
 
 
+def _block_reads_gpu_written(block, gpu_written: Set[str]) -> bool:
+    """Whether ``block`` (state or control-flow region) reads any GPU-written array -- i.e. it is a
+    host consumer of GPU output (a copy-out / read-back) that must wait for the producing kernels.
+    A host block that only writes host-computed values (e.g. the ``gt_compute_time`` timing scalar)
+    reads no GPU-written array and returns ``False``."""
+    read_set, _ = block.read_and_write_sets()
+    return bool(set(read_set) & gpu_written)
+
+
 def _classify_root_block(block) -> _Kind:
     """Classify a root-SDFG block (``SDFGState`` or ``AbstractControlFlowRegion``).
 
@@ -557,6 +566,24 @@ def _append_program_end_sync_state(parent_region, gpu_state, gpu_streams_name: s
     return sync_state
 
 
+def _sink_writes_host_visible_output(state) -> bool:
+    """True if ``state`` writes any non-transient array in host (non-GPU) storage.
+
+    Such an output is read by the caller on the host, so its exit ``cudaStreamSynchronize`` is
+    mandatory for correctness and is emitted regardless of ``compiler.cuda.synchronize_on_exit``.
+    Sinks whose outputs are all GPU-resident (or transient) have no host reader inside the SDFG,
+    so their exit sync is only needed for cross-stream ordering after return -- which the host
+    application owns when it shares one stream."""
+    gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
+    for node in state.data_nodes():
+        if state.in_degree(node) == 0:
+            continue  # read-only here, not a written output
+        desc = node.desc(state.parent)
+        if not desc.transient and desc.storage not in gpu_storages:
+            return True
+    return False
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
@@ -579,13 +606,29 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
     stream 0 queues after the CPU work naturally.
     """
 
-    def __init__(self):
+    def __init__(self, synchronize_on_exit: Optional[bool] = None):
+        # ``synchronize_on_exit`` overrides ``compiler.cuda.synchronize_on_exit`` for this strategy
+        # instance; ``None`` (the default, and the path the codegen takes) defers to the config
+        # value so the host application can control it from outside. See
+        # :meth:`_should_synchronize_on_exit`.
+        self._synchronize_on_exit: Optional[bool] = synchronize_on_exit
         # State / iedge analysis is rebuilt every ``assign_streams`` call. Both scheduling and
         # wiring run on a single SDFG, so cached state is per-instance and re-derived on reuse.
         self._fell_back: bool = False
         self._naive_fallback: Optional['NaiveGPUStreamScheduler'] = None
         self._state_kinds: Dict[SDFGState, _Kind] = {}
         self._gpu_written: Set[str] = set()
+
+    def _should_synchronize_on_exit(self) -> bool:
+        """Whether to keep the SDFG-exit ``cudaStreamSynchronize`` for GPU-resident outputs.
+
+        Explicit constructor argument wins; otherwise the ``compiler.cuda.synchronize_on_exit``
+        config value is used. Disabling is only safe when the host application shares one GPU
+        stream across SDFG calls and synchronizes at its own host-read boundaries -- host-visible
+        (copy-out) outputs stay synchronized regardless (see the splice / sink gates)."""
+        if self._synchronize_on_exit is not None:
+            return self._synchronize_on_exit
+        return bool(Config.get('compiler', 'cuda', 'synchronize_on_exit'))
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         # ``SplitStateByGPUClass`` is the preparation step for this strategy: it lifts CPU-only
@@ -718,11 +761,22 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 # needs a sync inserted on the edge.
                 if self._state_kinds.get(src) != _Kind.GPU:
                     continue
-                # GPU -> non-GPU: always splice. GPU -> GPU: splice only when the iedge reads
-                # a GPU-written array (host-side condition / assignment depending on kernel output).
+                # GPU -> GPU: splice only when the iedge reads a GPU-written array (host-side
+                # condition / assignment depending on kernel output).
+                # GPU -> host: splice only when the host block actually consumes GPU-produced data
+                # (a copy-out / read-back). A host block that reads no GPU-written array -- e.g. a
+                # trailing metrics state that only times and writes the host-side gt_compute_time --
+                # needs this sync solely to make GPU-resident outputs visible at SDFG exit, which is
+                # gated by compiler.cuda.synchronize_on_exit (the per-stencil host stall).
                 dst_kind = self._state_kinds.get(dst, _Kind.CPU)
-                if dst_kind == _Kind.GPU and not _iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
-                    continue
+                if dst_kind == _Kind.GPU:
+                    if not _iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
+                        continue
+                else:
+                    host_consumes_gpu = (_iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written)
+                                         or _block_reads_gpu_written(dst, self._gpu_written))
+                    if not host_consumes_gpu and not self._should_synchronize_on_exit():
+                        continue
                 edges_to_splice.append((region, edge))
 
         # ``edges_to_splice`` carries ``(region, edge)`` tuples so the splicer can mutate the
@@ -772,5 +826,13 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             if self._state_kinds.get(state) != _Kind.GPU:
                 continue
             if state.parent_graph.out_degree(state) > 0:
+                continue
+            # Emit the exit sync at every GPU sink that writes a host-visible (CPU) output -- the
+            # caller reads those on the host. For sinks whose outputs stay GPU-resident, the sync
+            # only matters when the result later crosses to an unordered stream; it is skipped when
+            # the host app shares one stream and synchronizes at its own boundaries
+            # (compiler.cuda.synchronize_on_exit=False), removing the per-SDFG host stall that
+            # dominates launch-bound stencils.
+            if (not _sink_writes_host_visible_output(state) and not self._should_synchronize_on_exit()):
                 continue
             _append_program_end_sync_state(state.parent_graph, state, stream_array_name)

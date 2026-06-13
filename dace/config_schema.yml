@@ -535,6 +535,21 @@ required:
                             or use other mechanisms like async copies or pipelines.
                         default: True
 
+                    synchronize_on_exit:
+                        type: bool
+                        title: Synchronize GPU stream at SDFG exit
+                        description: >
+                            If enabled (default), AutoSingleStreamGPUScheduler appends a
+                            cudaStreamSynchronize at every GPU sink state, making each GPU SDFG
+                            synchronous on return. Disable only when the host application shares one
+                            GPU stream across all SDFG calls (so GPU->GPU hand-off is stream-ordered)
+                            and synchronizes at its own host-read boundaries -- this removes the
+                            per-SDFG host stall for GPU-resident pipelines (e.g. icon4py), which is
+                            the dominant cost on launch-bound stencils. Sink states that write
+                            host-visible (CPU) outputs are ALWAYS synchronized regardless of this
+                            setting, so numpy / copy-out SDFGs stay correct.
+                        default: True
+
                     current_thread_block_name:
                         type: str
                         title: Variable name for the current thread block

@@ -286,6 +286,221 @@ def test_e2e_gpu_kernel_writes_scalar_consumed_by_cpu():
     assert np.isclose(out[0], expected, rtol=1e-5, atol=1e-5), (f"out[0]={out[0]} expected {expected}")
 
 
+# ICON-stencil patterns (from the compute_rho_theta legacy-vs-experimental investigation).
+# A real ICON stencil compiles to a single SDFG with many GPU maps writing GPU transients
+# (the ``gtir_tmp`` pool) consumed downstream. The scheduler pins everything to stream 0 and
+# adds the host-blocking ``cudaStreamSynchronize`` exactly once (the region sink) -- regardless
+# of kernel/transient count, since stream-0 ordering covers every GPU->GPU hand-off. That single
+# per-SDFG sink sync is correct but conservative: it serializes the host across many back-to-back
+# stencil calls.
+
+
+@dace.program
+def stencil_chain_with_transients(A: dace.float64[N], OUT: dace.float64[N]):
+    # Neighbour-offset reads keep the stages as separate kernels (resist map fusion).
+    t1 = np.zeros_like(A)
+    t2 = np.zeros_like(A)
+    for i in dace.map[1:N - 1]:
+        t1[i] = A[i - 1] + 2.0 * A[i] + A[i + 1]
+    for i in dace.map[1:N - 1]:
+        t2[i] = t1[i - 1] - t1[i + 1]
+    for i in dace.map[1:N - 1]:
+        OUT[i] = 0.5 * t2[i] + A[i]
+
+
+@pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
+def test_multikernel_stencil_pipeline_one_sync_at_exit():
+    """Stencil shape: several GPU maps writing GPU transients consumed downstream, all in one
+    SDFG. Expect a single stream and *exactly one* program-end sync at the region sink, not one
+    per kernel; plus numerical correctness."""
+    n_val = 256
+    sdfg = _build_gpu_sdfg(stencil_chain_with_transients)
+
+    streams = {
+        n.gpu_stream_id
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for s in nsdfg.states()
+        for n in s.nodes() if n.gpu_stream_id is not None
+    }
+    assert streams == {0}, f"expected single stream {{0}}, got {streams}"
+
+    gpu_device_maps = [
+        n for nsdfg in sdfg.all_sdfgs_recursive() for s in nsdfg.states() for n in s.nodes()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+    ]
+    assert len(gpu_device_maps) >= 2, f"expected a multi-kernel pipeline, got {len(gpu_device_maps)} device map(s)"
+
+    syncs = _all_sync_states(sdfg)
+    assert len(syncs) == 1, (f"expected exactly one program-end sync regardless of kernel/transient "
+                             f"count, got {len(syncs)}")
+    _, sink_state = syncs[0]
+    assert sink_state.parent_graph.out_degree(sink_state) == 0, "the sync must sit at the region-level sink"
+
+    rng = np.random.default_rng(3)
+    A = rng.standard_normal(n_val)
+    OUT = np.zeros(n_val)
+    sdfg(A=A.copy(), OUT=OUT, N=n_val)
+    t1 = np.zeros(n_val)
+    t2 = np.zeros(n_val)
+    ref = np.zeros(n_val)
+    t1[1:-1] = A[:-2] + 2.0 * A[1:-1] + A[2:]
+    t2[1:-1] = t1[:-2] - t1[2:]
+    ref[1:-1] = 0.5 * t2[1:-1] + A[1:-1]
+    assert np.allclose(OUT, ref, rtol=1e-9, atol=1e-12), f"numerical mismatch: {OUT[:4]} vs {ref[:4]}"
+
+
+@dace.program
+def deep_stencil_pipeline(A: dace.float64[N], OUT: dace.float64[N]):
+    t1 = np.zeros_like(A)
+    t2 = np.zeros_like(A)
+    t3 = np.zeros_like(A)
+    t4 = np.zeros_like(A)
+    t5 = np.zeros_like(A)
+    for i in dace.map[1:N - 1]:
+        t1[i] = A[i - 1] + A[i + 1]
+    for i in dace.map[1:N - 1]:
+        t2[i] = t1[i - 1] + t1[i + 1]
+    for i in dace.map[1:N - 1]:
+        t3[i] = t2[i - 1] + t2[i + 1]
+    for i in dace.map[1:N - 1]:
+        t4[i] = t3[i - 1] + t3[i + 1]
+    for i in dace.map[1:N - 1]:
+        t5[i] = t4[i - 1] + t4[i + 1]
+    for i in dace.map[1:N - 1]:
+        OUT[i] = t5[i - 1] + t5[i + 1]
+
+
+def test_sync_count_independent_of_kernel_count():
+    """Pass-structure only (no GPU needed): a deeper GPU pipeline must still get exactly one
+    program-end sync. Codifies that the per-SDFG sink sync count does not grow with the number
+    of kernels -- the over-synchronization is per-SDFG, not per-kernel."""
+    sdfg = _build_gpu_sdfg(deep_stencil_pipeline)
+    gpu_device_maps = [
+        n for nsdfg in sdfg.all_sdfgs_recursive() for s in nsdfg.states() for n in s.nodes()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+    ]
+    assert len(gpu_device_maps) >= 3, f"expected a deep multi-kernel pipeline, got {len(gpu_device_maps)}"
+    syncs = _all_sync_states(sdfg)
+    assert len(syncs) == 1, f"sync count must be independent of kernel count (expected 1, got {len(syncs)})"
+
+
+# compiler.cuda.synchronize_on_exit -- drop the per-SDFG exit sync for GPU-resident pipelines.
+# The exit sync is what serializes the host across back-to-back stencil calls; for a host app that
+# shares one GPU stream and syncs at its own boundaries (e.g. icon4py) it is pure overhead. Opting
+# out removes it for sinks whose outputs stay GPU-resident, while sinks that write host-visible
+# (numpy / copy-out) outputs are always synchronized so correctness is preserved.
+
+
+def _build_gpu_resident_pipeline(strategy=None):
+    """Hand-built pure-GPU pipeline with GPU_Global, non-transient I/O (no copy-out) -- the
+    icon4py shape where outputs stay on the device."""
+    GPU = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG('gpu_resident_pipeline')
+    for nm in ('A', 'B', 'C'):
+        sdfg.add_array(nm, [16], dace.float32, storage=GPU)
+    s0 = sdfg.add_state('k0')
+    me0, mx0 = s0.add_map('m0', dict(i='0:16'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    t0 = s0.add_tasklet('b0', {'a'}, {'o'}, 'o = a * 2.0')
+    s0.add_memlet_path(s0.add_read('A'), me0, t0, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    s0.add_memlet_path(t0, mx0, s0.add_write('B'), src_conn='o', memlet=dace.Memlet('B[i]'))
+    s1 = sdfg.add_state_after(s0, 'k1')
+    me1, mx1 = s1.add_map('m1', dict(i='0:16'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    t1 = s1.add_tasklet('b1', {'a'}, {'o'}, 'o = a + 1.0')
+    s1.add_memlet_path(s1.add_read('B'), me1, t1, dst_conn='a', memlet=dace.Memlet('B[i]'))
+    s1.add_memlet_path(t1, mx1, s1.add_write('C'), src_conn='o', memlet=dace.Memlet('C[i]'))
+    GPUStreamPipeline(scheduling_strategy=strategy or AutoSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_gpu_resident_sink_synced_by_default():
+    """Default (synchronize_on_exit=True): a GPU-resident sink still gets its exit sync."""
+    sdfg = _build_gpu_resident_pipeline()
+    assert len(_all_sync_states(sdfg)) == 1, "default must keep the exit sync"
+
+
+def test_gpu_resident_sink_exit_sync_dropped_when_opted_out():
+    """synchronize_on_exit=False: a GPU-resident sink (no host-visible output) gets NO exit sync;
+    stream-0 ordering still covers the GPU->GPU hand-off. This removes the per-stencil host stall."""
+    with dace.config.set_temporary('compiler', 'cuda', 'synchronize_on_exit', value=False):
+        sdfg = _build_gpu_resident_pipeline()
+    assert len(_all_sync_states(sdfg)) == 0, "opted-out GPU-resident sink must get no exit sync"
+    streams = {
+        n.gpu_stream_id
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for s in nsdfg.states()
+        for n in s.nodes() if n.gpu_stream_id is not None
+    }
+    assert streams == {0}, f"streams must still be wired for ordering, got {streams}"
+
+
+@pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
+def test_host_visible_output_always_synced_even_when_opted_out():
+    """Safety: even with synchronize_on_exit=False, a sink that writes a host (numpy) output keeps
+    its sync, so copy-out SDFGs stay correct."""
+    n_val = 128
+    with dace.config.set_temporary('compiler', 'cuda', 'synchronize_on_exit', value=False):
+        sdfg = _build_gpu_sdfg(stencil_chain_with_transients)
+        assert _all_sync_states(sdfg), "host-visible (numpy) output must still be synchronized"
+        rng = np.random.default_rng(5)
+        A = rng.standard_normal(n_val)
+        OUT = np.zeros(n_val)
+        sdfg(A=A.copy(), OUT=OUT, N=n_val)
+    t1 = np.zeros(n_val)
+    t2 = np.zeros(n_val)
+    ref = np.zeros(n_val)
+    t1[1:-1] = A[:-2] + 2.0 * A[1:-1] + A[2:]
+    t2[1:-1] = t1[:-2] - t1[2:]
+    ref[1:-1] = 0.5 * t2[1:-1] + A[1:-1]
+    assert np.allclose(OUT, ref, rtol=1e-9, atol=1e-12), f"numerical mismatch: {OUT[:4]} vs {ref[:4]}"
+
+
+def _build_gpu_then_host_nonconsumer():
+    """GPU kernel followed by a host state that writes a host scalar from a constant -- it reads no
+    GPU output. This is the shape of the ICON stencils' trailing metrics/exit state (writes the
+    host gt_compute_time), whose GPU->host edge carries the per-stencil sync."""
+    GPU = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG('gpu_then_host_nonconsumer')
+    sdfg.add_array('A', [16], dace.float32, storage=GPU)
+    sdfg.add_array('B', [16], dace.float32, storage=GPU)
+    sdfg.add_array('h', [1], dace.float32, storage=dace.dtypes.StorageType.CPU_Heap)
+    s0 = sdfg.add_state('gpu')
+    me, mx = s0.add_map('m', dict(i='0:16'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    t = s0.add_tasklet('b', {'a'}, {'o'}, 'o = a + 1.0')
+    s0.add_memlet_path(s0.add_read('A'), me, t, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    s0.add_memlet_path(t, mx, s0.add_write('B'), src_conn='o', memlet=dace.Memlet('B[i]'))
+    s1 = sdfg.add_state_after(s0, 'host_finalize')
+    ht = s1.add_tasklet('host', {}, {'o'}, 'o = 3.14f;', language=dace.Language.CPP)
+    s1.add_edge(ht, 'o', s1.add_write('h'), None, dace.Memlet('h[0]'))
+    return sdfg
+
+
+def test_gpu_to_host_nonconsumer_edge_sync_gated_by_flag():
+    """GPU -> trailing host state that reads no GPU output (ICON metrics/exit shape). Default keeps
+    the GPU->host edge sync; opt-out drops it (the host block consumes no GPU-produced data)."""
+    sdfg = _build_gpu_then_host_nonconsumer()
+    GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    assert len(_all_sync_states(sdfg)) == 1, "default must keep the GPU->host edge sync"
+
+    with dace.config.set_temporary('compiler', 'cuda', 'synchronize_on_exit', value=False):
+        sdfg = _build_gpu_then_host_nonconsumer()
+        GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    assert len(_all_sync_states(sdfg)) == 0, "opt-out must drop the sync to a non-GPU-consuming host block"
+
+
+def test_synchronize_on_exit_as_strategy_argument():
+    """synchronize_on_exit is also a strategy constructor argument; an explicit value wins over the
+    config (None defers to config, which is the path the codegen takes)."""
+    # explicit False drops the exit sync even with the config left at its default (True)
+    sdfg = _build_gpu_resident_pipeline(strategy=AutoSingleStreamGPUScheduler(synchronize_on_exit=False))
+    assert len(_all_sync_states(sdfg)) == 0, "explicit synchronize_on_exit=False must drop the exit sync"
+    # explicit True overrides a config that is flipped off
+    with dace.config.set_temporary('compiler', 'cuda', 'synchronize_on_exit', value=False):
+        sdfg = _build_gpu_resident_pipeline(strategy=AutoSingleStreamGPUScheduler(synchronize_on_exit=True))
+    assert len(_all_sync_states(sdfg)) == 1, "explicit synchronize_on_exit=True must override config=False"
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

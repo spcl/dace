@@ -8,6 +8,7 @@ SDFG. Both act on the root SDFG only.
 """
 from typing import Optional
 
+from dace.config import Config
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
                                                                                  GPUStreamSchedulingStrategy)
@@ -32,7 +33,10 @@ class GPUStreamPipeline(Pipeline):
 
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
         if scheduling_strategy is None:
-            scheduling_strategy = AutoSingleStreamGPUScheduler()
+            # The experimental codegen owns the synchronize_on_exit flag and hands it to the
+            # scheduling strategy (the strategy itself falls back to the same config when given None).
+            scheduling_strategy = AutoSingleStreamGPUScheduler(
+                synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         elif not isinstance(scheduling_strategy, GPUStreamSchedulingStrategy):
             raise TypeError(f"scheduling_strategy must be a GPUStreamSchedulingStrategy instance, "
                             f"got {type(scheduling_strategy).__name__}.")
@@ -75,7 +79,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     connectors, so connector types must be re-derived for correct codegen signatures.
         # Scheduling pass writes ``Node.gpu_stream_id``; wiring pass reads it
         # and lays down the ``gpu_streams`` array + connector + sync wiring.
-        strategy = AutoSingleStreamGPUScheduler()
+        strategy = AutoSingleStreamGPUScheduler(
+            synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         super().__init__([
             InferDefaultSchedulesAndStorages(),
             PromoteGPUScalarsToArrays(),
