@@ -30,8 +30,16 @@ except OSError:
     pass
 
 
-def _build_allany_sdfg(tag, op, mask_shape, mask_dtype, dim, out_shape, out_dtype, *,
-                       implementation="reduction", mask_subset=None):
+def _build_allany_sdfg(tag,
+                       op,
+                       mask_shape,
+                       mask_dtype,
+                       dim,
+                       out_shape,
+                       out_dtype,
+                       *,
+                       implementation="reduction",
+                       mask_subset=None):
     """One-state SDFG wiring an ``All`` / ``Any`` node from a mask access into an
     output access.  ``mask_subset`` (list of ``(lo, hi)`` per dim, 0-based
     inclusive-exclusive) restricts the input edge to a section."""
@@ -50,10 +58,8 @@ def _build_allany_sdfg(tag, op, mask_shape, mask_dtype, dim, out_shape, out_dtyp
     else:
         msub = ", ".join(f"{lo}:{hi}" for (lo, hi) in mask_subset)
     osub = ", ".join(f"0:{s}" for s in out_shape_used)
-    state.add_edge(state.add_access("mask"), None, node, AllNode.INPUT_CONNECTOR_NAME,
-                   dace.Memlet(f"mask[{msub}]"))
-    state.add_edge(node, AllNode.OUTPUT_CONNECTOR_NAME, state.add_access("out"), None,
-                   dace.Memlet(f"out[{osub}]"))
+    state.add_edge(state.add_access("mask"), None, node, AllNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"mask[{msub}]"))
+    state.add_edge(node, AllNode.OUTPUT_CONNECTOR_NAME, state.add_access("out"), None, dace.Memlet(f"out[{osub}]"))
     sdfg.validate()
     return sdfg
 
@@ -63,14 +69,16 @@ def _build_allany_sdfg(tag, op, mask_shape, mask_dtype, dim, out_shape, out_dtyp
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("op,mask,expected", [
-    ("all", [1, 1, 1, 1, 1], 1),   # every element true
-    ("all", [1, 1, 0, 1, 1], 0),   # one false -> false
-    ("all", [0, 0, 0, 0, 0], 0),
-    ("any", [0, 0, 0, 0, 0], 0),   # every element false
-    ("any", [0, 0, 1, 0, 0], 1),   # one true -> true
-    ("any", [1, 1, 1, 1, 1], 1),
-])
+@pytest.mark.parametrize(
+    "op,mask,expected",
+    [
+        ("all", [1, 1, 1, 1, 1], 1),  # every element true
+        ("all", [1, 1, 0, 1, 1], 0),  # one false -> false
+        ("all", [0, 0, 0, 0, 0], 0),
+        ("any", [0, 0, 0, 0, 0], 0),  # every element false
+        ("any", [0, 0, 1, 0, 0], 1),  # one true -> true
+        ("any", [1, 1, 1, 1, 1], 1),
+    ])
 def test_reduction_whole_array_1d(op, mask, expected):
     n = len(mask)
     sdfg = _build_allany_sdfg(f"red_{op}_{expected}", op, [n], dace.int32, -1, None, dace.int32)
@@ -125,14 +133,13 @@ def test_reduction_sectioned_input(op):
     # the section to prove the subset is honoured.
     mask = np.ones(10, dtype=np.int32)
     if op == "all":
-        mask[0] = 0   # outside [2:7) -> ALL of the section is still true
+        mask[0] = 0  # outside [2:7) -> ALL of the section is still true
         expected = 1
     else:
         mask[:] = 0
-        mask[9] = 1   # outside [2:7) -> ANY of the section is still false
+        mask[9] = 1  # outside [2:7) -> ANY of the section is still false
         expected = 0
-    sdfg = _build_allany_sdfg(f"sect_{op}", op, [10], dace.int32, -1, None, dace.int32,
-                              mask_subset=[(2, 7)])
+    sdfg = _build_allany_sdfg(f"sect_{op}", op, [10], dace.int32, -1, None, dace.int32, mask_subset=[(2, 7)])
     out = np.zeros(1, dtype=np.bool_)
     sdfg(mask=mask, out=out)
     assert int(out[0]) == expected
@@ -179,19 +186,26 @@ def test_default_implementation_is_reduction():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("op,mask,expected", [
-    ("all", [1, 1, 1, 1, 1], 1),
-    ("all", [1, 0, 1, 1, 1], 0),   # decides early (index 1) -> break
-    ("all", [0, 0, 0, 0, 0], 0),
-    ("any", [0, 0, 0, 0, 0], 0),
-    ("any", [1, 0, 0, 0, 0], 1),   # decides early (index 0) -> break
-    ("any", [0, 0, 0, 0, 1], 1),
-])
+@pytest.mark.parametrize(
+    "op,mask,expected",
+    [
+        ("all", [1, 1, 1, 1, 1], 1),
+        ("all", [1, 0, 1, 1, 1], 0),  # decides early (index 1) -> break
+        ("all", [0, 0, 0, 0, 0], 0),
+        ("any", [0, 0, 0, 0, 0], 0),
+        ("any", [1, 0, 0, 0, 0], 1),  # decides early (index 0) -> break
+        ("any", [0, 0, 0, 0, 1], 1),
+    ])
 def test_sequential_short_circuit(op, mask, expected):
     """The ``sequential`` expansion stops at the first deciding element
     (``break``) but returns the same logical result as ``reduction``."""
     n = len(mask)
-    sdfg = _build_allany_sdfg(f"seq_{op}_{expected}", op, [n], dace.int32, -1, None, dace.int32,
+    sdfg = _build_allany_sdfg(f"seq_{op}_{expected}",
+                              op, [n],
+                              dace.int32,
+                              -1,
+                              None,
+                              dace.int32,
                               implementation="sequential")
     out = np.zeros(1, dtype=np.bool_)
     sdfg(mask=np.array(mask, dtype=np.int32), out=out)
@@ -201,7 +215,6 @@ def test_sequential_short_circuit(op, mask, expected):
 def test_sequential_dimwise_falls_back():
     """``sequential`` only handles a rank-1 whole-array reduce; a
     ``dim``-wise request raises so the library default ('reduction') is used."""
-    sdfg = _build_allany_sdfg("seq_dim", "all", [3, 4], dace.int32, 1, [4], dace.int32,
-                              implementation="sequential")
+    sdfg = _build_allany_sdfg("seq_dim", "all", [3, 4], dace.int32, 1, [4], dace.int32, implementation="sequential")
     with pytest.raises(NotImplementedError, match="rank-1 whole-array"):
         sdfg.expand_library_nodes()

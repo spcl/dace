@@ -97,9 +97,9 @@ def _add_dft_axis_state(sdfg, after, src, dst, shape, ax, inverse, factor):
     code = (f'exponent = (2.0 * {math.pi!r} / {dace.symbolic.symstr(N)}) * __i{ax} * __n\n'
             f'o = decltype(o)(math.cos(exponent), {isign}math.sin(exponent)) * inp{fac}')
     state = sdfg.add_state_after(after, f'dft_ax{ax}')
-    state.add_mapped_tasklet('dft', rng, {'inp': dace.Memlet(data=src, subset=in_sub)},
-                             code,
-                             {'o': dace.Memlet(data=dst, subset=out_sub, wcr='lambda a, b: a + b')},
+    state.add_mapped_tasklet('dft',
+                             rng, {'inp': dace.Memlet(data=src, subset=in_sub)},
+                             code, {'o': dace.Memlet(data=dst, subset=out_sub, wcr='lambda a, b: a + b')},
                              external_edges=True)
     return state
 

@@ -118,19 +118,23 @@ def _reduction_sdfg(node, parent_state, parent_sdfg, is_all):
     # type is the mask's int/bool (never a float logical kind).
     if axis is None:
         if is_all:
+
             @dace.program
             def kernel(_mask, _out):
                 _out[0] = dace.reduce(lambda a, b: a and b, _mask != 0, identity=ident)
         else:
+
             @dace.program
             def kernel(_mask, _out):
                 _out[0] = dace.reduce(lambda a, b: a or b, _mask != 0, identity=ident)
     else:
         if is_all:
+
             @dace.program
             def kernel(_mask, _out):
                 _out[:] = dace.reduce(lambda a, b: a and b, _mask != 0, axis=axis, identity=ident)
         else:
+
             @dace.program
             def kernel(_mask, _out):
                 _out[:] = dace.reduce(lambda a, b: a or b, _mask != 0, axis=axis, identity=ident)
@@ -147,6 +151,7 @@ def _sequential_sdfg(node, parent_state, parent_sdfg, is_all):
                                   "dim-wise / multi-rank.")
     n = mask_shape[0]
     if is_all:
+
         @dace.program
         def kernel(_mask, _out):
             _out[0] = 1
@@ -155,6 +160,7 @@ def _sequential_sdfg(node, parent_state, parent_sdfg, is_all):
                     _out[0] = 0
                     break
     else:
+
         @dace.program
         def kernel(_mask, _out):
             _out[0] = 0
@@ -214,12 +220,10 @@ class AllNode(nodes.LibraryNode):
     INPUT_CONNECTOR_NAME = _INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
 
-    dim = properties.Property(dtype=int, default=-1,
-                              desc="Fortran 1-based reduction axis (-1 = collapse to scalar).")
+    dim = properties.Property(dtype=int, default=-1, desc="Fortran 1-based reduction axis (-1 = collapse to scalar).")
 
     def __init__(self, name, dim=-1, *args, **kwargs):
-        super().__init__(name, *args, inputs={_INPUT_CONNECTOR_NAME},
-                         outputs={_OUTPUT_CONNECTOR_NAME}, **kwargs)
+        super().__init__(name, *args, inputs={_INPUT_CONNECTOR_NAME}, outputs={_OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.dim = dim
 
     def validate(self, sdfg, state):
@@ -238,12 +242,10 @@ class AnyNode(nodes.LibraryNode):
     INPUT_CONNECTOR_NAME = _INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
 
-    dim = properties.Property(dtype=int, default=-1,
-                              desc="Fortran 1-based reduction axis (-1 = collapse to scalar).")
+    dim = properties.Property(dtype=int, default=-1, desc="Fortran 1-based reduction axis (-1 = collapse to scalar).")
 
     def __init__(self, name, dim=-1, *args, **kwargs):
-        super().__init__(name, *args, inputs={_INPUT_CONNECTOR_NAME},
-                         outputs={_OUTPUT_CONNECTOR_NAME}, **kwargs)
+        super().__init__(name, *args, inputs={_INPUT_CONNECTOR_NAME}, outputs={_OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.dim = dim
 
     def validate(self, sdfg, state):

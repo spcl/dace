@@ -1233,8 +1233,7 @@ class float64(sympy.Function):
 
 
 # Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``.
-_TYPECAST_CPP = {'int32': 'dace::int32', 'int64': 'dace::int64',
-                 'float32': 'dace::float32', 'float64': 'dace::float64'}
+_TYPECAST_CPP = {'int32': 'dace::int32', 'int64': 'dace::int64', 'float32': 'dace::float32', 'float64': 'dace::float64'}
 
 
 class bitwise_and(sympy.Function):
@@ -1784,10 +1783,11 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         # for int) semantics in EVERY symbolic context (interstate edge,
         # memlet subset, condition).
         func = node.func
-        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
-                and func.value.id == 'dace' and func.attr in _TYPECAST_CPP):
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == 'dace'
+                and func.attr in _TYPECAST_CPP):
             new_node = ast.Call(func=ast.Name(id=func.attr, ctx=ast.Load),
-                                args=[self.visit(a) for a in node.args], keywords=[])
+                                args=[self.visit(a) for a in node.args],
+                                keywords=[])
             return ast.copy_location(new_node, node)
         self.generic_visit(node)
         return node

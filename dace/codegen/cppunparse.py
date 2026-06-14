@@ -992,8 +992,12 @@ class CPPUnparser:
     # (interstate edges / memlet subsets) so one form round-trips through
     # both printers.  Here (tasklet-body C++) they lower to the matching
     # ``dace::<type>(x)`` cast (truncating for int, widening for float).
-    _typecast_funcs = {'int32': 'dace::int32', 'int64': 'dace::int64',
-                       'float32': 'dace::float32', 'float64': 'dace::float64'}
+    _typecast_funcs = {
+        'int32': 'dace::int32',
+        'int64': 'dace::int64',
+        'float32': 'dace::float32',
+        'float64': 'dace::float64'
+    }
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
