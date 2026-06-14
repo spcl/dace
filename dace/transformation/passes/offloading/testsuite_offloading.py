@@ -191,8 +191,24 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
     sdfg.validate()
     return sdfg
 
+def nested_sdfg():
+    @dace.program
+    def nested_kernel(inp: dace.float64[5], out: dace.float64[5]):
+        for i in range(5):
+            inp[i] = inp[i] + 1.0
 
-def complex_sdfg():
+        @dace.program
+        def nested_map(inp_inner: dace.float64[5], out_inner: dace.float64[5]):
+            for i in dace.map[0:5]:
+                out_inner[i] = inp_inner[i] * 2.0
+
+        nested_map(inp, out)
+
+    sdfg = nested_kernel.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+def kernel_sdfg():
     TS = dace.symbol("TS")
     @dace.program
     def example(A: dace.float64[100, 100], B: dace.float64[100, 100], C: dace.float64[100, 100], D: dace.float64[100, 100], E: dace.float64[100]) -> dace.float64[100, 100]:
@@ -504,7 +520,6 @@ def test_loopregion_offload():
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
 def test_conditional_offload_if():
     sdfg = conditional_branch_map_sdfg()
 
@@ -518,7 +533,6 @@ def test_conditional_offload_if():
     )
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
 def test_conditional_offload_else():
     sdfg = conditional_branch_map_sdfg()
     
@@ -531,6 +545,47 @@ def test_conditional_offload_else():
         new_output,
     )
 
+@pytest.mark.gpu_offload
+@pytest.mark.current
+def test_nested_sdfg():
+    sdfg = nested_sdfg()
+    
+    orig_output = np.zeros(5, dtype=np.float64)
+    new_output = np.zeros(5, dtype=np.float64)
+    run_numerical_offloading_test(
+        sdfg,
+        {"inp": np.linspace(0.0, 1.0, 5, dtype=np.float64)},
+        orig_output,
+        new_output,
+    )
+
+
+@pytest.mark.gpu_offload
+@pytest.mark.current
+def test_kernel_sdfg():
+    sdfg = kernel_sdfg()
+    
+    orig_output = np.zeros((100, 100), dtype=np.float64)
+    new_output = np.zeros((100, 100), dtype=np.float64)
+
+    A = np.arange(10000, dtype=np.float64).reshape(100, 100) / 1000.0
+    B = (np.arange(10000, dtype=np.float64).reshape(100, 100) % 97) / 97.0
+    C = np.zeros((100, 100), dtype=np.float64)
+    E = np.linspace(0.0, 1.0, 100, dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {
+            "A": A,
+            "B": B,
+            "C": C,
+            "E": E,
+            "TS": np.int32(3),
+        },
+        orig_output,
+        new_output,
+        result_name="D",
+    )
 
 # ============================================================================
 # Fixtures and Helpers
@@ -560,3 +615,4 @@ if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
     pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
+
