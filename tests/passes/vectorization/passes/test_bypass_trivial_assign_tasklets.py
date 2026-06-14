@@ -26,7 +26,8 @@ def _count_assign_tasklets(sdfg):
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for node in state.nodes():
-                if isinstance(node, dace.nodes.Tasklet) and node.code.as_string.strip().rstrip(";").strip() == "_out = _in":
+                if isinstance(node,
+                              dace.nodes.Tasklet) and node.code.as_string.strip().rstrip(";").strip() == "_out = _in":
                     total += 1
     return total
 
@@ -201,3 +202,38 @@ def test_outer_sdfg_an_to_an_assign_left_alone():
     assert _count_assign_tasklets(sdfg) == 1
     assert _bypass_count(sdfg) == 0
     assert _count_assign_tasklets(sdfg) == 1
+
+
+def test_does_not_collapse_cross_state_transient():
+    """Regression (cloudsc_one ``zqx`` Isolated-node crash): a transient staged in
+    state A and read in state B is a CROSS-STATE value. In state A its
+    ``out_degree`` is 0 (the reader is in B, reached via the persistent transient,
+    not an edge), so the bypass would wrongly treat it as dead, delete the only
+    write, and orphan the source -> ``InvalidSDFGNodeError: Isolated node``. The
+    pass must leave cross-state transient triples alone."""
+    outer, body, state_a, _ = _build_outer_with_body_nsdfg()
+    body.add_array("G", (1, ), dace.float64, transient=False)
+    body.add_array("T", (1, ), dace.float64, transient=True)
+    body.add_array("OUT", (1, ), dace.float64, transient=False)
+    # State A: G -> [_out=_in] -> T  (T's reader is in the next state, so T has
+    # out_degree 0 here -- the cross-state blind spot).
+    g = state_a.add_access("G")
+    t_a = state_a.add_access("T")
+    bridge = state_a.add_tasklet("b", {"_in"}, {"_out"}, "_out = _in")
+    state_a.add_edge(g, None, bridge, "_in", Memlet("G[0]"))
+    state_a.add_edge(bridge, "_out", t_a, None, Memlet("T[0]"))
+    # State B (executes after A): reads T -> OUT.
+    state_b = body.add_state_after(state_a, "b2")
+    t_b = state_b.add_access("T")
+    o = state_b.add_access("OUT")
+    cons = state_b.add_tasklet("c", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state_b.add_edge(t_b, None, cons, "_in", Memlet("T[0]"))
+    state_b.add_edge(cons, "_out", o, None, Memlet("OUT[0]"))
+
+    assert _count_assign_tasklets(outer) == 1
+    # The G -> [_out=_in] -> T staging must be PRESERVED (T is read cross-state).
+    assert _bypass_count(outer) == 0
+    assert _count_assign_tasklets(outer) == 1
+    # No isolated node left (the original crash was an orphaned ``G``).
+    iso = [n for st in body.states() for n in st.nodes() if isinstance(n, dace.nodes.AccessNode) and st.degree(n) == 0]
+    assert not iso, f"isolated AccessNode(s) left: {[n.data for n in iso]}"

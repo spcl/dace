@@ -39,8 +39,8 @@ from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             no_duplicate_connector_edges,
-                                                                             no_memlet_dim_mismatch)
+                                                                            no_duplicate_connector_edges,
+                                                                            no_memlet_dim_mismatch)
 # _is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
 # migration). The matcher is inlined below.
 
@@ -77,6 +77,29 @@ def _assign_triple(istate: SDFGState, t: dace.nodes.Tasklet) -> Optional[Tuple]:
     if not (isinstance(in_e.src, dace.nodes.AccessNode) and isinstance(out_e.dst, dace.nodes.AccessNode)):
         return None
     return in_e, out_e
+
+
+def _accessed_in_other_states(inner_sdfg: SDFG, data_name: str, current_state: SDFGState) -> bool:
+    """True iff ``data_name`` has an AccessNode in some state OTHER than ``current_state``.
+
+    A transient that is also accessed in another state is a **cross-state value**:
+    its producer (or consumer) lives in a different state and the data flows
+    through the persistent transient, NOT through an edge in ``current_state``.
+    Its in/out degree *within ``current_state``* is therefore misleading -- a
+    write whose only reader is in the NEXT state shows ``out_degree == 0`` here,
+    yet it is NOT dead. The state-local bypass / dedup rewrites must leave such
+    triples alone, else they delete the sole write (or read) and either produce
+    an isolated node (invalid SDFG) or silently break the cross-state data flow.
+    (cloudsc_one: ``zqx[z1,i,j]`` staged in ``assign_42_12`` and read by the
+    cond1 guard in the next state ``slice_zqx_43_0``.)
+    """
+    for st in inner_sdfg.states():
+        if st is current_state:
+            continue
+        for n in st.data_nodes():
+            if n.data == data_name:
+                return True
+    return False
 
 
 @transformation.explicit_cf_compatible
@@ -206,7 +229,14 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 continue
             if istate.out_degree(src_an) > 1 or istate.in_degree(dst_an) > 1:
                 continue
-            if src_desc.transient and istate.in_edges(src_an):
+            # Cross-state transient guard: the side we would collapse must not be
+            # accessed in another state, else its real consumer/producer lives
+            # elsewhere and the state-local degrees here are misleading (removing
+            # the staging would orphan a node / break the cross-state flow). See
+            # :func:`_accessed_in_other_states`.
+            src_xstate = src_desc.transient and _accessed_in_other_states(inner, src_an.data, istate)
+            dst_xstate = dst_desc.transient and _accessed_in_other_states(inner, dst_an.data, istate)
+            if src_desc.transient and istate.in_edges(src_an) and not src_xstate:
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
                 # Carry BOTH sides of the bypassed chain on the new memlet so
                 # ``an_side_subset`` can return the lane-dep subset for the
@@ -232,7 +262,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 removed += 1
                 if istate.degree(src_an) == 0:
                     istate.remove_node(src_an)
-            elif dst_desc.transient:
+            elif dst_desc.transient and not dst_xstate:
                 # AN(src) -> [_out=_in] -> AN(dst) -> C becomes AN(src) -> C.
                 # Symmetric to the src-transient branch -- pick ``data``
                 # endpoint based on whether C is an AccessNode or a Tasklet.
