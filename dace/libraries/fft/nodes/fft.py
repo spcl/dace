@@ -68,8 +68,8 @@ class DFTExpansion(xf.ExpandTransformation):
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
-        if len(indesc.shape) != 1:
-            raise NotImplementedError('Native SDFG expansion for FFT does not yet support N-dimensional inputs')
+        if len(indesc.shape) > 1 or getattr(node, 'axis', None) is not None:
+            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=False, axis=getattr(node, 'axis', None))
 
         return dft.dft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
@@ -84,8 +84,8 @@ class IDFTExpansion(xf.ExpandTransformation):
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
-        if len(indesc.shape) != 1:
-            raise NotImplementedError('Native SDFG expansion for IFFT does not yet support N-dimensional inputs')
+        if len(indesc.shape) > 1 or getattr(node, 'axis', None) is not None:
+            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=True, axis=getattr(node, 'axis', None))
 
         return dft.idft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
