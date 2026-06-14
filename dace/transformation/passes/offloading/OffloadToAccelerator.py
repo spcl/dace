@@ -12,6 +12,8 @@ from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
 class OffloadingIRNode:
 
+    ID = 0
+
     def __init__(self, block, cpu_set, gpu_set, next):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"
         self.block : ControlFlowBlock = block
@@ -19,7 +21,11 @@ class OffloadingIRNode:
         self.gpu_set : set[str] = gpu_set
         self.next : list[OffloadingIRNode] = next
 
-        self.debug_name = f"{block}"
+        self.set_debug_name(f"{block}")
+
+    def set_debug_name(self, name):
+        self.debug_name = name + str(OffloadingIRNode.ID) 
+        OffloadingIRNode.ID += 1
 
     def __repr__(self):
         return self._get_str(set(), -4)
@@ -71,7 +77,7 @@ class OffloadingIRNode:
     # static makers
     def make_empty(debug_name):
         node = OffloadingIRNode(None, set(), set(), [])
-        node.debug_name = debug_name
+        node.set_debug_name(debug_name)
         return node
     
 @properties.make_properties
@@ -753,7 +759,9 @@ class OffloadToAccelerator(ppl.Pass):
                 self._rename_arrays_in_block(node.block, rename_dict)
 
                 for cpu_name, gpu_name in rename_dict.items():
-                    assert cpu_name in sdfg.arrays
+                    #assert cpu_name in sdfg.arrays, cpu_name
+                    if not cpu_name in sdfg.arrays: # there is an internal nested sdfg -> do not rename
+                        continue
                     if not gpu_name in sdfg.arrays: # create gpu-euivalents as transient on-GPU arrays
                         cpu_array = sdfg.arrays[cpu_name]
                         sdfg.add_array(gpu_name, cpu_array.shape, cpu_array.dtype, storage = dtypes.StorageType.GPU_Global, transient=True)

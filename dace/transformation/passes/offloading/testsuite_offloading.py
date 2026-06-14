@@ -193,20 +193,20 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
 
 def nested_sdfg():
     @dace.program
-    def nested_kernel(inp: dace.float64[5], out: dace.float64[5]):
-        for i in range(5):
-            inp[i] = inp[i] + 1.0
+    def nested_kernel_program(inp: dace.float64[5], out: dace.float64[5]):
+        for idx in dace.map[0:5]:
+            tmp = dace.define_local([1], dace.float64)
 
-        @dace.program
-        def nested_map(inp_inner: dace.float64[5], out_inner: dace.float64[5]):
-            for i in dace.map[0:5]:
-                out_inner[i] = inp_inner[i] * 2.0
+            for phase in range(2):
+                if phase == 0:
+                    tmp[0] = inp[idx] + 1.0
+                else:
+                    out[idx] = tmp[0] * 2.0
 
-        nested_map(inp, out)
-
-    sdfg = nested_kernel.to_sdfg()
+    sdfg = nested_kernel_program.to_sdfg()
     sdfg.validate()
     return sdfg
+
 
 def kernel_sdfg():
     TS = dace.symbol("TS")
@@ -554,14 +554,14 @@ def test_nested_sdfg():
     new_output = np.zeros(5, dtype=np.float64)
     run_numerical_offloading_test(
         sdfg,
-        {"inp": np.linspace(0.0, 1.0, 5, dtype=np.float64)},
+        {"inp": np.arange(5, dtype=np.float64)},
         orig_output,
         new_output,
     )
 
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
+#@pytest.mark.current
 def test_kernel_sdfg():
     sdfg = kernel_sdfg()
     
@@ -616,3 +616,6 @@ if __name__ == "__main__":
     pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
+
+# kernel: IR parsing issue
+# pen and paper: loop_head8 never referenced again, has no corresponding join either: head8 -> join 20, join18 -> join20, join 20 -> next section
