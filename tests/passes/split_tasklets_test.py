@@ -488,6 +488,32 @@ def test_split_does_not_treat_ite_as_variable(body: str, inputs: set):
     assert saw_ite_call, "the ITE(...) call did not survive splitting"
 
 
+def test_split_comparison_intermediate_is_bool():
+    """A split-out comparison / boolean sub-expression must be typed ``bool``, not the
+    numeric ``input_type``. Regression: SplitTasklets typed every intermediate with the
+    inputs' dtype, so ``__t0 = (_a > 0.0)`` became ``double`` and, fed to a ``TileITE``
+    ``_mask`` connector downstream, tripped ConvertTaskletsToTileOps'
+    ``mask_connectors_are_bool`` invariant (the K=2 cond-mask tests)."""
+    sdfg = dace.SDFG("split_cmp_bool")
+    for arr in ("_a", "_c", "_b"):
+        sdfg.add_array(arr + "_ARR", shape=(1, ), dtype=dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"_a", "_c"}, {"_b"}, "_b = _c if (_a > 0.0) else 0.0")
+    state.add_edge(state.add_access("_a_ARR"), None, t, "_a", dace.Memlet("_a_ARR[0]"))
+    state.add_edge(state.add_access("_c_ARR"), None, t, "_c", dace.Memlet("_c_ARR[0]"))
+    state.add_edge(t, "_b", state.add_access("_b_ARR"), None, dace.Memlet("_b_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    # The intermediate produced by the comparison ``_a > 0.0`` must be a bool scalar
+    # (without the fix every split transient was the numeric ``input_type``).
+    bool_transients = [name for name, desc in sdfg.arrays.items() if desc.transient and desc.dtype == dace.bool_]
+    assert bool_transients, ("the split comparison intermediate was not typed bool; transient dtypes: " + str({
+        n: d.dtype
+        for n, d in sdfg.arrays.items() if d.transient
+    }))
+
+
 def test_to_ssa_preserves_int_floor_call():
     """A two-arg ``int_floor(a, b)`` must be split as a function call, not
     mangled into an infix ``a int_floor b`` or have its divisor dropped.

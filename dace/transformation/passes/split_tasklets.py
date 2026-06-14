@@ -253,6 +253,27 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
     return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
 
+def _ssa_lhs_is_bool(ssa_line: str) -> bool:
+    """True iff the SSA statement's RHS is a comparison / boolean expression, so its
+    assigned variable holds a ``bool`` rather than the numeric ``input_type``.
+
+    A split-out condition such as ``__t0 = (_a > 0.0)`` (or ``__t1 = a and b``,
+    ``__t2 = not c``) must be typed ``bool``: downstream it feeds a ``TileITE`` /
+    mask ``_mask`` connector whose operand contract requires a bool array. Typing
+    such an intermediate numerically (the default ``input_type``) trips the
+    ``mask_connectors_are_bool`` invariant in ConvertTaskletsToTileOps.
+    """
+    try:
+        rhs = ast.parse(ssa_line.split(" = ", 1)[1].strip(), mode="eval").body
+    except (SyntaxError, IndexError):
+        return False
+    if isinstance(rhs, (ast.Compare, ast.BoolOp)):
+        return True
+    if isinstance(rhs, ast.UnaryOp) and isinstance(rhs.op, ast.Not):
+        return True
+    return False
+
+
 @transformation.explicit_cf_compatible
 class SplitTasklets(ppl.Pass):
     """
@@ -484,6 +505,10 @@ class SplitTasklets(ppl.Pass):
                                  }.union({str(s)
                                           for s in sdfg.symbols.keys()}).union(tasklet.free_symbols)
             state.remove_node(tasklet)
+            # Variables assigned by a comparison / boolean SSA statement hold a bool;
+            # their split transient must be typed bool (mask / ITE-cond contract), not
+            # the numeric ``input_type``.
+            bool_vars = {lhs for stmt in ssa_statements if _ssa_lhs_is_bool(stmt) for lhs in _get_vars(stmt)[0]}
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
                 lhs_vars, rhs_vars = _get_vars(ssa_statement)
@@ -547,7 +572,7 @@ class SplitTasklets(ppl.Pass):
                             if array_name not in state.sdfg.arrays:
                                 state.sdfg.add_scalar(
                                     name=array_name,
-                                    dtype=input_type,
+                                    dtype=dace.bool_ if in_conn in bool_vars else input_type,
                                     storage=dace.dtypes.StorageType.Register,
                                     transient=True,
                                 )
@@ -580,7 +605,7 @@ class SplitTasklets(ppl.Pass):
                     if array_name not in state.sdfg.arrays:
                         state.sdfg.add_scalar(
                             name=array_name,
-                            dtype=input_type,
+                            dtype=dace.bool_ if out_conn in bool_vars else input_type,
                             storage=dace.dtypes.StorageType.Register,
                             transient=True,
                         )
