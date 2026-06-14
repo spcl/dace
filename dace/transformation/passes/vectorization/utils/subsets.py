@@ -6,16 +6,15 @@ Three rough sub-families:
 - Pattern replace (``repl_subset``, ``repl_subset_to_use_*_offset``):
   symbolic substitution on a single subset.
 - Memlet rewrite (``replace_memlet_expression``,
-  ``expand_memlet_expression``, ``offset_memlets``,
-  ``replace_all_access_subsets``): walk edges and replace the payload
-  in-place.
+  ``expand_memlet_expression``, ``replace_all_access_subsets``): walk edges
+  and replace the payload in-place.
 - Post-collapse (``squeeze_memlets_of_packed_arrays``,
   ``use_previous_subsets``, ``try_clean_other_subset_going_out_from_map_entry``):
   fix up memlets after upstream passes changed the descriptor shape or
   surrounding map.
 """
 import copy
-from typing import Dict, Iterable, List, Optional, Set, Union
+from typing import Dict, Iterable, Optional, Set, Union
 
 import dace
 from dace import SDFGState, typeclass
@@ -351,23 +350,6 @@ def expand_memlet_expression(state: SDFGState,
                 edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
                 modified_edges.add(edge)
     return modified_edges
-
-
-def offset_memlets(sdfg: dace.SDFG, dataname: str, offsets: List[dace.symbolic.SymExpr]):
-    """Subtract ``offsets`` from every memlet subset of ``dataname``.
-
-    Length-1 dimensions are collapsed out of the resulting subset.
-
-    :param sdfg: The SDFG to walk.
-    :param dataname: Data name whose memlets are offset.
-    :param offsets: Per-dimension offsets to subtract.
-    """
-    from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
-    for _state, edge in walk_memlets_of(sdfg, dataname):
-        subset = edge.data.subset.offset_new(dace.subsets.Range(offsets), negative=True)
-        # If subset is not one dimensional we need to collapse 0 accesses
-        collapsed_subset_list = [(b, e, s) for (b, e, s) in subset if (e + 1 - b) // s != 1]
-        edge.data.subset = dace.subsets.Range(collapsed_subset_list)
 
 
 def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str):

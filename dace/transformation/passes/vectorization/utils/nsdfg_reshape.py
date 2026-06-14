@@ -15,7 +15,7 @@ are intentional — loud failures are preferred over silent shape
 corruption at the NSDFG boundary.
 """
 import copy
-from typing import Dict, Optional, Set
+from typing import Optional, Set
 
 import dace
 from dace import SDFGState
@@ -274,38 +274,6 @@ def emit_staging_copy(state: SDFGState,
         t.add_in_connector("_mask", dtype=dace.dtypes.pointer(dace.bool_), force=True)
         mask_an = state.add_access(mask_name)
         state.add_edge(mask_an, None, t, "_mask", dace.memlet.Memlet(f"{mask_name}[0:{W}]"))
-
-
-def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
-    """Map each vector-map param to the end bound of the outer data-parallel map.
-
-    Walks ``nsdfg -> vector_map -> data_map`` and matches each vector-map
-    ``begin`` (canonicalised via ``dace.symbolic.simplify``) to a data-map
-    ``begin``, returning that data-map's end bound. For
-    ``map i=0:N -> map i_v=i:i+4:4 -> NestedSDFG`` the result is
-    ``{'i_v': 'N - 1'}``.
-
-    :param state: The SDFG state containing the nested SDFG node.
-    :param node: The nested SDFG node whose vector access ranges to determine.
-    :returns: Dictionary mapping vector-map param names to the outer data-map's
-        end bound (string repr). This is the upper iteration bound, not the
-        per-memlet access range.
-    """
-    scope_dict = state.scope_dict()
-    vector_map = scope_dict[node]
-    data_map = scope_dict[vector_map]
-
-    # Simplify-keyed mapping: data-map ``begin`` -> data-map ``end``.
-    d_simplified_begin_to_end = {dace.symbolic.simplify(begin): end for begin, end, _ in data_map.map.range}
-
-    param_max_ranges = {}
-    for v_param, (v_begin, _, _) in zip(vector_map.map.params, vector_map.map.range):
-        canonical_begin = dace.symbolic.simplify(v_begin)
-        # Bare lookup: matches when the vector-map ``begin`` simplifies
-        # to the same sympy expression as one of the data-map begins.
-        param_max_ranges[v_param] = str(d_simplified_begin_to_end[canonical_begin])
-
-    return param_max_ranges
 
 
 def find_state_containing_node(root_sdfg: dace.SDFG, node: dace.nodes.Node) -> dace.SDFGState:
@@ -811,8 +779,8 @@ def prepare_vectorized_array(state: dace.SDFGState,
 
         # Offset the surviving dim by the outer subset's start on that dim,
         # so an inner access like ``arr[start]`` becomes the first vector
-        # lane ``arr[0]``. Don't route through ``offset_memlets`` here: it
-        # post-collapses length-1 dims which would silently turn the
+        # lane ``arr[0]``. Offset the memlets directly here rather than via a
+        # collapse-all-length-1-dims helper, which would silently turn the
         # vector-lane memlet into a 0-D ``arr[]`` access.
         if not (reuse_name_if_existing and use_name is not None):
             from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of

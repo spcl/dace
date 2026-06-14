@@ -78,16 +78,6 @@ def subs(expr: Any, mapping: Mapping[Any, Any]) -> Any:
     return fn(mapping) if fn is not None else expr
 
 
-def atoms(expr: Any) -> Set[Any]:
-    """Return ``expr.atoms()`` when supported, else the empty set.
-
-    :param expr: Operand to inspect.
-    :returns: The set of atomic terms, or an empty set for primitives.
-    """
-    fn = getattr(expr, "atoms", None)
-    return fn() if fn is not None else set()
-
-
 def atoms_of(expr: Any, *types: type) -> Set[Any]:
     """Return ``expr.atoms(*types)`` when supported, else the empty set.
 

@@ -340,23 +340,3 @@ def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
         code=call,
         language=dace.dtypes.Language.CPP,
     )
-
-
-def _stride_is_one(stride_expr: str) -> bool:
-    """True iff the array stride C++ expression is statically the integer 1."""
-    return symstr(stride_expr).strip() == "1"
-
-
-def _num_idx_conns(node) -> int:
-    """Count the per-source-dim index connectors (``_idx_0`` ..)."""
-    return sum(1 for c in node.in_connectors if str(c).startswith("_idx_"))
-
-
-def _strided_lane(stride: int, off: str) -> str:
-    """Per-lane index into a (possibly ``c``-strided) index/value tile.
-
-    :param stride: The lane stride ``c`` into the tile.
-    :param off: The contiguous lane-offset expression (e.g. ``__l0``).
-    :returns: ``off`` for ``c == 1`` (contiguous), else ``(c) * (off)``.
-    """
-    return off if stride == 1 else f"({stride}) * ({off})"

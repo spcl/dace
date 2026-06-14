@@ -154,32 +154,6 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
     return None
 
 
-def cfg_is_flat_states(scope) -> Optional[str]:
-    """Every control-flow block in ``scope`` is a plain :class:`SDFGState`
-    (no nested :class:`ControlFlowRegion` / :class:`ConditionalBlock` /
-    :class:`LoopRegion`). After if-condition mask lowering the body CFG is a
-    single-level line graph of states, which lets the index-symbol resolver's
-    reaching-def use a one-level backward state walk (no parent-CFG ascent).
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
-    or a description of the first non-state block.
-    """
-    from dace.sdfg.state import ControlFlowRegion
-    if isinstance(scope, SDFGState):
-        return None
-    sdfgs = scope.all_sdfgs_recursive() if isinstance(scope, SDFG) else [scope]
-    for sd in sdfgs:
-        for region in sd.all_control_flow_regions(recursive=True):
-            for block in region.nodes():
-                if isinstance(block, SDFGState):
-                    continue
-                if isinstance(block, ControlFlowRegion):
-                    return (f"{sd.name}: control-flow block ``{block.label}`` is a "
-                            f"{type(block).__name__}, not a flat SDFGState (expected single-level "
-                            f"states after if-condition mask lowering)")
-    return None
-
-
 def memlet_subset_matches_descriptor(scope) -> Optional[str]:
     """Every memlet's ``subset`` rank must match the rank of the descriptor it
     accesses (``len(sdfg.arrays[memlet.data].shape)``). A memlet that reads a
@@ -237,15 +211,6 @@ def logical_binops_are_bool(scope) -> Optional[str]:
     return None
 
 
-def sdfg_validates(sdfg: SDFG) -> Optional[str]:
-    """``sdfg.validate()`` succeeds."""
-    try:
-        sdfg.validate()
-        return None
-    except Exception as e:  # noqa: BLE001
-        return f"SDFG validation failed: {type(e).__name__}: {str(e)[:200]}"
-
-
 # ---------------------------------------------------------------------------
 # K-dim pipeline invariants (require widths / K context).
 # ---------------------------------------------------------------------------
@@ -281,36 +246,6 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> 
                 pass
             return (f"{inner_sdfg.name}: lane-dep transient ``{name}`` has shape {shape} "
                     f"!= widths {tuple(widths)} (expected widened or Scalar bridge)")
-    return None
-
-
-def innermost_map_has_body_nsdfg(sdfg: SDFG, K: int) -> Optional[str]:
-    """Every tile-tagged innermost map's scope contains exactly one NestedSDFG."""
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                        TILE_K1_TAIL_MARKER)
-    from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-    for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.states():
-            for node in state.nodes():
-                if not isinstance(node, MapEntry):
-                    continue
-                try:
-                    if not is_innermost_map(state, node):
-                        continue
-                except (StopIteration, ValueError):
-                    continue
-                if len(node.map.params) < K:
-                    continue
-                if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
-                    continue
-                try:
-                    scope = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-                except (StopIteration, ValueError):
-                    continue
-                nsdfgs = [n for n in scope if isinstance(n, NestedSDFG)]
-                if len(nsdfgs) != 1:
-                    return (f"{sd.name}.{state.label}: tile-tagged innermost map ``{node.map.label}`` "
-                            f"has {len(nsdfgs)} NestedSDFGs in scope (expected 1)")
     return None
 
 

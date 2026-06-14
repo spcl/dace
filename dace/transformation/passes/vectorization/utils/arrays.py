@@ -87,32 +87,6 @@ def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new
                 e.data.other_subset = None
 
 
-def copy_arrays_with_a_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any],
-                                 name_suffix: str) -> None:
-    """
-    Create copies of existing arrays with a new shape and a name suffix.
-
-    :param sdfg: SDFG to mutate.
-    :param array_namelist: Source array names.
-    :param new_shape: Target shape for the new arrays.
-    :param name_suffix: Suffix appended to each new array name.
-    """
-    for arr_name in array_namelist:
-        arr = sdfg.arrays[arr_name]
-        sdfg.add_array(name=arr_name + name_suffix,
-                       shape=new_shape,
-                       storage=arr.storage,
-                       dtype=arr.dtype,
-                       location=arr.location,
-                       transient=arr.transient,
-                       lifetime=arr.lifetime,
-                       debuginfo=arr.debuginfo,
-                       allow_conflicts=arr.allow_conflicts,
-                       find_new_name=False,
-                       alignment=arr.alignment,
-                       may_alias=arr.may_alias)
-
-
 def add_transient_arrays_from_list(sdfg: dace.SDFG, arr_name_shape_storage_dtype: Iterable[Tuple[str, Any, Any,
                                                                                                  Any]]) -> None:
     """

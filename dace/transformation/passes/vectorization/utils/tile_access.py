@@ -291,10 +291,10 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     (read-b, read-a, write-a), so the symbol is multiply-assigned across the
     body; only the assignment on the path into ``state`` is the right one.
 
-    Relies on the :func:`cfg_is_flat_states` pre-condition (asserted by the
-    caller pass): after if-condition mask lowering the body CFG is a single
-    level of plain states, so a one-level BFS over ``state``'s region edges is a
-    complete reaching-def — no parent-CFG ascent is needed.
+    Relies on the flat-states pre-condition: after if-condition mask lowering
+    the body CFG is a single level of plain states, so a one-level BFS over
+    ``state``'s region edges is a complete reaching-def — no parent-CFG ascent
+    is needed.
 
     :param state: The access state (an :class:`SDFGState`).
     :param symbol: The symbol whose reaching definition is sought.

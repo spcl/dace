@@ -6,7 +6,6 @@ code from the ``TaskletType`` classification in ``dace.sdfg.tasklet_utils``,
 falling back to a scalar lane loop when no template applies.
 """
 import copy
-import re
 from dataclasses import dataclass
 from typing import Dict, Optional, Set, Tuple, Union
 
@@ -24,20 +23,6 @@ from dace.transformation.passes.vectorization.utils.code_rewrite import (
 from dace.transformation.passes.vectorization.utils.name_schemes import (LaneIdScheme, PackedNameScheme, VecNameScheme)
 
 
-def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict:
-    """Map a tasklet's input connectors to their array descriptors.
-
-    :param state: The state containing the tasklet.
-    :param tasklet: The tasklet whose connectors are inspected.
-    :returns: Mapping from input connector name to the array descriptor.
-    """
-    tdict = dict()
-    for ie in state.in_edges(tasklet):
-        if ie.data is not None:
-            tdict[ie.dst_conn] = state.sdfg.arrays[ie.data.data]
-    return tdict
-
-
 def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
     """Check whether a tasklet is a simple one-in one-out assignment.
 
@@ -52,21 +37,6 @@ def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
         body = node.code.as_string.strip().rstrip(";").rstrip()
         return body == f"{out_conn} = {in_conn}"
     return False
-
-
-_VECTOR_COPY_CALL_RE = re.compile(r"\bvector_copy\s*\(")
-
-
-def is_vector_assign_tasklet(t: dace.nodes.Tasklet) -> bool:
-    """Check whether a tasklet performs a ``vector_copy`` call.
-
-    The match is word-boundary anchored so ``my_vector_copy(`` does not
-    falsely match; comments / string literals are not stripped.
-
-    :param t: The tasklet to check.
-    :returns: True iff the tasklet's code contains a ``vector_copy(`` call.
-    """
-    return _VECTOR_COPY_CALL_RE.search(t.code.as_string) is not None
 
 
 # Operator tables consumed by ``instantiate_tasklet_from_info``. Kept at
@@ -939,31 +909,3 @@ def _insert_vector_copy_around_edge(state: dace.SDFGState, edge: Edge[Memlet],
         e3 = state.add_edge(t, "_out", dst, dst_conn, copy.deepcopy(edge.data))
     state.remove_edge(edge)
     return (e1, e2, e3)
-
-
-def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet],
-                                       vector_storage_type: dace.dtypes.StorageType,
-                                       vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """Splice ``vector_copy`` after the source: ``src -> tasklet -> vec -> dst``.
-
-    :param state: The SDFG state containing the edge.
-    :param edge: The edge to splice around.
-    :param vector_storage_type: Storage type for the vector transient.
-    :param vector_width: Lane count.
-    :returns: The three new edges in source-to-destination order.
-    """
-    return _insert_vector_copy_around_edge(state, edge, vector_storage_type, vector_width, direction="from_src")
-
-
-def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
-                                     vector_storage_type: dace.dtypes.StorageType,
-                                     vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """Splice ``vector_copy`` before the destination: ``src -> vec -> tasklet -> dst``.
-
-    :param state: The SDFG state containing the edge.
-    :param edge: The edge to splice around.
-    :param vector_storage_type: Storage type for the vector transient.
-    :param vector_width: Lane count.
-    :returns: The three new edges in source-to-destination order.
-    """
-    return _insert_vector_copy_around_edge(state, edge, vector_storage_type, vector_width, direction="to_dst")

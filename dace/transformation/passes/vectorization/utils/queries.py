@@ -6,7 +6,6 @@ These helpers do not mutate the SDFG; they extract access subsets,
 map-parameter relationships, or scalar conversions used by the
 emission and prep passes.
 """
-import typing
 from typing import Dict, Optional, Set, Tuple
 
 import sympy
@@ -14,18 +13,6 @@ import sympy
 import dace
 from dace.transformation.passes.vectorization.utils.lane_access import LaneAccessKind, classify_lane_access
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
-
-
-def to_ints(sym_epxr: dace.symbolic.SymExpr) -> typing.Union[int, None]:
-    """Try to convert a symbolic expression to an integer.
-
-    :param sym_epxr: The symbolic expression to convert.
-    :returns: The integer value if conversion succeeds, otherwise ``None``.
-    """
-    try:
-        return int(sym_epxr)
-    except Exception:
-        return None
 
 
 def collect_non_unit_stride_accesses_in_map(sdfg: dace.SDFG, state: dace.SDFGState,
