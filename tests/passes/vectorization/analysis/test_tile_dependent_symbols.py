@@ -21,11 +21,15 @@ from dace.transformation.passes.vectorization.utils.tile_access import (
 )
 
 
-def _build_body_with_assign(symbol_name: str, rhs: str) -> dace.SDFG:
+def _build_body_with_assign(symbol_name: str, rhs: str, arrays=()) -> dace.SDFG:
     """Build a body NSDFG with one interstate edge assigning ``rhs`` to
-    ``symbol_name`` (so ``_is_tile_dependent`` has something to walk)."""
+    ``symbol_name`` (so ``_is_tile_dependent`` has something to walk).
+    ``arrays`` names any data arrays the RHS reads (e.g. a data-dependent
+    ``syma <- arr[i]``)."""
     sdfg = dace.SDFG("body")
     sdfg.add_symbol(symbol_name, dace.int64)
+    for a in arrays:
+        sdfg.add_array(a, [16], dace.int64)
     s0 = sdfg.add_state("entry", is_start_block=True)
     s1 = sdfg.add_state("after")
     sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={symbol_name: rhs}))
@@ -81,10 +85,39 @@ def test_classify_symbols_returns_per_symbol_map():
     assert out.get("N") is False
 
 
-def test_classifier_promotes_tile_dependent_symbol_to_gather():
-    """End-to-end: ``a[2*syma + 1]`` with ``sym <- i + 3`` classifies as GATHER
-    (would otherwise look CONSTANT because ``sym`` isn't a direct tile iter-var)."""
+def test_classifier_inlines_affine_symbol_to_affine():
+    """``a[2*syma + 1]`` with ``syma <- i + 3`` is inlined (resolve_index_expr / symbol
+    propagation) to ``2*i + 7`` -> AFFINE strided access, NOT a gather. A symbol that merely
+    aliases an affine-of-tile-var is contiguous-with-stride; only a *data-dependent* symbol
+    definition forces a gather (see the two tests below)."""
     sdfg = _build_body_with_assign("syma", "i + 3")
+    subset = Range([(dace.symbolic.pystr_to_symbolic("2*syma + 1"), dace.symbolic.pystr_to_symbolic("2*syma + 1"), 1)])
+    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
+    assert record.per_dim_kind == (PerDimKind.AFFINE, )
+
+
+def test_classifier_data_dependent_symbol_forces_gather():
+    """``a[2*syma + 1]`` with ``syma <- arr[i]`` (data-dependent: the symbol reads an array)
+    classifies as GATHER -- the resolved index contains an array Subscript, so the access is
+    non-contiguous and must gather."""
+    sdfg = _build_body_with_assign("syma", "arr[i]", arrays=("arr", ))
+    subset = Range([(dace.symbolic.pystr_to_symbolic("2*syma + 1"), dace.symbolic.pystr_to_symbolic("2*syma + 1"), 1)])
+    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
+    assert record.per_dim_kind == (PerDimKind.GATHER, )
+
+
+def test_classifier_transitive_data_dependent_symbol_forces_gather():
+    """``syma <- sc`` and ``sc <- arr[i]`` -> ``syma`` is *transitively* data-dependent
+    (the array read reaches it through a scalar hop) -> GATHER."""
+    sdfg = dace.SDFG("body")
+    sdfg.add_symbol("syma", dace.int64)
+    sdfg.add_scalar("sc", dace.int64, transient=True)
+    sdfg.add_array("arr", [16], dace.int64)
+    s0 = sdfg.add_state("entry", is_start_block=True)
+    s1 = sdfg.add_state("mid")
+    s2 = sdfg.add_state("after")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"sc": "arr[i]"}))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"syma": "sc"}))
     subset = Range([(dace.symbolic.pystr_to_symbolic("2*syma + 1"), dace.symbolic.pystr_to_symbolic("2*syma + 1"), 1)])
     record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
     assert record.per_dim_kind == (PerDimKind.GATHER, )
