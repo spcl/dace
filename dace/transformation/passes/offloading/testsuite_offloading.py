@@ -32,6 +32,22 @@ pytest.mark.current = pytest.mark.current
 # SDFGS (reused ones)
 # ============================================================================
 
+def simple_no_copy_sdfg():
+    sdfg = dace.SDFG("simple_sdfg")
+    state = sdfg.add_state()
+    
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_array("Y", [1], dace.float64)
+    
+    X = state.add_access("X")
+    Y = state.add_access("Y")
+    
+    t = state.add_tasklet("add_one", {"x"}, {"y"}, "y = x + 1")
+    state.add_edge(X, None, t, "x", dace.Memlet("X[0]"))
+    state.add_edge(t, "y", Y, None, dace.Memlet("Y[0]"))
+    
+    sdfg.validate()
+    
 def scalar_to_gpu_sdfg():
     """
     in
@@ -231,24 +247,12 @@ def kernel_sdfg():
 # BASIC TESTS (single-state SDFGs, no offloading)
 # ============================================================================
 
+
+
 @pytest.mark.basic
 def test_simple_sdfg_basic():
     """Test that a basic single-state SDFG runs without offloading."""
-    sdfg = dace.SDFG("simple_sdfg")
-    state = sdfg.add_state()
-    
-    sdfg.add_array("X", [1], dace.float64)
-    sdfg.add_array("Y", [1], dace.float64)
-    
-    X = state.add_access("X")
-    Y = state.add_access("Y")
-    
-    t = state.add_tasklet("add_one", {"x"}, {"y"}, "y = x + 1")
-    state.add_edge(X, None, t, "x", dace.Memlet("X[0]"))
-    state.add_edge(t, "y", Y, None, dace.Memlet("Y[0]"))
-    
-    sdfg.validate()
-    
+    sdfg = simple_no_copy_sdfg()
     output = np.array([0.0])
     sdfg(X=np.array([5.0]), Y=output)
     
