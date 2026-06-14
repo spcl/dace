@@ -1014,7 +1014,33 @@ def classify_tile_access(subset: Range,
             dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
             continue
 
-        # Stop 4: multiple tile iter-vars directly -> AFFINE (multi-var).
+        # Stop 4: multiple tile iter-vars in the dim. AFFINE only if the expression
+        # is JOINTLY affine -- each tile var's coefficient must be tile-independent
+        # (e.g. ``i + j``, a diagonal access). A cross-term like ``i*j`` (or a
+        # resolved ``syma*i`` with ``syma <- j``) makes one var's coefficient depend
+        # on another tile var -> non-linear in the tile vars -> GATHER (G6 join rule,
+        # design section 4.2). Mirrors the single-var coefficient check at Stop 3.
+        multi_var_gather = False
+        for tv in direct_tile_vars:
+            c = _affine_coeff_for(lo_sym, tv)
+            if c is None:  # non-affine in tv (e.g. i**2)
+                multi_var_gather = True
+                break
+            c_syms = {str(s) for s in c.free_symbols} if hasattr(c, "free_symbols") else set()
+            if (c_syms & iter_var_set) or (inner_sdfg is not None
+                                           and any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in c_syms)):
+                multi_var_gather = True
+                break
+        if multi_var_gather:
+            per_dim_kind.append(PerDimKind.GATHER)
+            dim_strides.append(None)
+            dim_iter_var.append(None)
+            gather_index_per_dim.append(None)
+            dim_offset.append(None)
+            replicate_factor_per_dim.append(None)
+            dim_to_canonical_iter_var.append(None)
+            continue
+        # Jointly affine in multiple tile vars (e.g. ``i + j``) -> AFFINE (multi-var).
         per_dim_kind.append(PerDimKind.AFFINE)
         dim_strides.append(None)
         # No single representative iter-var for the dim; report the
