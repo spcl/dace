@@ -16,7 +16,7 @@ import dace
 import pytest
 
 from dace import subsets
-from dace.transformation.passes.vectorization.utils.post_descent_invariants import cleanup_an_to_an_edges
+from dace.transformation.passes.vectorization.vectorize import cleanup_an_to_an_edges
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")

@@ -36,7 +36,7 @@ import dace
 import pytest
 
 from dace.libraries.tileops import TileLoad, TileLoad, TileStore
-from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NK = dace.symbol("NK")

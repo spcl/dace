@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during 
 import dace
 import pytest
 
-from dace.transformation.passes.vectorization.emit_tile_ops import _is_assign_tasklet
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
