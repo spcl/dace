@@ -25,8 +25,7 @@ class OffloadingIRNode:
         self.persistent_helper = False
 
     def set_debug_name(self, name):
-        self.debug_name = name + str(OffloadingIRNode.ID) 
-        OffloadingIRNode.ID += 1
+        self.debug_name = name 
 
     def __repr__(self):
         return self._get_str(set(), -4)

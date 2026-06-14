@@ -12,10 +12,8 @@ Usage:
 import pytest
 import numpy as np
 import dace
-from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace import dtypes
-from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
+from dace.transformation.passes.offloading.OffloadToAcceleratorV2 import OffloadToAccelerator as OtA
 from copy import deepcopy
 
 # ============================================================================
@@ -47,7 +45,8 @@ def simple_no_copy_sdfg():
     state.add_edge(t, "y", Y, None, dace.Memlet("Y[0]"))
     
     sdfg.validate()
-    
+    return sdfg
+
 def scalar_to_gpu_sdfg():
     """
     in
@@ -615,9 +614,12 @@ def pytest_configure(config):
 
 if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
-    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
+    sdfg = conditional_branch_map_sdfg()
+    sdfg.view()
+    OtA().get_IR(sdfg)
 
 # kernel: IR parsing issue
 # pen and paper: loop_head8 never referenced again, has no corresponding join either: head8 -> join 20, join18 -> join20, join 20 -> next section

@@ -12,8 +12,7 @@ from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
 class OffloadingIRNode:
     # INVARIANT: IR-trees are always DAGs
-
-    ID = 0
+    CTR = 0
 
     STATE = -1
     OPEN = 0
@@ -29,14 +28,11 @@ class OffloadingIRNode:
         self.gpu_set : set[str] = gpu_set
         self.next : list[OffloadingIRNode] = next
         self.close = close
-        self.set_debug_name(f"{block}")
+        self.debug_name = "Cpt. Nemo"
+        self.copy_successor = False
         
         # there should be a reference to the corresponding close node IFF the current node is an open node
         assert (self.close is not None) == self.is_open_node(), f"node {self.debug_name} of type {self.type} has close {self.close}"
-
-    def set_debug_name(self, name):
-        self.debug_name = name + str(OffloadingIRNode.ID) 
-        OffloadingIRNode.ID += 1
 
     def __repr__(self):
         return self._get_str(set(), -4)
@@ -44,7 +40,7 @@ class OffloadingIRNode:
         return self.__repr__()
     def _get_str(self, visited_set, len_before):
         s = f"{self.debug_name}:"
-        spaces = 40 - (len_before + len(s))
+        spaces = 50 - (len_before + len(s))
         s += spaces * " " + f"cpu = {sorted(list(self.cpu_set))}, gpu = {sorted(list(self.gpu_set))}\n"
 
         if self in visited_set:
@@ -61,28 +57,30 @@ class OffloadingIRNode:
         return not self.cpu_set and not self.gpu_set
     
     def is_open_node(self):
-        return self.type in [OffloadingIRNode.OPEN, OffloadingIRNode.OPEN_LOOP]
+        return self.type in [OffloadingIRNode.OPEN, OffloadingIRNode.OPEN_LOOP, OffloadingIRNode.OPEN_COND]
 
     def append_node(self, node):
         self.next.append(node)
 
-    def get_all_leaves(self):
-        def _find_all_leaves(node:OffloadingIRNode, result:set):
-            if node.is_leaf():
-                result.add(node)
-                return
-            for next in node.next:
-                _find_all_leaves(next, result)
+    def get_all_tails(self):
+        assert self.is_open_node()
 
-        result = set()
-        _find_all_leaves(self, result)
+        def recursion(node, result:list):
+            for next in node.next:
+                if next == self.close: # definition of a tail: a node that points at this section's end (close-node)
+                    result.append(node)
+                    return
+                recursion(next, result)
+
+        result = []
+        recursion(self, result)
         return result
     
     # static makers
     def new_open_node(block:ControlFlowBlock):
         close = OffloadingIRNode(OffloadingIRNode.CLOSE, None, set(), set(), [], None)
-        close.set_debug_name(f"_close_{block.label}")
-        
+        close.debug_name = f"_close_{block.label}"#{OffloadingIRNode.CTR}"
+
         type : int
         if isinstance(block, LoopRegion):
             type = OffloadingIRNode.OPEN_LOOP
@@ -92,15 +90,14 @@ class OffloadingIRNode:
             type = OffloadingIRNode.OPEN
 
         open = OffloadingIRNode(type, block, set(), set(), [], close)
-        open.set_debug_name(f"_{OffloadingIRNode.get_type_as_str(type)}_{block.label}")
+        open.debug_name = f"_{OffloadingIRNode.get_type_as_str(type)}_{block.label}"#{OffloadingIRNode.CTR}"
+        
+        OffloadingIRNode.CTR += 1
         return open
     
-    def new_loop_node(block:ControlFlowBlock): return OffloadingIRNode.make_new_open(block, OffloadingIRNode.OPEN_LOOP)
-    def new_cond_node(block:ControlFlowBlock): return OffloadingIRNode.make_new_open(block, OffloadingIRNode.OPEN_COND)
-
     def new_state_node(block:ControlFlowBlock, cpu_set:set, gpu_set:set):
         state = OffloadingIRNode(OffloadingIRNode.STATE, block, cpu_set, gpu_set, [], None)
-        state.set_debug_name(f"_state_{block.label}")
+        state.debug_name = f"_state_{block.label}"
         return state
     
     def get_type_as_str(type:int):
@@ -564,7 +561,12 @@ class OffloadToAccelerator(ppl.Pass):
         end.append_node(IR.close)
         IR.close.cpu_set = all_arrays
 
-        print("--- early IR ---\n", IR, "\n\n")
+        print(f"--- early IR ---\n{IR}\n\n")
+
+        self._propagate_arrays(IR)
+        self._fill_in_successor_copies(IR)
+        
+        print(f"--- full IR ---\n{IR}\n\n")
 
         # create & rename all GPU arrays
         self._create_gpu_arrays_from(sdfg, IR)
@@ -573,19 +575,13 @@ class OffloadToAccelerator(ppl.Pass):
 
   
 
-
     def _parse_to_IR(self, sdfg:SDFG, cfr:ControlFlowRegion, curr_node:OffloadingIRNode) -> OffloadingIRNode:
         # NOTE to self: ControlFlowRegion inherits from ControlFlowBlock
         # edges: TODO
         
         # nodes
-        print(f"{cfr} contains {", ".join([str(block) for block in cfr.bfs_nodes()])}")
-        # create outer node representing entire cfr
-        cfr_outer_node = OffloadingIRNode.new_open_node(cfr)
-        curr_node.append_node(cfr_outer_node)
-        curr_node = cfr_outer_node
-
-        # create inner nodes representing cfr contents
+        #print(f"{cfr} contains {", ".join([str(block) for block in cfr.bfs_nodes()])}")
+        
         block : ControlFlowBlock
         for block in cfr.bfs_nodes():
             # non-nested state
@@ -596,74 +592,70 @@ class OffloadToAccelerator(ppl.Pass):
                 curr_node.append_node(state_node)
                 curr_node = state_node
 
-            # if else
-            elif isinstance(block, ConditionalBlock):
-                cond_block : LoopRegion = block
-
-                # outer node
-                outer_node = OffloadingIRNode.new_cond_node(cond_block)
-                curr_node.append_node(outer_node)
-                curr_node = outer_node
-
-                # branch condition
-                meta_data_node : OffloadingIRNode = None
-                meta_data = {memlet.data for memlet in cond_block.get_meta_read_memlets() if memlet.data in sdfg.arrays}
-                if meta_data:
-                    meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=set())
-                    curr_node.append_node(meta_data_node)
-                    curr_node = meta_data_node
-
-                # parse branches and connect each branch to close node
-                for _, branch in cond_block.branches:
-                    branch_end : OffloadingIRNode = self._parse_to_IR(sdfg, branch, curr_node)
-                    # TODO: FIND ALL TAILS
-                    branch_end.append_node(outer_node.close)
-
-                self._populate_container_node_sets(outer_node)
-                curr_node = outer_node.close
-                
-            # loop
-            elif isinstance(block, LoopRegion):
-                loop : LoopRegion = block
-
-                #outer node
-                outer_node = OffloadingIRNode.new_loop_node(loop)
-                curr_node.append_node(outer_node)
-                curr_node = outer_node
-
-                # add meta data node if needed
-                meta_data_node : OffloadingIRNode = None
-                meta_data = {memlet.data for memlet in loop.get_meta_read_memlets() if memlet.data in sdfg.arrays}
-                if meta_data:
-                    meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=set())
-                    curr_node.append_node(meta_data_node)
-                    curr_node = meta_data_node
-
-                # parse body and connect to loop close node
-                body = self._parse_to_IR(sdfg, loop, curr_node) # linked list representing all internal nodes of loop
-                # TODO: FIND ALL TAILS
-                body.append_node(outer_node.close)
-                self._populate_container_node_sets(outer_node)
-                curr_node = outer_node.close
-
-            # nested region -> flatten   
-            elif isinstance(block, ControlFlowRegion):
-                self._parse_to_IR(sdfg, block, curr_node)
-
-            elif isinstance(block, nodes.NestedSDFG):
-                self._parse_to_IR(block.sdfg, block.sdfg, curr_node)
-
             # do nothing
             elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
                 pass 
-
+            
+            # container node with outer wrapper
             else:
-                raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
+                # outer node
+                outer_node = OffloadingIRNode.new_open_node(block)
+                curr_node.append_node(outer_node)
+                curr_node = outer_node
 
-        # TODO: FIND ALL TAILS
-        curr_node.append_node(cfr_outer_node.close)
-        self._populate_container_node_sets(cfr_outer_node)
-        return cfr_outer_node.close
+                # if else
+                if isinstance(block, ConditionalBlock):
+                    cond_block : LoopRegion = block
+
+                    # branch condition
+                    meta_data_node : OffloadingIRNode = None
+                    meta_data = {memlet.data for memlet in cond_block.get_meta_read_memlets() if memlet.data in sdfg.arrays}
+                    if meta_data:
+                        meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=set())
+                        curr_node.append_node(meta_data_node)
+                        curr_node = meta_data_node
+
+                    # parse branches and connect each branch to close node
+                    for _, branch in cond_block.branches:
+                        branch_end : OffloadingIRNode = self._parse_to_IR(sdfg, branch, curr_node)
+                        # TODO: FIND ALL TAILS
+                        branch_end.append_node(outer_node.close)
+                    
+                # loop
+                elif isinstance(block, LoopRegion):
+                    loop : LoopRegion = block
+
+                    # add meta data node if needed
+                    meta_data_node : OffloadingIRNode = None
+                    meta_data = {memlet.data for memlet in loop.get_meta_read_memlets() if memlet.data in sdfg.arrays}
+                    if meta_data:
+                        meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=set())
+                        curr_node.append_node(meta_data_node)
+                        curr_node = meta_data_node
+
+                    # parse body and connect to loop close node
+                    # TODO: FIND ALL TAILS
+                    curr_node = self._parse_to_IR(sdfg, loop, curr_node) # linked list representing all internal nodes of loop
+                    curr_node.append_node(outer_node.close)
+                    
+                # nested region -> flatten   
+                elif isinstance(block, ControlFlowRegion):
+                    curr_node = self._parse_to_IR(sdfg, block, curr_node)
+                    curr_node.append_node(outer_node.close)
+
+                elif isinstance(block, nodes.NestedSDFG):
+                    curr_node = self._parse_to_IR(block.sdfg, block.sdfg, curr_node)
+                    curr_node.append_node(outer_node.close)
+                
+                else:
+                    raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
+
+                # finish container
+                self._populate_container_node_sets(outer_node)
+                curr_node = outer_node.close
+
+        # TODO: FIND ALL TAILS?
+        return curr_node
     
 
     def __traverse_IR(self, IR:OffloadingIRNode, method):
@@ -728,23 +720,64 @@ class OffloadToAccelerator(ppl.Pass):
     def __populate_close_node_sets(self,IR:OffloadingIRNode):
         assert IR.is_open_node(), str(IR)
 
-        # define data gathering function
-        location_on_gpu = {}
-        def gather_data(node:OffloadingIRNode):
-            for array_name in node.gpu_set:
-                location_on_gpu[array_name] = True
+        tails = IR.get_all_tails()
+        assert tails, f"{IR.debug_name} doesn't have any tails! {IR}"
 
-            for array_name in node.cpu_set:
-                location_on_gpu[array_name] = False
+        # Behavior 1: 
+        # if there is a single tail node (node that leads to this section's close node),
+        # then analyse the section & find last known location of each used array
+        if len(tails) == 1:
+            # define data gathering function
+            location_on_gpu = {}
+            def gather_data(node:OffloadingIRNode):
+                for array_name in node.gpu_set:
+                    location_on_gpu[array_name] = True
+
+                for array_name in node.cpu_set:
+                    location_on_gpu[array_name] = False
+            
+            # traverse graph
+            self.__traverse_same_level(IR, gather_data)
+
+            # populate IR sets
+            IR.close.gpu_set = {array_name for array_name in location_on_gpu if location_on_gpu[array_name]}
+            IR.close.cpu_set = {array_name for array_name in location_on_gpu if not location_on_gpu[array_name]}
+
+
+        # Behaviour 2:
+        # if there are multiple tail nodes, then mark this node for later.
+        # In a second pass, it will assume the gpu&cpu set of its next successor.
+        # This means that each branch will have to insert copies individually, usually leading to the least amount of necessary copies.
+        # There is however a risk that this introduces copies within a loop unnecessarily.
+        else:
+            print(f"{IR.debug_name} has tails: {[n.debug_name for n in tails]}")
+            IR.copy_successor = True
         
-        # traverse graph
-        self.__traverse_same_level(IR, gather_data)
+    
+    def _propagate_arrays(self, IR:OffloadingIRNode):
+        # all arrays which aren't used by this state retain their previous status
+        # ASSUMPTION: arrays are either gpu or cpu within a state
+        def propagate(node):        
+            for next in node.next:
+                next_arrays = next.cpu_set | next.gpu_set
+                
+                for array in node.cpu_set:
+                    if not array in next_arrays:
+                        next.cpu_set.add(array)
+                for array in node.gpu_set:
+                    if not array in next_arrays:
+                        next.gpu_set.add(array)
 
-        # populate IR sets
-        IR.close.gpu_set = {array_name for array_name in location_on_gpu if location_on_gpu[array_name]}
-        IR.close.cpu_set = {array_name for array_name in location_on_gpu if not location_on_gpu[array_name]}
-    
-    
+        self.__traverse_IR(IR, propagate)
+
+    def _fill_in_successor_copies(self, IR):
+        def fill_in_successor_copies(node):
+            if node.copy_successor and node.next:
+                node.cpu_set = node.next[0].cpu_set
+                node.gpu_set = node.next[0].gpu_set
+        self.__traverse_IR(IR, fill_in_successor_copies)
+
+
     def _create_gpu_arrays_from(self, sdfg, IR:OffloadingIRNode):
         def gpu_arrays(node:OffloadingIRNode):
             if node.block:
