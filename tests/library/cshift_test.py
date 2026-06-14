@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Anchor tests for the :class:`CShift` library node.
 
-``CSHIFT`` does not appear in any current target Fortran workload, so
-the lib node's pure expansion is a stub that raises
-``NotImplementedError``.  These tests exercise many shape / shift /
-dim combinations of the construction path -- each wires the lib node
-with a full-array memlet, validates, and (for one representative
-case) verifies the lowering refusal.  Implementing the expansion
-later will produce a clean test signal across all of them.
+The lib node's ``pure`` expansion lowers ``CSHIFT(arr, shift [, dim])``
+to a single Map whose source memlet subset rotates the chosen axis
+(``fortran_mod(__i + shift, n)``), so the tasklet body is just
+``__out = __in``.  These tests exercise many shape / shift / dim
+combinations of the construction path, verify the pure expansion's
+numerics against ``numpy.roll``, and pin the loud-fail contract when
+``shift`` was never set.
 """
+import numpy as np
 import pytest
 
 import dace
@@ -117,8 +118,36 @@ def test_cshift_validate_rejects_mismatched_shapes():
         node.validate(bad, state)
 
 
-def test_cshift_pure_expansion_raises_until_implemented():
-    """The stub expansion refuses lowering with a clear message."""
-    sdfg = _build((5, ), dace.float64, dim=1)
-    with pytest.raises(NotImplementedError, match="CShift pure expansion is not yet implemented"):
+def test_cshift_pure_expansion_requires_shift():
+    """The pure expansion fails loud when ``shift`` was never set -- a
+    fabricated fallback symbol would leak as an unbound free symbol the
+    SDFG would then demand as a call argument."""
+    sdfg = _build((5, ), dace.float64, dim=1)  # shift=None
+    with pytest.raises(ValueError, match="shift is None"):
         sdfg.expand_library_nodes()
+
+
+@pytest.mark.parametrize("shift", [2, -1, 0, 1, 4])
+def test_cshift_pure_expansion_computes_circular_shift(shift):
+    """``CSHIFT(arr, s)`` rotates LEFT by ``s`` (== ``np.roll(arr, -s)``);
+    the floored ``fortran_mod`` keeps a negative shift in range."""
+    arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
+    sdfg = _build((5, ), dace.float64, dim=1, shift=shift)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    out = np.zeros(5, dtype=np.float64)
+    sdfg(v=arr.copy(), out=out)
+    np.testing.assert_allclose(out, np.roll(arr, -shift))
+
+
+@pytest.mark.parametrize("dim,shift", [(1, 1), (2, 1), (1, -1), (2, 2)])
+def test_cshift_pure_expansion_2d_axis(dim, shift):
+    """Whole-array rotate along a chosen 2-D axis -- every cross-section
+    perpendicular to ``dim`` rotates independently."""
+    arr = np.arange(12, dtype=np.float64).reshape((3, 4))
+    sdfg = _build((3, 4), dace.float64, dim=dim, shift=shift)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    out = np.zeros((3, 4), dtype=np.float64)
+    sdfg(v=arr.copy(), out=out)
+    np.testing.assert_allclose(out, np.roll(arr, -shift, axis=dim - 1))
