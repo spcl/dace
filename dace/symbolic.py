@@ -2205,7 +2205,7 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
     return sympy_to_dace(result, symbol_map)
 
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=2048, typed=True)
 def simplify(expr: SymbolicType) -> SymbolicType:
     return sympy.simplify(expr)
 
