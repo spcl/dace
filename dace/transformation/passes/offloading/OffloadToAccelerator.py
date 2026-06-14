@@ -22,6 +22,7 @@ class OffloadingIRNode:
         self.next : list[OffloadingIRNode] = next
 
         self.set_debug_name(f"{block}")
+        self.persistent_helper = False
 
     def set_debug_name(self, name):
         self.debug_name = name + str(OffloadingIRNode.ID) 
@@ -47,7 +48,7 @@ class OffloadingIRNode:
     
     # utility functions
     def is_empty(self):
-        return not self.cpu_set and not self.gpu_set and not self.is_join()
+        return not self.cpu_set and not self.gpu_set and not self.persistent_helper
     
     def is_join(self):
         return self.debug_name == "_join"
@@ -75,9 +76,10 @@ class OffloadingIRNode:
         return not self.next
 
     # static makers
-    def make_empty(debug_name):
+    def make_helper(debug_name, persistence):
         node = OffloadingIRNode(None, set(), set(), [])
         node.set_debug_name(debug_name)
+        node.persistent_helper = persistence
         return node
     
 @properties.make_properties
@@ -563,18 +565,23 @@ class OffloadToAccelerator(ppl.Pass):
         # TODO: check if anything is already GPU or not default and create error
         
         # create inital node where all arrays must be on CPU
-        IR = OffloadingIRNode.make_empty("_SDFG_head")
+        IR = OffloadingIRNode.make_helper("_SDFG_head", True)
         IR.cpu_set = all_arrays # all arrays are initially assumed to be on CPU
 
         # create IR
-        self._parse_to_IR(sdfg, sdfg, IR)
+        end = self._parse_to_IR(sdfg, sdfg, IR)
 
         # add final node where all arrays must be on CPU again
-        final = OffloadingIRNode.make_empty("_SDFG_tail")
-        final.cpu_set = all_arrays
+        tail = OffloadingIRNode.make_helper("_SDFG_tail", True)
+        end.append_node(tail)
+        tail.gpu_set = end.gpu_set
+        tail.cpu_set = end.cpu_set
+        tail.block = list(sdfg.bfs_nodes())[-1] # final toplevel block
 
-        for leaf in IR.get_all_leaves():
-            leaf.append_node(final)
+        copy_back = OffloadingIRNode.make_helper("_SDFG_copy_back", True)
+        tail.append_node(copy_back)
+        copy_back.cpu_set = all_arrays
+        
 
         print("--- early IR ---\n", IR, "\n\n")
 
@@ -611,8 +618,11 @@ class OffloadToAccelerator(ppl.Pass):
                 curr_node = new_node
             
         # nodes
+        print(f"{cfr} contains {", ".join([str(block) for block in cfr.bfs_nodes()])}")
         block : ControlFlowBlock
         for block in cfr.bfs_nodes():
+            if str(cfr) == "for_224":
+                print(f"about to process {block}. curr node is {curr_node.debug_name}")
             
             # non-nested state
             if isinstance(block, SDFGState):
@@ -634,13 +644,13 @@ class OffloadToAccelerator(ppl.Pass):
                 curr_node.append_node(branch_condition)
 
                 # parse branches and connect each branch head to branch condition
-                tails = set()
+                tails = []
                 for _, branch in block.branches:
-                    branch_head : OffloadingIRNode = self._parse_to_IR(sdfg, branch, branch_condition)
-                    tails |= branch_head.get_all_leaves()
+                    branch_end : OffloadingIRNode = self._parse_to_IR(sdfg, branch, branch_condition)
+                    tails.append(branch_end)
 
                 # connect all tails to a join node (special functionality, ensures consistency)
-                curr_node = OffloadingIRNode.make_empty("_join")
+                curr_node = OffloadingIRNode.make_helper("_join", True)
                 for tail in tails:
                     tail.append_node(curr_node)
 
@@ -650,7 +660,7 @@ class OffloadToAccelerator(ppl.Pass):
                 loop : LoopRegion = block
 
                 # HEAD: get array accesses of init_statement, update_statement, and loop_condition add them to head's cpu_set
-                head = OffloadingIRNode.make_empty("_loop_head")
+                head = OffloadingIRNode.make_helper("_loop_head", False)
                 
                 for memlet in loop.get_meta_read_memlets():
                     if memlet.data in sdfg.arrays:
@@ -658,15 +668,21 @@ class OffloadToAccelerator(ppl.Pass):
                 curr_node.append_node(head)
 
                 # BODY: parse loop region and connect to head
-                self._parse_to_IR(sdfg, loop, head) # linked list representing all internal nodes of loop
+                body = self._parse_to_IR(sdfg, loop, head) # linked list representing all internal nodes of loop
                 
                 # TAILS: connect all tails to a join node (special functionality, ensures consistency)
-                curr_node = OffloadingIRNode.make_empty("_join")
-                for tail in head.get_all_leaves():
-                    tail.append_node(curr_node)
+                check = list(head.get_all_leaves())
+                assert len(check) <= 1, str(check)
+                if len(check) == 1:
+                    assert check[0] == body, f"{check[0]} != {body}"
+
+                curr_node = OffloadingIRNode.make_helper("_join", False)
+                body.append_node(curr_node)
 
                 # CLOSE: connect connector to head again (-> loop)
                 curr_node.append_node(head)
+
+                print(f"just finished loop {block.label} ({head.debug_name} -> {curr_node.debug_name}): {head}\n")
 
             # nested region -> flatten   
             elif isinstance(block, ControlFlowRegion):
@@ -682,7 +698,11 @@ class OffloadToAccelerator(ppl.Pass):
             else:
                 raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
 
-        return curr_node
+        cfr_repr = OffloadingIRNode.make_helper(f"_{cfr}_rep", True)
+        cfr_repr.gpu_set = curr_node.gpu_set
+        cfr_repr.cpu_set = curr_node.cpu_set
+        curr_node.append_node(cfr_repr)
+        return cfr_repr
     
     def __traverse_IR(self, IR:OffloadingIRNode, method):
         def recursion(node, visited_set):
@@ -694,6 +714,20 @@ class OffloadToAccelerator(ppl.Pass):
             
             for next in node.next:
                 recursion(next, visited_set)
+
+        return recursion(IR, set())
+    
+    def __traverse_single_path(self, IR:OffloadingIRNode, method):
+        def recursion(node, visited_set):
+            if node in visited_set:
+                return
+            visited_set.add(node)
+
+            method(node)
+            
+            for next in node.next:
+                recursion(next, visited_set)
+                break # !!!
 
         return recursion(IR, set())
     
@@ -751,6 +785,26 @@ class OffloadToAccelerator(ppl.Pass):
                 #print(f"{node.debug_name}: cpu = {node.cpu_set}, gpu = {node.gpu_set} -> {next_node.debug_name}: cpu = {next_node.cpu_set}, gpu = {next_node.gpu_set}\n\n")
 
         self.__traverse_IR(IR, join_sets)
+
+    def _create_before_node(self,IR:OffloadingIRNode):
+        before = OffloadingIRNode.make_helper(f"before_{IR.block.label}", True)
+        
+        def get_befores(node:OffloadingIRNode):
+            for array_name in node.gpu_set:
+                seen_before = array_name in before.gpu_set or array_name in before.cpu_set
+                if not seen_before:
+                    before.gpu_set.add(array_name)
+
+            for array_name in node.cpu_set:
+                seen_before = array_name in before.gpu_set or array_name in before.cpu_set
+                if not seen_before:
+                    before.cpu_set.add(array_name)
+
+        self.__traverse_single_path(IR, get_befores)
+        return before
+    
+      
+    
     
     def _create_gpu_arrays_from(self, sdfg, IR:OffloadingIRNode):
         def gpu_arrays(node:OffloadingIRNode):

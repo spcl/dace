@@ -435,7 +435,7 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # note: all parameters can be modified by this function
     # deepcopy before passing if previous state needs to be retained
     sdfg.validate()
-    sdfg.view()
+    #sdfg.view()
 
     # compile and run sdfg without offloading (all on CPU)
     input1 = deepcopy(param_dict)
@@ -546,7 +546,6 @@ def test_conditional_offload_else():
     )
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
 def test_nested_sdfg():
     sdfg = nested_sdfg()
     
@@ -559,9 +558,8 @@ def test_nested_sdfg():
         new_output,
     )
 
-
 @pytest.mark.gpu_offload
-#@pytest.mark.current
+@pytest.mark.current
 def test_kernel_sdfg():
     sdfg = kernel_sdfg()
     
@@ -571,7 +569,7 @@ def test_kernel_sdfg():
     A = np.arange(10000, dtype=np.float64).reshape(100, 100) / 1000.0
     B = (np.arange(10000, dtype=np.float64).reshape(100, 100) % 97) / 97.0
     C = np.zeros((100, 100), dtype=np.float64)
-    E = np.linspace(0.0, 1.0, 100, dtype=np.float64)
+    E = np.arange(100,200, dtype=np.float64)
 
     run_numerical_offloading_test(
         sdfg,
@@ -608,7 +606,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "basic: mark test as part of basic SDFG suite")
     config.addinivalue_line("markers", "copy_analysis: mark test as copy analysis suite")
     config.addinivalue_line("markers", "gpu_offload: mark test as GPU offload suite")
-    config.addinivalue_line("markers", "current: tests off current interest")
+    config.addinivalue_line("markers", "current: tests of current interest")
 
 
 if __name__ == "__main__":
@@ -619,3 +617,6 @@ if __name__ == "__main__":
 
 # kernel: IR parsing issue
 # pen and paper: loop_head8 never referenced again, has no corresponding join either: head8 -> join 20, join18 -> join20, join 20 -> next section
+# then: clean up test suite
+# clean up OtA
+# add npbench kernels, automate input somehow, get to work with the bugs
