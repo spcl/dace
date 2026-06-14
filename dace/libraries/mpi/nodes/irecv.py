@@ -25,8 +25,6 @@ class ExpandIrecvMPI(ExpandTransformation):
         grid = input_descriptor_name(node, parent_state, '_grid')
         if grid:
             comm = "_grid"
-        if "_comm" in node.in_connectors:
-            comm = "_comm"
 
         code = ""
         if ddt is not None:
