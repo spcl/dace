@@ -880,7 +880,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round'
+    'pow', 'round', 'int32', 'int64', 'float32', 'float64'
 }
 
 
@@ -1185,6 +1185,56 @@ class fortran_mod(sympy.Function):
 
     def _eval_is_integer(self):
         return self.args[0].is_integer and self.args[1].is_integer
+
+
+class int32(sympy.Function):
+    """Explicit ``INTEGER(4)`` typecast in a symbolic expression.
+
+    The Fortran frontend emits ``dace.int{32,64}(x)`` / ``dace.float{32,
+    64}(x)`` for a kind coercion in a tasklet body, where cppunparse
+    lowers the ``dace`` attribute to ``dace::int32(x)``.  When the SAME
+    coercion lands in an INTERSTATE-EDGE / memlet expression (a float
+    index symbol ``i = dace.int32(qm) + 1``, a condition over a widened
+    int) it must be sympy-parseable -- ``dace.int32`` is an attribute
+    call sympy cannot evaluate (``'Attr' object is not callable``).
+    These first-grade typecast functions are the symbolic spelling: the
+    frontend drops the ``dace.`` prefix in symbolic contexts so the cast
+    survives, unevaluated, to C++ as ``dace::int32(x)`` (a TRUNCATING
+    cast, matching Fortran ``INT`` -- semantically exact, unlike a
+    floored / stripped approximation)."""
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class int64(sympy.Function):
+    """Explicit ``INTEGER(8)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class float32(sympy.Function):
+    """Explicit ``REAL(4)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+class float64(sympy.Function):
+    """Explicit ``REAL(8)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``.
+_TYPECAST_CPP = {'int32': 'dace::int32', 'int64': 'dace::int64',
+                 'float32': 'dace::float32', 'float64': 'dace::float64'}
 
 
 class bitwise_and(sympy.Function):
@@ -1720,6 +1770,28 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+    def visit_Call(self, node):
+        # ``dace.int32(x)`` / ``dace.float64(x)`` -- an explicit numeric
+        # typecast.  The frontend emits the ``dace.<type>(x)`` spelling
+        # uniformly (cppunparse lowers it to ``dace::<type>(x)`` in a
+        # tasklet body); here in a sympy-parsed context the default
+        # ``visit_Attribute`` would turn ``dace.int32`` into ``Attr(dace,
+        # int32)`` and the surrounding call into ``Attr(...)(x)`` ->
+        # ``'Attr' object is not callable``.  Rewrite to the bare
+        # first-grade typecast function ``int32(x)`` (registered in
+        # ``_PYSTR2SYM_locals``) which parses cleanly and prints back to
+        # ``dace::int32(x)`` -- so the cast keeps its exact (truncating
+        # for int) semantics in EVERY symbolic context (interstate edge,
+        # memlet subset, condition).
+        func = node.func
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id == 'dace' and func.attr in _TYPECAST_CPP):
+            new_node = ast.Call(func=ast.Name(id=func.attr, ctx=ast.Load),
+                                args=[self.visit(a) for a in node.args], keywords=[])
+            return ast.copy_location(new_node, node)
+        self.generic_visit(node)
+        return node
+
     def visit_Attribute(self, node):
         new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
                             args=[self.visit(node.value), ast.Name(id=node.attr, ctx=ast.Load)],
@@ -2234,6 +2306,10 @@ _PYSTR2SYM_locals = {
     'IfExpr': IfExpr,
     'Mod': sympy.Mod,
     'fortran_mod': fortran_mod,
+    'int32': int32,
+    'int64': int64,
+    'float32': float32,
+    'float64': float64,
     'Attr': Attr,
     'conj': conj,
     'Subscript': Subscript,
@@ -2365,6 +2441,13 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             a = self._print(expr.args[0])
             b = self._print(expr.args[1])
             return '((((%s) %% (%s)) + (%s)) %% (%s))' % (a, b, b, b)
+        # Explicit numeric typecasts (``int32(x)`` / ``float64(x)`` ...)
+        # -> the matching ``dace::<type>(x)`` C++ cast (the same form the
+        # tasklet-body ``dace.<type>(x)`` lowers to via cppunparse), so a
+        # kind coercion that landed in an interstate-edge / memlet
+        # expression keeps its exact (truncating for int) semantics.
+        if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
+            return '%s(%s)' % (_TYPECAST_CPP[str(expr.func)], self._print(expr.args[0]))
         # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
             return 'dace::math::conj(%s)' % self._print(expr.args[0])
