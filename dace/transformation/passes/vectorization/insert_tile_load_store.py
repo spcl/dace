@@ -671,6 +671,17 @@ class InsertTileLoadStore(ppl.Pass):
                 # per-dim strides when the same iter-var dominates multiple source dims.
                 src_arr_strides = tuple(desc.strides) if desc.strides else None
                 dim_strides, replicate = self._pad_to_tile_dims(s_record, iter_vars, src_arr_strides=src_arr_strides)
+                # Per-tile-dim source-array dim mapping: each tile dim reads along
+                # the array dim its iter-var indexes, so the load uses that dim's
+                # OWN stride. The default (innermost K dims) is wrong on a
+                # non-C layout -- a Fortran array ``A[i, j]`` with strides
+                # ``(1, M)`` and an innermost ``i`` map indexes the UNIT-stride
+                # dim 0, not the last dim; mapping positionally would stride the
+                # ``i``-tile by ``M`` (reading a row, not the column). Symmetric to
+                # the scatter side's ``_w_dst_dims``.
+                _s_src_dims = tuple(
+                    next((d for d, ivv in enumerate(s_record.dim_iter_var) if ivv == iv),
+                         len(desc.shape) - len(iter_vars) + kk) for kk, iv in enumerate(iter_vars))
                 bridge_name, _ = stage_tile_load(inner_state,
                                                  an,
                                                  widths=tuple(self.widths),
@@ -678,6 +689,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                  name_hint=f"{an.data}_tile",
                                                  dim_strides=dim_strides,
                                                  replicate_factor_per_dim=replicate,
+                                                 src_dims=_s_src_dims,
                                                  mask_an=mask_an_for_this)
                 self._rewire_consumers_to_bridge(inner_state, an, bridge_name, s_edges, iter_vars=iter_vars)
                 staged += 1
@@ -783,12 +795,20 @@ class InsertTileLoadStore(ppl.Pass):
             dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
             dst_arr_strides = tuple(desc.strides) if desc.strides else None
             dim_strides_w, _ = self._pad_to_tile_dims(wrecord, iter_vars, src_arr_strides=dst_arr_strides)
+            # Per-tile-dim dest-array dim mapping (see the structured-read note):
+            # each tile dim writes along the array dim its iter-var indexes, so a
+            # non-C layout (Fortran ``C[i, j]`` strides ``(1, M)``) strides the
+            # ``i``-tile by 1 (its dim-0 stride), not positionally by ``M``.
+            _s_dst_dims = tuple(
+                next((d for d, ivv in enumerate(wrecord.dim_iter_var) if ivv == iv),
+                     len(desc.shape) - len(iter_vars) + kk) for kk, iv in enumerate(iter_vars))
             bridge_name, _ = stage_tile_store(inner_state,
                                               an,
                                               widths=tuple(self.widths),
                                               dst_subset=dst_subset_memlet,
                                               name_hint=f"{an.data}_tile_out",
                                               dim_strides=dim_strides_w,
+                                              dst_dims=_s_dst_dims,
                                               mask_an=mask_an_for_this)
             self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
             staged += 1

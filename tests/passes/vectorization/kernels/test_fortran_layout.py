@@ -17,12 +17,15 @@ path handles this directly (a contiguous, non-last-dim vectorization),
 validated here against the unvectorized reference across the
 branch/remainder/emission matrix.
 
-The K-dim tile-op path (``vectorize_config="tile_nodes"``) is NOT
-exercised here yet: its ``pure`` expansion lays the register tile out
-C-row-major and maps tile dims to map params positionally, so a
-Fortran-strided array is read at the wrong offsets. Carrying per-dim
-strides into the tile load/store expansion is a tracked follow-up; this
-test is its future regression target.
+The K-dim tile-op path (``vectorize_config="tile_nodes"``) IS exercised
+here. Its tile load/store expansion strides each tile dim along the
+ARRAY dim that dim's iter-var indexes (``src_dims`` / ``dst_dims``), not
+positionally, so a Fortran-strided array is read at unit stride on its
+leftmost (innermost-map) subscript -- both the main loop and the masked
+remainder. (Earlier the read/store sides defaulted to the last K dims,
+striding the ``i``-tile by ``M`` and reading a row instead of the
+unit-stride column; fixed by threading the per-dim mapping through
+``InsertTileLoadStore``.)
 
 TODO: add a Fortran-packed indirection (gather/scatter) test built on the
 indirect-access subgraph pattern in ``indirect/test_strided_gather_scatter``
