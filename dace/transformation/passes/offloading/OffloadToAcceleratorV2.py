@@ -156,7 +156,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 1: offload maps and library nodes -> heuristic only! document TODO
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
-        self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
+        #self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
+        # TODO: consistent offloading of library nodes: schedule is GPU IFF in a map
         """
         library node -> GPU
         map cpu
@@ -197,7 +198,12 @@ class OffloadToAccelerator(ppl.Pass):
                     continue
                     
                 if scope_dict[node] is None: # toplevel node -> change schedule
-                    self.set_schedule(node)
+                    if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
+                        node.map.schedule = dtypes.ScheduleType.GPU_Device
+                    elif isinstance(node, nodes.LibraryNode):
+                        node.schedule = dtypes.ScheduleType.GPU_Device
+                    else:
+                        assert False
 
                 else: # within nested scope -> must not have GPU schedule (defensive check)
                     if self.has_GPU_schedule(node):
@@ -217,13 +223,6 @@ class OffloadToAccelerator(ppl.Pass):
         else:
             assert False
         
-    def set_schedule(self, node):
-        if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
-            node.map.schedule = dtypes.ScheduleType.GPU_Device
-        elif isinstance(node, nodes.LibraryNode):
-            node.schedule = dtypes.ScheduleType.GPU_Device
-        else:
-            assert False
 
     def has_GPU_schedule(self, node):
         return self.get_schedule(node) in dtypes.GPU_SCHEDULES
@@ -403,7 +402,11 @@ class OffloadToAccelerator(ppl.Pass):
                     else:
                         gpu_set |= g | c
 
-                elif isinstance(node, nodes.MapExit) or isinstance(node, nodes.LibraryNode):
+                elif isinstance(node, nodes.LibraryNode):
+                    # nothing to do but change the Library Schedule
+                    node.schedule = dtypes.ScheduleType.GPU_Device
+
+                elif isinstance(node, nodes.MapExit):
                     pass # nothing to do
 
                 else:
