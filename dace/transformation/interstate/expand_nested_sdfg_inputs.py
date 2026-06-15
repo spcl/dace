@@ -118,7 +118,7 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
 
 
 def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims: List[sympy.Basic],
-                                  collapsed_dims: List[bool]) -> None:
+                                 collapsed_dims: List[bool]) -> None:
     """Rewrite every memlet referencing ``inner_name`` to add ``offset_dims``
     and uncollapse the ``collapsed_dims``. Runs BEFORE the inner SDFG's
     ``replace_dict({inner_name: outer_name})`` so the rewrite only matches
@@ -160,7 +160,23 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
             for d, (offset, collapsed) in enumerate(zip(offset_dims, collapsed_dims)):
                 if inner_is_full_rank:
                     (lo, hi, stp) = inner_subset[d]
-                    new_range_list.append((lo + offset, hi + offset, stp))
+                    # Add the window base to a full-rank inner dim ONLY when the
+                    # inner begin is expressed RELATIVE to the window (an
+                    # intra-window stencil offset ``0`` / ``1`` / ``2``, or the
+                    # NSDFG-boundary connector binding ``[0:1]``). When the inner
+                    # begin ALREADY references the offset's iteration symbol(s) it
+                    # is in absolute outer coordinates -- an in-place RMW body
+                    # keeps ``A[i, j]`` verbatim (the inner SDFG receives ``i``,
+                    # ``j`` as symbols) -- and re-adding the base double-counts
+                    # (``i + i = 2*i``), reading/writing only every other element.
+                    # Detect the absolute case via free-symbol overlap with the
+                    # offset and leave such dims untouched.
+                    off_syms = sympy.sympify(offset).free_symbols
+                    lo_syms = sympy.sympify(lo).free_symbols
+                    if off_syms and (off_syms & lo_syms):
+                        new_range_list.append((lo, hi, stp))
+                    else:
+                        new_range_list.append((lo + offset, hi + offset, stp))
                 elif collapsed is True:
                     new_range_list.append((offset, offset, 1))
                 else:
@@ -245,7 +261,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
         if outer_name not in nsdfg_node.in_connectors:
             nsdfg_node.add_in_connector(outer_name, force=True)
     else:
-        existing_target = any(e.src_conn == outer_name and e.src_conn != inner_name for e in state.out_edges(nsdfg_node))
+        existing_target = any(e.src_conn == outer_name and e.src_conn != inner_name
+                              for e in state.out_edges(nsdfg_node))
         for oedge in list(state.out_edges(nsdfg_node)):
             if oedge.src_conn == inner_name:
                 if existing_target:
