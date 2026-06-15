@@ -13,6 +13,20 @@ import os
 # binding intact. ``setdefault`` respects an explicit override.
 os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
 
+# Disable UCX's FUSE-based virtual filesystem before anything imports
+# ``mpi4py``. OpenMPI 5.x selects UCX as its transport, and UCX's VFS feature
+# mounts a per-process FUSE filesystem backed by an ``inotify`` watch to export
+# runtime introspection state. Under test fan-out (xdist workers and/or
+# per-test process isolation) each process opens its own watch, and the
+# default ``fs.inotify.max_user_instances`` (128 on this host) is quickly
+# exhausted -- UCX then aborts at init with
+# ``vfs_fuse.c ... inotify_add_watch(...) No space left on device``, crashing
+# otherwise-passing tests during MPI bring-up/teardown. The VFS is a debugging
+# convenience with no bearing on transport correctness, so disabling it is
+# safe and removes the inotify pressure entirely. ``setdefault`` respects an
+# explicit override.
+os.environ.setdefault("UCX_VFS_ENABLE", "n")
+
 import pytest
 
 
