@@ -467,6 +467,50 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         return out_conn, a_conn, op, "a", expr
         return None
 
+    def _detect_affine_unit_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
+        """Detect a 1-tile-operand body AFFINE in that operand with unit coefficient.
+
+        Complements :meth:`_detect_binop_with_symbol`, whose textual split cannot
+        isolate the operand when it is BURIED among symbolic terms -- e.g. a reverse
+        gather index ``_o = (LEN_1D - _in0) - 1`` (TSVC s4114 ``c[LEN_1D - ip[i] - 1]``).
+        Such a body is ``coeff * _in0 + offset`` with ``offset`` free of ``_in0``;
+        ``coeff == +1`` is ``_in0 + offset`` (symbol on side b) and ``coeff == -1`` is
+        ``offset - _in0`` (symbol on side a) -- each a single symbol :class:`TileBinop`.
+        Returns the :meth:`_detect_binop_with_symbol` tuple shape so
+        :meth:`_convert_binop_with_symbol` lowers it unchanged. Non-unit coefficients
+        (which need a multiply as well as an add) are deferred -> ``None``.
+        """
+        if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
+            return None
+        out_conn = next(iter(tasklet.out_connectors))
+        a_conn = next(iter(tasklet.in_connectors))
+        body = _normalize_python_tasklet_body(tasklet.code.as_string.strip().rstrip(";").strip())
+        if body is None or not body.startswith(f"{out_conn} = "):
+            return None
+        rhs = body[len(f"{out_conn} = "):].strip()
+        import sympy
+        from dace import symbolic
+        try:
+            a_sym = symbolic.pystr_to_symbolic(a_conn)
+            expr = symbolic.pystr_to_symbolic(rhs)
+        except Exception:
+            return None
+        # Affine analysis applies only to a scalar arithmetic expression that actually
+        # uses the operand (a relational / boolean body has no affine coefficient).
+        if not isinstance(expr, sympy.Expr) or a_sym not in expr.free_symbols:
+            return None
+        coeff = sympy.diff(expr, a_sym)
+        if a_sym in coeff.free_symbols:
+            return None  # operand appears non-linearly -> not affine
+        offset = sympy.simplify(expr - coeff * a_sym)
+        if a_sym in offset.free_symbols:
+            return None  # safety: the offset must be free of the operand
+        if coeff == 1:
+            return out_conn, a_conn, "+", "b", str(offset)
+        if coeff == -1:
+            return out_conn, a_conn, "-", "a", str(offset)
+        return None  # |coeff| != 1 needs a multiply too -- deferred
+
     def _detect_const_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
         """If ``tasklet`` is a 0-in-connector pure constant / Symbol assignment
         (``_o = <expr>`` with no operator -- just a literal or a Symbol), return
@@ -959,6 +1003,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         symbol_binop = self._detect_binop_with_symbol(tasklet)
         if symbol_binop is not None:
             return self._convert_binop_with_symbol(inner_state, tasklet, symbol_binop, iter_vars)
+        # Affine-in-one-operand with the operand buried among symbolic terms
+        # (e.g. reverse gather index ``(LEN_1D - _in0) - 1``); reuses the symbol
+        # binop converter via the same tuple shape.
+        affine_sym = self._detect_affine_unit_with_symbol(tasklet)
+        if affine_sym is not None:
+            return self._convert_binop_with_symbol(inner_state, tasklet, affine_sym, iter_vars)
         # ITE shape (``if .. else`` or ``ITE(...)`` function form) -- detect FIRST so the
         # 2-in-conn ``ITE(_cond, _t, <symbol>)`` shape isn't miscaptured as a binop or
         # reduction. The ITE detector requires a precise body match so binop fall-through
