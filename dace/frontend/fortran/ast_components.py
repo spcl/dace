@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from fparser.two import Fortran2008 as f08
+# NOTE: Fortran2003 needs to be imported before Fortran2008 (circular import otherwise).
 from fparser.two import Fortran2003 as f03
+from fparser.two import Fortran2008 as f08
 from fparser.two import symbol_table
 
 from dace.frontend.fortran import ast_internal_classes
