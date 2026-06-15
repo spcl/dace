@@ -698,7 +698,20 @@ def detect_lane_fanout_apply(sdfg: SDFG,
             # through an ``_idx`` connector instead of W interstate-edge
             # symbols.
             idxarr_match: Optional[Tuple[str, dace.symbolic.SymbolicType, int, List[str]]] = None
-            if (pattern == "contiguous" and collapse_laneid_index_loads and intrinsic_template_idxarr is not None):
+            # The MASKED remainder tile is collapsed into the ``_idx``-connector
+            # form unconditionally (independent of ``collapse_laneid_index_loads``):
+            # the per-lane laneid fan reads ``idxarr[begin + stride*k]`` for every
+            # lane ``k``, but the remainder window's high lanes (``k >= R``) index
+            # PAST the array end. Routing through the conv template materialises a
+            # local W-wide buffer with a mask-guarded fill, so no out-of-bounds
+            # index read survives (the non-collapse / direct-passthrough forms both
+            # over-read: interstate laneid assignments and the AVX512
+            # ``_mm512_loadu_si512`` respectively). The main (unmasked) loop keeps
+            # its existing behaviour, gated on ``collapse_laneid_index_loads``.
+            _force_collapse_for_mask = (iter_mask_name is not None
+                                        and intrinsic_template_idxarr_conv_masked is not None)
+            if (pattern == "contiguous" and (collapse_laneid_index_loads or _force_collapse_for_mask)
+                    and intrinsic_template_idxarr is not None):
                 idxarr_match = _recognize_laneid_index_slice(state, idx_data_and_subset, vector_length)
 
             if pattern == "contiguous" and idxarr_match is not None:
@@ -712,9 +725,13 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                 # (``idx[c*i]``), reading the right element per lane out
                 # of the contiguous boundary window.
                 idx_is_int64 = state.sdfg.arrays[idxarr_match[0]].dtype == dace.int64
-                if idx_is_int64 and idx_stride == 1:
-                    idxarr_template = (intrinsic_template_idxarr_masked
-                                       if iter_mask_name is not None else intrinsic_template_idxarr)
+                # Direct pointer pass-through is only safe for the UNMASKED main
+                # loop: it hands the (short) index array straight to the
+                # intrinsic, whose full-width vector load would over-read past
+                # the remainder window. The masked remainder always materialises
+                # a local W-wide buffer via the conv template (mask-guarded fill).
+                if idx_is_int64 and idx_stride == 1 and iter_mask_name is None:
+                    idxarr_template = intrinsic_template_idxarr
                     intrinsic_code = idxarr_template.format(vector_length=vector_length, dtype=dtype_cpp)
                 else:
                     idxarr_template = (intrinsic_template_idxarr_conv_masked
@@ -778,6 +795,13 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                     # the intrinsic strides into it via ``_idx[l*stride]``).
                     # ``stride == 1`` reduces to the W-wide window.
                     idx_end = begin_expr + idx_stride * (vector_length - 1)
+                    # The masked remainder's W-wide window runs past the index
+                    # array tail; clamp the subset end to the last valid element
+                    # so the memlet stays in bounds (the conv-masked tasklet only
+                    # dereferences active lanes + lane 0, all within this span).
+                    if iter_mask_name is not None:
+                        arr_size = state.sdfg.arrays[idxarr].shape[0]
+                        idx_end = dace.symbolic.SymExpr(f"Min({idx_end}, ({arr_size}) - 1)")
                     idx_memlet = dace.memlet.Memlet(data=idxarr, subset=dace.subsets.Range([(begin_expr, idx_end, 1)]))
                     state.add_edge(idx_an, None, t1, "_idx", idx_memlet)
                     # The fan tasklets that read the laneid symbols were

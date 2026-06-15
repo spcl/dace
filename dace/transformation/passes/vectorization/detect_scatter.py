@@ -54,10 +54,16 @@ scatter<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
 }}
 """
 
+# Masked counterpart: the remainder tile's index window extends past the
+# valid index-array tail (lanes ``>= R`` are out of bounds). Read the index
+# ONLY for active lanes; masked-off lanes copy lane 0's index (always in
+# bounds -- the remainder has at least one valid lane), so the per-lane fill
+# never dereferences ``_idx`` out of bounds. The destination written by a
+# masked lane is irrelevant: ``scatter_masked`` skips it.
 _SCATTER_TEMPLATE_IDXARR_CONV_MASKED = """
 {{
 int64_t __vec_lane_idx[{vector_length}];
-for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
+for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _mask[__l] ? _idx[__l * {stride}] : _idx[0];
 scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 }}
 """
