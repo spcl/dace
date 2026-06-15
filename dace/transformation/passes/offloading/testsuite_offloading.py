@@ -507,15 +507,13 @@ def test_copy_scalar_to_gpu_and_back():
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-    #sdfg.view()
-
+@pytest.mark.current
 @pytest.mark.gpu_offload
 def test_loopregion_offload():
     # not pretty but it passes
     # structural issue to be solved later
     # I want to see whether it shows up elsewhere too -> refactor or not -> patch
     sdfg = scalar_to_gpu_within_loopregion_sdfg()
-    #sdfg.view()
     
     input = 4321.1234
     orig_output = np.array([0.0])
@@ -562,10 +560,9 @@ def test_nested_sdfg():
     )
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
 def test_kernel_sdfg():
     sdfg = kernel_sdfg()
-    
+    #sdfg.view()
     orig_output = np.zeros((100, 100), dtype=np.float64)
     new_output = np.zeros((100, 100), dtype=np.float64)
 
@@ -615,14 +612,9 @@ def pytest_configure(config):
 if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
-    #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
+    pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
-    sdfg = conditional_branch_map_sdfg()
-    sdfg.view()
-    OtA().get_IR(sdfg)
+    
 
-# kernel: IR parsing issue
-# pen and paper: loop_head8 never referenced again, has no corresponding join either: head8 -> join 20, join18 -> join20, join 20 -> next section
-# then: clean up test suite
-# clean up OtA
+# get everything to run again
 # add npbench kernels, automate input somehow, get to work with the bugs

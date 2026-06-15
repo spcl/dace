@@ -28,11 +28,14 @@ class OffloadingIRNode:
         self.gpu_set : set[str] = gpu_set
         self.next : list[OffloadingIRNode] = next
         self.close = close
+        
+        self.open = None
         self.debug_name = "Cpt. Nemo"
         self.copy_successor = False
         
         # there should be a reference to the corresponding close node IFF the current node is an open node
         assert (self.close is not None) == self.is_open_node(), f"node {self.debug_name} of type {self.type} has close {self.close}"
+        
 
     def __repr__(self):
         return self._get_str(set(), -4)
@@ -41,7 +44,7 @@ class OffloadingIRNode:
     def _get_str(self, visited_set, len_before):
         s = f"{self.debug_name}:"
         spaces = 50 - (len_before + len(s))
-        s += spaces * " " + f"cpu = {sorted(list(self.cpu_set))}, gpu = {sorted(list(self.gpu_set))}\n"
+        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set if len(name) <= 5])}, gpu = {sorted([name for name in self.gpu_set if len(name) <= 5])}\n"
 
         if self in visited_set:
             return s
@@ -58,6 +61,9 @@ class OffloadingIRNode:
     
     def is_open_node(self):
         return self.type in [OffloadingIRNode.OPEN, OffloadingIRNode.OPEN_LOOP, OffloadingIRNode.OPEN_COND]
+
+    def is_close_node(self):
+        return self.type in [OffloadingIRNode.CLOSE]
 
     def append_node(self, node):
         self.next.append(node)
@@ -91,7 +97,8 @@ class OffloadingIRNode:
 
         open = OffloadingIRNode(type, block, set(), set(), [], close)
         open.debug_name = f"_{OffloadingIRNode.get_type_as_str(type)}_{block.label}"#{OffloadingIRNode.CTR}"
-        
+        close.open = open
+
         OffloadingIRNode.CTR += 1
         return open
     
@@ -166,8 +173,7 @@ class OffloadToAccelerator(ppl.Pass):
         # step 2 & 3: copy analysis & create IR to store analysis results
         print("--- Analysis---")
         sdfgIR = self.sdfg_to_IR(sdfg)
-        print(f"\n--- IR ---\n{sdfgIR}\n")
-
+        
         # step 4: insert copies based on IR
         print("--- Copies ---")
         self.eval_IR(sdfg, sdfgIR)
@@ -560,11 +566,11 @@ class OffloadToAccelerator(ppl.Pass):
         # set final close node where all arrays must be on CPU again
         end.append_node(IR.close)
         IR.close.cpu_set = all_arrays
-
-        print(f"--- early IR ---\n{IR}\n\n")
+    
+        print(f"--- early IR ---\n{IR}\n")
 
         self._propagate_arrays(IR)
-        self._fill_in_successor_copies(IR)
+        #self._fill_in_successor_copies(IR)
         
         print(f"--- full IR ---\n{IR}\n\n")
 
@@ -699,7 +705,18 @@ class OffloadToAccelerator(ppl.Pass):
     def __populate_open_node_sets(self, IR:OffloadingIRNode):
         assert IR.is_open_node(), str(IR)
 
-        # define data gathering function
+        # Behavior 1: 
+        # if there are no or multiple direct children, leave the sets empty & simply propagate later
+        # there is no good heuristic to choose from here, which copies to make and which not
+        # (not without significantly more analysis)
+        children = IR.next
+        if len(children) != 1:
+            return
+        
+        # Behavior 2: 
+        # if there is a single direct child, then analyse the section & find first known location of each used array
+        # if the graph splits later, the first of all possible paths is chosen for analysis
+        # this can lead to unnecessary copies in the other paths
         location_on_gpu = {}
         def gather_data(node:OffloadingIRNode):
             for array_name in node.gpu_set:
@@ -716,7 +733,8 @@ class OffloadToAccelerator(ppl.Pass):
         # populate IR sets
         IR.gpu_set = {array_name for array_name in location_on_gpu if location_on_gpu[array_name]}
         IR.cpu_set = {array_name for array_name in location_on_gpu if not location_on_gpu[array_name]}
-    
+
+
     def __populate_close_node_sets(self,IR:OffloadingIRNode):
         assert IR.is_open_node(), str(IR)
 
@@ -821,16 +839,17 @@ class OffloadToAccelerator(ppl.Pass):
 
     def eval_IR(self, sdfg, IR:OffloadingIRNode):
         # modifies SDFG in place & inserts all necessary copies
-        def insert_copies(node:OffloadingIRNode, next:OffloadingIRNode):
+        def insert_copies(node, next, node_block, next_block):
             gpu_copies = node.cpu_set & next.gpu_set
             if gpu_copies:
                 print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
-                self.create_interstate_copy(sdfg, node.block, next.block, gpu_copies, to_gpu=True)
+                self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
                 
             cpu_copies = node.gpu_set & next.cpu_set
             if cpu_copies:
                 print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
-                self.create_interstate_copy(sdfg, node.block, next.block, cpu_copies, to_gpu=False)
+                self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
+
 
         def eval(node:OffloadingIRNode):
             for next in node.next:
@@ -838,10 +857,40 @@ class OffloadToAccelerator(ppl.Pass):
                 if node.cpu_set & node.gpu_set:
                     raise NotImplementedError(f"This pass does not support copies within a single state. State {node.debug_name} uses arrays {node.cpu_set & node.gpu_set} on both cpu and gpu.")
 
-                insert_copies(node, next)
+                # edge case: if this condition is true, both blocks are None, can't insert
+                if node.type == OffloadingIRNode.CLOSE and next.type == OffloadingIRNode.CLOSE:
+                    insert_copies(node, next, node.open.block, None)
+                else: # the usual: copies between node -> next
+                    insert_copies(node, next, node.block, next.block)
+                    
 
-                if node.type == OffloadingIRNode.OPEN_LOOP:
-                    insert_copies(node.close, node)
+            # loop copies if applicable
+            if node.type == OffloadingIRNode.OPEN_LOOP:
+                top = node # INV: top.type == OffloadingIRNode.OPEN_LOOP
+                bottom = node.close # INV: bottom.type == OffloadingIRNode.CLOSE
+                tails = OffloadingIRNode.get_all_tails(top) # INV: all are STATE or CLOSE if there's a nested loop
+
+                gpu_copies = bottom.cpu_set & top.gpu_set
+                print(f"LOOP COPIES for {node.debug_name}: {gpu_copies}")
+
+                if gpu_copies:
+                    for tail in tails:
+                        print(f"insert LOOP gpu copy for {gpu_copies} between {tail.debug_name} and {bottom.debug_name}")
+                        
+                        if tail.type == OffloadingIRNode.CLOSE: # and bottom.type == OffloadingIRNode.CLOSE:
+                            self.create_interstate_copy(sdfg, tail.open.block, None, gpu_copies, to_gpu=True)
+                        else:
+                            self.create_interstate_copy(sdfg, tail.block, None, gpu_copies, to_gpu=True)
+
+                cpu_copies = bottom.gpu_set & top.cpu_set
+                if cpu_copies:
+                    for tail in tails:
+                        print(f"insert LOOP cpu copy for {cpu_copies} between {tail.debug_name} ({tail.type}) and {bottom.debug_name} ({bottom.type})")
+                        if tail.type == OffloadingIRNode.CLOSE:
+                            self.create_interstate_copy(sdfg, tail.open.block, None, cpu_copies, to_gpu=False)
+                        else:
+                            self.create_interstate_copy(sdfg, tail.block, None, cpu_copies, to_gpu=False)
+
 
         self.__traverse_IR(IR, eval)
 
@@ -860,7 +909,7 @@ class OffloadToAccelerator(ppl.Pass):
         copy_state : SDFGState
         label = f"copy_{"_".join(sorted(clean_array_names))}_{'to_gpu' if to_gpu else 'to_cpu'}"
         
-        if state2:
+        if state2 is not None:
             print("INSERT COPY BEFORE ", state2)
             target_graph = state2.parent_graph
             assert target_graph is not None, "copy insertion requires a parent control-flow graph (s2)"
@@ -869,13 +918,14 @@ class OffloadToAccelerator(ppl.Pass):
             if state2 is target_graph.start_block: 
                 target_graph.start_block = target_graph.node_id(copy_state) # copy state becomes new start block
         
-        else:
+        elif state1 is not None:
             print("INSERT COPY AFTER ", state1)
-            target_graph = state1.parent_graph
+            target_graph = state1.parent_graph if state1.parent_graph else state1
             assert target_graph is not None, "copy insertion requires a parent control-flow graph (s1)"
 
             copy_state = target_graph.add_state_after(state1, label = label)
-        
+
+
         # build all copies inside the new state (arrays were created and located previously)
         copy_map = {(name if to_gpu else name + "_gpu"): (name + "_gpu" if to_gpu else name) for name in clean_array_names}
 
