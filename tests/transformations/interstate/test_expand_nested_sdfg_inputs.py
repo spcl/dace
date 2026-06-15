@@ -199,21 +199,22 @@ def test_expand_terminates_on_already_full_inputs():
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=False,
-                   reason='ExpandNestedSDFGInputs produces a numerically-divergent SDFG '
-                   'on the ICON gather shape after Inline: write rows that should be '
-                   "untouched receive data, suggesting the inner memlet's per-iter "
-                   "offset isn't propagated through every consumer correctly. Marked "
-                   'as xfail so the regression is documented and watched while the '
-                   'transformation owner fixes it; numerics may flip to pass earlier '
-                   'than expected (strict=False).')
 def test_icon_zekinh_gather_numerics_via_expand_then_inline():
     """End-to-end: post-LoopToMap, Expand + Inline must preserve numerics.
 
     Runs the ICON kernel against numpy-generated random inputs (with
     valid in-bounds index arrays) and asserts the post-rewrite SDFG
     produces the same outputs as a fresh, untransformed reference.
-    """
+
+    Regression (fixed 2026-06-15): the gather index lives in an
+    interstate-edge assignment ``edge_idx_index = edge_idx[0, 0, 0]``.
+    When ``ExpandNestedSDFGInputs`` widened the ``edge_idx`` connector to
+    the full array it must uncollapse that subscript to
+    ``edge_idx[jb, jc, 0]``, but ``_uncollapse_subscript`` compared the
+    subscript base via ``base == sympy.Symbol(outer_name)`` -- which is
+    always False for a ``dace.symbolic.symbol`` (the dtype-carrying
+    subclass). The offset was never applied, so every lane gathered
+    ``edge_idx[0, 0, 0]``. Fixed by comparing the base by name."""
     from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 
     nb, nlev, nproma = 4, 6, 8

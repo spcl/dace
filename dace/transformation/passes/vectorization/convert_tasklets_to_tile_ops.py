@@ -1118,10 +1118,20 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 inner *= widths[q]
             parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
         flat = " + ".join(parts) if parts else "0"
+        # Reference the source by its descriptor kind -- NO C-style cast (user
+        # direction 2026-06-15: "we should never have c-type casts"). A
+        # ``dace.data.Scalar`` connector is passed by value (``T _in``) so it is
+        # referenced bare; a length-1 ``Array`` connector is passed as a pointer
+        # (``T* _in``) so its sole element is ``_in[0]``. The destination tile's
+        # element type drives the implicit conversion -- a cast is both
+        # unnecessary and (for the pointer form) a compile error.
+        import dace.data as _dd
+        src_desc = sdfg.arrays.get(src_edge.data.data)
+        src_ref = "_in" if isinstance(src_desc, _dd.Scalar) else "_in[0]"
         code_lines = []
         for d in range(K):
             code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
-        code_lines.append(f"{'    ' * K}_out[{flat}] = ({dtype.ctype})(_in);")
+        code_lines.append(f"{'    ' * K}_out[{flat}] = {src_ref};")
         for d in reversed(range(K)):
             code_lines.append(f"{'    ' * d}}}")
         tasklet = inner_state.add_tasklet(
@@ -1186,7 +1196,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         code_lines = []
         for d in range(K):
             code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
-        code_lines.append(f"{'    ' * K}_out[{flat}] = ({dtype.ctype})({expr});")
+        # No C-style cast (user direction 2026-06-15): the destination tile's
+        # element type drives the implicit conversion of the broadcast literal /
+        # symbolic expression.
+        code_lines.append(f"{'    ' * K}_out[{flat}] = ({expr});")
         for d in reversed(range(K)):
             code_lines.append(f"{'    ' * d}}}")
         tasklet = inner_state.add_tasklet(
@@ -1556,9 +1569,23 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         converted = 0
         for inner_state in inner_sdfg.states():
-            for node in list(inner_state.nodes()):
-                if not isinstance(node, Tasklet):
-                    continue
+            tasklets = [n for n in inner_state.nodes() if isinstance(n, Tasklet)]
+            # Convert in two phases so ITE arm sources are already full tiles
+            # when the ITE is planned. An ITE arm that is itself the output of a
+            # tile-PRODUCING op (e.g. a ``_then_b = 0.0`` const-assign that
+            # ``_convert_const_assign`` widens to a ``(W,)`` tile) must be wired
+            # to the TileITE directly. If the ITE is planned FIRST, its arm
+            # source is still the un-widened ``(1,)`` scalar, so ``_plan_arm``
+            # spuriously routes it through ``_broadcast_scalar_to_tile`` -- and
+            # once the producer later widens it to a real tile, that broadcast
+            # reads a tile pointer as a scalar (lane-0-only / malformed code).
+            # Phase 1 lowers every non-ITE tasklet (the producers); phase 2 the
+            # ITEs (the consumers).
+            phase1 = [t for t in tasklets if self._detect_ite(t) is None]
+            phase2 = [t for t in tasklets if self._detect_ite(t) is not None]
+            for node in phase1 + phase2:
+                if node not in inner_state.nodes():
+                    continue  # already removed/replaced by an earlier conversion
                 if self._convert_one(inner_state, node, iter_vars):
                     converted += 1
         return converted

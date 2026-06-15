@@ -269,7 +269,16 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
     # ``args[1:]`` are the indices.
     def _uncollapse_subscript(*args):
         base = args[0]
-        if base == sympy.Symbol(outer_name):
+        # Compare by NAME, not ``base == sympy.Symbol(outer_name)``: the
+        # subscript base is a ``dace.symbolic.symbol`` (DaCe's dtype-carrying
+        # ``sympy.Symbol`` subclass), which does NOT compare equal to a freshly
+        # built plain ``sympy.Symbol(outer_name)``. The old equality silently
+        # failed, so an interstate-edge gather index like
+        # ``edge_idx_index = edge_idx[0, 0, 0]`` was rebuilt verbatim instead of
+        # uncollapsed to ``edge_idx[jb, jc, 0]`` -- every lane then gathered the
+        # same element. (The dataflow-memlet path is unaffected: it rewrites
+        # subset ranges directly, never comparing symbols.)
+        if str(base) == outer_name:
             new_indices = []
             for idx, offset, collapsed in zip(args[1:], offset_dims, collapsed_dims):
                 if collapsed:
@@ -281,8 +290,12 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
         return symbolic.Subscript(*args)
 
     def _uncollapse_scalar(node):
-        A = sympy.Symbol(outer_name)
-        return node.subs(A, symbolic.Subscript(A, *offset_dims))
+        # ``node`` is the actual ``outer_name`` symbol pulled from the
+        # expression (a ``dace.symbolic.symbol``); subscript it with the
+        # per-axis offsets directly. Building a plain ``sympy.Symbol`` and
+        # calling ``node.subs`` would not match the dace symbol (see
+        # :func:`_uncollapse_subscript`), leaving the reference uncollapsed.
+        return symbolic.Subscript(node, *offset_dims)
 
     # Per user direction 2026-06-10: "On memlets we use subset 0,0,1 but on codeblocks we
     # treat scalar as if it is a symbol." A true ``dace.data.Scalar`` source has no

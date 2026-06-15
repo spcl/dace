@@ -82,6 +82,41 @@ def _in_ctype(node, parent_state, parent_sdfg, in_conn: str) -> str:
     return parent_sdfg.arrays[e.data.data].dtype.ctype
 
 
+def _resolve_operand_ctype(node, parent_state, parent_sdfg, conns, out_dtype: str) -> str:
+    """Resolve the C++ type the VALUE operands share (mirror of
+    ``ExpandTileBinopPure._operand_dtype``).
+
+    Prefer a data operand's (``_TILE`` / ``_SCALAR``) descriptor dtype; else a
+    symbol operand's declared type; else fall back to ``out_dtype``. Used to
+    decide whether the single-``T`` ISA runtime can carry this op (operands and
+    output share a type) or whether it must defer to the ``pure`` expansion
+    (operands and output differ -- a comparison's ``double`` operands vs ``bool``
+    output). The ISA runtime is type-strict (``out``, ``a``, ``b`` are all
+    ``T*``), so a mismatch would force a value-truncating ``(out_dtype)`` cast on
+    the operands; per user direction 2026-06-15 such a C-style cast is always
+    incorrect code, so we route to ``pure`` instead.
+    """
+    in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
+    for kind, conn in conns:
+        if kind in (_TILE, _SCALAR) and conn in in_e:
+            return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
+    for kind, conn, expr in [(k, c, e) for (k, c), e in zip(conns, _operand_exprs(node, conns))]:
+        if kind == _SYMBOL and expr:
+            try:
+                for s in dace.symbolic.symlist(dace.symbolic.pystr_to_symbolic(expr)):
+                    if str(s) in parent_sdfg.symbols:
+                        return parent_sdfg.symbols[str(s)].ctype
+            except Exception:  # noqa: BLE001
+                pass
+    return out_dtype
+
+
+def _operand_exprs(node, conns):
+    """Per-operand inline ``expr_*`` strings, aligned with ``conns`` order."""
+    mapping = {"_a": node.expr_a, "_b": getattr(node, "expr_b", None)}
+    return [mapping.get(conn) for _kind, conn in conns]
+
+
 def _scalar_ref(conn: str, desc, subset) -> str:
     """C++ reference for a Scalar/broadcast operand connector.
 
@@ -114,6 +149,18 @@ def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_c")
+    # The single-``T`` ISA runtime cannot carry an op whose operands and output
+    # differ in type (a comparison: ``double`` operands, ``bool`` output). The
+    # old code forced ``T = out_dtype`` and cast each operand to it -- truncating
+    # ``(bool)1e-12 -> 1`` and corrupting the predicate. Defer to the ``pure``
+    # expansion (which keeps operands at their own dtype and stores the result
+    # with the natural implicit conversion) instead of emitting an incorrect
+    # C-style cast (user direction 2026-06-15).
+    operand_ctype = _resolve_operand_ctype(node, parent_state, parent_sdfg, [(node.kind_a, "_a"), (node.kind_b, "_b")],
+                                           out_dtype)
+    if operand_ctype != out_dtype:
+        from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure
+        return ExpandTileBinopPure.expansion(node, parent_state, parent_sdfg)
     pre = []
 
     def operand(kind, conn, expr):
@@ -174,6 +221,13 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_c")
+    # Defer mixed operand/output-type unops (e.g. logical ``not`` of a numeric
+    # tile -> bool) to the ``pure`` expansion rather than casting the operand to
+    # the output type (user direction 2026-06-15: never emit a C-style cast).
+    operand_ctype = _resolve_operand_ctype(node, parent_state, parent_sdfg, [(node.kind_a, "_a")], out_dtype)
+    if operand_ctype != out_dtype:
+        from dace.libraries.tileops.nodes.tile_unop import ExpandTileUnopPure
+        return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     pre = []
     if node.kind_a == _TILE:
         src = parent_sdfg.arrays[in_e["_a"].data.data].dtype.ctype
@@ -230,7 +284,8 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
             f"(_o, _mask, _t, _e, nullptr);")
     return nodes.Tasklet(
         label=f"{node.label}_{suffix}",
-        inputs={c: None for c in ("_mask", "_t", "_e")},
+        inputs={c: None
+                for c in ("_mask", "_t", "_e")},
         outputs={"_o": None},
         code=call,
         language=dace.dtypes.Language.CPP,
@@ -256,13 +311,19 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     ``stride`` argument; the header SIMD-loads when it is 1 and falls back to a
     scalar gathered read otherwise.
 
+    ``src_kind != 'Tile'`` (a broadcast ``Symbol`` literal or a ``Scalar``
+    length-1 read) has no per-lane ``_src`` tile pointer, so the K=1 runtime
+    ``tile_load`` (which streams ``_src`` into ``_dst``) cannot express it; the
+    pure expansion broadcasts the literal / scalar to every lane instead.
+    Delegate to it -- symmetric to the ``src_kind != 'Tile'`` fallback in
+    :func:`make_store_tasklet`.
+
     When ``gather_dims`` is set the runtime ``tile_load`` does not apply -- it
     has no per-lane index input -- so the lowering delegates to
     :class:`ExpandTileLoadPure`, which emits the per-lane indirect read using
-    the ``_idx_<d>`` connectors (design section 9.3). Mirrors the
-    non-``Tile``-``src_kind`` fallback in :func:`make_store_tasklet`.
+    the ``_idx_<d>`` connectors (design section 9.3).
     """
-    if node.gather_dims:
+    if node.src_kind != "Tile" or node.gather_dims:
         from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
         return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
     # REPLICATE codegen (user direction 2026-06-10): the K=1 intrinsic
