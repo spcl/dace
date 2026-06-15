@@ -123,6 +123,26 @@ def test_length_one_view_is_not_scalarized():
     assert isinstance(sdfg.arrays["a"], dd.Scalar)
 
 
+def test_length_one_view_source_is_not_scalarized():
+    """A length-1 Array that BACKS a length-1 View must stay an Array: a
+    View needs an Array source to alias (a ``Scalar`` source is emitted
+    ``const`` and a write through the view fails to compile).  Both the
+    view and its source are kept; an unrelated length-1 array still folds."""
+    sdfg = dace.SDFG("len1_view_src")
+    st = sdfg.add_state("s")
+    sdfg.add_array("src", [1], dace.float64, transient=True)
+    sdfg.add_view("vw", [1], dace.float64)
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    sn = st.add_access("src")
+    vn = st.add_access("vw")
+    st.add_edge(sn, None, vn, "views", dace.Memlet(data="src", subset="0"))
+    rewritten = ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
+    assert "src" not in rewritten
+    assert isinstance(sdfg.arrays["src"], dd.Array) and not isinstance(sdfg.arrays["src"], dd.View)
+    assert isinstance(sdfg.arrays["vw"], dd.View)
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+
+
 def test_opaque_scalar_is_not_arrayized():
     """The symmetric inverse: an ``opaque`` ``Scalar`` keeps its scalar
     form under ``ConvertScalarsToLengthOneArrays`` while a plain-dtype

@@ -65,9 +65,28 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         return False
 
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
+        from dace.sdfg import nodes as _nd
+        from dace.sdfg import utils as _sdutil
         scalarized: Set[str] = set()
+        # A length-1 Array that BACKS a View (some View's viewed edge points
+        # at it) must not be scalarized either: a View needs an Array source
+        # to alias -- a ``Scalar`` source is emitted ``const`` in codegen, so
+        # a write through the view (``view[0] = ...``) fails to compile
+        # (``assignment of read-only location``).  Collect every such source.
+        view_sources: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, _nd.AccessNode) and isinstance(sdfg.arrays.get(node.data), dace.data.View):
+                    ve = _sdutil.get_view_edge(state, node)
+                    if ve is None:
+                        continue
+                    other = ve.src if ve.dst is node else ve.dst
+                    if isinstance(other, _nd.AccessNode):
+                        view_sources.add(other.data)
         for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
             if isinstance(arr.dtype, dace.dtypes.opaque):
+                continue
+            if arr_name in view_sources:
                 continue
             # A length-1 ``View`` (incl. ``ArrayView``) subclasses ``Array``
             # but must NOT be scalarized: a View is an alias into another
