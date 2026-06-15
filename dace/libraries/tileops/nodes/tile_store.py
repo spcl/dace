@@ -190,6 +190,26 @@ class ExpandTileStoreSVE(ExpandTransformation):
         return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "sve")
 
 
+def _stride_dim_may_scatter(p: int, dst_dims: Optional[Tuple[int, ...]], gather_dims: Tuple[int, ...]) -> bool:
+    """Whether tile dim ``p`` may legitimately carry a zero ``dim_strides`` entry.
+
+    A zero stride on tile dim ``p`` means lane ``__l<p>`` does not advance the dest address. That
+    is legal when ``p`` SCATTERS -- its dest dim is in ``gather_dims`` and the per-lane address
+    comes from ``_idx_<d>`` (symmetric to ``TileLoad`` gather, which never rejects zero strides).
+    On a non-scatter dim a zero stride collapses all ``W_p`` lanes onto one address and races
+    without WCR.
+
+    ``dst_dims=None`` selects the innermost-K default binding whose exact dest-dim indices need
+    ``dst_ndim`` (not known at construction time), so the precise per-dim check defers to
+    :meth:`TileStore.validate`; here we report ``True`` whenever any scatter dim exists.
+    """
+    if not gather_dims:
+        return False
+    if dst_dims is None:
+        return True
+    return dst_dims[p] in gather_dims
+
+
 @library.node
 class TileStore(nodes.LibraryNode):
     """Store a K-dim tile back into a global array.
@@ -323,10 +343,6 @@ class TileStore(nodes.LibraryNode):
         if src_kind == "Symbol" and not src_expr:
             raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
         resolved_dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
-        if any(s == 0 for s in resolved_dim_strides) and not wcr:
-            raise ValueError(f"TileStore: dim_strides {resolved_dim_strides!r} contains a 0 (collapse-out / "
-                             "broadcast write); WCR is required to avoid races. Pass ``wcr='lambda a, b: a + b'`` "
-                             "(or another reduction lambda) when collapsing tile dims to a shared destination.")
         # Validate gather_dims: sorted, unique, non-negative dest-dim indices.
         # The upper bound (max(gather_dims) < dst_ndim) is checked at validate() time since
         # ``dst_ndim`` depends on the wired ``_dst`` connector descriptor (design section 9.3).
@@ -334,6 +350,17 @@ class TileStore(nodes.LibraryNode):
         if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
             raise ValueError(f"TileStore: gather_dims must be a sorted tuple of unique non-negative "
                              f"dest-dim indices; got {g!r}")
+        # Zero-stride collapse guard, narrowed to exempt SCATTER tile dims (see
+        # :func:`_stride_dim_may_scatter`). A zero on a scatter dim addresses per-lane via
+        # ``_idx_<d>`` (legal, symmetric to ``TileLoad``); a zero on a non-scatter dim collapses
+        # ``W_p`` lanes onto one address and races without ``wcr``. The exact per-dim mapping when
+        # ``dst_dims is None`` defers to ``validate()`` (needs ``dst_ndim``).
+        if not wcr and any(s == 0 and not _stride_dim_may_scatter(p, dst_dims, g)
+                           for p, s in enumerate(resolved_dim_strides)):
+            raise ValueError(f"TileStore: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
+                             "dim (collapse-out / broadcast write); WCR is required to avoid races. Pass "
+                             "``wcr='lambda a, b: a + b'`` (or another reduction lambda) when collapsing tile "
+                             "dims to a shared destination, or wire the dim as a scatter (gather_dims + _idx).")
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
@@ -397,6 +424,23 @@ class TileStore(nodes.LibraryNode):
             if desc.dtype not in allowed_dtypes:
                 raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
                                  f"{{int32, int64}} (design section 10.4)")
+        # Zero-stride collapse guard (precise; design section 3.5 + 5.1). A zero ``dim_strides[p]``
+        # is legal only when tile dim ``p`` scatters -- its dest dim is in ``gather_dims`` so the
+        # per-lane address comes from ``_idx_<d>``. On any other dim a zero stride collapses all
+        # ``W_p`` lanes onto one dest address and races without ``wcr``. ``dst_dims`` defaults to the
+        # innermost K dest dims; ``dst_ndim`` is read from the wired ``_dst`` edge here.
+        if not self.wcr:
+            K = len(widths)
+            resolved_dst = (list(self.dst_dims)
+                            if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape))))
+            g_set = set(self.gather_dims)
+            collapsed = [p for p, s in enumerate(self.dim_strides) if s == 0 and resolved_dst[p] not in g_set]
+            if collapsed:
+                raise ValueError(
+                    f"{self.label}: dim_strides {tuple(self.dim_strides)} has a 0 on non-scatter tile "
+                    f"dim(s) {collapsed} (dest dims {[resolved_dst[p] for p in collapsed]} not in gather_dims "
+                    f"{tuple(self.gather_dims)}); a collapse-out / broadcast write races without WCR. Provide "
+                    f"``wcr`` or wire the dim as a scatter (gather_dims + _idx).")
         # Full-tile write contract (per user direction 2026-06-09): the destination memlet's
         # per-dim subset extents must match ``widths`` exactly under the ``dst_dims`` permutation.
         # Anything else -- partial-tile writes, single-element writes, scalar writes to global --

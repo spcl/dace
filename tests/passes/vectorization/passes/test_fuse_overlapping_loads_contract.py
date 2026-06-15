@@ -25,7 +25,7 @@ the multi-array case, simply rely on the harness's bit-exact check).
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import numpy as np
 import pytest
 
@@ -85,9 +85,17 @@ def test_fuse_inert_on_disjoint_reads():
 
 def test_fuse_multi_array_kernel_e2e():
     """Two distinct arrays each with their own 3-point stencil in the
-    same map: e2e correctness only. The harness asserts bit-exact
-    equality against the unvectorized reference — the per-array
-    structural shape is implementation-defined (not claimed here)."""
+    same map: e2e correctness of the overlapping-load fusion.
+
+    Pinned to ``vectorize_config="legacy_cpu"``: overlapping-load fusion is a
+    LEGACY-``VectorizeCPU`` optimization. ``VectorizeCPUMultiDim`` has no
+    fuse knob -- ``ExpandNestedSDFGInputs`` widens every body-NSDFG boundary
+    memlet to the full source array, so there are no per-tile windows to fuse
+    (the knob was removed 2026-06-15). Running this fusion-correctness check on
+    the tile path would therefore exercise the plain tile lowering, not fusion.
+    The tile path's own correctness on this kernel shape is covered by
+    :func:`test_inner_dim_overlapping_stencil_tile_nodes_e2e`. The harness
+    asserts bit-exact equality against the unvectorized reference."""
     _S = 64
     run_vectorization_test(
         dace_func=_multi_array_stencils,
@@ -101,6 +109,34 @@ def test_fuse_multi_array_kernel_e2e():
         sdfg_name="fuse_multi_array_e2e",
         fuse_overlapping_loads=True,
         insert_copies=False,
+        vectorize_config="legacy_cpu",
+    )
+
+
+def test_inner_dim_overlapping_stencil_tile_nodes_e2e():
+    """Inner-dim overlapping 3-point stencil on the ``tile_nodes`` path.
+
+    Regression (fixed 2026-06-15): ``ExpandNestedSDFGInputs`` widened the
+    body NSDFG's boundary memlet ``A[i, j:j+3]`` to the full array but, when
+    re-expressing the full-rank inner reads ``A[0,0] / A[0,1] / A[0,2]``
+    against it, dropped the intra-window offset and collapsed all three to
+    ``A[i,j]`` -- so the kernel computed ``3*A[i,j]`` shifted one column
+    instead of the stencil sum. The fix (full-rank 1:1 inner-subset indexing
+    in :func:`_rewrite_memlets_with_offset`) preserves the per-access offset.
+    The harness asserts bit-exact equality against the unvectorized
+    reference on the ``VectorizeCPUMultiDim`` (K=2 tile) path."""
+    _S = 64
+    run_vectorization_test(
+        dace_func=_multi_array_stencils,
+        arrays={
+            "A": np.random.random((_S, _S)),
+            "B": np.random.random((_S, _S)),
+            "C": np.zeros((_S, _S)),
+        },
+        params={"S": _S},
+        vector_width=8,
+        sdfg_name="stencil_tile_nodes_e2e",
+        vectorize_config="tile_nodes",
     )
 
 

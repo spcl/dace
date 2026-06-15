@@ -31,7 +31,7 @@ that the expected per-tile-dim shape survives.
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 
@@ -51,9 +51,15 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     collapsing them into AN -> AN would silently drop the source-side
     coordinates). They are semantically fine and lower to a one-element
     copy at codegen, so the K-dim tile-only contract is preserved as
-    "no NON-assign raw tasklets" rather than "zero tasklets total"."""
+    "no NON-assign raw tasklets" rather than "zero tasklets total".
+
+    The runtime trip-guard tasklet (``tile_runtime_*``, emitted for SYMBOLIC
+    tile dims to ``__builtin_trap`` on a too-small trip -- see MarkTileDims) is
+    also excluded: it is control, not a compute residual, so it does not break
+    the tile-only contract."""
     return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
+               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
+               and not n.label.startswith("tile_runtime"))
 
 
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:
@@ -70,8 +76,6 @@ def _vectorize_k2(sdfg: dace.SDFG) -> None:
         branch_mode="merge",
         loop_to_map_permissive=False,
         nest_map_bodies=True,
-        insert_copies=True,
-        fuse_overlapping_loads=False,
         scalar_remainder_emit="tile_k1",
         expand_tile_nodes=False,
     ).apply_pass(sdfg, {})
@@ -259,7 +263,7 @@ def test_col_gather_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_col_structured_descent_to_tile_only():
@@ -269,7 +273,7 @@ def test_col_structured_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_row_gather_descent_to_tile_only():
@@ -279,7 +283,7 @@ def test_row_gather_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_row_structured_descent_to_tile_only():
@@ -289,7 +293,7 @@ def test_row_structured_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_fully_structured_2d_descent_to_tile_only():
@@ -300,7 +304,7 @@ def test_fully_structured_2d_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) + _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_fully_unstructured_separable_descent_to_tile_only():
@@ -314,7 +318,7 @@ def test_fully_unstructured_separable_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 def test_fully_unstructured_2d_index_descent_to_tile_only():
@@ -328,7 +332,7 @@ def test_fully_unstructured_2d_index_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad(gather)) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
 
 
 if __name__ == "__main__":

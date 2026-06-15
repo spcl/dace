@@ -554,8 +554,7 @@ def _symbol_referenced_outside_defining_assignment(sdfg: SDFG, sym: str) -> bool
                     return True
     for region in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(region, LoopRegion):
-            for attr in ("loop_condition", "update_statement", "init_statement"):
-                code = getattr(region, attr, None)
+            for code in (region.loop_condition, region.update_statement, region.init_statement):
                 if code is None:
                     continue
                 if dace.symbolic.symbols_in_code(code.as_string, potential_symbols=only):

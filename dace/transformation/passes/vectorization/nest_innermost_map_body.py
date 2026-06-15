@@ -28,10 +28,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     a multiple of ``vector_width`` are skipped by default: they need no
     remainder split, and wrapping them would perturb downstream
     strided/gather detection. Set ``nest_provably_divisible=True`` to
-    nest them anyway — required by the SVE-style chain, where the
-    per-core block is deliberately divisible (analyze-clean-then-Min)
-    yet still needs a NestedSDFG body so the global iteration mask can
-    be attached.
+    nest them anyway — required by the masked-tail tile path, where the
+    provably-divisible interior still needs a NestedSDFG body so the
+    tile iteration mask can be attached.
     """
 
     CATEGORY: str = "Vectorization Preparation"
@@ -41,9 +40,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         dtype=bool,
         default=False,
         desc="Also nest innermost maps whose trip is provably a multiple of "
-        "``vector_width`` (default skips them). The SVE-style chain sets this: "
-        "its per-core block is intentionally divisible but still needs a "
-        "NestedSDFG body for the global iteration mask.")
+        "``vector_width`` (default skips them). The masked-tail tile path sets "
+        "this: its provably-divisible interior still needs a NestedSDFG body "
+        "for the tile iteration mask.")
 
     def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False):
         super().__init__()
@@ -75,6 +74,42 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             pass
         return False
 
+    def _strip_boundary_other_subsets(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
+        """Drop the stale ``other_subset`` on the body-NSDFG's boundary edges.
+
+        ``nest_state_subgraph`` deep-copies the original map-body boundary memlet
+        for the reconnected outer edge. When the body staged a global through a
+        scalar element (a frontend ``c_slice``-style ``Scalar``), that original
+        memlet was a copy *into the scalar* — e.g. ``a[jk, jc] -> c_slice[0]`` —
+        so it carried ``other_subset = [0]`` describing the rank-1 scalar side.
+        The reconnected outer edge now feeds the body-NSDFG connector ``a``
+        (whose descriptor is the rank-2 ``(1, 1)`` element), and DaCe
+        ``validate()`` resolves the edge's ``other_subset`` against the
+        memlet-path *source* AccessNode ``a`` (rank 2). The rank-1 ``[0]`` then
+        fails ``Memlet other_subset does not match node dimension``.
+
+        The boundary edge is a plain pass-through into the connector: the inner
+        descriptor already defines the connector-side shape, so ``other_subset``
+        is redundant there (the same convention DaCe uses everywhere for
+        NSDFG / lib-node connector edges, and exactly what the downstream
+        :class:`~dace.transformation.interstate.expand_nested_sdfg_inputs.ExpandNestedSDFGInputs`
+        clears when it widens these memlets). Clearing it here makes the SDFG
+        valid immediately after this pass rather than transiently malformed.
+
+        A memlet edge whose ``data is None`` is a structural dependency edge, not
+        a data movement — leave it untouched.
+
+        :param state: The state holding the freshly nested body NSDFG.
+        :param nsdfg_node: The body :class:`~dace.sdfg.nodes.NestedSDFG` node.
+        """
+        for edge in (*state.in_edges(nsdfg_node), *state.out_edges(nsdfg_node)):
+            mem = edge.data
+            if mem is None or mem.data is None:
+                # Structural dependency edge -- skip.
+                continue
+            if mem.other_subset is not None:
+                mem.other_subset = None
+
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         """Wrap every eligible innermost map body in a NestedSDFG.
 
@@ -95,8 +130,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                 continue
             # Provably-divisible maps need no remainder; leave the body
             # un-nested so the divisible path matches the old behaviour.
-            # SVE-style overrides this (its clean block is divisible by
-            # design but still needs a body NSDFG for the global mask).
+            # ``nest_provably_divisible`` overrides this (the masked-tail
+            # interior is divisible by design but still needs a body NSDFG
+            # for the tile mask).
             if not self.nest_provably_divisible and self._trip_is_provably_divisible(n):
                 continue
             # Skip if the body already collapses to a single NestedSDFG.
@@ -115,7 +151,8 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             if not body_nodes:
                 continue
             subgraph = SubgraphView(g, body_nodes)
-            nest_state_subgraph(g.sdfg, g, subgraph, name=f"{n.label}_body")
+            nsdfg_node = nest_state_subgraph(g.sdfg, g, subgraph, name=f"{n.label}_body")
+            self._strip_boundary_other_subsets(g, nsdfg_node)
             nested += 1
         if nested:
             # After nesting bodies, any WCR sink that previously flowed from a

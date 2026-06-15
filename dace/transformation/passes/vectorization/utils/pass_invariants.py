@@ -26,11 +26,11 @@ Each pass calls the checkers directly from its ``apply_pass``:
 
 No mixin, no inheritance, no env gate. Always runs.
 """
-from typing import Callable, Optional, Tuple
+from typing import Optional, Tuple
 
 import dace
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 
 
 def assert_invariant(violation: Optional[str], pass_name: str, description: str) -> None:
@@ -61,6 +61,13 @@ def no_memlet_dim_mismatch(scope) -> Optional[str]:
     descriptors that may have different ranks (e.g. a 4D slice copied
     into a 1D flat buffer) so the two subsets are intentionally
     different-rank when the descriptors are.
+
+    ``MapEntry`` / ``MapExit`` pass-through edges are likewise exempt: they are
+    scope plumbing, not the tasklet / lib-node / NSDFG-connector <-> AN edges
+    this invariant targets, and they legitimately carry a different-rank
+    ``other_subset`` when one side is a scalar staging element (e.g. a 2-D point
+    ``a[jk, jc]`` copied through the map into the scalar ``c_slice`` after
+    ``ConvertLengthOneArraysToScalars``).
     """
     states = _iter_states(scope)
     for sd, state in states:
@@ -72,9 +79,50 @@ def no_memlet_dim_mismatch(scope) -> Optional[str]:
             # subsets when the two descriptors have different ranks.
             if isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode):
                 continue
+            # Scope pass-through edges (Map entry/exit) are out of scope -- see docstring.
+            if isinstance(edge.src, (MapEntry, MapExit)) or isinstance(edge.dst, (MapEntry, MapExit)):
+                continue
             if len(mem.subset.size()) != len(mem.other_subset.size()):
                 return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset dim={len(mem.subset.size())} "
                         f"!= other_subset dim={len(mem.other_subset.size())}")
+    return None
+
+
+def no_transient_scalar_stores(scope) -> Optional[str]:
+    """No TILE (multi-element) memlet may be stored into a TRANSIENT Scalar.
+
+    Per the K-dim design (user direction 2026-06-14): inside a body NSDFG a scalar
+    *write* only targets a NON-transient program output (e.g. a reduction result,
+    section 3.5); a TILE result written into a TRANSIENT scalar is a widening miss
+    -- ``WidenAccesses`` should have widened that transient to a tile so the edge
+    is ``tile -> tile``. This is the clean replacement for the old
+    ``_maybe_elide_scalar_passthrough`` patch-fix (removed).
+
+    Scalar load-staging -- a single element copied into a transient scalar for a
+    broadcast, e.g. ``a_const`` from ``a[0]`` feeding a ``TileLoad(src_kind=
+    "Scalar")`` -- is single-element and therefore allowed.
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success.
+    """
+    for sd, state in _iter_states(scope):
+        for edge in state.edges():
+            dst = edge.dst
+            if not isinstance(dst, AccessNode):
+                continue
+            desc = sd.arrays.get(dst.data)
+            if not (isinstance(desc, dace.data.Scalar) and desc.transient):
+                continue
+            mem = edge.data
+            if mem is None or mem.subset is None:
+                continue
+            try:
+                multi_element = any(bool(dace.symbolic.simplify(sz - 1) != 0) for sz in mem.subset.size())
+            except Exception:  # noqa: BLE001 -- symbolic / non-Range subset: treat as scalar (skip)
+                multi_element = False
+            if multi_element:
+                return (f"{sd.name}.{state.label}: tile (multi-element {tuple(mem.subset.size())}) stored into "
+                        f"transient Scalar ``{dst.data}`` -- widen the transient to a tile "
+                        f"(scalar stores are only allowed to a non-transient program output)")
     return None
 
 
@@ -111,7 +159,7 @@ def no_duplicate_connector_edges(scope) -> Optional[str]:
                 in_counts[e.dst_conn] += 1
             for conn, count in in_counts.items():
                 if count > 1:
-                    return (f"{sd.name}.{state.label}: {type(node).__name__} ``{getattr(node, 'label', node)}`` "
+                    return (f"{sd.name}.{state.label}: {type(node).__name__} ``{node.label}``"
                             f"in-connector ``{conn}`` has {count} edges (max 1)")
             out_counts = {}
             for e in state.out_edges(node):
@@ -121,7 +169,7 @@ def no_duplicate_connector_edges(scope) -> Optional[str]:
                 out_counts[e.src_conn] += 1
             for conn, count in out_counts.items():
                 if count > 1:
-                    return (f"{sd.name}.{state.label}: {type(node).__name__} ``{getattr(node, 'label', node)}`` "
+                    return (f"{sd.name}.{state.label}: {type(node).__name__} ``{node.label}``"
                             f"out-connector ``{conn}`` has {count} edges (max 1)")
     return None
 
@@ -149,7 +197,7 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
                 continue
             if desc.dtype != _dt.bool_:
                 return (f"{sd.name}.{state.label}: ``_mask`` connector on "
-                        f"{type(edge.dst).__name__} ``{getattr(edge.dst, 'label', edge.dst)}`` is fed by "
+                        f"{type(edge.dst).__name__} ``{edge.dst.label}`` is fed by "
                         f"``{mem.data}`` of dtype {desc.dtype} (must be bool)")
     return None
 
@@ -175,8 +223,8 @@ def memlet_subset_matches_descriptor(scope) -> Optional[str]:
             if desc is None:
                 continue
             if len(mem.subset.size()) != len(desc.shape):
-                src = getattr(edge.src, "label", type(edge.src).__name__)
-                dst = getattr(edge.dst, "label", type(edge.dst).__name__)
+                src = edge.src.label
+                dst = edge.dst.label
                 return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset rank "
                         f"{len(mem.subset.size())} != descriptor rank {len(desc.shape)} "
                         f"(shape {tuple(desc.shape)}) on edge {src} -> {dst}")

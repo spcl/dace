@@ -119,19 +119,17 @@ class MarkTileDims(ppl.Pass):
             # trip is checked against the right width.
             dim_idx = iter_vars.index(iv)
             tile_w = int(widths[dim_idx])
+            # Unified "no-mask interior + w-mask remainder" model: every tiled
+            # dim gets a spec regardless of trip. A ``trip < W`` dim is a single
+            # w-mask remainder tile (mask ``l < trip``); ``trip == 0`` is a
+            # correct all-false-mask no-op. SplitMapForTileRemainder peels each
+            # non-divisible dim into a (possibly empty) ``__tile_main`` interior
+            # (mask-free) + a masked remainder, and GenerateTileIterationMask
+            # masks every non-interior region -- so MarkTileDims no longer
+            # rejects (trip<=1) or skips (trip<W) small trips. The interior and
+            # the tail are the SAME tile op, differing only by the mask.
             try:
-                trip_int = int(trip_expr)
-                if trip_int <= 1:
-                    return self._fail_or_skip(f"map {map_entry.label!r} dim {iv!r} has degenerate trip {trip_int} "
-                                              f"(must be > 1); flatten the map first")
-                if trip_int < tile_w:
-                    # Statically too small for a single tile: skip vectorization
-                    # for this map entirely. Downstream passes leave the map
-                    # alone, codegen sequentialises (and, if small, unrolls)
-                    # the iteration. This is the CLOUDSC ``klon, 5, 5`` pattern
-                    # — the tiny inner dims are never tiled; only the outer
-                    # ``klon``-wide dim gets a tile spec.
-                    return None
+                int(trip_expr)  # constant trip -> unified model needs no trip check
             except (TypeError, ValueError):
                 # Trip is symbolic — we cannot decide at compile time.
                 # The pipeline ASSUMES trip >= W for the inner tiled dim

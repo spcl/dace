@@ -115,7 +115,8 @@ def _no_edge_attr_state(state, attr: str, recursive: bool) -> bool:
     With ``recursive=True``, recursively descends into NestedSDFG nodes.
     """
     for edge in state.edges():
-        if getattr(edge.data, attr) is not None:
+        value = edge.data.wcr if attr == "wcr" else edge.data.other_subset
+        if value is not None:
             return False
     if recursive:
         for node in state.nodes():
@@ -138,19 +139,9 @@ def no_other_subset(state, recursive: bool = True) -> bool:
     return _no_edge_attr_state(state, "other_subset", recursive)
 
 
-def no_other_subset_sdfg(sdfg: dace.SDFG, recursive: bool = True) -> bool:
-    """True iff no edge in any state of ``sdfg`` has ``other_subset`` set."""
-    return _no_edge_attr_sdfg(sdfg, "other_subset", recursive)
-
-
 def no_wcr(state, recursive: bool = True) -> bool:
     """True iff no edge in ``state`` has WCR set; recurses into NSDFGs by default."""
     return _no_edge_attr_state(state, "wcr", recursive)
-
-
-def no_wcr_sdfg(sdfg: dace.SDFG, recursive: bool = True) -> bool:
-    """True iff no edge in any state of ``sdfg`` has WCR set."""
-    return _no_edge_attr_sdfg(sdfg, "wcr", recursive)
 
 
 def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:

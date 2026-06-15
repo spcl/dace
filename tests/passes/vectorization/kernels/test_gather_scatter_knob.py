@@ -68,7 +68,12 @@ _NUMERIC_KERNELS = {
 
 def _alloc(name, n, rng):
     if name in ("ip", "idx"):
-        return np.arange(n, dtype=np.int32)
+        # A genuine (non-identity) permutation: exercises a real gather/scatter
+        # while staying conflict-free, so the scatter loop is safe to
+        # parallelise under permissive ``LoopToMap`` (distinct lanes never write
+        # the same destination) and the parallel result equals the sequential
+        # reference.
+        return rng.permutation(n).astype(np.int32)
     if name == "sum_out":
         return np.zeros(1, dtype=np.float64)
     return rng.random(n).astype(np.float64)
@@ -84,9 +89,15 @@ def _vectorize(prog,
                name_prefix=""):
     """Build ref + vectorized SDFGs; return ``(ref_sdfg, vec_sdfg, ref_args, vec_args)``.
 
-    ``LoopToMap`` is applied ``permissive=True`` so an indirect-write
-    scatter loop maps (and flows through the same packed-fan path as
-    gather); the identity index arrays make that conflict-free.
+    The reference keeps the kernel's **sequential** loops (the ground-truth
+    semantics); only the vectorized copy gets ``LoopToMap`` applied
+    ``permissive=True`` so an indirect-write scatter loop maps (and flows
+    through the same packed-fan path as gather; the identity index arrays make
+    that conflict-free). The reference must NOT be ``LoopToMap``-ed: a reduction
+    loop (s4115 ``sum += a[i]*b[ip[i]]``) is not data-parallel, so permissive
+    ``LoopToMap`` would parallelise it without a WCR and corrupt the reference
+    answer — the vectorized path lifts that same reduction to a ``Reduce``
+    libnode and is correct, so it must be compared against the sequential truth.
 
     :param name_prefix: disambiguates the generated SDFG (hence the
         ``.dacecache`` build dir) so concurrent ``-n`` workers running
@@ -100,10 +111,10 @@ def _vectorize(prog,
     sdfg = copy.deepcopy(prog.to_sdfg(simplify=False))
     sdfg.name = f"ref_{tag}"
     sdfg.simplify()
-    sdfg.apply_transformations_repeated(LoopToMap, permissive=True)
-    sdfg.simplify()
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"vec_{tag}"
+    vsdfg.apply_transformations_repeated(LoopToMap, permissive=True)
+    vsdfg.simplify()
     VectorizeCPU(vector_width=8,
                  fail_on_unvectorizable=False,
                  remainder_strategy=remainder_strategy,

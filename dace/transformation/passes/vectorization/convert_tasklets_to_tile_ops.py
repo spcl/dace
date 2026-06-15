@@ -30,18 +30,16 @@ from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop, TileITE, TileMaskGen, TileReduce, TileUnop
-from dace.transformation.passes.vectorization.widen_accesses import materialise_per_lane_index_tile
+from dace.libraries.tileops import TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileUnop
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             logical_binops_are_bool,
-                                                                             mask_connectors_are_bool,
-                                                                             no_duplicate_connector_edges,
-                                                                             no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
+                                                                            mask_connectors_are_bool,
+                                                                            no_duplicate_connector_edges,
+                                                                            no_memlet_dim_mismatch)
 
 #: Subset of binary operators that map directly onto :class:`TileBinop`. Includes
 #: comparison (``<``, ``<=``, ``>``, ``>=``, ``==``, ``!=``) which produce bool tile
@@ -185,12 +183,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         is ``int64``; arithmetic on it composes with the Tile operand contract at
         expansion time.
 
-        Key distinction vs the gather-index materialiser
-        (``materialise_per_lane_index_tile``): for lane-id Symbols, the iter_var
-        ``ii`` represents the OUTER tile start (post-stride), and the per-lane
-        value is ``ii + __l``. The gather-index materialiser SUBSTITUTES
-        ``ii -> __l`` (correct for gather lookups where ``ii`` is the lane offset),
-        which would lose the outer tile's start value.
+        Key distinction vs the gather-index path
+        (:meth:`InsertTileLoadStore._stage_index_via_tileops`): for lane-id
+        Symbols, the iter_var ``ii`` represents the OUTER tile start
+        (post-stride), and the per-lane value is ``ii + __l``. The gather-index
+        path instead reads a data-dependent ``idx[...]`` array into an index
+        tile (whose lane offset IS ``__l``), so the two must not be conflated.
         """
         if not iter_vars or not self._is_lane_id_dependent(expr, iter_vars):
             return "Symbol", expr, None
@@ -297,15 +295,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return
         existing = [e for e in inner_state.in_edges(lib_node) if e.dst_conn == "_mask"]
         if existing:
-            raise NotImplementedError(
-                f"_wire_mask: ``_mask`` already wired on {lib_node.label!r} "
-                f"(existing src={existing[0].src!r}). Per the AND-combine "
-                f"contract, emit a ``TileBinop(op='&')`` combining "
-                f"{existing[0].src!r} with the new ``mask_an``={mask_an.data!r} "
-                f"(both bool tiles) and wire its ``_c`` output here. The "
-                f"current pipeline doesn't exercise this case -- no "
-                f"second-mask wiring happens, so this raise is a defensive "
-                f"guard rather than a missing implementation.")
+            raise NotImplementedError(f"_wire_mask: ``_mask`` already wired on {lib_node.label!r} "
+                                      f"(existing src={existing[0].src!r}). Per the AND-combine "
+                                      f"contract, emit a ``TileBinop(op='&')`` combining "
+                                      f"{existing[0].src!r} with the new ``mask_an``={mask_an.data!r} "
+                                      f"(both bool tiles) and wire its ``_c`` output here. The "
+                                      f"current pipeline doesn't exercise this case -- no "
+                                      f"second-mask wiring happens, so this raise is a defensive "
+                                      f"guard rather than a missing implementation.")
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
 
@@ -317,7 +314,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         (pinned-K=1 postamble) since neither runs the K-D tile-op chain.
         """
         from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                            TILE_K1_TAIL_MARKER)
+                                                                                           TILE_K1_TAIL_MARKER)
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
@@ -476,8 +473,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Reject anything that looks like an op shape -- those are handled by the other
         # detectors. Heuristic: a constant has no binary operator at top level and no
         # function-call shape with comma-separated args.
-        for op_token in (" + ", " - ", " * ", " / ", " % ", " ** ", " < ", " > ", " == ", " != ", " <= ", " >= ", " and ",
-                         " or "):
+        for op_token in (" + ", " - ", " * ", " / ", " % ", " ** ", " < ", " > ", " == ", " != ", " <= ", " >= ",
+                         " and ", " or "):
             if op_token in rhs:
                 return None
         # Reject function-form binops / ITE.
@@ -489,28 +486,39 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         return out_conn, rhs
 
-    def _convert_const_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected,
-                              iter_vars: Tuple[str, ...]) -> bool:
-        """Replace ``_o = <const_expr>`` with a constant-fill tasklet that writes the
-        full-tile output transient. Functionally equivalent to ``TileBroadcastSymbol``
-        but emitted as a raw CPP tasklet (the broadcast lib node lands in a follow-up
-        slice; this gets memset / broadcast kernels working today)."""
+    def _convert_const_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str,
+                                                                                                         ...]) -> bool:
+        """Replace ``_o = <const_expr>`` (a loop-invariant literal / symbol store)
+        with a ``TileLoad(src_kind='Symbol')`` broadcast lib node that writes the
+        value to every lane of the output tile -- NO CPP fill, no intermediate
+        transient, no AN -> AN copy (user direction 2026-06-15: a const / symbol ->
+        tile broadcast is a tile op; an AN -> AN tile copy should be a tile load).
+
+        ``TileLoad`` with a Symbol source declares no ``_src`` connector; the
+        expansion embeds ``src_expr`` inline and broadcasts it. When the output is
+        NOT a tile (it stays a true scalar), the ``_o = <const>`` is LEFT as a
+        single-statement python scalar tasklet (allowed) -- a scalar -> scalar
+        store needs no tile op (user direction 2026-06-15)."""
         out_conn, expr = detected
         out_edges = list(inner_state.out_edges(tasklet))
         if not out_edges:
             return False
         out_edge = out_edges[0]
-        an_name = self._materialise_invariant_to_tile(inner_state, expr, out_edge)
-        from dace.sdfg.nodes import AccessNode
-        existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == an_name), None)
-        src_an = existing if existing is not None else inner_state.add_access(an_name)
-        # Widen the destination transient + memlets to (W,) so the AN -> AN
-        # copy is valid (without this the dst stays Scalar (1,) and the
-        # tile (W,) -> Scalar copy trips DaCe codegen with StopIteration on
-        # the 1D-strided-copy dim-pick).
+        # Widen the output transient to tile shape when widenable; a genuinely
+        # scalar (non-widenable) output stays the python scalar assign.
         self._ensure_output_widened(inner_state, out_edge)
+        out_desc = inner_state.sdfg.arrays.get(out_edge.dst.data) if out_edge.data is not None else None
+        is_tile_out = (out_desc is not None and isinstance(out_desc, dace.data.Array)
+                       and tuple(out_desc.shape) == tuple(self.widths))
+        if not is_tile_out:
+            return False  # scalar const store -- keep the single-statement python tasklet
+        tl = TileLoad(name=f"{tasklet.label}_const_bcast",
+                      widths=tuple(self.widths),
+                      src_kind="Symbol",
+                      src_expr=str(expr))
+        inner_state.add_node(tl)
         subset = ", ".join(f"0:{w}" for w in self.widths)
-        inner_state.add_edge(src_an, None, out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{an_name}[{subset}]"))
+        inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{out_edge.dst.data}[{subset}]"))
         inner_state.remove_edge(out_edge)
         inner_state.remove_node(tasklet)
         return True
@@ -840,12 +848,51 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         a_edge = in_edges[a_conn]
         out_edge = out_edges[0]
+        # Scalar src -> tile dst is a BROADCAST (e.g. ``c[jk, jc] = a[0]`` staged as
+        # ``a_const`` scalar -> tile): lower to ``TileLoad(src_kind="Scalar")``, a
+        # per-lane splat of the single value -- NOT a rank-mismatched AN -> AN copy.
+        # Per user direction 2026-06-14.
+        if self._maybe_emit_scalar_broadcast(inner_state, tasklet, a_edge, out_edge):
+            return True
         # Use the input-side memlet (which references the source bridge / AN) so the new
         # edge's memlet.data matches the new edge's source.
         inner_state.add_edge(a_edge.src, a_edge.src_conn, out_edge.dst, out_edge.dst_conn,
                              dace.Memlet.from_memlet(a_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
+
+    def _maybe_emit_scalar_broadcast(self, inner_state: SDFGState, tasklet: Tasklet, a_edge, out_edge) -> bool:
+        """Lower a trivial assign whose SOURCE is a scalar and DEST is a ``widths``-shaped
+        tile into a ``TileLoad(src_kind="Scalar")`` broadcast (the single value splat
+        across every lane). Returns ``True`` when emitted.
+
+        Per user direction 2026-06-14: "widen subsets from a scalar src to a tile dst must
+        correctly lower to a broadcast". The pure expansion already handles
+        ``src_kind="Scalar"`` (reads ``_src[0]``, writes every lane); an intrinsic
+        hardware-splat path is a TODO.
+        """
+        sdfg = inner_state.sdfg
+        src_desc = sdfg.arrays.get(a_edge.data.data) if a_edge.data is not None else None
+        dst_desc = sdfg.arrays.get(out_edge.data.data) if out_edge.data is not None else None
+        if src_desc is None or dst_desc is None:
+            return False
+        widths = tuple(self.widths)
+        src_is_scalar = (isinstance(src_desc, dace.data.Scalar)
+                         or (isinstance(src_desc, dace.data.Array) and tuple(src_desc.shape) == (1, )))
+        dst_is_tile = isinstance(dst_desc, dace.data.Array) and tuple(dst_desc.shape) == widths
+        if not (src_is_scalar and dst_is_tile):
+            return False
+        tl = TileLoad(name=f"{tasklet.label}_bcast", widths=widths, src_kind="Scalar")
+        inner_state.add_node(tl)
+        # ``_src`` <- the scalar source (keep its scalar memlet); ``_dst`` -> the full tile.
+        inner_state.add_edge(a_edge.src, a_edge.src_conn, tl, "_src", dace.Memlet.from_memlet(a_edge.data))
+        tile_subset = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn,
+                             dace.Memlet(data=out_edge.data.data, subset=tile_subset))
+        inner_state.remove_edge(a_edge)
+        inner_state.remove_edge(out_edge)
         inner_state.remove_node(tasklet)
         return True
 
@@ -861,6 +908,17 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         :returns: ``True`` on rewrite.
         """
+        # Only PYTHON tasklets carry the scalar user-kernel op shapes this pass
+        # lowers (``_out = _a + _b``, ``max(...)`` etc.). A CPP tasklet is either
+        # an already-lowered tile loop (an expanded tile lib node emits a
+        # ``for (std::size_t __l0 ...) { ... }`` body) or a hand-written
+        # intrinsic. Both must pass through untouched (user direction: intrinsics
+        # should stay no matter what). Re-parsing a CPP for-loop body mis-detects
+        # the loop-condition ``<`` as a comparison binop and splits the loop into
+        # garbage operands, emitting malformed C++ (``_bc_a[1] = { (int64_t)(d::
+        # size_t __l0 = 0; __l0) }``). Skip every non-Python tasklet.
+        if tasklet.language != dace.dtypes.Language.Python:
+            return False
         # 0 in-conn tasklets first (purely Symbol-driven). Order: const-assign, then
         # 0-in unary (with a function call shape), then 0-in binop (two operands).
         unop_sym = self._detect_unop_with_symbol(tasklet)
@@ -931,14 +989,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """Convert a ternary tasklet to a TileITE lib node.
 
         ``detected`` shape: ``(out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym)``.
-        When ``t_is_sym`` or ``e_is_sym`` is True the corresponding arm is a Symbol or
-        literal expression (not a tasklet in-connector). For those we materialise a
-        full-tile transient via :meth:`_materialise_symbol_to_tile` and wire it to the
-        TileITE connector -- the lib node sees a uniform Tile operand contract.
-
-        This implements the "transients-are-either-full-tile-or-scalar" invariant of
-        design 7.5: a Symbol arm becomes a full-tile transient (broadcast values or
-        per-lane materialised), so TileITE doesn't need a Symbol kind.
+        When ``t_is_sym`` / ``e_is_sym`` is True the corresponding arm is a Symbol /
+        literal expression (not a tasklet in-connector). Per user direction
+        2026-06-15 (``any tile op accepts symbolic input ... we should support it
+        for TileITE as well``) an INVARIANT Symbol / literal arm (e.g. ``0.0``) is
+        embedded INLINE on the lib node (``kind_t/kind_e='Symbol'`` + ``expr_*``,
+        no connector) and broadcast to every lane by the expansion -- NO CPP fill,
+        no extra transient. A lane-id-dependent Symbol arm still materialises to a
+        per-lane tile; a connector arm reading a Scalar / length-1 source is
+        broadcast to a full tile.
         """
         out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym = detected
         in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
@@ -950,11 +1009,38 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if not e_is_sym and e_arg not in in_edges:
             return False
         out_edge = out_edges[0]
+        out_dtype = inner_state.sdfg.arrays[out_edge.data.data].dtype
+        subset = ", ".join(f"0:{w}" for w in self.widths)
+
+        def _plan_arm(arg, is_sym):
+            """Decide an arm's lowering. Returns ``(kind, expr, wire)`` where ``wire``
+            is ``None`` for an inline Symbol arm or ``(src, src_conn, memlet)`` for a
+            connector arm. ``kind`` is one of ``'Symbol'`` / ``'Tile'``."""
+            from dace.sdfg.nodes import AccessNode
+            if is_sym and not self._is_lane_id_dependent(arg, iter_vars):
+                return "Symbol", arg, None  # inline -- no connector, no CPP fill
+            if is_sym:
+                an = self._materialise_symbol_to_tile(inner_state, arg, iter_vars, out_edge)
+                return "Tile", None, (an, None, dace.Memlet(f"{an.data}[{subset}]"))
+            edge = in_edges[arg]
+            if self._is_scalar_or_len1_source(inner_state, edge):
+                bname = self._broadcast_scalar_to_tile(inner_state, edge, dtype=out_dtype)
+                ban = next(n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == bname)
+                return "Tile", None, (ban, None, dace.Memlet(f"{bname}[{subset}]"))
+            return "Tile", None, (edge.src, edge.src_conn, dace.Memlet.from_memlet(edge.data))
+
+        kind_t, expr_t, wire_t = _plan_arm(t_arg, t_is_sym)
+        kind_e, expr_e, wire_e = _plan_arm(e_arg, e_is_sym)
         # TileITE select-arm predicate is wired via the unified ``_mask``
         # connector (user direction 2026-06-12: ``Unifiy mask connectors in
         # the multi dim pass globally``). Downstream global TileStore
         # handles iter-mask gating; no separate iter-mask connector.
-        ite = TileITE(name=f"{tasklet.label}_ite", widths=tuple(self.widths))
+        ite = TileITE(name=f"{tasklet.label}_ite",
+                      widths=tuple(self.widths),
+                      kind_t=kind_t,
+                      kind_e=kind_e,
+                      expr_t=expr_t,
+                      expr_e=expr_e)
         inner_state.add_node(ite)
         # cond is always a connector (the result of the comparison upstream). If it's
         # a Scalar transient (from an all-Symbol comparison like ``FLAG > 0``), broadcast
@@ -967,45 +1053,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == broadcast_name),
                             None)
             cond_an = existing if existing is not None else inner_state.add_access(broadcast_name)
-            subset = ", ".join(f"0:{w}" for w in self.widths)
             inner_state.add_edge(cond_an, None, ite, "_mask", dace.Memlet(f"{broadcast_name}[{subset}]"))
         else:
             inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
                                  dace.Memlet.from_memlet(cond_edge.data))
-        # t arm: connector OR Symbol-materialised tile. When the connector is
-        # a Scalar (e.g. else-arm of ``if c: D[i,j]=expr else: D[i,j]=0.0``
-        # gives ``D=0.0`` -- a Scalar literal), broadcast to a full tile so
-        # the ITE pure expansion's per-lane index ``_t[...]`` is well-typed.
-        out_dtype = inner_state.sdfg.arrays[out_edge.data.data].dtype
-        if t_is_sym:
-            t_an = self._materialise_symbol_to_tile(inner_state, t_arg, iter_vars, out_edge)
-            subset = ", ".join(f"0:{w}" for w in self.widths)
-            inner_state.add_edge(t_an, None, ite, "_t", dace.Memlet(f"{t_an.data}[{subset}]"))
-        else:
-            t_edge = in_edges[t_arg]
-            if self._is_scalar_or_len1_source(inner_state, t_edge):
-                bcast_name = self._broadcast_scalar_to_tile(inner_state, t_edge, dtype=out_dtype)
-                from dace.sdfg.nodes import AccessNode
-                bcast_an = next(n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == bcast_name)
-                subset = ", ".join(f"0:{w}" for w in self.widths)
-                inner_state.add_edge(bcast_an, None, ite, "_t", dace.Memlet(f"{bcast_name}[{subset}]"))
-            else:
-                inner_state.add_edge(t_edge.src, t_edge.src_conn, ite, "_t", dace.Memlet.from_memlet(t_edge.data))
-        # e arm: same treatment.
-        if e_is_sym:
-            e_an = self._materialise_symbol_to_tile(inner_state, e_arg, iter_vars, out_edge)
-            subset = ", ".join(f"0:{w}" for w in self.widths)
-            inner_state.add_edge(e_an, None, ite, "_e", dace.Memlet(f"{e_an.data}[{subset}]"))
-        else:
-            e_edge = in_edges[e_arg]
-            if self._is_scalar_or_len1_source(inner_state, e_edge):
-                bcast_name = self._broadcast_scalar_to_tile(inner_state, e_edge, dtype=out_dtype)
-                from dace.sdfg.nodes import AccessNode
-                bcast_an = next(n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == bcast_name)
-                subset = ", ".join(f"0:{w}" for w in self.widths)
-                inner_state.add_edge(bcast_an, None, ite, "_e", dace.Memlet(f"{bcast_name}[{subset}]"))
-            else:
-                inner_state.add_edge(e_edge.src, e_edge.src_conn, ite, "_e", dace.Memlet.from_memlet(e_edge.data))
+        # Wire the materialised arms (an inline Symbol arm carries no connector).
+        if wire_t is not None:
+            inner_state.add_edge(wire_t[0], wire_t[1], ite, "_t", wire_t[2])
+        if wire_e is not None:
+            inner_state.add_edge(wire_e[0], wire_e[1], ite, "_e", wire_e[2])
         if self._ensure_output_widened(inner_state, out_edge, ite):
             subset_str = ", ".join(f"0:{w}" for w in self.widths)
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{subset_str}]")
@@ -1232,7 +1288,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         * **Loop-invariant** (no iter_var refs) -> ``kind=Symbol`` + ``expr_*``
           (no connector); broadcast at expansion time.
         * **Lane-id-dependent** (references an iter_var) -> materialise a per-lane
-          tile via :func:`materialise_per_lane_index_tile` and wire as
+          tile via :meth:`_materialise_lane_id_tile` and wire as
           ``kind=Tile`` operand.
         """
         out_conn, a_conn, op, symbol_side, symbol_expr = detected

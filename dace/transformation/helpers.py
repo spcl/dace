@@ -1122,11 +1122,20 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     # Replicate all temporary transients within scope
     for node in to_find_new_names:
         desc = node.desc(sdfg)
-        new_name = sdfg.add_datadesc(node.data, copy.deepcopy(desc), find_new_name=True)
+        old_name = node.data
+        new_name = sdfg.add_datadesc(old_name, copy.deepcopy(desc), find_new_name=True)
         node.data = new_name
         for edge in state.all_edges(node):
             for e in state.memlet_tree(edge):
-                e.data.data = new_name
+                # Only rename memlets that actually reference THIS transient. The
+                # memlet tree of an edge touching ``node`` spans the whole map path
+                # (e.g. up through the MapEntry to a DIFFERENT source array, as in a
+                # ``c[i, j] = a[i // 2]`` broadcast staged through ``c_slice``);
+                # blindly renaming every edge corrupts those unrelated memlets. A
+                # dependency edge (structural, no data) carries ``data is None`` and
+                # is skipped by the same guard.
+                if e.data is not None and e.data.data == old_name:
+                    e.data.data = new_name
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
 

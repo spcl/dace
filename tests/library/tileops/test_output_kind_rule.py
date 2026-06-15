@@ -157,3 +157,65 @@ def test_ite_validate_refuses_scalar_output():
     state.add_edge(node, "_o", state.add_access("O"), None, Memlet("O"))
     with pytest.raises(NotImplementedError, match=r"output-kind rule violated"):
         node.validate(sdfg, state)
+
+
+def _ite_tasklets(sdfg):
+    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+
+
+def test_ite_symbol_arm_omits_connector_and_inlines():
+    """A loop-invariant Symbol arm (e.g. ``0.0``) declares no ``_t`` connector and
+    is embedded inline in the pure expansion -- no CPP fill, no extra transient
+    (user direction 2026-06-15: any tile op accepts symbolic input for TileITE)."""
+    sdfg = dace.SDFG("ite_sym_arm")
+    sdfg.add_array("Cond", (8, ), dace.bool_, transient=True)
+    sdfg.add_array("E", (8, ), dace.float64, transient=True)
+    sdfg.add_array("O", (8, ), dace.float64, transient=True)
+    state = sdfg.add_state("s")
+    node = TileITE("ite", widths=(8, ), kind_t="Symbol", expr_t="0.0")
+    assert "_t" not in node.in_connectors, "Symbol then-arm must not declare a _t connector"
+    assert "_mask" in node.in_connectors and "_e" in node.in_connectors
+    state.add_node(node)
+    state.add_edge(state.add_access("Cond"), None, node, "_mask", Memlet("Cond[0:8]"))
+    state.add_edge(state.add_access("E"), None, node, "_e", Memlet("E[0:8]"))
+    state.add_edge(node, "_o", state.add_access("O"), None, Memlet("O[0:8]"))
+    node.validate(sdfg, state)
+    sdfg.expand_library_nodes()
+    tasks = _ite_tasklets(sdfg)
+    assert len(tasks) == 1, f"Symbol arm must NOT add a fill tasklet; got {len(tasks)} tasklets"
+    assert "0.0" in tasks[0].code.as_string
+    assert "_t" not in tasks[0].in_connectors
+
+
+def test_ite_symbol_cond_omits_mask_connector_and_inlines():
+    """A loop-invariant Symbol condition declares no ``_mask`` connector and is
+    embedded inline -- TileITE works without a ``_cond`` connector when the
+    predicate is loop-invariant (user direction 2026-06-15)."""
+    sdfg = dace.SDFG("ite_sym_cond")
+    sdfg.add_symbol("FLAG", dace.int32)
+    sdfg.add_array("T", (8, ), dace.float64, transient=True)
+    sdfg.add_array("E", (8, ), dace.float64, transient=True)
+    sdfg.add_array("O", (8, ), dace.float64, transient=True)
+    state = sdfg.add_state("s")
+    node = TileITE("ite", widths=(8, ), kind_mask="Symbol", expr_mask="FLAG > 0")
+    assert "_mask" not in node.in_connectors, "Symbol cond must not declare a _mask connector"
+    assert "_t" in node.in_connectors and "_e" in node.in_connectors
+    state.add_node(node)
+    state.add_edge(state.add_access("T"), None, node, "_t", Memlet("T[0:8]"))
+    state.add_edge(state.add_access("E"), None, node, "_e", Memlet("E[0:8]"))
+    state.add_edge(node, "_o", state.add_access("O"), None, Memlet("O[0:8]"))
+    node.validate(sdfg, state)
+    sdfg.expand_library_nodes()
+    tasks = _ite_tasklets(sdfg)
+    assert len(tasks) == 1
+    assert "FLAG > 0" in tasks[0].code.as_string
+    assert "_mask" not in tasks[0].in_connectors
+
+
+def test_ite_symbol_requires_expr():
+    """``kind_t='Symbol'`` / ``kind_mask='Symbol'`` without an expression raise
+    loudly at construction."""
+    with pytest.raises(ValueError, match="expr_t"):
+        TileITE("ite_bad_t", widths=(8, ), kind_t="Symbol")
+    with pytest.raises(ValueError, match="expr_mask"):
+        TileITE("ite_bad_m", widths=(8, ), kind_mask="Symbol")

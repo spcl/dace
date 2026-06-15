@@ -91,7 +91,9 @@ def _collect_read_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Dic
     for edge in state.in_edges(nsdfg_node):
         if edge.data is None or edge.data.data is None:
             continue
-        assert edge.data.other_subset is None
+        # ``other_subset`` (if present, e.g. a K>=2 broadcast read into a
+        # collapsed inner) is folded to None at widen time by
+        # _replace_desc_and_uncollapse_dims; tolerate it here.
         conn = edge.dst_conn
         if conn is None:
             continue
@@ -107,7 +109,7 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
     for edge in state.out_edges(nsdfg_node):
         if edge.data is None or edge.data.data is None:
             continue
-        assert edge.data.other_subset is None
+        # other_subset tolerated -- folded at widen time (see _collect_read_subsets).
         conn = edge.src_conn
         if conn is None:
             continue
@@ -133,8 +135,33 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
             new_range_list = []
             memlet_access_idx = 0
             inner_subset = memlet.subset.ranges
-            for offset, collapsed in zip(offset_dims, collapsed_dims):
-                if collapsed is True:
+            # ``offset_dims`` / ``collapsed_dims`` span the FULL outer-array rank.
+            # The inner memlet aligns to them in one of two ways:
+            #
+            #  * **Full-rank inner** (``len(inner_subset) == len(offset_dims)``):
+            #    the inner descriptor mirrors every outer dim, so each inner dim
+            #    maps 1:1 to an outer dim. Add the boundary begin to EACH dim's
+            #    own begin -- including the length-1 (collapsed) dims, whose
+            #    inner begin is 0 so the result is just the offset. This is what
+            #    modern ``NestInnermostMapBodyIntoNSDFG`` produces: a 3-point
+            #    j-stencil reads ``A[0,0] / A[0,1] / A[0,2]`` as 2-D memlets even
+            #    though the boundary dim0 ``i:i`` is length-1, so the per-access
+            #    intra-window offset (the ``+1`` / ``+2``) lives in the inner
+            #    begin and MUST be carried through (not skipped).
+            #  * **Rank-reduced inner** (inner dropped the collapsed dims): the
+            #    inner subset has one entry per NON-collapsed outer dim, so a
+            #    collapsed dim contributes only the offset and the running
+            #    ``memlet_access_idx`` walks the surviving inner dims.
+            #
+            # Indexing the rank-reduced way against a full-rank inner is the
+            # classic stencil miscompile: ``A[0,1]`` would consume the collapsed
+            # dim0's inner begin (``0``) for dim1 and silently drop the ``+1``.
+            inner_is_full_rank = (len(inner_subset) == len(offset_dims))
+            for d, (offset, collapsed) in enumerate(zip(offset_dims, collapsed_dims)):
+                if inner_is_full_rank:
+                    (lo, hi, stp) = inner_subset[d]
+                    new_range_list.append((lo + offset, hi + offset, stp))
+                elif collapsed is True:
                     new_range_list.append((offset, offset, 1))
                 else:
                     (lo, hi, stp) = inner_subset[memlet_access_idx]
@@ -206,6 +233,14 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
                 else:
                     iedge.dst_conn = outer_name
                     iedge.data.subset = _full_subset(state.sdfg, outer_name)
+                    # The inner descriptor now mirrors the full outer array and
+                    # the inner memlets carry the per-iteration offset (rewritten
+                    # above). Any ``other_subset`` on the boundary edge described
+                    # the OLD (collapsed / length-1) inner shape -- e.g. a K>=2
+                    # broadcast read ``a[i//2] -> inner_a[0]`` with inner ``(1,)``
+                    # -- and is stale after widening. Clear it so the edge is a
+                    # clean full-array passthrough (design 2.4).
+                    iedge.data.other_subset = None
         nsdfg_node.remove_in_connector(inner_name)
         if outer_name not in nsdfg_node.in_connectors:
             nsdfg_node.add_in_connector(outer_name, force=True)
@@ -218,6 +253,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
                 else:
                     oedge.src_conn = outer_name
                     oedge.data.subset = _full_subset(state.sdfg, outer_name)
+                    oedge.data.other_subset = None  # stale after widening (see in-edge note)
         nsdfg_node.remove_out_connector(inner_name)
         if outer_name not in nsdfg_node.out_connectors:
             nsdfg_node.add_out_connector(outer_name, force=True)
@@ -381,7 +417,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         for iedge in state.in_edges(nsdfg_node):
             if iedge.data is None or iedge.data.data is None:
                 continue
-            assert iedge.data.other_subset is None
+            # other_subset tolerated -- folded to None at widen time.
             in_conn = iedge.dst_conn
             if in_conn is None:
                 continue
@@ -405,7 +441,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         for oedge in state.out_edges(nsdfg_node):
             if oedge.data is None or oedge.data.data is None:
                 continue
-            assert oedge.data.other_subset is None
+            # other_subset tolerated -- folded to None at widen time.
             if oedge.data.wcr is not None:
                 continue  # WCR edges have special meaning -> also wcr means subset should be [0]
             out_conn = oedge.src_conn

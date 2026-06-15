@@ -15,9 +15,6 @@ mismatch where one site composes a name and another parses it differently:
 - ``PackedNameScheme`` — scatter / gather buffers ``<base>_packed``.
 - ``TileNameScheme`` — v2 tile-transient names (``<base>_tile``,
   ``<base>_tile_idx``, ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
-- ``CORE_MAP_PARAM_PREFIX`` — prefix marking outer map parameters minted
-  by the SVE tile-by-cores step (so the loop-conversion pass can find
-  the right outer scope later).
 
 ``_packed`` is reserved for scatter/gather; ``_vec`` is used for everything
 else in the 1D path; ``_tile`` is reserved for the v2 multi-dim path so
@@ -30,8 +27,6 @@ from typing import Iterable, Iterator, List, Optional, Tuple
 
 import dace
 from dace.sdfg import SDFG
-
-CORE_MAP_PARAM_PREFIX = "core"
 
 
 class LaneIdScheme:

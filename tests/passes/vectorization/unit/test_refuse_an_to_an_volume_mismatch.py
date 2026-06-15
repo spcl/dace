@@ -11,7 +11,7 @@ emitting a wrong copy.
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 
@@ -91,8 +91,6 @@ def _vectorize(sdfg: dace.SDFG) -> None:
         branch_mode="merge",
         loop_to_map_permissive=True,
         nest_map_bodies=True,
-        insert_copies=True,
-        fuse_overlapping_loads=False,
         scalar_remainder_emit="tile_k1",
         expand_tile_nodes=False,
     ).apply_pass(sdfg, {})

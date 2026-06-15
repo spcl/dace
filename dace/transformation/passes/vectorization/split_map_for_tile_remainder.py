@@ -131,25 +131,29 @@ class SplitMapForTileRemainder(ppl.Pass):
         """
         return False
 
-    def _provably_divisible_or_short(self, lb, ub, W: int) -> bool:
-        """Whether the dim ``[lb:ub]`` needs no split for tile width ``W``.
+    def _provably_divisible(self, lb, ub, W: int) -> bool:
+        """Whether the dim ``[lb:ub]`` is provably a whole number of tiles.
+
+        Unified "no-mask interior + w-mask remainder" model: ONLY a
+        provably-divisible dim needs no split -- it is all no-mask interior
+        (whole tiles, ``has_mask=False``). Every other dim is peeled into an
+        (optionally empty) no-mask interior plus a w-mask remainder tile. A
+        SHORT dim (``trip < W``) yields an EMPTY interior + one masked tile
+        spanning the whole dim (mask ``l < trip``); ``trip == 0`` is a correct
+        all-false-mask no-op. (Previously this also short-circuited
+        ``trip < W`` as "no split", which left short dims mask-free / scalar
+        instead of masked -- the design gap this model closes.)
 
         :param lb: Inclusive lower bound.
         :param ub: Inclusive upper bound.
         :param W: Tile width.
-        :returns: ``True`` if the trip is provably a multiple of ``W`` (whole
-            tiles only) or provably shorter than ``W`` (no whole tile — the
-            single masked tile suffices, splitting would only add noise).
+        :returns: ``True`` iff the trip is provably a multiple of ``W``.
         """
         trip = symbolic.simplify(ub - lb + 1)
         try:
-            if bool((trip % W).simplify() == 0):
-                return True
-            if bool((trip < W).simplify()):
-                return True
+            return bool((trip % W).simplify() == 0)
         except Exception:  # noqa: BLE001 - non-decidable symbolic trip -> split
-            pass
-        return False
+            return False
 
     def _split(self, state: dace.SDFGState, map_entry: MapEntry, K: int) -> bool:
         """Peel ``map_entry``'s K innermost dims into an interior + K slabs.
@@ -182,7 +186,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         tiled_dims = list(range(len(ranges) - K, len(ranges)))
         for d, W in zip(tiled_dims, self.widths):
             lb, ub, step = map_entry.map.range[d]
-            if self._provably_divisible_or_short(lb, ub, W):
+            if self._provably_divisible(lb, ub, W):
                 continue
             trip = symbolic.simplify(ub - lb + 1)
             # ``int_floor`` (not ``//``) so the C++ codegen emits integer division

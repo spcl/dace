@@ -74,7 +74,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
             dst_in = e.dst in inside_states
             if src_in and dst_in:
                 continue
-            assigns = getattr(e.data, "assignments", None) or {}
+            assigns = e.data.assignments
             for v in assigns.values():
                 outside_reads |= symbolic.symbols_in_code(str(v), potential_symbols=array_names)
             cond = e.data.condition.as_string if e.data.condition is not None else ""
@@ -471,7 +471,7 @@ class BranchNormalization(ppl.Pass):
         :returns: ``True`` iff every read of ``sym`` lives inside ``body``.
         """
         arm_blocks = set(body.all_control_flow_blocks(
-            recursive=True)) if hasattr(body, "all_control_flow_blocks") else set(body.nodes())
+            recursive=True)) if isinstance(body, ControlFlowRegion) else set(body.nodes())
         # Walk every block in the SDFG; any reference to ``sym`` outside the
         # arm disqualifies the lift.
         for cfg in sdfg.all_control_flow_regions(recursive=True):
@@ -506,7 +506,7 @@ class BranchNormalization(ppl.Pass):
                     for ed in blk.edges():
                         if ed.data is None:
                             continue
-                        for s in (ed.data.subset, getattr(ed.data, "other_subset", None)):
+                        for s in (ed.data.subset, ed.data.other_subset):
                             if s is None:
                                 continue
                             for r in s.ranges:

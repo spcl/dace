@@ -17,10 +17,13 @@ import pytest
 import dace
 from dace.libraries.tileops import TileStore
 from dace.memlet import Memlet
+from dace.symbolic import ONE
 
 
 def _build_store(src_shape, dst_shape, dst_subset, widths, gather_dims=None, idx_shapes=None):
     sdfg = dace.SDFG("ts_fixture")
+    if "ONE" not in sdfg.constants_prop:
+        sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
     sdfg.add_array("Src", src_shape, dace.float64, transient=True)
     sdfg.add_array("Dst", dst_shape, dace.float64, transient=False)
     state = sdfg.add_state("s")
@@ -79,7 +82,7 @@ def test_scatter_mode_skips_full_tile_check():
                                      dst_subset="0:16, 0:32",
                                      widths=(4, 8),
                                      gather_dims=(0, ),
-                                     idx_shapes=[(4, )])
+                                     idx_shapes=[(4, ONE)])
     node.validate(sdfg, state)
 
 

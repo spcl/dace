@@ -61,14 +61,19 @@ def test_widens_narrowed_inedges_to_full_array():
                     f'NSDFG in-edge for {e.data.data!r} should be full {full}; got {e.data.subset}'
 
 
-@pytest.mark.xfail(strict=False,
-                   reason='jacobi2d after Expand+Inline computes only the j=0 column of each i-row '
-                   '(observed output has data only in cols 1,5; reference has cols 1-8). Suggests '
-                   "the inner j-coordinate isn't preserved during the inner-memlet uncollapse step. "
-                   'Documented as a regression for the transformation owner to fix.')
 def test_apply_preserves_numerics_via_inline():
     """End-to-end: ExpandNestedSDFGInputs followed by InlineMultistateSDFG
-    produces a numerically-identical SDFG to the un-modified one."""
+    produces a numerically-identical SDFG to the un-modified one.
+
+    Regression (fixed 2026-06-15): the inner-memlet uncollapse step
+    (:func:`_rewrite_memlets_with_offset`) indexed the inner subset
+    assuming the inner descriptor had DROPPED the length-1 (collapsed)
+    dims, so for a full-rank inner descriptor (which modern
+    ``NestInnermostMapBodyIntoNSDFG`` produces) the non-collapsed dim
+    consumed the collapsed dim's inner begin and silently dropped the
+    per-access intra-window offset. jacobi2d then computed only the
+    ``j=0`` column of each ``i``-row. The fix indexes the inner subset
+    1:1 with the outer dims when the inner memlet is full-rank."""
     sdfg = _build_map_to_for_loop_test_sdfg()
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {})

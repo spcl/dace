@@ -180,16 +180,10 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     :returns: A short string explaining the skip, or ``""`` when the
         knobs are compatible with the v2 path.
     """
-    # ``sve_style`` (always-masked, no remainder split) is incompatible with
-    # ``fp_factor`` since the SVE chain's ``_iter_mask`` cannot ride through
-    # ``c*x + (1-c)*y`` float arithmetic. Every other (branch, remainder,
-    # emission) combo is supported on the tile path.
-    if emission_style == "sve_style" and branch_mode != "merge":
-        return f"sve_style requires branch_mode='merge' (got {branch_mode!r})"
     if remainder_strategy not in ("scalar", "masked"):
         return f"remainder_strategy={remainder_strategy!r} (tile path supports scalar/masked)"
-    if emission_style not in ("default", "sve_style"):
-        return f"emission_style={emission_style!r} (tile path supports default/sve_style)"
+    if emission_style != "default":
+        return f"emission_style={emission_style!r} (tile path supports default)"
     # ``insert_copies`` is accepted as a no-op on the tile orchestrator (the
     # lib nodes already make NSDFG-boundary memlets explicit), so the harness
     # no longer skips on it. ``fuse_overlapping_loads`` IS accepted by the
@@ -242,7 +236,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            collapse_laneid_index_loads: bool = False,
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
-                           num_cores: int = 8,
                            vectorize_config: str = "tile_nodes",
                            nest_map_bodies: bool = False,
                            scalar_remainder_emit: str = "scalar"):
@@ -309,26 +302,13 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                         insert_copies = _copies
             except Exception:
                 pass
-    # ``sve_style`` (legacy: always-masked, no remainder split) is incompatible
-    # with ``fp_factor`` since the SVE chain's ``_iter_mask`` predicate cannot
-    # ride through ``c*x + (1-c)*y`` arithmetic. The other two legacy-pipeline
-    # conflicts (``fuse_overlapping_loads`` and ``insert_copies``) only matter
-    # on the legacy ``VectorizeCPU`` arm; the tile path accepts both knobs as
-    # no-ops (see ``VectorizeCPUMultiDim.__init__``).
-    if emission_style == "sve_style" and branch_mode != "merge":
-        _pytest.skip("sve_style forces merge branch lowering; skipping fp_factor parametrisation")
-
-    # Legacy ``VectorizeCPU`` rejects two knob combos that the tile orchestrator
+    # Legacy ``VectorizeCPU`` rejects a knob combo the tile orchestrator
     # accepts: ``use_fp_factor=True`` (a.k.a. ``branch_mode='fp_factor'``)
-    # cannot ride a masked remainder, and ``sve_style='fixed'`` has no
-    # remainder loop (the global ``_iter_mask`` covers the tail). Skip these on
-    # the legacy_cpu arm rather than propagate the ``ValueError`` the
-    # ``VectorizeCPU`` constructor raises.
+    # cannot ride a masked remainder. Skip on the legacy_cpu arm rather than
+    # propagate the ``ValueError`` the ``VectorizeCPU`` constructor raises.
     if vectorize_config == "legacy_cpu":
         if branch_mode == "fp_factor" and remainder_strategy == "masked":
             _pytest.skip("legacy_cpu: use_fp_factor=True is incompatible with remainder_strategy='masked'")
-        if emission_style == "sve_style" and remainder_strategy != "scalar":
-            _pytest.skip("legacy_cpu: sve_style has no remainder loop; skipping non-scalar remainder")
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -470,18 +450,18 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
             VectorizeCPUMultiDim, )
         # Map the test knobs to the tile orchestrator's remainder strategy:
-        #   emission_style=sve_style -> full_mask (SVE always-masked analogue);
-        #   remainder=masked         -> masked_tail (mask-free interior + masked
+        #   remainder=masked  -> masked_tail (mask-free interior + masked
         #     boundary regions);
-        #   remainder=scalar         -> scalar_postamble (W-strided interior +
+        #   remainder=scalar  -> scalar_postamble (W-strided interior +
         #     step-1 scalar tail).
         # scalar_postamble is K=1-only by design: passing it (remainder=scalar)
         # at K>=2 makes the orchestrator RAISE NotImplementedError, which the
         # try/except below turns into an honest skip (NOT a silent full_mask
         # fallback, which would hide that the knob is unsupported at K>=2).
-        if emission_style == "sve_style":
-            tile_remainder = "full_mask"
-        elif remainder_strategy == "masked":
+        # ``full_mask`` remains a valid VectorizeCPUMultiDim option (the
+        # default is ``masked_tail``); it is covered directly by the
+        # tile-reduce lib-node tests rather than through this harness mapping.
+        if remainder_strategy == "masked":
             tile_remainder = "masked_tail"
         else:  # remainder == "scalar"
             tile_remainder = "scalar_postamble"
@@ -492,8 +472,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                  branch_mode=branch_mode,
                                  loop_to_map_permissive=loop_to_map_permissive,
                                  nest_map_bodies=nest_map_bodies,
-                                 insert_copies=insert_copies,
-                                 fuse_overlapping_loads=fuse_overlapping_loads,
                                  scalar_remainder_emit=scalar_remainder_emit).apply_pass(copy_sdfg, {})
         copy_sdfg.validate()
     else:
@@ -504,11 +482,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         else:
             raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
 
-        # sve_style='fixed' overrides use_fp_factor (forced merge) and
-        # rejects an explicit non-default remainder_strategy — the harness
-        # has already skipped contradicting parametrisations above. Forward
-        # only the orthogonal knobs (fuse, collapse, vector_width, etc.).
-        sve_kwargs = (dict(sve_style="fixed", num_cores=num_cores) if emission_style == "sve_style" else {})
         VectorizeCPU(vector_width=vector_width,
                      fuse_overlapping_loads=fuse_overlapping_loads,
                      insert_copies=insert_copies,
@@ -519,8 +492,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                      lower_to_intrinsics=lower_to_intrinsics,
                      collapse_laneid_index_loads=collapse_laneid_index_loads,
                      loop_to_map_permissive=loop_to_map_permissive,
-                     **branch_kwargs,
-                     **sve_kwargs).apply_pass(copy_sdfg, {})
+                     **branch_kwargs).apply_pass(copy_sdfg, {})
         copy_sdfg.validate()
 
     c_copy_sdfg = copy_sdfg.compile()

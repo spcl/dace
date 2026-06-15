@@ -14,7 +14,9 @@ Refer to the v2 plan for the locked knobs:
 * ``target_isa = "AUTO" | "AVX512" | "AVX2" | "ARM_SVE" | "ARM_NEON" |
   "SCALAR"`` (K=1 ISA backend; ``"AUTO"`` detects the host ISA at expansion).
 * ``widths`` — innermost-last, length in ``{1, 2, 3}``, powers of 2.
-* ``remainder_strategy = MASKED_TAIL`` (one map, mask covers the tail).
+* ``remainder_strategy = MASKED_TAIL`` (default; provably-divisible
+  interior + masked boundary remainder). ``FULL_MASK`` (single W-strided
+  map, every tile masked) and ``SCALAR_POSTAMBLE`` (K=1) are also supported.
 * ``branch_normalization = True``, ``use_fp_factor = False`` (v2 only
   consumes ``merge``-form output; the path is reserved for the
   post-MVP :class:`TileITE` slice).
@@ -22,7 +24,7 @@ Refer to the v2 plan for the locked knobs:
 Refuses every other combination with ``NotImplementedError`` so the
 caller is pointed at the supported config.
 """
-from typing import Literal, Optional, Set, Tuple
+from typing import Literal, Optional, Tuple
 
 import dace
 from dace import properties
@@ -201,13 +203,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
     def __init__(self,
                  widths: Tuple[int, ...],
                  target_isa: Literal["AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR"] = "AUTO",
-                 num_cores: int = 1,
-                 remainder_strategy: Literal["full_mask", "masked_tail", "scalar_postamble"] = "full_mask",
+                 remainder_strategy: Literal["full_mask", "masked_tail", "scalar_postamble"] = "masked_tail",
                  branch_mode: Literal["merge", "fp_factor"] = "merge",
                  loop_to_map_permissive: bool = False,
                  nest_map_bodies: bool = False,
-                 insert_copies: bool = False,
-                 fuse_overlapping_loads: bool = False,
                  scalar_remainder_emit: Literal["scalar", "tile_k1"] = "scalar",
                  expand_tile_nodes: bool = True):
         """Build the orchestrator.
@@ -218,14 +217,14 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             (``dace.libraries.tileops._dispatch.detect_host_isa``);
             ``"AVX512"`` / ``"AVX2"`` / ``"ARM_SVE"`` / ``"ARM_NEON"`` pin one;
             ``"SCALAR"`` is the portable reference. K>=2 always uses ``pure``.
-        :param num_cores: Reserved for future per-core tiling; currently
-            unused.
         :param remainder_strategy: Tile remainder handling (all implemented).
-            ``"full_mask"`` (default) is a single W-strided map with a
-            ``_tile_iter_mask`` on every tile (the masked expansions
-            short-circuit OOB lanes, so it is already OOB-safe).
-            ``"masked_tail"`` splits the map into a provably-divisible interior
-            (``has_mask=False`` fast path) plus a masked boundary remainder.
+            ``"masked_tail"`` (default) splits the map into a provably-divisible
+            interior (``has_mask=False`` fast path) plus a masked boundary
+            remainder.
+            ``"full_mask"`` is a single W-strided map with a ``_tile_iter_mask``
+            on every tile (the masked expansions short-circuit OOB lanes, so it
+            is already OOB-safe). It is a supported knob (the SVE always-masked
+            analogue), not the default.
             ``"scalar_postamble"`` (K=1 only) splits into the divisible interior
             plus a step-1 sequential scalar tail. ``scalar_postamble`` and
             ``branch_mode="fp_factor"`` are K=1-only; both raise at K>=2.
@@ -233,19 +232,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             same-write-set if/else to a per-lane :class:`TileITE` select;
             ``"fp_factor"`` (K=1 only, requires ``scalar_postamble``) lowers it
             to ``c*x + (1-c)*y`` tile-binop arithmetic.
-        :param insert_copies: NO-OP under the multi-dim design (kept for harness parity with the 1D
-            path). The inside-body staging (design section 3) inserts every copy intrinsically via
-            tile transients on each non-transient access.
-        :param fuse_overlapping_loads: Accepted for harness parity with the
-            legacy ``VectorizeCPU``; **always a no-op** under the multi-dim
-            design. With ``ExpandNestedSDFGInputs`` widening every body-NSDFG
-            boundary memlet to the full source-array subset (section 2.4),
-            every inner ``TileLoad`` reads the same full-array connector --
-            there are no per-tile windows to fuse. Multiple non-transient
-            AccessNodes referring to the same outer array each get their own
-            tile-bridge transient via the walker; this is benign SDFG bloat,
-            not a correctness issue. Fusion is overengineering until a kernel
-            proves it matters.
         :param nest_map_bodies: Emit-path selector. ``False`` (default) keeps
             the hybrid path — a flat (bare-tasklet) map body tiles via
             :class:`EmitTileOps`, and only a body that is *already* a NestedSDFG
@@ -403,9 +389,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             else:
                 tail_mode = "masked"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
-        # ``fuse_overlapping_loads`` is a no-op under multi-dim (full-subset boundary makes fusion
-        # structurally unnecessary; see the constructor's :param: doc). It no longer gates
-        # NestInnermostMapBodyIntoNSDFG.
         # Always-on under walker-primary: every innermost map body must be nested in a body
         # NSDFG so the walker (InsertTileLoadStore) has something to traverse. The walker is the
         # ONLY emit path now -- the legacy ``EmitTileOps`` / ``PromoteNSDFGBodyToTiles``
@@ -464,12 +447,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # materialised _idx_<k> + gather_dims). The per-lane idx materialiser is folded into
         # WidenAccesses (step 5); InsertTileLoadStore wires the resulting tiles into the
         # ``_idx_<k>`` connectors of TileLoad / TileStore.
-        # NOTE: ``fuse_overlapping_loads`` is intentionally NOT honoured here. Under the multi-dim
-        # design ``ExpandNestedSDFGInputs`` widens every body-NSDFG boundary memlet to the full
-        # source-array subset (section 2.4), so every inner TileLoad already reads the same
-        # full-array connector -- there are no per-tile windows to fuse. The constructor
-        # docstring documents this; the knob is kept on the constructor for harness parity with
-        # the legacy 1D path but has no effect on the multi-dim pipeline.
+        # NOTE: there is no overlapping-load fusion under the multi-dim design --
+        # ``ExpandNestedSDFGInputs`` widens every body-NSDFG boundary memlet to the
+        # full source-array subset (section 2.4), so every inner TileLoad already
+        # reads the same full-array connector; there are no per-tile windows to fuse.
         passes += [
             # Unified WidenAccesses pass (user direction 2026-06-10/11) --
             # replaces InferBodyTransientShapes + WidenScalarsToTiles +
@@ -490,13 +471,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         super().__init__(passes)
         self._widths = widths_t
         self._target_isa = target_isa
-        self._num_cores = num_cores
         self._remainder_strategy = remainder_strategy
         self._branch_mode = branch_mode
         self._nest_map_bodies = nest_map_bodies
         self._loop_to_map_permissive = loop_to_map_permissive
         self._expand_tile_nodes = expand_tile_nodes
-        self._insert_copies = insert_copies
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -562,7 +541,49 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # 2026-06-10), and the surviving ones are the populate-tasklet
             # references that the audit can't tell apart from accidental leaks.
             RemoveUnusedPerLaneSymbols().apply_pass(sdfg, {})
+        # Final validate (per user direction 2026-06-14): the core vectorization
+        # passes (WidenAccesses + tile-lib insertion) leave the SDFG transiently
+        # invalid, so the per-subpass gate skips them; by here they have all
+        # completed (and, on the expand path, lowered to tasklets), so the SDFG
+        # must be valid again. This bookends the structural-pass gate -- last
+        # clean-pass validate before widening, then this one after the end.
+        sdfg.validate()
         return result
+
+    #: Passes after which the SDFG is intentionally TRANSIENTLY invalid -- a
+    #: later pass in the same structural sequence immediately repairs it -- so
+    #: the per-subpass validate gate (below) must NOT validate right after them:
+    #:  * ``WidenAccesses`` onward widen the memlets / insert tile lib nodes
+    #:    before the lib nodes consume them; not valid again until
+    #:    ``ConvertTaskletsToTileOps`` completes.
+    #: ``NestInnermostMapBodyIntoNSDFG`` is intentionally NOT listed: it now
+    #: clears the stale scalar-staging ``other_subset`` on its body-NSDFG
+    #: boundary edges (the ``a[jk, jc] -> _slice[0]`` element case), so it leaves
+    #: a VALID SDFG on its own and the gate validates right after it.
+    #: The final ``sdfg.validate()`` in :meth:`apply_pass` re-checks the end state.
+    _SKIP_VALIDATE_AFTER = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore, ConvertTaskletsToTileOps)
+
+    def apply_subpass(self, sdfg: dace.SDFG, p, state):
+        """Run a pipeline subpass, then ``sdfg.validate()`` for the cleaning /
+        structural passes that leave the SDFG in a valid state.
+
+        Per user direction 2026-06-14: validate after each such pass so a
+        malformation is reported RIGHT AFTER the pass that produced it -- with
+        the pass name -- instead of surfacing as a cryptic failure deep in a
+        later consumer (e.g. a ``KeyError`` on an out-of-scope slice array inside
+        ``ExpandNestedSDFGInputs``). The gate SKIPS the passes that deliberately
+        leave the SDFG transiently invalid (:data:`_SKIP_VALIDATE_AFTER`): the
+        nest->expand boundary pair and the widening / tile-lib sequence. The
+        final validate in :meth:`apply_pass` re-checks the end state.
+        """
+        r = super().apply_subpass(sdfg, p, state)
+        if not isinstance(p, self._SKIP_VALIDATE_AFTER):
+            try:
+                sdfg.validate()
+            except Exception as ex:  # noqa: BLE001 - re-raise with the culprit pass named
+                raise RuntimeError(f"VectorizeCPUMultiDim: SDFG invalid after preprocessing pass "
+                                   f"{type(p).__name__!r} -- it left the SDFG malformed: {ex}") from ex
+        return r
 
     def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:
         """Parallelise data-parallel loops, then canonicalise body-NSDFG memlets

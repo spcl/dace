@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import data as dd
-from dace import dtypes, properties, subsets
+from dace import properties, subsets
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
@@ -58,17 +58,17 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             lane_dep_transients_widened,
-                                                                             no_memlet_dim_mismatch)
+                                                                            lane_dep_transients_widened,
+                                                                            no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
 def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str):
     """Return ``(interstate_edge, rhs_str)`` for the iedge defining ``sym_name``,
-    or ``(None, None)``. Used by :func:`materialise_per_lane_index_tile` to
-    detect the Bypass form ``__sym = idx[i]`` for the inline per-lane fan-out
-    (folded GatherLift logic per user direction 2026-06-11)."""
+    or ``(None, None)``. Used by :func:`emit_per_lane_symbol_fanout` to detect
+    the Bypass form ``__sym = idx[i]`` for the per-lane fan-out (folded
+    GatherLift logic per user direction 2026-06-11)."""
     for iedge in inner_sdfg.all_interstate_edges():
         if sym_name in iedge.data.assignments:
             return iedge, iedge.data.assignments[sym_name]
@@ -84,9 +84,9 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG,
 
     Idempotent: if the per-lane symbols already exist (an earlier call has
     seeded them), returns the existing map without re-emitting. Designed so
-    :class:`WidenAccesses` step 5 can seed symbols upfront and
-    :func:`materialise_per_lane_index_tile` can call this without race --
-    same name scheme, same iedge assignments.
+    :class:`WidenAccesses` step 5 can seed symbols upfront so downstream
+    consumers (the tile-op gather-index path in
+    :class:`InsertTileLoadStore`) see a consistent name scheme.
 
     Per user direction 2026-06-11: ``wide subsets should emit laneid symbols
     vida a[idx[ii+0]] ... all the way assign them to their symbols (making
@@ -152,174 +152,6 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG,
     return per_lane_syms
 
 
-def _emit_unrolled_lift_or_loop(sdfg: SDFG, gather_expr_orig: str, body_expr: str,
-                                 widths, dep_mask, dep_dims, iter_vars, flat, idx_dtype):
-    """Emit either the unrolled per-lane fan-out (Bypass form) or the loop body.
-
-    Bypass form: ``gather_expr_orig`` is a single bare interstate symbol
-    defined by an iedge whose RHS references at least one tile iter-var.
-    Delegates to :func:`emit_per_lane_symbol_fanout` (idempotent -- shared
-    with :class:`WidenAccesses` step 5) and emits unrolled writes sourcing
-    from the per-lane symbols.
-
-    Non-Bypass form: emit the K-fold for-loop the materialiser originally
-    produced (var-substituted expression evaluated per lane).
-    """
-    import re as _re
-    import itertools as _itertools
-    expr_strip = gather_expr_orig.strip()
-    bare_sym = _re.fullmatch(r"[A-Za-z_]\w*", expr_strip)
-    if bare_sym is not None:
-        sym_name = bare_sym.group(0)
-        per_lane_syms = emit_per_lane_symbol_fanout(sdfg, sym_name, iter_vars, widths)
-        if per_lane_syms is not None:
-            # ``per_lane_syms`` is keyed by Cartesian-product cells over the
-            # dep dims. Recover the dep dim list from the first key's length
-            # so the unrolled-write loop matches the fanout exactly.
-            sample_key = next(iter(per_lane_syms))
-            dep_iter_var_indices = list(range(len(iter_vars)))[-len(sample_key):] if sample_key else []
-            # Better: emit_per_lane_symbol_fanout used the iedge RHS to pick
-            # dep dims; recover deterministically by re-walking. The lookup
-            # is cheap and avoids the assumption that dep dims are the last
-            # ``len(sample_key)`` iter vars.
-            _iedge, rhs_template = _find_iedge_defining_symbol(sdfg, sym_name)
-            from dace import symbolic as _sym
-            rhs_free = set(map(str, _sym.pystr_to_symbolic(rhs_template).free_symbols))
-            dep_iter_var_indices = [d for d, iv in enumerate(iter_vars) if iv in rhs_free]
-            lines = []
-            for all_idx in _itertools.product(*(range(w) for w in widths)):
-                dep_key = tuple(all_idx[d] for d in dep_iter_var_indices)
-                plane = per_lane_syms[dep_key]
-                off = 0
-                for k, idx in enumerate(all_idx):
-                    stride = 1
-                    for q in range(k + 1, len(widths)):
-                        stride *= widths[q]
-                    off += idx * stride
-                lines.append(f"_out[{off}] = ({idx_dtype.ctype})({plane});")
-            return lines
-    code_lines = []
-    for d in dep_dims:
-        depth = dep_dims.index(d)
-        code_lines.append(f"{'    ' * depth}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
-    for d, is_dep in enumerate(dep_mask):
-        if not is_dep:
-            indent = '    ' * len(dep_dims)
-            code_lines.append(f"{indent}std::size_t __l{d} = 0;")
-    code_lines.append(f"{'    ' * len(dep_dims)}_out[{flat}] = ({idx_dtype.ctype})({body_expr});")
-    for depth in reversed(range(len(dep_dims))):
-        code_lines.append(f"{'    ' * depth}}}")
-    return code_lines
-
-
-def materialise_per_lane_index_tile(state: SDFGState,
-                                    name_hint: str,
-                                    gather_expr: str,
-                                    tile_iter_vars,
-                                    tile_widths,
-                                    idx_dtype: dtypes.typeclass = dace.int64,
-                                    dep_mask=None) -> str:
-    """Materialise a per-lane gather index tile (design 3.8 + 3.8.1).
-
-    Creates an integer transient of shape derived from ``tile_widths`` and
-    emits a CPP tasklet at ``state`` that fills it with the per-lane
-    evaluation of ``gather_expr``. Per-dim lane dependency is encoded with
-    :data:`dace.symbolic.ONE` on broadcast dims (no per-cell variation).
-
-    Owned by :mod:`widen_accesses` per user direction 2026-06-11 (was a
-    standalone ``PreparePerLaneIndices`` pre-pass before the fold).
-
-    :param state: State that owns the gather AccessNode (the materialiser
-        emits its populate tasklet into the same state).
-    :param name_hint: Hint for the transient name; uniquified via
-        ``find_new_name=True``.
-    :param gather_expr: Gather expression with ``tile_iter_vars`` free.
-    :param tile_iter_vars: Name(s) of the tile iter-vars the expression
-        depends on. ``str`` for K=1; iterable for K>=2.
-    :param tile_widths: Tile width(s); shape matches ``tile_iter_vars``.
-    :param idx_dtype: Descriptor dtype; ``int32`` or ``int64`` per design 10.4.
-    :param dep_mask: Optional per-dim dependency mask (overrides direct iter-
-        var-membership detection); see :func:`compute_per_iter_var_dep_mask`.
-    :returns: Name of the materialised transient (AccessNode added to ``state``).
-    """
-    sdfg = state.sdfg
-    if isinstance(tile_iter_vars, str):
-        iter_vars = (tile_iter_vars, )
-        widths = (int(tile_widths), )
-    else:
-        iter_vars = tuple(tile_iter_vars)
-        widths = tuple(int(w) for w in tile_widths)
-    if len(iter_vars) != len(widths):
-        raise ValueError(f"materialise_per_lane_index_tile: tile_iter_vars (len={len(iter_vars)}) "
-                         f"and tile_widths (len={len(widths)}) must align")
-    from dace.symbolic import ONE
-    if dep_mask is not None:
-        if len(dep_mask) != len(iter_vars):
-            raise ValueError(f"materialise_per_lane_index_tile: dep_mask length {len(dep_mask)} "
-                             f"!= iter_vars length {len(iter_vars)}")
-        dep_mask = tuple(bool(b) for b in dep_mask)
-    else:
-        try:
-            expr_free_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(gather_expr).free_symbols}
-        except Exception:  # noqa: BLE001
-            expr_free_syms = set(iter_vars)
-        direct_dep_mask = tuple(v in expr_free_syms for v in iter_vars)
-        dep_mask = direct_dep_mask if any(direct_dep_mask) else tuple(True for _ in iter_vars)
-    shape = tuple(widths[d] if dep_mask[d] else ONE for d in range(len(iter_vars)))
-    if "ONE" not in sdfg.constants_prop:
-        sdfg.add_constant("ONE", 1, dd.Scalar(dace.int32))
-    arr_name, _ = sdfg.add_array(name_hint,
-                                 shape=shape,
-                                 dtype=idx_dtype,
-                                 storage=dtypes.StorageType.Register,
-                                 transient=True,
-                                 find_new_name=True)
-    # Word-boundary substitution: naive ``str.replace(var, ...)`` is
-    # character-level and mangles unrelated identifiers that happen to
-    # contain ``var`` as a substring (e.g. ``dst_slice_0`` -> ``dst_sl(__l0)ce_0``
-    # when ``var == "i"``). Use ``\b`` so only standalone tokens match.
-    import re as _re
-    import itertools as _itertools
-    body_expr = gather_expr
-    for d, var in enumerate(iter_vars):
-        body_expr = _re.sub(rf"\b{_re.escape(var)}\b", f"(__l{d})", body_expr)
-    dep_dims = [d for d, is_dep in enumerate(dep_mask) if is_dep]
-    parts = []
-    for i, d in enumerate(dep_dims):
-        inner = 1
-        for q in dep_dims[i + 1:]:
-            inner *= widths[q]
-        parts.append(f"__l{d}" if inner == 1 else f"(__l{d} * {inner})")
-    flat = " + ".join(parts) if parts else "0"
-    # GatherLift fold (user direction 2026-06-11: ``We can remove gather lift
-    # because we already have to do it when emitting loads``): when
-    # ``gather_expr`` is a single bare interstate symbol that's lane-dep, emit
-    # UNROLLED per-lane writes sourcing from per-lane symbols here -- avoids
-    # the placeholder loop body that confuses ConvertTaskletsToTileOps.
-    code_lines = _emit_unrolled_lift_or_loop(
-        sdfg=sdfg,
-        gather_expr_orig=gather_expr,
-        body_expr=body_expr,
-        widths=widths,
-        dep_mask=dep_mask,
-        dep_dims=dep_dims,
-        iter_vars=iter_vars,
-        flat=flat,
-        idx_dtype=idx_dtype,
-    )
-    tasklet = state.add_tasklet(
-        name=f"materialise_{arr_name}",
-        inputs=set(),
-        outputs={"_out"},
-        code="\n".join(code_lines),
-        language=dtypes.Language.CPP,
-    )
-    out_an = state.add_access(arr_name)
-    out_subset = ", ".join(f"0:{widths[d]}" if dep_mask[d] else "0:ONE" for d in range(len(iter_vars)))
-    state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
-    return arr_name
-
-
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class WidenAccesses(ppl.Pass):
@@ -360,7 +192,7 @@ class WidenAccesses(ppl.Pass):
         ``__tile_k1_tail`` postamble (pinned at K=1).
         """
         from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                            TILE_K1_TAIL_MARKER)
+                                                                                           TILE_K1_TAIL_MARKER)
         K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
@@ -499,8 +331,7 @@ class WidenAccesses(ppl.Pass):
             modified = True
         return subsets.Range(ranges) if modified else None
 
-    def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str,
-                                     iter_vars: Tuple[str, ...]) -> bool:
+    def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str, iter_vars: Tuple[str, ...]) -> bool:
         """Widen single-element memlets on edges incident to a non-transient AN.
 
         SYMMETRIC: identical for read-side and write-side edges and for
@@ -578,8 +409,7 @@ class WidenAccesses(ppl.Pass):
                     promoted |= {tok for tok in re.findall(r"\b[A-Za-z_]\w*\b", str(rhs)) if tok in names}
         return promoted
 
-    def _propagate_lane_dep(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...],
-                            nt_lane_dep: Set[str]) -> Set[str]:
+    def _propagate_lane_dep(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...], nt_lane_dep: Set[str]) -> Set[str]:
         """Forward-propagate lane-dep through Tasklets AND AN -> AN copies.
 
         Per user direction 2026-06-10/11: ``we need to DFS this so that we
@@ -698,10 +528,9 @@ class WidenAccesses(ppl.Pass):
         Per user direction 2026-06-11: ``wide subsets should emit laneid
         symbols ... all the way assign them to their symbols (making the
         original symbol etc)``. Per-lane symbol fanout is now WidenAccesses's
-        responsibility (sibling of subset / other_subset widening). The
-        downstream :func:`materialise_per_lane_index_tile` is idempotent --
-        if symbols are pre-seeded, it consumes them directly; if not, it
-        seeds them inline as a fallback.
+        responsibility (sibling of subset / other_subset widening); the
+        downstream tile-op gather-index path (:class:`InsertTileLoadStore`)
+        consumes the pre-seeded symbols.
 
         :returns: Number of (AN, k) pairs that triggered a seed.
         """
@@ -723,7 +552,10 @@ class WidenAccesses(ppl.Pass):
                     if sub is None:
                         continue
                     try:
-                        record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
+                        record = classify_tile_access(sub,
+                                                      iter_vars=iter_vars,
+                                                      inner_sdfg=inner_sdfg,
+                                                      state=inner_state)
                     except Exception:  # noqa: BLE001
                         continue
                     if not record.per_dim_kind or PerDimKind.GATHER not in record.per_dim_kind:
@@ -734,7 +566,10 @@ class WidenAccesses(ppl.Pass):
                         begin_str = str(sub.ranges[k][0]).strip()
                         if _re.fullmatch(r"[A-Za-z_]\w*", begin_str) is None:
                             continue
-                        if emit_per_lane_symbol_fanout(inner_sdfg, begin_str, iter_vars, widths,
+                        if emit_per_lane_symbol_fanout(inner_sdfg,
+                                                       begin_str,
+                                                       iter_vars,
+                                                       widths,
                                                        iter_var_ubs=iter_var_ubs) is not None:
                             seeded += 1
         return seeded

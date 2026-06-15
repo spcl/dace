@@ -32,6 +32,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
 from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
+from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
 # never installed on CI, so this resolves to ``None`` there (meaning "assume
@@ -65,16 +66,49 @@ class ExpandTileITEPure(ExpandTransformation):
         node.validate(parent_sdfg, parent_state)
         widths = list(node.widths)
         off = tile_offset(widths)
+        in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_o").data.data].dtype.ctype
+
+        def _ref(kind, conn, expr, cast):
+            """Per-lane C++ reference for one operand (a select arm or the cond).
+
+            A ``Symbol`` operand embeds its loop-invariant expression inline,
+            broadcast across every lane (user direction 2026-06-15). A ``Scalar``
+            operand reads a length-1 / ``dace.data.Scalar`` source (``conn[0]`` for
+            a length-1 Array pointer connector, bare ``conn`` for a by-value
+            Scalar) and broadcasts it. A ``Tile`` operand indexes per lane. When
+            ``cast`` is given (the arms, cast to the output dtype) it is applied;
+            the cond is used in a boolean ``? :`` context so ``cast`` is ``None``.
+            """
+            if kind == _SYMBOL:
+                return f"({cast})({expr})" if cast else f"({expr})"
+            if kind == _TILE:
+                return f"{conn}[{off}]"
+            desc = parent_sdfg.arrays[in_e[conn].data.data]
+            is_len1_array = (isinstance(desc, dace.data.Array)
+                             and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
+            ref = f"{conn}[0]" if is_len1_array else conn
+            return f"({cast})({ref})" if cast else f"({ref})"
+
+        t_ref = _ref(node.kind_t, "_t", node.expr_t, out_dtype)
+        e_ref = _ref(node.kind_e, "_e", node.expr_e, out_dtype)
         # Unified mask connector contract (user direction 2026-06-12: ``Unifiy
         # mask connectors in the multi dim pass globally``). ``_mask`` is the
-        # select-arm predicate for ITE (which lane gets ``_t`` vs ``_e``).
-        # The downstream global TileStore handles iter-mask gating; no
-        # separate execution-gate connector is needed.
-        body = f"_o[{off}] = (_mask[{off}] ? _t[{off}] : _e[{off}]);"
+        # select predicate for ITE (which lane gets ``_t`` vs ``_e``); a
+        # loop-invariant cond may instead be inline (kind_mask='Symbol' /
+        # 'Scalar', user direction 2026-06-15). The downstream global TileStore
+        # handles iter-mask gating; no separate execution-gate connector.
+        mask_ref = _ref(node.kind_mask, "_mask", node.expr_mask, None)
+        body = f"_o[{off}] = ({mask_ref} ? {t_ref} : {e_ref});"
         code = nested_loops(widths, body)
-        inputs = {"_mask", "_t", "_e"}
+        inputs = set()
+        if node.kind_mask in (_TILE, _SCALAR):
+            inputs.add("_mask")
+        if node.kind_t in (_TILE, _SCALAR):
+            inputs.add("_t")
+        if node.kind_e in (_TILE, _SCALAR):
+            inputs.add("_e")
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={c: None
@@ -218,18 +252,103 @@ class TileITE(nodes.LibraryNode):
         default=[],
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
-    def __init__(self, name: str, widths: Tuple[int, ...], location: Optional[str] = None):
+    kind_t = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default=_TILE,
+        desc="Then-arm kind: 'Tile' (read via _t), 'Scalar' (length-1 via _t), or 'Symbol' (inline expr_t).",
+    )
+    kind_e = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default=_TILE,
+        desc="Else-arm kind: 'Tile' (read via _e), 'Scalar' (length-1 via _e), or 'Symbol' (inline expr_e).",
+    )
+    expr_t = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Symbolic expression embedded inline when kind_t == 'Symbol'; ignored otherwise.",
+    )
+    expr_e = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Symbolic expression embedded inline when kind_e == 'Symbol'; ignored otherwise.",
+    )
+    kind_mask = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default=_TILE,
+        desc="Condition kind: 'Tile' (per-lane bool tile via _mask), 'Scalar' (length-1 bool via _mask), "
+        "or 'Symbol' (loop-invariant predicate embedded inline via expr_mask, no _mask connector).",
+    )
+    expr_mask = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Loop-invariant predicate expression embedded inline when kind_mask == 'Symbol'; ignored otherwise.",
+    )
+
+    def __init__(self,
+                 name: str,
+                 widths: Tuple[int, ...],
+                 kind_t: str = _TILE,
+                 kind_e: str = _TILE,
+                 expr_t: Optional[str] = None,
+                 expr_e: Optional[str] = None,
+                 kind_mask: str = _TILE,
+                 expr_mask: Optional[str] = None,
+                 location: Optional[str] = None):
         """Construct a ``TileITE`` node.
+
+        Every operand -- the condition (``_mask``) and both select arms (``_t`` /
+        ``_e``) -- may be a Tile (per-lane, read via its connector), a Scalar
+        (length-1 / ``dace.data.Scalar`` broadcast via its connector), or a
+        Symbol (a loop-invariant expression / literal embedded inline and
+        broadcast to every lane at expansion). Per user direction 2026-06-15
+        (``any tile op accepts symbolic / scalar inputs ... for TileITE as
+        well``); a Symbol operand declares NO connector. A loop-invariant
+        condition (``kind_mask='Symbol'``) thus omits ``_mask`` entirely.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
+        :param kind_t: Then-arm kind -- ``"Tile"`` / ``"Scalar"`` / ``"Symbol"``.
+        :param kind_e: Else-arm kind -- ``"Tile"`` / ``"Scalar"`` / ``"Symbol"``.
+        :param expr_t: Required when ``kind_t == "Symbol"``.
+        :param expr_e: Required when ``kind_e == "Symbol"``.
+        :param kind_mask: Condition kind -- ``"Tile"`` / ``"Scalar"`` / ``"Symbol"``.
+        :param expr_mask: Required when ``kind_mask == "Symbol"``.
         :param location: Optional DaCe node location override.
-        :raises ValueError: On invalid ``widths`` length.
+        :raises ValueError: On invalid ``widths`` length / kind, or a missing
+            expression for a Symbol operand.
         """
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileITE: widths must have length in {{1, 2, 3}}, got {widths!r}")
-        super().__init__(name, location=location, inputs={"_mask", "_t", "_e"}, outputs={"_o"})
+        for label, kind in (("kind_t", kind_t), ("kind_e", kind_e), ("kind_mask", kind_mask)):
+            if kind not in _VALID_KINDS:
+                raise ValueError(f"TileITE: {label} must be one of {_VALID_KINDS}, got {kind!r}")
+        if kind_t == _SYMBOL and not expr_t:
+            raise ValueError("TileITE: kind_t='Symbol' requires expr_t")
+        if kind_e == _SYMBOL and not expr_e:
+            raise ValueError("TileITE: kind_e='Symbol' requires expr_e")
+        if kind_mask == _SYMBOL and not expr_mask:
+            raise ValueError("TileITE: kind_mask='Symbol' requires expr_mask")
+        inputs = set()
+        if kind_mask in (_TILE, _SCALAR):
+            inputs.add("_mask")
+        if kind_t in (_TILE, _SCALAR):
+            inputs.add("_t")
+        if kind_e in (_TILE, _SCALAR):
+            inputs.add("_e")
+        super().__init__(name, location=location, inputs=inputs, outputs={"_o"})
         self.widths = list(widths)
+        self.kind_t = kind_t
+        self.kind_e = kind_e
+        self.expr_t = expr_t
+        self.expr_e = expr_e
+        self.kind_mask = kind_mask
+        self.expr_mask = expr_mask
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Validate connector counts and the then/else/out dtype agreement.
@@ -237,28 +356,38 @@ class TileITE(nodes.LibraryNode):
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
         :raises ValueError: If a required connector is unconnected.
-        :raises NotImplementedError: If ``_t`` / ``_e`` / ``_o`` dtypes
-            disagree (a cross-dtype select needs an explicit cast first).
+        :raises NotImplementedError: If the output is not tile-shape or the
+            materialised (Tile / Scalar) arm dtypes disagree with ``_o``
+            (a cross-dtype select needs an explicit cast first). Symbol arms
+            are cast to ``_o``'s dtype inline at expansion, so they are exempt.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
         if "_o" not in out_e:
             raise ValueError(f"{self.label}: required output '_o' not connected")
-        for conn in ("_mask", "_t", "_e"):
+        # An operand connector is required only when its kind reads through a
+        # connector (Tile / Scalar); a Symbol operand is inline (no connector).
+        required = []
+        for conn, kind in (("_mask", self.kind_mask), ("_t", self.kind_t), ("_e", self.kind_e)):
+            if kind in (_TILE, _SCALAR):
+                required.append(conn)
+        for conn in required:
             if conn not in in_e:
                 raise ValueError(f"{self.label}: required input {conn!r} not connected")
         o_arr = sdfg.arrays[out_e["_o"].data.data]
-        t_arr = sdfg.arrays[in_e["_t"].data.data]
-        # Output-kind rule (design 6.2): TileITE inputs are implicitly Tile (no kind
-        # properties), so the output must be tile-shape.
-        from .tile_binop import _is_tile_shape
-        if not _is_tile_shape(o_arr, tuple(self.widths)):
+        # Output-kind rule (design 6.2): when ANY operand is a Tile, ``_o`` must be
+        # tile-shape. (In the tile body at least the cond or one arm is a Tile; an
+        # all-Symbol/Scalar ITE is loop-invariant and may keep a scalar output.)
+        any_tile_input = _TILE in (self.kind_mask, self.kind_t, self.kind_e)
+        if any_tile_input and not _is_tile_shape(o_arr, tuple(self.widths)):
             raise NotImplementedError(
-                f"{self.label}: output-kind rule violated -- TileITE inputs are implicitly Tile but "
+                f"{self.label}: output-kind rule violated -- a Tile input is present but "
                 f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design section 6.2: "
                 f"any Tile input -> Tile output.")
-        e_arr = sdfg.arrays[in_e["_e"].data.data]
-        if {o_arr.dtype, t_arr.dtype, e_arr.dtype} != {o_arr.dtype}:
-            raise NotImplementedError(
-                f"{self.label}: TileITE requires uniform dtype across _t, _e and _o "
-                f"(got {o_arr.dtype}, {t_arr.dtype}, {e_arr.dtype}); cast via separate tasklet first.")
+        arm_dtypes = {o_arr.dtype}
+        for conn, kind in (("_t", self.kind_t), ("_e", self.kind_e)):
+            if kind in (_TILE, _SCALAR):
+                arm_dtypes.add(sdfg.arrays[in_e[conn].data.data].dtype)
+        if arm_dtypes != {o_arr.dtype}:
+            raise NotImplementedError(f"{self.label}: TileITE requires uniform dtype across _t, _e and _o "
+                                      f"(got {sorted(str(d) for d in arm_dtypes)}); cast via separate tasklet first.")

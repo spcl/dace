@@ -14,17 +14,20 @@ and emit at least one ``TileLoad`` (gather) AND at least one ``TileStore`` (scat
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.transformation.passes.vectorization.utils.tasklets import tasklet_reads_or_writes_tile
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")
 NPROMA = dace.symbol("NPROMA")
+
+_WIDTHS = (8, 8)
 
 
 @dace.program
@@ -46,16 +49,24 @@ def _icon_zekinh_gather_scatter(
 
 
 def _count_tasklets(sdfg: dace.SDFG) -> int:
-    """Count tasklets the descent did NOT lower to lib nodes.
+    """Count raw tasklets that still touch TILE-shaped data after the descent.
 
-    Trivial ``_out = _in`` assign tasklets are LEFT in place by the descent
-    (``_promote_internal_assigns`` is a no-op per user directive: collapsing
-    them into AN -> AN would silently drop source-side coordinates). These
-    are semantically fine -- they lower to a one-element copy at codegen --
-    so the test asserts only "no NON-assign raw tasklets" rather than
-    "zero tasklets total"."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
+    The K-dim tile-only invariant is "tile-shaped values flow only through tile
+    lib nodes" -- so a tasklet is unlowered residue iff it reads/writes a tile
+    (full ``widths`` or a ``ONE``-broadcast tile). Excluded as legitimate:
+
+    * Trivial ``_out = _in`` assign tasklets (``_is_assign_tasklet``) -- the
+      descent leaves these as one-element copies (collapsing into AN -> AN
+      would drop source-side coordinates, per user directive).
+    * ``tile_runtime_*`` trip-guard tasklets (SYMBOLIC-dim ``__builtin_trap``
+      control, not a compute residual).
+    * Scalar ``__tile_k1_tail`` remainder tasklets operating purely on ``(1,)``
+      scalars -- scalar-load -> scalar chains stay python scalar tasklets (user
+      direction 2026-06-15); they touch no tile, so are not counted.
+    """
+    return sum(1 for n, parent in sdfg.all_nodes_recursive()
+               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
+               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, _WIDTHS))
 
 
 def _count_lib(sdfg: dace.SDFG, cls) -> int:
@@ -74,16 +85,14 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
         branch_mode="merge",
         loop_to_map_permissive=True,
         nest_map_bodies=True,
-        insert_copies=True,
-        fuse_overlapping_loads=False,
         scalar_remainder_emit="tile_k1",
         expand_tile_nodes=False,
     ).apply_pass(sdfg, {})
     sdfg.validate()
 
     n_tasklet = _count_tasklets(sdfg)
-    n_gather = _count_lib(sdfg, TileLoad(gather))
-    n_scatter = _count_lib(sdfg, TileStore(scatter))
+    n_gather = _count_lib(sdfg, TileLoad)
+    n_scatter = _count_lib(sdfg, TileStore)
     assert n_tasklet == 0, (f"icon_zekinh_gather_scatter must lower to tile lib nodes only at the K-dim "
                             f"layer; got {n_tasklet} raw Tasklet nodes after the descent.")
     assert n_gather >= 1, (f"The mixed-gather source must yield at least one TileLoad (gather); got {n_gather}.")

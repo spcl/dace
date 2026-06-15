@@ -102,43 +102,75 @@ def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_
 
 
 def resolve_gather_deps(idx_shape, widths):
-    """Find the sorted subset of tile dims whose widths spell out ``idx_shape``.
+    """Find the sorted subset of tile dims an ``_idx_<d>`` index tile depends on.
 
     Implements the design section 9.2 lane-dependency lookup: given an
     ``_idx_<d>`` connector's descriptor shape and the lib node's tile widths,
-    return the sorted tuple of tile dim indices ``deps_d`` such that
-    ``tuple(widths[p] for p in deps_d) == idx_shape``, or ``None`` if no such
-    subset exists. The special ``(1,)`` shape (scalar gather index, no lane
-    dep) returns the empty tuple ``()``.
+    return the sorted tuple of tile dim indices ``deps_d`` the index tile
+    varies over, or ``None`` if the shape cannot be reconciled with ``widths``.
+    The special ``(1,)`` shape (scalar gather index, no lane dep) returns the
+    empty tuple ``()``.
 
-    Per user direction 2026-06-10: ``ONE``-marked broadcast dims are collapsed
-    out before matching, so a ``(W_0, ONE)`` shape is treated as ``(W_0,)``.
-    Uses :func:`dace.symbolic.collapse_one_dims` (shared helper -- design 3.8.2).
+    **Index tiles are full-K-dim and resolve POSITIONALLY — ``ONE`` is NEVER
+    collapsed** (user direction 2026-06-14: the markers must be preserved). A
+    ``K``-dim index tile encodes its per-tile-dim dependencies *by position*:
+    tile dim ``d`` is a dependency iff ``idx_shape[d]`` is neither literal ``1``
+    nor the :data:`~dace.symbolic.ONE` broadcast marker (and a non-marker extent
+    must equal ``widths[d]``). ``(W, ONE)`` (col gather, dep dim 0) and
+    ``(ONE, W)`` (row gather, dep dim 1) are DISTINCT — collapsing both to
+    ``(W,)`` would make equal-width tiles (``widths=(8, 8)``) ambiguous, the
+    exact bug the ``ONE`` marker exists to prevent. The index-tile emitters
+    (:meth:`InsertTileLoadStore._stage_array_read_tile`) therefore always emit
+    the full-rank ``ONE``-padded form; a shape whose rank is not ``K`` (other
+    than the scalar ``(1,)``) is rejected.
 
     :param idx_shape: The descriptor shape of an ``_idx_<d>`` connector
-        (e.g. ``(4,)`` or ``(4, 8)`` or ``(4, ONE)``).
+        (e.g. ``(4, 8)``, ``(4, ONE)``, ``(ONE, 8)``).
     :param widths: The lib node's full tile widths ``(W_0, ..., W_{K-1})``.
     :returns: Sorted tuple of tile dim indices, ``()`` for the scalar case,
-        or ``None`` when no Cartesian product of widths matches.
+        or ``None`` when the shape cannot be reconciled with ``widths``.
     """
-    from itertools import combinations
-    from dace.symbolic import collapse_one_dims
-    if tuple(idx_shape) == (1, ):
-        return ()
-    # Opt into the ``treat_one_symbol_as_one`` mode: this lookup compares the
-    # idx-tile descriptor shape against the tile widths, so a ``(W_0, ONE)``
-    # tile shape must match ``widths=(W_0,)``. The ``ONE`` symbol acts as a
-    # broadcast marker, structurally equivalent to literal 1 for this match.
-    collapsed = collapse_one_dims(idx_shape, treat_one_symbol_as_one=True)
-    if collapsed == ():
-        # All dims were ``ONE`` -- treat as a scalar (no lane dep).
-        return ()
+    import sympy
+    import dace
+    from dace.symbolic import ONE
+
+    def _is_one(s):
+        """True only for the :data:`ONE` broadcast marker -- NOT a literal ``1``.
+
+        ``ONE`` is the deliberate broadcast / collapsed-dim marker; a literal
+        ``1`` extent means a genuine width-1 tile dim (a real dependency). The
+        two must stay distinct here -- that disambiguation (broadcast vs a
+        coincidental width-1 dep) is the whole reason ``ONE`` is a symbol and
+        not just ``1`` (user 2026-06-14), and it is what keeps the index-tile
+        rank aligned with the data tile (cuTile-faithful broadcast dims)."""
+        return isinstance(s, sympy.Basic) and ONE in s.free_symbols
+
+    def _extent_eq(a, b):
+        """Symbolic-safe extent equality."""
+        try:
+            return bool(dace.symbolic.simplify(a - b) == 0)
+        except Exception:  # noqa: BLE001
+            return a == b
+
+    idx_shape = tuple(idx_shape)
     K = len(widths)
-    for k in range(1, K + 1):
-        for combo in combinations(range(K), k):
-            if collapsed == tuple(widths[p] for p in combo):
-                return combo
-    return None
+    # Scalar gather index (no lane dep): the legacy literal ``(1,)`` shape. A
+    # K-dim all-``ONE`` shape is also scalar and falls out of the positional
+    # loop below (every dim skipped -> empty deps).
+    if idx_shape == (1, ):
+        return ()
+    # Full-K-dim positional resolution. The ONE markers are PRESERVED, never
+    # collapsed: dim d is a dep iff its extent is not a 1/ONE broadcast marker.
+    if len(idx_shape) != K:
+        return None
+    deps = []
+    for d in range(K):
+        if _is_one(idx_shape[d]):
+            continue  # broadcast dim -- not a dependency
+        if not _extent_eq(idx_shape[d], widths[d]):
+            return None  # non-marker extent disagrees with the tile width
+        deps.append(d)
+    return tuple(deps)
 
 
 def _strides_match_packed(shape, strides, order):

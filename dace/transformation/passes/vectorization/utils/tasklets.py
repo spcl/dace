@@ -39,6 +39,79 @@ def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
     return False
 
 
+def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
+    """ONE-aware classification: ``desc`` is a tile (full ``widths``) or a
+    broadcast-tile (each dim is the tile width ``w_d`` or a broadcast marker --
+    the ``dace.symbolic.ONE`` symbol / a literal ``1``), with at least one real
+    (non-broadcast) width dim.
+
+    CLASSIFICATION ONLY -- this never reshapes a memlet. ``(W, ONE)`` / ``(ONE,
+    W)`` broadcast shapes live solely on ``TileLoad`` / ``TileStore`` index
+    connectors, which know how to handle them internally; collapsing such a
+    shape to ``(W,)`` in a memlet trips DaCe's subset-dimensionality validator
+    (user direction 2026-06-15: ``(W, ONE) and similar shapes should be only
+    passed to the tile load or tile store``). This predicate lets callers (e.g.
+    the K-dim tile-only test contract) recognise that a value is tile-shaped
+    -- treating the ``ONE`` marker as the integer ``1`` it stands for -- without
+    ever touching the memlet.
+
+    Note the rank gate: a scalar ``(1,)`` bridge in a K=1 ``__tile_k1_tail``
+    body has rank 1, so against a rank-2 ``widths`` it is correctly NOT a tile
+    (scalar-load -> scalar chains stay python scalar tasklets, user direction
+    2026-06-15). The strict-output sibling is ``tile_binop._is_tile_shape``.
+
+    :param desc: A data descriptor (``dace.data.Array`` / ``Scalar`` / ...).
+    :param widths: Per-tile-dim widths, innermost-last.
+    :returns: True iff ``desc`` is a tile or a broadcast-tile of rank
+        ``len(widths)``.
+    """
+    import sympy
+    from dace.symbolic import ONE
+    if not isinstance(desc, dace.data.Array):
+        return False
+    shape = tuple(desc.shape)
+    if len(shape) != len(widths):
+        return False
+    n_real = 0
+    for s, w in zip(shape, widths):
+        try:
+            is_w = bool(dace.symbolic.simplify(s - w) == 0)
+        except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
+            is_w = (s == w)
+        is_one_marker = isinstance(s, sympy.Basic) and ONE in s.free_symbols
+        try:
+            is_lit_one = bool(dace.symbolic.simplify(s - 1) == 0)
+        except Exception:  # noqa: BLE001
+            is_lit_one = (s == 1)
+        if is_w:
+            n_real += 1
+        elif is_one_marker or is_lit_one:
+            continue  # broadcast dim -- the ``ONE`` marker, i.e. width 1
+        else:
+            return False
+    return n_real >= 1
+
+
+def tasklet_reads_or_writes_tile(state: dace.SDFGState, tasklet: dace.nodes.Tasklet, widths: Tuple[int, ...]) -> bool:
+    """True iff any in/out edge of ``tasklet`` carries data whose descriptor is a
+    tile or broadcast-tile (see :func:`descriptor_is_tile_or_broadcast`).
+
+    Encodes the K-dim tile-only invariant: tile-shaped values flow ONLY through
+    tile lib nodes, never through raw tasklets. A raw tasklet that touches a
+    tile is unlowered residue (a real failure); a tasklet operating purely on
+    scalars (e.g. the scalar ``__tile_k1_tail`` remainder) is legitimate and is
+    NOT counted.
+    """
+    sdfg = state.sdfg
+    for edge in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
+        if edge.data is None or edge.data.data is None:
+            continue
+        desc = sdfg.arrays.get(edge.data.data)
+        if desc is not None and descriptor_is_tile_or_broadcast(desc, widths):
+            return True
+    return False
+
+
 # Operator tables consumed by ``instantiate_tasklet_from_info``. Kept at
 # module level so callers / tests can inspect them without poking at
 # function-local state.
@@ -395,6 +468,21 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
     :param vector_map_param: The vectorized map parameter.
     :return: ``True`` when the connector reads a lane-invariant value.
     """
+    # Authoritative per-lane signal: when the INNER access subset itself still
+    # mentions the vectorized map parameter, every lane reads a DIFFERENT
+    # element -- it is per-lane data, never a broadcast. The legacy widening
+    # rewrites many inner views to ``[0:W]`` (dropping the param), so a subset
+    # that STILL carries it is unambiguous and must short-circuit the
+    # outer-begin heuristic below. This is the gather-sibling case: a contiguous
+    # operand ``c[i:i+W]`` riding alongside a packed gather, whose OUTER NSDFG
+    # boundary memlet is the whole array ``c[0:N]`` (begin 0) -- the outer-begin
+    # rule would otherwise mis-read it as a broadcast and collapse W lanes to
+    # ``c[0]`` (TSVC s4113 ``a[ip[i]] = b[ip[i]] + c[i]``).
+    for ie in state.in_edges(node):
+        if ie.dst_conn == conn and ie.data is not None and ie.data.subset is not None:
+            if vector_map_param in {str(s) for s in ie.data.subset.free_symbols}:
+                return False
+            break
     # The inner subset alone is not enough: the legacy widening rewrites
     # the inner view's index to ``[0:W]`` for every connector, so neither
     # ``a[0]`` (intended broadcast) nor ``b[i]`` (intended sliding window)

@@ -229,3 +229,152 @@ def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") 
         if e.dst_conn in operand_names:
             return ReductionInfo(op=op, accumulator=accum, identity=IDENTITY[op])
     return None
+
+
+@dataclass
+class MapReductionInfo:
+    """Result of :func:`recognize_map_reduction` — a per-iteration scalar
+    reduction carried *across* an innermost map (the spmv "row reduction").
+
+    Unlike :class:`ReductionInfo` (a single flat tasklet), this describes an
+    innermost map ``R`` that read-modify-writes a scalar accumulator through
+    an opaque body — typically a :class:`~dace.nodes.NestedSDFG` performing a
+    gather + product (``acc = acc + data[idx] * x[indices[idx]]``). The body
+    is an *indirect-access* NSDFG that cannot be inlined, so the operator is
+    recovered by peeking (read-only) at the combining tasklet inside it.
+
+    :param op: Reduction operator (an :data:`IDENTITY` key).
+    :param identity: ``IDENTITY[op]`` — the fold seed.
+    :param accumulator: The carried scalar's data-descriptor name.
+    :param map_entry: The reduction map's entry node.
+    :param map_exit: The reduction map's exit node.
+    :param body: The single node in the map scope (NSDFG or tasklet).
+    :param read_edge: ``map_entry -> body`` edge carrying ``acc`` in.
+    :param write_edge: ``body -> map_exit`` edge carrying ``acc`` out.
+    """
+
+    op: str
+    identity: str
+    accumulator: str
+    map_entry: "dace.nodes.MapEntry"
+    map_exit: "dace.nodes.MapExit"
+    body: "dace.nodes.Node"
+    read_edge: object
+    write_edge: object
+
+
+def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> Optional[str]:
+    """Reduction op of ``tasklet`` iff ``conn`` is an operand of its top-level
+    associative binop (``__out = conn <op> other`` / ``op(conn, other)``).
+
+    Reuses :func:`_reduction_op_and_operands` so the recognised op set stays
+    identical to the flat :func:`recognize_reduction` path.
+
+    :param tasklet: The candidate combining tasklet.
+    :param conn: The accumulator-carrying input connector name.
+    :returns: The op token (an :data:`IDENTITY` key) or ``None``.
+    """
+    if not isinstance(tasklet, dace.nodes.Tasklet) or tasklet.code.language != dace.dtypes.Language.Python:
+        return None
+    assign = _single_assignment(tasklet.code.as_string)
+    if assign is None or len(assign.targets) != 1:
+        return None
+    parsed = _reduction_op_and_operands(assign.value)
+    if parsed is None:
+        return None
+    op, operands = parsed
+    if op not in IDENTITY:
+        return None
+    if conn in {o.id for o in operands if isinstance(o, ast.Name)}:
+        return op
+    return None
+
+
+def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge, write_edge) -> Optional[str]:
+    """Recover the reduction op combining the accumulator inside ``body``.
+
+    ``body`` is either a flat tasklet (delegate to :func:`recognize_reduction`)
+    or an opaque NSDFG. For the NSDFG case the accumulator enters on connector
+    ``read_edge.dst_conn``; the inner array of that name is consumed by exactly
+    the combining tasklet — parse it for the associative op.
+
+    :param state: The state holding ``body``.
+    :param body: The map-scope body node.
+    :param read_edge: ``map_entry -> body`` edge (accumulator in).
+    :param write_edge: ``body -> map_exit`` edge (accumulator out).
+    :returns: The op token or ``None`` if not a recognised reduction.
+    """
+    if isinstance(body, dace.nodes.Tasklet):
+        info = recognize_reduction(state, body)
+        return info.op if info is not None else None
+    if not isinstance(body, dace.nodes.NestedSDFG):
+        return None
+    cin = read_edge.dst_conn
+    if cin is None:
+        return None
+    inner = body.sdfg
+    for st in inner.states():
+        for an in st.data_nodes():
+            if an.data != cin:
+                continue
+            for oe in st.out_edges(an):
+                op = _reduction_op_for_connector(oe.dst, oe.dst_conn)
+                if op is not None:
+                    return op
+    return None
+
+
+def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry") -> Optional[MapReductionInfo]:
+    """Recognise a scalar reduction carried across an innermost map.
+
+    The shape (the spmv ``for idx: tmp = tmp + data[idx]*x[indices[idx]]``
+    row reduction): a single-param, unit-step innermost map whose scope is one
+    body node that *reads* a scalar ``acc[0]`` at the entry and *writes* the
+    same ``acc[0]`` at the exit — a loop-carried read-modify-write. The body is
+    an opaque indirect-access NSDFG (the gather cannot be inlined), so the
+    operator is recovered by peeking at the combining tasklet inside it.
+
+    :param state: The state containing ``map_entry``.
+    :param map_entry: The candidate innermost reduction map.
+    :returns: A :class:`MapReductionInfo`, or ``None`` if not recognised.
+    """
+    if not isinstance(map_entry, dace.nodes.MapEntry):
+        return None
+    if len(map_entry.map.params) != 1:
+        return None
+    _, _, step = map_entry.map.range[-1]
+    if (step != 1) and (str(step) != "1"):
+        return None
+    map_exit = state.exit_node(map_entry)
+    # Innermost only: no nested map in scope.
+    inner = state.all_nodes_between(map_entry, map_exit) or set()
+    if any(isinstance(n, dace.nodes.MapEntry) for n in inner):
+        return None
+    body_nodes = [n for n in inner if n not in (map_entry, map_exit)]
+    if len(body_nodes) != 1:
+        return None
+    body = body_nodes[0]
+
+    def _scalar_slot(e) -> bool:
+        return (e.data is not None and e.data.data is not None and e.data.subset is not None
+                and e.data.subset.num_elements() == 1)
+
+    reads = {e.data.data: e for e in state.out_edges(map_entry) if e.dst is body and _scalar_slot(e)}
+    writes = {e.data.data: e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e)}
+    for acc in set(reads) & set(writes):
+        desc = state.sdfg.arrays.get(acc)
+        if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
+            continue
+        read_edge, write_edge = reads[acc], writes[acc]
+        op = _op_through_body(state, body, read_edge, write_edge)
+        if op is None or op not in IDENTITY:
+            continue
+        return MapReductionInfo(op=op,
+                                identity=IDENTITY[op],
+                                accumulator=acc,
+                                map_entry=map_entry,
+                                map_exit=map_exit,
+                                body=body,
+                                read_edge=read_edge,
+                                write_edge=write_edge)
+    return None

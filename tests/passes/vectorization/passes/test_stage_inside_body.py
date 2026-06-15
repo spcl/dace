@@ -379,9 +379,12 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
         "expected two float64 tile-shape transients (TileLoad bridge + A6-resized passthrough)"
     body_state = next(s for s in inner.states())
     tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
-    assert len(tile_loads) == 1
-    load = tile_loads[0]
-    assert tuple(load.gather_dims) == (0, ), "expected gather_dims=(0,) on the TileLoad"
+    # Two TileLoads now: the index-tile load (builds the ``(W,)`` _idx tile -- no
+    # CPP materialiser anymore) + the data gather load. The data gather is the
+    # one carrying gather_dims.
+    assert len(tile_loads) == 2, f"expected index-load + data-gather TileLoad, got {len(tile_loads)}"
+    load = next(n for n in tile_loads if n.gather_dims)
+    assert tuple(load.gather_dims) == (0, ), "expected gather_dims=(0,) on the data-gather TileLoad"
     assert "_idx_0" in load.in_connectors, "expected _idx_0 connector wired"
 
 
@@ -440,8 +443,9 @@ def test_walker_stages_K2_multi_tile_dim_gather():
         "expected two (8, 16) float64 tile-shape transients (TileLoad bridge + A6-resized passthrough)"
     body_state = next(s for s in inner.states())
     tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
-    assert len(tile_loads) == 1
-    load = tile_loads[0]
+    # Index-tile load (builds the (8, 16) _idx tile) + data gather load.
+    assert len(tile_loads) == 2, f"expected index-load + data-gather TileLoad, got {len(tile_loads)}"
+    load = next(n for n in tile_loads if n.gather_dims)
     assert tuple(load.gather_dims) == (0, )
     assert "_idx_0" in load.in_connectors
 
@@ -655,7 +659,7 @@ def test_walker_scatter_dispatch_uses_stage_tile_store_helper():
     fires. Direct walker-to-end-to-end testing of scatter requires a ``B[idx[ii]]`` memlet
     which DaCe's parser doesn't accept verbatim; the helper-level tests above pin the
     contract of ``stage_tile_store(gather_dims=...)`` and the walker reuses it via the
-    same shared materialise_per_lane_index_tile path that the read-side gather branch uses.
+    same shared ``_stage_index_via_tileops`` path that the read-side gather branch uses.
     This test is a thin smoke that the InsertTileLoadStore class itself imports the helpers
     without breaking when scatter dispatch is reachable.
     """

@@ -34,8 +34,48 @@ def assert_post_descent_invariants(*args, **kwargs):
     return None
 
 
-def cleanup_an_to_an_edges(*args, **kwargs):
-    """No-op stub -- legacy descent was deleted in the walker-primary migration."""
+def cleanup_an_to_an_edges(sdfg, *args, **kwargs):
+    """Refuse an ``AccessNode -> AccessNode`` copy whose two sides move a
+    DIFFERENT number of elements.
+
+    DaCe's AN -> AN validation only checks non-negative size, not volume
+    equality between ``subset`` and ``other_subset`` -- so a lopsided copy
+    (e.g. write 2 elements, read 1) validates yet cannot be expressed as a
+    single ``_out = _in`` assignment tasklet. Raise ``NotImplementedError``
+    rather than silently emitting a wrong copy.
+
+    The legacy descent expressed an AN -> AN copy as a single ``_out = _in``
+    assignment tasklet, which moves exactly one element to one element; any
+    side-volume inequality (``N != M``, including a lopsided 1->2 "broadcast")
+    cannot be expressed that way and is refused. Equal-volume copies pass
+    through. (Re-homed 2026-06-15: the legacy descent that owned this refusal
+    was stubbed in the walker-primary migration; the invariant check is
+    restored here so the malformed pattern fails loudly instead of
+    miscompiling.)
+    """
+    from dace.sdfg.nodes import AccessNode
+    if sdfg is None or not hasattr(sdfg, "all_states"):
+        return None
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            if not (isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode)):
+                continue
+            m = edge.data
+            if m is None or m.subset is None or m.other_subset is None:
+                continue
+            try:
+                n_dst = m.subset.num_elements()
+                n_src = m.other_subset.num_elements()
+                equal = bool(dace.symbolic.simplify(n_dst - n_src) == 0)
+            except Exception:  # noqa: BLE001 -- exotic symbolic subset
+                continue
+            if equal:
+                continue
+            raise NotImplementedError(
+                f"AccessNode '{edge.src.data}' -> AccessNode '{edge.dst.data}': mismatched-volume copy "
+                f"(other_subset {m.other_subset} = {n_src} elems read, subset {m.subset} = {n_dst} elems "
+                f"written); no single '_out = _in' tasklet can express it. Refusing rather than emitting a "
+                f"wrong copy.")
     return None
 
 
@@ -186,7 +226,7 @@ class Vectorize(ppl.Pass):
         try:
             int_size = int(e + 1 - b)
             int_vwidth = int(self.vector_width)
-        except:
+        except (TypeError, ValueError):
             int_size = None
             int_vwidth = None
         assert (int_size is not None and int_size == int_vwidth) or (

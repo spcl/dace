@@ -8,8 +8,8 @@ Two flavors per design 6.2 / 6.5:
   ``kind=Symbol`` + inline ``expr_*`` on the lib node.
 
 * **Lane-id-dependent** symbol -- an expression that references an iter_var (e.g.
-  ``ii``, ``2 * ii + jj``). Materialised to a per-lane tile via
-  :func:`materialise_per_lane_index_tile`; the lib node sees ``kind=Tile`` and reads
+  ``ii``, ``2 * ii + jj``). Materialised to a per-lane tile by the
+  ConvertTaskletsToTileOps lane-id path; the lib node sees ``kind=Tile`` and reads
   from the materialised tile.
 
 Both paths should produce numerically correct output bit-equal to the unvectorized

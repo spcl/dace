@@ -24,16 +24,19 @@ constant store is now a ``TileStore`` lib node.
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.transformation.passes.vectorization.utils.tasklets import tasklet_reads_or_writes_tile
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
 KLEV = dace.symbol("KLEV")
 KLON = dace.symbol("KLON")
+
+_WIDTHS = (8, 8)
 
 _PTSPHY = 50.0
 _RLMIN = 1.0e-8
@@ -76,16 +79,17 @@ def _tile_lib_node_count(sdfg: dace.SDFG) -> int:
 
 
 def _tasklet_count(sdfg: dace.SDFG) -> int:
-    """Number of NON-assign raw ``Tasklet`` nodes anywhere in ``sdfg``.
+    """Number of raw ``Tasklet`` nodes that still touch TILE-shaped data.
 
-    Trivial ``_out = _in`` assigns are LEFT in place by the descent
-    (``_promote_internal_assigns`` is a no-op per user directive --
-    collapsing them into AN -> AN would silently drop source-side
-    coordinates). They are semantically fine and lower to a one-element
-    copy at codegen, so the K-dim tile-only contract is preserved as
-    "no NON-assign raw tasklets" rather than "zero tasklets total"."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
+    The K-dim tile-only contract is "tile-shaped values flow only through tile
+    lib nodes" -- so every constant store / broadcast in the tile body must be a
+    tile lib node (here a ``TileLoad(src_kind='Symbol')``), never a CPP fill.
+    Excluded as legitimate: trivial assigns, ``tile_runtime_*`` trip guards, and
+    the scalar ``__tile_k1_tail`` remainder (scalar-load -> scalar python
+    tasklets, user direction 2026-06-15) -- none of those touch a tile."""
+    return sum(1 for n, parent in sdfg.all_nodes_recursive()
+               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
+               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, _WIDTHS))
 
 
 def test_tilestore_symbol_broadcast_minimal():
@@ -122,8 +126,6 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
         branch_mode="merge",
         loop_to_map_permissive=False,
         nest_map_bodies=True,
-        insert_copies=True,
-        fuse_overlapping_loads=False,
         scalar_remainder_emit="tile_k1",
         expand_tile_nodes=False,
     ).apply_pass(sdfg, {})

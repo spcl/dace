@@ -11,7 +11,7 @@ else raises :class:`NotImplementedError`.
 """
 import copy
 import re
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -102,8 +102,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
 
     for region in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(region, _LoopRegion):
-            for attr in ("loop_condition", "update_statement", "init_statement"):
-                code = getattr(region, attr, None)
+            for code in (region.loop_condition, region.update_statement, region.init_statement):
                 if code is None:
                     continue
                 text = code.as_string if isinstance(code, CodeBlock) else str(code)
@@ -205,6 +204,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                     if isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
                         continue
                     return False
+            # An arm writing the same array at multiple distinct subsets (an
+            # in-place chain) cannot use the single-temp clone-redirect below;
+            # defer to BranchNormalization's per-write ITE rewrite.
+            if (self._arm_writes_array_at_multiple_subsets(s0) or self._arm_writes_array_at_multiple_subsets(s1)):
+                return False
             shared = self._shared_writes(s0, s1)
             return bool(shared)
         if len(cb.branches) == 1:
@@ -221,6 +225,10 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             for n in s0.nodes():
                 if isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
                     continue
+                return False
+            # Multi-subset in-place chain -> defer to BranchNormalization
+            # (the single-temp clone-redirect below would merge the writes).
+            if self._arm_writes_array_at_multiple_subsets(s0):
                 return False
             try:
                 w0 = self._collect_write_subsets(s0)
@@ -244,6 +252,34 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             raise NotImplementedError(
                 f"SameWriteSetIfElseToITECFG: non-element write subset found in state {state.label}")
         return out
+
+    @staticmethod
+    def _arm_writes_array_at_multiple_subsets(state: dace.SDFGState) -> bool:
+        """Whether some array is element-written at >1 distinct subset in ``state``.
+
+        The single-temp clone-redirect here allocates ONE ``_then_<arr>`` /
+        ``_else_<arr>`` (1,)-shaped scratch per array *name* and redirects every
+        write of that array to it (:meth:`_clone_with_redirect`). That collapses
+        an in-place chain that writes the *same* array at *different* element
+        subsets -- e.g. the cloudsc disjoint chain ``zsolqa[0,3,i] += ...`` then
+        ``zsolqa[3,0,i] -= ...`` -- into one cell, dropping all but one write and
+        miscompiling the ITE. Such an arm must instead go through
+        :class:`BranchNormalization`, whose ``_rewrite_writes_to_ite`` gates each
+        write node individually (so each subset keeps its own ITE). Detect the
+        shape so :meth:`_matches` can defer it.
+
+        :param state: An arm body state.
+        :returns: ``True`` if any array has two or more distinct write subsets.
+        """
+        subsets_per_array: Dict[str, set] = {}
+        for n in state.nodes():
+            if not isinstance(n, dace.nodes.AccessNode):
+                continue
+            for e in state.in_edges(n):
+                if e.data is None or e.data.data is None or e.data.subset is None:
+                    continue
+                subsets_per_array.setdefault(n.data, set()).add(str(e.data.subset))
+        return any(len(subs) > 1 for subs in subsets_per_array.values())
 
     def _shared_writes(self, s0: dace.SDFGState, s1: dace.SDFGState) -> dict:
         """Shared element writes of both arms.
@@ -671,7 +707,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         defining_edge = None
         for cfg in sdfg.all_control_flow_regions(recursive=True):
             for e in cfg.edges():
-                assigns = getattr(e.data, "assignments", None) or {}
+                assigns = e.data.assignments
                 if cond_sym in assigns:
                     rhs = assigns[cond_sym]
                     defining_edge = e

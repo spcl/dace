@@ -41,7 +41,7 @@ Knobs covered HERE:
 """
 
 import pytest
-pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
+# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import copy
 import os
 import pytest
@@ -187,7 +187,7 @@ def test_knob_force_autovec_rewrites_template():
     VectorizeCPU(vector_width=8, force_autovec_ops={"+"}).apply_pass(sdfg, {})
     sdfg.compile()
 
-    cache_root = os.path.join(".dacecache", sdfg.name, "src", "cpu")
+    cache_root = os.path.join(sdfg.build_folder, "src", "cpu")
     cpp_path = os.path.join(cache_root, sdfg.name + ".cpp")
     cpp = open(cpp_path).read()
     assert "vector_add_av<" in cpp, \
@@ -203,7 +203,7 @@ def test_knob_force_pscalar_rewrites_template():
     VectorizeCPU(vector_width=8, force_pscalar_ops={"+"}).apply_pass(sdfg, {})
     sdfg.compile()
 
-    cache_root = os.path.join(".dacecache", sdfg.name, "src", "cpu")
+    cache_root = os.path.join(sdfg.build_folder, "src", "cpu")
     cpp_path = os.path.join(cache_root, sdfg.name + ".cpp")
     cpp = open(cpp_path).read()
     assert "vector_add_pscalar<" in cpp, \
