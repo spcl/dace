@@ -616,11 +616,8 @@ class InsertTileLoadStore(ppl.Pass):
                     # default (innermost K dims) is wrong when the linear tile dim is an
                     # OUTER source dim (Fortran ``zqx[_for_it_88, 0, jo-1]`` -- tile dim
                     # is dim0, while the innermost dim2 is the gather dim).
-                    _g_strides, _g_repl = self._pad_to_tile_dims(
+                    _g_strides, _g_repl, _g_src_dims = self._pad_to_tile_dims(
                         g_record, iter_vars, src_arr_strides=tuple(desc.strides) if desc.strides else None)
-                    _g_src_dims = tuple(
-                        next((d for d, ivv in enumerate(g_record.dim_iter_var) if ivv == iv),
-                             len(desc.shape) - len(iter_vars) + kk) for kk, iv in enumerate(iter_vars))
                     bridge_name, _ = stage_tile_load(inner_state,
                                                      an,
                                                      widths=tuple(self.widths),
@@ -670,18 +667,18 @@ class InsertTileLoadStore(ppl.Pass):
                 # Pass src array strides so the diagonal-as-affine path can combine
                 # per-dim strides when the same iter-var dominates multiple source dims.
                 src_arr_strides = tuple(desc.strides) if desc.strides else None
-                dim_strides, replicate = self._pad_to_tile_dims(s_record, iter_vars, src_arr_strides=src_arr_strides)
-                # Per-tile-dim source-array dim mapping: each tile dim reads along
-                # the array dim its iter-var indexes, so the load uses that dim's
-                # OWN stride. The default (innermost K dims) is wrong on a
-                # non-C layout -- a Fortran array ``A[i, j]`` with strides
-                # ``(1, M)`` and an innermost ``i`` map indexes the UNIT-stride
-                # dim 0, not the last dim; mapping positionally would stride the
-                # ``i``-tile by ``M`` (reading a row, not the column). Symmetric to
-                # the scatter side's ``_w_dst_dims``.
-                _s_src_dims = tuple(
-                    next((d for d, ivv in enumerate(s_record.dim_iter_var) if ivv == iv),
-                         len(desc.shape) - len(iter_vars) + kk) for kk, iv in enumerate(iter_vars))
+                # Per-tile-dim coefficient + source-array dim basis, derived together
+                # so they stay consistent: each tile dim reads along the array dim its
+                # iter-var indexes (its OWN stride). The lib-node default (innermost K
+                # dims) is wrong on a non-C layout -- a Fortran array ``A[i, j]`` with
+                # strides ``(1, M)`` and an innermost ``i`` map indexes the UNIT-stride
+                # dim 0, not the last; mapping positionally would stride the ``i``-tile
+                # by ``M`` (reading a row, not the column). For a diagonal ``A[i, i]``
+                # the coefficient is the combined byte stride and the basis is the
+                # unit-stride indexed dim (see :meth:`_pad_to_tile_dims`).
+                dim_strides, replicate, _s_src_dims = self._pad_to_tile_dims(s_record,
+                                                                             iter_vars,
+                                                                             src_arr_strides=src_arr_strides)
                 bridge_name, _ = stage_tile_load(inner_state,
                                                  an,
                                                  widths=tuple(self.widths),
@@ -773,11 +770,8 @@ class InsertTileLoadStore(ppl.Pass):
                 # note): each tile dim maps to the dest dim its iter-var indexes so
                 # the scatter adds the per-lane offset for LINEAR tile dims under
                 # any layout (Fortran ``zratio[_for_it_88, jo-1]`` -- tile dim0).
-                _w_strides, _w_repl = self._pad_to_tile_dims(
+                _w_strides, _w_repl, _w_dst_dims = self._pad_to_tile_dims(
                     wrecord, iter_vars, src_arr_strides=tuple(desc.strides) if desc.strides else None)
-                _w_dst_dims = tuple(
-                    next((d for d, ivv in enumerate(wrecord.dim_iter_var) if ivv == iv),
-                         len(desc.shape) - len(iter_vars) + kk) for kk, iv in enumerate(iter_vars))
                 bridge_name, _ = stage_tile_store(inner_state,
                                                   an,
                                                   widths=tuple(self.widths),
@@ -794,14 +788,13 @@ class InsertTileLoadStore(ppl.Pass):
             # Structured tile store: LINEAR / AFFINE / REPLICATE / MODULAR.
             dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
             dst_arr_strides = tuple(desc.strides) if desc.strides else None
-            dim_strides_w, _ = self._pad_to_tile_dims(wrecord, iter_vars, src_arr_strides=dst_arr_strides)
-            # Per-tile-dim dest-array dim mapping (see the structured-read note):
-            # each tile dim writes along the array dim its iter-var indexes, so a
-            # non-C layout (Fortran ``C[i, j]`` strides ``(1, M)``) strides the
-            # ``i``-tile by 1 (its dim-0 stride), not positionally by ``M``.
-            _s_dst_dims = tuple(
-                next((d for d, ivv in enumerate(wrecord.dim_iter_var) if ivv == iv),
-                     len(desc.shape) - len(iter_vars) + kk) for kk, iv in enumerate(iter_vars))
+            # Per-tile-dim coefficient + dest-array dim basis, derived together (see the
+            # structured-read note): each tile dim writes along the array dim its
+            # iter-var indexes, so a non-C layout (Fortran ``C[i, j]`` strides
+            # ``(1, M)``) strides the ``i``-tile by 1 (its dim-0 stride), not
+            # positionally by ``M``; a diagonal ``C[i, i]`` uses the combined byte
+            # stride against its unit-stride indexed dim.
+            dim_strides_w, _, _s_dst_dims = self._pad_to_tile_dims(wrecord, iter_vars, src_arr_strides=dst_arr_strides)
             bridge_name, _ = stage_tile_store(inner_state,
                                               an,
                                               widths=tuple(self.widths),
@@ -844,10 +837,25 @@ class InsertTileLoadStore(ppl.Pass):
 
         :param src_arr_strides: per-source-dim strides of the array being staged.
             When None, falls back to picking the first dim (legacy behaviour).
+        :returns: ``(dim_strides, replicate_factor_per_dim, src_dims)`` -- the per-
+            tile-dim coefficient, replicate factor, and source-array dim basis. The
+            three are computed together so the coefficient always matches the basis
+            ``offset_via_strides`` will scale it by. ``src_dims`` is ``None`` (use the
+            lib-node positional default) when ``src_arr_strides`` is not supplied.
         """
         from collections import defaultdict
         K = len(iter_vars)
         widths = tuple(int(w) for w in self.widths)
+        ndim = len(src_arr_strides) if src_arr_strides is not None else None
+
+        def _stride_is_one(s) -> bool:
+            # A unit (contiguous) stride is always the literal int 1 / Integer(1);
+            # a symbolic stride (``N``, ``N*M``) is not int-convertible -> not unit.
+            try:
+                return int(s) == 1
+            except (TypeError, ValueError):
+                return False
+
         # Multi-map: iter_var -> list of source dim indices it dominates.
         iv_to_src_dims: Dict[str, List[int]] = defaultdict(list)
         for d, iv_name in enumerate(record.dim_iter_var):
@@ -855,42 +863,70 @@ class InsertTileLoadStore(ppl.Pass):
                 iv_to_src_dims[iv_name].append(d)
         padded_strides = []
         padded_replicate = []
+        # The per-tile-dim source-dim basis is computed HERE, together with the
+        # coefficient, because the two are interdependent: ``offset_via_strides``
+        # forms ``coeff[k] * strides[src_dims[k]] * __l<k>``, so the coeff is only
+        # correct against the basis it was derived for. Computing them apart (an
+        # earlier bug) let a non-C layout / diagonal pick a basis that mismatched
+        # the coeff, inflating the offset by the basis stride.
+        padded_src_dims = []
         for k in range(K):
             iv = iter_vars[k]
+            # Positional default basis = the lib node's own default (innermost K
+            # source dims). Used for broadcast dims and as the diagonal fallback.
+            pos_default = (ndim - K + k) if ndim is not None else None
             if iv in iv_to_src_dims:
                 dims_for_iv = iv_to_src_dims[iv]
                 if len(dims_for_iv) == 1:
-                    # Standard single-dim case.
+                    # Single source dim: coeff = the affine multiplier, basis = the
+                    # dim the iter-var actually indexes. Correct under ANY layout --
+                    # the offset is ``affine * strides[that_dim] * __l`` (this is the
+                    # Fortran-layout fix: the unit-stride dim need NOT be the last).
                     d = dims_for_iv[0]
                     s = record.dim_strides[d]
                     padded_strides.append(s if s is not None else 1)
                     r = record.replicate_factor_per_dim[d]
                     padded_replicate.append(r if r is not None else 1)
+                    padded_src_dims.append(d)
+                elif src_arr_strides is None:
+                    # Diagonal, legacy fallback (no strides supplied): pick the first
+                    # dim and leave the basis to the caller / lib-node default.
+                    d = dims_for_iv[0]
+                    s = record.dim_strides[d]
+                    padded_strides.append(s if s is not None else 1)
+                    r = record.replicate_factor_per_dim[d]
+                    padded_replicate.append(r if r is not None else 1)
+                    padded_src_dims.append(pos_default)
                 else:
-                    # Diagonal: combine strides across source dims.
-                    if src_arr_strides is None:
-                        # Legacy fallback: pick the first dim (matches pre-fix behaviour).
-                        d = dims_for_iv[0]
-                        s = record.dim_strides[d]
-                        padded_strides.append(s if s is not None else 1)
-                        r = record.replicate_factor_per_dim[d]
-                        padded_replicate.append(r if r is not None else 1)
-                    else:
-                        # Compute combined affine stride.
-                        all_affine = all(record.dim_strides[d] is not None for d in dims_for_iv)
-                        if not all_affine:
-                            raise NotImplementedError(f"diagonal access on iter-var {iv!r} spans dims {dims_for_iv}; "
-                                                      f"at least one per-dim stride is None (non-affine) -- "
-                                                      f"cannot express as a single linear stride. Refusing per the "
-                                                      f"diagonal-as-affine design (no gather fallback).")
-                        combined = sum(record.dim_strides[d] * src_arr_strides[d] for d in dims_for_iv)
-                        padded_strides.append(combined)
-                        padded_replicate.append(1)
+                    # Diagonal: combine the per-dim affine strides into one BYTE
+                    # stride. ``offset_via_strides`` then multiplies this coeff by
+                    # ``strides[basis]``, so the basis MUST be a unit-stride indexed
+                    # dim for the product to equal ``combined`` (C-layout's
+                    # contiguous LAST dim and Fortran's contiguous FIRST dim are both
+                    # covered). Absent a unit-stride indexed dim we keep the historical
+                    # positional-default basis (no worse than the pre-fix behaviour).
+                    all_affine = all(record.dim_strides[d] is not None for d in dims_for_iv)
+                    if not all_affine:
+                        raise NotImplementedError(f"diagonal access on iter-var {iv!r} spans dims {dims_for_iv}; "
+                                                  f"at least one per-dim stride is None (non-affine) -- "
+                                                  f"cannot express as a single linear stride. Refusing per the "
+                                                  f"diagonal-as-affine design (no gather fallback).")
+                    combined = sum(record.dim_strides[d] * src_arr_strides[d] for d in dims_for_iv)
+                    padded_strides.append(combined)
+                    padded_replicate.append(1)
+                    unit_dim = next((d for d in dims_for_iv if _stride_is_one(src_arr_strides[d])), None)
+                    padded_src_dims.append(unit_dim if unit_dim is not None else pos_default)
             else:
                 # BROADCAST tile dim -- this iter_var doesn't appear in the subset.
+                # stride 0 -> the basis is irrelevant (the term is zero); keep the
+                # positional default for a stable mapping.
                 padded_strides.append(0)
                 padded_replicate.append(widths[k])
-        return tuple(padded_strides), tuple(padded_replicate)
+                padded_src_dims.append(pos_default)
+        # When no strides were supplied the basis cannot be resolved here; signal
+        # ``None`` so the caller falls back to the lib node's positional default.
+        src_dims_out = tuple(padded_src_dims) if src_arr_strides is not None else None
+        return tuple(padded_strides), tuple(padded_replicate), src_dims_out
 
     def _index_symbol_subscripts(self, inner_sdfg: SDFG, inner_state: SDFGState, begin_str: str) -> Dict[str, Any]:
         """Map each *data-dependent* index symbol in ``begin_str`` to the pure
