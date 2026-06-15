@@ -265,6 +265,25 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             for out_edge in inner_state.out_edges(n):
                 if out_edge.src_conn == "_o" and isinstance(out_edge.dst, AccessNode):
                     return out_edge.dst
+        # Cross-state fallback: the masked-tail body NSDFG can split compute and
+        # store into separate states (the TileMaskGen lives in one, a TileReduce /
+        # TileBinop in another). The mask transient persists SDFG-wide and the
+        # states run in sequence (producer first), so a consumer here reads the
+        # same value through a fresh AccessNode. Without this, a masked op in the
+        # TileMaskGen-less state lowers UNMASKED -- benign for an elementwise op
+        # (the masked store discards inactive lanes) but WRONG for a TileReduce,
+        # which would fold the inactive (past-the-tail) lanes into the result.
+        sdfg = inner_state.sdfg
+        mask_names = {
+            e.dst.data
+            for s in sdfg.states()
+            for n in s.nodes() if isinstance(n, TileMaskGen) for e in s.out_edges(n)
+            if e.src_conn == "_o" and isinstance(e.dst, AccessNode)
+        }
+        if len(mask_names) == 1:
+            mask_name = next(iter(mask_names))
+            existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == mask_name), None)
+            return existing if existing is not None else inner_state.add_access(mask_name)
         return None
 
     def _wire_mask(self, inner_state: SDFGState, lib_node, mask_an) -> None:

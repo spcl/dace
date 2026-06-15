@@ -1111,6 +1111,20 @@ class InsertTileLoadStore(ppl.Pass):
                 if out_edge.src_conn == "_o" and isinstance(out_edge.dst,
                                                             AccessNode) and out_edge.dst.data == mask_name:
                     return out_edge.dst
+        # Cross-state fallback: the masked-tail body NSDFG splits compute and
+        # store across separate states (e.g. ``BinOp_22`` holds the TileMaskGen +
+        # masked load, ``assign_22_8`` holds the scatter store). The mask
+        # transient is written by a TileMaskGen in ANOTHER state but persists
+        # SDFG-wide, and the states run sequentially (producer first), so a
+        # consumer here reads the same value through a fresh AccessNode. Without
+        # this, the store/index-load in the TileMaskGen-less state would be
+        # emitted UNMASKED -- a masked-remainder scatter then writes
+        # ``dst[idx[masked_lane]]`` at an out-of-bounds index (idx read past its
+        # tail), corrupting memory.
+        sdfg = inner_state.sdfg
+        if mask_name in sdfg.arrays and any(isinstance(n, TileMaskGen) for s in sdfg.states() for n in s.nodes()):
+            existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == mask_name), None)
+            return existing if existing is not None else inner_state.add_access(mask_name)
         return None
 
     def _bridge_memlet(self, inner_sdfg: SDFG, bridge_name: str) -> Memlet:
@@ -1246,10 +1260,24 @@ class InsertTileLoadStore(ppl.Pass):
             prefix_parts = [f"0:{consumer_shape[d]}" for d in range(D - K)]
         tile_parts = [f"{iter_vars[k]}:{iter_vars[k]} + {widths[k]}" for k in range(K)]
         dst_subset_str = ", ".join(prefix_parts + tile_parts)
-        store = TileStore(name=f"store_{bridge_an.data}_to_{consumer_an.data}", widths=widths, has_mask=False)
+        # Mask the bridge->output store when an iteration mask is in scope (the
+        # masked-tail remainder). Without it this structured store writes every
+        # lane of the W-wide tile, including the lanes past the array tail
+        # (``dst[N], dst[N+1], ...``) -- an out-of-bounds write. The mask
+        # producer may live in another state of this body NSDFG (compute and
+        # store split across states), so the cross-state lookup in
+        # :meth:`_find_mask_producer_an` finds it.
+        mask_name = self._find_inner_mask_name(sdfg)
+        mask_an = self._find_mask_producer_an(inner_state, mask_name) if mask_name else None
+        store = TileStore(name=f"store_{bridge_an.data}_to_{consumer_an.data}",
+                          widths=widths,
+                          has_mask=mask_an is not None)
         inner_state.add_node(store)
         src_subset_str = ", ".join(f"0:{w}" for w in widths)
         inner_state.add_edge(bridge_an, None, store, "_src", Memlet(f"{bridge_an.data}[{src_subset_str}]"))
+        if mask_an is not None:
+            mask_subset_str = ", ".join(f"0:{w}" for w in widths)
+            inner_state.add_edge(mask_an, None, store, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
         inner_state.add_edge(store, "_dst", consumer_an, None, Memlet(data=consumer_an.data, subset=dst_subset_str))
         return True
 
