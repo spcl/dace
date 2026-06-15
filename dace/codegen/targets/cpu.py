@@ -19,7 +19,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -168,6 +168,21 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
+    def _viewed_data_is_const(self, sdfg: SDFG, viewed_dnode: nodes.AccessNode) -> bool:
+        """Whether the data viewed by a ``View`` is already declared ``const`` in the emitted code.
+
+        A view aliasing ``const`` data must itself be ``const`` (mirroring its parent). The viewed
+        node is allocated before the view (see :meth:`allocate_view`), so its registered ctype is
+        available -- a leading ``const`` qualifier is the signal.
+        """
+        for key in (self.ptr(viewed_dnode.data, viewed_dnode.desc(sdfg), sdfg), viewed_dnode.data):
+            try:
+                _, ctype = self._dispatcher.defined_vars.get(key)
+            except KeyError:
+                continue
+            return ctype.strip().startswith('const ')
+        return False
+
     def allocate_view(self,
                       sdfg: SDFG,
                       cfg: ControlFlowRegion,
@@ -214,7 +229,17 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet.subset is None:
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
-        # Emit memlet as a reference and register defined variable
+        # Emit memlet as a reference and register defined variable. A view must mirror the const
+        # qualifier of the data it views: a ``const`` parent (e.g. a read-only nested-SDFG argument)
+        # cannot be aliased by a non-const ``T*`` view (an illegal ``const T* -> T*`` conversion), so
+        # the view is emitted pointer-to-const too. A non-const parent must keep non-const views --
+        # the view edge's read/write *direction* does not imply the view's contents are never written
+        # (reinterpret / same-name views are read-direction yet written), so const-ness is keyed off
+        # the parent, not the direction. ``_mutated_descriptors`` guarantees a const parent is never
+        # written through any view, so mirroring is always sound.
+        const_view = (not isinstance(sdfg.arrays[viewed_dnode.data],
+                                     (data.Structure, data.ContainerArray, data.ContainerView))
+                      and self._viewed_data_is_const(sdfg, viewed_dnode))
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
@@ -222,7 +247,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         codegen=self,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=is_write,
+                                                        const_read_only_array=const_view)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -253,7 +279,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         value = '&' + value
 
         if not declared:
+            # Keep the registered ctype consistent with the emitted declaration: a read-only view
+            # is declared as a pointer-to-const (see ``const_view`` above), so consumers that look
+            # it up must see the same qualifier.
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            if const_view:
+                ctypedef = 'const ' + ctypedef
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             if isinstance(nodedesc, data.StructureView):
                 for k, v in nodedesc.members.items():
@@ -1635,31 +1666,74 @@ class CPUCodeGen(TargetCodeGenerator):
         ])
         return f'{sdfg_label}({args});'
 
+    @staticmethod
+    def _mutated_descriptors(nsdfg: SDFG) -> Set[str]:
+        """Names of descriptors in ``nsdfg`` that may be mutated -- the set that must *not* be
+        ``const``-qualified as a device-function argument.
+
+        Beyond data written directly, this propagates non-const *up* a ``View`` chain: a write
+        through a view is recorded by :func:`read_and_write_sets` against the *view's* name, so the
+        underlying parent it aliases would otherwise look read-only. A written view exposes its
+        parent through a non-const pointer, which is the C++ rule made explicit -- a non-const view
+        of const data is illegal, while a const (read-only) view of non-const data is fine, so only
+        *written* views taint their parent. Propagation runs to a fixpoint to cover view-of-view.
+        """
+        mutated: Set[str] = set()
+        # Underlying (parent) descriptor of each *write-direction* view -- the data it aliases and
+        # writes through. A view's direction is read off its view edge exactly as ``allocate_view``
+        # does (``is_write = view_edge.src is view_node``); a read-direction view never writes its
+        # parent and so does not taint it. Note: ``read_and_write_sets`` counts the view-*linking*
+        # edge as a write to the view itself, so the view's own name being in the write set is not a
+        # reliable signal -- the edge direction is.
+        write_view_parent: Dict[str, str] = {}
+        for nstate in nsdfg.states():
+            mutated |= nstate.read_and_write_sets()[1]
+            for vn in nstate.nodes():
+                if not (isinstance(vn, nodes.AccessNode) and isinstance(nsdfg.arrays[vn.data], data.View)):
+                    continue
+                view_edge = sdutils.get_view_edge(nstate, vn)
+                if view_edge is None or view_edge.src is not vn:
+                    continue  # read-direction view (or no view edge) -> does not write its parent
+                parent = view_edge.dst
+                if isinstance(parent, nodes.AccessNode):
+                    write_view_parent[vn.data] = parent.data
+
+        # A write-direction view writes its parent through a non-const pointer, so the parent is
+        # mutated. Propagate to a fixpoint so a view-of-view write chain taints the deepest parent.
+        changed = True
+        while changed:
+            changed = False
+            for parent in write_view_parent.values():
+                if parent not in mutated:
+                    mutated.add(parent)
+                    changed = True
+        return mutated
+
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
-        # An input connector is only truly read-only (hence ``const``-qualifiable) if its data is
-        # never written inside the nested SDFG. A same-named ``View`` can write the underlying data
-        # without the connector appearing as an output, so consult the inner write set rather than
-        # relying on output-connector membership alone.
-        written_inside = set()
-        for nstate in node.sdfg.states():
-            written_inside |= nstate.read_and_write_sets()[1]
+        # An input array argument is ``const``-qualifiable only if the callee never mutates its
+        # data. ``read_and_write_sets`` records a write against the *written access node's* name,
+        # so a write through a ``View`` registers against the view -- not the underlying array.
+        # ``_mutated_descriptors`` therefore propagates non-const *up* a view chain (a written
+        # view exposes its parent through a non-const pointer), mirroring the C++ rule that a
+        # non-const view of const data is illegal while a const view of non-const data is fine.
+        written_inside = self._mutated_descriptors(node.sdfg)
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ''):
             if vconn in inout or in_memlet.data is None:
                 continue
-            is_write = vconn in node.out_connectors or vconn in written_inside
+            const_read_only = vconn not in written_inside
             memlet_references.append(
                 cpp.emit_memlet_reference(self._dispatcher,
                                           sdfg,
                                           in_memlet,
                                           vconn,
                                           codegen=self,
-                                          is_write=is_write,
-                                          const_read_only_array=True,
+                                          is_write=vconn in node.out_connectors,
+                                          const_read_only_array=const_read_only,
                                           conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ''):
