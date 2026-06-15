@@ -172,6 +172,23 @@ class GenerateTileIterationMask(ppl.Pass):
             None,
             dace.Memlet(f"{mask_name}[{subset}]"),
         )
+        # The mask's per-dim upper bounds (``global_ubs``) reference outer-scope
+        # symbols (loop bounds such as ``kfdia``). A bound symbol the body NSDFG
+        # does not otherwise use -- i.e. not an array-shape symbol like ``klev`` --
+        # is absent from both the inner SDFG's symbol table AND the NestedSDFG's
+        # ``symbol_mapping``, so the generated body function never receives it and
+        # the TileMaskGen tasklet fails to compile (``'kfdia' was not declared``).
+        # Thread every ``global_ubs`` free symbol into the body NSDFG: declare it on
+        # the inner SDFG and map it (identity) from the same-named parent symbol.
+        import dace.symbolic as _sym
+        for ub in spec.global_ubs:
+            for s in _sym.pystr_to_symbolic(str(ub)).free_symbols:
+                sname = str(s)
+                if sname not in inner_sdfg.symbols:
+                    dtype = parent_sdfg.symbols[sname] if sname in parent_sdfg.symbols else dace.dtypes.int64
+                    inner_sdfg.add_symbol(sname, dtype)
+                if sname not in body_nsdfg.symbol_mapping:
+                    body_nsdfg.symbol_mapping[sname] = _sym.pystr_to_symbolic(sname)
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
