@@ -69,6 +69,15 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
             if isinstance(arr.dtype, dace.dtypes.opaque):
                 continue
+            # A length-1 ``View`` (incl. ``ArrayView``) subclasses ``Array``
+            # but must NOT be scalarized: a View is an alias into another
+            # array's storage, wired through a ``views`` edge that a
+            # ``Scalar`` cannot carry (``get_view_edge`` would fail and the
+            # alias would be silently dropped).  A length-1 view of a length-1
+            # array -- e.g. a Fortran scalar POINTER rebind lowered as a
+            # length-1-array view -- must stay a View.
+            if isinstance(arr, dace.data.View):
+                continue
             if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1]):
                 if (not transient_only) or arr.transient:
                     sdfg.remove_data(arr_name, validate=False)

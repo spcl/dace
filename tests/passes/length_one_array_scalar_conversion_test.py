@@ -103,6 +103,26 @@ def test_opaque_length_one_array_is_not_scalarized():
     assert isinstance(sdfg.arrays["a"], dd.Scalar)
 
 
+def test_length_one_view_is_not_scalarized():
+    """A length-1 ``View`` aliases another array's storage through a
+    ``views`` edge that a ``Scalar`` cannot carry, so it must stay a View
+    even though it subclasses ``Array`` and has shape ``(1,)``.  The plain
+    length-1 Array beside it is still folded.  (A Fortran scalar POINTER
+    rebind lowered as a length-1-array view relies on this.)"""
+    sdfg = dace.SDFG("len1_view")
+    sdfg.add_state("s")
+    sdfg.add_array("src", [4], dace.float64, transient=True)
+    sdfg.add_view("vw", [1], dace.float64)
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    # The View is transient, so without the View guard it would be folded.
+    assert sdfg.arrays["vw"].transient
+    rewritten = ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
+    assert "vw" not in rewritten
+    assert isinstance(sdfg.arrays["vw"], dd.View)
+    assert tuple(sdfg.arrays["vw"].shape) == (1, )
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+
+
 def test_opaque_scalar_is_not_arrayized():
     """The symmetric inverse: an ``opaque`` ``Scalar`` keeps its scalar
     form under ``ConvertScalarsToLengthOneArrays`` while a plain-dtype
