@@ -66,6 +66,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
+        from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
+            DemoteKernelInternalArraysToScalars)
         # Order constraints:
         #   * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` before the stream scheduler: it moves
         #     the map's dynamic-input edges onto the new libnode and a pre-wired ``__stream``
@@ -75,6 +77,10 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * ``AddThreadBlockMaps`` after the kernel-internal transient hoist (in
         #     ``InsertExplicitGPUGlobalMemoryCopies``): tiling first leaks the inner-map outer-loop
         #     symbol into host-side ``cudaMalloc`` size expressions for hoisted transients.
+        #   * ``DemoteKernelInternalArraysToScalars`` after the structure is final (post stream
+        #     wiring / tiling) and before ``ReinferConnectorTypes``: it scalarizes kernel-internal
+        #     length-1 arrays and resets their connectors, which the final re-inference then
+        #     re-derives as scalar references.
         #   * ``ReinferConnectorTypes`` last: earlier passes mutate descriptors under NestedSDFG
         #     connectors, so connector types must be re-derived for correct codegen signatures.
         # Scheduling pass writes ``Node.gpu_stream_id``; wiring pass reads it
@@ -95,5 +101,6 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             GPUStreamWiring(strategy),
             LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
+            DemoteKernelInternalArraysToScalars(),
             ReinferConnectorTypes(),
         ])
