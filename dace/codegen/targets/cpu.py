@@ -1639,17 +1639,27 @@ class CPUCodeGen(TargetCodeGenerator):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
+        # An input connector is only truly read-only (hence ``const``-qualifiable) if its data is
+        # never written inside the nested SDFG. A same-named ``View`` can write the underlying data
+        # without the connector appearing as an output, so consult the inner write set rather than
+        # relying on output-connector membership alone.
+        written_inside = set()
+        for nstate in node.sdfg.states():
+            written_inside |= nstate.read_and_write_sets()[1]
+
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ''):
             if vconn in inout or in_memlet.data is None:
                 continue
+            is_write = vconn in node.out_connectors or vconn in written_inside
             memlet_references.append(
                 cpp.emit_memlet_reference(self._dispatcher,
                                           sdfg,
                                           in_memlet,
                                           vconn,
                                           codegen=self,
-                                          is_write=vconn in node.out_connectors,
+                                          is_write=is_write,
+                                          const_read_only_array=True,
                                           conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ''):
