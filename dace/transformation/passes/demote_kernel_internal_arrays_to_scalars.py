@@ -69,23 +69,38 @@ def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
 
 
 def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
-    """The schedule of ``node`` if it carries one (map / nested SDFG / library node), else ``None``."""
+    """The GPU-relevant schedule of ``node`` if it carries one, else ``None``.
+
+    Only maps and library nodes expose a schedule. Tasklets and nested SDFGs do **not** (in this
+    codebase a ``NestedSDFG`` is always a sequential device function -- neither the node nor its
+    inner SDFG has a ``schedule`` -- so accessing ``.schedule`` on one raises ``AttributeError``);
+    they yield ``None`` and are handled by the other predicates / not treated as sub-kernels.
+    """
     if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
         return node.map.schedule
-    if isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
+    if isinstance(node, nodes.LibraryNode):
         return node.schedule
     return None
 
 
-def _accessed_by_gpu_subkernel(sdfg: SDFG, name: str) -> bool:
-    """``True`` iff an access node for ``name`` is adjacent to a node that lowers into its own GPU
-    (sub)kernel and emits raw indexed access into the buffer.
+def _accessed_by_unscalarizable_node(sdfg: SDFG, name: str) -> bool:
+    """``True`` iff an access node for ``name`` is adjacent to a node whose generated code we cannot
+    rewrite to scalar access -- demoting the length-1 buffer to a ``Scalar`` would then break codegen
+    (``float buf; ... buf[0] = ...``).
 
-    Two such neighbours: a :class:`~dace.sdfg.nodes.LibraryNode` (e.g. a cub block ``Reduce`` --
-    its expansion writes ``buf[0]`` directly, which the scalar-conversion rewrite never sees), and a
-    GPU-scheduled nested map / SDFG (a thread-block collective rather than a single per-thread value).
-    A *sequential* nested SDFG (a device function) is **not** matched -- its boundary scalars are
-    genuinely single values and are scalarized cleanly.
+    Blocking neighbours:
+
+    * a :class:`~dace.sdfg.nodes.LibraryNode` -- it emits its own indexing (e.g. an *unexpanded* cub
+      block ``Reduce``);
+    * a **non-Python** tasklet -- a C++ tasklet such as the *expanded* cub block reduce, whose body
+      is raw text (``buf[0] = cub::BlockReduce...``) the scalar-conversion never sees. Because
+      ``ExpandLibraryNodes`` runs before this pass, this is the predicate that actually fires for the
+      block-reduction case;
+    * a GPU-scheduled map / library node -- a thread-block collective / sub-kernel, i.e. a
+      multi-thread buffer rather than a single per-thread value.
+
+    A Python tasklet (connector-based access) and a sequential nested SDFG (device function) are
+    safe: their boundary length-1 buffers are scalarized cleanly via memlet / connector rewrite.
     """
     for state in sdfg.states():
         for node in state.nodes():
@@ -94,6 +109,8 @@ def _accessed_by_gpu_subkernel(sdfg: SDFG, name: str) -> bool:
             neighbors = [e.src for e in state.in_edges(node)] + [e.dst for e in state.out_edges(node)]
             for nb in neighbors:
                 if isinstance(nb, nodes.LibraryNode):
+                    return True
+                if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
                     return True
                 if _node_schedule(nb) in dtypes.GPU_SCHEDULES:
                     return True
@@ -155,11 +172,10 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
         # Kernel outputs must stay arrays -- they cross the GPU_Device boundary.
         if written_by_gpu_map_exit(sdfg, name):
             return False
-        # A buffer touched by a node that lowers into its own (sub)kernel cannot become a
-        # per-thread scalar: a ``LibraryNode`` (e.g. a cub block ``Reduce``) or a GPU-scheduled
-        # nested map / SDFG emits raw ``buf[0]`` indexing we cannot rewrite, and is a multi-thread
-        # collective rather than a single value.
-        if _accessed_by_gpu_subkernel(sdfg, name):
+        # A buffer touched by a node whose code we cannot rewrite to scalar access -- a library
+        # node, a non-Python (C++) tasklet such as the expanded cub block ``Reduce``, or a
+        # GPU-scheduled sub-kernel -- must stay an array (else codegen emits ``float buf; buf[0]``).
+        if _accessed_by_unscalarizable_node(sdfg, name):
             return False
         # A descriptor inside a device-function sub-SDFG is kernel-internal by
         # construction. Otherwise (e.g. a transient declared in the kernel-owning

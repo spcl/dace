@@ -7,6 +7,8 @@ is demoted back to a ``Scalar``. Genuine kernel outputs (``GPU_Global`` storage
 or written across a ``GPU_Device`` ``MapExit``) and ``GPU_Shared`` arrays are
 kept.
 """
+import re
+
 import dace
 from dace import data, dtypes
 from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaultSchedulesAndStorages
@@ -129,14 +131,12 @@ def test_non_gpu_len1_array_untouched():
     assert isinstance(sdfg.arrays['a'], data.Array)
 
 
-def test_library_node_output_not_demoted():
-    """A length-1 array written by a ``LibraryNode`` (e.g. a cub block ``Reduce``) is kept: the
-    library expansion emits raw ``buf[0]`` indexing that scalar-conversion never rewrites. This is
-    the block-reduction regression -- demoting it yields ``float tB; ... tB[0] = ...``."""
+def _build_block_reduction() -> dace.SDFG:
+    """GPU-transformed SDFG whose length-1 ``tB`` is the output of a cub block ``Reduce``."""
     from dace.memlet import Memlet
     from dace.transformation.interstate import GPUTransformSDFG
 
-    sdfg = dace.SDFG('blockreduce')
+    sdfg = dace.SDFG('block_reduction')
     sdfg.add_array('A', (128, ), dace.float32)
     sdfg.add_array('B', (2, ), dace.float32)
     sdfg.add_transient('tA', (2, ), dace.float32)
@@ -160,10 +160,92 @@ def test_library_node_output_not_demoted():
     state.add_edge(mx, None, B, None, Memlet.simple(B, '0:2'))
     sdfg.fill_scope_connectors()
     sdfg.apply_transformations(GPUTransformSDFG, options={'sequential_innermaps': False})
+    return sdfg
 
+
+def test_library_node_output_not_demoted():
+    """Run directly on the *un-expanded* SDFG: the reduce is still a ``LibraryNode``, so its length-1
+    output ``tB`` must be kept (library nodes emit their own ``buf[0]`` indexing)."""
+    sdfg = _build_block_reduction()
     InferDefaultSchedulesAndStorages().apply_pass(sdfg, {})
     DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
     assert isinstance(sdfg.arrays['tB'], data.Array), sdfg.arrays['tB']
+
+
+def test_block_reduce_output_not_scalarized_end_to_end():
+    """End-to-end through the experimental GPU codegen pipeline (text-gen only, no GPU needed).
+
+    ``ExpandLibraryNodes`` runs *before* this pass, turning the cub block ``Reduce`` into a C++
+    tasklet that writes ``tB[0]`` as raw text -- so by pass time there is no ``LibraryNode`` to key
+    on, only the non-Python tasklet. ``tB`` must still be kept; otherwise codegen emits
+    ``float tB; ... tB[0] = cub::BlockReduce...`` (the CI compile failure). This is the regression a
+    direct (un-expanded) pass invocation does not catch.
+    """
+    sdfg = _build_block_reduction()
+    old_impl = dace.Config.get('compiler', 'cuda', 'implementation')
+    try:
+        dace.Config.set('compiler', 'cuda', 'implementation', value='experimental')
+        code = '\n'.join(o.code for o in sdfg.generate_code())
+    finally:
+        dace.Config.set('compiler', 'cuda', 'implementation', value=old_impl)
+    assert not re.search(r'\bfloat\s+tB\s*;', code), 'reduce output tB was wrongly scalarized'
+
+
+def test_cpp_tasklet_neighbor_not_demoted():
+    """A length-1 array written by a non-Python (C++) tasklet inside a GPU kernel is kept: raw C++
+    ``buf[0]`` indexing is opaque to the scalar-conversion rewrite (the post-expansion cub case)."""
+    sdfg = dace.SDFG('cpptask')
+    sdfg.add_array('A', (16, ), dace.float64, storage=GPU_GLOBAL)
+    sdfg.add_array('B', (16, ), dace.float64, storage=GPU_GLOBAL)
+    sdfg.add_transient('buf', (1, ), dace.float64, storage=REGISTER)
+    st = sdfg.add_state('m')
+    e, x = st.add_map('k', dict(i='0:16'), schedule=GPU_DEVICE)
+    tc = st.add_tasklet('cpp', {'inp'}, {'outp'}, 'outp = inp;', language=dtypes.Language.CPP)
+    tp = st.add_tasklet('py', {'inp'}, {'outp'}, 'outp = inp')
+    buf = st.add_access('buf')
+    st.add_memlet_path(st.add_access('A'), e, tc, dst_conn='inp', memlet=dace.Memlet('A[i]'))
+    st.add_edge(tc, 'outp', buf, None, dace.Memlet('buf[0]'))
+    st.add_edge(buf, None, tp, 'inp', dace.Memlet('buf[0]'))
+    st.add_memlet_path(tp, x, st.add_access('B'), src_conn='outp', memlet=dace.Memlet('B[i]'))
+
+    InferDefaultSchedulesAndStorages().apply_pass(sdfg, {})
+    DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays['buf'], data.Array), sdfg.arrays['buf']
+
+
+def test_nested_sdfg_neighbor_does_not_crash():
+    """A length-1 array adjacent to a ``NestedSDFG`` inside a GPU kernel must not crash the pass.
+
+    ``NestedSDFG`` carries no ``schedule`` (neither the node nor its inner SDFG), so probing it for
+    one raised ``AttributeError`` -- the cause of the bulk CI failures. A nested SDFG is a sequential
+    device function, so the buffer feeding it stays demotable here.
+    """
+    inner = dace.SDFG('inner')
+    inner.add_array('a', (1, ), dace.float64)
+    inner.add_array('b', (1, ), dace.float64)
+    s = inner.add_state('s')
+    t = s.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    s.add_edge(s.add_access('a'), None, t, 'x', dace.Memlet('a[0]'))
+    s.add_edge(t, 'y', s.add_access('b'), None, dace.Memlet('b[0]'))
+
+    sdfg = dace.SDFG('outer')
+    sdfg.add_array('A', (16, ), dace.float64, storage=GPU_GLOBAL)
+    sdfg.add_array('B', (16, ), dace.float64, storage=GPU_GLOBAL)
+    sdfg.add_transient('buf', (1, ), dace.float64, storage=REGISTER)
+    st = sdfg.add_state('m')
+    e, x = st.add_map('k', dict(i='0:16'), schedule=GPU_DEVICE)
+    t0 = st.add_tasklet('seed', {'x'}, {'y'}, 'y = x')
+    n = st.add_nested_sdfg(inner, {'a'}, {'b'})
+    buf = st.add_access('buf')
+    st.add_memlet_path(st.add_access('A'), e, t0, dst_conn='x', memlet=dace.Memlet('A[i]'))
+    st.add_edge(t0, 'y', buf, None, dace.Memlet('buf[0]'))
+    st.add_edge(buf, None, n, 'a', dace.Memlet('buf[0]'))
+    st.add_memlet_path(n, x, st.add_access('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+
+    InferDefaultSchedulesAndStorages().apply_pass(sdfg, {})
+    # Must not raise AttributeError; buf (fed to a sequential device function) is demotable.
+    DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays['buf'], data.Scalar), sdfg.arrays['buf']
 
 
 def test_gpu_scheduled_nested_map_boundary_not_demoted():
@@ -195,5 +277,8 @@ if __name__ == '__main__':
     test_kernel_output_written_across_gpu_exit_not_demoted()
     test_non_gpu_len1_array_untouched()
     test_library_node_output_not_demoted()
+    test_block_reduce_output_not_scalarized_end_to_end()
+    test_cpp_tasklet_neighbor_not_demoted()
+    test_nested_sdfg_neighbor_does_not_crash()
     test_gpu_scheduled_nested_map_boundary_not_demoted()
     print('ok')
