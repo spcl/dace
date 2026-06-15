@@ -135,6 +135,12 @@ def _validate_knobs(widths: Tuple[int, ...], target_isa: str, remainder_strategy
     Replaces an 8-deep ``if ...: raise`` cascade with a single table
     pass. See :class:`VectorizeCPUMultiDim` constructor for semantics.
     """
+    # The checks list is built eagerly, so the AVX-512 ``widths[-1]`` access
+    # must be empty-safe: ``widths=()`` (K=0) would otherwise raise IndexError
+    # here BEFORE the ``1 <= len(widths) <= 3`` check can report the real "K=0"
+    # reason. A sentinel last-width of 8 (a valid AVX alignment) lets the K=0
+    # case fall through to the K-range check, which raises the right message.
+    last_w = widths[-1] if widths else 8
     checks = [
         (scalar_remainder_emit in _VALID_SCALAR_REMAINDER,
          f"scalar_remainder_emit {scalar_remainder_emit!r} not in {_VALID_SCALAR_REMAINDER}"),
@@ -144,8 +150,7 @@ def _validate_knobs(widths: Tuple[int, ...], target_isa: str, remainder_strategy
         (1 <= len(widths) <= 3, f"K={len(widths)} not in {{1, 2, 3}}; got widths={widths!r}"),
         (target_isa in _VALID_ISAS, f"target_isa {target_isa!r} not in {_VALID_ISAS}"),
         (all(_is_power_of_two(w) for w in widths), f"every width must be a power of 2; got {widths!r}"),
-        (target_isa != "AVX512"
-         or widths[-1] % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={widths[-1]}"),
+        (target_isa != "AVX512" or last_w % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}"),
         (remainder_strategy
          in _VALID_REMAINDER, f"remainder_strategy {remainder_strategy!r} not in {_VALID_REMAINDER}"),
         (branch_mode in _VALID_BRANCH, f"branch_mode {branch_mode!r} not in {_VALID_BRANCH}"),

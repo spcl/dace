@@ -77,14 +77,25 @@ def test_mark_tile_dims_no_guard_for_static_trip_at_or_above_width():
     assert not guard_states, 'no guard state should be planted when trip >= W is static'
 
 
-def test_mark_tile_dims_soft_skips_static_trip_below_width():
-    """Static trip < W: the map is soft-skipped (returned dict excludes it,
-    no guard planted). Downstream passes leave it for sequential codegen."""
+def test_mark_tile_dims_specs_static_trip_below_width_for_masked_tail():
+    """Static trip < W: under the unified "no-mask interior + w-mask remainder"
+    model the dim is STILL tiled -- it lowers to a single masked remainder tile
+    (empty interior + ``mask l < trip``), so :class:`MarkTileDims` records a spec
+    for it (it is NOT soft-skipped). A static trip needs NO runtime guard (the
+    trip is known at compile time; the mask handles the short dim).
+
+    Regression contract: the prior design soft-skipped ``trip < W`` and returned
+    ``None``; the masked-tail model removed that skip (every inner-tiled dim is
+    spec'd) -- so a trip-4 / W-8 kernel vectorises correctly end-to-end via the
+    masked tail rather than being dropped to sequential codegen."""
     sdfg = _build_inner_map_sdfg('static_trip_below_w', 4)
     res = MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
-    assert res is None, "static trip < W must soft-skip (empty specs -> None)"
+    assert res is not None, "static trip < W must be spec'd (masked-tail), not soft-skipped"
+    specs = list(res.values())
+    assert len(specs) == 1, f"expected one spec for the single inner map, got {len(specs)}"
+    assert specs[0].iter_vars == ('i', ) and specs[0].widths == (8, )
     guard_states = [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState) and s.label == _RUNTIME_GUARD_STATE_LABEL]
-    assert not guard_states, 'no guard for soft-skipped maps'
+    assert not guard_states, 'a STATIC trip < W needs no runtime guard (mask handles it at compile time)'
 
 
 def test_mark_tile_dims_runtime_guard_traps_on_violating_symbol():

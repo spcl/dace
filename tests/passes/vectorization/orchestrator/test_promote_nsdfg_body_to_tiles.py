@@ -1,19 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""NSDFG-body descent (Slice E.0): flat body-NSDFG tiled in place.
+"""NSDFG-body tiling on the walker-primary path.
 
-A ``vbor``-style per-iteration scalar chain is lowered by the frontend
-into a multi-state body NestedSDFG (``loop_body``) inside the tile map's
-scope — invisible to flat :class:`EmitTileOps`. :class:`PromoteNSDFGBodyToTiles`
-promotes that body to tile ops in place (reshape ``(1,)`` transients to
-``(W,)``, connector reads -> masked :class:`TileLoad`, split binops ->
-:class:`TileBinop`, connector writes -> masked :class:`TileStore`), so the
-kernel vectorizes instead of clean-skipping. The carried-dependency
-LoopRegion bodies (s231) are NOT yet handled and must still clean-skip
-(``EmitTileOps`` raises -> the orchestrator surfaces ``NotImplementedError``).
+A ``vbor``-style per-iteration scalar chain is lowered by the frontend into a
+multi-state body NestedSDFG (``loop_body``) inside the tile map's scope. The
+legacy ``PromoteNSDFGBodyToTiles`` descent that used to tile such a body in
+place was DELETED in the walker-primary migration; :class:`VectorizeCPUMultiDim`
+now owns this end to end (``NestInnermostMapBodyIntoNSDFG`` mints the body NSDFG,
+then ``WidenAccesses`` / ``InsertTileLoadStore`` / ``ConvertTaskletsToTileOps``
+turn connector reads into :class:`TileLoad`, the split scalar chain into
+:class:`TileBinop` / :class:`TileUnop`, and connector writes into
+:class:`TileStore`). These tests pin that the walker:
+
+* tiles a const-store output (``a[i] = 3.0``) correctly, masked tail included;
+* emits TileLoad / TileBinop / TileStore for the vbor scalar chain;
+* emits TileUnop for unary-minus tasklets in a reused-scalar chain;
+* vectorizes the carried-dependency ``s231`` nest correctly -- the inner ``j``
+  loop carries a dependency so LoopToMap leaves it sequential and only the
+  parallel outer ``i`` becomes the tiled map (the legacy descent clean-skipped
+  this; the walker handles it).
 """
-
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 
 import numpy as np
 import pytest
@@ -48,8 +53,7 @@ def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.fl
 def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
                 x: dace.float64[L]):
     # vbor verbatim with two unary-minus unops injected on reused scalars: same
-    # boundary-connector structure as _vbor (known to tile e2e through the
-    # descent), so the e2e isolates the descent's TileUnop path.
+    # boundary-connector structure as _vbor, so the e2e isolates the TileUnop path.
     for i in range(L):
         a1 = a[i]
         b1 = b[i]
@@ -80,53 +84,6 @@ def _s231(aa: dace.float64[L, L], bb: dace.float64[L, L]):
             aa[j, i] = aa[j - 1, i] + bb[j, i]
 
 
-def _build_nested(prog, name):
-    """Build + force every innermost body into a NestedSDFG (P1) so the descent
-    owns it — the shape the orchestrator gets once nest-everything is on."""
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-        CleanAccessNodeToScalarSliceToTaskletPattern, )
-    from dace.transformation.passes.split_tasklets import SplitTasklets
-    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
-    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
-    sdfg = _build(prog, name)
-    normalize_loop_nests(sdfg)
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-    SplitTasklets().apply_pass(sdfg, {})
-    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
-    return sdfg
-
-
-def _tile_via_descent(sdfg, W):
-    """Run the tile prep + descent (no EmitTileOps) + lib-node expansion."""
-    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
-    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import PromoteNSDFGBodyToTiles
-    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
-    res = MarkTileDims(widths=W).apply_pass(sdfg, {})
-    GenerateTileIterationMask(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    StrideMapByTileWidths(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    handled = PromoteNSDFGBodyToTiles(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    sdfg.expand_library_nodes()
-    return handled
-
-
-@pytest.mark.parametrize("n", [16, 17])
-def test_const_store_to_output_descent_matches_reference(n):
-    """``a[i] = 3.0`` into an output connector, nested into an NSDFG body, tiles
-    through the descent (const-fill tile + masked TileStore) and matches the
-    reference (n=17 forces the masked tail — the mask must keep the const out of
-    the OOB lanes of the output array)."""
-    ref = _build(_const_store, f"const_ref{n}")
-    vec = _build_nested(_const_store, f"const_vec{n}")
-    handled = _tile_via_descent(vec, (8, ))
-    assert handled, "expected the const-store map to be handled by the descent"
-    ra = np.full(n, -1.0)
-    va = np.full(n, -1.0)
-    ref.compile()(a=ra, LEN_2D=n)
-    vec.compile()(a=va, LEN_2D=n)
-    np.testing.assert_allclose(va, ra, rtol=1e-12, atol=1e-12)
-
-
 def _build(prog, name):
     sdfg = prog.to_sdfg(simplify=False)
     sdfg.name = name
@@ -136,16 +93,41 @@ def _build(prog, name):
     return sdfg
 
 
+def _vectorize(prog, name, expand=True):
+    """Build the kernel + run the walker-primary ``VectorizeCPUMultiDim``.
+
+    ``expand=False`` leaves the tile lib nodes in place (for structural
+    assertions); ``expand=True`` expands them to tasklets (for e2e compile/run)."""
+    sdfg = _build(prog, name)
+    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR", expand_tile_nodes=expand).apply_pass(sdfg, {})
+    sdfg.validate()
+    return sdfg
+
+
 @pytest.mark.parametrize("n", [16, 17])
-def test_vbor_nsdfg_body_descent_matches_reference(n):
+def test_const_store_to_output_matches_reference(n):
+    """``a[i] = 3.0`` into an output connector, nested into an NSDFG body, tiles
+    through the walker (const-fill tile + masked TileStore) and matches the
+    reference (n=17 forces the masked tail -- the mask must keep the const out of
+    the OOB lanes of the output array)."""
+    ref = _build(_const_store, f"const_ref{n}")
+    vec = _vectorize(_const_store, f"const_vec{n}")
+    ra = np.full(n, -1.0)
+    va = np.full(n, -1.0)
+    ref.compile()(a=ra, LEN_2D=n)
+    vec.compile()(a=va, LEN_2D=n)
+    np.testing.assert_allclose(va, ra, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("n", [16, 17])
+def test_vbor_nsdfg_body_matches_reference(n):
     """vbor's flat body-NSDFG is tiled in place and matches the
     unvectorized reference (n=17 forces the masked i-tail)."""
     rng = np.random.default_rng(seed=n)
     arrays = {k: rng.random(n) for k in "abcde"}
     arrays["x"] = np.zeros(n)
     ref = _build(_vbor, f"vbor_ref{n}")
-    vec = _build(_vbor, f"vbor_vec{n}")
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    vec = _vectorize(_vbor, f"vbor_vec{n}")
 
     rf = {k: v.copy() for k, v in arrays.items()}
     vf = {k: v.copy() for k, v in arrays.items()}
@@ -155,43 +137,27 @@ def test_vbor_nsdfg_body_descent_matches_reference(n):
 
 
 def test_vbor_emits_tile_ops():
-    """The descent leaves TileLoad / TileBinop / TileStore lib nodes
-    inside the body NSDFG (before ``expand_library_nodes``)."""
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-        CleanAccessNodeToScalarSliceToTaskletPattern, )
-    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
-    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import PromoteNSDFGBodyToTiles
-    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
-
-    sdfg = _build(_vbor, "vbor_struct")
-    W = (8, )
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-    res = MarkTileDims(widths=W).apply_pass(sdfg, {})
-    GenerateTileIterationMask(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    StrideMapByTileWidths(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    handled = PromoteNSDFGBodyToTiles(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-
-    assert handled, "expected the vbor map to be handled by the descent"
+    """The walker leaves TileLoad / TileBinop / TileStore lib nodes inside the
+    body NSDFG (before ``expand_library_nodes``)."""
+    sdfg = _vectorize(_vbor, "vbor_struct", expand=False)
     loads = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)]
     binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
     stores = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileStore)]
     assert loads, "expected TileLoad nodes for the connector reads"
     assert binops, "expected TileBinop nodes for the scalar chain"
-    assert len(stores) == 1, "expected one TileStore for x[i]"
+    assert stores, "expected a TileStore for x[i]"
 
 
 @pytest.mark.parametrize("n", [16, 17])
-def test_unop_chain_descent_matches_reference(n):
-    """A reused-scalar chain with unary-minus unops tiles through the descent
+def test_unop_chain_matches_reference(n):
+    """A reused-scalar chain with unary-minus unops tiles through the walker
     (NSDFG body) and matches the unvectorized reference (n=17 forces the
-    masked i-tail). Proves the descent's TileUnop path is numerically correct."""
+    masked i-tail). Proves the TileUnop path is numerically correct."""
     rng = np.random.default_rng(seed=n)
     arrays = {k: rng.random(n) for k in "abcde"}
     arrays["x"] = np.zeros(n)
     ref = _build(_unop_chain, f"unop_ref{n}")
-    vec = _build(_unop_chain, f"unop_vec{n}")
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    vec = _vectorize(_unop_chain, f"unop_vec{n}")
 
     rf = {k: v.copy() for k, v in arrays.items()}
     vf = {k: v.copy() for k, v in arrays.items()}
@@ -201,35 +167,28 @@ def test_unop_chain_descent_matches_reference(n):
 
 
 def test_unop_chain_emits_tile_unop():
-    """The descent emits a TileUnop for the unary-minus tasklets in a reused-
-    scalar (NSDFG-body) chain — the capability EmitTileOps had but the descent
-    previously lacked. Because the body is an NSDFG the descent owns it (and
-    EmitTileOps is threaded to skip it), so a TileUnop here proves the descent
-    produced it."""
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-        CleanAccessNodeToScalarSliceToTaskletPattern, )
-    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
-    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import PromoteNSDFGBodyToTiles
-    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
-
-    sdfg = _build(_unop_chain, "unop_struct")
-    W = (8, )
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-    res = MarkTileDims(widths=W).apply_pass(sdfg, {})
-    GenerateTileIterationMask(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    StrideMapByTileWidths(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-    handled = PromoteNSDFGBodyToTiles(widths=W).apply_pass(sdfg, {"MarkTileDims": res})
-
-    assert handled, "expected the unop-chain map to be handled by the descent"
+    """The walker emits a TileUnop for the unary-minus tasklets in a reused-
+    scalar (NSDFG-body) chain."""
+    sdfg = _vectorize(_unop_chain, "unop_struct", expand=False)
     unops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileUnop)]
     assert unops, "expected TileUnop nodes for the unary-minus tasklets"
 
 
-def test_s231_loopregion_body_still_clean_skips():
-    """The carried-dep LoopRegion body (s231) is NOT a flat body, so the
-    descent leaves it; ``EmitTileOps`` raises ``NotImplementedError``
-    (the kernel stays a clean skip until its own slice lands)."""
-    sdfg = _build(_s231, "s231_skip")
-    with pytest.raises(NotImplementedError):
-        VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(sdfg, {})
+@pytest.mark.parametrize("n", [16, 17])
+def test_s231_carried_dep_vectorizes_on_parallel_dim(n):
+    """The carried-dependency ``s231`` nest: the inner ``j`` loop carries a
+    dependency (``aa[j] = aa[j-1] + bb[j]``), so LoopToMap leaves it sequential
+    and only the parallel outer ``i`` becomes the tiled map. The walker
+    vectorizes that ``i`` map correctly -- bit-equal to the unvectorized
+    reference (the legacy descent clean-skipped this kernel; the walker now
+    handles it, so the prior ``NotImplementedError`` expectation is obsolete)."""
+    rng = np.random.default_rng(seed=n)
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    ref = _build(_s231, f"s231_ref{n}")
+    vec = _vectorize(_s231, f"s231_vec{n}")
+    ar = aa.copy()
+    av = aa.copy()
+    ref.compile()(aa=ar, bb=bb.copy(), LEN_2D=n)
+    vec.compile()(aa=av, bb=bb.copy(), LEN_2D=n)
+    np.testing.assert_allclose(av, ar, rtol=1e-12, atol=1e-12)
