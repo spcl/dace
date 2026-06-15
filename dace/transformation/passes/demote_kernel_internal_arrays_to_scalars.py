@@ -68,6 +68,38 @@ def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
     return False
 
 
+def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
+    """The schedule of ``node`` if it carries one (map / nested SDFG / library node), else ``None``."""
+    if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+        return node.map.schedule
+    if isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
+        return node.schedule
+    return None
+
+
+def _accessed_by_gpu_subkernel(sdfg: SDFG, name: str) -> bool:
+    """``True`` iff an access node for ``name`` is adjacent to a node that lowers into its own GPU
+    (sub)kernel and emits raw indexed access into the buffer.
+
+    Two such neighbours: a :class:`~dace.sdfg.nodes.LibraryNode` (e.g. a cub block ``Reduce`` --
+    its expansion writes ``buf[0]`` directly, which the scalar-conversion rewrite never sees), and a
+    GPU-scheduled nested map / SDFG (a thread-block collective rather than a single per-thread value).
+    A *sequential* nested SDFG (a device function) is **not** matched -- its boundary scalars are
+    genuinely single values and are scalarized cleanly.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and node.data == name):
+                continue
+            neighbors = [e.src for e in state.in_edges(node)] + [e.dst for e in state.out_edges(node)]
+            for nb in neighbors:
+                if isinstance(nb, nodes.LibraryNode):
+                    return True
+                if _node_schedule(nb) in dtypes.GPU_SCHEDULES:
+                    return True
+    return False
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DemoteKernelInternalArraysToScalars(ppl.Pass):
@@ -122,6 +154,12 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
             return False
         # Kernel outputs must stay arrays -- they cross the GPU_Device boundary.
         if written_by_gpu_map_exit(sdfg, name):
+            return False
+        # A buffer touched by a node that lowers into its own (sub)kernel cannot become a
+        # per-thread scalar: a ``LibraryNode`` (e.g. a cub block ``Reduce``) or a GPU-scheduled
+        # nested map / SDFG emits raw ``buf[0]`` indexing we cannot rewrite, and is a multi-thread
+        # collective rather than a single value.
+        if _accessed_by_gpu_subkernel(sdfg, name):
             return False
         # A descriptor inside a device-function sub-SDFG is kernel-internal by
         # construction. Otherwise (e.g. a transient declared in the kernel-owning

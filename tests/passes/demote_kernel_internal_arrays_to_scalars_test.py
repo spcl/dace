@@ -129,10 +129,71 @@ def test_non_gpu_len1_array_untouched():
     assert isinstance(sdfg.arrays['a'], data.Array)
 
 
+def test_library_node_output_not_demoted():
+    """A length-1 array written by a ``LibraryNode`` (e.g. a cub block ``Reduce``) is kept: the
+    library expansion emits raw ``buf[0]`` indexing that scalar-conversion never rewrites. This is
+    the block-reduction regression -- demoting it yields ``float tB; ... tB[0] = ...``."""
+    from dace.memlet import Memlet
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    sdfg = dace.SDFG('blockreduce')
+    sdfg.add_array('A', (128, ), dace.float32)
+    sdfg.add_array('B', (2, ), dace.float32)
+    sdfg.add_transient('tA', (2, ), dace.float32)
+    sdfg.add_transient('tB', (1, ), dace.float32)  # length-1 reduce output
+    state = sdfg.add_state('a')
+    A, B = state.add_access('A'), state.add_access('B')
+    me, mx = state.add_map('mymap', dict(bi='0:2'))
+    mei, mxi = state.add_map('mymap2', dict(i='0:32'))
+    red = state.add_reduce('lambda a, b: a + b', None, 0)
+    red.implementation = 'CUDA (block)'
+    tA, tB = state.add_access('tA'), state.add_access('tB')
+    wt = state.add_tasklet('writeout', {'inp'}, {'out'}, 'if i == 0: out = inp')
+    state.add_edge(A, None, me, None, Memlet.simple(A, '0:128'))
+    state.add_edge(me, None, mei, None, Memlet.simple(A, '(64*bi):(64*bi+64)'))
+    state.add_edge(mei, None, tA, None, Memlet.simple('A', '(64*bi+2*i):(64*bi+2*i+2)'))
+    state.add_edge(tA, None, red, None, Memlet.simple(tA, '0:2'))
+    state.add_edge(red, None, tB, None, Memlet.simple(tB, '0'))
+    state.add_edge(tB, None, wt, 'inp', Memlet.simple(tB, '0'))
+    state.add_edge(wt, 'out', mxi, None, Memlet.simple('B', 'bi', num_accesses=-1))
+    state.add_edge(mxi, None, mx, None, Memlet.simple(B, 'bi'))
+    state.add_edge(mx, None, B, None, Memlet.simple(B, '0:2'))
+    sdfg.fill_scope_connectors()
+    sdfg.apply_transformations(GPUTransformSDFG, options={'sequential_innermaps': False})
+
+    InferDefaultSchedulesAndStorages().apply_pass(sdfg, {})
+    DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays['tB'], data.Array), sdfg.arrays['tB']
+
+
+def test_gpu_scheduled_nested_map_boundary_not_demoted():
+    """A length-1 array on the boundary of a GPU-scheduled *nested* map (a thread-block sub-kernel)
+    is kept -- it is a multi-thread buffer, not a single per-thread value."""
+    sdfg = dace.SDFG('nestedgpu')
+    sdfg.add_array('A', (16, ), dace.float64, storage=GPU_GLOBAL)
+    sdfg.add_array('B', (16, ), dace.float64, storage=GPU_GLOBAL)
+    sdfg.add_transient('buf', (1, ), dace.float64, storage=REGISTER)
+    st = sdfg.add_state('main')
+    dev_e, dev_x = st.add_map('dev', dict(i='0:16'), schedule=GPU_DEVICE)
+    # A nested GPU thread-block map writes the length-1 buffer.
+    tb_e, tb_x = st.add_map('tb', dict(j='0:1'), schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+    t = st.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    buf = st.add_access('buf')
+    st.add_memlet_path(st.add_access('A'), dev_e, tb_e, t, dst_conn='x', memlet=dace.Memlet('A[i]'))
+    st.add_memlet_path(t, tb_x, buf, src_conn='y', memlet=dace.Memlet('buf[0]'))
+    st.add_memlet_path(buf, dev_x, st.add_access('B'), memlet=dace.Memlet('B[i]'))
+
+    InferDefaultSchedulesAndStorages().apply_pass(sdfg, {})
+    DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays['buf'], data.Array), sdfg.arrays['buf']
+
+
 if __name__ == '__main__':
     test_kernel_internal_transient_demoted()
     test_gpu_global_len1_array_not_demoted()
     test_gpu_shared_len1_array_not_demoted()
     test_kernel_output_written_across_gpu_exit_not_demoted()
     test_non_gpu_len1_array_untouched()
+    test_library_node_output_not_demoted()
+    test_gpu_scheduled_nested_map_boundary_not_demoted()
     print('ok')
