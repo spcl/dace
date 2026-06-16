@@ -488,23 +488,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if body is None or not body.startswith(f"{out_conn} = "):
             return None
         rhs = body[len(f"{out_conn} = "):].strip()
-        import sympy
         from dace import symbolic
+        from dace.transformation.passes.vectorization.utils.tile_access import (_affine_coeff_for, _affine_offset_for)
         try:
-            a_sym = symbolic.pystr_to_symbolic(a_conn)
             expr = symbolic.pystr_to_symbolic(rhs)
         except Exception:
             return None
-        # Affine analysis applies only to a scalar arithmetic expression that actually
-        # uses the operand (a relational / boolean body has no affine coefficient).
-        if not isinstance(expr, sympy.Expr) or a_sym not in expr.free_symbols:
+        # Reuse the Poly-based affine helpers (they return None for a non-affine /
+        # degree>1 / relational body). Only |coeff| == 1 maps to a single symbol
+        # binop; other coefficients also need a multiply and are deferred.
+        coeff = _affine_coeff_for(expr, a_conn)
+        offset = _affine_offset_for(expr, a_conn)
+        if coeff is None or offset is None:
             return None
-        coeff = sympy.diff(expr, a_sym)
-        if a_sym in coeff.free_symbols:
-            return None  # operand appears non-linearly -> not affine
-        offset = sympy.simplify(expr - coeff * a_sym)
-        if a_sym in offset.free_symbols:
-            return None  # safety: the offset must be free of the operand
         if coeff == 1:
             return out_conn, a_conn, "+", "b", str(offset)
         if coeff == -1:
