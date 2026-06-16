@@ -586,7 +586,7 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
     svbool_t wp = svwhilelt_b64((uint64_t)i, (uint64_t)VLEN);  // valid out lanes
     svint64_t lanes = svindex_s64((std::int64_t)base + i, 1);  // base+i + {0,1,...}
     svbool_t active = svcmplt(wp, lanes, n);                   // (base+i+l) < ub
-    svint64_t ones = svdup_s64_z(active, 1);                   // 1 active / 0 else
+    svint64_t ones = svdup_n_s64_z(active, 1);                 // 1 active / 0 else
     svst1b_s64(wp, reinterpret_cast<signed char*>(out) + i, ones);
   }
 }
