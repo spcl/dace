@@ -201,6 +201,17 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
+// ---------------------------- tile_mask_gen ----------------------------
+// Iteration mask: out[l] = (base + l) < ub for l in 0..VLEN-1. The K=1 form of
+// the per-dim conjunction TileMaskGen lowers (K>=2 stays 'pure'); ``base`` is the
+// surrounding map iter-var and ``ub`` the dim's exclusive upper bound. The
+// predicate is a monotonic whilelt-style prefix; consumers rebuild their own
+// hardware mask from this bool tile.
+template <typename IdxT, int VLEN>
+inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
+  for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
+}
+
 // =========================== VLEN=1 overloads ============================
 // DaCe codegen collapses a ``Register Array(shape=(1,))`` transient to a
 // plain ``T`` variable for the K=0 / W=1 postamble — but other operands

@@ -218,5 +218,23 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
+// ---------------------------- tile_mask_gen ----------------------------
+// out[l] = (base + l) < ub. AVX-512: 64-bit-lane threshold compare
+// (``_mm512_cmplt_epi64_mask``, W=8) -> ``__mmask8`` expanded to bool bytes;
+// scalar tail. int64 compare keeps array-sized bounds exact.
+template <typename IdxT, int VLEN>
+inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
+  constexpr int W = 8;
+  const __m512i iota = _mm512_set_epi64(7, 6, 5, 4, 3, 2, 1, 0);
+  const __m512i ubv = _mm512_set1_epi64((long long)ub);
+  int i = 0;
+  for (; i + W <= VLEN; i += W) {
+    __m512i lanes = _mm512_add_epi64(_mm512_set1_epi64((long long)base + i), iota);
+    __mmask8 k = _mm512_cmplt_epi64_mask(lanes, ubv);
+    for (int j = 0; j < W; ++j) out[i + j] = (k >> j) & 1;
+  }
+  for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
+}
+
 }  // namespace tileops
 }  // namespace dace

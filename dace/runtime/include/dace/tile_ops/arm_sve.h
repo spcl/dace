@@ -574,5 +574,22 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
+// ---------------------------- tile_mask_gen ----------------------------
+// out[l] = (base + l) < ub. SVE: per 64-bit-lane chunk, svindex + svcmplt give
+// the active predicate; narrowing svst1b writes 1/0 bytes. (Written on an x86
+// dev box -- SVE path not hardware-exercised; semantics mirror scalar.h.)
+template <typename IdxT, int VLEN>
+inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
+  const std::int64_t n = (std::int64_t)ub;
+  const std::int64_t cnt = svcntd();
+  for (std::int64_t i = 0; i < VLEN; i += cnt) {
+    svbool_t wp = svwhilelt_b64((uint64_t)i, (uint64_t)VLEN);  // valid out lanes
+    svint64_t lanes = svindex_s64((std::int64_t)base + i, 1);  // base+i + {0,1,...}
+    svbool_t active = svcmplt(wp, lanes, n);                   // (base+i+l) < ub
+    svint64_t ones = svdup_s64_z(active, 1);                   // 1 active / 0 else
+    svst1b_s64(wp, reinterpret_cast<signed char*>(out) + i, ones);
+  }
+}
+
 }  // namespace tileops
 }  // namespace dace

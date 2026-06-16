@@ -484,5 +484,24 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   tile_scatter<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
+// ---------------------------- tile_mask_gen ----------------------------
+// out[l] = (base + l) < ub. NEON (AArch64): 64-bit-lane compare (vcltq_s64,
+// W=2) extracted to bool bytes; scalar tail.
+template <typename IdxT, int VLEN>
+inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
+  constexpr int W = 2;
+  const int64x2_t ubv = vdupq_n_s64((std::int64_t)ub);
+  int i = 0;
+  for (; i + W <= VLEN; i += W) {
+    const std::int64_t lb = (std::int64_t)base + i;
+    const std::int64_t seed[W] = {lb, lb + 1};
+    int64x2_t lanes = vld1q_s64(seed);
+    uint64x2_t cmp = vcltq_s64(lanes, ubv);  // base+l < ub
+    out[i + 0] = vgetq_lane_u64(cmp, 0) != 0;
+    out[i + 1] = vgetq_lane_u64(cmp, 1) != 0;
+  }
+  for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
+}
+
 }  // namespace tileops
 }  // namespace dace

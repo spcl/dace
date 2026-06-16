@@ -678,5 +678,24 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   tile_scatter<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
+// ---------------------------- tile_mask_gen ----------------------------
+// out[l] = (base + l) < ub. AVX2: 64-bit-lane compare (``_mm256_cmpgt_epi64``,
+// W=4; ``ub > base+l`` => active) extracted to bool bytes; scalar tail.
+template <typename IdxT, int VLEN>
+inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
+  constexpr int W = 4;
+  const __m256i iota = _mm256_set_epi64x(3, 2, 1, 0);
+  const __m256i ubv = _mm256_set1_epi64x((long long)ub);
+  int i = 0;
+  for (; i + W <= VLEN; i += W) {
+    __m256i lanes = _mm256_add_epi64(_mm256_set1_epi64x((long long)base + i), iota);
+    __m256i cmp = _mm256_cmpgt_epi64(ubv, lanes);  // ub > base+l => active
+    alignas(32) std::int64_t tmp[W];
+    _mm256_storeu_si256((__m256i*)tmp, cmp);
+    for (int j = 0; j < W; ++j) out[i + j] = tmp[j] != 0;
+  }
+  for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
+}
+
 }  // namespace tileops
 }  // namespace dace

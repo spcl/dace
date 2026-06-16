@@ -304,6 +304,29 @@ def _k1_array_stride(node, parent_sdfg, edge, dims_prop) -> str:
     return f"({coeff}) * ({symstr(arr.strides[dims[0]])})"
 
 
+def make_mask_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
+    """CPP tasklet calling ``dace::tileops::tile_mask_gen`` (K=1 iteration mask).
+
+    The K=1 mask is ``_o[l] = (iter_var + l) < global_ub``; ``iter_var`` and
+    ``global_ub`` are the surrounding-scope symbol expressions, rendered inline
+    exactly as :class:`ExpandTileMaskGenPure` does (e.g. ``i`` / ``kfdia``). An
+    ``int64`` index keeps array-sized bounds exact. K=1 only -- the selector
+    routes K>=2 (the per-dim AND conjunction) to ``pure``.
+    """
+    node.validate(parent_sdfg, parent_state)
+    vlen = _require_k1(node)
+    base = str(node.iter_vars[0])
+    ub = str(node.global_ubs[0])
+    call = f"dace::tileops::tile_mask_gen<int64_t, {vlen}>(_o, ({base}), ({ub}));"
+    return nodes.Tasklet(
+        label=f"{node.label}_{suffix}",
+        inputs={},
+        outputs={"_o": None},
+        code=call,
+        language=dace.dtypes.Language.CPP,
+    )
+
+
 def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_load`` (contiguous / strided).
 
