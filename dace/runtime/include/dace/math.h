@@ -560,6 +560,25 @@ namespace dace
         static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
+
+        // Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real
+        // / imaginary part of a complex value.  ``cppunparse`` maps the
+        // tasklet-body spellings ``re(_in)`` / ``im(_in)`` here so a complex
+        // connector's component is read directly.  Generic over
+        // ``std::complex`` / ``thrust::complex`` (both expose ``.real()`` /
+        // ``.imag()``); the trailing ``decltype`` constrains it to complex
+        // types.
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real())
+        {
+            return z.real();
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag())
+        {
+            return z.imag();
+        }
+
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
         {

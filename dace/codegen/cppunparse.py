@@ -999,11 +999,34 @@ class CPPUnparser:
         'float64': 'dace::float64'
     }
 
+    # Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real /
+    # imaginary part of a complex value -- they lower to the ``dace::math``
+    # helpers (which call ``.real()`` / ``.imag()`` on ``std::complex`` /
+    # ``thrust::complex``).  Same call shape as a renamed function: write the
+    # C++ name, then the (single) argument list.  This is the tasklet-body
+    # spelling for a complex's components, mirroring how ``int_floor`` maps to
+    # ``dace::math::ifloor``.
+    _renamed_funcs = {
+        're': 'dace::math::re',
+        'im': 'dace::math::im',
+    }
+
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
             if t.func.id in self._typecast_funcs:
                 self.write(self._typecast_funcs[t.func.id])
+                self.write("(")
+                comma = False
+                for e in t.args:
+                    if comma:
+                        self.write(", ")
+                    comma = True
+                    self.dispatch(e)
+                self.write(")")
+                return
+            if t.func.id in self._renamed_funcs:
+                self.write(self._renamed_funcs[t.func.id])
                 self.write("(")
                 comma = False
                 for e in t.args:
