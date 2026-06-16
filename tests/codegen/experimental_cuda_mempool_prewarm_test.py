@@ -90,15 +90,15 @@ def test_no_prewarm_without_pool_arrays():
     assert '__dace_pool_prewarm' not in _experimental_code(sdfg)
 
 
-def test_prewarm_excludes_size_with_non_init_symbol():
-    """A pool transient sized by a symbol *defined inside* the SDFG (not known at init) is left to
-    lazy growth; here it is the only pool array, so no pre-grow is emitted."""
+def test_prewarm_pins_non_init_symbol_to_one():
+    """A pool transient sized by a symbol *defined inside* the SDFG (not known at init) is still
+    pre-reserved, with that symbol pinned to 1 in the size expression."""
     N = dace.symbol('N')
     M = dace.symbol('M')
-    sdfg = dace.SDFG('pw_excl')
+    sdfg = dace.SDFG('pw_pin')
     sdfg.add_array('A', (N, ), dace.float64, storage=GG)
     sdfg.add_array('B', (N, ), dace.float64, storage=GG)
-    sdfg.add_transient('tmp', (M, ), dace.float64, storage=GG)  # size uses M
+    sdfg.add_transient('tmp', (M, ), dace.float64, storage=GG)  # size uses internally-defined M
     sdfg.arrays['tmp'].pool = True
 
     s0 = sdfg.add_state('s0', is_start_block=True)
@@ -111,13 +111,15 @@ def test_prewarm_excludes_size_with_non_init_symbol():
     s1.add_edge(e, None, t, None, dace.Memlet())
     s1.add_memlet_path(t, x, s1.add_access('tmp'), src_conn='b', memlet=dace.Memlet('tmp[i]'))
 
-    code = _experimental_code(sdfg)
-    assert '__dace_pool_prewarm' not in code, 'M is not init-known; tmp must be left to lazy growth'
+    expr = _prewarm_bytes_expr(_experimental_code(sdfg))
+    assert expr is not None, 'tmp must still be pre-reserved (M pinned to 1)'
+    assert 'M' not in expr, f'M should be pinned to 1, not appear in {expr!r}'
+    assert expr == '(1) * sizeof(double)', expr
 
 
 if __name__ == '__main__':
     test_prewarm_emitted_for_symbolic_pool_transient()
     test_prewarm_sums_multiple_pool_transients()
     test_no_prewarm_without_pool_arrays()
-    test_prewarm_excludes_size_with_non_init_symbol()
+    test_prewarm_pins_non_init_symbol_to_one()
     print('ok')

@@ -815,11 +815,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def _pool_prewarm(self, stream: str) -> str:
         """Pre-grow the memory pool once, at init, to the working-set size.
 
-        Sized as the sum of the pool-allocated (``cudaMallocAsync``) transients whose sizes are
-        known at init -- i.e. depend only on globally-available free symbols / constants. With the
-        retain threshold set above, the freed reservation stays mapped, so no per-invocation
-        allocation then triggers (synchronous) pool growth. Sizes that need a symbol defined inside
-        the SDFG are left to lazy growth. Returns '' when there is nothing to pre-grow.
+        Sized as the sum over the pool-allocated (``cudaMallocAsync``) transients of
+        ``total_size * sizeof(dtype)``. With the retain threshold set above, the freed reservation
+        stays mapped, so no per-invocation allocation then triggers (synchronous) pool growth. A
+        size factor that depends on a symbol not known at init (one defined *inside* the SDFG rather
+        than a global free symbol / constant) is pinned to 1 so the array is still pre-reserved --
+        an underestimate for that factor, but better than reserving nothing. Returns '' only when
+        there are no pool transients.
         """
         available = {str(s) for s in self._frame.free_symbols(self._global_sdfg)}
         available |= set(self._global_sdfg.constants.keys())
@@ -828,10 +830,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             for name, desc in sub.arrays.items():
                 if not (desc.transient and desc.pool is True) or (id(sub), name) in seen:
                     continue
-                if not {str(s) for s in desc.total_size.free_symbols} <= available:
-                    continue  # size needs a symbol unknown at init -> leave to lazy growth
                 seen.add((id(sub), name))
-                terms.append(f'({sym2cpp(desc.total_size)}) * sizeof({desc.dtype.ctype})')
+                size = desc.total_size
+                unknown = {s for s in size.free_symbols if str(s) not in available}
+                if unknown:  # pin init-unknown symbols to 1 so the array is still pre-reserved
+                    size = size.subs({s: 1 for s in unknown})
+                terms.append(f'({sym2cpp(size)}) * sizeof({desc.dtype.ctype})')
         if not terms:
             return ''
         return f'''
