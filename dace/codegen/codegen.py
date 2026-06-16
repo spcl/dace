@@ -226,10 +226,20 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             default_target = k
     targets = {'cpu': default_target(frame, sdfg)}
 
+    # Both CUDA code generators are registered, but only the one selected in
+    # ``compiler.cuda.implementation`` may be instantiated: they share GPU schedule
+    # types, so instantiating both would raise a duplicate-dispatcher error.
+    cuda_impl = config.Config.get('compiler', 'cuda', 'implementation')
+    if cuda_impl not in ('legacy', 'experimental'):
+        raise ValueError(f"Invalid compiler.cuda.implementation: {cuda_impl!r}. "
+                         "Please select one of 'legacy' or 'experimental'.")
+    disabled_cuda_target = 'experimental_cuda' if cuda_impl == 'legacy' else 'cuda'
+
     # Instantiate the rest of the targets
     targets.update({
         v['name']: k(frame, sdfg)
-        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
+        for k, v in TargetCodeGenerator.extensions().items()
+        if v['name'] not in targets and v['name'] != disabled_cuda_target
     })
 
     # Query all code generation targets and instrumentation providers in SDFG

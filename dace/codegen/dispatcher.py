@@ -27,6 +27,7 @@ class DefinedType(attr_enum.ExtensibleAttributeEnum):
     Object = auto()  # An object moved by reference
     Stream = auto()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = auto()  # An array of Streams
+    GPUStream = auto()  # A backend GPU stream handle (e.g., cudaStream_t / hipStream_t)
 
 
 class DefinedMemlets:
@@ -91,7 +92,8 @@ class DefinedMemlets:
         for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
-                if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")):
+                if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")
+                        or dtype == DefinedType.GPUStream):
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
                 else:

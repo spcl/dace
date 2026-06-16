@@ -342,6 +342,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
 
+        # Check for interstate edges that write to scalars or arrays
+        _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
@@ -353,6 +356,17 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         sdfg.save(fpath, exception=ex, compress=True)
         ex.path = fpath
         raise
+
+
+def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
+    from dace.sdfg import InterstateEdge
+    for edge, graph in sdfg.all_edges_recursive():
+        if edge.data is not None and isinstance(edge.data, InterstateEdge):
+            # sdfg.arrays return arrays and scalars, it is invalid to write to them
+            if any([key in graph.sdfg.arrays for key in edge.data.assignments]):
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', graph.sdfg,
+                    graph.edge_id(edge))
 
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):
@@ -870,9 +884,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                          for oe in state.out_edges(dst_node)}):
                         pass
                 else:
-                    raise InvalidSDFGEdgeError(
-                        f"Memlet creates an invalid path (sink node {dst_node}"
-                        " should be a data node)", sdfg, state_id, eid)
+                    if isinstance(dst_node, nd.Tasklet) and len(dst_node.in_connectors) == 0 and len(
+                            dst_node.out_connectors) == 0:
+                        # Tasklets with no input or output connector -> sync tasklet -> OK
+                        pass
+                    else:
+                        raise InvalidSDFGEdgeError(
+                            f"Memlet creates an invalid path (sink node {dst_node}"
+                            " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
@@ -888,11 +907,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     eid,
                 )
 
-        # Verify that source and destination subsets contain the same
-        # number of elements
-        if not e.data.allow_oob and e.data.other_subset is not None and not (
-            (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
-            (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
+        # Verify that source and destination subsets contain the same number of
+        # elements. The check only applies when BOTH endpoints are ``AccessNode``s
+        # backed by arrays (so ``.data`` and ``.veclen`` are meaningful); if either
+        # side is a ``Stream`` access node the volumes legitimately differ.
+        if (not e.data.allow_oob and e.data.other_subset is not None and isinstance(src_node, nd.AccessNode)
+                and isinstance(dst_node, nd.AccessNode) and not isinstance(sdfg.arrays[src_node.data], dt.Stream)
+                and not isinstance(sdfg.arrays[dst_node.data], dt.Stream)):
             src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):

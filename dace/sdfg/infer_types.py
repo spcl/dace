@@ -250,16 +250,27 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     constraints: Set[dtypes.ScheduleType] = set()
     sdfg = state.parent
     for dname in memlets:
-        if isinstance(sdfg.arrays[dname], data.Scalar):
+        desc = sdfg.arrays[dname]
+        if isinstance(desc, data.Scalar):
             continue  # Skip scalars
 
-        storage = sdfg.arrays[dname].storage
+        storage = desc.storage
         if storage not in dtypes.STORAGEDEFAULT_SCHEDULE:
             continue
         sched = dtypes.STORAGEDEFAULT_SCHEDULE[storage]
         if sched is None:
             continue
         constraints.add(sched)
+
+    # Copy/Memset library nodes are the one class of nodes that legitimately
+    # bridge storage types (CPU->GPU copies, GPU buffer zero-fill, etc.).
+    # If any GPU storage is involved on either side, the node must schedule
+    # as GPU_Device; otherwise fall through to the normal single-constraint
+    # path so pure-CPU copies still land on CPU_Multicore.
+    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+    from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+    if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)) and dtypes.ScheduleType.GPU_Device in constraints:
+        return dtypes.ScheduleType.GPU_Device
 
     if not constraints:  # No constraints found
         child_schedule = None
