@@ -903,19 +903,29 @@ class InsertTileLoadStore(ppl.Pass):
                     # ``strides[basis]``, so the basis MUST be a unit-stride indexed
                     # dim for the product to equal ``combined`` (C-layout's
                     # contiguous LAST dim and Fortran's contiguous FIRST dim are both
-                    # covered). Absent a unit-stride indexed dim we keep the historical
-                    # positional-default basis (no worse than the pre-fix behaviour).
+                    # covered).
                     all_affine = all(record.dim_strides[d] is not None for d in dims_for_iv)
                     if not all_affine:
                         raise NotImplementedError(f"diagonal access on iter-var {iv!r} spans dims {dims_for_iv}; "
                                                   f"at least one per-dim stride is None (non-affine) -- "
                                                   f"cannot express as a single linear stride. Refusing per the "
                                                   f"diagonal-as-affine design (no gather fallback).")
+                    # With no unit-stride spanned dim (a diagonal over a strided view in
+                    # every dim) the positional default would multiply ``combined`` by a
+                    # NON-unit stride and inflate the offset (silent OOB / wrong values).
+                    # Refuse loudly rather than mis-stride (user: refuse, don't miscompile).
+                    unit_dim = next((d for d in dims_for_iv if _stride_is_one(src_arr_strides[d])), None)
+                    if unit_dim is None:
+                        raise NotImplementedError(
+                            f"diagonal access on iter-var {iv!r} spans dims {dims_for_iv} with no unit-stride "
+                            f"source dim (strides {[src_arr_strides[d] for d in dims_for_iv]}); the combined "
+                            f"byte-stride coeff has no ``strides[basis] == 1`` dim to carry it, so "
+                            f"``offset_via_strides`` would inflate it. Refusing per the diagonal-as-affine "
+                            f"design (rather than silently mis-striding via the positional default).")
                     combined = sum(record.dim_strides[d] * src_arr_strides[d] for d in dims_for_iv)
                     padded_strides.append(combined)
                     padded_replicate.append(1)
-                    unit_dim = next((d for d in dims_for_iv if _stride_is_one(src_arr_strides[d])), None)
-                    padded_src_dims.append(unit_dim if unit_dim is not None else pos_default)
+                    padded_src_dims.append(unit_dim)
             else:
                 # BROADCAST tile dim -- this iter_var doesn't appear in the subset.
                 # stride 0 -> the basis is irrelevant (the term is zero); keep the
