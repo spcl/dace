@@ -21,7 +21,6 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 
 def _is_tile_shape(desc, widths) -> bool:
@@ -290,70 +289,6 @@ class ExpandTileBinopCutile(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileBinopScalar(ExpandTransformation):
-    """K=1 scalar-backend lowering: a call to ``dace::tileops::tile_binop`` in
-    ``dace/tile_ops/scalar.h`` (pulled in via :class:`TileOpsScalar`).
-
-    The shared :func:`~dace.libraries.tileops._isa_codegen.make_binop_tasklet`
-    maps ``op`` -> a one-char op code, each operand's ``kind`` -> a broadcast
-    boolean, and ``has_mask`` -> the ``Masked`` boolean. K=1 only (the selector
-    routes K>=2 to ``pure``). The avx512 / avx2 / neon / sve siblings emit the
-    identical call and differ only in the backend header their environment pulls
-    in.
-    """
-
-    environments = [TileOpsScalar]
-
-    @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "scalar")
-
-
-@library.expansion
-class ExpandTileBinopAVX512(ExpandTransformation):
-    """AVX-512 lowering of :class:`TileBinop` (``dace/tile_ops/avx512.h``)."""
-
-    environments = [TileOpsAVX512]
-
-    @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "avx512")
-
-
-@library.expansion
-class ExpandTileBinopAVX2(ExpandTransformation):
-    """AVX2 lowering of :class:`TileBinop` (``dace/tile_ops/avx2.h``)."""
-
-    environments = [TileOpsAVX2]
-
-    @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "avx2")
-
-
-@library.expansion
-class ExpandTileBinopNeon(ExpandTransformation):
-    """ARM NEON lowering of :class:`TileBinop` (``dace/tile_ops/arm_neon.h``)."""
-
-    environments = [TileOpsNeon]
-
-    @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "neon")
-
-
-@library.expansion
-class ExpandTileBinopSVE(ExpandTransformation):
-    """ARM SVE lowering of :class:`TileBinop` (``dace/tile_ops/arm_sve.h``)."""
-
-    environments = [TileOpsSVE]
-
-    @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_binop_tasklet(node, parent_state, parent_sdfg, "sve")
-
-
 @library.node
 class TileBinop(nodes.LibraryNode):
     """Element-wise binary op on K-dim register tiles.
@@ -375,13 +310,11 @@ class TileBinop(nodes.LibraryNode):
     implementations = {
         "pure": ExpandTileBinopPure,
         "cutile": ExpandTileBinopCutile,
-        # K=1 ISA backends: a call into dace/tile_ops/<backend>.h (same call;
-        # the backend's env pulls in the matching header).
-        "scalar": ExpandTileBinopScalar,
-        "avx512": ExpandTileBinopAVX512,
-        "avx2": ExpandTileBinopAVX2,
-        "neon": ExpandTileBinopNeon,
-        "sve": ExpandTileBinopSVE,
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("Binop", _isa_codegen.make_binop_tasklet, globals()),
     }
     default_implementation = "pure"
 

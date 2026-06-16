@@ -23,7 +23,6 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 _TILE = "Tile"
 _SYMBOL = "Symbol"
@@ -186,61 +185,6 @@ class ExpandTileUnopCutile(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileUnopScalar(ExpandTransformation):
-    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``)."""
-
-    environments = [TileOpsScalar]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_unop_tasklet(node, parent_state, parent_sdfg, "scalar")
-
-
-@library.expansion
-class ExpandTileUnopAVX512(ExpandTransformation):
-    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``)."""
-
-    environments = [TileOpsAVX512]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_unop_tasklet(node, parent_state, parent_sdfg, "avx512")
-
-
-@library.expansion
-class ExpandTileUnopAVX2(ExpandTransformation):
-    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``)."""
-
-    environments = [TileOpsAVX2]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_unop_tasklet(node, parent_state, parent_sdfg, "avx2")
-
-
-@library.expansion
-class ExpandTileUnopNeon(ExpandTransformation):
-    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``)."""
-
-    environments = [TileOpsNeon]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_unop_tasklet(node, parent_state, parent_sdfg, "neon")
-
-
-@library.expansion
-class ExpandTileUnopSVE(ExpandTransformation):
-    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``)."""
-
-    environments = [TileOpsSVE]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_unop_tasklet(node, parent_state, parent_sdfg, "sve")
-
-
 @library.node
 class TileUnop(nodes.LibraryNode):
     """Element-wise unary op on a K-dim register tile.
@@ -256,11 +200,11 @@ class TileUnop(nodes.LibraryNode):
     implementations = {
         "pure": ExpandTileUnopPure,
         "cutile": ExpandTileUnopCutile,
-        "scalar": ExpandTileUnopScalar,
-        "avx512": ExpandTileUnopAVX512,
-        "avx2": ExpandTileUnopAVX2,
-        "neon": ExpandTileUnopNeon,
-        "sve": ExpandTileUnopSVE,
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("Unop", _isa_codegen.make_unop_tasklet, globals()),
     }
     default_implementation = "pure"
 

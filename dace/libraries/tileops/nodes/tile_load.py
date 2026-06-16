@@ -14,7 +14,6 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import (gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
-from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 #: Map the :attr:`TileLoad.pad_mode` property values to the cuTile
 #: ``ct.PaddingMode`` enum members. cuTile's padding enum offers ``+inf``
@@ -155,13 +154,11 @@ class ExpandTileLoadPure(ExpandTransformation):
                 if k is None:
                     continue
                 w_d = int(widths[d])
-                runtime_checks.append(
-                    f'if (({w_d}) % ({k}) != 0) {{ '
-                    f'fprintf(stderr, "TileLoad runtime check failed: width[{d}]=%d not divisible by '
-                    f'replicate_factor=%lld (formula __l/factor requires W %% factor == 0)\\n", '
-                    f'{w_d}, (long long)({k})); '
-                    f'std::abort(); }}'
-                )
+                runtime_checks.append(f'if (({w_d}) % ({k}) != 0) {{ '
+                                      f'fprintf(stderr, "TileLoad runtime check failed: width[{d}]=%d not divisible by '
+                                      f'replicate_factor=%lld (formula __l/factor requires W %% factor == 0)\\n", '
+                                      f'{w_d}, (long long)({k})); '
+                                      f'std::abort(); }}')
             if runtime_checks:
                 code = "\n".join(runtime_checks) + "\n" + code
         inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
@@ -202,66 +199,6 @@ class ExpandTileLoadCutile(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileLoadScalar(ExpandTransformation):
-    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsScalar]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "scalar")
-
-
-@library.expansion
-class ExpandTileLoadAVX512(ExpandTransformation):
-    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsAVX512]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "avx512")
-
-
-@library.expansion
-class ExpandTileLoadAVX2(ExpandTransformation):
-    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsAVX2]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "avx2")
-
-
-@library.expansion
-class ExpandTileLoadNeon(ExpandTransformation):
-    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsNeon]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "neon")
-
-
-@library.expansion
-class ExpandTileLoadSVE(ExpandTransformation):
-    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsSVE]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_load_tasklet(node, parent_state, parent_sdfg, "sve")
-
-
 @library.node
 class TileLoad(nodes.LibraryNode):
     """Load a K-dim tile out of a global array.
@@ -276,11 +213,11 @@ class TileLoad(nodes.LibraryNode):
     implementations = {
         "pure": ExpandTileLoadPure,
         "cutile": ExpandTileLoadCutile,
-        "scalar": ExpandTileLoadScalar,
-        "avx512": ExpandTileLoadAVX512,
-        "avx2": ExpandTileLoadAVX2,
-        "neon": ExpandTileLoadNeon,
-        "sve": ExpandTileLoadSVE
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("Load", _isa_codegen.make_load_tasklet, globals()),
     }
     default_implementation = "pure"
 

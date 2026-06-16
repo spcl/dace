@@ -17,6 +17,8 @@ from dace import properties
 from dace.data import add_mask
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.lane_access import classify_lane_access
+from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
+                                                                          thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
@@ -49,10 +51,7 @@ class GenerateIterationMask(ppl.Pass):
                                               "fault on inactive tail lanes. Such a map is auto-degraded to a "
                                               "scalar (Sequential, step-1) remainder instead of being masked.")
 
-    def __init__(self,
-                 vector_width: int = 8,
-                 mode: str = "step_w_only",
-                 lower_to_intrinsics: bool = False):
+    def __init__(self, vector_width: int = 8, mode: str = "step_w_only", lower_to_intrinsics: bool = False):
         super().__init__()
         self.vector_width = vector_width
         self.mode = mode
@@ -250,12 +249,7 @@ class GenerateIterationMask(ppl.Pass):
                     return True
         return False
 
-    def _attach_mask(self,
-                     nsdfg_node: dace.nodes.NestedSDFG,
-                     iter_var: str,
-                     lb,
-                     ub,
-                     W: int) -> bool:
+    def _attach_mask(self, nsdfg_node: dace.nodes.NestedSDFG, iter_var: str, lb, ub, W: int) -> bool:
         """Add and fill the ``_iter_mask`` transient inside one body NestedSDFG.
 
         :param nsdfg_node: The NestedSDFG node whose inner SDFG receives the mask.
@@ -299,33 +293,23 @@ class GenerateIterationMask(ppl.Pass):
         # inner NSDFG. The map's own ``iter_var`` is also kept in the symbol
         # set for backward compatibility with callers that might rely on it.
         symbols_to_ensure = ([iter_var] + bound_syms + [str(s) for s in dace.symbolic.symlist(lb).values()])
-        for sname in symbols_to_ensure:
-            if sname not in inner.symbols and sname in nsdfg_node.sdfg.parent_sdfg.symbols:
-                inner.add_symbol(sname, nsdfg_node.sdfg.parent_sdfg.symbols[sname])
-            elif sname not in inner.symbols:
-                # iter_var is typically not in parent_sdfg.symbols (it's a map
-                # parameter, scoped to the map entry). Default to int64.
-                inner.add_symbol(sname, dace.int64)
-            if sname not in nsdfg_node.symbol_mapping:
-                nsdfg_node.symbol_mapping[sname] = sname
+        thread_symbols_into_nsdfg(inner, nsdfg_node, symbols_to_ensure, nsdfg_node.sdfg.parent_sdfg)
 
-        # Capture the current start block BEFORE prepending the new prep
-        # state, otherwise ``inner.start_block`` becomes ambiguous between
-        # the existing start and the new node.
-        old_start = inner.start_block
-
-        # Each lane ``l`` sets ``mask[l] = (lb + l <= ub)``.
+        # Each lane ``l`` sets ``mask[l] = (lb + l <= ub)``. Emit the fill in a
+        # dedicated start state so it dominates the whole body (shared scaffolding
+        # with GenerateTileIterationMask's ``_tile_mask_init``).
         body = "\n".join([f"_o[{l}] = (({key_str}) + {l} {cmp} ({bound_str}));" for l in range(W)])
-        prep = inner.add_state("_iter_mask_init", is_start_block=True)
-        an = prep.add_access(mask_name)
-        t = prep.add_tasklet(
-            name="_iter_mask_fill",
-            inputs=set(),
-            outputs={"_o"},
-            code=body,
-            language=dace.dtypes.Language.CPP,
-        )
-        prep.add_edge(t, "_o", an, None, dace.Memlet(f"{mask_name}[0:{W}]"))
-        if old_start is not None and old_start is not prep:
-            inner.add_edge(prep, old_start, dace.InterstateEdge())
+
+        def _build_mask(prep: dace.SDFGState) -> None:
+            an = prep.add_access(mask_name)
+            t = prep.add_tasklet(
+                name="_iter_mask_fill",
+                inputs=set(),
+                outputs={"_o"},
+                code=body,
+                language=dace.dtypes.Language.CPP,
+            )
+            prep.add_edge(t, "_o", an, None, dace.Memlet(f"{mask_name}[0:{W}]"))
+
+        prepend_dominating_init_state(inner, "_iter_mask_init", _build_mask)
         return True

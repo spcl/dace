@@ -15,7 +15,6 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .. import _isa_codegen
-from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 from .._pure_codegen import nested_loops, tile_offset
 
 
@@ -71,66 +70,6 @@ class ExpandTileMaskGenCutile(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileMaskGenScalar(ExpandTransformation):
-    """K=1 scalar-backend lowering: a call to ``dace::tileops::tile_mask_gen`` in
-    ``dace/tile_ops/scalar.h``. The avx512 / avx2 / neon / sve siblings emit the
-    identical call and differ only in the backend header their environment pulls
-    in (the per-ISA tile_mask_gen vectorises the ``base + l < ub`` compare). K=1
-    only -- the selector routes K>=2 (the per-dim conjunction) to ``pure``.
-    """
-
-    environments = [TileOpsScalar]
-
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_mask_tasklet(node, parent_state, parent_sdfg, "scalar")
-
-
-@library.expansion
-class ExpandTileMaskGenAVX512(ExpandTransformation):
-    """AVX-512 lowering of :class:`TileMaskGen` (``dace/tile_ops/avx512.h``)."""
-
-    environments = [TileOpsAVX512]
-
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_mask_tasklet(node, parent_state, parent_sdfg, "avx512")
-
-
-@library.expansion
-class ExpandTileMaskGenAVX2(ExpandTransformation):
-    """AVX2 lowering of :class:`TileMaskGen` (``dace/tile_ops/avx2.h``)."""
-
-    environments = [TileOpsAVX2]
-
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_mask_tasklet(node, parent_state, parent_sdfg, "avx2")
-
-
-@library.expansion
-class ExpandTileMaskGenNeon(ExpandTransformation):
-    """ARM NEON lowering of :class:`TileMaskGen` (``dace/tile_ops/arm_neon.h``)."""
-
-    environments = [TileOpsNeon]
-
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_mask_tasklet(node, parent_state, parent_sdfg, "neon")
-
-
-@library.expansion
-class ExpandTileMaskGenSVE(ExpandTransformation):
-    """ARM SVE lowering of :class:`TileMaskGen` (``dace/tile_ops/arm_sve.h``)."""
-
-    environments = [TileOpsSVE]
-
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _isa_codegen.make_mask_tasklet(node, parent_state, parent_sdfg, "sve")
-
-
 @library.node
 class TileMaskGen(nodes.LibraryNode):
     """Produce the K-dim iteration mask ``bool[widths]``.
@@ -145,13 +84,11 @@ class TileMaskGen(nodes.LibraryNode):
     implementations = {
         "pure": ExpandTileMaskGenPure,
         "cutile": ExpandTileMaskGenCutile,
-        # K=1 ISA backends: a call into dace/tile_ops/<backend>.h (the backend's
-        # env pulls in the matching header; the selector routes K>=2 to 'pure').
-        "scalar": ExpandTileMaskGenScalar,
-        "avx512": ExpandTileMaskGenAVX512,
-        "avx2": ExpandTileMaskGenAVX2,
-        "neon": ExpandTileMaskGenNeon,
-        "sve": ExpandTileMaskGenSVE,
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("MaskGen", _isa_codegen.make_mask_tasklet, globals()),
     }
     default_implementation = "pure"
 

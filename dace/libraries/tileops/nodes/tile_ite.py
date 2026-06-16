@@ -31,7 +31,6 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
@@ -148,66 +147,6 @@ class ExpandTileITECutile(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileITEScalar(ExpandTransformation):
-    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsScalar]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "scalar")
-
-
-@library.expansion
-class ExpandTileITEAVX512(ExpandTransformation):
-    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsAVX512]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "avx512")
-
-
-@library.expansion
-class ExpandTileITEAVX2(ExpandTransformation):
-    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsAVX2]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "avx2")
-
-
-@library.expansion
-class ExpandTileITENeon(ExpandTransformation):
-    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsNeon]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "neon")
-
-
-@library.expansion
-class ExpandTileITESVE(ExpandTransformation):
-    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsSVE]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_ite_tasklet(node, parent_state, parent_sdfg, "sve")
-
-
 @library.node
 class TileITE(nodes.LibraryNode):
     """Per-lane select ``_o = _mask ? _t : _e`` on K-dim register tiles.
@@ -230,11 +169,11 @@ class TileITE(nodes.LibraryNode):
     implementations = {
         "pure": ExpandTileITEPure,
         "cutile": ExpandTileITECutile,
-        "scalar": ExpandTileITEScalar,
-        "avx512": ExpandTileITEAVX512,
-        "avx2": ExpandTileITEAVX2,
-        "neon": ExpandTileITENeon,
-        "sve": ExpandTileITESVE
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("ITE", _isa_codegen.make_ite_tasklet, globals()),
     }
     default_implementation = "pure"
 

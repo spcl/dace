@@ -17,6 +17,8 @@ from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
+                                                                          thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
                                                                             tile_mask_gen_dominates_consumers)
@@ -149,52 +151,36 @@ class GenerateTileIterationMask(ppl.Pass):
             storage=dace.dtypes.StorageType.Register,
             transient=True,
         )
+
         # The mask must be GENERATED in a state that DOMINATES every masked
         # consumer. A flat body has a single state, but a data-dependent ``if``
         # (TileITE) body has several (``compute_then`` / ``compute_else`` /
-        # ``apply_ITE``); an arbitrary ``next(iter(states()))`` could land the
-        # producer in a NON-dominating branch state, so the other branches read
-        # ``_tile_iter_mask`` uninitialized (flaky lane-not-written). Prepend a
-        # dedicated start state and emit the mask there -- it then dominates the
-        # whole body (mirrors GenerateIterationMask's ``_iter_mask_init``).
-        # Capture ``start_block`` BEFORE adding the prep state or it is ambiguous.
-        old_start = inner_sdfg.start_block
-        inner_state = inner_sdfg.add_state("_tile_mask_init", is_start_block=True)
-        mask_node = TileMaskGen(
-            name="_tile_iter_mask_gen",
-            widths=spec.widths,
-            iter_vars=spec.iter_vars,
-            global_ubs=spec.global_ubs,
-        )
-        inner_state.add_node(mask_node)
-        mask_access = inner_state.add_access(mask_name)
-        subset = ", ".join(f"0:{w}" for w in spec.widths)
-        inner_state.add_edge(
-            mask_node,
-            "_o",
-            mask_access,
-            None,
-            dace.Memlet(f"{mask_name}[{subset}]"),
-        )
-        if old_start is not None and old_start is not inner_state:
-            inner_sdfg.add_edge(inner_state, old_start, dace.InterstateEdge())
+        # ``apply_ITE``); landing the producer in a NON-dominating branch state
+        # would let the other branches read ``_tile_iter_mask`` uninitialized
+        # (flaky lane-not-written). Prepend a dedicated start state and emit the
+        # mask there -- it then dominates the whole body (shared scaffolding with
+        # GenerateIterationMask's ``_iter_mask_init``).
+        def _build_mask(init_state: dace.SDFGState) -> None:
+            mask_node = TileMaskGen(
+                name="_tile_iter_mask_gen",
+                widths=spec.widths,
+                iter_vars=spec.iter_vars,
+                global_ubs=spec.global_ubs,
+            )
+            init_state.add_node(mask_node)
+            mask_access = init_state.add_access(mask_name)
+            subset = ", ".join(f"0:{w}" for w in spec.widths)
+            init_state.add_edge(mask_node, "_o", mask_access, None, dace.Memlet(f"{mask_name}[{subset}]"))
+
+        prepend_dominating_init_state(inner_sdfg, "_tile_mask_init", _build_mask)
         # The mask's per-dim upper bounds (``global_ubs``) reference outer-scope
-        # symbols (loop bounds such as ``kfdia``). A bound symbol the body NSDFG
-        # does not otherwise use -- i.e. not an array-shape symbol like ``klev`` --
-        # is absent from both the inner SDFG's symbol table AND the NestedSDFG's
-        # ``symbol_mapping``, so the generated body function never receives it and
-        # the TileMaskGen tasklet fails to compile (``'kfdia' was not declared``).
-        # Thread every ``global_ubs`` free symbol into the body NSDFG: declare it on
-        # the inner SDFG and map it (identity) from the same-named parent symbol.
+        # symbols (loop bounds such as ``kfdia``). Such a bound symbol -- one the
+        # body NSDFG does not otherwise use (unlike an array-shape symbol like
+        # ``klev``) -- must be threaded into the body NSDFG or the TileMaskGen
+        # tasklet fails to compile (``'kfdia' was not declared``).
         import dace.symbolic as _sym
-        for ub in spec.global_ubs:
-            for s in _sym.pystr_to_symbolic(str(ub)).free_symbols:
-                sname = str(s)
-                if sname not in inner_sdfg.symbols:
-                    dtype = parent_sdfg.symbols[sname] if sname in parent_sdfg.symbols else dace.dtypes.int64
-                    inner_sdfg.add_symbol(sname, dtype)
-                if sname not in body_nsdfg.symbol_mapping:
-                    body_nsdfg.symbol_mapping[sname] = _sym.pystr_to_symbolic(sname)
+        ub_syms = {str(s) for ub in spec.global_ubs for s in _sym.pystr_to_symbolic(str(ub)).free_symbols}
+        thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, ub_syms, parent_sdfg)
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:

@@ -13,7 +13,6 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import (gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
-from ..environments import TileOpsScalar, TileOpsAVX512, TileOpsAVX2, TileOpsNeon, TileOpsSVE
 
 
 @library.expansion
@@ -130,66 +129,6 @@ class ExpandTileStoreCutile(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileStoreScalar(ExpandTransformation):
-    """K=1 scalar backend lowering (``dace/tile_ops/scalar.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsScalar]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "scalar")
-
-
-@library.expansion
-class ExpandTileStoreAVX512(ExpandTransformation):
-    """K=1 avx512 backend lowering (``dace/tile_ops/avx512.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsAVX512]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "avx512")
-
-
-@library.expansion
-class ExpandTileStoreAVX2(ExpandTransformation):
-    """K=1 avx2 backend lowering (``dace/tile_ops/avx2.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsAVX2]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "avx2")
-
-
-@library.expansion
-class ExpandTileStoreNeon(ExpandTransformation):
-    """K=1 neon backend lowering (``dace/tile_ops/arm_neon.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsNeon]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "neon")
-
-
-@library.expansion
-class ExpandTileStoreSVE(ExpandTransformation):
-    """K=1 sve backend lowering (``dace/tile_ops/arm_sve.h``); same call as
-    the other ISA backends, differing only in the included header."""
-
-    environments = [TileOpsSVE]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        return _isa_codegen.make_store_tasklet(node, parent_state, parent_sdfg, "sve")
-
-
 def _stride_dim_may_scatter(p: int, dst_dims: Optional[Tuple[int, ...]], gather_dims: Tuple[int, ...]) -> bool:
     """Whether tile dim ``p`` may legitimately carry a zero ``dim_strides`` entry.
 
@@ -223,11 +162,11 @@ class TileStore(nodes.LibraryNode):
     implementations = {
         "pure": ExpandTileStorePure,
         "cutile": ExpandTileStoreCutile,
-        "scalar": ExpandTileStoreScalar,
-        "avx512": ExpandTileStoreAVX512,
-        "avx2": ExpandTileStoreAVX2,
-        "neon": ExpandTileStoreNeon,
-        "sve": ExpandTileStoreSVE
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("Store", _isa_codegen.make_store_tasklet, globals()),
     }
     default_implementation = "pure"
 
@@ -431,8 +370,8 @@ class TileStore(nodes.LibraryNode):
         # innermost K dest dims; ``dst_ndim`` is read from the wired ``_dst`` edge here.
         if not self.wcr:
             K = len(widths)
-            resolved_dst = (list(self.dst_dims)
-                            if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape))))
+            resolved_dst = (list(self.dst_dims) if self.dst_dims else list(
+                range(len(dst_arr.shape) - K, len(dst_arr.shape))))
             g_set = set(self.gather_dims)
             collapsed = [p for p, s in enumerate(self.dim_strides) if s == 0 and resolved_dst[p] not in g_set]
             if collapsed:

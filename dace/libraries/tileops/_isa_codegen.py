@@ -16,6 +16,66 @@ import dace
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 
+# ISA backends shared by every tile-op node: (implementation key, class-name
+# suffix, environment attribute on ``..environments``). Each backend exposes the
+# SAME ``dace::tileops::tile_<op>`` signature and differs ONLY in the header its
+# environment pulls in -- so a single factory builds all five expansion classes.
+_ISA_BACKENDS = (
+    ("scalar", "Scalar", "TileOpsScalar"),
+    ("avx512", "AVX512", "TileOpsAVX512"),
+    ("avx2", "AVX2", "TileOpsAVX2"),
+    ("neon", "Neon", "TileOpsNeon"),
+    ("sve", "SVE", "TileOpsSVE"),
+)
+
+
+def make_isa_expansions(node_label: str, maker, module_globals: dict) -> dict:
+    """Build the five per-ISA ``ExpandTransformation`` classes for a tile-op node.
+
+    Every tile-op node (``TileBinop`` / ``TileUnop`` / ``TileITE`` / ``TileLoad``
+    / ``TileStore`` / ``TileMaskGen``) exposes the same five K=1 ISA backends,
+    each of which just calls the op's ``maker(node, state, sdfg, key)`` builder;
+    the only per-class difference is the environment (hence the backend header)
+    it declares. This factory replaces the five hand-written, near-identical
+    expansion classes per node (~30 classes across the package).
+
+    Each class is given the same ``__name__`` / ``__qualname__`` the hand-written
+    class had (``ExpandTile<node_label><Suffix>``) and is bound into
+    ``module_globals`` so any transformation lookup by qualified name still
+    resolves. The SDFG only ever serializes the implementation KEY (``"avx512"``)
+    and re-resolves the class from the node's in-code ``implementations`` map, so
+    the factory-built classes round-trip identically to the hand-written ones.
+
+    :param node_label: The node's CamelCase tag, e.g. ``"Binop"`` / ``"MaskGen"``.
+    :param maker: The op's tasklet builder ``(node, state, sdfg, key) -> Tasklet``.
+    :param module_globals: The defining module's ``globals()`` (for name binding).
+    :returns: ``{"scalar": cls, "avx512": cls, "avx2": cls, "neon": cls, "sve": cls}``
+        ready to splice into the node's ``implementations`` mapping.
+    """
+    from dace import library
+    from dace.transformation.transformation import ExpandTransformation
+    from . import environments as _env
+    out = {}
+    for key, suffix, env_name in _ISA_BACKENDS:
+        cls_name = f"ExpandTile{node_label}{suffix}"
+
+        def _expansion(node, parent_state, parent_sdfg, _maker=maker, _key=key):
+            return _maker(node, parent_state, parent_sdfg, _key)
+
+        cls = type(
+            cls_name, (ExpandTransformation, ), {
+                "environments": [getattr(_env, env_name)],
+                "expansion": staticmethod(_expansion),
+                "__doc__": f"{key} ISA lowering of Tile{node_label} (calls "
+                f"_isa_codegen.{maker.__name__}; the {env_name} environment pulls in the header).",
+                "__module__": module_globals.get("__name__", __name__),
+                "__qualname__": cls_name,
+            })
+        out[key] = library.expansion(cls)
+        module_globals[cls_name] = out[key]
+    return out
+
+
 # TileBinop.op -> the single-char op code the backend headers template on
 # (``dace::tileops::tile_binop<T, VLEN, Op, ...>``; legend in scalar.h).
 _OP_TO_CHAR = {
