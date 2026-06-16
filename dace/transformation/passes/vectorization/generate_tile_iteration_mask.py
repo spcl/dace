@@ -18,8 +18,8 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
+                                                                            tile_mask_gen_dominates_consumers)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
@@ -234,4 +234,6 @@ class GenerateTileIterationMask(ppl.Pass):
                 attached += 1
         assert_invariant(no_memlet_dim_mismatch(sdfg), "GenerateTileIterationMask",
                          "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(tile_mask_gen_dominates_consumers(sdfg), "GenerateTileIterationMask",
+                         "every TileMaskGen lives in its SDFG start block (dominates masked consumers)")
         return attached or None

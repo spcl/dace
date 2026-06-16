@@ -202,6 +202,31 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
     return None
 
 
+def tile_mask_gen_dominates_consumers(scope) -> Optional[str]:
+    """Every :class:`TileMaskGen` must sit in the start block of its own SDFG.
+
+    The iteration mask is branch-independent ("which lanes are in bounds"), so its
+    producer must DOMINATE every masked consumer -- otherwise a data-dependent
+    ``if`` (-> TileITE) body reads ``_tile_iter_mask`` from a branch state the
+    producer does not dominate (uninitialized lanes, flaky writes). The start block
+    has no predecessors and dominates every reachable state, so producing the mask
+    there is the simplest sufficient guarantee. ``GenerateTileIterationMask`` emits
+    it in a dedicated ``_tile_mask_init`` start state; this is its post-condition.
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success or
+    a description of the first mis-placed producer.
+    """
+    from dace.libraries.tileops import TileMaskGen
+    for sd, state in _iter_states(scope):
+        if not any(isinstance(n, TileMaskGen) for n in state.nodes()):
+            continue
+        if state is not sd.start_block:
+            return (f"{sd.name}.{state.label}: TileMaskGen lives outside the SDFG start block "
+                    f"``{sd.start_block.label}`` -- the iteration mask producer must dominate every "
+                    f"masked consumer (emit it in the ``_tile_mask_init`` start state)")
+    return None
+
+
 def memlet_subset_matches_descriptor(scope) -> Optional[str]:
     """Every memlet's ``subset`` rank must match the rank of the descriptor it
     accesses (``len(sdfg.arrays[memlet.data].shape)``). A memlet that reads a

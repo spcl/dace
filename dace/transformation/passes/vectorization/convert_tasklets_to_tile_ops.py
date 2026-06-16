@@ -492,7 +492,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         from dace.transformation.passes.vectorization.utils.tile_access import (_affine_coeff_for, _affine_offset_for)
         try:
             expr = symbolic.pystr_to_symbolic(rhs)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- unparseable RHS: not an affine body
             return None
         # Reuse the Poly-based affine helpers (they return None for a non-affine /
         # degree>1 / relational body). Only |coeff| == 1 maps to a single symbol
