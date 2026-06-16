@@ -98,14 +98,7 @@ def test_k1_mask_gen_isa_backend(isa, flag, header):
     per-ISA backend header: the iteration mask's ``base + l < ub`` compare becomes
     the ``dace::tileops::tile_mask_gen`` intrinsic (not the scalar pure loop), and
     the masked load/store read it. Verified against numpy over aligned + non-
-    divisible (masked-remainder) sizes.
-
-    NB: a data-dependent ``if`` would also exercise ``TileITE`` here, but the
-    masked-remainder + multi-branch lowering currently reads ``_tile_iter_mask``
-    UNINITIALIZED -- the TileMaskGen lands in one branch's state
-    (``compute_else_if``) instead of a state that dominates the then/else/apply-ITE
-    reads. That combined shape is a separate latent bug (flaky lane writes), tracked
-    for the masked-tail+ITE state placement, not asserted in this lowering test."""
+    divisible (masked-remainder) sizes."""
     if flag is not None and flag not in _FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_axpy_sdfg(f"e2e_k1_maskgen_{isa.lower()}")
@@ -124,3 +117,53 @@ def test_k1_mask_gen_isa_backend(isa, flag, header):
         C = np.zeros(n)
         csdfg(A=A, B=B, C=C, N=n)
         np.testing.assert_allclose(C, A + B, rtol=0, atol=0)
+
+
+def _k1_masked_ite_sdfg(name):
+    """K=1 data-dependent select ``C[i] = A[i]*2 if A[i]>B[i] else B[i]+1``
+    (unique name per case for parallel runs)."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def masked_select(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+        for i in dace.map[0:N]:
+            if A[i] > B[i]:
+                C[i] = A[i] * 2.0
+            else:
+                C[i] = B[i] + 1.0
+
+    sdfg = masked_select.to_sdfg(simplify=True)
+    sdfg.name = name
+    return sdfg
+
+
+@pytest.mark.parametrize("isa,flag,header", _MASKGEN_CASES)
+def test_k1_masked_ite_isa_backend(isa, flag, header):
+    """A data-dependent ``if`` (-> ``TileITE``) under a masked remainder lowers
+    ``TileMaskGen`` through the per-ISA header AND reads the iteration mask from a
+    state that dominates every then/else/apply-ITE branch.
+
+    Regression guard for the masked-tail + ITE uninitialized-``_tile_iter_mask`` bug:
+    the mask producer used to land in one branch's state (``compute_else_if``), so
+    the other branches read it uninitialized (flaky lane writes). The fix emits the
+    mask in a dedicated dominating ``_tile_mask_init`` start state. Verified
+    bit-exact against numpy over aligned + non-divisible (masked-remainder) sizes."""
+    if flag is not None and flag not in _FLAGS:
+        pytest.skip(f"host lacks {flag}")
+    sdfg = _k1_masked_ite_sdfg(f"e2e_k1_maskite_{isa.lower()}")
+    VectorizeCPUMultiDim(widths=(8, ), target_isa=isa, remainder_strategy="masked_tail",
+                         branch_mode="merge").apply_pass(sdfg, {})
+    sdfg.validate()
+    csdfg = sdfg.compile()
+    cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
+    with open(cpp) as f:
+        code = f.read()
+    assert header in code, f"{isa}: expected {header} include, backend not selected"
+    assert "dace::tileops::tile_mask_gen<" in code, f"{isa}: tile_mask_gen call not emitted"
+    rng = np.random.default_rng(seed=tsvc.stable_seed(("maskite", isa)))
+    for n in (8, 22, 64, 70):  # aligned + non-divisible tails (masked remainder fires)
+        A = rng.random(n)
+        B = rng.random(n)
+        C = np.zeros(n)
+        csdfg(A=A, B=B, C=C, N=n)
+        np.testing.assert_allclose(C, np.where(A > B, A * 2.0, B + 1.0), rtol=0, atol=0)

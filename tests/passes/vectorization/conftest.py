@@ -31,7 +31,11 @@ def _deterministic_global_numpy_seed(request):
     global RNG (or a ``hash()``-derived seed) otherwise varies per run -> flaky,
     and a lucky draw can mask a real OOB (as it long did for s4116). Tests that
     build their own ``np.random.default_rng(seed=...)`` are unaffected (separate
-    stream); the per-node-id seed also keeps distinct tests from sharing data."""
+    stream); the per-node-id seed also keeps distinct tests from sharing data.
+
+    (Audit note: this crc32 matches ``tsvc.stable_seed``; reuse that single source
+    once verified -- left inline here to avoid importing tsvc into conftest, which
+    loads at collection and has whole-suite blast radius, without a test run.)"""
     np.random.seed(zlib.crc32(request.node.nodeid.encode()) & 0xFFFFFFFF)
 
 

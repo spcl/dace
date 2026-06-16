@@ -149,13 +149,17 @@ class GenerateTileIterationMask(ppl.Pass):
             storage=dace.dtypes.StorageType.Register,
             transient=True,
         )
-        # Insert TileMaskGen + access node into the body NSDFG's first SDFGState.
-        # When the body has nested CFG structure (``insert_copies`` /
-        # ``fuse_overlapping_loads`` may produce this), ``start_state`` returns a
-        # ControlFlowRegion -- which can't host AccessNodes / library nodes. Walk
-        # the flat ``states()`` iterator (which already flattens CFG regions to
-        # their leaf SDFGStates) and pick the first one.
-        inner_state = next(iter(inner_sdfg.states()))
+        # The mask must be GENERATED in a state that DOMINATES every masked
+        # consumer. A flat body has a single state, but a data-dependent ``if``
+        # (TileITE) body has several (``compute_then`` / ``compute_else`` /
+        # ``apply_ITE``); an arbitrary ``next(iter(states()))`` could land the
+        # producer in a NON-dominating branch state, so the other branches read
+        # ``_tile_iter_mask`` uninitialized (flaky lane-not-written). Prepend a
+        # dedicated start state and emit the mask there -- it then dominates the
+        # whole body (mirrors GenerateIterationMask's ``_iter_mask_init``).
+        # Capture ``start_block`` BEFORE adding the prep state or it is ambiguous.
+        old_start = inner_sdfg.start_block
+        inner_state = inner_sdfg.add_state("_tile_mask_init", is_start_block=True)
         mask_node = TileMaskGen(
             name="_tile_iter_mask_gen",
             widths=spec.widths,
@@ -172,6 +176,8 @@ class GenerateTileIterationMask(ppl.Pass):
             None,
             dace.Memlet(f"{mask_name}[{subset}]"),
         )
+        if old_start is not None and old_start is not inner_state:
+            inner_sdfg.add_edge(inner_state, old_start, dace.InterstateEdge())
         # The mask's per-dim upper bounds (``global_ubs``) reference outer-scope
         # symbols (loop bounds such as ``kfdia``). A bound symbol the body NSDFG
         # does not otherwise use -- i.e. not an array-shape symbol like ``klev`` --
