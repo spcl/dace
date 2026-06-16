@@ -812,6 +812,35 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         else:
             raise NotImplementedError(f'Deallocation not implemented for storage type: {nodedesc.storage.name}')
 
+    def _pool_prewarm(self, stream: str) -> str:
+        """Pre-grow the memory pool once, at init, to the working-set size.
+
+        Sized as the sum of the pool-allocated (``cudaMallocAsync``) transients whose sizes are
+        known at init -- i.e. depend only on globally-available free symbols / constants. With the
+        retain threshold set above, the freed reservation stays mapped, so no per-invocation
+        allocation then triggers (synchronous) pool growth. Sizes that need a symbol defined inside
+        the SDFG are left to lazy growth. Returns '' when there is nothing to pre-grow.
+        """
+        available = {str(s) for s in self._frame.free_symbols(self._global_sdfg)}
+        available |= set(self._global_sdfg.constants.keys())
+        terms, seen = [], set()
+        for sub in self._global_sdfg.all_sdfgs_recursive():
+            for name, desc in sub.arrays.items():
+                if not (desc.transient and desc.pool is True) or (id(sub), name) in seen:
+                    continue
+                if not {str(s) for s in desc.total_size.free_symbols} <= available:
+                    continue  # size needs a symbol unknown at init -> leave to lazy growth
+                seen.add((id(sub), name))
+                terms.append(f'({sym2cpp(desc.total_size)}) * sizeof({desc.dtype.ctype})')
+        if not terms:
+            return ''
+        return f'''
+    {{  // Pre-grow the pool to the working-set size so no per-invocation allocation grows it.
+        void *__dace_pool_prewarm;
+        DACE_GPU_CHECK({self.backend}MallocAsync(&__dace_pool_prewarm, {' + '.join(terms)}, {stream}));
+        DACE_GPU_CHECK({self.backend}FreeAsync(__dace_pool_prewarm, {stream}));
+    }}'''
+
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
 
@@ -865,6 +894,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
 '''
 
+        pool_prewarm = self._pool_prewarm('__state->gpu_context->streams[0]') if self.has_pool else ''
+
         self._codeobject.code = """
 #include <{backend_header}>
 #include <dace/dace.h>
@@ -909,7 +940,7 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
     }}
-
+{pool_prewarm}
     {initcode}
 
     return 0;
@@ -949,6 +980,7 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
+           pool_prewarm=pool_prewarm,
            sdfg=self._global_sdfg)
 
         return [self._codeobject]
