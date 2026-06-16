@@ -23,6 +23,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileBinop, TileLoad, TileStore
 from dace.transformation.interstate import LoopToMap
+from tests.corpus import tsvc
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern, )
 # from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps  (frozen -- module deleted)
@@ -92,7 +93,7 @@ def test_k1_tile_op_matches_reference(kernel, n):
     """``VectorizeCPUMultiDim(widths=(8,))`` produces a numerically
     correct 1D tile lowering (n=17 exercises the masked tail)."""
     prog, names, out = _KERNELS[kernel]
-    rng = np.random.default_rng(seed=hash((kernel, n)) & 0xFFFF)
+    rng = np.random.default_rng(seed=tsvc.stable_seed((kernel, n)))
     arrays = {nm: rng.random(n) for nm in names}
     arrays[out] = np.zeros(n)
     ref = _build(prog, f"k1_{kernel}_ref{n}")

@@ -18,8 +18,22 @@ Both modes must produce numerically identical results against the
 unvectorized scalar reference, otherwise the two lowerings have drifted.
 """
 import os
+import zlib
 
+import numpy as np
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_global_numpy_seed(request):
+    """Seed NumPy's GLOBAL RNG per test, deterministically from the test node id,
+    so any unseeded ``np.random.*`` call is reproducible across processes. A fresh
+    global RNG (or a ``hash()``-derived seed) otherwise varies per run -> flaky,
+    and a lucky draw can mask a real OOB (as it long did for s4116). Tests that
+    build their own ``np.random.default_rng(seed=...)`` are unaffected (separate
+    stream); the per-node-id seed also keeps distinct tests from sharing data."""
+    np.random.seed(zlib.crc32(request.node.nodeid.encode()) & 0xFFFFFFFF)
+
 
 # Note: tests that pass legacy knobs (``lower_to_intrinsics=True``,
 # ``collapse_laneid_index_loads=True``, ``filter_map=``) are NOT deselected

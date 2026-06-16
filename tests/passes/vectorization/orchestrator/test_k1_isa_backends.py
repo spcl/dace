@@ -17,6 +17,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
+from tests.corpus import tsvc
 
 
 def _host_flags():
@@ -77,7 +78,7 @@ def test_k1_axpy_isa_backend(isa, flag, header):
     assert header in code, f"{isa}: expected {header} include, backend not selected"
     assert "dace::tileops::tile_binop<" in code, f"{isa}: tile_binop call not emitted"
 
-    rng = np.random.default_rng(seed=hash(isa) & 0xFFFF)
+    rng = np.random.default_rng(seed=tsvc.stable_seed(isa))
     for n in (8, 50, 64, 70):  # aligned, tail, multi-chunk, tail
         A = rng.random(n)
         B = rng.random(n)

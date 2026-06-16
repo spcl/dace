@@ -1938,6 +1938,42 @@ def symbols(kernel: TSVCKernel, l1: int, l2: int) -> Dict[str, int]:
     return {s: v for s, v in (("LEN_1D", l1), ("LEN_2D", l2), ("S", S_VALUE)) if s in free}
 
 
+def regime_sizes(regime: str, swept: int) -> Tuple[int, int]:
+    """``(LEN_1D, LEN_2D)`` for one test variant.
+
+    ``swept`` is the non-divisible dimension the variant exercises. Enforces the
+    TSVC structural invariant ``LEN_1D >= LEN_2D`` (real values 32000 vs 256): a
+    2D kernel indexes a ``LEN_1D``-sized array at ``a[inc + i]`` while ``i`` sweeps
+    the ``LEN_2D`` loop, so ``LEN_1D`` must cover ``inc + LEN_2D - 1`` or that read
+    runs off the end (the s4116 bug, where the 2d regime set ``LEN_1D=16 <
+    LEN_2D=17``). The ``+ 8`` margin absorbs the ``inc`` / ``N4`` shift.
+
+    :param regime: ``"1d"`` (sweep ``LEN_1D``; ``LEN_2D`` small/fixed) or ``"2d"``
+        (sweep ``LEN_2D``; ``LEN_1D`` kept ``>= LEN_2D`` + margin).
+    :param swept: the swept (non-divisible) extent for the regime.
+    :returns: ``(LEN_1D, LEN_2D)``.
+    """
+    if regime == "1d":
+        return swept, LEN_2D_FIXED
+    return max(LEN_2D_FIXED, swept) + 8, swept
+
+
+def stable_seed(key) -> int:
+    """A deterministic, well-distributed RNG seed derived from ``key``.
+
+    Python's ``hash()`` for ``str`` / ``tuple`` is per-process randomized
+    (``PYTHONHASHSEED``), so ``default_rng(seed=hash(name))`` drew DIFFERENT data
+    every run -> flaky, unreproducible failures. ``crc32`` of the key's ``repr``
+    is stable across processes yet still varies per kernel name, so each kernel
+    gets its own reproducible-but-varied data set.
+
+    :param key: any value with a stable ``repr`` (kernel name, ``(kernel, n)``, ...).
+    :returns: a 32-bit seed.
+    """
+    import zlib
+    return zlib.crc32(repr(key).encode()) & 0xFFFFFFFF
+
+
 def _unique_name(base: str, tag: str) -> str:
     """A valid, collision-free SDFG name from ``base`` + a test ``tag``.
 

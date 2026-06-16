@@ -76,12 +76,10 @@ def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, rem
     # already exercised in ``test_tsvc_vectorization``; here we focus on
     # the knob cross, not the remainder shape, which the
     # ``remainder_strategy`` fixture handles independently).
-    if kernel.regime == "1d":
-        l1, l2 = 64, tsvc.LEN_2D_FIXED
-    else:
-        l1, l2 = tsvc.LEN_2D_FIXED, 16
+    # regime_sizes keeps LEN_1D >= LEN_2D + margin so a[inc+i] stays in bounds.
+    l1, l2 = tsvc.regime_sizes(kernel.regime, 64 if kernel.regime == "1d" else 16)
 
-    rng = np.random.default_rng(seed=hash(kernel_name) & 0xFFFF)
+    rng = np.random.default_rng(seed=tsvc.stable_seed(kernel_name))
     arrays = tsvc.allocate(kernel, l1, l2, rng)
     sym = tsvc.symbols(kernel, l1, l2)
     sparams = tsvc.scalar_params(kernel, l1)
