@@ -387,12 +387,87 @@ def make_mask_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     )
 
 
+def _has_replicate_gt1(node) -> bool:
+    """True if any per-dim replicate factor is (or may be) > 1.
+
+    A REPLICATE factor ``k > 1`` (e.g. ``c[i // 2]``) means lanes share a source
+    element, which the linear ``tile_load`` / ``tile_gather`` intrinsics (no
+    per-lane replicate divisor) cannot express -- the caller routes such a node
+    to the ``pure`` expansion. A symbolic factor is treated as ``>1`` (can't
+    prove it is 1 at compile time, so route safely).
+    """
+    for r in (node.replicate_factor_per_dim or []):
+        try:
+            if int(r) > 1:
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
+def _try_make_gather_tasklet(node, parent_state, parent_sdfg, suffix: str):
+    """Emit ``tile_gather`` for the clean 1D unit-stride gather (``a[idx[i]]``).
+
+    Only the canonical case lowers to the gather intrinsic: K=1, a single gather
+    dim on a 1-D source with unit stride, an index tile that depends on the one
+    tile lane (shape ``(W,)``), and no replicate. Then the per-lane source offset
+    is exactly ``_idx_<g>[l]`` and the runtime ``tile_gather`` (AVX-512
+    ``_mm512_i64gather_pd``; scalar reference on the other backends) applies
+    directly. Anything more complex -- a multi-dim source, a non-unit gather-dim
+    stride, a replicate factor, or a lane-independent index -- returns ``None``
+    so the caller keeps the per-lane ``pure`` expansion (the scalar fallback).
+    """
+    widths = list(node.widths)
+    if len(widths) != 1 or len(node.gather_dims) != 1 or _has_replicate_gt1(node):
+        return None
+    g = int(node.gather_dims[0])
+    if g != 0:
+        return None
+    src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
+    src_arr = parent_sdfg.arrays[src_edge.data.data]
+    if len(src_arr.shape) != 1:
+        return None
+    # Unit stride on the gather dim: ``_idx_0`` is then the direct element offset
+    # into ``_src`` (the intrinsic does ``src[idx[l]]`` with no stride multiply).
+    if not bool(dace.symbolic.simplify(src_arr.strides[0] == 1)):
+        return None
+    idx_conn = f"_idx_{g}"
+    idx_edge = next((e for e in parent_state.in_edges(node) if e.dst_conn == idx_conn), None)
+    if idx_edge is None:
+        return None
+    idx_arr = parent_sdfg.arrays[idx_edge.data.data]
+    # The index tile must depend on the single tile lane (shape ``(W,)``).
+    try:
+        idx_shape = tuple(int(s) for s in idx_arr.shape)
+    except (TypeError, ValueError):
+        return None
+    if idx_shape != (int(widths[0]), ):
+        return None
+    vlen = widths[0]
+    dst_dtype = _out_ctype(node, parent_state, parent_sdfg, "_dst")
+    idx_ctype = idx_arr.dtype.ctype
+    masked = "true" if node.has_mask else "false"
+    mask_arg = "_mask" if node.has_mask else "nullptr"
+    call = (f"dace::tileops::tile_gather<{dst_dtype}, {idx_ctype}, {vlen}, {masked}>"
+            f"(_dst, _src, {idx_conn}, {mask_arg});")
+    inputs = {"_src", idx_conn} | ({"_mask"} if node.has_mask else set())
+    return nodes.Tasklet(
+        label=f"{node.label}_{suffix}",
+        inputs={c: None
+                for c in inputs},
+        outputs={"_dst": None},
+        code=call,
+        language=dace.dtypes.Language.CPP,
+    )
+
+
 def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_load`` (contiguous / strided).
 
     The K=1 tile-dim linear stride into the source array is passed as the
-    ``stride`` argument; the header SIMD-loads when it is 1 and falls back to a
-    scalar gathered read otherwise.
+    ``stride`` argument; the header SIMD-loads when it is 1 (``_mm512_loadu_pd``)
+    and uses the gather intrinsic (``_mm512_i64gather_pd`` over a strided index
+    vector) otherwise.
 
     ``src_kind != 'Tile'`` (a broadcast ``Symbol`` literal or a ``Scalar``
     length-1 read) has no per-lane ``_src`` tile pointer, so the K=1 runtime
@@ -401,36 +476,28 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     Delegate to it -- symmetric to the ``src_kind != 'Tile'`` fallback in
     :func:`make_store_tasklet`.
 
-    When ``gather_dims`` is set the runtime ``tile_load`` does not apply -- it
-    has no per-lane index input -- so the lowering delegates to
-    :class:`ExpandTileLoadPure`, which emits the per-lane indirect read using
-    the ``_idx_<d>`` connectors (design section 9.3).
+    When ``gather_dims`` is set the clean 1D unit-stride case (``a[idx[i]]``)
+    lowers to the ``tile_gather`` intrinsic via :func:`_try_make_gather_tasklet`;
+    any richer gather (multi-dim source, non-unit stride, replicate) delegates to
+    :class:`ExpandTileLoadPure`, which emits the per-lane indirect read using the
+    ``_idx_<d>`` connectors (design section 9.3).
     """
+    if node.src_kind == "Tile" and node.gather_dims:
+        gather_tasklet = _try_make_gather_tasklet(node, parent_state, parent_sdfg, suffix)
+        if gather_tasklet is not None:
+            return gather_tasklet
     if node.src_kind != "Tile" or node.gather_dims:
         from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
         return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
     # REPLICATE codegen (user direction 2026-06-10): the K=1 intrinsic
     # ``tile_load<T, VLEN, Masked>(_dst, _src, mask, stride)`` does
-    # ``dst[i] = src[i * stride]`` -- no per-lane replicate divisor. When
-    # ``replicate_factor_per_dim[d] > 1`` (e.g. ``c[i // 2]`` -> factor 2
-    # means lanes 0,1 share c[i//2], lanes 2,3 share c[i//2+1], ...), the
-    # intrinsic produces wrong values. Fall back to the pure expansion,
-    # which emits ``src[(__l/replicate) * stride]`` per lane.
-    if node.replicate_factor_per_dim:
-        needs_pure = False
-        for r in node.replicate_factor_per_dim:
-            try:
-                if int(r) > 1:
-                    needs_pure = True
-                    break
-            except (TypeError, ValueError):
-                # Symbolic factor (e.g. ``DV``): always fall back to pure --
-                # we can't prove it's 1 at compile time, so route safely.
-                needs_pure = True
-                break
-        if needs_pure:
-            from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
-            return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
+    # ``dst[i] = src[i * stride]`` -- no per-lane replicate divisor. When a
+    # ``replicate_factor_per_dim[d] > 1`` (e.g. ``c[i // 2]`` -> factor 2 means
+    # lanes 0,1 share c[i//2], ...), the intrinsic produces wrong values. Fall
+    # back to the pure expansion (``src[(__l/replicate) * stride]`` per lane).
+    if _has_replicate_gt1(node):
+        from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
+        return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
     dst_dtype = _out_ctype(node, parent_state, parent_sdfg, "_dst")

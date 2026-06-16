@@ -182,9 +182,68 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
   }
 }
 
+// dst[l] = src[l * stride] (ZERO-FILL inactive + guarded read). Unit stride is a
+// dense SIMD load (``_mm512_loadu_pd`` / masked ``_mm512_maskz_loadu_pd``); a
+// constant non-unit stride uses the gather intrinsic (``_mm512_i64gather_pd`` on
+// a ``[0, s, 2s, ...]`` index vector). The masked forms only touch active lanes,
+// so an OOB tail lane is never dereferenced. fp64 (W=8) + fp32 unit-stride
+// (W=16); other dtypes / fp32-strided fall to the scalar loop.
 template <typename T, int VLEN, bool Masked>
 inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
                       std::int64_t stride = 1) {
+  if constexpr (std::is_same<T, double>::value) {
+    constexpr int W = 8;
+    int i = 0;
+    for (; i + W <= VLEN; i += W) {
+      if (stride == 1) {
+        if constexpr (Masked) {
+          __mmask8 k = 0;
+          for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask8(1) << j;
+          _mm512_storeu_pd(dst + i, _mm512_maskz_loadu_pd(k, src + i));
+        } else {
+          _mm512_storeu_pd(dst + i, _mm512_loadu_pd(src + i));
+        }
+      } else {
+        const __m512i vindex = _mm512_set_epi64(
+            (long long)((i + 7) * stride), (long long)((i + 6) * stride), (long long)((i + 5) * stride),
+            (long long)((i + 4) * stride), (long long)((i + 3) * stride), (long long)((i + 2) * stride),
+            (long long)((i + 1) * stride), (long long)((i + 0) * stride));
+        if constexpr (Masked) {
+          __mmask8 k = 0;
+          for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask8(1) << j;
+          _mm512_storeu_pd(dst + i, _mm512_mask_i64gather_pd(_mm512_setzero_pd(), k, vindex, src, 8));
+        } else {
+          _mm512_storeu_pd(dst + i, _mm512_i64gather_pd(vindex, src, 8));
+        }
+      }
+    }
+    for (; i < VLEN; ++i) {
+      if constexpr (Masked) dst[i] = mask[i] ? src[i * stride] : T(0);
+      else dst[i] = src[i * stride];
+    }
+    return;
+  }
+  if constexpr (std::is_same<T, float>::value) {
+    if (stride == 1) {
+      constexpr int W = 16;
+      int i = 0;
+      for (; i + W <= VLEN; i += W) {
+        if constexpr (Masked) {
+          __mmask16 k = 0;
+          for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask16(1) << j;
+          _mm512_storeu_ps(dst + i, _mm512_maskz_loadu_ps(k, src + i));
+        } else {
+          _mm512_storeu_ps(dst + i, _mm512_loadu_ps(src + i));
+        }
+      }
+      for (; i < VLEN; ++i) {
+        if constexpr (Masked) dst[i] = mask[i] ? src[i] : T(0);
+        else dst[i] = src[i];
+      }
+      return;
+    }
+    // fp32 strided -> scalar loop below.
+  }
   for (int i = 0; i < VLEN; ++i) {
     if constexpr (Masked) dst[i] = mask[i] ? src[i * stride] : T(0);
     else dst[i] = src[i * stride];
@@ -200,9 +259,33 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
   }
 }
 
+// dst[l] = src[idx[l]] (data-dependent gather; ZERO-FILL inactive + guarded
+// read). fp64 with 64-bit indices uses the real gather intrinsic
+// (``_mm512_i64gather_pd``; masked form only reads active lanes, so an inactive
+// lane's OOB index is never dereferenced). Other dtypes / index widths fall to
+// the scalar loop.
 template <typename T, typename IdxT, int VLEN, bool Masked>
 inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                         const bool* __restrict__ mask) {
+  if constexpr (std::is_same<T, double>::value && sizeof(IdxT) == 8) {
+    constexpr int W = 8;
+    int i = 0;
+    for (; i + W <= VLEN; i += W) {
+      const __m512i vindex = _mm512_loadu_si512((const void*)(idx + i));
+      if constexpr (Masked) {
+        __mmask8 k = 0;
+        for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask8(1) << j;
+        _mm512_storeu_pd(dst + i, _mm512_mask_i64gather_pd(_mm512_setzero_pd(), k, vindex, src, 8));
+      } else {
+        _mm512_storeu_pd(dst + i, _mm512_i64gather_pd(vindex, src, 8));
+      }
+    }
+    for (; i < VLEN; ++i) {
+      if constexpr (Masked) dst[i] = mask[i] ? src[idx[i]] : T(0);
+      else dst[i] = src[idx[i]];
+    }
+    return;
+  }
   for (int i = 0; i < VLEN; ++i) {
     if constexpr (Masked) dst[i] = mask[i] ? src[idx[i]] : T(0);
     else dst[i] = src[idx[i]];
