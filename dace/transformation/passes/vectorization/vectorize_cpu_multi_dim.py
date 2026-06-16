@@ -123,6 +123,39 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
         return applied or None
 
 
+class _RunWCRToAugAssign(ppl.Pass):
+    """Pipeline-embedded re-run of :class:`WCRToAugAssign` after the trivial-assign
+    cleaning, so NO write-conflict resolution survives into the body NSDFG before
+    tiling.
+
+    The multi-dim tile path assumes no inner WCR (design 3.5: WCR lives only at the
+    outer ``AN -> MapExit`` boundary, lifted to ``TileReduce``). Canonicalisation
+    lowers an in-place ``a[i] = a[i] + b[i]`` to ``b -> [_out=_in] -> _wcr_priv
+    -(+=)-> a`` -- an AN->AN WCR copy. ``BypassTrivialAssignTasklets`` cleans the
+    trivial ``_out=_in`` copy while CARRYING the WCR (it would otherwise drop the
+    reduction); this re-run then converts the surviving ``b -(+=)-> a`` into an
+    explicit read-modify-write tasklet (``WCRToAugAssign`` expr-2, the AN->AN copy
+    case), leaving the body WCR-free. Placed right after the cleaning so a WCR that
+    the cleaning exposes -- or that ``LoopToMap`` minted after the front-of-pass
+    ``WCRToAugAssign`` already ran -- is still eliminated before the walker.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        applied = sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+        return applied or None
+
+
 def _is_power_of_two(n: int) -> bool:
     """True iff ``n > 0`` and ``n`` is a power of 2."""
     return n > 0 and (n & (n - 1)) == 0
@@ -291,6 +324,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             ConvertLengthOneArraysToScalars(recursive=True, transient_only=False),
             NormalizeWCRSource(),
             BypassTrivialAssignTasklets(),
+            # Strip any WCR the cleaning exposed (carried off a bypassed trivial copy)
+            # or that LoopToMap minted after the front-of-apply_pass WCRToAugAssign --
+            # the tile path must see NO inner-NSDFG WCR (design 3.5).
+            _RunWCRToAugAssign(),
         ]
         if branch_mode == "fp_factor":
             # FP-factor branch lowering (the legacy front): collapse a

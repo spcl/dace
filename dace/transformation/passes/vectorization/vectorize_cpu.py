@@ -30,6 +30,29 @@ from dace.transformation.passes.vectorization.generate_iteration_mask import Gen
 from dace.transformation.passes.vectorization.utils.iteration import assert_no_lane_memlet_reads
 
 
+class _WCRToAugAssignPass(ppl.Pass):
+    """Thin Pass wrapper running :class:`WCRToAugAssign` to a fixed point.
+
+    Strips every write-conflict resolution that survived into the body (an
+    in-place ``a[i] = a[i] + b[i]`` is canonicalised / ``LoopToMap``-lowered to an
+    ``... -(+=)-> a`` WCR, including the AN->AN copy shape). The vectorizer assumes
+    NO inner WCR -- a stray one is silently mis-vectorised (the reduction is
+    dropped, computing ``a = b``). Runs after ``LoopToMap`` so any WCR the
+    parallelisation minted is also converted to an explicit RMW tasklet before the
+    vectorize prep. Mirrors the multi-dim path's ``_RunWCRToAugAssign``.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified) -> bool:
+        return False
+
+    def apply_pass(self, sdfg, _pipeline_results):
+        from dace.transformation.dataflow import WCRToAugAssign
+        return sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+
+
 class _LoopToMapPass(ppl.Pass):
     """Thin Pass wrapper running :class:`LoopToMap` to a fixed point.
 
@@ -347,6 +370,10 @@ class VectorizeCPU(ppl.Pipeline):
                 # vectorizer can stride. Runs before the Vectorize / prep
                 # passes. No-op for ``dace.map`` kernels.
                 _LoopToMapPass(permissive=loop_to_map_permissive),
+                # Strip any inner WCR (from a canonicalised in-place RMW or minted
+                # by LoopToMap) into an explicit augmented-assign tasklet -- the
+                # vectorizer assumes no inner WCR. Runs right after LoopToMap.
+                _WCRToAugAssignPass(),
                 RemoveFPTypeCasts(),
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),

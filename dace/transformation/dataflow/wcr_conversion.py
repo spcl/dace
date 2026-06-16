@@ -513,6 +513,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
     map_exit = transformation.PatternNode(nodes.MapExit)
+    inp = transformation.PatternNode(nodes.AccessNode)
 
     _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
     _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
@@ -522,14 +523,24 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
     def expressions(cls):
         return [
             sdutil.node_path_graph(cls.tasklet, cls.output),
-            sdutil.node_path_graph(cls.tasklet, cls.map_exit, cls.output)
+            sdutil.node_path_graph(cls.tasklet, cls.map_exit, cls.output),
+            # An ``AccessNode -[wcr]-> AccessNode`` copy: a write-conflict-resolved
+            # copy with no producing tasklet (e.g. canonicalisation lowers an
+            # in-place ``a[i] = a[i] + b[i]`` to ``_wcr_priv -(+=)-> a``). Converted
+            # to the same explicit read-modify-write tasklet as the tasklet-sourced
+            # forms so no stray WCR survives (it has the identical safety contract:
+            # the caller applies this only where the write is non-conflicting, i.e.
+            # genuine reductions have already been lifted to ``Reduce``).
+            sdutil.node_path_graph(cls.inp, cls.output),
         ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if expr_index == 0:
             edges = graph.edges_between(self.tasklet, self.output)
-        else:
+        elif expr_index == 1:
             edges = graph.edges_between(self.tasklet, self.map_exit)
+        else:
+            edges = graph.edges_between(self.inp, self.output)
         if len(edges) != 1:
             return False
         if edges[0].data.wcr is None:
@@ -563,7 +574,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             state.add_edge(in_access, None, new_tasklet, '__in2', copy.deepcopy(edge.data))
             state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, edge.data)
             state.remove_edge(edge)
-        else:
+        elif self.expr_index == 1:
             edge = state.edges_between(self.tasklet, self.map_exit)[0]
             map_entry = state.entry_node(self.map_exit)
             wcr = ast.parse(edge.data.wcr).body[0].value.body
@@ -584,4 +595,34 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in1', Memlet.from_array(scal_name, scal_desc))
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in2')
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
+            state.remove_edge(edge)
+        else:
+            # AccessNode(inp) -[wcr]-> AccessNode(output) copy. Materialise the
+            # read-modify-write explicitly: ``output = inp <op> output`` (read the
+            # destination back, drop the WCR). ``inp`` is the incoming value (the
+            # ``new`` operand, as the tasklet output is in expr 0); the read-back of
+            # ``output`` is the existing (``old``) operand.
+            edge = state.edges_between(self.inp, self.output)[0]
+            wcr = ast.parse(edge.data.wcr).body[0].value.body
+            if isinstance(wcr, ast.BinOp):
+                wcr.left.id = '__in1'
+                wcr.right.id = '__in2'
+                code = astutils.unparse(wcr)
+            else:
+                raise NotImplementedError
+            # Resolve which side of the (possibly AN->AN) memlet addresses the
+            # destination vs the source.
+            m = edge.data
+            if m.data == self.output.data:
+                out_subset = m.subset
+                in_subset = m.other_subset if m.other_subset is not None else m.subset
+            else:
+                in_subset = m.subset
+                out_subset = m.other_subset if m.other_subset is not None else m.subset
+            read_back = state.add_access(self.output.data)
+            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in1', Memlet(data=self.inp.data, subset=in_subset))
+            state.add_edge(read_back, None, new_tasklet, '__in2', Memlet(data=self.output.data, subset=out_subset))
+            state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn,
+                           Memlet(data=self.output.data, subset=out_subset))
             state.remove_edge(edge)

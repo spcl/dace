@@ -274,6 +274,15 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     else:
                         # AN -> Tasklet: ``data`` must be the AN side (no other_subset).
                         new_memlet = dace.Memlet(data=src_an.data, subset=in_subset)
+                    # Preserve a reduction across the bypass: an in-place ``a[i] += b[i]``
+                    # canonicalises to ``b -> [_out=_in] -> _wcr_priv -(+=)-> a``; dropping
+                    # the WCR here would silently degrade it to ``a = b``. The following
+                    # WCRToAugAssign pass converts the surviving WCR into an explicit RMW
+                    # tasklet so no WCR is left inside the body NSDFG before tiling.
+                    _wcr = de.data.wcr if de.data.wcr is not None else in_e.data.wcr
+                    if _wcr is not None:
+                        new_memlet.wcr = _wcr
+                        new_memlet.wcr_nonatomic = bool(de.data.wcr_nonatomic or in_e.data.wcr_nonatomic)
                     istate.add_edge(src_an, in_e.src_conn, de.dst, de.dst_conn, new_memlet)
                     istate.remove_edge(de)
                 for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
