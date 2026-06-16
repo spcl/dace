@@ -148,6 +148,4 @@ def test_disjoint_chain(branch_mode):
     copy_sdfg(**out_fused)
 
     for name in sorted(arrays.keys()):
-        print(f"Compare {name}")
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
-        print(f"{name} OK")

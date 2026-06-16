@@ -495,4 +495,3 @@ if __name__ == "__main__":
     test_inmap_multi_state_propagation()
     test_inmap_multi_in_multi_out_subsets()
     test_nsdfg_single_bridge_through_scalar()
-    print("OK")

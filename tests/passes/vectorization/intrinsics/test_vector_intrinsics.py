@@ -170,7 +170,6 @@ def select_env_flags():
     """
 
     feats = detect_cpu_vector_features()
-    print("Detected SIMD:", feats)
 
     configs = []
 
@@ -212,10 +211,6 @@ def select_env_flags():
     # ------------------------
     elif feats.get("neon", False):
         configs.append({"__DACE_USE_INTRINSICS": "1", "__DACE_USE_SVE": "0"})
-
-    print("Generated test configurations:")
-    for cfg in configs:
-        print("  ", cfg)
 
     return configs
 

@@ -444,8 +444,6 @@ def test_huge_sdfg_with_log_exp_div(branch_mode):
 
     # Compare all arrays
     for name in data.keys():
-        print(name)
-        print(out_fused[name] - out_no_fuse[name])
         numpy.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
 
@@ -519,8 +517,6 @@ def test_mid_sdfg_with_log_exp_div(branch_mode):
 
     # Compare all arrays
     for name in data.keys():
-        print(name)
-        print(out_fused[name] - out_no_fuse[name])
         numpy.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
 
