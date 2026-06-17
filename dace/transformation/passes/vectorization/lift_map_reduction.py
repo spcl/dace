@@ -260,5 +260,87 @@ class LiftMapReductionToReduce(ppl.Pass):
         state.add_edge(buf_node, None, red, None, dace.Memlet(f"{buf}[0:{trip}]"))
         state.add_edge(red, None, acc_out_node, None, dace.Memlet(f"{acc}[0]"))
 
+        # If the reduced trip depends on data-dependent symbols (spmv's
+        # ``row_start``/``row_end`` = ``indptr[i]`` / ``indptr[i+1]``, bound by
+        # an interstate-edge assignment from a scalar), keep those symbols in
+        # scope for the buffer + Reduce through the downstream re-nesting passes
+        # by wrapping the product-map/buffer/Reduce in a single-iteration map
+        # whose dynamic-range connectors re-define them from their scalar
+        # sources.  An interstate-edge binding does not survive
+        # ``ExpandNestedSDFGInputs``' re-nest (the symbol gets demanded from a
+        # parent scope that no longer defines it); a dynamic-range connector is
+        # carried as a data edge and so does.
+        self._scope_dynamic_range_symbols(state, me, mx, buf_node, red)
+
         sdfg.validate()
         return True
+
+    @staticmethod
+    def _scope_dynamic_range_symbols(state: dace.SDFGState, me: nodes.MapEntry, mx: nodes.MapExit,
+                                     buf_node: nodes.AccessNode, red: nodes.LibraryNode) -> None:
+        """Wrap the lifted product-map + buffer + ``Reduce`` in a single-iteration
+        map that re-defines the product-map's data-dependent range symbols as
+        dynamic-range connectors.
+
+        Only the symbols of ``me``'s range that are (a) SDFG symbols and (b)
+        bound by an interstate-edge assignment to a plain ``Scalar`` source are
+        scoped -- a genuine free/global symbol (e.g. ``N`` in a static
+        ``0:N`` reduction) is already in scope everywhere and is left untouched
+        (no wrap emitted). The wrap reuses the original symbol names on the
+        connectors: they shadow the interstate-bound symbols with the SAME
+        value, so the buffer-shape references (at SDFG level) stay satisfied by
+        the surviving interstate binding while the in-scope copy survives the
+        re-nest.
+
+        :param state: The state holding the lifted reduction.
+        :param me: The product-fill map entry (its range carries the symbols).
+        :param mx: The product-fill map exit.
+        :param buf_node: The product buffer access node.
+        :param red: The ``Reduce`` library node.
+        """
+        sdfg = state.sdfg
+        range_syms = {str(s) for s in me.map.range.free_symbols} & set(sdfg.symbols)
+        if not range_syms:
+            return
+
+        # Resolve each range symbol to its interstate-edge scalar source.
+        scalar_src = {}
+        for ie in sdfg.edges():
+            for sym, rhs in ie.data.assignments.items():
+                if sym in range_syms and rhs is not None:
+                    rhs = rhs.strip()
+                    if rhs in sdfg.arrays and isinstance(sdfg.arrays[rhs], dace.data.Scalar):
+                        scalar_src[sym] = rhs
+        if set(scalar_src) != range_syms:
+            return  # not all symbols are scalar-bound dynamic ranges; nothing to scope
+
+        cluster = (set(state.all_nodes_between(me, mx)) | {me, mx, buf_node, red})
+        me_w, mx_w = state.add_map("reduce_scope", {"__reduce_scope_it": "0:1"})
+
+        # Dynamic-range connectors re-defining the symbols from their scalars.
+        for sym, src in scalar_src.items():
+            me_w.add_in_connector(sym)
+            state.add_edge(state.add_access(src), None, me_w, sym, dace.Memlet(f"{src}[0]"))
+
+        # Route every cluster<->outside edge through the wrap map.  Internal
+        # edges (both endpoints in the cluster) and the dynamic-range feeds we
+        # just added are left alone.
+        idx = 0
+        for e in list(state.all_edges(*cluster)):
+            if e.src in (me_w, mx_w) or e.dst in (me_w, mx_w):
+                continue
+            src_in, dst_in = e.src in cluster, e.dst in cluster
+            if src_in == dst_in:
+                continue  # internal edge or unrelated
+            idx += 1
+            ic, oc = f"IN_rsc{idx}", f"OUT_rsc{idx}"
+            gate = me_w if dst_in else mx_w
+            gate.add_in_connector(ic)
+            gate.add_out_connector(oc)
+            state.add_edge(e.src, e.src_conn, gate, ic, copy.deepcopy(e.data))
+            state.add_edge(gate, oc, e.dst, e.dst_conn, copy.deepcopy(e.data))
+            state.remove_edge(e)
+
+        # The buffer's symbolic shape is only valid inside the wrap scope where
+        # the symbols are defined; allocate it there.
+        sdfg.arrays[buf_node.data].lifetime = dace.dtypes.AllocationLifetime.Scope
