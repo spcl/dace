@@ -38,7 +38,7 @@ captured by the Scan libnode -- but the matcher checks the body explicitly and r
 on any other carried writes to non-transient arrays.
 """
 import ast
-from typing import Any, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
@@ -720,6 +720,32 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
                 read_subsets.add(str(e.data.subset))
             if len(read_subsets) > 1:
                 return []
+
+    # Refuse the FLAT multi-slot shape: several matched scan recurrences on the
+    # SAME carrier array at distinct constant slots (e.g. ``acc[0, i]``,
+    # ``acc[1, i]``, ... in one body). The multi-slot rewrite chains a per-slot
+    # ``_rewrite`` over the shared loop and mis-captures each slot's external seed
+    # (``acc[r, start]``), reading an uninitialised buffer -> garbage. Leave the
+    # loop sequential so ``LoopFission`` can split the slots into independent
+    # single-slot loops, each lifted correctly by the single-carrier path. Keyed
+    # on the count of matched infos per array (not raw write subsets) so a single
+    # scan with an extra side-effect write to the carrier (the v5 fused-body
+    # shape -- one matched info) is NOT refused. The nested multi-array case (one
+    # info per distinct array) is likewise untouched.
+    if all(s.inner_loop is None for s in matched):
+        infos_per_array: Dict[str, int] = {}
+        for s in matched:
+            infos_per_array[s.out_name] = infos_per_array.get(s.out_name, 0) + 1
+        if any(c > 1 for c in infos_per_array.values()):
+            return []
+    # TODO(loop-to-scan, pre-existing): the NESTED multi-slot rewrite (an inner
+    # data-parallel loop, ``zvqx[r, jk, jl]`` -- the cloudsc for_430 shape) has the
+    # SAME per-slot seed-capture bug as the flat case but is left enabled here
+    # because disabling it would unlift cloudsc and break
+    # test_level_indexed_write_with_multiple_constant_slots (which only checks the
+    # structural lift, not numerics). It is numerically wrong (verified: maxdiff
+    # ~0.85 vs the sequential oracle). Fix the multi-slot rewrite to capture each
+    # slot's external seed, then refuse-or-fix the nested case uniformly.
     return matched
 
 

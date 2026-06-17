@@ -144,6 +144,14 @@ class BreakAntiDependence(ppl.Pass):
             # For alpha = -1 the iteration-time direction flips; multiply by
             # alpha so the downstream sign tests stay uniform.
             carried_offset = symbolic.simplify(alpha * carried_offset)
+            # TODO(break-anti-dep, pre-existing): the alpha=-1 post-NNS reverse
+            # cases (tests test_break_anti_dependence_alpha_minus_one_with_larger_offset
+            # and ..._post_normalize_negative_stride_reverse_scan) classify as WAR
+            # and snapshot-rename correctly, but the *resulting* loop still carries
+            # the ``i := N - _loop_pos_0 - 1`` reverse rebinding, and LoopToMap then
+            # refuses it (0 maps). Per the positive-symbol assumption, that negative
+            # reverse index test can be normalized to a positive forward form so
+            # LoopToMap can map the snapshotted loop. Not addressed here.
         if carried_offset is None:
             return ('none', None)  # loop-invariant read of the array, not our case
         if carried_offset.is_number:
@@ -165,6 +173,17 @@ class BreakAntiDependence(ppl.Pass):
         #
         #   (c) ``isym`` is present and resolution fails  -> conservative complex.
         if isym not in carried_offset.free_symbols:
+            # Read-ahead (offset > 0) is a renamable WAR; read-behind (offset < 0)
+            # is a true recurrence that must stay sequential. For a symbolic
+            # offset we keep the guarded WAR path only for a positive-looking
+            # expression (e.g. ``+K``, whose ``K > 0`` runtime guard typically
+            # holds). An offset that is provably negative, or merely extracts a
+            # leading minus sign (``-K`` -- the read-behind ``a[i-K]`` recurrence
+            # of a stride-K prefix sum), is RAW. The old code mis-tagged ``-K`` as
+            # WAR_symbolic and emitted an unsatisfiable ``-K > 0`` guard that
+            # trapped at runtime and, once DCE'd, silently corrupted the result.
+            if carried_offset.is_negative or carried_offset.could_extract_minus_sign():
+                return ('RAW', None)
             return ('WAR_symbolic', carried_offset)
         if loop is not None and sdfg is not None:
             arr = self._try_recognize_indirected(carried_offset, isym, loop, sdfg)
