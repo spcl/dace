@@ -19,6 +19,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme, PackedNameScheme
+from dace.transformation.passes.vectorization.utils.strided_codegen import render_strided_call
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import is_integer
 
 _ASSIGN_LABEL_RE = re.compile(r"^(?:assign|a)_(\d+)$")
@@ -286,8 +287,12 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
                 state.remove_node(t)
 
             iter_mask_name = _find_iter_mask(state.sdfg) if intrinsic_template_masked is not None else None
-            template = intrinsic_template_masked if iter_mask_name is not None else intrinsic_template
-            intrinsic_code = template.format(vector_length=vector_length, stride=fixed_increment, dtype=dtype_cpp)
+            # Emit ``strided_{load,store}`` with the lane count as a template arg
+            # and the stride as a template arg too when it is a compile-time
+            # constant (runtime arg only for a genuinely symbolic stride).
+            fn = "strided_load" if direction in ("gather", "load") else "strided_store"
+            intrinsic_code = render_strided_call(fn, dtype_cpp, vector_length, fixed_increment,
+                                                 masked=iter_mask_name is not None)
             tasklet_inputs = {"_in", "_mask"} if iter_mask_name is not None else {"_in"}
             t1 = state.add_tasklet(intrinsic_tasklet_name, tasklet_inputs, {"_out"}, intrinsic_code,
                                    dace.dtypes.Language.CPP)
@@ -749,7 +754,11 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                 fixed_increment, base_expr = detect_fixed_increment(initializers)
                 if fixed_increment is None:
                     continue
-                intrinsic_code = template.format(vector_length=vector_length, stride=fixed_increment, dtype=dtype_cpp)
+                # Lane count is always a template arg; stride is a template arg
+                # when constant, runtime arg only when symbolic.
+                fn = "strided_load" if direction in ("gather", "load") else "strided_store"
+                intrinsic_code = render_strided_call(fn, dtype_cpp, vector_length, fixed_increment,
+                                                     masked=iter_mask_name is not None)
 
             indirect = _single_indirect_neighbour(state, sorted_tasklets, is_pack_in_side)
             if not isinstance(indirect, dace.nodes.AccessNode):

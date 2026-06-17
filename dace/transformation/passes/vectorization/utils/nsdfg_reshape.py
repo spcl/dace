@@ -22,6 +22,7 @@ from dace import SDFGState
 
 from dace.transformation.passes.vectorization.utils.code_rewrite import drop_dims
 from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme, VecNameScheme
+from dace.transformation.passes.vectorization.utils.strided_codegen import render_strided_call
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbols
 
 _ITER_MASK_PREFIX = "_iter_mask"
@@ -942,10 +943,8 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
         prep = inner_sdfg.add_state(_STRIDED_LOAD_PREP_PREFIX + inner_conn, is_start_block=(mask_name is None))
         bbox_an = prep.add_access(inner_conn)
         vec_an = prep.add_access(vec_name)
-        if mask_name is not None:
-            code = f"strided_load_masked<{dtype_ctype}>(_in, _out, {vector_width}, {stride}, _mask);"
-        else:
-            code = f"strided_load<{dtype_ctype}>(_in, _out, {vector_width}, {stride});"
+        code = render_strided_call("strided_load", dtype_ctype, vector_width, stride,
+                                   masked=mask_name is not None)
         tasklet = prep.add_tasklet(
             name=f"_strided_load_{inner_conn}",
             inputs={"_in"},
@@ -1000,10 +999,8 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
         vec_an = finish.add_access(vec_name)
         bbox_an = finish.add_access(inner_conn)
         mask_name = _iter_mask_name(inner_sdfg)
-        if mask_name is not None:
-            code = f"strided_store_masked<{dtype_ctype}>(_in, _out, {vector_width}, {stride}, _mask);"
-        else:
-            code = f"strided_store<{dtype_ctype}>(_in, _out, {vector_width}, {stride});"
+        code = render_strided_call("strided_store", dtype_ctype, vector_width, stride,
+                                   masked=mask_name is not None)
         tasklet = finish.add_tasklet(
             name=f"_strided_store_{inner_conn}",
             inputs={"_in"},
@@ -1146,10 +1143,8 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
         bbox_an = prep.add_access(inner_conn)
         for p in range(K):
             vec_an = prep.add_access(phase_names[p])
-            if mask_name is not None:
-                code = f"strided_load_masked<{dtype_ctype}>(_in + {p}, _out, {W}, {S}, _mask);"
-            else:
-                code = f"strided_load<{dtype_ctype}>(_in + {p}, _out, {W}, {S});"
+            code = render_strided_call("strided_load", dtype_ctype, W, S,
+                                       masked=mask_name is not None, in_expr=f"_in + {p}")
             tasklet = prep.add_tasklet(
                 name=f"_multi_elem_load_{inner_conn}_p{p}",
                 inputs={"_in"},
@@ -1184,10 +1179,8 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
         mask_name = _iter_mask_name(inner_sdfg)
         for p in range(K):
             vec_an = finish.add_access(phase_names[p])
-            if mask_name is not None:
-                code = f"strided_store_masked<{dtype_ctype}>(_in, _out + {p}, {W}, {S}, _mask);"
-            else:
-                code = f"strided_store<{dtype_ctype}>(_in, _out + {p}, {W}, {S});"
+            code = render_strided_call("strided_store", dtype_ctype, W, S,
+                                       masked=mask_name is not None, out_expr=f"_out + {p}")
             tasklet = finish.add_tasklet(
                 name=f"_multi_elem_store_{inner_conn}_p{p}",
                 inputs={"_in"},
