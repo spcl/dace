@@ -31,6 +31,7 @@ _ISA_TO_IMPL = {
     "AVX2": "avx2",
     "ARM_SVE": "sve",
     "ARM_NEON": "neon",
+    "CUDA": "cuda",
     "CUTILE": "cutile",
     # The K=1 scalar backend (dace/tile_ops/scalar.h call). Nodes without it yet
     # fall back to ``pure`` via the membership check in select_tile_implementation.

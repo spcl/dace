@@ -126,3 +126,30 @@ class TileOpsSVE:
     init_code = ""
     finalize_code = ""
     dependencies = []
+
+
+@dace.library.environment
+class TileOpsCUDA:
+    """NVIDIA CUDA (device) K=1 tile-op backend (``dace/tile_ops/cuda.h``).
+
+    The fp16 elementwise ops use the native ``half2`` (FP16x2) intrinsics from
+    ``<cuda_fp16.h>``; fp8 (no native arithmetic) computes through ``float``.
+    The header is ``__CUDACC__``-guarded, so listing it in the host frame is
+    harmless -- the ``__device__`` bodies only materialise under nvcc. Selected
+    only when the tile map is GPU-scheduled.
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = []
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
+
+    headers = {'frame': ["dace/tile_ops/cuda.h"]}
+    state_fields = []
+    init_code = ""
+    finalize_code = ""
+    dependencies = []

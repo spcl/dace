@@ -26,6 +26,7 @@ _ISA_BACKENDS = (
     ("avx2", "AVX2", "TileOpsAVX2"),
     ("neon", "Neon", "TileOpsNeon"),
     ("sve", "SVE", "TileOpsSVE"),
+    ("cuda", "CUDA", "TileOpsCUDA"),
 )
 
 
