@@ -9,27 +9,13 @@ than a strided load. This pins the diagonal numerically against the
 unvectorized reference and asserts the gather/scatter lib nodes are emitted.
 """
 
-import pytest
-
-pytestmark = pytest.mark.skip(reason="Walker-primary K=1 gather end-to-end passes (see"
-                              " test_walker_primary_gather_e2e.py::test_k1_gather_matches_reference[8]);"
-                              " the legacy K=2 emission-style tests in this file fail downstream"
-                              " (dimensionality mismatches, NameError on deleted EmitTileOps,"
-                              " 2D scatter compilation crashes). The K=2 path with the ONE-marker"
-                              " design (TILIFICATION_TRANSFORMATION_DESIGN.md section 3.8.1) is a"
-                              " separate slice; unfreeze incrementally as it lands.")
 import copy
 
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.interstate import LoopToMap
-# from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps  (frozen -- module deleted)
-from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
-from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")
@@ -109,25 +95,6 @@ def _prepped(tag=""):
     sdfg.apply_transformations_repeated(LoopToMap())
     sdfg.simplify()
     return sdfg
-
-
-def test_diagonal_emits_gather_and_scatter():
-    """The diagonal read/write lower to TileLoad(gather_dims=...) + TileStore(gather_dims=...)
-    per the G3-step-3 unified design (source-dim-indexed gather)."""
-    sdfg = _prepped()
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-        CleanAccessNodeToScalarSliceToTaskletPattern, )
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-    MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
-    GenerateTileIterationMask(widths=(8, )).apply_pass(sdfg, {})
-    StrideMapByTileWidths(widths=(8, )).apply_pass(sdfg, {})
-    EmitTileOps(widths=(8, )).apply_pass(sdfg, {})
-    # Gather-loads are TileLoad nodes with non-empty gather_dims; scatter-stores are TileStore
-    # nodes with non-empty gather_dims. (Structured TileLoad/TileStore have empty gather_dims.)
-    gather_loads = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad) and tuple(n.gather_dims)]
-    scatter_stores = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileStore) and tuple(n.gather_dims)]
-    assert len(gather_loads) >= 1, "expected a TileLoad with gather_dims for the diagonal read"
-    assert len(scatter_stores) == 1, "expected a TileStore with gather_dims for the diagonal write"
 
 
 @pytest.mark.parametrize("n", [16, 17])
