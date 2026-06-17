@@ -360,7 +360,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         #     no `_out = _in` tasklet between. Runs early so the classifier and the staging pass see clean
         #     edges everywhere.
         passes = [
-            ConvertLengthOneArraysToScalars(recursive=True, transient_only=False),
+            ConvertLengthOneArraysToScalars(recursive=True, transient_only=True),
             NormalizeWCRSource(),
             BypassTrivialAssignTasklets(),
             # Strip any WCR the cleaning exposed (carried off a bypassed trivial copy)
@@ -600,6 +600,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # (FunctionCallRegions inlined, dead dataflow swept) regardless of how the
         # SDFG was built — already-simplified inputs are a near no-op.
         sdfg.simplify()
+        # Lift pure-WCR boundary reductions (``acc = sum(A)`` -- a MapExit
+        # ``CR:op`` WCR with no carry-in read) to a product buffer + vectorized
+        # ``Reduce`` BEFORE ``WCRToAugAssign`` rewrites the WCR into an in-place
+        # RMW (which would split the body into a multi-node tmp-staged form that
+        # neither reduction recogniser matches, leaving a loop-carried scalar the
+        # tiler cannot safely widen). The loop-carried RMW shape is lifted later,
+        # after ``LoopToMap`` produces its map.
+        from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
+        LiftMapReductionToReduce(vectorized=True, pure_wcr_only=True).apply_pass(sdfg, {})
         # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction shape into an
         # in-place RMW tasklet. The recognised tile-path reductions (post-NormalizeWCRSource in the
         # constructor pipeline) land as `tile -> scalar -[wcr]-> sink` and are left alone -- they're
