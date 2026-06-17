@@ -50,7 +50,14 @@ class _WCRToAugAssignPass(ppl.Pass):
 
     def apply_pass(self, sdfg, _pipeline_results):
         from dace.transformation.dataflow import WCRToAugAssign
-        return sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+        from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                                    no_wcr_in_map_body)
+        applied = sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+        # Post-condition / legacy vectorize pre-condition: no WCR survives inside any
+        # map body (the in-place vectorizer does not resolve loop-carried reductions;
+        # the reduction-out boundary edge MapExit -> AN lives outside the body).
+        assert_invariant(no_wcr_in_map_body(sdfg), "VectorizeCPU", "no WCR inside the map body before vectorizing")
+        return applied
 
 
 class _LoopToMapPass(ppl.Pass):

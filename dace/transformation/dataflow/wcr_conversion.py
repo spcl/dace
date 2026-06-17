@@ -621,8 +621,13 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 out_subset = m.other_subset if m.other_subset is not None else m.subset
             read_back = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in1', Memlet(data=self.inp.data, subset=in_subset))
-            state.add_edge(read_back, None, new_tasklet, '__in2', Memlet(data=self.output.data, subset=out_subset))
+            # Each memlet must own its subset object (DaCe rejects shared subset
+            # references); ``in_subset`` / ``out_subset`` may alias ``m.subset``
+            # when ``other_subset`` is None, and ``out_subset`` is used twice.
+            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in1',
+                           Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset)))
+            state.add_edge(read_back, None, new_tasklet, '__in2',
+                           Memlet(data=self.output.data, subset=copy.deepcopy(out_subset)))
             state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn,
-                           Memlet(data=self.output.data, subset=out_subset))
+                           Memlet(data=self.output.data, subset=copy.deepcopy(out_subset)))
             state.remove_edge(edge)

@@ -284,6 +284,73 @@ def logical_binops_are_bool(scope) -> Optional[str]:
     return None
 
 
+def no_wcr_in_map_body(scope) -> Optional[str]:
+    """No edge inside a map scope may carry a write-conflict resolution.
+
+    **Legacy vectorization precondition.** ``VectorizeCPU`` vectorizes the
+    tasklets of a free map in place; a surviving WCR inside the map body is a
+    loop-carried reduction the vectorizer does NOT lower (it would widen the
+    body without resolving the conflict, racing the lanes). ``WCRToAugAssign``
+    must first convert every such WCR into an explicit read-modify-write
+    tasklet -- this checker is that pass's post-condition / the vectorizer's
+    entry pre-condition.
+
+    "The map body" is the set of nodes strictly between a ``MapEntry`` and its
+    ``MapExit`` (:meth:`~dace.sdfg.state.SDFGState.all_nodes_between`); every
+    edge incident to one of those nodes is a body edge. The reduction-out
+    boundary edge ``MapExit -> AccessNode`` is incident only to the exit and an
+    outer AccessNode -- neither is in the body -- so it is not flagged: that is
+    the legitimate place a reduction's WCR lives once lifted out of the body.
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
+    or a description of the first offending edge.
+    """
+    for sd, state in _iter_states(scope):
+        for node in state.nodes():
+            if not isinstance(node, MapEntry):
+                continue
+            body = state.all_nodes_between(node, state.exit_node(node))
+            if not body:
+                continue
+            for edge in state.all_edges(*body):
+                if edge.data is None or edge.data.wcr is None:
+                    continue
+                return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
+                        f"``{edge.data.wcr}`` inside a map body (convert it to an explicit "
+                        f"read-modify-write via WCRToAugAssign before vectorizing)")
+    return None
+
+
+def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
+    """No edge INSIDE any nested SDFG may carry a write-conflict resolution.
+
+    **Multi-dim vectorization precondition.** The tile emitters lower the body
+    NSDFG of the tile map assuming every inner edge is a plain (conflict-free)
+    write (design 3.5). An inner WCR that survives into tiling is silently
+    dropped, degrading e.g. an in-place ``a[i] += b[i]`` to ``a[i] = b[i]``.
+    ``WCRToAugAssign`` (incl. its AN->AN copy case) must eliminate every inner
+    WCR first -- this checker is that pass's post-condition.
+
+    The ALLOWED scalar-reduction-out form -- the NSDFG writes a scalar that
+    exits via a WCR reduction on the ``NestedSDFG -> MapExit`` edge in the
+    PARENT state -- is not flagged: that edge lives in the parent SDFG, not
+    inside the nested SDFG, so it is skipped by the ``parent_nsdfg_node`` guard.
+
+    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
+    or a description of the first offending edge.
+    """
+    for sd, state in _iter_states(scope):
+        if sd.parent_nsdfg_node is None:
+            continue
+        for edge in state.edges():
+            if edge.data is None or edge.data.wcr is None:
+                continue
+            return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
+                    f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
+                    f"NSDFG -> MapExit boundary; convert in-place RMW via WCRToAugAssign before tiling)")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # K-dim pipeline invariants (require widths / K context).
 # ---------------------------------------------------------------------------

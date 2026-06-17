@@ -35,6 +35,8 @@ from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                            no_wcr_inside_nested_sdfgs)
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
@@ -153,6 +155,12 @@ class _RunWCRToAugAssign(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         applied = sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+        # Post-condition / multi-dim tiling pre-condition: no WCR survives inside any
+        # body NSDFG (the tile emitters would silently drop it). The allowed
+        # scalar-reduction-out form lives on the NSDFG -> MapExit edge in the PARENT
+        # state, which is outside the nested SDFG and therefore not flagged.
+        assert_invariant(no_wcr_inside_nested_sdfgs(sdfg), "VectorizeCPUMultiDim",
+                         "no WCR inside the body NSDFG before tiling")
         return applied or None
 
 
