@@ -350,6 +350,36 @@ def test_create_loop_for():
     assert tasklet_2.label == "assign_2"
 
 
+def test_create_loop_for_same_name() -> None:
+    loop_1 = tn.ForScope(
+        loop=LoopRegion(label="same_label",
+                        loop_var="i",
+                        initialize_expr=CodeBlock("i = 0 "),
+                        condition_expr=CodeBlock("i < 3"),
+                        update_expr=CodeBlock("i = i+1")),
+        children=[
+            tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+    loop_2 = tn.ForScope(
+        loop=LoopRegion(label="same_label",
+                        loop_var="i",
+                        initialize_expr=CodeBlock("i = 0 "),
+                        condition_expr=CodeBlock("i < 3"),
+                        update_expr=CodeBlock("i = i+1")),
+        children=[
+            tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[loop_1, loop_2],
+    )
+    sdfg = stree.as_sdfg(validate=False, simplify=False)
+    assert sdfg.is_valid()
+
+
 def test_create_loop_while():
     while_scope = tn.WhileScope(
         children=[
@@ -1031,6 +1061,7 @@ if __name__ == '__main__':
     test_create_tasklet_waw()
     test_create_tasklet_war()
     test_create_loop_for()
+    test_create_loop_for_same_name()
     test_create_loop_while()
     test_create_if_else()
     test_create_if_elif_else()

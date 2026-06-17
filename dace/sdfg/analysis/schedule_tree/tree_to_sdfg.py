@@ -253,7 +253,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         memlets = loop_region.get_meta_read_memlets(self._ctx.root.containers, include_scalars=True)
         self._ensure_data_descriptors(memlets, sdfg)
 
-        cf_region.add_node(loop_region)
+        cf_region.add_node(loop_region, ensure_unique_name=True)
         prefix = self._loop_state_name_prefix(node)
         loop_state = loop_region.add_state(f"{prefix}_loop_state_{id(node)}", is_start_block=True)
 
