@@ -359,53 +359,43 @@ def test_inmap_single_bridge_through_scalar():
     _assert_close({"A": expected_A, "output": expected_out}, {"A": A_run, "output": out_run})
 
 
-@pytest.mark.xfail(reason="Pure-writer multi-subset pattern: multiple tasklets write "
-                   "distinct subsets of the same global A inside one Map, no consumer "
-                   "tasklets read A in the same body. The current pass enumerates "
-                   "(producer, consumer) pairs and skips when there is no consumer, so "
-                   "nothing fires. Expected rewrite per user spec: each "
-                   "``tasklet -> A[subset]`` becomes ``tasklet -> scalar`` and the "
-                   "scalar flows through the MapExit to ``A[subset]`` (one scalar per "
-                   "write subset). ``A`` is added as a Map connector for each subset; "
-                   "memlet propagation on the scope picks up the outer subset. "
-                   "Documented for follow-up.")
 def test_inmap_multi_subset_writes_through_scalars():
     """Two tasklets writing distinct subsets of the same global ``A``.
 
-    The pass should stage each subset through its own scalar and the
-    final ``A`` must carry both writes.
+    The pass stages each subset through its own scalar and the final
+    ``A`` must carry both writes.
+
+    Compared against the mathematical expectation, NOT against the
+    un-staged SDFG: two writers sharing a single in-body global bridge
+    AccessNode (each draining a distinct subset through the MapExit)
+    mis-serialise under the un-staged codegen — ``A[0]`` ends up holding
+    ``A[N + 2]``'s value — so ``_ref_run`` on the un-staged SDFG is not a
+    valid reference. The per-subset staging is precisely what fixes it.
+
+    Kernel: ``A[i] = 2*input[i]`` and ``A[i + N] = 3*input[i]``.
     """
     rng = np.random.default_rng(1)
     N = 8
     inputs = rng.random(N)
-    A = np.zeros(2 * N)
     sdfg = _build_inmap_multi_subset_writes(N)
-    ref = _ref_run(sdfg, input=inputs, A=A)
     _stage(sdfg)
     sdfg.validate()
     assert _bridge_is_staged(sdfg, "A"), "Bridge A should have a staged scalar (per subset)"
-    cur = {"input": inputs.copy(), "A": A.copy()}
-    sdfg(**cur)
-    _assert_close(ref, cur)
+    A_run = np.zeros(2 * N)
+    sdfg(input=inputs.copy(), A=A_run)
+    expected_A = np.concatenate([2.0 * inputs, 3.0 * inputs])
+    _assert_close({"A": expected_A}, {"A": A_run})
 
 
-@pytest.mark.xfail(reason="Cross-state staging inside a body NSDFG: the bridge is "
-                   "written in state 1, read in state 2. The pass must assume the body "
-                   "NSDFG scope = states + interstate edges + ConditionalBlocks (the "
-                   "user's spec) and walk the WHOLE body, not state-by-state. Expected "
-                   "rewrite: state 1 writes a transient scalar (visible across state "
-                   "boundaries), state 2's tasklet reads that scalar, and at the NSDFG "
-                   "exit the scalar flows out to the connector ``A_io`` which then "
-                   "drains through every enclosing Map to the global ``A[i]`` "
-                   "(``add_memlet_path(scalar, map_exit_chain, A_AN)``). Memlet "
-                   "propagation on each Map scope picks up the outer subset. "
-                   "Documented for follow-up.")
 def test_inmap_multi_state_propagation():
     """Multi-state body NSDFG: write A[i] in state 1, read in state 2.
 
-    The scalar must propagate between states; the pass needs to walk
-    the body NSDFG as a whole (not state-by-state independently) to
-    recognise the cross-state ``write -> read`` chain.
+    State 1's write of the ``A_io`` connector is staged through a scalar
+    that then writes back to ``A_io`` (the NSDFG out-connector path), so
+    state 2's read of ``A_io`` observes the staged value and the global
+    ``A`` still receives the per-iteration write. The cross-state
+    ``write -> read`` chain is preserved without a shared in-body global
+    bridge AccessNode.
     """
     rng = np.random.default_rng(3)
     N = 8
@@ -423,31 +413,30 @@ def test_inmap_multi_state_propagation():
     _assert_close(ref, cur)
 
 
-@pytest.mark.xfail(reason="Multi-in / multi-out subsets (cloudsc zsolqa shape): "
-                   "two distinct write subsets ``A[i]`` and ``A[i + N]``, two distinct "
-                   "read subsets, all inside one Map. Per user spec: one scalar per "
-                   "(write_subset, read_subset) pair. Each write becomes "
-                   "``tasklet -> scalar_subsetK`` and the scalar carries the value to "
-                   "the reader; the final value flows out via MapExit to "
-                   "``A[subsetK]``. CRITICAL: all per-subset scalars must connect to "
-                   "the SAME ``IN_A`` connector on the enclosing MapExit (a memlet "
-                   "tree) — DaCe's memlet propagation on the scope merges the "
-                   "per-subset memlets into the outer ``A[0:2N]`` subset. Dependency "
-                   "edges between scalars are needed when they share a producer or "
-                   "consumer to preserve order. Documented for follow-up.")
 def test_inmap_multi_in_multi_out_subsets():
     """Cloudsc zsolqa-style multi-in / multi-out: per-subset scalars + deps.
 
     Verifies the pass mints one scalar per subset chain and produces
     numerically correct output across all subset reads.
+
+    Compared against the mathematical expectation, NOT against the
+    un-staged SDFG: with two distinct write subsets *and* two distinct
+    read subsets sharing a single global bridge AccessNode, the un-staged
+    codegen mis-serialises the per-subset read-after-write chains (``t3``
+    reads a stale / aliased ``A[i]`` that disagrees with the value
+    finally stored), so ``_ref_run`` on the un-staged SDFG is not a valid
+    reference — exactly the bug the per-subset staging eliminates (see
+    :func:`test_inmap_single_bridge_through_scalar`).
+
+    Kernel:
+        A[i]     = 2*input[i];      output[i]     = A[i] + 1
+        A[i + N] = 3*input[i + N];  output[i + N] = A[i + N] - 1
     """
     rng = np.random.default_rng(4)
     N = 8
     inputs = rng.random(2 * N)
-    outputs = np.zeros(2 * N)
     A = np.zeros(2 * N)
     sdfg = _build_inmap_multi_in_multi_out_subsets(N)
-    ref = _ref_run(sdfg, input=inputs, output=outputs, A=A)
     _stage(sdfg)
     sdfg.validate()
     # Expect TWO distinct staged scalars (one per subset).
@@ -457,19 +446,14 @@ def test_inmap_multi_in_multi_out_subsets():
             if "A" in name and desc.transient and isinstance(desc, dace.data.Scalar):
                 staged_count += 1
     assert staged_count >= 2, (f"Expected ≥2 staged scalars (one per subset), got {staged_count}")
-    cur = {"input": inputs.copy(), "output": outputs.copy(), "A": A.copy()}
-    sdfg(**cur)
-    _assert_close(ref, cur)
+    A_run = A.copy()
+    out_run = np.zeros(2 * N)
+    sdfg(input=inputs.copy(), output=out_run, A=A_run)
+    expected_A = np.concatenate([2.0 * inputs[:N], 3.0 * inputs[N:]])
+    expected_out = np.concatenate([expected_A[:N] + 1.0, expected_A[N:] - 1.0])
+    _assert_close({"A": expected_A, "output": expected_out}, {"A": A_run, "output": out_run})
 
 
-@pytest.mark.xfail(reason="StageGlobalArrayThroughScalars recurses into nested SDFGs, "
-                   "but the body-NSDFG's connector ``A_io`` is non-transient INSIDE the "
-                   "nested body yet the inner state's data-flow pattern (the same "
-                   "tasklet -> A_io -> tasklet shape that fires at the top level) does "
-                   "not trigger the staging. Likely the inner connector aliasing "
-                   "(parent's non-transient ``A`` mapped to inner ``A_io``) trips a "
-                   "guard. Documented for follow-up — needs investigation of the "
-                   "_collect_occurrences walk inside the nested body.")
 def test_nsdfg_single_bridge_through_scalar():
     """``map -> nsdfg -> tasklet1 -[A[i]]-> A -[A[i]]-> tasklet2`` —
     the bridge is inside the body NSDFG.

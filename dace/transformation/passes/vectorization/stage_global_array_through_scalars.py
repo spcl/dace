@@ -3,8 +3,14 @@
 
 A non-transient (global / argument) array access node bridging producer and
 consumer tasklets inside a Map body forces a global-memory round-trip and a
-false serialization that blocks vectorization / tiling. This pass rewrites
-each such bridge into a per-distinct-subset scalar fan-out:
+false serialization that blocks vectorization / tiling. A consumer is not
+strictly required: a **pure-writer** bridge is staged the same way when it
+is itself a serialization point rather than an ordinary kernel output --
+either several tasklets writing **distinct subsets** of an in-body global
+that then drains to the ``MapExit`` (the cloudsc ``zsolqa`` case), or an
+NSDFG-body write whose value is read back in a **later body state** (a
+cross-state ``write -> read`` bridge). This pass rewrites each such bridge
+into a per-distinct-subset scalar fan-out:
 
 - One transient scalar per **distinct** array subset touched by the bridge.
   A subset that appears on both sides of the bridge (RMW) shares a single
@@ -204,6 +210,27 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         """Build a descriptive base name for a staged scalar."""
         return f"stage_{array_name}_{tag}"
 
+    @staticmethod
+    def _read_in_other_state(state: 'dace.SDFGState', array_name: str) -> bool:
+        """Whether ``array_name`` is read by a tasklet in a body state other
+        than ``state``.
+
+        The signature of a cross-state ``write -> read`` bridge inside an
+        NSDFG body: the write lives in ``state`` (a pure writer there) and
+        the value is consumed in a later state. Distinguishes such a bridge
+        -- worth staging -- from an ordinary single-state kernel output
+        that is written and never read back.
+        """
+        for other in state.sdfg.states():
+            if other is state:
+                continue
+            for n in other.data_nodes():
+                if n.data != array_name:
+                    continue
+                if any(isinstance(e.dst, dace.nodes.Tasklet) for e in other.out_edges(n)):
+                    return True
+        return False
+
     # ------------------------------------------------------------------
     # Collection
     # ------------------------------------------------------------------
@@ -242,8 +269,33 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 e for e in state.out_edges(node) if isinstance(e.dst, dace.nodes.Tasklet)
                 and body_owner.get(e.dst) is owning_entry and self._carries_data_read(e, node.data)
             ]
-            if not producers or not consumers:
+            # A write is required to make staging meaningful, but a
+            # consumer is not: ``_apply_multi`` models the empty read-set
+            # case (no read redirects, no W x R dep edges). A pure-writer
+            # bridge is only staged when it is a genuine serialization
+            # point, never an ordinary kernel output (whose tile lowering
+            # must not be disturbed):
+            #
+            #   * Top-level Map body (``owning_entry`` set): require >= 2
+            #     distinct write subsets sharing the bridge -- the cloudsc
+            #     ``zsolqa`` multi-subset case. A lone output subset is
+            #     left for the tile lowering.
+            #   * NSDFG-internal flat state (``owning_entry is None``,
+            #     reached only when ``nsdfg_internal``): require the array
+            #     to be read by a tasklet in a *different* body state --
+            #     the cross-state ``write -> read`` bridge. A write that is
+            #     never read back is an ordinary output and is left alone.
+            if not producers:
                 continue
+            if not consumers:
+                if owning_entry is not None:
+                    wsubsets = {
+                        self._subset_key(self._array_side_subset(e, node.data)) for e in producers
+                    }
+                    if len(wsubsets) < 2:
+                        continue
+                elif not self._read_in_other_state(state, node.data):
+                    continue
             if any(e.data.wcr is not None for e in producers + consumers):
                 continue
             if any(not self._is_single_element(self._array_side_subset(e, node.data)) for e in producers + consumers):
