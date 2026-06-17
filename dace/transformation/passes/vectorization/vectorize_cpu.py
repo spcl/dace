@@ -86,6 +86,35 @@ class _LoopToMapPass(ppl.Pass):
         return sdfg.apply_transformations_repeated(LoopToMap, permissive=self._permissive)
 
 
+class _AssertNoBodyWCRPass(ppl.Pass):
+    """Vectorizer-entry precondition: NO loose WCR survives in the region about to
+    be vectorized. Asserts BOTH checkers after the body has been nested --
+    ``no_wcr_in_map_body`` (a loose WCR in the map body) AND
+    ``no_wcr_inside_nested_sdfgs`` (a self-contained WCR hiding inside the body
+    NSDFG, which the map-body checker alone cannot see). The only WCR allowed
+    past this point is a genuine reduction in lifted form (a ``Reduce`` libnode
+    produced by ``LiftMapReductionToReduce`` / the boundary ``MapExit -> AN``
+    edge), neither of which is a loose inner edge-WCR. Every self-contained /
+    in-place RMW must already be an explicit aug-assign (``WCRToAugAssign``).
+    Read-only.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified) -> bool:
+        return False
+
+    def apply_pass(self, sdfg, _pipeline_results):
+        from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+                                                                                    no_wcr_in_map_body,
+                                                                                    no_wcr_inside_nested_sdfgs)
+        assert_invariant(no_wcr_in_map_body(sdfg), "VectorizeCPU", "no loose WCR in the map body before vectorizing")
+        assert_invariant(no_wcr_inside_nested_sdfgs(sdfg), "VectorizeCPU",
+                         "no loose WCR inside the body NSDFG before vectorizing")
+        return None
+
+
 class _AssertNoLaneMemletReadsPass(ppl.Pass):
     """Thin Pass wrapper that runs ``assert_no_lane_memlet_reads`` after
     the vectorizer. Lands in the pipeline only when ``remainder_strategy='masked'``
@@ -446,6 +475,13 @@ class VectorizeCPU(ppl.Pipeline):
                                           mode="masked",
                                           lower_to_intrinsics=lower_to_intrinsics),
                 ])
+            # Vectorizer-entry precondition: the nested body must carry no loose WCR.
+            # Self-contained / in-place RMW is already an explicit aug-assign; genuine
+            # reductions are now ``Reduce`` libnodes (LiftMapReductionToReduce) or boundary
+            # MapExit -> AN edges -- none of which is a loose inner edge-WCR. Asserts BOTH
+            # checkers so a self-contained WCR hiding inside a body NSDFG (invisible to the
+            # map-body checker) is caught loudly instead of mis-vectorized.
+            passes.append(_AssertNoBodyWCRPass())
             passes.append(vectorizer)
         else:
             passes = [RemoveMathCall(), vectorizer]

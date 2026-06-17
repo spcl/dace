@@ -35,7 +35,7 @@ from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_wcr_in_map_body,
                                                                             no_wcr_inside_nested_sdfgs)
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
@@ -162,6 +162,35 @@ class _RunWCRToAugAssign(ppl.Pass):
         assert_invariant(no_wcr_inside_nested_sdfgs(sdfg), "VectorizeCPUMultiDim",
                          "no WCR inside the body NSDFG before tiling")
         return applied or None
+
+
+class _AssertNoBodyWCR(ppl.Pass):
+    """Vectorizer-entry precondition: NO loose WCR survives in the region about to
+    be tiled. Asserts BOTH checkers after the body has been nested into a body
+    NSDFG -- ``no_wcr_in_map_body`` (a loose WCR in the still-flat map body) AND
+    ``no_wcr_inside_nested_sdfgs`` (a self-contained WCR hiding inside the body
+    NSDFG). The only WCR allowed past this point is a genuine reduction in lifted
+    form (TileReduce / the scalar-reduction-out ``NSDFG -> MapExit`` boundary
+    edge), which neither checker flags. Every self-contained / in-place RMW must
+    already be an explicit aug-assign (``WCRToAugAssign``). Read-only.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        assert_invariant(no_wcr_in_map_body(sdfg), "VectorizeCPUMultiDim", "no loose WCR in the map body before tiling")
+        assert_invariant(no_wcr_inside_nested_sdfgs(sdfg), "VectorizeCPUMultiDim",
+                         "no loose WCR inside the body NSDFG before tiling")
+        return None
 
 
 def _is_power_of_two(n: int) -> bool:
@@ -449,6 +478,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # we always nest. The ``nest_map_bodies`` knob is kept on the constructor for harness
         # parity with the legacy 1D path but is otherwise unused.
         passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
+        # Vectorizer-entry precondition: the just-nested region must carry no loose WCR
+        # (self-contained / in-place RMW must already be an explicit aug-assign; genuine
+        # reductions are lifted to TileReduce / the scalar-reduction-out boundary). Asserts
+        # BOTH checkers -- the flat-body one AND the inside-NSDFG one -- so neither blind spot
+        # lets a stray WCR reach the tile emitters (which would silently drop it).
+        passes.append(_AssertNoBodyWCR())
         # Embedded wrapper -- expands body NSDFG boundary memlets to the full source-array
         # subset (design section 2.4). MUST run between Nest and the walker; see the class
         # docstring for the rationale.

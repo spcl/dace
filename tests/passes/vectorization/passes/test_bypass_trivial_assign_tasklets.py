@@ -204,6 +204,101 @@ def test_outer_sdfg_an_to_an_assign_left_alone():
     assert _count_assign_tasklets(sdfg) == 1
 
 
+def _scope_passthrough_consistent(sdfg) -> bool:
+    """True iff every Map entry/exit ``IN_x``/``OUT_x`` passthrough connector
+    carries the SAME memlet data on both sides. A single-edge bypass splice
+    across a scope boundary renames only one side -> the two disagree -> invalid.
+    """
+    from dace.sdfg.nodes import MapEntry, MapExit
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not isinstance(node, (MapEntry, MapExit)):
+                    continue
+                for oe in state.out_edges(node):
+                    if oe.src_conn is None or not oe.src_conn.startswith("OUT_"):
+                        continue
+                    in_conn = "IN_" + oe.src_conn[len("OUT_"):]
+                    for ie in state.in_edges(node):
+                        if ie.dst_conn == in_conn and ie.data.data != oe.data.data:
+                            return False
+    return True
+
+
+def test_map_exit_boundary_assign_not_corrupted():
+    """A trivial copy whose source is fed by a MapExit -- the spmv per-row
+    accumulator shape ``MapExit:OUT -> AN(transient) -> [_out=_in] -> AN`` -- must
+    not be spliced across the scope boundary. A single-edge rewrite renames only
+    the exit's ``OUT_x`` side, leaving ``IN_x`` naming the old array (invalid).
+    The pass leaves such copies in place; the scope passthrough stays consistent."""
+    outer, body, state, _ = _build_outer_with_body_nsdfg()
+    body.add_array("A", (8, ), dace.float64, transient=True)
+    body.add_array("acc", (1, ), dace.float64, transient=True)
+    body.add_array("OUT", (1, ), dace.float64, transient=True)
+    a = state.add_access("A")
+    acc = state.add_access("acc")
+    out = state.add_access("OUT")
+    me, mx = state.add_map("m", dict(i="0:8"))
+    w = state.add_tasklet("w", {"_a"}, {"_o"}, "_o = _a")
+    state.add_memlet_path(a, me, w, dst_conn="_a", memlet=Memlet("A[i]"))
+    state.add_memlet_path(w, mx, acc, src_conn="_o", memlet=Memlet("acc[0]"))
+    cp = state.add_tasklet("cp", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(acc, None, cp, "_in", Memlet("acc[0]"))
+    state.add_edge(cp, "_out", out, None, Memlet("OUT[0]"))
+
+    assert _scope_passthrough_consistent(outer)
+    BypassTrivialAssignTasklets().apply_pass(outer, {})
+    # The fix: the exit's IN_acc / OUT_acc passthrough must not be half-renamed.
+    assert _scope_passthrough_consistent(outer), "bypass half-renamed a Map scope passthrough connector"
+
+
+def test_spmv_bypass_keeps_sdfg_valid():
+    """Regression (user-directed before/after): the spmv per-row reduction
+    accumulator ``tmp`` is fed by the inner idx-map's MapExit, and the trivial
+    ``tmp -> __tmp_w`` copy (``y[i] = tmp``) sits across that scope boundary.
+    ``BypassTrivialAssignTasklets`` must leave the prepped SDFG valid both BEFORE
+    and AFTER it runs (it previously half-renamed the exit passthrough -> invalid).
+
+    Note: this checks ONLY that the bypass does not corrupt the SDFG; full
+    spmv multi-dim vectorization additionally needs the carried-accumulator
+    reduction lowered to a horizontal reduce (tracked separately)."""
+    from dace.transformation.dataflow import WCRToAugAssign
+    from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
+    from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+    from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+
+    n = dace.symbol("n")
+    m = dace.symbol("m")
+    nnz = dace.symbol("nnz")
+
+    @dace.program
+    def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
+                 y: dace.float64[n]):
+        n_rows = len(indptr) - 1
+        for i in dace.map[0:n_rows:1]:
+            row_start = indptr[i]
+            row_end = indptr[i + 1]
+            tmp = 0.0
+            for idx in dace.map[row_start:row_end:1]:
+                j = indices[idx]
+                tmp = tmp + data[idx] * x[j]
+            y[i] = tmp
+
+    sdfg = spmv_csr.to_sdfg()
+    sdfg.simplify()
+    sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
+    sdfg.apply_transformations_repeated([LoopToMap, RefineNestedAccess], permissive=False, validate=False)
+    normalize_loop_nests(sdfg)
+    ConvertLengthOneArraysToScalars(recursive=True, transient_only=False).apply_pass(sdfg, {})
+    NormalizeWCRSource().apply_pass(sdfg, {})
+
+    sdfg.validate()  # BEFORE bypass: valid
+    BypassTrivialAssignTasklets().apply_pass(sdfg, {})
+    sdfg.validate()  # AFTER bypass: must still be valid (the fix)
+    assert _scope_passthrough_consistent(sdfg)
+
+
 def test_does_not_collapse_cross_state_transient():
     """Regression (cloudsc_one ``zqx`` Isolated-node crash): a transient staged in
     state A and read in state B is a CROSS-STATE value. In state A its

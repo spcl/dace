@@ -236,7 +236,21 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             # :func:`_accessed_in_other_states`.
             src_xstate = src_desc.transient and _accessed_in_other_states(inner, src_an.data, istate)
             dst_xstate = dst_desc.transient and _accessed_in_other_states(inner, dst_an.data, istate)
-            if src_desc.transient and istate.in_edges(src_an) and not src_xstate:
+            # Map-scope-boundary guard: the bypass splices the transient's producer
+            # (src branch) / consumer (dst branch) directly onto the other endpoint
+            # with a single new edge. When that neighbour is a MapEntry / MapExit,
+            # the splice would rename only ONE side of the scope's ``IN_x``/``OUT_x``
+            # passthrough connector, leaving the two sides naming different data --
+            # an invalid SDFG. (spmv: the per-row accumulator ``tmp`` is fed by the
+            # idx-map's MapExit; bypassing ``tmp -> __tmp_w`` renamed ``OUT_tmp`` but
+            # left ``IN_tmp`` as ``tmp``.) Collapsing across a scope boundary needs a
+            # consistent passthrough rename, which a single-edge splice cannot do, so
+            # leave such copies in place -- a plain copy the rest of the pipeline handles.
+            src_at_scope = any(
+                isinstance(pe.src, (dace.nodes.MapEntry, dace.nodes.MapExit)) for pe in istate.in_edges(src_an))
+            dst_at_scope = any(
+                isinstance(de.dst, (dace.nodes.MapEntry, dace.nodes.MapExit)) for de in istate.out_edges(dst_an))
+            if src_desc.transient and istate.in_edges(src_an) and not src_xstate and not src_at_scope:
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
                 # Carry BOTH sides of the bypassed chain on the new memlet so
                 # ``an_side_subset`` can return the lane-dep subset for the
@@ -262,7 +276,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 removed += 1
                 if istate.degree(src_an) == 0:
                     istate.remove_node(src_an)
-            elif dst_desc.transient and not dst_xstate:
+            elif dst_desc.transient and not dst_xstate and not dst_at_scope:
                 # AN(src) -> [_out=_in] -> AN(dst) -> C becomes AN(src) -> C.
                 # Symmetric to the src-transient branch -- pick ``data``
                 # endpoint based on whether C is an AccessNode or a Tasklet.
