@@ -1360,100 +1360,112 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond,
 
 #include <stdint.h>
 
-template <typename T>
-inline void gather(const T* __restrict__ A, const int64_t* __restrict__ idx,
-                   T* __restrict__ B, const int64_t length) {
+// Lane count is a compile-time ``vector_width`` template argument (runtime
+// ``length`` removed) so loop bounds are constexpr; ``stride`` stays a (literal)
+// parameter.
+template <typename T, int vector_width>
+static inline void gather(const T* __restrict__ A,
+                          const int64_t* __restrict__ idx, T* __restrict__ B) {
 #if defined(__ARM_NEON)
   if constexpr (std::is_same<T, double>::value) {
     int64_t i = 0;
-    for (; i + 1 < length; i += 2) {
+    for (; i + 1 < vector_width; i += 2) {
       float64x2_t vdata = {A[idx[i]], A[idx[i + 1]]};
       vst1q_f64((double*)&B[i], vdata);
     }
-    for (; i < length; ++i) B[i] = A[idx[i]];
+    for (; i < vector_width; ++i) B[i] = A[idx[i]];
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[i] = A[idx[i]];
 }
 
-template <typename T>
-inline void scatter(const T* __restrict__ A, const int64_t* __restrict__ idx,
-                    T* __restrict__ B, const int64_t length) {
-  for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
+template <typename T, int vector_width>
+static inline void scatter(const T* __restrict__ A,
+                           const int64_t* __restrict__ idx, T* __restrict__ B) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[idx[i]] = A[i];
 }
 
-template <typename T>
-inline void strided_load(const T* __restrict__ A, T* __restrict__ B,
-                         const int64_t length, const int64_t stride) {
+template <typename T, int vector_width>
+static inline void strided_load(const T* __restrict__ A, T* __restrict__ B,
+                                const int64_t stride) {
 #if defined(__ARM_NEON)
   if constexpr (std::is_same<T, double>::value) {
     int64_t i = 0;
-    for (; i + 1 < length; i += 2) {
+    for (; i + 1 < vector_width; i += 2) {
       float64x2_t vdata = {A[(i + 0) * stride], A[(i + 1) * stride]};
       vst1q_f64((double*)&B[i], vdata);
     }
-    for (; i < length; ++i) B[i] = A[i * stride];
+    for (; i < vector_width; ++i) B[i] = A[i * stride];
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[i] = A[i * stride];
 }
 
-template <typename T>
-inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
-                          const int64_t length, const int64_t stride) {
+template <typename T, int vector_width>
+static inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
+                                 const int64_t stride) {
 #if defined(__ARM_NEON)
   if constexpr (std::is_same<T, double>::value) {
     int64_t i = 0;
-    for (; i + 1 < length; i += 2) {
+    for (; i + 1 < vector_width; i += 2) {
       float64x2_t vdata = vld1q_f64((const double*)&A[i]);
       double tmp[2];
       vst1q_f64(tmp, vdata);
       B[(i + 0) * stride] = tmp[0];
       B[(i + 1) * stride] = tmp[1];
     }
-    for (; i < length; ++i) B[i * stride] = A[i];
+    for (; i < vector_width; ++i) B[i * stride] = A[i];
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[i * stride] = A[i];
 }
 
 // --------------------------- masked variants (RMW) ---------------------------
 // NEON has no native masked gather/scatter; scalar fallback gates each lane
 // via mask[i]. Inactive lanes leave destination memory unchanged.
 
-template <typename T>
-inline void gather_masked(const T* __restrict__ A,
-                          const int64_t* __restrict__ idx, T* __restrict__ B,
-                          const int64_t length, const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i)
+template <typename T, int vector_width>
+static inline void gather_masked(const T* __restrict__ A,
+                                 const int64_t* __restrict__ idx,
+                                 T* __restrict__ B,
+                                 const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[i] = A[idx[i]];
 }
 
-template <typename T>
-inline void scatter_masked(const T* __restrict__ A,
-                           const int64_t* __restrict__ idx, T* __restrict__ B,
-                           const int64_t length,
-                           const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i)
+template <typename T, int vector_width>
+static inline void scatter_masked(const T* __restrict__ A,
+                                  const int64_t* __restrict__ idx,
+                                  T* __restrict__ B,
+                                  const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[idx[i]] = A[i];
 }
 
-template <typename T>
-inline void strided_load_masked(const T* __restrict__ A, T* __restrict__ B,
-                                const int64_t length, const int64_t stride,
-                                const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i)
+template <typename T, int vector_width>
+static inline void strided_load_masked(const T* __restrict__ A,
+                                       T* __restrict__ B, const int64_t stride,
+                                       const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[i] = A[i * stride];
 }
 
-template <typename T>
-inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
-                                 const int64_t length, const int64_t stride,
-                                 const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i)
+template <typename T, int vector_width>
+static inline void strided_store_masked(const T* __restrict__ A,
+                                        T* __restrict__ B, const int64_t stride,
+                                        const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[i * stride] = A[i];
 }
 

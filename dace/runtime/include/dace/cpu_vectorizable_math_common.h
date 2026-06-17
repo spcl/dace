@@ -33,6 +33,19 @@
 #include <algorithm>
 #include <cmath>
 
+// Full-unroll hint for fixed-width (constexpr-bounded) lane loops. Normally
+// provided by dace/types.h; defined defensively here so the vectorizable-math
+// headers can be included standalone (e.g. in isolation tests) without it.
+#ifndef DACE_UNROLL
+#if defined(__clang__) || defined(__CUDACC__) || defined(__INTEL_LLVM_COMPILER)
+#define DACE_UNROLL _Pragma("unroll")
+#elif defined(__GNUC__)
+#define DACE_UNROLL _Pragma("GCC unroll 64")
+#else
+#define DACE_UNROLL
+#endif
+#endif
+
 // ----------------------------------------------------------------------------
 // Generator macros
 // ----------------------------------------------------------------------------

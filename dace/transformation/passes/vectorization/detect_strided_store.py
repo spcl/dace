@@ -9,13 +9,13 @@ from dace.transformation.passes.vectorization.utils.lane_fanout import detect_la
 
 _STRIDED_STORE_TEMPLATE = """
 {{
-strided_store<{dtype}>(_in, _out, {vector_length}, {stride});
+strided_store<{dtype}, {vector_length}>(_in, _out, {stride});
 }}
 """
 
 _STRIDED_STORE_TEMPLATE_MASKED = """
 {{
-strided_store_masked<{dtype}>(_in, _out, {vector_length}, {stride}, _mask);
+strided_store_masked<{dtype}, {vector_length}>(_in, _out, {stride}, _mask);
 }}
 """
 

@@ -14,14 +14,14 @@ from dace.transformation.passes.vectorization.utils.lane_fanout import detect_la
 _SCATTER_TEMPLATE = """
 {{
 int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
-scatter<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
+scatter<{dtype}, {vector_length}>(_in, __vec_lane_idx, _out);
 }}
 """
 
 _SCATTER_TEMPLATE_MASKED = """
 {{
 int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
-scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
+scatter_masked<{dtype}, {vector_length}>(_in, __vec_lane_idx, _out, _mask);
 }}
 """
 
@@ -36,13 +36,13 @@ scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 # for the element-width conversion the runtime signature requires.
 _SCATTER_TEMPLATE_IDXARR = """
 {{
-scatter<{dtype}>(_in, _idx, _out, {vector_length});
+scatter<{dtype}, {vector_length}>(_in, _idx, _out);
 }}
 """
 
 _SCATTER_TEMPLATE_IDXARR_MASKED = """
 {{
-scatter_masked<{dtype}>(_in, _idx, _out, {vector_length}, _mask);
+scatter_masked<{dtype}, {vector_length}>(_in, _idx, _out, _mask);
 }}
 """
 
@@ -52,7 +52,7 @@ constexpr int __VL = {vector_length};
 int64_t __vec_lane_idx[__VL];
 DACE_UNROLL
 for (int __l = 0; __l < __VL; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
-scatter<{dtype}>(_in, __vec_lane_idx, _out, __VL);
+scatter<{dtype}, __VL>(_in, __vec_lane_idx, _out);
 }}
 """
 
@@ -68,7 +68,7 @@ constexpr int __VL = {vector_length};
 int64_t __vec_lane_idx[__VL];
 DACE_UNROLL
 for (int __l = 0; __l < __VL; ++__l) __vec_lane_idx[__l] = _mask[__l] ? _idx[__l * {stride}] : _idx[0];
-scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, __VL, _mask);
+scatter_masked<{dtype}, __VL>(_in, __vec_lane_idx, _out, _mask);
 }}
 """
 

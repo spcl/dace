@@ -17,14 +17,14 @@ from dace.transformation.passes.vectorization.utils.lane_fanout import detect_la
 _GATHER_TEMPLATE = """
 {{
 int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
-gather<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
+gather<{dtype}, {vector_length}>(_in, __vec_lane_idx, _out);
 }}
 """
 
 _GATHER_TEMPLATE_MASKED = """
 {{
 int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
-gather_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
+gather_masked<{dtype}, {vector_length}>(_in, __vec_lane_idx, _out, _mask);
 }}
 """
 
@@ -40,13 +40,13 @@ gather_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 # regeneration of the indices.
 _GATHER_TEMPLATE_IDXARR = """
 {{
-gather<{dtype}>(_in, _idx, _out, {vector_length});
+gather<{dtype}, {vector_length}>(_in, _idx, _out);
 }}
 """
 
 _GATHER_TEMPLATE_IDXARR_MASKED = """
 {{
-gather_masked<{dtype}>(_in, _idx, _out, {vector_length}, _mask);
+gather_masked<{dtype}, {vector_length}>(_in, _idx, _out, _mask);
 }}
 """
 
@@ -56,7 +56,7 @@ constexpr int __VL = {vector_length};
 int64_t __vec_lane_idx[__VL];
 DACE_UNROLL
 for (int __l = 0; __l < __VL; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
-gather<{dtype}>(_in, __vec_lane_idx, _out, __VL);
+gather<{dtype}, __VL>(_in, __vec_lane_idx, _out);
 }}
 """
 
@@ -72,7 +72,7 @@ constexpr int __VL = {vector_length};
 int64_t __vec_lane_idx[__VL];
 DACE_UNROLL
 for (int __l = 0; __l < __VL; ++__l) __vec_lane_idx[__l] = _mask[__l] ? _idx[__l * {stride}] : _idx[0];
-gather_masked<{dtype}>(_in, __vec_lane_idx, _out, __VL, _mask);
+gather_masked<{dtype}, __VL>(_in, __vec_lane_idx, _out, _mask);
 }}
 """
 

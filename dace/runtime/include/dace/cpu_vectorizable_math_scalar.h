@@ -325,34 +325,42 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond,
 // avx512/neon/sve arch files alongside their own vector_<op>s.
 // ============================================================================
 
-template <typename T>
-inline void gather(const T* __restrict__ A, const int64_t* __restrict__ idx,
-                   T* __restrict__ B, const int64_t length) {
-  for (int64_t i = 0; i < length; ++i) {
+// The lane count is a compile-time ``vector_width`` template argument (the
+// runtime ``length`` was removed so the loop bound is constexpr and the body
+// fully unrolls). ``stride`` stays a parameter -- call sites pass a literal, so
+// the compiler constant-folds it.
+template <typename T, int vector_width>
+static inline void gather(const T* __restrict__ A,
+                          const int64_t* __restrict__ idx, T* __restrict__ B) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     B[i] = A[idx[i]];
   }
 }
 
-template <typename T>
-inline void scatter(const T* __restrict__ A, const int64_t* __restrict__ idx,
-                    T* __restrict__ B, const int64_t length) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void scatter(const T* __restrict__ A,
+                           const int64_t* __restrict__ idx, T* __restrict__ B) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     B[idx[i]] = A[i];
   }
 }
 
-template <typename T>
-inline void strided_load(const T* __restrict__ A, T* __restrict__ B,
-                         const int64_t length, const int64_t stride) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void strided_load(const T* __restrict__ A, T* __restrict__ B,
+                                const int64_t stride) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     B[i] = A[i * stride];
   }
 }
 
-template <typename T>
-inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
-                          const int64_t length, const int64_t stride) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
+                                 const int64_t stride) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     B[i * stride] = A[i];
   }
 }
@@ -361,39 +369,44 @@ inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
 // Inactive lanes leave the destination memory unchanged; matches the
 // vector_<op>_masked convention used elsewhere in the runtime.
 
-template <typename T>
-inline void gather_masked(const T* __restrict__ A,
-                          const int64_t* __restrict__ idx, T* __restrict__ B,
-                          const int64_t length, const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void gather_masked(const T* __restrict__ A,
+                                 const int64_t* __restrict__ idx,
+                                 T* __restrict__ B,
+                                 const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     if (mask[i]) B[i] = A[idx[i]];
   }
 }
 
-template <typename T>
-inline void scatter_masked(const T* __restrict__ A,
-                           const int64_t* __restrict__ idx, T* __restrict__ B,
-                           const int64_t length,
-                           const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void scatter_masked(const T* __restrict__ A,
+                                  const int64_t* __restrict__ idx,
+                                  T* __restrict__ B,
+                                  const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     if (mask[i]) B[idx[i]] = A[i];
   }
 }
 
-template <typename T>
-inline void strided_load_masked(const T* __restrict__ A, T* __restrict__ B,
-                                const int64_t length, const int64_t stride,
-                                const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void strided_load_masked(const T* __restrict__ A,
+                                       T* __restrict__ B, const int64_t stride,
+                                       const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     if (mask[i]) B[i] = A[i * stride];
   }
 }
 
-template <typename T>
-inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
-                                 const int64_t length, const int64_t stride,
-                                 const bool* __restrict__ mask) {
-  for (int64_t i = 0; i < length; ++i) {
+template <typename T, int vector_width>
+static inline void strided_store_masked(const T* __restrict__ A,
+                                        T* __restrict__ B, const int64_t stride,
+                                        const bool* __restrict__ mask) {
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) {
     if (mask[i]) B[i * stride] = A[i];
   }
 }

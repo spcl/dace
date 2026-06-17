@@ -1550,105 +1550,96 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond,
 // tail handling for length not divisible by 8.
 // ============================================================================
 
-template <typename T>
-inline void gather(const T* __restrict__ A, const int64_t* __restrict__ idx,
-                   T* __restrict__ B, const int64_t length) {
+// The lane count is a compile-time ``vector_width`` template argument (runtime
+// ``length`` removed): the ``>= 8`` SIMD gate becomes ``if constexpr`` so the
+// unused branch is discarded, and every loop bound is constexpr.
+template <typename T, int vector_width>
+static inline void gather(const T* __restrict__ A,
+                          const int64_t* __restrict__ idx, T* __restrict__ B) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      int64_t i = 0;
-      for (; i + 8 <= length; i += 8) {
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
-        __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
-        _mm512_storeu_pd(&B[i], vdata);
-      }
-      for (; i < length; ++i) B[i] = A[idx[i]];
-    } else {
-      for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    int64_t i = 0;
+    for (; i + 8 <= vector_width; i += 8) {
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
+      __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
+      _mm512_storeu_pd(&B[i], vdata);
     }
+    for (; i < vector_width; ++i) B[i] = A[idx[i]];
     return;
   }
 #endif
   // Scalar fallback for non-double T or non-AVX-512 builds (also covers float).
-  for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[i] = A[idx[i]];
 }
 
-template <typename T>
-inline void scatter(const T* __restrict__ A, const int64_t* __restrict__ idx,
-                    T* __restrict__ B, const int64_t length) {
+template <typename T, int vector_width>
+static inline void scatter(const T* __restrict__ A,
+                           const int64_t* __restrict__ idx, T* __restrict__ B) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      int64_t i = 0;
-      for (; i + 8 <= length; i += 8) {
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
-        __m512d vdata = _mm512_loadu_pd(&A[i]);
-        _mm512_i64scatter_pd(B, vindex, vdata, 8);
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    int64_t i = 0;
+    for (; i + 8 <= vector_width; i += 8) {
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
+      __m512d vdata = _mm512_loadu_pd(&A[i]);
+      _mm512_i64scatter_pd(B, vindex, vdata, 8);
+    }
+    for (; i < vector_width; ++i) B[idx[i]] = A[i];
+    return;
+  }
+#endif
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[idx[i]] = A[i];
+}
+
+template <typename T, int vector_width>
+static inline void strided_load(const T* __restrict__ A, T* __restrict__ B,
+                                const int64_t stride) {
+#if defined(__AVX512F__)
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    for (int64_t i = 0; i < vector_width; i += 8) {
+      int64_t idx_buf[8];
+      int lane_count = 0;
+      for (int lane = 0; lane < 8 && (i + lane) < vector_width; ++lane) {
+        idx_buf[lane] = (i + lane) * stride;
+        ++lane_count;
       }
-      for (; i < length; ++i) B[idx[i]] = A[i];
-    } else {
-      for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+      __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
+      double tmp[8];
+      _mm512_storeu_pd(tmp, vdata);
+      for (int lane = 0; lane < lane_count; ++lane) B[i + lane] = tmp[lane];
     }
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[i] = A[i * stride];
 }
 
-template <typename T>
-inline void strided_load(const T* __restrict__ A, T* __restrict__ B,
-                         const int64_t length, const int64_t stride) {
+template <typename T, int vector_width>
+static inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
+                                 const int64_t stride) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      for (int64_t i = 0; i < length; i += 8) {
-        int64_t idx_buf[8];
-        int lane_count = 0;
-        for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-          idx_buf[lane] = (i + lane) * stride;
-          ++lane_count;
-        }
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-        __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
-        double tmp[8];
-        _mm512_storeu_pd(tmp, vdata);
-        for (int lane = 0; lane < lane_count; ++lane) B[i + lane] = tmp[lane];
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    for (int64_t i = 0; i < vector_width; i += 8) {
+      int64_t idx_buf[8];
+      double val_buf[8];
+      int lane_count = 0;
+      for (int lane = 0; lane < 8 && (i + lane) < vector_width; ++lane) {
+        idx_buf[lane] = (i + lane) * stride;
+        val_buf[lane] = A[i + lane];
+        ++lane_count;
       }
-    } else {
-      for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+      __m512d vdata = _mm512_loadu_pd(val_buf);
+      _mm512_i64scatter_pd(B, vindex, vdata, 8);
     }
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
-}
-
-template <typename T>
-inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
-                          const int64_t length, const int64_t stride) {
-#if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      for (int64_t i = 0; i < length; i += 8) {
-        int64_t idx_buf[8];
-        double val_buf[8];
-        int lane_count = 0;
-        for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-          idx_buf[lane] = (i + lane) * stride;
-          val_buf[lane] = A[i + lane];
-          ++lane_count;
-        }
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-        __m512d vdata = _mm512_loadu_pd(val_buf);
-        _mm512_i64scatter_pd(B, vindex, vdata, 8);
-      }
-    } else {
-      for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
-    }
-    return;
-  }
-#endif
-  for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i) B[i * stride] = A[i];
 }
 
 // --------------------------- masked variants (RMW) ---------------------------
@@ -1656,124 +1647,109 @@ inline void strided_store(const T* __restrict__ A, T* __restrict__ B,
 // _mm512_mask_i64{gather,scatter}_pd and _mm512_mask_storeu_pd which honour
 // the lane mask. Matches the vector_<op>_masked convention.
 
-template <typename T>
-inline void gather_masked(const T* __restrict__ A,
-                          const int64_t* __restrict__ idx, T* __restrict__ B,
-                          const int64_t length, const bool* __restrict__ mask) {
+template <typename T, int vector_width>
+static inline void gather_masked(const T* __restrict__ A,
+                                 const int64_t* __restrict__ idx,
+                                 T* __restrict__ B,
+                                 const bool* __restrict__ mask) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      int64_t i = 0;
-      for (; i + 8 <= length; i += 8) {
-        __mmask8 k = 0;
-        for (int lane = 0; lane < 8; ++lane)
-          if (mask[i + lane]) k |= __mmask8(1) << lane;
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
-        __m512d vdata =
-            _mm512_mask_i64gather_pd(_mm512_setzero_pd(), k, vindex, A, 8);
-        _mm512_mask_storeu_pd(&B[i], k, vdata);
-      }
-      for (; i < length; ++i)
-        if (mask[i]) B[i] = A[idx[i]];
-    } else {
-      for (int64_t i = 0; i < length; ++i)
-        if (mask[i]) B[i] = A[idx[i]];
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    int64_t i = 0;
+    for (; i + 8 <= vector_width; i += 8) {
+      __mmask8 k = 0;
+      for (int lane = 0; lane < 8; ++lane)
+        if (mask[i + lane]) k |= __mmask8(1) << lane;
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
+      __m512d vdata =
+          _mm512_mask_i64gather_pd(_mm512_setzero_pd(), k, vindex, A, 8);
+      _mm512_mask_storeu_pd(&B[i], k, vdata);
     }
+    for (; i < vector_width; ++i)
+      if (mask[i]) B[i] = A[idx[i]];
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i)
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[i] = A[idx[i]];
 }
 
-template <typename T>
-inline void scatter_masked(const T* __restrict__ A,
-                           const int64_t* __restrict__ idx, T* __restrict__ B,
-                           const int64_t length,
-                           const bool* __restrict__ mask) {
+template <typename T, int vector_width>
+static inline void scatter_masked(const T* __restrict__ A,
+                                  const int64_t* __restrict__ idx,
+                                  T* __restrict__ B,
+                                  const bool* __restrict__ mask) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      int64_t i = 0;
-      for (; i + 8 <= length; i += 8) {
-        __mmask8 k = 0;
-        for (int lane = 0; lane < 8; ++lane)
-          if (mask[i + lane]) k |= __mmask8(1) << lane;
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
-        __m512d vdata = _mm512_loadu_pd(&A[i]);
-        _mm512_mask_i64scatter_pd(B, k, vindex, vdata, 8);
-      }
-      for (; i < length; ++i)
-        if (mask[i]) B[idx[i]] = A[i];
-    } else {
-      for (int64_t i = 0; i < length; ++i)
-        if (mask[i]) B[idx[i]] = A[i];
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    int64_t i = 0;
+    for (; i + 8 <= vector_width; i += 8) {
+      __mmask8 k = 0;
+      for (int lane = 0; lane < 8; ++lane)
+        if (mask[i + lane]) k |= __mmask8(1) << lane;
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
+      __m512d vdata = _mm512_loadu_pd(&A[i]);
+      _mm512_mask_i64scatter_pd(B, k, vindex, vdata, 8);
     }
+    for (; i < vector_width; ++i)
+      if (mask[i]) B[idx[i]] = A[i];
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i)
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[idx[i]] = A[i];
 }
 
-template <typename T>
-inline void strided_load_masked(const T* __restrict__ A, T* __restrict__ B,
-                                const int64_t length, const int64_t stride,
-                                const bool* __restrict__ mask) {
+template <typename T, int vector_width>
+static inline void strided_load_masked(const T* __restrict__ A,
+                                       T* __restrict__ B, const int64_t stride,
+                                       const bool* __restrict__ mask) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      for (int64_t i = 0; i < length; i += 8) {
-        int64_t idx_buf[8];
-        __mmask8 k = 0;
-        for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-          idx_buf[lane] = (i + lane) * stride;
-          if (mask[i + lane]) k |= __mmask8(1) << lane;
-        }
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-        __m512d vdata =
-            _mm512_mask_i64gather_pd(_mm512_setzero_pd(), k, vindex, A, 8);
-        _mm512_mask_storeu_pd(&B[i], k, vdata);
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    for (int64_t i = 0; i < vector_width; i += 8) {
+      int64_t idx_buf[8];
+      __mmask8 k = 0;
+      for (int lane = 0; lane < 8 && (i + lane) < vector_width; ++lane) {
+        idx_buf[lane] = (i + lane) * stride;
+        if (mask[i + lane]) k |= __mmask8(1) << lane;
       }
-    } else {
-      for (int64_t i = 0; i < length; ++i)
-        if (mask[i]) B[i] = A[i * stride];
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+      __m512d vdata =
+          _mm512_mask_i64gather_pd(_mm512_setzero_pd(), k, vindex, A, 8);
+      _mm512_mask_storeu_pd(&B[i], k, vdata);
     }
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i)
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[i] = A[i * stride];
 }
 
-template <typename T>
-inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
-                                 const int64_t length, const int64_t stride,
-                                 const bool* __restrict__ mask) {
+template <typename T, int vector_width>
+static inline void strided_store_masked(const T* __restrict__ A,
+                                        T* __restrict__ B, const int64_t stride,
+                                        const bool* __restrict__ mask) {
 #if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value) {
-    if (length >= 8) {
-      for (int64_t i = 0; i < length; i += 8) {
-        int64_t idx_buf[8];
-        double val_buf[8];
-        __mmask8 k = 0;
-        for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-          idx_buf[lane] = (i + lane) * stride;
-          val_buf[lane] = A[i + lane];
-          if (mask[i + lane]) k |= __mmask8(1) << lane;
-        }
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-        __m512d vdata = _mm512_loadu_pd(val_buf);
-        _mm512_mask_i64scatter_pd(B, k, vindex, vdata, 8);
+  if constexpr (std::is_same<T, double>::value && vector_width >= 8) {
+    for (int64_t i = 0; i < vector_width; i += 8) {
+      int64_t idx_buf[8];
+      double val_buf[8];
+      __mmask8 k = 0;
+      for (int lane = 0; lane < 8 && (i + lane) < vector_width; ++lane) {
+        idx_buf[lane] = (i + lane) * stride;
+        val_buf[lane] = A[i + lane];
+        if (mask[i + lane]) k |= __mmask8(1) << lane;
       }
-    } else {
-      for (int64_t i = 0; i < length; ++i)
-        if (mask[i]) B[i * stride] = A[i];
+      __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+      __m512d vdata = _mm512_loadu_pd(val_buf);
+      _mm512_mask_i64scatter_pd(B, k, vindex, vdata, 8);
     }
     return;
   }
 #endif
-  for (int64_t i = 0; i < length; ++i)
+  DACE_UNROLL
+  for (int i = 0; i < vector_width; ++i)
     if (mask[i]) B[i * stride] = A[i];
 }
 

@@ -9,13 +9,13 @@ from dace.transformation.passes.vectorization.utils.lane_fanout import detect_la
 
 _STRIDED_LOAD_TEMPLATE = """
 {{
-strided_load<{dtype}>(_in, _out, {vector_length}, {stride});
+strided_load<{dtype}, {vector_length}>(_in, _out, {stride});
 }}
 """
 
 _STRIDED_LOAD_TEMPLATE_MASKED = """
 {{
-strided_load_masked<{dtype}>(_in, _out, {vector_length}, {stride}, _mask);
+strided_load_masked<{dtype}, {vector_length}>(_in, _out, {stride}, _mask);
 }}
 """
 
