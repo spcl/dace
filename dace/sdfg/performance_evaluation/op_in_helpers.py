@@ -2,14 +2,12 @@
 """ Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
 and class AccessStack which which corresponds to the stack used to compute the stack distance.
 Further, provides a curve fitting method and plotting function. """
-
 import warnings
 from dace.data import Array
 import sympy as sp
-from collections import deque
 from scipy.optimize import curve_fit
 import numpy as np
-from dace import symbol
+from dace.symbolic import symbol, pystr_to_symbolic
 
 
 class CacheLineTracker:
@@ -34,17 +32,11 @@ class CacheLineTracker:
         one_d_index = 0
         for dim in range(len(access)):
             i = access[dim]
-            one_d_index += (i + sp.sympify(arr.offset[dim]).subs(mapping)) * sp.sympify(arr.strides[dim]).subs(mapping)
+            one_d_index += (i + pystr_to_symbolic(arr.offset[dim]).subs(mapping)) * pystr_to_symbolic(
+                arr.strides[dim]).subs(mapping)
 
         # divide by L to get the cache line id
         return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
-
-    def copy(self):
-        new_clt = CacheLineTracker(self.L)
-        new_clt.array_info = dict(self.array_info)
-        new_clt.start_lines = dict(self.start_lines)
-        new_clt.next_free_line = self.next_free_line
-        return new_clt
 
 
 class Node:
@@ -96,48 +88,19 @@ class AccessStack:
 
         return distance
 
-    def in_cache_as_list(self):
-        """
-        Returns a list of cache ids currently in cache. Index 0 is the most recently used.
-        """
-        res = deque()
-        curr = self.top
-        dist = 0
-        while curr is not None and dist < self.C:
-            res.append(curr.v)
-            curr = curr.next
-            dist += 1
-        return res
-
-    def debug_print(self):
-        # prints the whole stack
-        print('\n')
-        curr = self.top
-        while curr is not None:
-            print(curr.v, end=', ')
-            curr = curr.next
-        print('\n')
-
-    def copy(self):
-        new_stack = AccessStack(self.C)
-        cache_content = self.in_cache_as_list()
-        if len(cache_content) > 0:
-            new_top_value = cache_content.popleft()
-            new_stack.top = Node(new_top_value)
-            curr = new_stack.top
-            for x in cache_content:
-                curr.next = Node(x)
-                curr = curr.next
-        return new_stack
+    def replace_self(self, other: 'AccessStack'):
+        self.top = other.top
+        self.num_calls = other.num_calls
+        self.lengh = other.length
+        self.C = other.C
 
 
 def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, element, name):
-    plt = None
+    # matplotlib is an optional dependency, imported lazily so the rest of the module works without it.
     try:
-        import matplotlib.pyplot as plt_import
-        plt = plt_import
+        import matplotlib.pyplot as plt
     except ModuleNotFoundError:
-        pass
+        plt = None
 
     if plt is None:
         warnings.warn('Plotting only possible with matplotlib installed')
@@ -154,7 +117,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
     ax[0].scatter(x, cache_misses, label=f'C={C*L}, L={L}')
     b = []
     for curr in a:
-        b.append(sp.N(sp.sympify(sympy_f).subs(symbol_name, curr)))
+        b.append(sp.N(pystr_to_symbolic(sympy_f).subs(symbol_name, curr)))
     ax[0].plot(a, b)
 
     c = []
@@ -170,7 +133,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
     ax[1].scatter(x, c, label=f'C={C*L}, L={L}')
     b = []
     for curr in a:
-        b.append(sp.N(sp.sympify(op_in_map).subs(symbol_name, curr)))
+        b.append(sp.N(pystr_to_symbolic(op_in_map).subs(symbol_name, curr)))
     ax[1].plot(a, b)
 
     ax[0].set_ylim(bottom=0, top=max(cache_misses) + max(cache_misses) / 10)
