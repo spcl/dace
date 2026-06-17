@@ -1025,6 +1025,8 @@ class int_floor(sympy.Function):
             return x // y
         if y.is_Number and y == 1:
             return x
+        if y.is_Number and y == -1:
+            return -x
 
     def _eval_is_integer(self):
         return True
