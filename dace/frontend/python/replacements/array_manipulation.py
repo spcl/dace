@@ -15,6 +15,7 @@ from numbers import Integral
 from typing import Any, Optional, List, Sequence, Tuple, Union
 
 import numpy as np
+import ml_dtypes
 
 
 @oprepo.replaces('numpy.flip')
@@ -432,7 +433,12 @@ def _make_datatype_converter(typeclass: str):
     elif typeclass in {"int", "float", "complex"}:
         dtype = dtypes.dtype_to_typeclass(eval(typeclass))
     else:
-        dtype = dtypes.dtype_to_typeclass(getattr(np, typeclass))
+        # Low-precision types (bfloat16 / float8_e4m3fn / float8_e5m2) have no
+        # ``numpy`` attribute -- they are ml_dtypes-backed and named verbatim as
+        # ml_dtypes names them -- so resolve them from ml_dtypes; numpy-backed
+        # types keep the numpy path.
+        scalar_type = getattr(np, typeclass, None) or getattr(ml_dtypes, typeclass)
+        dtype = dtypes.dtype_to_typeclass(scalar_type)
 
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
