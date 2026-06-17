@@ -98,26 +98,72 @@ typedef half float16;
 typedef std::complex<float> complex64;
 typedef std::complex<double> complex128;
 struct half {
-  // source: https://stackoverflow.com/a/26779139/15853075
+  half() {}
+
+  // IEEE-754 binary32 -> binary16, round-to-nearest-even.
+  // Based on (https://gist.github.com/rygorous/2156668)
   half(float f) {
     union {
-      float fval;
-      uint32_t x;
-    } u;
-    u.fval = f;
-    h = ((u.x >> 16) & 0x8000) |
-        ((((u.x & 0x7f800000) - 0x38000000) >> 13) & 0x7c00) |
-        ((u.x >> 13) & 0x03ff);
-  }
-  operator float() {
-    union {
       float f;
-      uint32_t tmp;
-    } u;
-    u.tmp = ((h & 0x8000) << 16) | (((h & 0x7c00) + 0x1C000) << 13) |
-            ((h & 0x03FF) << 13);
-    return u.f;
+      uint32_t u;
+    } in;
+    in.f = f;
+    uint32_t sign = in.u & 0x80000000u;
+    in.u ^= sign;  // work on the magnitude
+
+    if (in.u >= 0x47800000u) {
+      // Inf or NaN (exponent overflows half range): NaN -> qNaN, else Inf.
+      h = (in.u > 0x7f800000u) ? 0x7e00 : 0x7c00;
+    } else if (in.u < 0x38800000u) {
+      // Subnormal half or zero. Adding this magic constant and relying on
+      // round-to-nearest-even FP addition aligns the mantissa correctly.
+      union {
+        uint32_t u;
+        float f;
+      } magic;
+      magic.u = 0x3f000000u;  // 126 << 23
+      in.f += magic.f;
+      h = (uint16_t)(in.u - magic.u);
+    } else {
+      // Normal half: rebias exponent (127 -> 15) and round mantissa to even.
+      uint32_t mant_odd = (in.u >> 13) & 1;
+      in.u += 0xc8000000u + 0xfffu;  // ((15 - 127) << 23) + rounding bias
+      in.u += mant_odd;
+      h = (uint16_t)(in.u >> 13);
+    }
+    h |= (uint16_t)(sign >> 16);
   }
+
+  // IEEE-754 binary16 -> binary32 (exact; every binary16 fits in binary32).
+  operator float() const {
+    uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+    uint32_t exp = (h >> 10) & 0x1f;
+    uint32_t mant = h & 0x3ff;
+    union {
+      uint32_t u;
+      float f;
+    } out;
+    if (exp == 0) {
+      if (mant == 0) {
+        out.u = sign;  // signed zero
+      } else {
+        // Subnormal half: normalize into a float normal.
+        exp = 1;
+        do {
+          exp--;
+          mant <<= 1;
+        } while ((mant & 0x400) == 0);
+        mant &= 0x3ff;
+        out.u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+      }
+    } else if (exp == 0x1f) {
+      out.u = sign | 0x7f800000u | (mant << 13);  // Inf or NaN
+    } else {
+      out.u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);  // normal
+    }
+    return out.f;
+  }
+
   uint16_t h;
 };
 typedef half float16;
