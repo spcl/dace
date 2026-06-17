@@ -54,6 +54,7 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
     LowerInterstateConditionalAssignmentsToTasklets, )
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
+from dace.transformation.passes.vectorization.tile_carried_reduction import TileCarriedScalarReduction
 from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
 # Unified WidenAccesses pass (replaces InferBodyTransientShapes + WidenScalarsToTiles
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
@@ -497,6 +498,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # boundary source or sink. Downstream tile widening + lib-node
         # insertion see a clean, uniform graph.
         passes.append(StageGlobalArrayThroughScalars())
+        # NOTE: TileCarriedScalarReduction (loop-carried scalar reduction -> partial-sum
+        # tile + TileReduce fold) is WIP and NOT yet wired in: recognition is validated
+        # (tight, no false positives) and the single-tile case is correct, but the
+        # cross-tile carry needs a mechanism DaCe codegen actually accumulates -- a
+        # map-exit WCR fed by an NSDFG body OVERWRITES (one tile survives), so the
+        # carry must instead be a sequential LoopRegion (or per-tile scalar fold +
+        # scalar-WCR, the known-working reduction idiom). Wiring it in now would
+        # silently miscompile any recognised reduction with trip > W, so it stays off.
+        #     passes.append(TileCarriedScalarReduction(widths=widths_t))
         # Index-subset propagation (per user direction): the frontend promotes a
         # computed index ``i + offset`` to a scalar then a symbol ``__sym`` used in
         # the memlet subset (``A[__sym]``), hiding the iter-var from the tile-access
