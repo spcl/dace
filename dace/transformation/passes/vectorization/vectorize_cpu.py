@@ -30,6 +30,20 @@ from dace.transformation.passes.vectorization.generate_iteration_mask import Gen
 from dace.transformation.passes.vectorization.utils.iteration import assert_no_lane_memlet_reads
 
 
+class _EarlyPureWCRReductionLift(LiftMapReductionToReduce):
+    """Distinct pipeline type for the early ``pure_wcr_only`` reduction lift.
+
+    ``VectorizeCPU`` is a :class:`~dace.transformation.pass_pipeline.Pipeline`,
+    which forbids two passes of the *same type*. This subclass lets the early
+    pure-WCR lift (before ``_WCRToAugAssignPass`` strips the WCR) coexist with
+    the full RMW-shape :class:`LiftMapReductionToReduce` that runs later, after
+    ``InlineSDFGs`` has put the opaque body in its final shape.
+    """
+
+    def __init__(self):
+        super().__init__(pure_wcr_only=True)
+
+
 class _WCRToAugAssignPass(ppl.Pass):
     """Thin Pass wrapper running :class:`WCRToAugAssign` to a fixed point.
 
@@ -406,6 +420,15 @@ class VectorizeCPU(ppl.Pipeline):
                 # vectorizer can stride. Runs before the Vectorize / prep
                 # passes. No-op for ``dace.map`` kernels.
                 _LoopToMapPass(permissive=loop_to_map_permissive),
+                # Genuine scalar reductions (``dot += a[i]*b[i]``, ``acc = sum(A)``)
+                # survive canonicalisation as a scalar ``CR:+`` / ``CR:*`` MapExit
+                # edge that ``WCRToAugAssign`` cannot strip (the fold is not a
+                # sequential in-place RMW). Lift those to a product buffer +
+                # ``Reduce`` libnode HERE -- before ``_WCRToAugAssignPass`` asserts
+                # no map-body WCR -- mirroring the multi-dim path's early lift. The
+                # RMW-shape reductions are still lifted by the full pass after
+                # ``InlineSDFGs`` (their opaque body must be in final shape first).
+                _EarlyPureWCRReductionLift(),
                 # Strip any inner WCR (from a canonicalised in-place RMW or minted
                 # by LoopToMap) into an explicit augmented-assign tasklet -- the
                 # vectorizer assumes no inner WCR. Runs right after LoopToMap.

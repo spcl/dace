@@ -114,11 +114,22 @@ def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
                                   map_entry: "dace.nodes.MapEntry") -> Optional[PureWCRReductionInfo]:
     """Recognise ``acc (op)= f(...)`` expressed as a MapExit WCR with no carry-in.
 
-    The canonical ``acc = sum(A)`` shape: a single-param, unit-step innermost map
-    with one flat-tasklet body whose ``body -> map_exit`` edge writes a scalar
-    accumulator under a ``CR:+`` / ``CR:*`` WCR, and where that accumulator is
-    *not* also read at the map entry. (The loop-carried RMW shape -- accumulator
-    read at entry + written at exit -- is :func:`recognize_map_reduction`.)
+    The canonical ``acc = sum(A)`` / ``dot += a[i]*b[i]`` shape: a single-param,
+    unit-step, *top-level* map whose body (any acyclic sub-DAG -- the product
+    ``a[i]*b[i]`` may be several tasklets feeding a private ``_wcr_priv_*`` access
+    node) has exactly one scalar ``body -> map_exit`` edge writing the accumulator
+    under a ``CR:+`` / ``CR:*`` WCR, where that accumulator is a FIXED scalar slot
+    (subset independent of the map param) and is *not* read at the map entry. (The
+    loop-carried RMW shape -- accumulator read at entry + written at exit -- is
+    :func:`recognize_map_reduction`.)
+
+    The guards reject the look-alikes canonicalisation also emits as a scalar
+    ``CR:`` MapExit edge: an indexed scatter / recurrence ``a[i] (op)= ...`` /
+    ``a[i*inc] += ...`` (target subset depends on the map param), a non-additive
+    fold (``CR:-`` etc. -- only ``+`` / ``*`` round-trip through the finite-float
+    identity), and a *nested* reduction (its trip depends on the enclosing map
+    param, so the lifted product buffer's symbolic shape would be out of scope
+    after re-nesting -- deferred).
 
     :returns: A :class:`PureWCRReductionInfo`, or ``None`` if not recognised.
     """
@@ -130,26 +141,33 @@ def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
     _, _, step = map_entry.map.range[-1]
     if (step != 1) and (str(step) != "1"):
         return None
+    # Top-level only: a nested reduction's trip is an enclosing map param, so the
+    # product buffer's symbolic shape would not be in scope after the re-nest.
+    if state.entry_node(map_entry) is not None:
+        return None
     map_exit = state.exit_node(map_entry)
     inner = state.all_nodes_between(map_entry, map_exit) or set()
     if any(isinstance(n, dace.nodes.MapEntry) for n in inner):
         return None
-    body_nodes = [n for n in inner if n not in (map_entry, map_exit)]
-    if len(body_nodes) != 1 or not isinstance(body_nodes[0], dace.nodes.Tasklet):
-        return None
-    body = body_nodes[0]
+    param = map_entry.map.params[0]
 
     def _scalar_slot(e) -> bool:
         return (e.data is not None and e.data.data is not None and e.data.subset is not None
                 and e.data.subset.num_elements() == 1)
 
-    wcr_writes = [
-        e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e) and e.data.wcr is not None
-    ]
+    # Exactly one scalar WCR write into the map exit, from any body node (the
+    # canonicalised product map feeds it from a ``_wcr_priv_*`` access node, not
+    # the flat tasklet of the bare ``acc = sum(A)`` map -- both are accepted).
+    wcr_writes = [e for e in state.in_edges(map_exit) if _scalar_slot(e) and e.data.wcr is not None]
     if len(wcr_writes) != 1:
         return None
     write_edge = wcr_writes[0]
+    body = write_edge.src
     acc = write_edge.data.data
+    # FIXED scalar accumulator: the write subset must not depend on the map param
+    # (else it is an indexed scatter / recurrence, not a scalar fold).
+    if param in {str(s) for s in write_edge.data.subset.free_symbols}:
+        return None
     desc = state.sdfg.arrays.get(acc)
     if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
         return None
@@ -157,15 +175,15 @@ def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
     if op is None or op not in IDENTITY:
         return None
     # Pure WCR: the accumulator must NOT be read at the map entry (else it is a
-    # loop-carried RMW -- handled by the other recogniser) and must not appear on
-    # any other body edge (no aliasing we would silently break).
+    # loop-carried RMW -- handled by the other recogniser) and must not appear
+    # anywhere else in the map scope (no aliasing we would silently break).
     if any(e.data is not None and e.data.data == acc for e in state.out_edges(map_entry)):
         return None
-    other_acc = [
-        e for e in state.all_edges(body) if e is not write_edge and e.data is not None and e.data.data == acc
-    ]
-    if other_acc:
-        return None
+    for n in (x for x in inner if x not in (map_entry, map_exit)):
+        if isinstance(n, dace.nodes.AccessNode) and n.data == acc:
+            return None
+        if any(e is not write_edge and e.data is not None and e.data.data == acc for e in state.all_edges(n)):
+            return None
     return PureWCRReductionInfo(map_entry, map_exit, body, acc, op, write_edge)
 
 
