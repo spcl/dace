@@ -610,6 +610,17 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # Inline wrapper NSDFGs + collapse adjacent perfectly-nested single-param maps so the K-dim
         # tile spans K genuine map dims.
         normalize_loop_nests(sdfg)
+        # v3 reduction handling: lift a loop-carried scalar reduction over an
+        # innermost map (acc threaded through entry/exit, combined via an
+        # associative op) to a product-fill map + a ``Reduce`` library node with
+        # the "vectorized" implementation (ExpandReduceVectorized -- a self-
+        # contained horizontal_reduce_<op> + scalar tail). The product-fill map is
+        # ordinary elementwise dataflow the tiler strides; the Reduce node carries
+        # its own vectorized fold, so no partial-tile carry / remainder-map split
+        # is needed in the SDFG. Mirrors where the legacy 1-D path runs the lift
+        # (after LoopToMap). No-op on non-reductions.
+        from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
+        LiftMapReductionToReduce(vectorized=True).apply_pass(sdfg, {})
         # ExpandNestedSDFGInputs runs as a Pass embedded in the pipeline (see
         # ``_RunExpandNestedSDFGInputs`` constructed at __init__) -- it has to fire AFTER
         # ``NestInnermostMapBodyIntoNSDFG`` (which mints the body NSDFG) and BEFORE
