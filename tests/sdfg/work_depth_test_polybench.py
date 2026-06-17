@@ -4,8 +4,9 @@ Validation of the work-depth analysis on the canonical PolyBench kernels.
 """
 
 import importlib.util
+import sys
+from contextlib import contextmanager
 import pathlib
-
 import pytest
 import sympy as sp
 
@@ -103,13 +104,26 @@ EXPECTED = {
     }
 
 
+@contextmanager
+def _on_path(directory):
+    path_str = str(directory)
+    added = path_str not in sys.path
+    if added:
+        sys.path.insert(0, path_str)
+    try:
+        yield
+    finally:
+        if added:
+            sys.path.remove(path_str)
+
 def _load_kernel(stem: str):
     """Import the PolyBench kernel module by path (the file names are not valid module names) and
     return its ``dace.program``."""
-    spec = importlib.util.spec_from_file_location('polybench_' + stem.replace('-', '_'), _POLYBENCH_DIR / f'{stem}.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return getattr(module, _KERNEL_FUNCS[stem])
+    with _on_path(_POLYBENCH_DIR):
+        spec = importlib.util.spec_from_file_location('polybench_' + stem.replace('-', '_'), _POLYBENCH_DIR / f'{stem}.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return getattr(module, _KERNEL_FUNCS[stem])
 
 
 def _value(expr):
