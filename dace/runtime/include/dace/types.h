@@ -19,6 +19,18 @@
 #define DACE_PRAGMA(x) _Pragma(#x)
 #endif
 
+// Portable full-unroll hint for fixed-width (constexpr-bounded) lane loops in
+// vectorized intrinsics. Clang / NVCC accept a bare ``#pragma unroll``; GCC
+// needs an explicit factor (64 covers every vector width we emit and fully
+// unrolls any shorter constexpr-bounded loop); MSVC has no equivalent.
+#if defined(__clang__) || defined(__CUDACC__) || defined(__INTEL_LLVM_COMPILER)
+#define DACE_UNROLL DACE_PRAGMA(unroll)
+#elif defined(__GNUC__)
+#define DACE_UNROLL DACE_PRAGMA(GCC unroll 64)
+#else
+#define DACE_UNROLL
+#endif
+
 // Visual Studio (<=2017) + CUDA support
 #if defined(_MSC_VER) && _MSC_VER <= 1999
 #define DACE_CONSTEXPR

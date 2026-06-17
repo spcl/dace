@@ -48,9 +48,11 @@ scatter_masked<{dtype}>(_in, _idx, _out, {vector_length}, _mask);
 
 _SCATTER_TEMPLATE_IDXARR_CONV = """
 {{
-int64_t __vec_lane_idx[{vector_length}];
-for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
-scatter<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
+constexpr int __VL = {vector_length};
+int64_t __vec_lane_idx[__VL];
+DACE_UNROLL
+for (int __l = 0; __l < __VL; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
+scatter<{dtype}>(_in, __vec_lane_idx, _out, __VL);
 }}
 """
 
@@ -62,9 +64,11 @@ scatter<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
 # masked lane is irrelevant: ``scatter_masked`` skips it.
 _SCATTER_TEMPLATE_IDXARR_CONV_MASKED = """
 {{
-int64_t __vec_lane_idx[{vector_length}];
-for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _mask[__l] ? _idx[__l * {stride}] : _idx[0];
-scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
+constexpr int __VL = {vector_length};
+int64_t __vec_lane_idx[__VL];
+DACE_UNROLL
+for (int __l = 0; __l < __VL; ++__l) __vec_lane_idx[__l] = _mask[__l] ? _idx[__l * {stride}] : _idx[0];
+scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, __VL, _mask);
 }}
 """
 

@@ -150,14 +150,22 @@ def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
         ident = _OP_IDENTITY_CXX[opname].replace("{T}", ctype)
     fold = _OP_CXX[opname]
     W = _VEC_W
+    # The per-lane loops have a compile-time-constant trip count (the vector
+    # width): declare it ``constexpr`` and hint a full unroll so the body lowers
+    # to straight-line SIMD. The ``_i`` loop over the runtime length ``_M`` is
+    # data-dependent and stays a plain loop.
     code = f"""{{
+constexpr int _W = {W};
 const long long _M = (long long)({m_expr});
-{ctype} _vacc[{W}];
-for (int _l = 0; _l < {W}; ++_l) _vacc[_l] = {ident};
+{ctype} _vacc[_W];
+DACE_UNROLL
+for (int _l = 0; _l < _W; ++_l) _vacc[_l] = {ident};
 long long _i = 0;
-for (; _i + {W} <= _M; _i += {W})
-  for (int _l = 0; _l < {W}; ++_l) _vacc[_l] = {fold("_vacc[_l]", "__inp[_i + _l]")};
-{ctype} _s = horizontal_reduce_{opname}<{ctype}, {W}>(_vacc);
+for (; _i + _W <= _M; _i += _W) {{
+  DACE_UNROLL
+  for (int _l = 0; _l < _W; ++_l) _vacc[_l] = {fold("_vacc[_l]", "__inp[_i + _l]")};
+}}
+{ctype} _s = horizontal_reduce_{opname}<{ctype}, _W>(_vacc);
 for (; _i < _M; ++_i) _s = {fold("_s", "__inp[_i]")};
 __out = _s;
 }}"""

@@ -235,7 +235,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         flat = " + ".join(parts) if parts else "0"
         code_lines = []
         for d in range(K):
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+            # constexpr lane-loop bound + full-unroll hint: every tile dim has a
+            # compile-time-constant width, so the lane loop lowers to SIMD.
+            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
+            code_lines.append(f"{'    ' * d}DACE_UNROLL")
+            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
         code_lines.append(f"{'    ' * K}_out[{flat}] = (int64_t)({body_expr});")
         for d in reversed(range(K)):
             code_lines.append(f"{'    ' * d}}}")
@@ -1195,7 +1199,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         src_ref = "_in" if isinstance(src_desc, _dd.Scalar) else "_in[0]"
         code_lines = []
         for d in range(K):
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+            # constexpr lane-loop bound + full-unroll hint: every tile dim has a
+            # compile-time-constant width, so the lane loop lowers to SIMD.
+            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
+            code_lines.append(f"{'    ' * d}DACE_UNROLL")
+            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
         code_lines.append(f"{'    ' * K}_out[{flat}] = {src_ref};")
         for d in reversed(range(K)):
             code_lines.append(f"{'    ' * d}}}")
@@ -1260,7 +1268,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         flat = " + ".join(parts) if parts else "0"
         code_lines = []
         for d in range(K):
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < {widths[d]}; ++__l{d}) {{")
+            # constexpr lane-loop bound + full-unroll hint: every tile dim has a
+            # compile-time-constant width, so the lane loop lowers to SIMD.
+            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
+            code_lines.append(f"{'    ' * d}DACE_UNROLL")
+            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
         # No C-style cast (user direction 2026-06-15): the destination tile's
         # element type drives the implicit conversion of the broadcast literal /
         # symbolic expression.
