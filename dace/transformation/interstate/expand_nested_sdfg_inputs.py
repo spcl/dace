@@ -227,6 +227,113 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
     # offset from iteration 1.
     _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims)
 
+    # Transform Subscript nodes during ``expr.replace(SubscriptClass, fn)``.
+    # SymPy invokes ``fn(*matched.args)`` (the matched expression's args
+    # are splatted positionally, NOT passed as the matched node itself),
+    # so the callback signature has to accept ``*args`` matching the
+    # Subscript's arity: ``args[0]`` is the subscripted container and
+    # ``args[1:]`` are the indices.
+    #
+    # These uncollapse callbacks + the interstate-edge / loop-head rewrites
+    # below run BEFORE the ``replace_dict`` rename and match ``inner_name``
+    # (the still-distinct connector array), NOT the post-rename ``outer_name``.
+    # This is the interstate-edge analogue of the memlet ordering fix above:
+    # when two inner connectors bind the SAME outer array at different offsets
+    # (spmv reads ``indptr[i]`` and ``indptr[i+1]`` -> two scalar connectors
+    # both widening to outer ``indptr``), matching ``outer_name`` AFTER the
+    # rename let a later connector re-collapse an assignment an earlier one had
+    # already rewritten (``row_start = indptr[i]`` -> ``indptr[i+1]``),
+    # conflating both row bounds to ``indptr[i+1]`` (size-0 reduction buffer).
+    def _uncollapse_subscript(*args):
+        base = args[0]
+        # Compare by NAME, not ``base == sympy.Symbol(inner_name)``: the
+        # subscript base is a ``dace.symbolic.symbol`` (DaCe's dtype-carrying
+        # ``sympy.Symbol`` subclass), which does NOT compare equal to a freshly
+        # built plain ``sympy.Symbol(inner_name)``. The old equality silently
+        # failed, so an interstate-edge gather index like
+        # ``edge_idx_index = edge_idx[0, 0, 0]`` was rebuilt verbatim instead of
+        # uncollapsed to ``edge_idx[jb, jc, 0]`` -- every lane then gathered the
+        # same element. (The dataflow-memlet path is unaffected: it rewrites
+        # subset ranges directly, never comparing symbols.)
+        if str(base) == inner_name:
+            new_indices = []
+            for idx, offset, collapsed in zip(args[1:], offset_dims, collapsed_dims):
+                if collapsed:
+                    new_indices.append(offset)
+                else:
+                    new_indices.append(idx)
+            return symbolic.Subscript(base, *new_indices)
+        # Not our target: rebuild the original Subscript verbatim.
+        return symbolic.Subscript(*args)
+
+    def _uncollapse_scalar(node):
+        # ``node`` is the actual ``inner_name`` symbol pulled from the
+        # expression (a ``dace.symbolic.symbol``); subscript it with the
+        # per-axis offsets directly. Building a plain ``sympy.Symbol`` and
+        # calling ``node.subs`` would not match the dace symbol (see
+        # :func:`_uncollapse_subscript`), leaving the reference uncollapsed.
+        return symbolic.Subscript(node, *offset_dims)
+
+    # Per user direction 2026-06-10: "On memlets we use subset 0,0,1 but on codeblocks we
+    # treat scalar as if it is a symbol." A true ``dace.data.Scalar`` source has no
+    # array dimension to subscript -- the bare symbol reference IS the correct C++
+    # form. Only wrap with ``[offset_dims]`` when the source is an Array (i.e. has a
+    # dimension to address).
+    outer_is_scalar = isinstance(desc, data.Scalar)
+
+    # Uncollapse dims (interstate edges).
+    for edge in inner_sdfg.edges():
+        assignments = edge.data.assignments
+        new_assignments = dict()
+        for var, str_expr in assignments.items():
+            symexpr = symbolic.pystr_to_symbolic(str_expr)
+            if inner_name in symbolic.arrays(symexpr):
+                new_assignments[var] = symbolic.symstr(symexpr.replace(symbolic.Subscript, _uncollapse_subscript))
+            elif inner_name in {str(s) for s in symexpr.free_symbols}:  # Could be scalar and fully collapsed
+                if outer_is_scalar:
+                    # Scalar source: keep the bare symbol reference; codegen handles it
+                    # the same way it would handle any other free symbol.
+                    new_assignments[var] = str_expr
+                else:
+                    matching_syms = {s for s in symexpr.free_symbols if str(s) == inner_name}
+                    assert len(matching_syms) == 1, \
+                        f"Expected exactly one matching symbol for {inner_name} in {symexpr}, found {matching_syms}"
+                    sym = matching_syms.pop()
+                    new_assignments[var] = symbolic.symstr(symexpr.subs(sym, _uncollapse_scalar(sym)))
+            else:
+                new_assignments[var] = str_expr
+        edge.data.assignments = new_assignments
+
+    # Uncollapse dims in code blocks (loop heads). LoopRegion's loop-head
+    # CodeBlocks are ``loop_condition``, ``update_statement`` (per-iter
+    # ``i = i + 1`` style update -- not a pure expression), and
+    # ``init_statement`` (``i = 0`` style). Each may be ``None`` when
+    # omitted, and assignment-style statements aren't parseable by
+    # :func:`pystr_to_symbolic`; rewrite when parseable, leave alone
+    # otherwise (those statements don't reference connector arrays).
+    def _rewrite_codeblock(cb):
+        if cb is None:
+            return cb
+        try:
+            sym = symbolic.pystr_to_symbolic(cb.as_string)
+        except Exception:
+            return cb
+        return CodeBlock(symbolic.symstr(sym.replace(symbolic.Subscript, _uncollapse_subscript)))
+
+    for cfg in inner_sdfg.all_control_flow_regions():
+        if isinstance(cfg, LoopRegion):
+            cfg.loop_condition = _rewrite_codeblock(cfg.loop_condition)
+            cfg.update_statement = _rewrite_codeblock(cfg.update_statement)
+            cfg.init_statement = _rewrite_codeblock(cfg.init_statement)
+    # Uncollapse dims in conditional-branch heads.
+    for cfg in inner_sdfg.all_control_flow_blocks():
+        if isinstance(cfg, ConditionalBlock):
+            for i, (cond, body) in enumerate(cfg.branches):
+                cfg.branches[i] = (CodeBlock(
+                    symbolic.symstr(
+                        symbolic.pystr_to_symbolic(cond.as_string).replace(symbolic.Subscript,
+                                                                           _uncollapse_subscript))), body)
+
     inner_sdfg.replace_dict({inner_name: outer_name})
 
     # Replace connectors. When the rename target ``outer_name`` already has
@@ -275,104 +382,10 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
         if outer_name not in nsdfg_node.out_connectors:
             nsdfg_node.add_out_connector(outer_name, force=True)
 
-    # (Inner memlets were already rewritten above with the per-inner_name
-    # offsets, BEFORE replace_dict, to avoid clobbering previous iterations.)
-
-    # Transform Subscript nodes during ``expr.replace(SubscriptClass, fn)``.
-    # SymPy invokes ``fn(*matched.args)`` (the matched expression's args
-    # are splatted positionally, NOT passed as the matched node itself),
-    # so the callback signature has to accept ``*args`` matching the
-    # Subscript's arity: ``args[0]`` is the subscripted container and
-    # ``args[1:]`` are the indices.
-    def _uncollapse_subscript(*args):
-        base = args[0]
-        # Compare by NAME, not ``base == sympy.Symbol(outer_name)``: the
-        # subscript base is a ``dace.symbolic.symbol`` (DaCe's dtype-carrying
-        # ``sympy.Symbol`` subclass), which does NOT compare equal to a freshly
-        # built plain ``sympy.Symbol(outer_name)``. The old equality silently
-        # failed, so an interstate-edge gather index like
-        # ``edge_idx_index = edge_idx[0, 0, 0]`` was rebuilt verbatim instead of
-        # uncollapsed to ``edge_idx[jb, jc, 0]`` -- every lane then gathered the
-        # same element. (The dataflow-memlet path is unaffected: it rewrites
-        # subset ranges directly, never comparing symbols.)
-        if str(base) == outer_name:
-            new_indices = []
-            for idx, offset, collapsed in zip(args[1:], offset_dims, collapsed_dims):
-                if collapsed:
-                    new_indices.append(offset)
-                else:
-                    new_indices.append(idx)
-            return symbolic.Subscript(base, *new_indices)
-        # Not our target: rebuild the original Subscript verbatim.
-        return symbolic.Subscript(*args)
-
-    def _uncollapse_scalar(node):
-        # ``node`` is the actual ``outer_name`` symbol pulled from the
-        # expression (a ``dace.symbolic.symbol``); subscript it with the
-        # per-axis offsets directly. Building a plain ``sympy.Symbol`` and
-        # calling ``node.subs`` would not match the dace symbol (see
-        # :func:`_uncollapse_subscript`), leaving the reference uncollapsed.
-        return symbolic.Subscript(node, *offset_dims)
-
-    # Per user direction 2026-06-10: "On memlets we use subset 0,0,1 but on codeblocks we
-    # treat scalar as if it is a symbol." A true ``dace.data.Scalar`` source has no
-    # array dimension to subscript -- the bare symbol reference IS the correct C++
-    # form. Only wrap with ``[offset_dims]`` when the source is an Array (i.e. has a
-    # dimension to address).
-    outer_is_scalar = isinstance(desc, data.Scalar)
-
-    # Uncollapse dims (interstate edges).
-    for edge in inner_sdfg.edges():
-        assignments = edge.data.assignments
-        new_assignments = dict()
-        for var, str_expr in assignments.items():
-            symexpr = symbolic.pystr_to_symbolic(str_expr)
-            if outer_name in symbolic.arrays(symexpr):
-                new_assignments[var] = symbolic.symstr(symexpr.replace(symbolic.Subscript, _uncollapse_subscript))
-            elif outer_name in {str(s) for s in symexpr.free_symbols}:  # Could be scalar and fully collapsed
-                if outer_is_scalar:
-                    # Scalar source: keep the bare symbol reference; codegen handles it
-                    # the same way it would handle any other free symbol.
-                    new_assignments[var] = str_expr
-                else:
-                    matching_syms = {s for s in symexpr.free_symbols if str(s) == outer_name}
-                    assert len(matching_syms) == 1, \
-                        f"Expected exactly one matching symbol for {outer_name} in {symexpr}, found {matching_syms}"
-                    sym = matching_syms.pop()
-                    new_assignments[var] = symbolic.symstr(symexpr.subs(sym, _uncollapse_scalar(sym)))
-            else:
-                new_assignments[var] = str_expr
-        edge.data.assignments = new_assignments
-
-    # Uncollapse dims in code blocks (loop heads). LoopRegion's loop-head
-    # CodeBlocks are ``loop_condition``, ``update_statement`` (per-iter
-    # ``i = i + 1`` style update -- not a pure expression), and
-    # ``init_statement`` (``i = 0`` style). Each may be ``None`` when
-    # omitted, and assignment-style statements aren't parseable by
-    # :func:`pystr_to_symbolic`; rewrite when parseable, leave alone
-    # otherwise (those statements don't reference connector arrays).
-    def _rewrite_codeblock(cb):
-        if cb is None:
-            return cb
-        try:
-            sym = symbolic.pystr_to_symbolic(cb.as_string)
-        except Exception:
-            return cb
-        return CodeBlock(symbolic.symstr(sym.replace(symbolic.Subscript, _uncollapse_subscript)))
-
-    for cfg in inner_sdfg.all_control_flow_regions():
-        if isinstance(cfg, LoopRegion):
-            cfg.loop_condition = _rewrite_codeblock(cfg.loop_condition)
-            cfg.update_statement = _rewrite_codeblock(cfg.update_statement)
-            cfg.init_statement = _rewrite_codeblock(cfg.init_statement)
-    # Uncollapse dims in conditional-branch heads.
-    for cfg in inner_sdfg.all_control_flow_blocks():
-        if isinstance(cfg, ConditionalBlock):
-            for i, (cond, body) in enumerate(cfg.branches):
-                cfg.branches[i] = (CodeBlock(
-                    symbolic.symstr(
-                        symbolic.pystr_to_symbolic(cond.as_string).replace(symbolic.Subscript,
-                                                                           _uncollapse_subscript))), body)
+    # (Inner memlets, interstate-edge assignments and loop/branch heads were all
+    # rewritten above with the per-inner_name offsets, BEFORE replace_dict, to
+    # avoid clobbering an earlier connector's rewrite when two connectors bind
+    # the same outer array.)
 
 
 class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
