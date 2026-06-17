@@ -36,7 +36,12 @@ jobs:
         sudo dpkg-reconfigure man-db
         # Install dependencies
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
+        # g++-aarch64-linux-gnu: aarch64 cross C++ toolchain (driver + libstdc++/glibc
+        # sysroot) for the NEON/SVE -fsyntax-only intrinsic-header tests in
+        # tests/passes/vectorization/intrinsics/test_horizontal_reduce_header.py. Without
+        # it those tests skip (the host is x86_64; clang alone can't supply an aarch64
+        # standard-library sysroot).
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools g++-aarch64-linux-gnu
         pip install flake8 pytest-xdist coverage
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov

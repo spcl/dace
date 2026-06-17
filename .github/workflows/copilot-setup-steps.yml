@@ -15,7 +15,10 @@ jobs:
       - name: Set up C++ compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ build-essential
+          # g++-aarch64-linux-gnu enables the NEON/SVE -fsyntax-only intrinsic-header
+          # tests (tests/passes/vectorization/intrinsics/test_horizontal_reduce_header.py)
+          # to run instead of skip in the agent environment.
+          sudo apt-get install -y g++ build-essential g++-aarch64-linux-gnu
 
       - name: Set up CMake
         run: |
