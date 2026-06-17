@@ -27,6 +27,17 @@ os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
 # explicit override.
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+# Steer OpenMPI off UCX entirely before ``mpi4py`` is imported (dace's frontend
+# does ``from mpi4py import MPI`` lazily inside ``to_sdfg``, which auto-calls
+# ``MPI_Init``). On hosts where UCX bring-up stalls -- e.g. a wedged RDMA device
+# or the VFS/inotify pressure above -- ``MPI_Init`` can block forever. The
+# ``ob1`` point-to-point messaging layer over the ``self`` (loopback) and
+# ``vader`` (shared-memory) BTLs is sufficient for the single-node test runs and
+# avoids the UCX path completely. ``setdefault`` keeps any externally-provided
+# MPI configuration.
+os.environ.setdefault("OMPI_MCA_pml", "ob1")
+os.environ.setdefault("OMPI_MCA_btl", "self,vader")
+
 import pytest
 
 
