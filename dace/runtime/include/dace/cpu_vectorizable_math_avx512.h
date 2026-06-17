@@ -30,7 +30,7 @@
 // --------------------------- vector_mult ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_mult(T* __restrict__ c, const T* __restrict__ a,
+static inline void vector_mult(T* __restrict__ c, const T* __restrict__ a,
                         const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -71,7 +71,7 @@ inline void vector_mult(T* __restrict__ c, const T* __restrict__ a,
 // --------------------------- vector_mult_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_mult_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_mult_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                  const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -112,7 +112,7 @@ inline void vector_mult_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_add ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_add(T* __restrict__ c, const T* __restrict__ a,
+static inline void vector_add(T* __restrict__ c, const T* __restrict__ a,
                        const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -153,7 +153,7 @@ inline void vector_add(T* __restrict__ c, const T* __restrict__ a,
 // --------------------------- vector_add_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                 const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -196,7 +196,7 @@ inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // (RMW). Built on _mm512_mask_storeu_{ps,pd} which writes only active lanes.
 
 template <typename T, int vector_width>
-inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ a,
                               const T* __restrict__ b,
                               const bool* __restrict__ mask) {
 #if defined(__AVX512F__)
@@ -243,7 +243,7 @@ inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ a,
 // ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_add_w_scalar_masked(T* __restrict__ out,
+static inline void vector_add_w_scalar_masked(T* __restrict__ out,
                                        const T* __restrict__ a,
                                        const T constant,
                                        const bool* __restrict__ mask) {
@@ -290,7 +290,7 @@ inline void vector_add_w_scalar_masked(T* __restrict__ out,
 // --------------------------- vector_sub ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_sub(T* __restrict__ c, const T* __restrict__ a,
+static inline void vector_sub(T* __restrict__ c, const T* __restrict__ a,
                        const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -331,7 +331,7 @@ inline void vector_sub(T* __restrict__ c, const T* __restrict__ a,
 // --------------------------- vector_sub_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_sub_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_sub_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                 const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -372,7 +372,7 @@ inline void vector_sub_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_sub_w_scalar_c ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_sub_w_scalar_c(T* __restrict__ out, const T constant,
+static inline void vector_sub_w_scalar_c(T* __restrict__ out, const T constant,
                                   const T* __restrict__ a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -413,7 +413,7 @@ inline void vector_sub_w_scalar_c(T* __restrict__ out, const T constant,
 // --------------------------- vector_div ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_div(T* __restrict__ c, const T* __restrict__ a,
+static inline void vector_div(T* __restrict__ c, const T* __restrict__ a,
                        const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -454,7 +454,7 @@ inline void vector_div(T* __restrict__ c, const T* __restrict__ a,
 // --------------------------- vector_div_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_div_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_div_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                 const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -495,7 +495,7 @@ inline void vector_div_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_div_w_scalar_c ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_div_w_scalar_c(T* __restrict__ out, const T constant,
+static inline void vector_div_w_scalar_c(T* __restrict__ out, const T constant,
                                   const T* __restrict__ a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -536,7 +536,7 @@ inline void vector_div_w_scalar_c(T* __restrict__ out, const T constant,
 // --------------------------- vector_copy ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_copy(T* __restrict__ dst, const T* __restrict__ src) {
+static inline void vector_copy(T* __restrict__ dst, const T* __restrict__ src) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
     constexpr int W = 16;
@@ -572,7 +572,7 @@ inline void vector_copy(T* __restrict__ dst, const T* __restrict__ src) {
 // --------------------------- vector_copy_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_copy_w_scalar(T* __restrict__ dst, const T a) {
+static inline void vector_copy_w_scalar(T* __restrict__ dst, const T a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
     constexpr int W = 16;
@@ -608,7 +608,7 @@ inline void vector_copy_w_scalar(T* __restrict__ dst, const T a) {
 // --------------------------- vector_min ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_min(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_min(T* __restrict__ out, const T* __restrict__ a,
                        const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -649,7 +649,7 @@ inline void vector_min(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_min_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_min_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_min_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                 const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -690,7 +690,7 @@ inline void vector_min_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_max ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_max(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_max(T* __restrict__ out, const T* __restrict__ a,
                        const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -731,7 +731,7 @@ inline void vector_max(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_max_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                 const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -772,7 +772,7 @@ inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_gt ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_gt(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_gt(T* __restrict__ out, const T* __restrict__ a,
                       const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -819,7 +819,7 @@ inline void vector_gt(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_gt_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_gt_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_gt_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -866,7 +866,7 @@ inline void vector_gt_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_gt_w_scalar_c ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_gt_w_scalar_c(T* __restrict__ out, const T constant,
+static inline void vector_gt_w_scalar_c(T* __restrict__ out, const T constant,
                                  const T* __restrict__ a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -913,7 +913,7 @@ inline void vector_gt_w_scalar_c(T* __restrict__ out, const T constant,
 // --------------------------- vector_lt ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_lt(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_lt(T* __restrict__ out, const T* __restrict__ a,
                       const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -960,7 +960,7 @@ inline void vector_lt(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_lt_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_lt_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_lt_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1007,7 +1007,7 @@ inline void vector_lt_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_lt_w_scalar_c ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_lt_w_scalar_c(T* __restrict__ out, const T constant,
+static inline void vector_lt_w_scalar_c(T* __restrict__ out, const T constant,
                                  const T* __restrict__ a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1054,7 +1054,7 @@ inline void vector_lt_w_scalar_c(T* __restrict__ out, const T constant,
 // --------------------------- vector_ge ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_ge(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_ge(T* __restrict__ out, const T* __restrict__ a,
                       const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1101,7 +1101,7 @@ inline void vector_ge(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_ge_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_ge_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_ge_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1148,7 +1148,7 @@ inline void vector_ge_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_ge_w_scalar_c ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_ge_w_scalar_c(T* __restrict__ out, const T constant,
+static inline void vector_ge_w_scalar_c(T* __restrict__ out, const T constant,
                                  const T* __restrict__ a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1195,7 +1195,7 @@ inline void vector_ge_w_scalar_c(T* __restrict__ out, const T constant,
 // --------------------------- vector_le ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_le(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_le(T* __restrict__ out, const T* __restrict__ a,
                       const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1242,7 +1242,7 @@ inline void vector_le(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_le_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_le_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_le_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1289,7 +1289,7 @@ inline void vector_le_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_le_w_scalar_c ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_le_w_scalar_c(T* __restrict__ out, const T constant,
+static inline void vector_le_w_scalar_c(T* __restrict__ out, const T constant,
                                  const T* __restrict__ a) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1336,7 +1336,7 @@ inline void vector_le_w_scalar_c(T* __restrict__ out, const T constant,
 // --------------------------- vector_eq ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_eq(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_eq(T* __restrict__ out, const T* __restrict__ a,
                       const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1383,7 +1383,7 @@ inline void vector_eq(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_eq_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_eq_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_eq_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1430,7 +1430,7 @@ inline void vector_eq_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_ne ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_ne(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_ne(T* __restrict__ out, const T* __restrict__ a,
                       const T* __restrict__ b) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1477,7 +1477,7 @@ inline void vector_ne(T* __restrict__ out, const T* __restrict__ a,
 // --------------------------- vector_ne_w_scalar ---------------------------
 
 template <typename T, int vector_width>
-inline void vector_ne_w_scalar(T* __restrict__ out, const T* __restrict__ a,
+static inline void vector_ne_w_scalar(T* __restrict__ out, const T* __restrict__ a,
                                const T constant) {
 #if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
@@ -1522,21 +1522,21 @@ inline void vector_ne_w_scalar(T* __restrict__ out, const T* __restrict__ a,
 }
 
 template <typename T, int vector_width>
-inline void vector_exp(T* __restrict__ out, const T* __restrict__ a) {
+static inline void vector_exp(T* __restrict__ out, const T* __restrict__ a) {
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) {
     out[i] = std::exp(a[i]);
   }
 }
 
 template <typename T, int vector_width>
-inline void vector_log(T* __restrict__ out, const T* __restrict__ a) {
+static inline void vector_log(T* __restrict__ out, const T* __restrict__ a) {
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) {
     out[i] = std::log(a[i]);
   }
 }
 
 template <typename T, int vector_width, typename CondT = bool>
-inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond,
+static inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond,
                           const T* __restrict__ t, const T* __restrict__ e) {
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) {
     out[i] = cond[i] ? t[i] : e[i];
@@ -1764,7 +1764,7 @@ static inline void strided_store_masked(const T* __restrict__ A,
 // remainder when ``vector_width`` is not a multiple of the lane count.
 #define _DACE_AVX512_HRED(NAME, MM_PD, RED_PD, MM_PS, RED_PS, SCALAR)         \
   template <typename T, int vector_width>                                    \
-  inline typename std::enable_if<std::is_same<T, double>::value, T>::type     \
+  static inline typename std::enable_if<std::is_same<T, double>::value, T>::type     \
   horizontal_reduce_##NAME(const T* __restrict__ a) {                        \
     if (vector_width < 8) return _dace_horizontal_tree_##NAME<T, vector_width>(a); \
     __m512d acc = _mm512_loadu_pd(a);                                        \
@@ -1775,7 +1775,7 @@ static inline void strided_store_masked(const T* __restrict__ A,
     return s;                                                                \
   }                                                                          \
   template <typename T, int vector_width>                                    \
-  inline typename std::enable_if<std::is_same<T, float>::value, T>::type      \
+  static inline typename std::enable_if<std::is_same<T, float>::value, T>::type      \
   horizontal_reduce_##NAME(const T* __restrict__ a) {                        \
     if (vector_width < 16) return _dace_horizontal_tree_##NAME<T, vector_width>(a); \
     __m512 acc = _mm512_loadu_ps(a);                                         \
@@ -1786,7 +1786,7 @@ static inline void strided_store_masked(const T* __restrict__ A,
     return s;                                                                \
   }                                                                          \
   template <typename T, int vector_width>                                    \
-  inline typename std::enable_if<!std::is_same<T, double>::value &&           \
+  static inline typename std::enable_if<!std::is_same<T, double>::value &&           \
                                      !std::is_same<T, float>::value,          \
                                  T>::type                                     \
   horizontal_reduce_##NAME(const T* __restrict__ a) {                        \
@@ -1816,14 +1816,14 @@ _DACE_AVX512_HRED(min, _mm512_min_pd, _mm512_reduce_min_pd, _mm512_min_ps,
 // Bitwise reductions have no clean one-shot AVX-512 intrinsic across
 // the integer widths the emitter uses; delegate to the portable tree.
 template <typename T, int vector_width>
-inline T horizontal_reduce_band(const T* __restrict__ a) {
+static inline T horizontal_reduce_band(const T* __restrict__ a) {
   return _dace_horizontal_tree_band<T, vector_width>(a);
 }
 template <typename T, int vector_width>
-inline T horizontal_reduce_bor(const T* __restrict__ a) {
+static inline T horizontal_reduce_bor(const T* __restrict__ a) {
   return _dace_horizontal_tree_bor<T, vector_width>(a);
 }
 template <typename T, int vector_width>
-inline T horizontal_reduce_bxor(const T* __restrict__ a) {
+static inline T horizontal_reduce_bxor(const T* __restrict__ a) {
   return _dace_horizontal_tree_bxor<T, vector_width>(a);
 }
