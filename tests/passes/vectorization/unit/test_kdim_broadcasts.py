@@ -51,15 +51,9 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     collapsing them into AN -> AN would silently drop the source-side
     coordinates). They are semantically fine and lower to a one-element
     copy at codegen, so the K-dim tile-only contract is preserved as
-    "no NON-assign raw tasklets" rather than "zero tasklets total".
-
-    The runtime trip-guard tasklet (``tile_runtime_*``, emitted for SYMBOLIC
-    tile dims to ``__builtin_trap`` on a too-small trip -- see MarkTileDims) is
-    also excluded: it is control, not a compute residual, so it does not break
-    the tile-only contract."""
+    "no NON-assign raw tasklets" rather than "zero tasklets total"."""
     return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
-               and not n.label.startswith("tile_runtime"))
+               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
 
 
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:
