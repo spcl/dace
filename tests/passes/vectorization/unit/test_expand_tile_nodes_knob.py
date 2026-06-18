@@ -23,7 +23,8 @@ import dace
 import pytest
 
 from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim, )
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
+    VectorizeCPUMultiDim, )
 
 _TILE_LIB_NODE_TYPES = (
     TileBinop,

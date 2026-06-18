@@ -3,7 +3,6 @@ import copy
 
 import dace
 import numpy as np
-import pytest
 
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_expansion import MapExpansion
@@ -138,10 +137,8 @@ NPROMA = dace.symbol('NPROMA')
 
 
 @dace.program
-def _icon_zekinh_gather_kernel(e_bln: dace.float64[NB, 3, NPROMA],
-                               edge_idx: dace.int32[NB, NPROMA, 3],
-                               edge_blk: dace.int32[NB, NPROMA, 3],
-                               z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+def _icon_zekinh_gather_kernel(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA, 3],
+                               edge_blk: dace.int32[NB, NPROMA, 3], z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
                                z_ekinh: dace.float64[NB, NLEV, NPROMA]):
     """Minimal ICON velocity_zekinh-style data-dependent gather kernel.
 
@@ -153,8 +150,7 @@ def _icon_zekinh_gather_kernel(e_bln: dace.float64[NB, 3, NPROMA],
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] *
-                                       z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]])
+                z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]])
 
 
 def test_widens_icon_zekinh_gather_inmap_nsdfg():

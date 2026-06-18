@@ -683,7 +683,9 @@ class InsertTileLoadStore(ppl.Pass):
                         const_sub = an_side_subset(s_edges[0], an, inner_sdfg)
                     except Exception:  # noqa: BLE001 -- exotic edge: fall back to descriptor-shape default
                         const_sub = None
-                    bridge_name = stage_constant_access(inner_state, an, name_hint=f"{an.data}_const",
+                    bridge_name = stage_constant_access(inner_state,
+                                                        an,
+                                                        name_hint=f"{an.data}_const",
                                                         src_subset=const_sub)
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, s_edges, iter_vars=iter_vars)
                     staged += 1

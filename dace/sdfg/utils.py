@@ -1706,9 +1706,8 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     # one bcast keeps the collective sequence identical on every rank.
     error, folder = comm.bcast((error, folder), root=0)
     if error is not None:
-        raise RuntimeError(
-            "distributed_compile: rank 0 compilation failed; all ranks abort "
-            f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
+        raise RuntimeError("distributed_compile: rank 0 compilation failed; all ranks abort "
+                           f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
 
     # Loads compiled SDFG.
     if rank > 0:

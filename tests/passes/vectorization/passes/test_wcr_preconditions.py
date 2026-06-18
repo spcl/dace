@@ -16,7 +16,6 @@ Covers the three pass extensions made for in-place ``a[i] = a[i] + b[i]``:
 Plus an e2e in-place RMW through both vectorizers (legacy + tile-node).
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.memlet import Memlet

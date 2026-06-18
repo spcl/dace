@@ -87,10 +87,7 @@ def _build_replicate_load_sdfg(src_shape, widths, replicate_factor_per_dim):
     state = sdfg.add_state("main")
     src_node = state.add_access("SRC")
     dst_node = state.add_access("DST")
-    node = TileLoad(name="tl_rep",
-                    widths=widths,
-                    has_mask=False,
-                    replicate_factor_per_dim=replicate_factor_per_dim)
+    node = TileLoad(name="tl_rep", widths=widths, has_mask=False, replicate_factor_per_dim=replicate_factor_per_dim)
     state.add_node(node)
     src_subset = ",".join(f"0:{s}" for s in src_shape)
     dst_subset = ",".join(f"0:{w}" for w in widths)

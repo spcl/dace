@@ -272,8 +272,8 @@ def logical_binops_are_bool(scope) -> Optional[str]:
             if not isinstance(node, TileBinop) or node.op not in ("&&", "||"):
                 continue
             for conn in ("_a", "_b", "_c"):
-                edges = ([e for e in state.in_edges(node) if e.dst_conn == conn]
-                         + [e for e in state.out_edges(node) if e.src_conn == conn])
+                edges = ([e for e in state.in_edges(node) if e.dst_conn == conn] +
+                         [e for e in state.out_edges(node) if e.src_conn == conn])
                 for e in edges:
                     if e.data is None or e.data.data is None:
                         continue
@@ -431,7 +431,7 @@ def _iter_states(scope):
 def _tile_tagged_bodies(sdfg: SDFG, K: int):
     """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG."""
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                        TILE_K1_TAIL_MARKER)
+                                                                                       TILE_K1_TAIL_MARKER)
     from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():

@@ -50,7 +50,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import dace
 from dace import data as dd
 from dace import properties, subsets
-from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState

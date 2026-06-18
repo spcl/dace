@@ -40,9 +40,9 @@ from dace import dtypes
 from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             no_duplicate_connector_edges,
-                                                                             no_isolated_access_nodes,
-                                                                             no_memlet_dim_mismatch)
+                                                                            no_duplicate_connector_edges,
+                                                                            no_isolated_access_nodes,
+                                                                            no_memlet_dim_mismatch)
 
 #: Storage type used for the staged scalars (kept in registers, never spilled).
 _STAGED_SCALAR_STORAGE = dtypes.StorageType.Register
@@ -289,9 +289,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 continue
             if not consumers:
                 if owning_entry is not None:
-                    wsubsets = {
-                        self._subset_key(self._array_side_subset(e, node.data)) for e in producers
-                    }
+                    wsubsets = {self._subset_key(self._array_side_subset(e, node.data)) for e in producers}
                     if len(wsubsets) < 2:
                         continue
                 elif not self._read_in_other_state(state, node.data):

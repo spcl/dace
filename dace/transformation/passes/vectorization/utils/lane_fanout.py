@@ -291,7 +291,10 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
             # and the stride as a template arg too when it is a compile-time
             # constant (runtime arg only for a genuinely symbolic stride).
             fn = "strided_load" if direction in ("gather", "load") else "strided_store"
-            intrinsic_code = render_strided_call(fn, dtype_cpp, vector_length, fixed_increment,
+            intrinsic_code = render_strided_call(fn,
+                                                 dtype_cpp,
+                                                 vector_length,
+                                                 fixed_increment,
                                                  masked=iter_mask_name is not None)
             tasklet_inputs = {"_in", "_mask"} if iter_mask_name is not None else {"_in"}
             t1 = state.add_tasklet(intrinsic_tasklet_name, tasklet_inputs, {"_out"}, intrinsic_code,
@@ -757,7 +760,10 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                 # Lane count is always a template arg; stride is a template arg
                 # when constant, runtime arg only when symbolic.
                 fn = "strided_load" if direction in ("gather", "load") else "strided_store"
-                intrinsic_code = render_strided_call(fn, dtype_cpp, vector_length, fixed_increment,
+                intrinsic_code = render_strided_call(fn,
+                                                     dtype_cpp,
+                                                     vector_length,
+                                                     fixed_increment,
                                                      masked=iter_mask_name is not None)
 
             indirect = _single_indirect_neighbour(state, sorted_tasklets, is_pack_in_side)

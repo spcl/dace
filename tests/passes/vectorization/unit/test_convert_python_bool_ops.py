@@ -27,12 +27,14 @@ def _tasklet(in_conns, out_conn, code):
     return state.add_tasklet("tk", set(in_conns), {out_conn}, code)
 
 
-@pytest.mark.parametrize("body,expected", [
-    ("_o = (_c_0 or _c_1)", "_o = (_c_0 || _c_1)"),
-    ("_o = _c_0 and _c_1", "_o = _c_0 && _c_1"),
-    ("_o = (not _c_0)", "_o = (not _c_0)"),  # not is unary; left for _detect_unop
-    ("_o = horizontal_or", "_o = horizontal_or"),  # word-boundary: substring 'or' untouched
-])
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("_o = (_c_0 or _c_1)", "_o = (_c_0 || _c_1)"),
+        ("_o = _c_0 and _c_1", "_o = _c_0 && _c_1"),
+        ("_o = (not _c_0)", "_o = (not _c_0)"),  # not is unary; left for _detect_unop
+        ("_o = horizontal_or", "_o = horizontal_or"),  # word-boundary: substring 'or' untouched
+    ])
 def test_normalize_python_tasklet_body(body, expected):
     assert _normalize_python_tasklet_body(body) == expected
 

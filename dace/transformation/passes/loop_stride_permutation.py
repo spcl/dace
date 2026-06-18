@@ -47,9 +47,9 @@ from typing import Dict, List, Optional, Set, Tuple
 import sympy
 
 import dace
-from dace import SDFG, properties
+from dace import SDFG
 from dace import data as dt
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_to_map import LoopToMap

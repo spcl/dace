@@ -1015,8 +1015,8 @@ def loop_to_map_overlap_seq(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 @dace.program
 def loop_to_map_threshold_gather(out: dace.float64[LEN_2D, LEN_2D], x: dace.float64[LEN_2D, LEN_2D],
-                                 y: dace.float64[LEN_2D, LEN_2D], w: dace.float64[LEN_2D, LEN_2D],
-                                 idx: dace.int64[LEN_2D]):
+                                 y: dace.float64[LEN_2D, LEN_2D], w: dace.float64[LEN_2D,
+                                                                                  LEN_2D], idx: dace.int64[LEN_2D]):
     """cloudsc-style column physics: for each ``(i, k)`` a threshold on
     GATHERED data ``w[idx[i], k]`` selects which elementwise update writes
     ``out[i, k]``. Every ``(i, k)`` owns a distinct output cell, so
@@ -1133,8 +1133,17 @@ def collect():
 #: the cubic 3D arrays stay small; tile/offset symbols are small but keep every
 #: kernel's loop ranges in bounds.
 SIZES = {
-    "LEN_1D": 128, "LEN_2D": 32, "LEN_3D": 16, "ITERATIONS": 4,
-    "S": 4, "SSYM": 3, "K": 3, "M": 4, "T": 4, "T1": 8, "T2": 4,
+    "LEN_1D": 128,
+    "LEN_2D": 32,
+    "LEN_3D": 16,
+    "ITERATIONS": 4,
+    "S": 4,
+    "SSYM": 3,
+    "K": 3,
+    "M": 4,
+    "T": 4,
+    "T1": 8,
+    "T2": 4,
     # The reroll kernels are valid as written, but a non-multiple-of-7 tail triggers a
     # *separate, unfixed* canonicalize reroll-remainder bug (TODO). Bind their dedicated
     # length to a multiple of 7 so the suite isn't blocked on that fix; revisit once it lands.

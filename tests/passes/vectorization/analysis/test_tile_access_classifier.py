@@ -7,7 +7,6 @@ function; tests construct ``Range`` objects directly and assert on the
 returned ``TileAccess`` record.
 """
 import pytest
-import sympy
 
 import dace
 from dace import symbolic

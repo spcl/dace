@@ -34,7 +34,7 @@ the identity reproduces the original ``init (op) fold`` semantics).
 """
 import ast
 import copy
-from typing import Optional, Tuple
+from typing import Optional
 
 import dace
 from dace import dtypes, nodes, symbolic

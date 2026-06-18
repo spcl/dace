@@ -224,32 +224,56 @@ STORAGEDEFAULT_SCHEDULE = {
 
 # Translation of types to C types
 _CTYPES = {
-    None: "void",
-    int: "int",
-    float: "float",
-    complex: "dace::complex64",
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "int8_t",
-    numpy.int16: "int16_t",
-    numpy.int32: "int32_t",
-    numpy.intc: "int",
-    numpy.int64: "int64_t",
-    numpy.uint8: "uint8_t",
-    numpy.uint16: "uint16_t",
-    numpy.uint32: "uint32_t",
-    numpy.uintc: "dace::uint",
-    numpy.uint64: "uint64_t",
-    numpy.float16: "dace::float16",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "dace::complex64",
-    numpy.complex128: "dace::complex128",
+    None:
+    "void",
+    int:
+    "int",
+    float:
+    "float",
+    complex:
+    "dace::complex64",
+    bool:
+    "bool",
+    numpy.bool_:
+    "bool",
+    numpy.int8:
+    "int8_t",
+    numpy.int16:
+    "int16_t",
+    numpy.int32:
+    "int32_t",
+    numpy.intc:
+    "int",
+    numpy.int64:
+    "int64_t",
+    numpy.uint8:
+    "uint8_t",
+    numpy.uint16:
+    "uint16_t",
+    numpy.uint32:
+    "uint32_t",
+    numpy.uintc:
+    "dace::uint",
+    numpy.uint64:
+    "uint64_t",
+    numpy.float16:
+    "dace::float16",
+    numpy.float32:
+    "float",
+    numpy.float64:
+    "double",
+    numpy.complex64:
+    "dace::complex64",
+    numpy.complex128:
+    "dace::complex128",
     # Low-precision types (runtime C++ headers not yet implemented -- see
     # ``dace::bfloat16`` / ``dace::float8_e4m3`` / ``dace::float8_e5m2``).
-    ml_dtypes.bfloat16: "dace::bfloat16",
-    ml_dtypes.float8_e4m3fn: "dace::float8_e4m3fn",
-    ml_dtypes.float8_e5m2: "dace::float8_e5m2",
+    ml_dtypes.bfloat16:
+    "dace::bfloat16",
+    ml_dtypes.float8_e4m3fn:
+    "dace::float8_e4m3fn",
+    ml_dtypes.float8_e5m2:
+    "dace::float8_e5m2",
 }
 
 # Translation of types to ctypes types

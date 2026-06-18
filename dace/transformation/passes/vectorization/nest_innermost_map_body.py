@@ -15,8 +15,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 
 
 @properties.make_properties

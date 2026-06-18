@@ -13,7 +13,6 @@ import pytest
 import dace
 from dace import dtypes
 
-
 LOWP = [
     ("bfloat16", ml_dtypes.bfloat16, 2, "dace::bfloat16"),
     ("float8_e4m3fn", ml_dtypes.float8_e4m3fn, 1, "dace::float8_e4m3fn"),

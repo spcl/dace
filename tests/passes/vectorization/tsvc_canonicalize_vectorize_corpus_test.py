@@ -19,7 +19,6 @@ config.
 Known multidim gaps (legacy passes them) are marked ``xfail`` with the tracking
 reason -- see ``_MULTIDIM_XFAIL``.
 """
-import copy
 
 import numpy as np
 import pytest
@@ -89,8 +88,7 @@ def test_tsvc_canonicalize_then_legacy_vectorize(idx, name):
     """Canonicalize -> verify -> legacy VectorizeCPU (round-robin knob) -> verify."""
     kernel, sdfg, arrays, ck, ref = _canonicalized(name)
     knobs = _LEGACY_KNOBS[idx % len(_LEGACY_KNOBS)]
-    _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref,
-                         VectorizeCPU(8, fail_on_unvectorizable=False, **knobs))
+    _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, VectorizeCPU(8, fail_on_unvectorizable=False, **knobs))
 
 
 @pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
@@ -107,7 +105,9 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # tile pipeline (it aborts) -- so such kernels fall back to K=1.
     if map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
-        vec = VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR", remainder_strategy="masked_tail",
+        vec = VectorizeCPUMultiDim(widths=(8, 8),
+                                   target_isa="SCALAR",
+                                   remainder_strategy="masked_tail",
                                    branch_mode="merge")
     else:
         vec = VectorizeCPUMultiDim(widths=(8, ), **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)])

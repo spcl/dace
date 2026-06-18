@@ -16,9 +16,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                             no_memlet_dim_mismatch,
-                                                                             tile_main_map_step_is_widths)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
+                                                                            tile_main_map_step_is_widths)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 

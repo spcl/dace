@@ -54,7 +54,6 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
     LowerInterstateConditionalAssignmentsToTasklets, )
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars, )
-from dace.transformation.passes.vectorization.tile_carried_reduction import TileCarriedScalarReduction
 from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
 # Unified WidenAccesses pass (replaces InferBodyTransientShapes + WidenScalarsToTiles
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
@@ -222,7 +221,8 @@ def _validate_knobs(widths: Tuple[int, ...], target_isa: str, remainder_strategy
         (target_isa in _VALID_ISAS, f"target_isa {target_isa!r} not in {_VALID_ISAS}"),
         (all(_is_power_of_two(w) for w in widths), f"every width must be a power of 2; got {widths!r}"),
         (target_isa != "AVX512" or last_w % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}"),
-        (target_isa != "CUDA" or last_w % 2 == 0, f"CUDA (half2 FP16x2) requires widths[-1] % 2 == 0; got widths[-1]={last_w}"),
+        (target_isa != "CUDA"
+         or last_w % 2 == 0, f"CUDA (half2 FP16x2) requires widths[-1] % 2 == 0; got widths[-1]={last_w}"),
         (remainder_strategy
          in _VALID_REMAINDER, f"remainder_strategy {remainder_strategy!r} not in {_VALID_REMAINDER}"),
         (branch_mode in _VALID_BRANCH, f"branch_mode {branch_mode!r} not in {_VALID_BRANCH}"),

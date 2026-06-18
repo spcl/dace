@@ -464,9 +464,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # The reduce PREP (LICM / SimplifyPass / IV substitution / ...) already ran
     # above; these are the lifting passes only.
     s += [('loop_to_x', LoopToReduce()),
-          ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
-          ('loop_to_x', ArgMaxLift()), ('loop_to_x', EarlyExitToFindIndex()),
-          ('loop_to_x', LoopToConditionalReduce())]
+          ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
+          ('loop_to_x', EarlyExitToFindIndex()), ('loop_to_x', LoopToConditionalReduce())]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
     # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,

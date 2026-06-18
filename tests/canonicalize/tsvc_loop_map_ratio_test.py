@@ -43,8 +43,7 @@ def _count(program):
     """Canonicalize the program's simplified SDFG; return ``(for_loops, maps)``."""
     sdfg = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(sdfg, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP,
-                     unroll_limit=_UNROLL_LIMIT)
+        canonicalize(sdfg, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP, unroll_limit=_UNROLL_LIMIT)
     loops = sum(1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion))
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     return loops, maps
@@ -52,8 +51,7 @@ def _count(program):
 
 def loop_map_table():
     """:returns: markdown table rows (``list[str]``) of for-loop% per benchmark group."""
-    rows = ["| benchmark | kernels | maps | for-loops | for-loop % |",
-            "| --- | ---: | ---: | ---: | ---: |"]
+    rows = ["| benchmark | kernels | maps | for-loops | for-loop % |", "| --- | ---: | ---: | ---: | ---: |"]
     for label, programs in _GROUPS:
         loops = maps = 0
         for p in programs:

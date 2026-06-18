@@ -301,7 +301,8 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strat
 
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
-def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
+def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_mode, remainder_strategy,
+                                                        vectorize_config):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
@@ -357,7 +358,8 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
 
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
-def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
+def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_parameters, branch_mode, remainder_strategy,
+                                                                       vectorize_config):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
@@ -413,7 +415,8 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
 
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
-def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
+def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_mode, remainder_strategy,
+                                                         vectorize_config):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)

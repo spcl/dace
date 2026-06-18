@@ -10,7 +10,6 @@ prevents silent drift between the two implementations.
 """
 import pytest
 
-import dace
 from dace import symbolic
 from dace.subsets import Range
 from dace.transformation.passes.vectorization.utils.tile_access_compat import (

@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileITE, TileLoad
+from dace.libraries.tileops import TileBinop, TileLoad
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 
 

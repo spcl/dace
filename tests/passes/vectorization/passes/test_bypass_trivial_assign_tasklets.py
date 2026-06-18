@@ -5,12 +5,8 @@ Each test builds a minimal body-NSDFG by hand and asserts the pass
 folds the targeted ``AN -> [_out=_in] -> AN`` triples without changing
 numerical results.
 """
-import copy
-
-import numpy as np
 
 import dace
-from dace import subsets
 from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 

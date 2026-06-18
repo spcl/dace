@@ -15,7 +15,6 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 
-
 N_SYM = dace.symbol("N_REDUCE")
 
 

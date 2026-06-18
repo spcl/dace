@@ -13,7 +13,6 @@ loops -> ``LoopRegion`` nest under ``simplify=True``), runs it to capture a
 reference, applies the pass, and re-runs to confirm the interchange preserved
 the result.
 """
-import copy
 
 import numpy as np
 import pytest
