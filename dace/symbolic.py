@@ -2059,15 +2059,6 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             parts.append(rendered)
         return '*'.join(parts) if parts else '1'
 
-    def _as_ordered_terms(self, expr, order=None):
-        # Deterministic, insertion-order-independent ordering so that
-        # serialize -> parse -> serialize is a fixed point. SymPy's default
-        # as_ordered_terms() is unstable for unevaluated products such as
-        # 1/2*(1 + k)*N - 1/2*N*k, where no well-defined monomial degree
-        # exists, so the printed order ends up depending on the stored arg
-        # order (which the non-evaluating parser does not preserve).
-        return sorted(expr.args, key=sympy.default_sort_key)
-
 
 def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
     if isinstance(expr, SymExpr):
