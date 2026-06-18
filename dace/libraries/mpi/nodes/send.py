@@ -4,7 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
+from dace.libraries.mpi.nodes.node import MPINode, input_descriptor_name, validate_integer_descriptor
 
 
 @dace.library.expansion
@@ -31,9 +31,16 @@ class ExpandSendMPI(ExpandTransformation):
                             """
             mpi_dtype_str = "newtype"
             count_str = "1"
+        # Default to MPI_COMM_WORLD; use the user/runtime communicator when a
+        # ``_grid`` connector is wired (a FortranProcessGrid's cartesian
+        # sub-comm), matching the Isend/Irecv and collective node contract.
+        comm = "MPI_COMM_WORLD"
+        grid = input_descriptor_name(node, parent_state, '_grid')
+        if grid is not None:
+            comm = "_grid"
         buffer_offset = 0
         code += f"""
-                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), MPI_COMM_WORLD);
+                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm});
                 """
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
