@@ -12,6 +12,7 @@ from dace.transformation import transformation
 from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.simplify import SimplifyPass
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
@@ -287,8 +288,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # NormalizeNegativeStride runs first so every downstream matcher
     # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
     # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
+    # ContinueToCondition runs explicitly after the initial cleanup passes (it is
+    # also inside SimplifyPass, but running it here lifts ``continue`` -> guarding
+    # condition before the structural transforms, the same way the break lift is
+    # applied early). A no-op on kernels without a ``continue`` (e.g. the current
+    # TSVC corpus emits none); it hardens the pipeline for kernels that do.
     s += [('clean', NormalizeNegativeStride()), ('clean', _uniq), ('clean', SplitTasklets()),
-          ('clean', LowerITEToFpFactor()), ('clean', SimplifyPass())]
+          ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
