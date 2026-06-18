@@ -126,12 +126,14 @@ class symbol(sympy.Symbol):
 
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
+
+        # If commutative is not explicitly added, serialization / deserialization of integer symbols might add the assumption
         if 'integer' in assumptions or not numpy.any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
             # to modifying different references of symbols with the same name.
-            self = sympy.Symbol.__xnew__(cls, name, **assumptions)
+            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'commutative': True})
         else:
-            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'integer': True})
+            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'commutative': True, 'integer': True})
 
         self.dtype = dtype
         self._constraints = []
@@ -2018,7 +2020,6 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return ''.join(parts)
 
     def _print_Mul(self, expr):
-        # Sort arguments deterministically
         sorted_args = sorted(expr.args, key=sympy.default_sort_key)
 
         flat_args = []
@@ -2032,7 +2033,6 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
         _flatten(sorted_args)
 
-        # Filtering logic (ensure we keep TypedConstants)
         if len(flat_args) > 1:
             flat_args = [arg for arg in flat_args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
 
@@ -2045,7 +2045,6 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
                 nonnumeric_args.append(arg)
 
         if coeff != 1 or not nonnumeric_args:
-            # Put coefficient at the front
             flat_args = [coeff] + nonnumeric_args
         else:
             flat_args = nonnumeric_args
@@ -2053,7 +2052,6 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         parts = []
         for arg in flat_args:
             rendered = self._print(arg)
-            # Parenthesize additions to ensure correct order of operations
             if isinstance(arg, sympy.Add):
                 rendered = f'({rendered})'
             parts.append(rendered)
