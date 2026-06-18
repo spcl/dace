@@ -171,7 +171,10 @@ def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
 # write-phase callsites.
 
 
-def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "constant_bridge") -> str:
+def stage_constant_access(state: SDFGState,
+                          an: AccessNode,
+                          name_hint: str = "constant_bridge",
+                          src_subset: Optional["subsets.Range"] = None) -> str:
     """Stage a CONSTANT-only access on ``an`` through a fresh ``Scalar`` transient.
 
     Mints a transient ``dace.data.Scalar`` of ``an``'s element dtype, adds it
@@ -188,6 +191,9 @@ def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "co
     :param an: Non-transient AccessNode that's being staged.
     :param name_hint: Hint for the bridge transient name; uniquified via
         ``find_new_name=True``.
+    :param src_subset: The exact CONSTANT (loop-invariant) element the consumer
+        reads on the ``an`` side -- a single element (all tile dims size 1).
+        The staging copy moves *only* that element into the scalar bridge.
     :returns: Name of the staged transient (an AccessNode for it is added
         to ``state`` with the AN -> AN edge already wired).
     """
@@ -200,12 +206,23 @@ def stage_constant_access(state: SDFGState, an: AccessNode, name_hint: str = "co
                                      storage=dtypes.StorageType.Register,
                                      find_new_name=True)
     bridge_an = state.add_access(bridge_name)
-    # Direct AN -> AN scalar copy per section 3.6: the memlet names the
-    # source array on its data side; other_subset is omitted (full-shape
-    # implicit), which the staged consumer's an_side_subset helper handles.
-    # The 1-element subset on `an` side is naturally the loop-invariant
-    # access (the classifier upstream guarantees this is CONSTANT-only).
-    state.add_edge(an, None, bridge_an, None, Memlet(data=an.data, subset=f"0:1" if len(desc.shape) == 1 else None))
+    # Direct AN -> AN scalar copy per section 3.6: the memlet names the source
+    # array on its data side and copies EXACTLY the loop-invariant element the
+    # consumer reads. Using the actual access subset is essential -- it is a
+    # single element on every dim (CONSTANT on all tile dims), so the bridge
+    # stays scalar. Falling back to the full-array shape (the old ``subset=None``
+    # multi-D default) would copy the WHOLE array (e.g. 2-D ``aa[0:N,0:N]``)
+    # into a scalar -- a tile-into-scalar store the lowering rejects; a hardcoded
+    # ``0:1`` would read the wrong element when the constant index is non-zero
+    # (``aa[0, j]`` with an outer-loop ``j``). The fallbacks below only apply
+    # when the caller has no subset to hand (legacy single-dim CONSTANT staging).
+    if src_subset is not None:
+        sub = subsets.Range(list(src_subset.ranges))
+    elif len(desc.shape) == 1:
+        sub = subsets.Range.from_string("0:1")
+    else:
+        sub = subsets.Range([(0, s - 1, 1) for s in desc.shape])
+    state.add_edge(an, None, bridge_an, None, Memlet(data=an.data, subset=sub))
     return bridge_name
 
 
@@ -658,7 +675,16 @@ class InsertTileLoadStore(ppl.Pass):
                                                     inner_sdfg=inner_sdfg,
                                                     state=inner_state)
                 if set(s_record.per_dim_kind) == {PerDimKind.CONSTANT}:
-                    bridge_name = stage_constant_access(inner_state, an, name_hint=f"{an.data}_const")
+                    # Stage EXACTLY the loop-invariant element the consumer reads
+                    # (a single CONSTANT element) -- not the whole array. Without
+                    # this an N-D ``an`` would copy its full shape into the scalar
+                    # bridge (see ``stage_constant_access``).
+                    try:
+                        const_sub = an_side_subset(s_edges[0], an, inner_sdfg)
+                    except Exception:  # noqa: BLE001 -- exotic edge: fall back to descriptor-shape default
+                        const_sub = None
+                    bridge_name = stage_constant_access(inner_state, an, name_hint=f"{an.data}_const",
+                                                        src_subset=const_sub)
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, s_edges, iter_vars=iter_vars)
                     staged += 1
                     continue
