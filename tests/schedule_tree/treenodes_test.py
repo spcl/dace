@@ -1,8 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace import nodes
+from dace import nodes, data, subsets
+from dace import Memlet
 
+import dace
 import pytest
 
 
@@ -107,6 +109,35 @@ def test_dataflow_scope_children(DataflowScope: type[tn.DataflowScope], tasklet:
 
     for child in scope.children:
         assert child.parent == scope
+
+
+def test_scope_inputs_outputs() -> None:
+    write_scalar = tn.TaskletNode(
+        nodes.Tasklet('bla', {}, {'out'}, 'out = 1'),
+        {},
+        {'out': Memlet('scalar[0]')},
+    )
+    read_scalar = tn.TaskletNode(
+        nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp + 1'),
+        {'inp': Memlet('scalar[0]')},
+        {'out': Memlet('A[1]')},
+    )
+    map_scope = tn.MapScope(
+        node=nodes.MapEntry(nodes.Map('map', ['i'], subsets.Range.from_string("0:20"))),
+        children=[write_scalar, read_scalar],
+    )
+
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'scalar': data.Scalar(dace.float64)
+        },
+        children=[map_scope],
+    )
+
+    assert len(map_scope.input_memlets()) == 0
+    assert len(map_scope.output_memlets()) == 2
 
 
 if __name__ == '__main__':
