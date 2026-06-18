@@ -1,5 +1,4 @@
 import dace
-from dace.sdfg.state import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from typing import Optional, Dict, Set, Tuple
 import copy
@@ -13,16 +12,16 @@ class MultiStateScalarWriteError(RuntimeError):
     pass
 
 
-def _scalar_is_safe_to_eliminate(sdfg: dace.SDFG, scalar_name: str,
-                                 current_state: dace.SDFGState) -> bool:
+def _scalar_is_safe_to_eliminate(sdfg: dace.SDFG, scalar_name: str, current_state: dace.SDFGState) -> bool:
     """Return ``True`` if removing the transient :class:`Scalar` is safe."""
     desc = sdfg.arrays.get(scalar_name)
     if not isinstance(desc, dace.data.Scalar):
         return True
 
     in_state_writes = sum(1 for n in current_state.nodes()
-                         if isinstance(n, dace.nodes.AccessNode) and n.data == scalar_name
-                         and len({e for e in current_state.in_edges(n) if e.data is not None}) > 0)
+                          if isinstance(n, dace.nodes.AccessNode) and n.data == scalar_name
+                          and len({e
+                                   for e in current_state.in_edges(n) if e.data is not None}) > 0)
     if in_state_writes > 1:
         raise MultiStateScalarWriteError(
             f"CleanRedundantCopiesAndAssignments: transient scalar {scalar_name!r} has "
@@ -33,16 +32,17 @@ def _scalar_is_safe_to_eliminate(sdfg: dace.SDFG, scalar_name: str,
             continue
         _reads, writes = st.read_and_write_sets()
         if scalar_name in writes:
-            raise MultiStateScalarWriteError(
-                f"CleanRedundantCopiesAndAssignments: transient scalar {scalar_name!r} "
-                f"is written in state {st.label!r} as well as {current_state.label!r}.")
+            raise MultiStateScalarWriteError(f"CleanRedundantCopiesAndAssignments: transient scalar {scalar_name!r} "
+                                             f"is written in state {st.label!r} as well as {current_state.label!r}.")
     return True
+
 
 def _has_edge(state: dace.SDFGState, src: dace.nodes.Node, dst: dace.nodes.Node):
     for e in state.edges():
         if e.src == src and e.dst == dst:
             return True
     return False
+
 
 @dace.properties.make_properties
 @explicit_cf_compatible
@@ -86,9 +86,8 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
                         ie1 = state.in_edges(t2)[0]
                         if ie1.data.subset and ie1.data.subset.num_elements_exact() == 1:
                             an = ie1.src
-                            if (isinstance(an, dace.nodes.AccessNode) and
-                                sdfg.arrays[an.data].transient and
-                                isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
+                            if (isinstance(an, dace.nodes.AccessNode) and sdfg.arrays[an.data].transient
+                                    and isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
                                 if state.in_degree(an) == 1:
                                     ie0 = state.in_edges(an)[0]
                                     if ie0.data.subset and ie0.data.subset.num_elements_exact() == 1:
@@ -96,7 +95,7 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
                                         if isinstance(t1, dace.nodes.Tasklet):
                                             if not _scalar_is_safe_to_eliminate(sdfg, an.data, state):
                                                 continue
-                                            
+
                                             me_out = list(state.out_edges(me))
                                             if me_out and me_out[0].data is not None:
                                                 target = me_out[0].data.data
@@ -123,24 +122,20 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
             for oe1 in list(state.out_edges(entry)):
                 if oe1.data.subset and oe1.data.subset.num_elements_exact() == 1:
                     an = oe1.dst
-                    if (isinstance(an, dace.nodes.AccessNode) and
-                        sdfg.arrays[an.data].transient and
-                        isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
+                    if (isinstance(an, dace.nodes.AccessNode) and sdfg.arrays[an.data].transient
+                            and isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
                         if state.in_degree(an) == 1:
                             out_edges = list(state.out_edges(an))
                             if all(
-                                isinstance(oe2.dst, dace.nodes.Tasklet) and
-                                oe2.data.subset and
-                                oe2.data.subset.num_elements_exact() == 1
-                                for oe2 in out_edges
-                            ):
+                                    isinstance(oe2.dst, dace.nodes.Tasklet) and oe2.data.subset
+                                    and oe2.data.subset.num_elements_exact() == 1 for oe2 in out_edges):
                                 if not _scalar_is_safe_to_eliminate(sdfg, an.data, state):
                                     continue
                                 if oe1.data is not None:
                                     target = oe1.data.data
                                     idx = ','.join(str(r[0]) for r in oe1.data.subset)
                                     self._record_replacement(replacements, an.data, target, idx)
-                                    
+
                                     for oe2 in out_edges:
                                         if isinstance(oe2.dst, dace.nodes.Tasklet):
                                             state_reads.setdefault((target, idx), set()).add(oe2.dst)
@@ -169,16 +164,17 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
                         an1 = ie.src
                         if isinstance(an1, dace.nodes.AccessNode):
                             out_edges = list(state.out_edges(an2))
-                            if not out_edges or all(oe.data.subset and oe.data.subset.num_elements_exact() == 1 for oe in out_edges):
+                            if not out_edges or all(oe.data.subset and oe.data.subset.num_elements_exact() == 1
+                                                    for oe in out_edges):
                                 if not _scalar_is_safe_to_eliminate(sdfg, an2.data, state):
                                     continue
                                 indices = ','.join(str(r[0]) for r in ie.data.subset)
                                 self._record_replacement(replacements, an2.data, an1.data, indices)
-                                
+
                                 for oe in out_edges:
                                     if isinstance(oe.dst, dace.nodes.Tasklet):
                                         state_reads.setdefault((an1.data, indices), set()).add(oe.dst)
-                                
+
                                 state.remove_edge(ie)
                                 for oe in out_edges:
                                     state.remove_edge(oe)
@@ -199,14 +195,13 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
         sdfg: dace.SDFG = state.sdfg
         modifications = 0
         for an in [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)]:
-            if (an in state.nodes() and
-                sdfg.arrays[an.data].transient and
-                isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
+            if (an in state.nodes() and sdfg.arrays[an.data].transient
+                    and isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
                 if state.in_degree(an) == 1 and state.out_degree(an) == 1:
                     ie = state.in_edges(an)[0]
                     oe = state.out_edges(an)[0]
-                    if (ie.data.subset and ie.data.subset.num_elements_exact() == 1 and
-                        oe.data.subset and oe.data.subset.num_elements_exact() == 1):
+                    if (ie.data.subset and ie.data.subset.num_elements_exact() == 1 and oe.data.subset
+                            and oe.data.subset.num_elements_exact() == 1):
                         t = ie.src
                         arr_node = oe.dst
                         if isinstance(t, dace.nodes.Tasklet) and isinstance(arr_node, dace.nodes.AccessNode):
@@ -215,7 +210,7 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
                             target = oe.data.data
                             idx = ','.join(str(r[0]) for r in oe.data.subset)
                             self._record_replacement(replacements, an.data, target, idx)
-                            
+
                             state_writes.setdefault((target, idx), set()).add(t)
 
                             state.remove_edge(ie)
@@ -229,42 +224,42 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
     def _clean_pattern_5(self, state: dace.SDFGState, replacements: Dict[str, Tuple[str, str]],
                          state_reads: Dict[Tuple[str, str], Set[dace.nodes.Tasklet]],
                          state_writes: Dict[Tuple[str, str], Set[dace.nodes.Tasklet]]) -> int:
-            sdfg: dace.SDFG = state.sdfg
-            modifications = 0
-            for an in [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)]:
-                if (an in state.nodes() and
-                    sdfg.arrays[an.data].transient and
-                    isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
-                    if state.in_degree(an) == 1 and state.out_degree(an) == 1:
-                        ie = state.in_edges(an)[0]
-                        oe = state.out_edges(an)[0]
-                        if (ie.data.subset and ie.data.subset.num_elements_exact() == 1 and
-                            oe.data.subset and oe.data.subset.num_elements_exact() == 1):
-                            t1 = ie.src
-                            t2 = oe.dst
-                            if isinstance(t1, dace.nodes.Tasklet) and isinstance(t2, dace.nodes.Tasklet):
-                                if not self._is_assign_tasklet(t2):
-                                    continue
-                                if state.in_degree(t2) == 1 and state.out_degree(t2) == 1:
-                                    oe2 = state.out_edges(t2)[0]
-                                    arr_node = oe2.dst
-                                    if isinstance(arr_node, dace.nodes.AccessNode) and oe2.data.subset and oe2.data.subset.num_elements_exact() == 1:
-                                        if not _scalar_is_safe_to_eliminate(sdfg, an.data, state):
-                                            continue
-                                        target = oe2.data.data
-                                        idx = ','.join(str(r[0]) for r in oe2.data.subset)
-                                        self._record_replacement(replacements, an.data, target, idx)
-                                        
-                                        state_writes.setdefault((target, idx), set()).add(t1)
+        sdfg: dace.SDFG = state.sdfg
+        modifications = 0
+        for an in [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)]:
+            if (an in state.nodes() and sdfg.arrays[an.data].transient
+                    and isinstance(sdfg.arrays[an.data], dace.data.Scalar)):
+                if state.in_degree(an) == 1 and state.out_degree(an) == 1:
+                    ie = state.in_edges(an)[0]
+                    oe = state.out_edges(an)[0]
+                    if (ie.data.subset and ie.data.subset.num_elements_exact() == 1 and oe.data.subset
+                            and oe.data.subset.num_elements_exact() == 1):
+                        t1 = ie.src
+                        t2 = oe.dst
+                        if isinstance(t1, dace.nodes.Tasklet) and isinstance(t2, dace.nodes.Tasklet):
+                            if not self._is_assign_tasklet(t2):
+                                continue
+                            if state.in_degree(t2) == 1 and state.out_degree(t2) == 1:
+                                oe2 = state.out_edges(t2)[0]
+                                arr_node = oe2.dst
+                                if isinstance(arr_node, dace.nodes.AccessNode
+                                              ) and oe2.data.subset and oe2.data.subset.num_elements_exact() == 1:
+                                    if not _scalar_is_safe_to_eliminate(sdfg, an.data, state):
+                                        continue
+                                    target = oe2.data.data
+                                    idx = ','.join(str(r[0]) for r in oe2.data.subset)
+                                    self._record_replacement(replacements, an.data, target, idx)
 
-                                        state.remove_edge(ie)
-                                        state.remove_edge(oe)
-                                        state.remove_edge(oe2)
-                                        state.add_edge(t1, ie.src_conn, arr_node, oe2.dst_conn, copy.deepcopy(oe2.data))
-                                        state.remove_node(an)
-                                        state.remove_node(t2)
-                                        modifications += 1
-            return modifications
+                                    state_writes.setdefault((target, idx), set()).add(t1)
+
+                                    state.remove_edge(ie)
+                                    state.remove_edge(oe)
+                                    state.remove_edge(oe2)
+                                    state.add_edge(t1, ie.src_conn, arr_node, oe2.dst_conn, copy.deepcopy(oe2.data))
+                                    state.remove_node(an)
+                                    state.remove_node(t2)
+                                    modifications += 1
+        return modifications
 
     def _apply_recursive(self, sdfg: dace.SDFG) -> int:
         if not sdfg:
@@ -295,7 +290,7 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
                 for slot in all_tracked_slots:
                     readers = state_reads.get(slot, set())
                     writers = state_writes.get(slot, set())
-                    
+
                     # Filter out any tasklets that might have been purged/fused by patterns
                     active_involved = {t for t in (readers | writers) if t in state.nodes()}
                     if len(active_involved) < 2:
@@ -317,11 +312,11 @@ class CleanRedundantCopiesAndAssignments(ppl.Pass):
                             for r in current_readers:
                                 if r != t and not _has_edge(state, r, t):
                                     state.add_edge(r, None, t, None, dace.Memlet())
-                            
+
                             # WAW Hazard: connect the prior writer to this writer
                             if last_writer and last_writer != t and not _has_edge(state, last_writer, t):
                                 state.add_edge(last_writer, None, t, None, dace.Memlet())
-                            
+
                             # Clear structural context for subsequent writers
                             current_readers = set()
                             last_writer = t
