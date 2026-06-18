@@ -1554,6 +1554,43 @@ def test_fuse_body_states_refuses_carry_through_state_boundary():
                                     'read before its write')
 
 
+@dace.program
+def nested_scan_parallel_inner(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    # j carries the recurrence (outer), i is the data-parallel inner axis -- the
+    # shape LoopStridePermutation produces by moving the unit-stride axis inner.
+    for j in range(1, N):
+        for i in range(N):
+            aa[j, i] = aa[j - 1, i] + bb[j, i]
+
+
+def test_nested_scan_keeps_map_inside_by_default():
+    """Default (``lift_nested_scan=False``): a carry loop wrapping a DOALL inner
+    loop is NOT lifted -- it stays a sequential loop + (later) parallel map, so
+    no ``Scan`` libnode is emitted. Running the un-lifted SDFG still matches."""
+    sdfg = nested_scan_parallel_inner.to_sdfg(simplify=True)
+    rng = np.random.default_rng(1)
+    aa0 = rng.standard_normal((16, 16))
+    bb = rng.standard_normal((16, 16))
+    ref = aa0.copy()
+    sdfg(aa=ref, bb=bb.copy(), N=16)
+
+    LoopToScan().apply_pass(sdfg, {})
+    assert _num_scan_nodes(sdfg) == 0, ('the carry loop wrapping a parallelizable inner loop must NOT '
+                                        'be lifted by default (keep the map inside)')
+    got = aa0.copy()
+    sdfg(aa=got, bb=bb.copy(), N=16)
+    assert np.allclose(got, ref)
+
+
+def test_nested_scan_lifts_with_knob():
+    """``lift_nested_scan=True``: the vector scan is still lifted (a ``Scan``
+    libnode with a Map over the inner axis)."""
+    sdfg = nested_scan_parallel_inner.to_sdfg(simplify=True)
+    res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
+    assert res, "lift_nested_scan=True should lift the vector scan"
+    assert _num_scan_nodes(sdfg) >= 1, "a Scan libnode is emitted when the knob opts in"
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

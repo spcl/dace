@@ -385,10 +385,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # whose final value is read after the loop: it materialises the closed-form exit
     # under a fresh ``_loop_exit_<sym>_<N>`` symbol and rewrites every downstream
     # reader so the "loop-defined symbol used after the loop" refusal disappears.
+    # Reduce PREP only (the loop-lifting LoopTo* passes moved AFTER fission +
+    # LoopStridePermutation -- see 'loop_to_x' below -- so the pipeline shape is
+    # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap).
     s += [('reduce', HoistInductionVariableUpdates()), ('reduce', InductionVariableSubstitution()),
-          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass()),
-          ('reduce', LoopToReduce()), ('reduce', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
-          ('reduce', ArgMaxLift()), ('reduce', EarlyExitToFindIndex()), ('reduce', LoopToConditionalReduce())]
+          ('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass())]
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
@@ -446,13 +447,26 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # standalone ``NormalizeLoopsAndMaps`` for callers that want it; just not
     # wired into the canonicalize pipeline.
 
-    # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
-    # interchange would need a loop-interchange primitive (none exists) and
-    # loop-carried-dependence analysis; instead the loops that *can* become
-    # maps are permuted as maps right after LoopToMap (see 'reorder' below),
-    # which is dependence-free by the Map contract and reuses the proven,
-    # symbolic-safe MinimizeStridePermutation.
+    # loop_stride_permutation (after LoopFission, before every LoopTo* lift):
+    # interchange a perfect loop nest so a unit-stride DOALL loop is innermost.
+    # For a recurrence kernel (``aa[j,i] = aa[j-1,i] + ...`` with ``i`` the
+    # unit-stride parallel axis) this turns ``for i: for j:`` into ``for j(seq):
+    # for i(parallel):`` -- the inner ``i`` becomes a contiguous map and ``j``
+    # stays a plain sequential loop, so NO ``Scan`` libnode (over a strided
+    # apply) is needed. Soundness rests on moving only DOALL loops (a parallel
+    # loop is freely interchangeable); see the pass docstring.
     s += [('loop_stride_permutation', LoopStridePermutation())]
+
+    # loop_to_x (moved here from the 'reduce' stage so the order is
+    # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap): lift the
+    # accumulator / scan / argmax / find-index / conditional-reduce shapes that
+    # LoopStridePermutation did NOT turn into a sequential-loop + parallel-map.
+    # The reduce PREP (LICM / SimplifyPass / IV substitution / ...) already ran
+    # above; these are the lifting passes only.
+    s += [('loop_to_x', LoopToReduce()),
+          ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
+          ('loop_to_x', ArgMaxLift()), ('loop_to_x', EarlyExitToFindIndex()),
+          ('loop_to_x', LoopToConditionalReduce())]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
     # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,

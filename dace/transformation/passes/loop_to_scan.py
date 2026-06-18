@@ -282,9 +282,25 @@ class LoopToScan(ppl.Pass):
               "parallel Map)."),
     )
 
-    def __init__(self, interchange_carry_with_map: bool = False):
+    lift_nested_scan = properties.Property(
+        dtype=bool,
+        default=False,
+        desc=("Controls the NESTED (vector) scan shape ``for j: for i: a[j,i] = "
+              "a[j-1,i] OP b[j,i]`` -- a carry loop ``j`` wrapping a data-parallel "
+              "inner loop ``i``. With the default ``False`` the lift is REFUSED when "
+              "the inner loop is parallelizable: the carry loop is left as a plain "
+              "sequential ``LoopRegion`` and the inner loop is mapped by ``LoopToMap`` "
+              "(``for j(seq): map[i]``) -- a contiguous unit-stride map with no ``Scan`` "
+              "libnode, the preferred shape after ``LoopStridePermutation`` interchanges "
+              "the unit-stride axis innermost. Set ``True`` to still lift the vector "
+              "scan (a ``Scan`` with a Map over the inner axis). Non-parallelizable "
+              "inner loops are lifted regardless (there is no map to keep)."),
+    )
+
+    def __init__(self, interchange_carry_with_map: bool = False, lift_nested_scan: bool = False):
         super().__init__()
         self.interchange_carry_with_map = interchange_carry_with_map
+        self.lift_nested_scan = lift_nested_scan
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -294,6 +310,16 @@ class LoopToScan(ppl.Pass):
 
     def depends_on(self):
         return set()
+
+    @staticmethod
+    def _inner_loop_parallelizable(inner_loop: LoopRegion, sdfg: SDFG) -> bool:
+        """``True`` iff the nested scan's inner loop is a DOALL loop ``LoopToMap``
+        would parallelize -- i.e. there is a map to keep instead of lifting."""
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        try:
+            return LoopToMap.can_be_applied_to(sdfg, loop=inner_loop)
+        except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not a keepable map
+            return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         # Whole-SDFG preprocess: strip frontend ``__out = __inp`` copy tasklets so the
@@ -364,6 +390,19 @@ class LoopToScan(ppl.Pass):
             if id(loop) in interchanged_loop_ids:
                 continue
             infos = _match_all(loop, sdfg)
+            # NESTED (vector) scan default: when the matched scan wraps a
+            # data-parallel inner loop, prefer to KEEP THE MAP INSIDE -- leave
+            # this carry loop sequential and let ``LoopToMap`` map the inner
+            # loop (``for j(seq): map[i]``). That avoids a ``Scan`` over a
+            # strided apply and is the shape ``LoopStridePermutation`` sets up
+            # by moving the unit-stride parallel axis innermost. Lifting the
+            # vector scan is opt-in via ``lift_nested_scan``. A non-parallel
+            # inner loop has no map to keep, so it is lifted regardless.
+            if infos and not self.lift_nested_scan:
+                infos = [
+                    info for info in infos
+                    if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, sdfg))
+                ]
             if infos:
                 for info in infos:
                     _rewrite(parent, loop, info, sdfg)
