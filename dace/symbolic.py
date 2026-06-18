@@ -1285,6 +1285,39 @@ class right_shift(sympy.Function):
             return x >> y
 
 
+class logical_left_shift(sympy.Function):
+    """Logical (zero-fill) left shift -- the Fortran ``ISHFT`` lowering.
+
+    Distinct from :class:`left_shift`: it shifts the unsigned bit pattern (no
+    sign extension), lowering to the ``dace::logical_left_shift`` runtime
+    helper.  Symbolic operands stay unevaluated so they round-trip to the
+    helper rather than collapsing to ``x * 2**y``.
+    """
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and x.is_nonnegative:
+            # For a non-negative value the zero-fill and arithmetic results
+            # agree; leave the sign-dependent case to the runtime helper.
+            return x << y
+
+
+class logical_right_shift(sympy.Function):
+    """Logical (zero-fill) right shift -- the Fortran ``ISHFT`` (negative count)
+    lowering.
+
+    Distinct from :class:`right_shift`: it shifts the unsigned bit pattern (no
+    sign extension), lowering to the ``dace::logical_right_shift`` runtime
+    helper.  Only folds for a concrete non-negative value (where zero-fill and
+    arithmetic agree); otherwise stays unevaluated.
+    """
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and x.is_nonnegative:
+            return x >> y
+
+
 # Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
 # ``symstr`` prints these as the operator, while the bare ``bitwise_or`` etc. print as
 # ``func(a, b)`` (both lower to the operator in C++). They subclass the bare classes so

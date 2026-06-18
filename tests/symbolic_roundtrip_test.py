@@ -69,6 +69,18 @@ def test_explicit_function_name_preserved():
     assert symstr(pystr_to_symbolic('bitwise_or(a, b)'), cpp_mode=True) == '(((a) | (b)))'
 
 
+def test_logical_shift_roundtrip():
+    # Logical (zero-fill) shifts have no plain C++ operator: unlike ``<<`` / ``>>``
+    # (which sign-extend a signed operand on the right shift) they lower to the
+    # ``dace::logical_left_shift`` / ``dace::logical_right_shift`` runtime helpers
+    # (dace/math.h), so the function spelling is kept in BOTH Python and C++ mode
+    # -- it must not collapse to an operator or to ``x * 2**y``.
+    assert _roundtrip('logical_left_shift(a, b)') == '(logical_left_shift(a, b))'
+    assert _roundtrip('logical_left_shift(a, b)', cpp_mode=True) == '(logical_left_shift(a, b))'
+    assert _roundtrip('logical_right_shift(a, b)') == '(logical_right_shift(a, b))'
+    assert _roundtrip('logical_right_shift(a, b)', cpp_mode=True) == '(logical_right_shift(a, b))'
+
+
 def test_subscript_roundtrip():
     assert _roundtrip('A[i]') == '(A[i])'
     assert _roundtrip('sizes[i, j]') == '(sizes[i, j])'

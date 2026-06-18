@@ -159,6 +159,26 @@ static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand,
   return left_operand << right_operand;
 }
 
+// Logical (zero-fill) shifts.  Unlike ``left_shift`` / ``right_shift`` (which
+// map to ``<<`` / ``>>`` and thus sign-extend a signed operand on the right
+// shift), these operate on the UNSIGNED representation so the bit pattern
+// shifts without sign extension.  This matches Fortran ``ISHFT`` semantics,
+// which is what the Fortran frontend lowers a logical shift to: e.g.
+// ``ishft(-182, -2)`` must zero-fill, not propagate the sign bit.
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& left_operand,
+                                                     const T2& right_operand) {
+  return static_cast<T>(
+      static_cast<typename std::make_unsigned<T>::type>(left_operand) << right_operand);
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& left_operand,
+                                                      const T2& right_operand) {
+  return static_cast<T>(
+      static_cast<typename std::make_unsigned<T>::type>(left_operand) >> right_operand);
+}
+
 #define AND(x, y) ((x) && (y))
 #define OR(x, y) ((x) || (y))
 
