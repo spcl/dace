@@ -340,6 +340,7 @@ class Range(Subset):
 
     @staticmethod
     def from_json(obj, context=None):
+        from dace.properties import _symbolic_deserializer  # Avoid circular import
         if not isinstance(obj, dict):
             raise TypeError("Expected dict, got {}".format(type(obj)))
         if obj['type'] != 'Range':
@@ -350,8 +351,8 @@ class Range(Subset):
         tuples = []
 
         for r in ranges:
-            tuples.append((symbolic.deserialize_symbolic(r['start']), symbolic.deserialize_symbolic(r['end']),
-                           symbolic.deserialize_symbolic(r['step']), symbolic.deserialize_symbolic(r['tile'])))
+            tuples.append((_symbolic_deserializer(r['start'], context), _symbolic_deserializer(r['end'], context),
+                           _symbolic_deserializer(r['step'], context), _symbolic_deserializer(r['tile'], context)))
 
         return Range(tuples)
 

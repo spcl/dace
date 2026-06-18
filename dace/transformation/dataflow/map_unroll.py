@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, symbolic, SDFG
+from dace import data as dt, symbolic, SDFG, __version__
 from dace.sdfg import InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
@@ -85,6 +85,7 @@ class MapUnroll(transformation.SingleStateTransformation):
                     nsdfg_json = nested_sdfgs[nsdfg]
                     name = nsdfg_json["attributes"]["name"]
                     nsdfg_json["attributes"]["name"] += suffix
+                    nsdfg_json["dace_version"] = __version__
                     unrolled_nsdfg = SDFG.from_json(nsdfg_json)
                     nsdfg_json["attributes"]["name"] = name  # Reinstate
                     # Set all the references
