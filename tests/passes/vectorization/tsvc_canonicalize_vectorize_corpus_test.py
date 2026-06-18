@@ -100,8 +100,12 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     if name in _MULTIDIM_XFAIL:
         pytest.xfail(_MULTIDIM_XFAIL[name])
     kernel, sdfg, arrays, ck, ref = _canonicalized(name)
-    knat = max((len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)), default=1)
-    if knat >= 2:
+    map_param_counts = [len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
+    # K=2 only when EVERY inner map is a genuine collapsed 2-D map. A kernel with
+    # any 1-D map (an init / reduction / boundary beside a 2-D body) cannot be
+    # tiled with a uniform K=2 -- mixed-K within one SDFG is unsupported by the
+    # tile pipeline (it aborts) -- so such kernels fall back to K=1.
+    if map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
         vec = VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR", remainder_strategy="masked_tail",
                                    branch_mode="merge")
