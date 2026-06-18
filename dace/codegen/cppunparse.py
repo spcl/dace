@@ -91,6 +91,16 @@ _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
 
+# DaCe typeclass names usable as cast "functions" in expressions (e.g. a
+# ``float64(x)`` / ``int32(x)`` produced by sympy lowering or the Fortran
+# bridge).  Each is a ``dace::``-namespaced typedef in the runtime headers,
+# so a bare call must be namespaced to resolve -- exactly the way an explicit
+# ``dace.float64(x)`` is lowered to ``dace::float64(x)``.  Built from the
+# canonical typeclass->string map, which already carries the ``dace::``
+# prefix and naturally excludes the plain C++ builtins (``int`` / ``float`` /
+# ``bool`` / ``complex``), whose bare functional casts are valid as-is.
+_typecast_func_to_cpp = {s.split("::")[-1]: s for s in dtypes.TYPECLASS_TO_STRING.values()}
+
 
 def interleave(inter, f, seq, **kwargs):
     """
@@ -999,6 +1009,15 @@ class CPPUnparser:
             elif t.func.id in self.callbools:
                 op = self.callbools[t.func.id]()
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
+                return
+            elif t.func.id in _typecast_func_to_cpp:
+                # A bare DaCe typeclass cast (``float64(x)`` / ``int32(x)``):
+                # namespace it to the ``dace::`` typedef so it resolves the
+                # same as an explicit ``dace.float64(x)``.
+                self.write(_typecast_func_to_cpp[t.func.id])
+                self.write("(")
+                interleave(lambda: self.write(", "), self.dispatch, t.args)
+                self.write(")")
                 return
 
         self.dispatch(t.func)

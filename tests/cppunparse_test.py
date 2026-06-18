@@ -117,6 +117,26 @@ if (something) {
     assert success
 
 
+def test_typecast_function_namespacing():
+    """A bare DaCe typeclass cast (e.g. ``float64(x)`` emitted by sympy
+    lowering or the Fortran bridge) must be namespaced to its ``dace::``
+    typedef so it resolves in generated C++, the same as ``dace.float64(x)``.
+    The plain C++ builtins (``int`` / ``float`` / ``bool``) stay bare."""
+    success = True
+    # Sized typeclasses get the ``dace::`` prefix.
+    success &= _test_pyexpr2cpp('float64(x)', 'dace::float64(x)')
+    success &= _test_pyexpr2cpp('int32(a + b)', 'dace::int32((a + b))')
+    success &= _test_pyexpr2cpp('sqrt(float64(i + k))', 'sqrt(dace::float64((i + k)))')
+    success &= _test_pyexpr2cpp('uint64(n)', 'dace::uint64(n)')
+    # The explicit attribute form is unchanged, and now matches the bare form.
+    success &= _test_pyexpr2cpp('dace.float64(x)', 'dace::float64(x)')
+    # Plain C++ builtin casts must NOT be namespaced (there is no dace::int).
+    success &= _test_pyexpr2cpp('int(x)', 'int(x)')
+    success &= _test_pyexpr2cpp('float(x)', 'float(x)')
+    assert success
+
+
 if __name__ == "__main__":
     test()
     test_annotated_definition()
+    test_typecast_function_namespacing()
