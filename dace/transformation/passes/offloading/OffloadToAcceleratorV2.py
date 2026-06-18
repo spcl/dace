@@ -156,8 +156,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 1: offload maps and library nodes -> heuristic only! document TODO
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
-        #self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
-        # TODO: consistent offloading of library nodes: schedule is GPU IFF in a map
+        self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
+        
         """
         library node -> GPU
         map cpu
@@ -370,14 +370,10 @@ class OffloadToAccelerator(ppl.Pass):
             # input & output nodes
             if is_gpu:
                 gpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
-                #print(f"map entry {map_entry} (gpu): {gpu_set}")
                 gpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
-                #print(f"map exit {map_entry} (gpu): {gpu_set}")
             else:
                 cpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
-                gpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
-                #print(f"map entry {map_entry} (cpu): {gpu_set} & {cpu_set}")
-                #print(f"map exit {map_entry} (cpu): {gpu_set} & {cpu_set}")
+                cpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
 
             # internal nodes
             for node in map_nodes:
@@ -412,7 +408,6 @@ class OffloadToAccelerator(ppl.Pass):
                 else:
                     raise RuntimeError(f"inside map: unhandled node {node} of type {node.__class__.__name__} in state {state}")
 
-             
 
         # function body, calls recursive helper
         gpu_set : set[str] = set()
@@ -468,6 +463,46 @@ class OffloadToAccelerator(ppl.Pass):
 
             gpu_set |= g
             cpu_set |= c
+
+        # Check for invalid state configurations, where arrays are accessed on both CPU and GPU. 
+        overlap = gpu_set & cpu_set
+        if overlap: 
+
+            def set_to_gpu(type, nodes):
+                has_gpu_node = False
+                for node in nodes:
+                    if isinstance(node, type) and self.has_GPU_schedule(node): #second conditions prevents infinite recursion on unfixable cases
+                        node.schedule = dtypes.ScheduleType.Default
+                        has_gpu_node = True
+                return has_gpu_node
+                
+            # This is most often caused by lib nodes which were offloaded but weren't supposed to (initial heuristic failed).
+            # Try to keep lib nodes on CPU & analyse state again.
+            resolved = False
+            change_made = set_to_gpu(nodes.LibraryNode, top_level_nodes)
+            
+            if change_made:
+                gpu_set, cpu_set = self.get_data_locations_of_state(sdfg, state)
+                if not (gpu_set & cpu_set):
+                    resolved = True
+
+            # If that didn't work, set all maps to CPU (Sequential).
+            # This should remove all sources of conflict by completely running the state on CPU
+            # In case the conflict still isn't resolved (shouldn't happen), raise an error.
+            # Else, raise a Warning to the user that this state couldn't be offloaded properly and continue.
+            if not resolved:
+                change_made = set_to_gpu(nodes.MapEntry, top_level_nodes)
+                
+                if change_made:
+                    gpu_set, cpu_set = self.get_data_locations_of_state(sdfg, state)
+                    if not (gpu_set & cpu_set):
+                        resolved = True
+                        
+            if not resolved:
+                raise NotImplementedError(f"(This should never happen.) This pass does not support copies within a single state. State {state} uses arrays {overlap} on both cpu and gpu.")
+            
+            print(Warning(f"The sdfg {sdfg} could not be fully offloaded. The state {state} accesses the arrays {overlap} both with GPU-capable nodes (maps & library nodes) AND with CPU-bound nodes (e.g. top-level tasklets). This pass only supports copies between states, copies within states are not supported. As a consequence, all maps & library nodes in {state} remain sequential (no offloading). To enable optimization, ensure arrays are EITHER accessed by maps OR by top-level tasklets within the same state."))
+
 
         print(f"state {state}: gpu {gpu_set if gpu_set else "{}"}, cpu {cpu_set if cpu_set else "{}"}")
         return gpu_set, cpu_set
@@ -802,7 +837,7 @@ class OffloadToAccelerator(ppl.Pass):
     def _create_gpu_arrays_from(self, sdfg, IR:OffloadingIRNode):
         def gpu_arrays(node:OffloadingIRNode):
             if node.block:
-                rename_dict = {array : array + "_gpu" for array in node.gpu_set}
+                rename_dict = {array : self.get_gpu_name(array) for array in node.gpu_set}
                 self._rename_arrays_in_block(node.block, rename_dict)
 
                 for cpu_name, gpu_name in rename_dict.items():
@@ -899,14 +934,14 @@ class OffloadToAccelerator(ppl.Pass):
 
 
     ### Step 4: Copy Insertion ###
-    def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu:bool):
-        # create ONE copy state for all arrays in array_names
+    # create ONE copy state for all arrays in array_names
 
+    def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu:bool):
         assert state1 is not None or state2 is not None, "invalid: both states are None"
-        if not array_names: return
 
         # do not copy transient arrays -> ASSUMPTION: NO REUSE OF TRANSIENTS WHICH REQUIRES COPIES
         clean_array_names = [name for name in array_names if not sdfg.arrays[name].transient]
+        if not clean_array_names: return
 
         # insert new state
         copy_state : SDFGState
@@ -928,10 +963,10 @@ class OffloadToAccelerator(ppl.Pass):
 
             copy_state = target_graph.add_state_after(state1, label = label)
 
-
+            
         # build all copies inside the new state (arrays were created and located previously)
-        copy_map = {(name if to_gpu else name + "_gpu"): (name + "_gpu" if to_gpu else name) for name in clean_array_names}
-
+        copy_map = {(name if to_gpu else self.get_gpu_name(name)): (self.get_gpu_name(name) if to_gpu else name) for name in clean_array_names}
+        
         for old_name, new_name in copy_map.items():
             assert new_name in sdfg.arrays
             assert old_name in sdfg.arrays
@@ -941,4 +976,8 @@ class OffloadToAccelerator(ppl.Pass):
             copy_state.add_edge(copy_in, None, copy_out, None, dace.Memlet(f"{old_name} -> {new_name}"))
                 
         
-# TODO: A -> A_gpu, A -> A_host
+    def get_gpu_name(self, cpu_name):
+        if cpu_name.startswith("__return"):
+            return "return" + cpu_name[8:] + "_gpu"
+        return cpu_name + "_gpu"
+    # TODO: A -> A_gpu, A -> A_host
