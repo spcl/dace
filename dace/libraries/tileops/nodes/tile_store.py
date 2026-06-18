@@ -81,12 +81,20 @@ class ExpandTileStorePure(ExpandTransformation):
         #   * ``Tile`` — the existing per-lane tile read.
         #   * ``Symbol`` — the literal / expression broadcast to every lane,
         #     cast to the destination dtype so a typed store resolves.
-        #   * ``Scalar`` — a length-1 array read, broadcast to every lane.
+        #   * ``Scalar`` — a volume-1 source passed by value, broadcast to every
+        #     lane (or a tile-shape source widened upstream, read per lane).
         out_dtype = dst_arr.dtype.ctype
         if node.src_kind == "Symbol":
             src_ref = f"({out_dtype})({node.src_expr})"
         elif node.src_kind == "Scalar":
-            src_ref = f"({out_dtype})(_src[0])"
+            # A volume-1 source is passed by value (bare ``_src``); a tile-shape
+            # source widened upstream is a pointer read per lane (``_src[off]``).
+            # ``[0]`` is a memlet concern, not a tasklet-body one.
+            from .tile_binop import scalar_operand_ref
+            src_desc = parent_sdfg.arrays[next(e for e in parent_state.in_edges(node)
+                                               if e.dst_conn == "_src").data.data]
+            ref, broadcast = scalar_operand_ref(src_desc, "_src", widths, src_off)
+            src_ref = f"({out_dtype})({ref})" if broadcast else ref
         else:
             src_ref = f"_src[{src_off}]"
         if node.has_mask:

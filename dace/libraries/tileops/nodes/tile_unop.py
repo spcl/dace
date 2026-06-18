@@ -131,10 +131,16 @@ class ExpandTileUnopPure(ExpandTransformation):
             operand = f"{_cast}({node.expr_a})"
         elif node.kind_a == _TILE:
             operand = f"_a[{off}]"
-        else:  # Scalar: length-1 Array reads ``_a[0]``, a dace.data.Scalar is ``_a``.
+        else:  # Scalar: descriptor-aware reference.
+            # A tile-shape Array widened upstream is read per lane ``_a[off]``
+            # like a Tile (never ``(T)_a`` -- a pointer cast); any volume-1
+            # source (Scalar / length-1 Array) is passed by value and read as
+            # the bare ``_a``. A per-lane tile read keeps the tile dtype uncast;
+            # a broadcast is cast.
+            from .tile_binop import scalar_operand_ref
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
-            ref = "_a" if isinstance(desc, dace.data.Scalar) else "_a[0]"
-            operand = f"{_cast}({ref})"
+            ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
+            operand = f"{_cast}({ref})" if broadcast else ref
 
         pre, post = _UNOP_CPP[node.op]
         rhs_expr = f"{pre}{operand}{post}"
@@ -144,11 +150,13 @@ class ExpandTileUnopPure(ExpandTransformation):
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
         out_is_scalar = (node.kind_a != _TILE and _is_scalar_shape(out_desc))
         if out_is_scalar:
-            c_ref = "_c[0]" if isinstance(out_desc, dace.data.Array) else "_c"
+            # A volume-1 output (Scalar / length-1 Array) is a by-value local
+            # (``T _c;``), so it -- and the volume-1 ``_mask`` -- are referenced
+            # bare. ``[0]`` is a memlet concern, never a tasklet-body one.
             if node.has_mask:
-                body = f"{c_ref} = _mask[0] ? ({rhs_expr}) : {out_dtype}(0);"
+                body = f"_c = _mask ? ({rhs_expr}) : {out_dtype}(0);"
             else:
-                body = f"{c_ref} = {rhs_expr};"
+                body = f"_c = {rhs_expr};"
             code = body
         else:
             if node.has_mask:

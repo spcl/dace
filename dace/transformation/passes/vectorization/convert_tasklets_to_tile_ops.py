@@ -1188,12 +1188,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
         flat = " + ".join(parts) if parts else "0"
         # Reference the source by its descriptor kind -- NO C-style cast (user
-        # direction 2026-06-15: "we should never have c-type casts"). A
-        # ``dace.data.Scalar`` connector is passed by value (``T _in``) so it is
-        # referenced bare; a length-1 ``Array`` connector is passed as a pointer
-        # (``T* _in``) so its sole element is ``_in[0]``. The destination tile's
-        # element type drives the implicit conversion -- a cast is both
-        # unnecessary and (for the pointer form) a compile error.
+        # direction 2026-06-15: "we should never have c-type casts"). This runs
+        # in the *pass* (before downstream widening/staging finalises connector
+        # shapes), so the descriptor kind -- not the eventual codegen ABI -- is
+        # what is reliable here: a ``dace.data.Scalar`` is passed by value
+        # (``T _in``) and referenced bare; any ``Array`` source is staged to a
+        # pointer connector (``T* _in``), so its element 0 is broadcast to every
+        # lane via ``_in[0]`` -- a genuine pointer index (the connector is a
+        # pointer), not a by-value ``[0]``. The destination tile's element type
+        # drives the implicit conversion -- no cast needed.
         import dace.data as _dd
         src_desc = sdfg.arrays.get(src_edge.data.data)
         src_ref = "_in" if isinstance(src_desc, _dd.Scalar) else "_in[0]"

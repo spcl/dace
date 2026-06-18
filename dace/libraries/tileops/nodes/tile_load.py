@@ -49,8 +49,8 @@ class ExpandTileLoadPure(ExpandTransformation):
 
         * ``src_kind="Tile"`` (default): ``_src`` is a tile-shape transient
           / strided view; standard per-lane indexed read.
-        * ``src_kind="Scalar"``: ``_src`` is a length-1 array; every lane
-          reads ``_src[0]`` (broadcast).
+        * ``src_kind="Scalar"``: ``_src`` is a volume-1 source passed by value;
+          every lane reads the bare ``_src`` (broadcast).
         * ``src_kind="Symbol"``: no ``_src`` connector; every lane writes
           the cast of :attr:`src_expr` (broadcast literal / symbolic).
 
@@ -68,16 +68,16 @@ class ExpandTileLoadPure(ExpandTransformation):
         if node.src_kind == "Symbol":
             src_ref = f"({dst_dtype})({node.src_expr})"
         elif node.src_kind == "Scalar":
-            # DaCe passes a tasklet connector by value (``T _src``) for a true
-            # ``dace.data.Scalar`` and for a single-element access into a
-            # larger array (``a[j]``); only a genuine length-1 *array*
-            # connector is a pointer (``T* _src``) needing ``_src[0]``.
+            # A volume-1 source (a true ``dace.data.Scalar``, a length-1 Array,
+            # or a single-element access) is passed by value (``T _src``) and
+            # referenced bare; a tile-shape source widened upstream is a pointer
+            # read per lane (``_src[off]``). ``[0]`` is a memlet concern, never a
+            # tasklet-body one (a by-value connector is not a pointer).
+            from .tile_binop import scalar_operand_ref
             src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
             desc = parent_sdfg.arrays[src_edge.data.data]
-            is_len1_array = (isinstance(desc, dace.data.Array)
-                             and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
-            ref = "_src[0]" if is_len1_array else "_src"
-            src_ref = f"({dst_dtype})({ref})"
+            ref, broadcast = scalar_operand_ref(desc, "_src", widths, dst_off)
+            src_ref = f"({dst_dtype})({ref})" if broadcast else ref
         else:
             src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
             src_arr = parent_sdfg.arrays[src_edge.data.data]

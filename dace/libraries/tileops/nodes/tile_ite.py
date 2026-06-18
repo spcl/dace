@@ -31,7 +31,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape
+from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, scalar_operand_ref
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
 # never installed on CI, so this resolves to ``None`` there (meaning "assume
@@ -74,20 +74,27 @@ class ExpandTileITEPure(ExpandTransformation):
 
             A ``Symbol`` operand embeds its loop-invariant expression inline,
             broadcast across every lane (user direction 2026-06-15). A ``Scalar``
-            operand reads a length-1 / ``dace.data.Scalar`` source (``conn[0]`` for
-            a length-1 Array pointer connector, bare ``conn`` for a by-value
-            Scalar) and broadcasts it. A ``Tile`` operand indexes per lane. When
-            ``cast`` is given (the arms, cast to the output dtype) it is applied;
-            the cond is used in a boolean ``? :`` context so ``cast`` is ``None``.
+            operand is descriptor-aware: a volume-1 source (``dace.data.Scalar``
+            / length-1 Array) is passed by value, referenced bare ``conn`` and
+            broadcast; a tile-shape source widened upstream is a pointer read per
+            lane ``conn[off]`` (``[0]`` is a memlet concern, not a tasklet one).
+            A ``Tile`` operand indexes per lane. When ``cast`` is given (the
+            arms, cast to the output dtype) it is applied to a broadcast; a
+            per-lane tile read keeps the tile dtype. The cond is a boolean
+            ``? :`` context so its ``cast`` is ``None``.
             """
             if kind == _SYMBOL:
                 return f"({cast})({expr})" if cast else f"({expr})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
+            # Scalar operand: descriptor-aware reference (a tile-shape Array
+            # widened upstream is read per lane like a Tile; a by-value Scalar /
+            # length-1 Array is broadcast). A per-lane tile read keeps the tile
+            # dtype (no cast); a broadcast applies ``cast`` (the arms) when given.
             desc = parent_sdfg.arrays[in_e[conn].data.data]
-            is_len1_array = (isinstance(desc, dace.data.Array)
-                             and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
-            ref = f"{conn}[0]" if is_len1_array else conn
+            ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
+            if not broadcast:
+                return ref
             return f"({cast})({ref})" if cast else f"({ref})"
 
         t_ref = _ref(node.kind_t, "_t", node.expr_t, out_dtype)

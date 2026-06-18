@@ -42,6 +42,39 @@ def _is_scalar_shape(desc) -> bool:
     return False
 
 
+def scalar_operand_ref(desc, conn: str, widths, off: str) -> Tuple[str, bool]:
+    """Per-lane C++ reference for a ``Scalar``-kind tile-op operand.
+
+    A ``Scalar``-kind operand (one classified as a broadcast because its source
+    is read through a single-element ``"0"`` memlet) may be bound to one of two
+    connector ABIs:
+
+    * a **tile-shape** :class:`dace.data.Array` (``shape == widths``) -> a
+      transient an upstream tile op widened to a register tile, then read here
+      through a single-element memlet. The connector is a pointer (``T* conn``)
+      carrying PER-LANE data, so it must be read ``conn[off]`` exactly like a
+      Tile operand. Reading it as a broadcast would emit ``(T)conn`` -- an
+      invalid pointer-to-value cast.
+    * anything else (a true :class:`dace.data.Scalar`, a length-1 Array, or any
+      single-element access) -> DaCe passes a volume-1 connector by value
+      (``T conn = ...``), so the tasklet references the bare ``conn`` and
+      broadcasts it. ``[0]`` is a *memlet* concern, never a tasklet-body one --
+      a by-value ``conn`` is not a pointer.
+
+    :param desc: The data descriptor bound to ``conn``.
+    :param conn: The tasklet input connector name (e.g. ``"_a"``).
+    :param widths: Per-dim tile widths (innermost-last).
+    :param off: The flattened per-lane offset expression (from ``tile_offset``).
+    :returns: ``(ref, broadcast)`` -- the C++ reference and whether it is a
+        loop-invariant broadcast. The caller casts a broadcast to the operand
+        dtype; a per-lane tile read (``broadcast == False``) keeps the tile
+        dtype uncast, exactly like a Tile operand.
+    """
+    if isinstance(desc, dace.data.Array) and _is_tile_shape(desc, tuple(widths)):
+        return f"{conn}[{off}]", False
+    return conn, True
+
+
 def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
     """Whether a Tile operand of dtype ``src`` may be promoted to the output
     dtype ``dst`` before the op (a widening conversion).
@@ -194,17 +227,15 @@ class ExpandTileBinopPure(ExpandTransformation):
                 return f"{_cast}({expr})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
-            # Scalar broadcast operand. DaCe passes a tasklet connector by
-            # value (``T conn``) for a true ``dace.data.Scalar`` and for a
-            # single-element access into a larger array (``a[j]`` ->
-            # ``double conn = a[j]``); only a genuine length-1 *array*
-            # connector is a pointer (``T* conn``) needing ``conn[0]``. Cast
-            # to ``operand_dtype`` so a typed binop (``std::min`` etc.) resolves.
+            # Scalar operand. A tile-shape Array widened upstream is a pointer
+            # read per lane (``conn[off]``); any volume-1 source (Scalar /
+            # length-1 Array / single-element access) is passed by value and
+            # read as the bare ``conn``. A per-lane tile read keeps the tile
+            # dtype (no cast, like a Tile operand); a broadcast is cast to
+            # ``operand_dtype`` so a typed binop (``std::min`` etc.) resolves.
             desc = parent_sdfg.arrays[in_e[conn].data.data]
-            is_len1_array = (isinstance(desc, dace.data.Array)
-                             and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
-            ref = f"{conn}[0]" if is_len1_array else conn
-            return f"{_cast}({ref})"
+            ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
+            return f"{_cast}({ref})" if broadcast else ref
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b)
@@ -215,13 +246,15 @@ class ExpandTileBinopPure(ExpandTransformation):
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
         out_is_scalar = (node.kind_a != _TILE and node.kind_b != _TILE and _is_scalar_shape(out_desc))
         if out_is_scalar:
-            # The Scalar output path: no lane loop; one assignment. ``_c[0]`` for a length-1
-            # Array (pointer connector), bare ``_c`` for a true Scalar (by-value connector).
-            c_ref = "_c[0]" if isinstance(out_desc, dace.data.Array) else "_c"
+            # The Scalar output path: no lane loop; one assignment. A volume-1
+            # output (Scalar or length-1 Array) is a by-value local (``T _c;``),
+            # so it -- and the volume-1 ``_mask`` gating it -- are referenced
+            # bare. ``[0]`` is a memlet concern, never a tasklet-body one (a
+            # by-value connector is not a pointer).
             if node.has_mask:
-                body = f"{c_ref} = _mask[0] ? ({rhs_expr}) : {out_dtype}(0);"
+                body = f"_c = _mask ? ({rhs_expr}) : {out_dtype}(0);"
             else:
-                body = f"{c_ref} = {rhs_expr};"
+                body = f"_c = {rhs_expr};"
             code = body
         else:
             if node.has_mask:
