@@ -200,8 +200,10 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
                 pass
     cuda2d_1d = (src_rank == 1 and dst_rank == 1
                  and not symbolic.inequal_symbols(in_shape_collapsed[0], out_shape_collapsed[0]))
-    if cuda2d_2d or cuda2d_1d:
-        return 'MemcpyCUDA2D'
+    if cuda2d_1d:
+        return None  # Reducible to a 1D copy.
+    elif cuda2d_2d:
+        return 'MemcpyCUDA2D'  # Genuine 2D copy.
 
     # Same-side strided ND -- MappedTasklet.
     if not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
