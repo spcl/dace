@@ -864,6 +864,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
     {self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold);
 '''
+        # Depending on `max_concurrent_streams` we decide how to allocate the streams
+        if int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1:
+            stream_alloc_call = "__state->gpu_context->internal_streams[i] = nullptr"
+            stream_free_call = "{ /* no action needed */ }"
+            assert self._gpu_stream_manager.num_gpu_streams == 1
+            assert self._gpu_stream_manager.num_gpu_events == 0
+        else:
+            stream_alloc_call = "DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking))"
+            stream_free_call = "DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
 
         self._codeobject.code = """
 #include <{backend_header}>
@@ -903,7 +912,7 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
+        {stream_alloc_call};
         __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
     }}
     for(int i = 0; i < {nevents}; ++i) {{
@@ -924,7 +933,7 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
+        {stream_free_call};
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
@@ -948,6 +957,8 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
+           stream_alloc_call=stream_alloc_call,
+           stream_free_call=stream_free_call,
            sdfg=self._global_sdfg)
 
         return [self._codeobject]
