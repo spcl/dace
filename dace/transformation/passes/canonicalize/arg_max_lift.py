@@ -96,6 +96,10 @@ class _Match(NamedTuple):
     :param input_array: The reduced-over array's data name (``a`` in s314).
     :param iter_start: Loop start expression.
     :param iter_end: Loop inclusive end expression.
+    :param idx_carrier_name: The index carrier symbol (``index`` in s315), when
+        the true-branch ALSO tracks the argmax/argmin position; ``None`` for the
+        value-only shape. Only the symbol-carrier path supports it (the index is
+        bound via an iedge, like the value carrier).
     """
     op: dtypes.ReductionType
     loop: LoopRegion
@@ -106,6 +110,7 @@ class _Match(NamedTuple):
     input_array: str
     iter_start: Any
     iter_end: Any
+    idx_carrier_name: Optional[str] = None
 
 
 @properties.make_properties
@@ -217,15 +222,23 @@ class ArgMaxLift(ppl.Pass):
             if not self._true_state_writes_carrier_from_array(true_state, carrier_name, input_array, loop.loop_variable,
                                                               sdfg):
                 return None
+        idx_carrier_name = None
+        if carrier_kind in ('scalar', 'length_one_array'):
+            pass  # data-carrier path validated above (value-only)
         else:
             # Symbol-carrier path: the in-loop write is an iedge assignment
             # ``carrier := arr[loop_var]`` (or ``carrier := gather_sym`` where
             # ``gather_sym`` was bound to ``arr[loop_var]``) inside the
-            # true-branch. The true-branch states must be empty -- any tasklet
-            # / AccessNode work would be a separate side effect the rewrite
-            # cannot preserve.
-            if not self._symbol_true_branch_writes_carrier(true_branch, carrier_name, input_array, gather_sym_name,
-                                                           loop.loop_variable):
+            # true-branch, OPTIONALLY plus an index carrier ``idx := loop_var``
+            # (argmax position, s315). The true-branch states must be empty --
+            # any tasklet / AccessNode work would be a separate side effect the
+            # rewrite cannot preserve.
+            ok, idx_carrier_name = self._symbol_true_branch_writes_carrier(true_branch, carrier_name, input_array,
+                                                                           gather_sym_name, loop.loop_variable)
+            if not ok:
+                return None
+            # An index carrier must itself be a symbol (bound back via iedge).
+            if idx_carrier_name is not None and idx_carrier_name not in sdfg.symbols:
                 return None
 
         return _Match(
@@ -238,6 +251,7 @@ class ArgMaxLift(ppl.Pass):
             input_array=input_array,
             iter_start=start,
             iter_end=end,
+            idx_carrier_name=idx_carrier_name,
         )
 
     # ------------------------- match helpers -------------------------
@@ -419,55 +433,68 @@ class ArgMaxLift(ppl.Pass):
             return 'symbol', None
         return None, None
 
-    def _symbol_true_branch_writes_carrier(self, true_branch, carrier: str, array: str, gather_sym: str,
-                                           loop_var: str) -> bool:
-        """For the symbol-carrier case, verify the true-branch contains exactly
-        one iedge whose assignment binds ``carrier := array[loop_var]`` or
-        ``carrier := gather_sym``, and that the true-branch's states are all
-        empty (no tasklet / AccessNode work). Other iedge assignments are
-        refused -- they would be silently dropped by the rewrite.
+    def _symbol_true_branch_writes_carrier(self, true_branch, carrier: str, array: str, gather_sym: str, loop_var: str):
+        """For the symbol-carrier case, verify the true-branch binds the value
+        carrier (``carrier := array[loop_var]`` or ``carrier := gather_sym``)
+        and, optionally, ONE index carrier (``idx := loop_var`` -- the argmax
+        position, TSVC s315). The true-branch states must all be empty (no
+        tasklet / AccessNode work). Any other iedge assignment is refused -- it
+        would be silently dropped by the rewrite.
+
+        :returns: ``(ok, idx_carrier)`` -- ``ok`` is True iff the value carrier
+            write was found and every assignment was recognised; ``idx_carrier``
+            is the index-carrier symbol name when an ``idx := loop_var`` write is
+            present, else ``None``.
         """
         if not hasattr(true_branch, 'edges'):
-            return False
+            return False, None
         carrier_write_seen = False
+        idx_carrier = None
         for e in true_branch.edges():
             assigns = e.data.assignments or {}
             for lhs, rhs in assigns.items():
-                if lhs != carrier:
-                    return False  # extra iedge write -> refuse
-                # The RHS must be ``array[loop_var]`` (direct gather) or the
-                # gather symbol (indirect through ``a_index`` bound earlier).
                 rhs_str = str(rhs).strip()
-                if rhs_str == gather_sym:
+                if lhs == carrier:
+                    # Value carrier := ``array[loop_var]`` (direct gather) or the
+                    # gather symbol (indirect through ``a_index`` bound earlier).
+                    if rhs_str == gather_sym:
+                        carrier_write_seen = True
+                        continue
+                    try:
+                        tree = ast.parse(rhs_str, mode='eval').body
+                    except SyntaxError:
+                        return False, None
+                    if not isinstance(tree, ast.Subscript):
+                        return False, None
+                    if not (isinstance(tree.value, ast.Name) and tree.value.id == array):
+                        return False, None
+                    idx = tree.slice
+                    if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+                        idx = idx.value
+                    if not (isinstance(idx, ast.Name) and idx.id == loop_var):
+                        return False, None
                     carrier_write_seen = True
-                    continue
-                try:
-                    tree = ast.parse(rhs_str, mode='eval').body
-                except SyntaxError:
-                    return False
-                if not isinstance(tree, ast.Subscript):
-                    return False
-                if not (isinstance(tree.value, ast.Name) and tree.value.id == array):
-                    return False
-                idx = tree.slice
-                if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-                    idx = idx.value
-                if not (isinstance(idx, ast.Name) and idx.id == loop_var):
-                    return False
-                carrier_write_seen = True
+                elif rhs_str == loop_var and idx_carrier is None:
+                    # Index carrier := the loop variable (argmax position).
+                    idx_carrier = lhs
+                else:
+                    return False, None  # unrecognised extra write -> refuse
         # All true-branch states must be empty -- any contained tasklet /
         # AccessNode work is a separate side effect.
         for n in true_branch.nodes():
             if isinstance(n, SDFGState) and len(n.nodes()) > 0:
-                return False
+                return False, None
             if not isinstance(n, SDFGState):
-                return False  # nested control flow not supported in v1
-        return carrier_write_seen
+                return False, None  # nested control flow not supported in v1
+        return carrier_write_seen, idx_carrier
 
     # ------------------------- rewrite -------------------------
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
-        """Replace the loop with a :class:`Reduce` libnode."""
+        """Replace the loop with a :class:`Reduce` (value-only) or
+        :class:`ArgReduce` (value + index) libnode."""
+        if m.idx_carrier_name is not None:
+            return self._rewrite_with_index(m, sdfg)
         start = symbolic.simplify(m.iter_start)
         end = symbolic.simplify(m.iter_end)
 
@@ -561,6 +588,73 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(read, None, node, '_in', input_memlet)
         output_memlet = mm.Memlet(data=out_name, subset=output_subset)
         reduce_state.add_edge(node, '_out', write, None, output_memlet)
+        sdfg.reset_cfg_list()
+
+    def _rewrite_with_index(self, m: _Match, sdfg: SDFG):
+        """Replace an argmax/argmin-with-index loop (TSVC s315) with an
+        :class:`~dace.libraries.standard.nodes.ArgReduce` libnode.
+
+        The lift mirrors the symbol-carrier value-only path but uses the
+        two-output ``ArgReduce`` (value + index). Both outputs are fresh
+        transient SCALARS -- ``val_buf`` (the array's dtype) and ``idx_buf``
+        (``int64``) -- bound back to the carrier symbols after the reduce:
+        ``carrier := val_buf`` and ``idx_carrier := slice_lo + idx_buf`` (the
+        ``ArgReduce`` index is slice-local; ``slice_lo`` recovers the
+        original-array position). The pre-loop seed iedges binding either
+        carrier are dropped -- the reduce subsumes them (the seed position is
+        kept by extending the input slice down to ``start - 1``).
+        """
+        from dace.libraries.standard.nodes import ArgReduce
+        start = symbolic.simplify(m.iter_start)
+        end = symbolic.simplify(m.iter_end)
+        arr_dtype = sdfg.arrays[m.input_array].dtype
+
+        val_buf, _ = sdfg.add_scalar(f'_argmax_val_{m.loop.label}', arr_dtype, transient=True, find_new_name=True)
+        idx_buf, _ = sdfg.add_scalar(f'_argmax_idx_{m.loop.label}', dtypes.int64, transient=True, find_new_name=True)
+
+        # Include the seed ``a[start-1]`` in the slice (clamped at 0).
+        slice_lo = symbolic.simplify(start - 1)
+        try:
+            if slice_lo < 0:
+                slice_lo = symbolic.simplify(0)
+        except TypeError:  # symbolic start; assume the seed sits at >= 0
+            pass
+        lo_is_zero = bool(symbolic.simplify(slice_lo) == 0)
+
+        argmax_state = m.parent.add_state(m.loop.label + '_argreduce')
+        # Re-route inbound edges, dropping pre-loop binds of BOTH carriers.
+        for ie in list(m.parent.in_edges(m.loop)):
+            new_assigns = dict(ie.data.assignments or {})
+            new_assigns.pop(m.carrier_name, None)
+            new_assigns.pop(m.idx_carrier_name, None)
+            m.parent.add_edge(ie.src, argmax_state,
+                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.remove_edge(ie)
+
+        # Bind state: re-materialise both carrier symbols from the scalars
+        # (bare names; the index adds the slice base when the slice is offset).
+        idx_rhs = idx_buf if lo_is_zero else f'({symbolic.symstr(slice_lo)} + {idx_buf})'
+        bind_state = m.parent.add_state(m.loop.label + '_argreduce_bind')
+        m.parent.add_edge(argmax_state, bind_state,
+                          dace.InterstateEdge(assignments={
+                              m.carrier_name: val_buf,
+                              m.idx_carrier_name: idx_rhs
+                          }))
+        for oe in list(m.parent.out_edges(m.loop)):
+            m.parent.add_edge(bind_state, oe.dst, oe.data)
+            m.parent.remove_edge(oe)
+        m.parent.remove_node(m.loop)
+
+        read = argmax_state.add_read(m.input_array)
+        wv = argmax_state.add_write(val_buf)
+        wi = argmax_state.add_write(idx_buf)
+        op = 'max' if m.op == dtypes.ReductionType.Max else 'min'
+        node = ArgReduce(name=f'{m.loop.label}_argreduce', op=op)
+        argmax_state.add_node(node)
+        argmax_state.add_edge(read, None, node, '_in',
+                              mm.Memlet(data=m.input_array, subset=subsets.Range([(slice_lo, end, 1)])))
+        argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
         sdfg.reset_cfg_list()
 
 

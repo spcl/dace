@@ -129,10 +129,12 @@ def test_refuses_unary_transform_on_gather_s3113():
 
 
 def test_refuses_index_tracking_s315():
-    """TSVC s315: ``if a[i] > x: x = a[i]; index = i``. The true-branch writes
-    BOTH the value carrier and an index; v1 only handles the value carrier.
-    The ``index = i`` write lives on an interstate edge inside the true-branch
-    -- the matcher checks for any such edge assignment and refuses."""
+    """TSVC s315 in its DATA-carrier form (``x`` / ``index`` as Scalars, the
+    shape ``to_sdfg(simplify=True)`` produces): the true-branch writes BOTH the
+    value carrier and an index, so the data-carrier path sees two terminal
+    AccessNodes and refuses. (The SYMBOL-carrier form -- what full canonicalize
+    produces -- DOES lift to an ``ArgReduce`` libnode; see
+    ``test_symbol_carrier_argmax_with_index``.)"""
 
     @dace.program
     def s315(a: dace.float64[N], result: dace.float64[1]):
@@ -563,6 +565,91 @@ def test_symbol_carrier_negative_wrong_rhs():
     sdfg.validate()
     res = ArgMaxLift().apply_pass(sdfg, {})
     assert res is None, "wrong-RHS symbol-carrier write must be refused"
+
+
+def _build_symbol_argmax_index_sdfg(label: str, op: str = '>', inline_cond: bool = True):
+    """Symbol-carrier argmax/argmin that ALSO tracks the index (TSVC s315).
+
+    Mirrors :func:`_build_symbol_argmax_sdfg` but the true-branch binds BOTH the
+    value carrier ``x := a[i]`` and the index carrier ``index := i``; the pre-loop
+    seeds are ``x := a[0]`` / ``index := 0``. The post state reads both symbols
+    into ``result`` (value) and ``idx_result`` (index) so the lift can be
+    verified end to end. ArgMaxLift must lift this to an ``ArgReduce`` libnode.
+    """
+    from dace.sdfg.state import ControlFlowRegion
+    from dace.properties import CodeBlock
+
+    sdfg = dace.SDFG(label)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('result', [1], dace.float64)
+    sdfg.add_array('idx_result', [1], dace.int64)
+    sdfg.add_symbol('x', dace.float64)
+    sdfg.add_symbol('index', dace.int64)
+    sdfg.add_symbol('a_index', dace.float64)
+    sdfg.add_symbol('__tmp0', dace.bool)
+
+    init_state = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion(label + '_loop',
+                      initialize_expr='i = 1',
+                      condition_expr='i < N',
+                      update_expr='i = i + 1',
+                      loop_var='i')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init_state, loop, dace.InterstateEdge(assignments={'x': 'a[0]', 'index': '0'}))
+
+    start_blk = loop.add_state('start', is_start_block=True)
+    cond_prep = loop.add_state('cond_prep')
+    cond_block = ConditionalBlock('cond_block')
+    loop.add_node(cond_block)
+    loop.add_edge(start_blk, cond_prep, dace.InterstateEdge(assignments={'a_index': 'a[i]'}))
+    if inline_cond:
+        loop.add_edge(cond_prep, cond_block, dace.InterstateEdge())
+        cond_code = f'(a_index {op} x)'
+    else:
+        loop.add_edge(cond_prep, cond_block, dace.InterstateEdge(assignments={'__tmp0': f'(a_index {op} x)'}))
+        cond_code = '__tmp0'
+
+    true_branch = ControlFlowRegion(label + '_true')
+    cond_block.add_branch(CodeBlock(cond_code), true_branch)
+    t1 = true_branch.add_state('t1', is_start_block=True)
+    t2 = true_branch.add_state('t2')
+    true_branch.add_edge(t1, t2, dace.InterstateEdge(assignments={'x': 'a[i]', 'index': 'i'}))
+
+    post = sdfg.add_state('post')
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    wv = post.add_write('result')
+    tv = post.add_tasklet('write_val', {}, {'__o'}, '__o = x', language=dace.dtypes.Language.Python)
+    post.add_edge(tv, '__o', wv, None, dace.Memlet(data='result', subset='0'))
+    wi = post.add_write('idx_result')
+    ti = post.add_tasklet('write_idx', {}, {'__o'}, '__o = index', language=dace.dtypes.Language.Python)
+    post.add_edge(ti, '__o', wi, None, dace.Memlet(data='idx_result', subset='0'))
+    return sdfg
+
+
+@pytest.mark.parametrize('op,reducer', [('>', np.argmax), ('<', np.argmin)])
+def test_symbol_carrier_argmax_with_index(op, reducer):
+    """``if a[i] OP x: x = a[i]; index = i`` lifts to an ``ArgReduce`` libnode
+    (two scalar outputs) whose value/index are bound back to the ``x`` / ``index``
+    symbols. Verifies BOTH the extreme value and its (first-occurrence) index."""
+    from dace.libraries.standard.nodes import ArgReduce
+    sdfg = _build_symbol_argmax_index_sdfg('s_argidx_' + ('max' if op == '>' else 'min'), op=op)
+    sdfg.validate()
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    assert res == 1, "argmax-with-index must lift"
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 1
+
+    n = 24
+    rng = np.random.default_rng(815 if op == '>' else 816)
+    a = rng.standard_normal(n)
+    val = np.zeros(1)
+    idx = np.zeros(1, dtype=np.int64)
+    sdfg(a=a, result=val, idx_result=idx, N=n)
+    expected_idx = int(reducer(a))
+    expected_val = a[expected_idx]
+    assert np.isclose(val[0], expected_val), f"value: got {val[0]}, expected {expected_val}"
+    assert idx[0] == expected_idx, f"index: got {idx[0]}, expected {expected_idx}"
 
 
 def test_symbol_carrier_inline_condition_max():
