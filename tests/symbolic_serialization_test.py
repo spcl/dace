@@ -40,7 +40,7 @@ def test_range_json_roundtrip_uses_symbolic_deserializer():
     rng = subsets.Range([(symbolic.TypedConstant(np.int16(2)), sym + symbolic.TypedConstant(np.int16(6)),
                           symbolic.TypedConstant(np.int16(2)), symbolic.TypedConstant(np.uint8(4)))])
 
-    restored = subsets.Range.from_json(rng.to_json())
+    restored = subsets.Range.from_json(rng.to_json(), {"version": dace.__version__})
     start, end, step = restored.ranges[0]
     tile = restored.tile_sizes[0]
 
@@ -241,7 +241,7 @@ def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
         }],
     }
 
-    rng = subsets.Range.from_json(json_range)
+    rng = subsets.Range.from_json(json_range, {"version": dace.__version__})
 
     assert symbolic.serialize_symbolic(rng.ranges[0][0]) == '0'
     assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int16)'
@@ -254,7 +254,7 @@ def test_scalar_memlet_connector_type_after_symbolic_range_roundtrip():
     stencil_i = symbolic.symbol('stencil_i', dtype=dace.int64)
     start = 2 * i - 2 * stencil_i + 1
     rng = subsets.Range([(start, start, 1)])
-    restored = subsets.Range.from_json(rng.to_json())
+    restored = subsets.Range.from_json(rng.to_json(), {"version": dace.__version__})
     restored.replace({i: stencil_i})
 
     assert 'i' not in restored.free_symbols
@@ -282,7 +282,7 @@ def test_list_property_symbolic_type_json_roundtrip_supports_plain_names():
 
     assert prop.to_json(['START']) == ['$START']
 
-    restored = prop.from_json(prop.to_json(['START']))
+    restored = prop.from_json(prop.to_json(['START']), {"version": dace.__version__})
 
     assert len(restored) == 1
     assert restored[0] == symbolic.symbol('START')
@@ -293,7 +293,7 @@ def test_dict_property_symbolic_type_json_roundtrip_supports_plain_names():
 
     assert prop.to_json({'N': 'N'}) == {'N': '$N'}
 
-    restored = prop.from_json(prop.to_json({'N': 'N'}))
+    restored = prop.from_json(prop.to_json({'N': 'N'}), {"version": dace.__version__})
 
     assert restored == {'N': symbolic.symbol('N')}
 
