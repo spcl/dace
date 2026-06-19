@@ -897,9 +897,9 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
     DACE_GPU_CHECK({backend}Free(dev_X));
 
-    {pool_header}
-
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+
+    {pool_header}
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
