@@ -127,14 +127,14 @@ class symbol(sympy.Symbol):
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
 
-        # If commutative is not explicitly added, serialization / deserialization of integer symbols might add the assumption
-        # commutative must appear last
-        if 'integer' in assumptions or not numpy.any(is_integer):
-            # Using __xnew__ as the regular __new__ is cached, which leads
-            # to modifying different references of symbols with the same name.
-            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'commutative': True})
-        else:
-            self = sympy.Symbol.__xnew__(cls, name, **{**assumptions, 'integer': True, 'commutative': True})
+        # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
+        # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
+        assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
+        if 'integer' not in assumptions and numpy.any(is_integer):
+            assumptions['integer'] = True
+        # Using __xnew__ as the regular __new__ is cached, which leads
+        # to modifying different references of symbols with the same name.
+        self = sympy.Symbol.__xnew__(cls, name, **assumptions)
 
         self.dtype = dtype
         self._constraints = []
@@ -1674,6 +1674,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     def _pow(a, b):
         a = sympy.sympify(a)
         b = sympy.sympify(b)
+        # Evaluate pure-numeric powers (8**-1 -> 1/8) so coefficients stay reduced Rationals; an
+        # unevaluated Pow reorders surrounding Mul terms on round-trip. TypedConstants keep dtype.
+        if (_is_sympy_number(a) and _is_sympy_number(b) and not isinstance(a, TypedConstant)
+                and not isinstance(b, TypedConstant)):
+            return a**b
         if hasattr(sympy.Pow, '_from_args'):
             return sympy.Pow._from_args((a, b))
         if hasattr(sympy.Pow, '__xnew__'):
