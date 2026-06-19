@@ -892,10 +892,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if self.has_pool:
             poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
             pool_header = f'''
-    cudaMemPool_t mempool;
-    cudaDeviceGetDefaultMemPool(&mempool, 0);
+    {self.backend}MemPool_t mempool;
+    {self.backend}DeviceGetDefaultMemPool(&mempool, 0);
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
+    {self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold);
 '''
 
         pool_prewarm = self._pool_prewarm('__state->gpu_context->streams[0]') if self.has_pool else ''
