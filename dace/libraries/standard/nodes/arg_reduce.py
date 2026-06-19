@@ -31,7 +31,7 @@ original-array position.
 from typing import Optional
 
 import dace
-from dace import library, properties
+from dace import library, properties, symbolic
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -54,18 +54,32 @@ class ExpandArgReducePure(ExpandTransformation):
 
         in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
         idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
-        n = in_edge.data.subset.num_elements()
         from dace.codegen.targets.cpp import sym2cpp
+        sub = in_edge.data.subset
+        n = sub.num_elements()
         n_str = sym2cpp(n)
         op = _OP_CPP[node.op]
 
-        # ``_in`` is a pointer to the (contiguous) slice; ``_out_val`` /
-        # ``_out_idx`` are scalar (by-value) connectors. A strict comparison
-        # keeps the FIRST extreme element (matches the sequential source).
+        # Stride of the (1-D) input slice. ``_in`` points at the slice base, so a
+        # strided slice ``a[lo:hi:s]`` reads element ``j`` at ``_in[j*s]``. A
+        # unit-stride slice gets the tight contiguous loop (separate code path,
+        # so the compiler can fully vectorise the hot case); a non-unit stride
+        # multiplies the lane index by the stride -- a compile-time-constant
+        # stride folds away, a symbolic stride stays a runtime multiply.
+        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+        try:
+            unit_stride = (int(symbolic.simplify(step)) == 1)
+        except (TypeError, ValueError):
+            unit_stride = False
+        access = "__i" if unit_stride else f"(__i * ({sym2cpp(step)}))"
+
+        # ``_out_val`` / ``_out_idx`` are scalar (by-value) connectors. A strict
+        # comparison keeps the FIRST extreme element (matches the sequential
+        # source). ``_out_idx`` is the SLICE-LOCAL position ``0 .. n-1``.
         code = (f"{idx_dtype.ctype} __bidx = 0;\n"
                 f"{in_dtype.ctype} __best = _in[0];\n"
                 f"for ({idx_dtype.ctype} __i = 1; __i < {n_str}; ++__i) {{\n"
-                f"    if (_in[__i] {op} __best) {{ __best = _in[__i]; __bidx = __i; }}\n"
+                f"    if (_in[{access}] {op} __best) {{ __best = _in[{access}]; __bidx = __i; }}\n"
                 f"}}\n"
                 f"_out_val = __best;\n"
                 f"_out_idx = __bidx;")
@@ -91,8 +105,10 @@ class ExpandArgReduceCUDA(ExpandTransformation):
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         raise NotImplementedError(
             f"ArgReduce CUDA expansion (cub::DeviceReduce::{_OP_CUB[node.op]}) is not yet wired up; "
-            "the CUB ArgMax/ArgMin call returns a KeyValuePair to split into _out_val / _out_idx. "
-            "Pin the 'pure' expansion (expand_library_nodes(implementation='pure')) for CPU.")
+            "the CUB ArgMax/ArgMin call returns a KeyValuePair<int, T> to split into _out_val / _out_idx. "
+            "CUB ArgMax/ArgMin take a contiguous input pointer; a non-unit-stride slice needs a strided "
+            "input iterator (e.g. cub::CountingInputIterator + a TransformInputIterator computing base+j*stride) "
+            "before the call. Pin the 'pure' expansion (expand_library_nodes(implementation='pure')) for CPU.")
 
 
 @library.node

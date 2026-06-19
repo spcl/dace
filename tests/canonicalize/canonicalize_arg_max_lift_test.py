@@ -109,10 +109,11 @@ def test_max_corner_first_element_is_max():
 # -----------------------------------------------------------------------------
 
 
-def test_refuses_unary_transform_on_gather_s3113():
-    """TSVC s3113: ``av = abs(a[i]); if av > maxv: maxv = av``. The gather is
-    transformed by ``abs`` before the comparison; v1 only recognises direct
-    array reads. Refused; the loop stays sequential."""
+def test_lifts_abs_transform_s3113():
+    """TSVC s3113: ``av = abs(a[i]); if av > maxv: maxv = av`` -- a max reduction
+    over the ABS-transformed gather. The abs path materialises ``buf[j] =
+    abs(a[j])`` into a contiguous transient, then a ``Reduce(Max)`` over ``buf``;
+    the result is ``max(|a|)``."""
 
     @dace.program
     def s3113(a: dace.float64[N], b: dace.float64[2]):
@@ -125,7 +126,16 @@ def test_refuses_unary_transform_on_gather_s3113():
 
     sdfg = s3113.to_sdfg(simplify=True)
     res = ArgMaxLift().apply_pass(sdfg, {})
-    assert res is None, "abs(a[i]) transform should be refused in v1"
+    assert res == 1, "abs-transform max reduction should lift"
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0 and _num_reduces(sdfg) == 1
+
+    n = 20
+    rng = np.random.default_rng(3113)
+    a = rng.standard_normal(n)  # mixed signs -> abs matters
+    out = np.zeros(2)
+    sdfg(a=a, b=out, N=n)
+    assert np.isclose(out[0], np.max(np.abs(a))), f"got {out[0]}, expected {np.max(np.abs(a))}"
 
 
 def test_refuses_index_tracking_s315():

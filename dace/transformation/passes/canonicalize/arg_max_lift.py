@@ -111,6 +111,7 @@ class _Match(NamedTuple):
     iter_start: Any
     iter_end: Any
     idx_carrier_name: Optional[str] = None
+    transform: Optional[str] = None  # unary gather transform ('abs') or None
 
 
 @properties.make_properties
@@ -190,9 +191,9 @@ class ArgMaxLift(ppl.Pass):
         #  (b) inlined -- the comparison sits directly in the condition
         #      ``(g OP c)`` (current canonicalize output for TSVC s314/s316).
         if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
-            op_ast, gather_sym_name, carrier_name = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
+            op_ast, gather_sym_name, carrier_name, transform = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
         else:
-            op_ast, gather_sym_name, carrier_name = self._parse_comparison(cond_expr_str)
+            op_ast, gather_sym_name, carrier_name, transform = self._parse_comparison(cond_expr_str)
         if op_ast is None:
             return None
         op = _CMP_AST_TO_RTYPE[op_ast]
@@ -209,10 +210,14 @@ class ArgMaxLift(ppl.Pass):
         if carrier_kind is None:
             return None
 
+        idx_carrier_name = None
         if carrier_kind in ('scalar', 'length_one_array'):
             # Data-carrier path: the in-loop write lives on AccessNode chains;
             # the true-branch's iedges must NOT carry assignments (any iedge
             # assignment is an extra write -- e.g. TSVC s315's ``index = i``).
+            # A gather transform (``abs``) is only handled on the symbol path.
+            if transform is not None:
+                return None
             for e in true_branch.edges():
                 if e.data.assignments:
                     return None
@@ -222,23 +227,30 @@ class ArgMaxLift(ppl.Pass):
             if not self._true_state_writes_carrier_from_array(true_state, carrier_name, input_array, loop.loop_variable,
                                                               sdfg):
                 return None
-        idx_carrier_name = None
-        if carrier_kind in ('scalar', 'length_one_array'):
-            pass  # data-carrier path validated above (value-only)
         else:
             # Symbol-carrier path: the in-loop write is an iedge assignment
-            # ``carrier := arr[loop_var]`` (or ``carrier := gather_sym`` where
-            # ``gather_sym`` was bound to ``arr[loop_var]``) inside the
+            # ``carrier := [f](arr[loop_var])`` (or ``carrier := [f](gather_sym)``
+            # where ``gather_sym`` was bound to ``arr[loop_var]``) inside the
             # true-branch, OPTIONALLY plus an index carrier ``idx := loop_var``
-            # (argmax position, s315). The true-branch states must be empty --
-            # any tasklet / AccessNode work would be a separate side effect the
-            # rewrite cannot preserve.
-            ok, idx_carrier_name = self._symbol_true_branch_writes_carrier(true_branch, carrier_name, input_array,
-                                                                           gather_sym_name, loop.loop_variable)
+            # (argmax position, s315). The transform ``f`` (e.g. ``abs``, s3113)
+            # must match the one the comparison used. The true-branch states must
+            # be empty -- any tasklet / AccessNode work would be a separate side
+            # effect the rewrite cannot preserve.
+            ok, idx_carrier_name = self._symbol_true_branch_writes_carrier(true_branch,
+                                                                           carrier_name,
+                                                                           input_array,
+                                                                           gather_sym_name,
+                                                                           loop.loop_variable,
+                                                                           transform=transform)
             if not ok:
                 return None
             # An index carrier must itself be a symbol (bound back via iedge).
             if idx_carrier_name is not None and idx_carrier_name not in sdfg.symbols:
+                return None
+            # The transformed + index-tracking combo (TSVC s318) also needs a
+            # strided gather; not handled here yet -- lift only the value-only
+            # transform (s3113) for now, refuse transform+index.
+            if transform is not None and idx_carrier_name is not None:
                 return None
 
         return _Match(
@@ -252,6 +264,7 @@ class ArgMaxLift(ppl.Pass):
             iter_start=start,
             iter_end=end,
             idx_carrier_name=idx_carrier_name,
+            transform=transform,
         )
 
     # ------------------------- match helpers -------------------------
@@ -266,10 +279,28 @@ class ArgMaxLift(ppl.Pass):
                 return True
         return False
 
+    def _parse_compare_node(self, tree):
+        """Extract ``(op_cls, gather_name, carrier_name, transform)`` from a
+        :class:`ast.Compare` node ``gather OP carrier`` (or ``f(gather) OP
+        carrier``). The gather side may carry a recognised unary transform
+        (``abs`` -> ``transform='abs'``); the carrier side must be a bare name.
+        Returns ``(None, None, None, None)`` on any mismatch.
+        """
+        if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
+            return None, None, None, None
+        op_cls = type(tree.ops[0])
+        if op_cls not in _CMP_AST_TO_RTYPE:
+            return None, None, None, None
+        transform, lhs_name = self._extract_transform(tree.left)
+        rhs_name = self._extract_name(tree.comparators[0])
+        if lhs_name is None or rhs_name is None:
+            return None, None, None, None
+        return op_cls, lhs_name, rhs_name, transform
+
     def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, tmp_sym: str):
         """Walk in-edges of ``cond_block`` looking for one whose assignment binds
-        ``tmp_sym`` to a comparison ``g OP c``. Returns ``(ast_op_cls, g_name,
-        c_name)`` or ``(None, None, None)``."""
+        ``tmp_sym`` to a comparison ``[f](g) OP c``. Returns ``(ast_op_cls,
+        g_name, c_name, transform)`` or ``(None, None, None, None)``."""
         for ie in loop.in_edges(cond_block):
             assigns = ie.data.assignments or {}
             rhs = assigns.get(tmp_sym)
@@ -279,40 +310,23 @@ class ArgMaxLift(ppl.Pass):
                 tree = ast.parse(str(rhs), mode='eval').body
             except SyntaxError:
                 continue
-            if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
-                continue
-            op_cls = type(tree.ops[0])
-            if op_cls not in _CMP_AST_TO_RTYPE:
-                continue
-            lhs_name = self._extract_name(tree.left)
-            rhs_name = self._extract_name(tree.comparators[0])
-            if lhs_name is None or rhs_name is None:
-                continue
-            return op_cls, lhs_name, rhs_name
-        return None, None, None
+            res = self._parse_compare_node(tree)
+            if res[0] is not None:
+                return res
+        return None, None, None, None
 
     def _parse_comparison(self, expr_str: str):
-        """Parse a comparison ``g OP c`` inlined directly in the condition.
+        """Parse a comparison ``[f](g) OP c`` inlined directly in the condition.
 
-        Mirrors the comparison extraction in :meth:`_resolve_tmp_iedge` but on
-        the condition string itself (the indirection through a ``tmp`` iedge is
-        absent). Returns ``(ast_op_cls, g_name, c_name)`` or ``(None, None,
-        None)``.
+        Mirrors :meth:`_resolve_tmp_iedge` but on the condition string itself
+        (no ``tmp`` iedge indirection). Returns ``(ast_op_cls, g_name, c_name,
+        transform)`` or ``(None, None, None, None)``.
         """
         try:
             tree = ast.parse(expr_str, mode='eval').body
         except SyntaxError:
-            return None, None, None
-        if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
-            return None, None, None
-        op_cls = type(tree.ops[0])
-        if op_cls not in _CMP_AST_TO_RTYPE:
-            return None, None, None
-        lhs_name = self._extract_name(tree.left)
-        rhs_name = self._extract_name(tree.comparators[0])
-        if lhs_name is None or rhs_name is None:
-            return None, None, None
-        return op_cls, lhs_name, rhs_name
+            return None, None, None, None
+        return self._parse_compare_node(tree)
 
     def _resolve_gather_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, gather_sym: str, loop_var: str,
                               sdfg: SDFG) -> Optional[str]:
@@ -347,6 +361,24 @@ class ArgMaxLift(ppl.Pass):
         if isinstance(node, ast.Name):
             return node.id
         return None
+
+    #: Recognised unary gather transforms ``f(g)`` -> the Python builtin name.
+    _SUPPORTED_TRANSFORMS = {'abs'}
+
+    def _extract_transform(self, node) -> Tuple[Optional[str], Optional[str]]:
+        """Return ``(transform, name)`` for a possibly-transformed operand.
+
+        A bare ``Name`` ``g`` -> ``(None, 'g')``; a recognised unary call
+        ``abs(g)`` -> ``('abs', 'g')``; anything else -> ``(None, None)``.
+        """
+        if isinstance(node, ast.Name):
+            return None, node.id
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in self._SUPPORTED_TRANSFORMS and len(node.args) == 1 and not node.keywords):
+            inner = self._extract_name(node.args[0])
+            if inner is not None:
+                return node.func.id, inner
+        return None, None
 
     def _extract_singleton_state(self, branch) -> Optional[SDFGState]:
         if not hasattr(branch, 'nodes'):
@@ -433,13 +465,44 @@ class ArgMaxLift(ppl.Pass):
             return 'symbol', None
         return None, None
 
-    def _symbol_true_branch_writes_carrier(self, true_branch, carrier: str, array: str, gather_sym: str, loop_var: str):
+    def _rhs_is_value_write(self, rhs_str: str, gather_sym: str, array: str, loop_var: str,
+                            transform: Optional[str]) -> bool:
+        """True iff ``rhs_str`` is the value-carrier write under ``transform``:
+        ``[f](gather_sym)`` or ``[f](array[loop_var])``, where ``f`` is the
+        recognised transform (``None`` -> no wrapping call allowed)."""
+        try:
+            tree = ast.parse(rhs_str, mode='eval').body
+        except SyntaxError:
+            return False
+        if transform is not None:
+            if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and tree.func.id == transform
+                    and len(tree.args) == 1 and not tree.keywords):
+                return False
+            tree = tree.args[0]
+        elif isinstance(tree, ast.Call):
+            return False  # an unexpected transform when none was matched
+        if isinstance(tree, ast.Name):
+            return tree.id == gather_sym
+        if isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array:
+            idx = tree.slice
+            if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+                idx = idx.value
+            return isinstance(idx, ast.Name) and idx.id == loop_var
+        return False
+
+    def _symbol_true_branch_writes_carrier(self,
+                                           true_branch,
+                                           carrier: str,
+                                           array: str,
+                                           gather_sym: str,
+                                           loop_var: str,
+                                           transform: Optional[str] = None):
         """For the symbol-carrier case, verify the true-branch binds the value
-        carrier (``carrier := array[loop_var]`` or ``carrier := gather_sym``)
-        and, optionally, ONE index carrier (``idx := loop_var`` -- the argmax
-        position, TSVC s315). The true-branch states must all be empty (no
-        tasklet / AccessNode work). Any other iedge assignment is refused -- it
-        would be silently dropped by the rewrite.
+        carrier (``carrier := [f](array[loop_var])`` or ``carrier :=
+        [f](gather_sym)``, with the same gather transform ``f`` the comparison
+        used) and, optionally, ONE index carrier (``idx := loop_var`` -- the
+        argmax position, TSVC s315). The true-branch states must all be empty
+        (no tasklet / AccessNode work). Any other iedge assignment is refused.
 
         :returns: ``(ok, idx_carrier)`` -- ``ok`` is True iff the value carrier
             write was found and every assignment was recognised; ``idx_carrier``
@@ -455,23 +518,7 @@ class ArgMaxLift(ppl.Pass):
             for lhs, rhs in assigns.items():
                 rhs_str = str(rhs).strip()
                 if lhs == carrier:
-                    # Value carrier := ``array[loop_var]`` (direct gather) or the
-                    # gather symbol (indirect through ``a_index`` bound earlier).
-                    if rhs_str == gather_sym:
-                        carrier_write_seen = True
-                        continue
-                    try:
-                        tree = ast.parse(rhs_str, mode='eval').body
-                    except SyntaxError:
-                        return False, None
-                    if not isinstance(tree, ast.Subscript):
-                        return False, None
-                    if not (isinstance(tree.value, ast.Name) and tree.value.id == array):
-                        return False, None
-                    idx = tree.slice
-                    if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-                        idx = idx.value
-                    if not (isinstance(idx, ast.Name) and idx.id == loop_var):
+                    if not self._rhs_is_value_write(rhs_str, gather_sym, array, loop_var, transform):
                         return False, None
                     carrier_write_seen = True
                 elif rhs_str == loop_var and idx_carrier is None:
@@ -493,6 +540,8 @@ class ArgMaxLift(ppl.Pass):
     def _rewrite(self, m: _Match, sdfg: SDFG):
         """Replace the loop with a :class:`Reduce` (value-only) or
         :class:`ArgReduce` (value + index) libnode."""
+        if m.transform is not None:
+            return self._rewrite_with_transform(m, sdfg)
         if m.idx_carrier_name is not None:
             return self._rewrite_with_index(m, sdfg)
         start = symbolic.simplify(m.iter_start)
@@ -655,6 +704,81 @@ class ArgMaxLift(ppl.Pass):
                               mm.Memlet(data=m.input_array, subset=subsets.Range([(slice_lo, end, 1)])))
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
+        sdfg.reset_cfg_list()
+
+    def _rewrite_with_transform(self, m: _Match, sdfg: SDFG):
+        """Replace a transformed value-only reduction (TSVC s3113,
+        ``maxv = max(|a[i]|)``) with: a map materialising ``buf[j] = f(a[lo+j])``
+        into a fresh contiguous transient, then a :class:`Reduce` over ``buf``.
+
+        Only the value-only symbol-carrier shape is handled here (transform +
+        index, TSVC s318, also needs a strided gather and is refused upstream).
+        The transform ``f`` is applied per element in the materialisation map,
+        so the reduction itself stays a plain Max/Min fold over a unit-stride
+        buffer.
+        """
+        from dace.codegen.targets.cpp import sym2cpp
+        start = symbolic.simplify(m.iter_start)
+        end = symbolic.simplify(m.iter_end)
+        arr_dtype = sdfg.arrays[m.input_array].dtype
+
+        # Include the seed ``a[start-1]`` (clamped at 0); buf spans the slice.
+        slice_lo = symbolic.simplify(start - 1)
+        try:
+            if slice_lo < 0:
+                slice_lo = symbolic.simplify(0)
+        except TypeError:  # symbolic start; assume the seed sits at >= 0
+            pass
+        n_elems = symbolic.simplify(end + 1 - slice_lo)
+
+        buf, _ = sdfg.add_array(f'_argf_buf_{m.loop.label}', [n_elems], arr_dtype, transient=True, find_new_name=True)
+
+        # Materialisation state: buf[_j] = f(input_array[slice_lo + _j]).
+        mat_state = m.parent.add_state(m.loop.label + '_argf')
+        mat_state.add_mapped_tasklet(
+            name='transform_gather',
+            map_ranges={'_j': f'0:{sym2cpp(n_elems)}'},
+            inputs={'__in': mm.Memlet(data=m.input_array, subset=f'{sym2cpp(slice_lo)} + _j')},
+            code=f'__out = {m.transform}(__in)',
+            outputs={'__out': mm.Memlet(data=buf, subset='_j')},
+            external_edges=True,
+        )
+
+        # Reduce over the (contiguous) buffer.
+        out_dtype = sdfg.symbols[m.carrier_name]
+        out_name, _ = sdfg.add_scalar(f'_argf_val_{m.loop.label}', out_dtype, transient=True, find_new_name=True)
+        reduce_state = m.parent.add_state(m.loop.label + '_argf_reduce')
+
+        # Re-route inbound edges to the materialise state, dropping the pre-loop
+        # carrier seed (the reduce over buf subsumes it).
+        for ie in list(m.parent.in_edges(m.loop)):
+            new_assigns = dict(ie.data.assignments or {})
+            new_assigns.pop(m.carrier_name, None)
+            m.parent.add_edge(ie.src, mat_state,
+                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.remove_edge(ie)
+        m.parent.add_edge(mat_state, reduce_state, dace.InterstateEdge())
+
+        # Bind state: carrier := reduced value.
+        bind_state = m.parent.add_state(m.loop.label + '_argf_bind')
+        m.parent.add_edge(reduce_state, bind_state, dace.InterstateEdge(assignments={m.carrier_name: out_name}))
+        for oe in list(m.parent.out_edges(m.loop)):
+            m.parent.add_edge(bind_state, oe.dst, oe.data)
+            m.parent.remove_edge(oe)
+        m.parent.remove_node(m.loop)
+
+        read = reduce_state.add_read(buf)
+        write = reduce_state.add_write(out_name)
+        wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
+        _info = np.finfo(arr_dtype.type) if np.issubdtype(arr_dtype.type, np.floating) else np.iinfo(arr_dtype.type)
+        identity = (_info.min if m.op == dtypes.ReductionType.Max else _info.max).item()
+        node = Reduce(name=f'{m.loop.label}_argf_reduce', wcr=wcr_str, axes=[0], identity=identity)
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
+        reduce_state.add_node(node)
+        reduce_state.add_edge(read, None, node, '_in',
+                              mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)])))
+        reduce_state.add_edge(node, '_out', write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
         sdfg.reset_cfg_list()
 
 
