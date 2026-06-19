@@ -219,6 +219,8 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
         if self._max_concurrent_streams == 0:
             return gpu_stream + 1
         if self._max_concurrent_streams == -1:
+            # NOTE: In this case codegen will create the `gpu_streams` array, but
+            #   will only place `nullptr` in it.
             return 0
         return (gpu_stream + 1) % self._max_concurrent_streams
 

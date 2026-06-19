@@ -812,39 +812,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         else:
             raise NotImplementedError(f'Deallocation not implemented for storage type: {nodedesc.storage.name}')
 
-    def _pool_prewarm(self, stream: str) -> str:
-        """Pre-grow the memory pool once, at init, to the working-set size.
-
-        Sized as the sum over the pool-allocated (``cudaMallocAsync``) transients of
-        ``total_size * sizeof(dtype)``. With the retain threshold set above, the freed reservation
-        stays mapped, so no per-invocation allocation then triggers (synchronous) pool growth. A
-        size factor that depends on a symbol not known at init (one defined *inside* the SDFG rather
-        than a global free symbol / constant) is pinned to 1 so the array is still pre-reserved --
-        an underestimate for that factor, but better than reserving nothing. Returns '' only when
-        there are no pool transients.
-        """
-        available = {str(s) for s in self._frame.free_symbols(self._global_sdfg)}
-        available |= set(self._global_sdfg.constants.keys())
-        terms, seen = [], set()
-        for sub in self._global_sdfg.all_sdfgs_recursive():
-            for name, desc in sub.arrays.items():
-                if not (desc.transient and desc.pool is True) or (id(sub), name) in seen:
-                    continue
-                seen.add((id(sub), name))
-                size = desc.total_size
-                unknown = {s for s in size.free_symbols if str(s) not in available}
-                if unknown:  # pin init-unknown symbols to 1 so the array is still pre-reserved
-                    size = size.subs({s: 1 for s in unknown})
-                terms.append(f'({sym2cpp(size)}) * sizeof({desc.dtype.ctype})')
-        if not terms:
-            return ''
-        return f'''
-    {{  // Pre-grow the pool to the working-set size so no per-invocation allocation grows it.
-        void *__dace_pool_prewarm;
-        DACE_GPU_CHECK({self.backend}MallocAsync(&__dace_pool_prewarm, {' + '.join(terms)}, {stream}));
-        DACE_GPU_CHECK({self.backend}FreeAsync(__dace_pool_prewarm, {stream}));
-    }}'''
-
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
 
@@ -892,13 +859,20 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if self.has_pool:
             poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
             pool_header = f'''
-    cudaMemPool_t mempool;
-    cudaDeviceGetDefaultMemPool(&mempool, 0);
+    {self.backend}MemPool_t mempool;
+    {self.backend}DeviceGetDefaultMemPool(&mempool, 0);
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
+    {self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold);
 '''
-
-        pool_prewarm = self._pool_prewarm('__state->gpu_context->streams[0]') if self.has_pool else ''
+        # Depending on `max_concurrent_streams` we decide how to allocate the streams
+        if int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1:
+            stream_alloc_call = "__state->gpu_context->internal_streams[i] = nullptr"
+            stream_free_call = "{ /* no action needed */ }"
+            assert self._gpu_stream_manager.num_gpu_streams == 1
+            assert self._gpu_stream_manager.num_gpu_events == 0
+        else:
+            stream_alloc_call = "DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking))"
+            stream_free_call = "DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
 
         self._codeobject.code = """
 #include <{backend_header}>
@@ -932,19 +906,18 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
     DACE_GPU_CHECK({backend}Free(dev_X));
 
-    {pool_header}
-
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+
+    {pool_header}
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
+        {stream_alloc_call};
         __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
     }}
-{pool_prewarm}
     {initcode}
 
     return 0;
@@ -960,7 +933,7 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
+        {stream_free_call};
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
@@ -984,7 +957,8 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
-           pool_prewarm=pool_prewarm,
+           stream_alloc_call=stream_alloc_call,
+           stream_free_call=stream_free_call,
            sdfg=self._global_sdfg)
 
         return [self._codeobject]
