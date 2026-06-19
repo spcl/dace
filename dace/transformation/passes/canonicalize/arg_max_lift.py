@@ -63,6 +63,8 @@ import ast
 import re
 from typing import Any, NamedTuple, Optional, Tuple
 
+import numpy as np
+
 import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
@@ -176,13 +178,16 @@ class ArgMaxLift(ppl.Pass):
             return None
 
         cond_expr_str = cond_codeblock.as_string.strip()
-        # The condition is a single symbol set by an iedge upstream.
-        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
-            return None
-        tmp_sym_name = cond_expr_str
-
-        # Walk backward through iedges to find the comparison: ``tmp_sym = (g OP c)``.
-        op_ast, gather_sym_name, carrier_name = self._resolve_tmp_iedge(loop, cond_block, tmp_sym_name)
+        # The comparison ``gather OP carrier`` reaches the ConditionalBlock in
+        # one of two shapes, depending on how Simplify folded the body:
+        #  (a) indirected -- the condition is a single symbol ``tmp`` bound by an
+        #      upstream iedge ``tmp := (g OP c)``; or
+        #  (b) inlined -- the comparison sits directly in the condition
+        #      ``(g OP c)`` (current canonicalize output for TSVC s314/s316).
+        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
+            op_ast, gather_sym_name, carrier_name = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
+        else:
+            op_ast, gather_sym_name, carrier_name = self._parse_comparison(cond_expr_str)
         if op_ast is None:
             return None
         op = _CMP_AST_TO_RTYPE[op_ast]
@@ -271,6 +276,29 @@ class ArgMaxLift(ppl.Pass):
                 continue
             return op_cls, lhs_name, rhs_name
         return None, None, None
+
+    def _parse_comparison(self, expr_str: str):
+        """Parse a comparison ``g OP c`` inlined directly in the condition.
+
+        Mirrors the comparison extraction in :meth:`_resolve_tmp_iedge` but on
+        the condition string itself (the indirection through a ``tmp`` iedge is
+        absent). Returns ``(ast_op_cls, g_name, c_name)`` or ``(None, None,
+        None)``.
+        """
+        try:
+            tree = ast.parse(expr_str, mode='eval').body
+        except SyntaxError:
+            return None, None, None
+        if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
+            return None, None, None
+        op_cls = type(tree.ops[0])
+        if op_cls not in _CMP_AST_TO_RTYPE:
+            return None, None, None
+        lhs_name = self._extract_name(tree.left)
+        rhs_name = self._extract_name(tree.comparators[0])
+        if lhs_name is None or rhs_name is None:
+            return None, None, None
+        return op_cls, lhs_name, rhs_name
 
     def _resolve_gather_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, gather_sym: str, loop_var: str,
                               sdfg: SDFG) -> Optional[str]:
@@ -496,7 +524,27 @@ class ArgMaxLift(ppl.Pass):
         # to include the seed position explicitly in the input slice because
         # the dropped pre-loop iedge no longer materialises the seed.
         wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
-        node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=None)
+        # Identity (accumulator seed) for the reduction.
+        #  * symbol carrier -> the Reduce writes a FRESH transient with no
+        #    pre-seeded value (and the input slice already covers the original
+        #    seed ``a[start-1]``). ``identity=None`` makes the pure expansion
+        #    default the accumulator to 0, which is correct only for a Max over
+        #    non-negative data -- it silently corrupts a Min (``min(0, positives)
+        #    == 0``) and a Max over all-negative data. Use the proper neutral
+        #    element: the dtype's most-negative value for Max, most-positive for
+        #    Min (finite extremes, so codegen stays a plain numeric literal).
+        #  * scalar / length-1 carrier -> keep ``identity=None``: it WCR-folds
+        #    into the pre-loop ``x = a[start]`` seed already in the carrier AN.
+        if m.carrier_kind == 'symbol':
+            _nt = sdfg.arrays[m.input_array].dtype.type
+            if np.issubdtype(_nt, np.floating):
+                _info = np.finfo(_nt)
+            else:
+                _info = np.iinfo(_nt)
+            identity = (_info.min if m.op == dtypes.ReductionType.Max else _info.max).item()
+        else:
+            identity = None
+        node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=identity)
         node.add_in_connector('_in')
         node.add_out_connector('_out')
         reduce_state.add_node(node)

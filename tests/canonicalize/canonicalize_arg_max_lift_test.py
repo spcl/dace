@@ -434,8 +434,14 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
 # -----------------------------------------------------------------------------
 
 
-def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str):
+def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str, op: str = '>', inline_cond: bool = False):
     """Construct an SDFG where the argmax carrier ``x`` is a symbol.
+
+    :param op: comparison operator in the guard (``'>'`` -> Max, ``'<'`` -> Min).
+    :param inline_cond: when True the comparison ``(a_index OP x)`` sits directly
+        in the ConditionalBlock condition (the shape full canonicalize produces
+        for TSVC s314/s316); when False it is indirected through a ``__tmp0``
+        symbol bound by an upstream iedge (the older frontend shape).
 
     Structure::
 
@@ -493,11 +499,18 @@ def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str):
     loop.add_node(cond_block)
 
     loop.add_edge(start_blk, cond_prep, dace.InterstateEdge(assignments={'a_index': 'a[i]'}))
-    loop.add_edge(cond_prep, cond_block, dace.InterstateEdge(assignments={'__tmp0': '(a_index > x)'}))
+    if inline_cond:
+        # Comparison inlined directly in the condition (post-canonicalize shape).
+        loop.add_edge(cond_prep, cond_block, dace.InterstateEdge())
+        cond_code = f'(a_index {op} x)'
+    else:
+        # Comparison indirected through a ``__tmp0`` iedge (older frontend shape).
+        loop.add_edge(cond_prep, cond_block, dace.InterstateEdge(assignments={'__tmp0': f'(a_index {op} x)'}))
+        cond_code = '__tmp0'
 
     # True-branch: empty states with the carrier-write iedge between them.
     true_branch = ControlFlowRegion(label + '_true')
-    cond_block.add_branch(CodeBlock('__tmp0'), true_branch)
+    cond_block.add_branch(CodeBlock(cond_code), true_branch)
     t1 = true_branch.add_state('t1', is_start_block=True)
     t2 = true_branch.add_state('t2')
     true_branch.add_edge(t1, t2, dace.InterstateEdge(assignments={'x': in_loop_write_rhs}))
@@ -550,6 +563,47 @@ def test_symbol_carrier_negative_wrong_rhs():
     sdfg.validate()
     res = ArgMaxLift().apply_pass(sdfg, {})
     assert res is None, "wrong-RHS symbol-carrier write must be refused"
+
+
+def test_symbol_carrier_inline_condition_max():
+    """The comparison is inlined directly in the ConditionalBlock condition
+    (``(a_index > x)``) rather than indirected through a ``__tmp0`` iedge. This
+    is the shape full canonicalize produces for TSVC s314; the matcher must
+    parse the comparison straight off the condition codeblock."""
+    sdfg = _build_symbol_argmax_sdfg('s_arg_inline_max', in_loop_write_rhs='a[i]', op='>', inline_cond=True)
+    sdfg.validate()
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    assert res == 1, "inline-condition symbol-carrier argmax must lift"
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0 and _num_reduces(sdfg) == 1
+
+    n = 16
+    rng = np.random.default_rng(701)
+    a = rng.standard_normal(n)
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=n)
+    assert np.isclose(out[0], np.max(a)), f"got {out[0]}, expected {np.max(a)}"
+
+
+def test_symbol_carrier_min_inline_all_positive():
+    """Min reduction (``<``) with a symbol carrier, inline condition, over
+    ALL-POSITIVE data. Regression for the identity bug: a fresh symbol-carrier
+    Reduce with ``identity=None`` defaults the accumulator to ``0``, so
+    ``min(0, positives) == 0`` would wrongly return 0. The fix seeds the
+    accumulator with the dtype's most-positive value, so the true minimum is
+    returned (it is the TSVC s316 shape)."""
+    sdfg = _build_symbol_argmax_sdfg('s_arg_inline_min', in_loop_write_rhs='a[i]', op='<', inline_cond=True)
+    sdfg.validate()
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    assert res == 1, "inline-condition symbol-carrier argmin must lift"
+    sdfg.validate()
+
+    n = 16
+    rng = np.random.default_rng(702)
+    a = rng.random(n) + 0.5  # strictly positive, so a wrong identity=0 would surface
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=n)
+    assert np.isclose(out[0], np.min(a)), f"got {out[0]}, expected {np.min(a)} (identity bug returns 0)"
 
 
 if __name__ == '__main__':
