@@ -1731,8 +1731,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_div(a, b):
-        return _SerializedSymbolicParser._mul(
-            *_SerializedSymbolicParser._flatten_args(sympy.Mul, a, _SerializedSymbolicParser._pow(b, -1)))
+        # Fold the numeric quotient into one reduced factor (1/3 -> Rational(1, 3))
+        # instead of leaving a stray identity 1*(1/3).
+        return _SerializedSymbolicParser._binop_mul(a, _SerializedSymbolicParser._pow(b, -1))
 
     @staticmethod
     def _binop_pow(a, b):
@@ -1781,6 +1782,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
         'ceiling': sympy.ceiling,
+        'sqrt': sympy.sqrt,
         'round': ROUND,
         'And': AND,
         'Or': OR,
@@ -1816,6 +1818,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'NoneSymbol': symbol('NoneSymbol'),
         'pi': sympy.pi,
         'E': sympy.E,
+        'I': sympy.I,
         'oo': sympy.oo,
         'nan': sympy.nan,
     }
@@ -2045,7 +2048,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         coeff = sympy.S.One
         nonnumeric_args = []
         for arg in flat_args:
-            if not isinstance(arg, TypedConstant) and _is_sympy_number(arg):
+            # Fold only genuine numbers (Integer/Rational/Float). `_is_sympy_number` also matches
+            # `is_number` composites (pi, sqrt(2), I, (-1)**(1/3)); folding one into `coeff` rebuilds
+            # this same Mul, and `self._print(coeff)` below would then recurse forever.
+            if isinstance(arg, sympy.Number) and not isinstance(arg, TypedConstant):
                 coeff *= arg
             else:
                 nonnumeric_args.append(arg)

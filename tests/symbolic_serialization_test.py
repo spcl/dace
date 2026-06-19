@@ -468,6 +468,23 @@ def _max_of_integers():
     return sympy.Max(ta3, tb3)
 
 
+def _mul_with_transcendental_coeff():
+    # An `is_number` factor (pi) must print as its own factor, not fold into the numeric
+    # coefficient -- folding it makes the Mul printer recurse forever.
+    return 3 * sympy.pi * symbolic.symbol('ttrc')
+
+
+def _mul_with_imaginary_unit():
+    # Exercises both the Mul printer (I is `is_number`) and `I` deserialization.
+    return 2 * sympy.I * symbolic.symbol('timg')
+
+
+def _mul_with_sqrt_coeff():
+    # sqrt(2) must deserialize back to the real Pow (not an undefined ``sqrt`` function),
+    # otherwise its sort key flips against the symbol on the round-trip.
+    return 3 * sympy.sqrt(2) * symbolic.symbol('tsqrt')
+
+
 CEILING_AND_SIMILAR = {
     'ceiling_triangular': _ceiling_triangular,
     'floor_triangular': _floor_triangular,
@@ -475,6 +492,9 @@ CEILING_AND_SIMILAR = {
     'nested_ceiling': _nested_ceiling,
     'stencil_bound_min': _stencil_bound_min,
     'max_of_integers': _max_of_integers,
+    'mul_with_transcendental_coeff': _mul_with_transcendental_coeff,
+    'mul_with_imaginary_unit': _mul_with_imaginary_unit,
+    'mul_with_sqrt_coeff': _mul_with_sqrt_coeff,
 }
 
 
@@ -496,6 +516,27 @@ def test_roundtrip_preserves_free_symbol_names(build):
     # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     assert {s.name for s in reparsed.free_symbols} == {s.name for s in expr.free_symbols}
+
+
+def test_standalone_fraction_deserializes_without_stray_identity():
+    """A numeric quotient must fold to a reduced Number, not ``Mul(1, 1/3)``."""
+    reparsed = symbolic.deserialize_symbolic('1/3')
+    assert not isinstance(reparsed, sympy.Mul)
+    assert reparsed == sympy.Rational(1, 3)
+
+
+def test_imaginary_unit_roundtrips():
+    """The serializer emits ``I`` for ``sympy.I``; it must deserialize back to it."""
+    assert symbolic.deserialize_symbolic('I') is sympy.I
+    expr = 3 + 4 * sympy.I
+    assert symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr)) == expr
+
+
+def test_sqrt_deserializes_to_real_sqrt():
+    """``sqrt(2)`` must parse to the real Pow, not an opaque ``Function('sqrt')``."""
+    reparsed = symbolic.deserialize_symbolic('sqrt(2)')
+    assert not isinstance(reparsed, sympy.core.function.AppliedUndef)
+    assert reparsed == sympy.sqrt(2)
 
 
 def test_add_order_independent_of_arg_order():
