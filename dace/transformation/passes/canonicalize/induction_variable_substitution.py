@@ -312,6 +312,20 @@ def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, 
 # -----------------------------------------------------------------------------
 
 
+def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -> bool:
+    """Whether ``sym_name`` is assigned on a direct interstate edge of any
+    ``LoopRegion`` other than ``loop`` -- i.e. it is a counter shared with a
+    nested or enclosing loop (TSVC s126). Such a symbol has no per-loop closed
+    form, so the caller refuses to substitute it."""
+    for region in sdfg.all_control_flow_regions():
+        if not isinstance(region, LoopRegion) or region is loop:
+            continue
+        for e in region.edges():
+            if sym_name in (e.data.assignments or {}):
+                return True
+    return False
+
+
 def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
     """Substitute an interstate-edge induction variable (``sym := sym + literal``)
     in the loop body with its closed form.
@@ -337,16 +351,17 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     later readers see ``k + trip_count * step`` (matching the un-rewritten
     sequential semantics).
 
-    Scope today (kept narrow for v1):
+    Scope today:
 
     * stride ``== 1`` (matches the existing :func:`_try_substitute` scope);
-    * exactly ONE iedge in the body carries an IV assignment of the form
-      ``sym := sym + literal`` (or ``sym := sym - literal``);
+    * exactly ONE iedge in the body carries an IV assignment ``sym := sym + step``
+      (or ``sym := sym - step``), where ``step`` is a numeric literal OR a
+      loop-invariant symbolic expression (e.g. a stride argument ``inc`` after
+      scalar-to-symbol promotion);
     * the IV iedge has no other assignments and no condition;
-    * the IV iedge is sourced from ``loop.start_block``, and the source
-      block is empty (an iedge-only state) so every other body block is
-      reachable AFTER the iedge -- substituting every body block with the
-      single ``sym + (loop_var - start + 1) * step`` closed form is sound;
+    * the IV iedge is at the TOP (sourced from the empty ``loop.start_block`` --
+      body is post-increment) or the BOTTOM (its destination is the body's
+      unique, empty sink reached via a single in-edge -- body is pre-increment);
     * no other iedge in the body writes ``sym`` (the IV is unique);
     * ``sym`` is an SDFG symbol / free symbol (not a data container).
 
@@ -355,10 +370,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     * IV iedge between two non-empty content blocks (would need pre-iedge
       vs post-iedge block partitioning + two different closed-form
       substitutions);
-    * derived IVs (multiple symbols related by ``j := a*i + b``);
-    * multi-step IV (``sym := sym + sym2`` where ``sym2`` is a loop-
-      invariant non-literal -- the closed form is the same up to
-      symbolic-rendering).
+    * derived IVs (multiple symbols related by ``j := a*i + b``).
 
     :param parent: CFG containing ``loop``.
     :param loop: Candidate ``LoopRegion``.
@@ -397,9 +409,13 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             # other non-arithmetic expression on which ``-`` raises
             # ``TypeError`` -- the assignment is not an arithmetic IV.
             continue
-        # Step must be a number constant (literal). Symbolic step is a follow-up.
+        # Step must be loop-invariant: a numeric literal, or a symbolic
+        # expression whose free symbols are all loop-invariant (e.g. a stride
+        # argument ``inc`` promoted to a symbol). A varying step has no closed form.
         if not getattr(diff, 'is_number', False):
-            continue
+            if not diff.free_symbols or not all(
+                    _is_loop_invariant_symbol(str(s), loop, sdfg) for s in diff.free_symbols):
+                continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
             continue
@@ -416,30 +432,48 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         return False
     iv_edge, sym_name, step = iv_candidate
 
-    # 2. v1 shape constraint: the IV iedge sources from loop.start_block, and
-    #    the start block is empty (an iedge-only state). Every other body
-    #    block is then post-iedge and substituting the whole body once with
-    #    the post-iedge closed form is sound.
-    if iv_edge.src is not loop.start_block:
-        return False
-    if not isinstance(iv_edge.src, SDFGState):
-        return False
-    if iv_edge.src.nodes():
-        # start block has content -- pre-iedge reads of ``sym`` would need a
-        # different (pre-step) closed form; defer.
+    # The IV symbol must be a counter PRIVATE to this loop. If it is also updated
+    # in another (nested or enclosing) loop it is a shared counter, and a per-loop
+    # closed form double-counts (TSVC s126 increments ``k`` in BOTH the inner and
+    # outer loop). Refuse so such shared counters stay sequential.
+    if _symbol_updated_in_other_loop(sdfg, loop, sym_name):
         return False
 
-    # 3. Build the closed form. At ``loop_var = i`` (with ``stride == 1``):
-    #    - At iv_edge.src (the empty start block): sym = sym_init + (i - start) * step.
-    #    - At iv_edge.dst and post-iedge blocks in the same iter:
-    #      sym = sym_init + (i - start + 1) * step.
-    #    Since the SDFG symbol ``sym`` evaluates to its current value
-    #    (which IS ``sym_init`` once we strip the iedge increment), the
-    #    post-iedge substitution writes ``sym`` -> ``sym + ((i - start) + 1) * step``.
+    # 2. Shape constraint: the IV iedge is at the TOP or the BOTTOM of the body.
+    #    The closed form a body block sees depends on how many times this
+    #    iteration's increment ran before it:
+    #
+    #    * TOP -- the iedge sources from the empty loop start block. Every other
+    #      body block is reached AFTER the increment, so it sees this iter's
+    #      increment too: ``sym = sym_init + (i - start + 1) * step``.
+    #    * BOTTOM -- the iedge's destination is the body's unique, empty sink
+    #      reached via a single in-edge (the increment is the last thing each
+    #      iteration does, after all reads). Every body block is reached BEFORE
+    #      the increment: ``sym = sym_init + (i - start) * step``.
+    #
+    #    (The frontend lowers ``for i: v = a[k]; ...; k += inc`` to the BOTTOM
+    #    shape -- the gather reads the pre-increment ``k``; TSVC s318.)
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     sym_sym = symbolic.pystr_to_symbolic(sym_name)
     norm_iter = symbolic.simplify(loop_var_sym - start)
-    post_iedge_expr = symbolic.simplify(sym_sym + (norm_iter + 1) * step)
+
+    src_is_empty_start = (iv_edge.src is loop.start_block and isinstance(iv_edge.src, SDFGState)
+                          and not iv_edge.src.nodes())
+    sinks = [b for b in loop.nodes() if loop.out_degree(b) == 0]
+    dst_is_unique_empty_sink = (isinstance(iv_edge.dst, SDFGState) and not iv_edge.dst.nodes() and len(sinks) == 1
+                                and sinks[0] is iv_edge.dst and loop.in_degree(iv_edge.dst) == 1)
+
+    if src_is_empty_start:
+        body_offset = norm_iter + 1  # update-at-top: body is post-increment
+    elif dst_is_unique_empty_sink:
+        body_offset = norm_iter  # update-at-bottom: body is pre-increment
+    else:
+        return False
+
+    # 3. Build the closed form. The SDFG symbol ``sym`` evaluates to its current
+    #    value (which IS ``sym_init`` once we strip the iedge increment), so the
+    #    body substitution writes ``sym`` -> ``sym + body_offset * step``.
+    post_iedge_expr = symbolic.simplify(sym_sym + body_offset * step)
 
     # 4. Substitute. The loop-level ``replace_dict`` walks every state +
     #    iedge in the body. We protect the IV iedge by clearing its

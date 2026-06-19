@@ -315,6 +315,114 @@ def test_iedge_iv_refuses_when_iedge_has_other_assignments():
     assert np.allclose(flat, expected), f"got {flat}, expected {expected}"
 
 
+# ---------------------------------------------------------------------------
+# Iedge-IV: symbolic step + update position (TOP vs BOTTOM). Hand-built so the
+# update position and the symbolic step are controlled exactly. The body reads
+# the IV symbol ``k`` through a gather iedge ``g := a[k]``; after substitution
+# that read carries the closed form. TSVC s318's secondary IV is the BOTTOM +
+# symbolic-step case.
+# ---------------------------------------------------------------------------
+
+from dace.sdfg.state import ControlFlowRegion  # noqa: E402
+from dace import symbolic  # noqa: E402
+
+
+def _build_iedge_iv_loop(label, step_rhs, at_bottom, extra_body_iv=None):
+    """Loop ``for i in 0:N`` with a gather ``g := a[k]`` and an IV update
+    ``k := <step_rhs>``. ``at_bottom`` puts the update on the body's unique empty
+    sink (gather reads pre-increment ``k``); else on the empty start block
+    (gather reads post-increment ``k``). ``extra_body_iv`` optionally adds a
+    second IV ``(sym, rhs)`` on another edge (for the loop-variant-step refusal)."""
+    sdfg = dace.SDFG(label)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    sdfg.add_symbol('g', dace.float64)
+    for s in set(symbolic.pystr_to_symbolic(step_rhs).free_symbols) - {symbolic.pystr_to_symbolic('k')}:
+        if str(s) not in sdfg.symbols and str(s) != 'N':
+            sdfg.add_symbol(str(s), dace.int64)
+    if extra_body_iv is not None and extra_body_iv[0] not in sdfg.symbols:
+        sdfg.add_symbol(extra_body_iv[0], dace.int64)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion(label + '_lp',
+                      initialize_expr='i = 0',
+                      condition_expr='i < N',
+                      update_expr='i = i + 1',
+                      loop_var='i')
+    sdfg.add_node(loop)
+    seed = {'k': '0'}
+    if extra_body_iv is not None:
+        seed[extra_body_iv[0]] = '0'
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments=seed))
+
+    start = loop.add_state('start', is_start_block=True)
+    mid = loop.add_state('mid')
+    sink = loop.add_state('sink')
+    if at_bottom:
+        loop.add_edge(start, mid, dace.InterstateEdge(assignments={'g': 'a[k]'}))  # gather (pre-increment)
+        loop.add_edge(mid, sink, dace.InterstateEdge(assignments={'k': step_rhs}))  # IV update at bottom (sink)
+    else:
+        loop.add_edge(start, mid, dace.InterstateEdge(assignments={'k': step_rhs}))  # IV update at top (start)
+        loop.add_edge(mid, sink, dace.InterstateEdge(assignments={'g': 'a[k]'}))  # gather (post-increment)
+    if extra_body_iv is not None:
+        # A second IV on the gather edge's successor -- makes ``extra_body_iv[0]``
+        # loop-variant; if ``step_rhs`` references it the closed form is invalid.
+        loop.add_edge(sink, loop.add_state('sink2'),
+                      dace.InterstateEdge(assignments={extra_body_iv[0]: extra_body_iv[1]}))
+    return sdfg, loop
+
+
+def _gather_rhs(loop):
+    for e in loop.all_interstate_edges():
+        if 'g' in (e.data.assignments or {}):
+            return str(e.data.assignments['g'])
+    return None
+
+
+def test_iedge_iv_bottom_symbolic_step():
+    """Update-at-bottom + symbolic step ``k := k + inc``: the gather ``a[k]`` is
+    closed to ``a[k + (i-0)*inc]`` (pre-increment, offset ``i``). TSVC s318 shape."""
+    sdfg, loop = _build_iedge_iv_loop('iv_bot_sym', 'k + inc', at_bottom=True)
+    sdfg.validate()
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    # a[k + i*inc]: subtract expected -> 0.
+    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
+    expected = symbolic.pystr_to_symbolic('k + i*inc')
+    assert symbolic.simplify(got - expected) == 0, f"gather index {got}, expected {expected}"
+
+
+def test_iedge_iv_top_symbolic_step():
+    """Update-at-top + symbolic step: the gather reads post-increment ``k``, so
+    the closed form is ``a[k + (i+1)*inc]`` (offset ``i+1``)."""
+    sdfg, loop = _build_iedge_iv_loop('iv_top_sym', 'k + inc', at_bottom=False)
+    sdfg.validate()
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
+    expected = symbolic.pystr_to_symbolic('k + (i + 1)*inc')
+    assert symbolic.simplify(got - expected) == 0, f"gather index {got}, expected {expected}"
+
+
+def test_iedge_iv_bottom_literal_step():
+    """Update-at-bottom + literal step ``k := k + 3`` -> ``a[k + 3*i]``."""
+    sdfg, loop = _build_iedge_iv_loop('iv_bot_lit', 'k + 3', at_bottom=True)
+    sdfg.validate()
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
+    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
+    assert symbolic.simplify(got - symbolic.pystr_to_symbolic('k + 3*i')) == 0
+
+
+def test_iedge_iv_refuses_loop_variant_step():
+    """``k := k + m`` where ``m`` is itself reassigned in the body (``m := m+1``)
+    is NOT loop-invariant -- no closed form, so the substitution is refused."""
+    sdfg, loop = _build_iedge_iv_loop('iv_variant', 'k + m', at_bottom=True, extra_body_iv=('m', 'm + 1'))
+    sdfg.validate()
+    res = InductionVariableSubstitution().apply_pass(sdfg, {})
+    # The IV ``k`` must not be substituted (its step ``m`` varies); gather stays ``a[k]``.
+    assert _gather_rhs(loop) == 'a[k]', f"loop-variant step must be refused, gather={_gather_rhs(loop)}"
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()
@@ -324,3 +432,7 @@ if __name__ == "__main__":
     test_non_const_operand_is_not_lifted()
     test_arithmetic_iv_symbolic_operand_collapses_to_closed_form()
     test_arithmetic_iv_symbolic_stride_collapses_to_closed_form()
+    test_iedge_iv_bottom_symbolic_step()
+    test_iedge_iv_top_symbolic_step()
+    test_iedge_iv_bottom_literal_step()
+    test_iedge_iv_refuses_loop_variant_step()

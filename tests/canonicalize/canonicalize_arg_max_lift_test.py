@@ -703,5 +703,199 @@ def test_symbol_carrier_min_inline_all_positive():
     assert np.isclose(out[0], np.min(a)), f"got {out[0]}, expected {np.min(a)} (identity bug returns 0)"
 
 
+# -----------------------------------------------------------------------------
+# Strided transform+index argmax/argmin (TSVC s318): ``maxv = max(|a[k]|)`` over
+# a strided gather ``k = inc*i`` with an index carrier. After
+# ``InductionVariableSubstitution`` closes the secondary IV ``k``, the gather is
+# an affine ``a[base + coeff*i]``; ArgMaxLift materialises ``buf[j] = |a[...]|``
+# then ArgReduces it (value + slice-local index). Built manually (mirrors the
+# post-IV-subst frontend shape; ``a`` is given its own length symbol ``AL`` so
+# the strided positions ``coeff*j`` stay in bounds).
+# -----------------------------------------------------------------------------
+
+_AL = dace.symbol('AL')
+
+
+def _build_strided_abs_argmax_index_sdfg(label: str, op: str = '>', gather_form: str = 'iv'):
+    """s318 shape: abs-transformed argmax/argmin WITH index over a strided gather.
+
+    :param gather_form: ``'closed'`` -> the clean closed form ``a[inc*i]``
+        (``base=0``); ``'iv'`` -> the exact shape ``InductionVariableSubstitution``
+        leaves, ``a[k + (i-1)*inc]`` (``base = k-inc`` with ``k`` bound pre-loop
+        to ``inc``). Both decompose to ``coeff=inc``.
+    """
+    from dace.sdfg.state import ControlFlowRegion
+    from dace.properties import CodeBlock
+
+    sdfg = dace.SDFG(label)
+    sdfg.add_array('a', [_AL], dace.float64)
+    sdfg.add_array('result', [1], dace.float64)
+    sdfg.add_array('idx_result', [1], dace.int64)
+    sdfg.add_symbol('N', dace.int64)
+    for s, t in (('x', dace.float64), ('index', dace.int64), ('a_index', dace.float64), ('inc', dace.int32),
+                 ('k', dace.int32)):
+        sdfg.add_symbol(s, t)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion(label + '_loop',
+                      initialize_expr='i = 1',
+                      condition_expr='i < N',
+                      update_expr='i = i + 1',
+                      loop_var='i')
+    sdfg.add_node(loop)
+    # Pre-loop seed: maxv = |a[0]|; index = 0; k = inc (the secondary-IV init).
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'x': 'abs(a[0])', 'index': '0', 'k': 'inc'}))
+
+    sb = loop.add_state('start', is_start_block=True)
+    cp = loop.add_state('cond_prep')
+    cb = ConditionalBlock('cb')
+    loop.add_node(cb)
+    gather = 'a[k + (i - 1) * inc]' if gather_form == 'iv' else 'a[inc * i]'
+    loop.add_edge(sb, cp, dace.InterstateEdge(assignments={'a_index': gather}))
+    loop.add_edge(cp, cb, dace.InterstateEdge())
+    tb = ControlFlowRegion(label + '_true')
+    cb.add_branch(CodeBlock(f'(abs(a_index) {op} x)'), tb)
+    t1 = tb.add_state('t1', is_start_block=True)
+    t2 = tb.add_state('t2')
+    tb.add_edge(t1, t2, dace.InterstateEdge(assignments={'x': 'abs(a_index)', 'index': 'i'}))
+
+    post = sdfg.add_state('post')
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    tv = post.add_tasklet('wv', {}, {'__o'}, '__o = x', language=dace.dtypes.Language.Python)
+    post.add_edge(tv, '__o', post.add_write('result'), None, dace.Memlet('result[0]'))
+    ti = post.add_tasklet('wi', {}, {'__o'}, '__o = index', language=dace.dtypes.Language.Python)
+    post.add_edge(ti, '__o', post.add_write('idx_result'), None, dace.Memlet('idx_result[0]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('op,reducer', [('>', np.argmax), ('<', np.argmin)])
+@pytest.mark.parametrize('gather_form', ['closed', 'iv'])
+def test_strided_abs_argmax_with_index_s318(op, reducer, gather_form):
+    """``if |a[inc*i]| OP maxv: maxv = |a[inc*i]|; index = i`` lifts to an
+    ``ArgReduce`` over a materialised ``buf[j] = |a[inc*j]|``. Verifies BOTH the
+    extreme |value| and its iteration index, for the clean closed form and the
+    exact ``InductionVariableSubstitution`` output, max and min."""
+    from dace.libraries.standard.nodes import ArgReduce
+    sdfg = _build_strided_abs_argmax_index_sdfg(f's318_{gather_form}_{"max" if op == ">" else "min"}',
+                                                op=op,
+                                                gather_form=gather_form)
+    sdfg.validate()
+    res = ArgMaxLift().apply_pass(sdfg, {})
+    assert res == 1, f"strided abs-argmax-with-index ({gather_form}) must lift"
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 1
+
+    inc, n = 2, 8
+    al = inc * (n - 1) + 4
+    rng = np.random.default_rng(318 + (op == '<') + 10 * (gather_form == 'iv'))
+    a = rng.standard_normal(al)
+    val = np.zeros(1)
+    idx = np.zeros(1, dtype=np.int64)
+    sdfg(a=a, result=val, idx_result=idx, N=n, inc=inc, AL=al)
+    # Reduction set: |a[inc*j]| for j in 0..n-1 (seed j=0 plus loop i=1..n-1).
+    strided = np.abs(a[[inc * j for j in range(n)]])
+    ej = int(reducer(strided))
+    assert np.isclose(val[0], strided[ej]), f"value: got {val[0]}, expected {strided[ej]}"
+    assert idx[0] == ej, f"index: got {idx[0]}, expected {ej}"
+
+
+# -----------------------------------------------------------------------------
+# False-positive guards for the strided transform+index path.
+# -----------------------------------------------------------------------------
+
+
+def test_strided_refuses_nonaffine_gather():
+    """A non-affine gather index (``a[i*i]``) is not a strided IV gather; the
+    affine decomposition rejects it and the loop stays sequential."""
+    sdfg = _build_strided_abs_argmax_index_sdfg('s318_nonaffine', op='>', gather_form='closed')
+    # Rewrite the gather to a quadratic index.
+    for e in sdfg.all_interstate_edges():
+        if e.data.assignments and 'a_index' in e.data.assignments:
+            e.data.assignments['a_index'] = 'a[i * i]'
+    sdfg.validate()
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None, "non-affine gather must be refused"
+
+
+def test_strided_refuses_loop_variant_base():
+    """The gather index ``a[m + inc*i]`` with ``m`` ALSO written on a body iedge
+    is not loop-invariant in its base -- the closed form would be wrong, so
+    refuse."""
+    sdfg = _build_strided_abs_argmax_index_sdfg('s318_variant_base', op='>', gather_form='closed')
+    sdfg.add_symbol('m', dace.int64)
+    loop = next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))
+    # Seed ``m`` pre-loop and reassign it on a body iedge (the cond-prep edge) so
+    # ``m`` is loop-variant; the gather reads it on a different edge (no race).
+    for e in sdfg.in_edges(loop):
+        if 'x' in (e.data.assignments or {}):
+            e.data.assignments['m'] = '0'
+    for e in loop.all_interstate_edges():
+        if e.data.assignments and 'a_index' in e.data.assignments:
+            e.data.assignments['a_index'] = 'a[m + inc * i]'
+        elif not e.data.assignments and getattr(e.src, 'label', '') == 'cond_prep':
+            e.data.assignments['m'] = 'm + 1'  # m reassigned in the body -> loop-variant
+    sdfg.validate()
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None, "loop-variant gather base must be refused"
+
+
+def test_strided_refuses_seed_position_mismatch():
+    """The pre-loop seed reads ``a[5]`` but the gather's seed-iteration position
+    is ``a[0]`` -- the buffer's first element would not match the real seed, so
+    refuse (guards :meth:`_verify_affine_seed`)."""
+    sdfg = _build_strided_abs_argmax_index_sdfg('s318_seed_mismatch', op='>', gather_form='closed')
+    for e in sdfg.in_edges(next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))):
+        if 'x' in (e.data.assignments or {}):
+            e.data.assignments['x'] = 'abs(a[5])'  # seed at the wrong position
+    sdfg.validate()
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None, "seed-position mismatch must be refused"
+
+
+def test_strided_refuses_index_init_mismatch():
+    """The index carrier's pre-loop init is ``3`` (not ``start-1 == 0``); the
+    ``index := (start-1) + idx`` bind would be wrong when the seed wins, so
+    refuse."""
+    sdfg = _build_strided_abs_argmax_index_sdfg('s318_idxinit', op='>', gather_form='closed')
+    for e in sdfg.in_edges(next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))):
+        if 'index' in (e.data.assignments or {}):
+            e.data.assignments['index'] = '3'
+    sdfg.validate()
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None, "index-init != start-1 must be refused"
+
+
+def test_strided_refuses_value_only_no_transform_no_index():
+    """A strided gather with NEITHER a transform NOR an index carrier (plain
+    ``x := a[inc*i]``) is not handled by the combined path and is not unit
+    stride, so it is refused (no value-only strided lift)."""
+    from dace.sdfg.state import ControlFlowRegion
+    from dace.properties import CodeBlock
+    sdfg = dace.SDFG('s318_value_only_strided')
+    sdfg.add_array('a', [_AL], dace.float64)
+    sdfg.add_array('result', [1], dace.float64)
+    sdfg.add_symbol('N', dace.int64)
+    for s, t in (('x', dace.float64), ('a_index', dace.float64), ('inc', dace.int32)):
+        sdfg.add_symbol(s, t)
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('vo_loop', initialize_expr='i = 1', condition_expr='i < N', update_expr='i = i + 1', loop_var='i')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'x': 'a[0]'}))
+    sb = loop.add_state('start', is_start_block=True)
+    cp = loop.add_state('cond_prep')
+    cb = ConditionalBlock('cb')
+    loop.add_node(cb)
+    loop.add_edge(sb, cp, dace.InterstateEdge(assignments={'a_index': 'a[inc * i]'}))
+    loop.add_edge(cp, cb, dace.InterstateEdge())
+    tb = ControlFlowRegion('vo_true')
+    cb.add_branch(CodeBlock('(a_index > x)'), tb)
+    t1 = tb.add_state('t1', is_start_block=True)
+    t2 = tb.add_state('t2')
+    tb.add_edge(t1, t2, dace.InterstateEdge(assignments={'x': 'a_index'}))
+    post = sdfg.add_state('post')
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    tv = post.add_tasklet('wv', {}, {'__o'}, '__o = x', language=dace.dtypes.Language.Python)
+    post.add_edge(tv, '__o', post.add_write('result'), None, dace.Memlet('result[0]'))
+    sdfg.validate()
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None, "value-only strided gather must be refused"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
