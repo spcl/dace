@@ -167,7 +167,6 @@ def test_polybench_bicg(): test_npbench_polybench_offload("bicg") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_small
-@pytest.mark.current
 def test_polybench_doitgen(): test_npbench_polybench_offload("doitgen") # FAILS with ValueError: matrix-matrix product only supported on matrices TODO
 
 @pytest.mark.polybench
@@ -232,7 +231,6 @@ def test_polybench_cholesky(): test_npbench_polybench_offload("cholesky") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_medium
-@pytest.mark.current
 def test_polybench_cholesky2(): test_npbench_polybench_offload("cholesky2") # fails due to improper edge handling! TODO
 
 @pytest.mark.polybench
@@ -279,8 +277,7 @@ def test_polybench_nussinov(): test_npbench_polybench_offload("nussinov") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
-@pytest.mark.current
-def test_polybench_adi(): test_npbench_polybench_offload("adi") # incorrect, not enough copies TODO
+def test_polybench_adi(): test_npbench_polybench_offload("adi") # TODO fails because transients aren't copied
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
@@ -308,7 +305,6 @@ def test_polybench_ludcmp(): test_npbench_polybench_offload("ludcmp") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
-@pytest.mark.current
 def test_polybench_seidel_2d(): test_npbench_polybench_offload("seidel_2d") # fine (nested loop with copies! -> there's a slight inefficiency I can possibly fix at some point)
 
 @pytest.mark.polybench
