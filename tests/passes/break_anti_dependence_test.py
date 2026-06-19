@@ -139,6 +139,77 @@ def test_break_anti_dependence_symbolic_positive_offset():
     assert np.allclose(a_run, ref_a)
 
 
+def test_break_anti_dependence_refuses_symbolic_difference_offset():
+    """``a[i] = a[i + K - M] + b[i]`` -- the carried offset ``K - M`` is a difference
+    of two (nonnegative) symbols whose sign is undecidable even under the
+    canonicalization assumption that symbols are nonnegative. It must be refused
+    (left sequential), NOT snapshot-renamed: at runtime ``K < M`` makes this a
+    read-behind RAW recurrence, and renaming it produced wrong results (the old
+    ``could_extract_minus_sign`` test let ``K - M`` through as a guarded WAR while
+    refusing the algebraically equivalent ``M - K`` -- a canonical-ordering
+    artifact -- emitting an unsatisfiable ``> 0`` guard that trapped or, once
+    DCE'd, silently corrupted the output)."""
+    K, M = dace.symbol('K'), dace.symbol('M')
+
+    @dace.program
+    def diff_offset(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(M, N):
+            a[i] = a[i + K - M] + b[i]
+
+    sdfg = diff_offset.to_sdfg(simplify=True)
+    # Refused: no snapshot transient, no rename.
+    assert not BreakAntiDependence().apply_pass(sdfg, {})
+    assert not any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    _l2m(sdfg)
+    # The read-behind RAW cannot be mapped -> stays sequential.
+    assert _nloops(sdfg) == 1 and _nmaps(sdfg) == 0
+    sdfg.validate()
+
+    # Numerical correctness with nonnegative symbol values K=2 < M=5 (read-behind).
+    n, k, m = 16, 2, 5
+    rng = np.random.default_rng(7)
+    a = rng.random(n)
+    b = rng.random(n)
+    ref_a = a.copy()
+    for i in range(m, n):
+        ref_a[i] = ref_a[i + k - m] + b[i]  # sequential oracle (offset k-m = -3)
+    a_run = a.copy()
+    sdfg(a=a_run, b=b, N=n, K=k, M=m)
+    assert np.allclose(a_run, ref_a), f'max-diff {np.abs(a_run - ref_a).max()}'
+
+
+def test_break_anti_dependence_sum_of_symbols_offset_renames():
+    """``a[i] = a[i + K + P] + b[i]`` -- the carried offset ``K + P`` is a sum of
+    nonnegative symbols, hence provably ``>= 0`` (the soundness condition for the
+    snapshot rename). It must still be renamed and parallelized, confirming the
+    nonnegative-difference refusal does not over-reject genuine read-ahead WARs."""
+    K, P = dace.symbol('K'), dace.symbol('P')
+
+    @dace.program
+    def sum_offset(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - K - P):
+            a[i] = a[i + K + P] + b[i]
+
+    sdfg = sum_offset.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    assert any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    _l2m(sdfg)
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+    sdfg.validate()
+
+    # Numerical correctness with nonnegative symbol values K=1, P=2 (read-ahead).
+    n, k, p = 32, 1, 2
+    rng = np.random.default_rng(11)
+    a = rng.random(n)
+    b = rng.random(n)
+    ref_a = a.copy()
+    for i in range(n - k - p):
+        ref_a[i] = ref_a[i + k + p] + b[i]
+    a_run = a.copy()
+    sdfg(a=a_run, b=b, N=n, K=k, P=p)
+    assert np.allclose(a_run, ref_a), f'max-diff {np.abs(a_run - ref_a).max()}'
+
+
 def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     """``a[i + idx[i]] -> a[i]`` -- the SDFG splits the index computation into a
     separate state binding a free symbol (e.g. ``__sym_i_plus_idx_slice := i +

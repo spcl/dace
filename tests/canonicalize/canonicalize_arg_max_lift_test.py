@@ -897,5 +897,91 @@ def test_strided_refuses_value_only_no_transform_no_index():
     assert ArgMaxLift().apply_pass(sdfg, {}) is None, "value-only strided gather must be refused"
 
 
+# -----------------------------------------------------------------------------
+# 2-D contiguous nested argmax (TSVC s3110 / s13110).
+# -----------------------------------------------------------------------------
+
+
+def test_2d_contiguous_argmax_with_two_indices():
+    """``for i: for j: if aa[i, j] > maxv: maxv = aa[i, j]; xindex = i;
+    yindex = j`` over the full (contiguous) array lifts to a single flat
+    ``ArgReduce`` whose flat index is decomposed back into ``xindex = m // ncols``
+    / ``yindex = m % ncols``. Verifies the lift fires and the value + BOTH indices
+    match numpy's 2-D argmax end to end (TSVC s3110 / s13110)."""
+    from dace.libraries.standard.nodes import ArgReduce
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    M = dace.symbol('M')
+
+    @dace.program
+    def argmax2d(aa: dace.float64[M, M], out: dace.float64[3]):
+        maxv = aa[0, 0]
+        xindex = 0
+        yindex = 0
+        for i in range(M):
+            for j in range(M):
+                if aa[i, j] > maxv:
+                    maxv = aa[i, j]
+                    xindex = i
+                    yindex = j
+        out[0] = maxv
+        out[1] = float(xindex)
+        out[2] = float(yindex)
+
+    sdfg = argmax2d.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 1
+    assert _num_loops(sdfg) == 0
+
+    m = 7
+    rng = np.random.default_rng(3110)
+    aa = rng.standard_normal((m, m))
+    out = np.zeros(3)
+    sdfg(aa=aa, out=out, M=m)
+    flat = int(np.argmax(aa))
+    xi, yi = flat // m, flat % m
+    assert np.isclose(out[0], aa[xi, yi]), f'value: got {out[0]}, expected {aa[xi, yi]}'
+    assert int(out[1]) == xi and int(out[2]) == yi, f'index: got ({out[1]}, {out[2]}), expected ({xi}, {yi})'
+
+
+def test_2d_argmax_refuses_non_contiguous_partial_rows():
+    """A nested argmax that scans only a partial, non-full inner range (``j`` up
+    to ``M - 1``, skipping the last column) is NOT the whole contiguous array, so
+    the 2-D lift is refused (left sequential) -- the flat-index equivalence does
+    not hold for a strided/partial subset."""
+    from dace.libraries.standard.nodes import ArgReduce
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    M = dace.symbol('M')
+
+    @dace.program
+    def partial2d(aa: dace.float64[M, M], out: dace.float64[3]):
+        maxv = aa[0, 0]
+        xindex = 0
+        yindex = 0
+        for i in range(M):
+            for j in range(M - 1):  # partial inner range -> not the full array
+                if aa[i, j] > maxv:
+                    maxv = aa[i, j]
+                    xindex = i
+                    yindex = j
+        out[0] = maxv
+        out[1] = float(xindex)
+        out[2] = float(yindex)
+
+    sdfg = partial2d.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 0
+
+    m = 7
+    rng = np.random.default_rng(13110)
+    aa = rng.standard_normal((m, m))
+    out = np.zeros(3)
+    sdfg(aa=aa, out=out, M=m)
+    ref = aa[:, :m - 1]
+    flat = int(np.argmax(ref))
+    xi, yi = flat // (m - 1), flat % (m - 1)
+    assert np.isclose(out[0], ref[xi, yi])
+    assert int(out[1]) == xi and int(out[2]) == yi
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

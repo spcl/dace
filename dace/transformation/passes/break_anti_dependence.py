@@ -19,10 +19,36 @@ It trades an extra array + an O(N) copy for parallelism, so it is meant to run
 """
 from typing import Any, Dict, Optional, Set
 
-from dace import data, properties, symbolic, Memlet
-from dace.sdfg import SDFG
+from dace import data, dtypes, properties, symbolic, Memlet
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+
+
+def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
+    """``True`` iff ``expr >= 0`` for every nonnegative value of its free symbols.
+
+    Canonicalization assumes symbols (array sizes, strides, offsets) are
+    nonnegative, but DaCe symbols carry no sign assumption (``is_nonnegative`` is
+    ``None``), so we re-evaluate the expression with each free symbol replaced by
+    a nonnegative one and ask sympy. ``>= 0`` -- not ``> 0`` -- is exactly the
+    soundness condition for the snapshot-and-redirect rewrite: a read at
+    ``a[i + offset]`` with ``offset >= 0`` is never written by an *earlier*
+    iteration (which writes ``a[i' ], i' < i``), so reading the snapshot is sound;
+    an ``offset < 0`` read-behind is a true RAW recurrence.
+
+    A bare symbol (``K``) or a sum of nonnegatives (``K + N``) is provably
+    nonnegative; a negation (``-K``) is not; and -- importantly -- a difference of
+    two nonnegatives (``K - M``) is *not* provably nonnegative (its sign is
+    undecidable even under the assumption), so it is rejected rather than renamed.
+    Returns ``False`` on any sympy uncertainty (``is_nonnegative`` is ``None``).
+    """
+    import sympy
+    try:
+        subs = {s: sympy.Symbol(s.name, nonnegative=True) for s in expr.free_symbols}
+        return bool(expr.subs(subs).is_nonnegative)
+    except (AttributeError, TypeError):
+        return False
 
 
 @properties.make_properties
@@ -173,18 +199,20 @@ class BreakAntiDependence(ppl.Pass):
         #
         #   (c) ``isym`` is present and resolution fails  -> conservative complex.
         if isym not in carried_offset.free_symbols:
-            # Read-ahead (offset > 0) is a renamable WAR; read-behind (offset < 0)
-            # is a true recurrence that must stay sequential. For a symbolic
-            # offset we keep the guarded WAR path only for a positive-looking
-            # expression (e.g. ``+K``, whose ``K > 0`` runtime guard typically
-            # holds). An offset that is provably negative, or merely extracts a
-            # leading minus sign (``-K`` -- the read-behind ``a[i-K]`` recurrence
-            # of a stride-K prefix sum), is RAW. The old code mis-tagged ``-K`` as
-            # WAR_symbolic and emitted an unsatisfiable ``-K > 0`` guard that
-            # trapped at runtime and, once DCE'd, silently corrupted the result.
-            if carried_offset.is_negative or carried_offset.could_extract_minus_sign():
-                return ('RAW', None)
-            return ('WAR_symbolic', carried_offset)
+            # Read-ahead (offset >= 0) is a renamable WAR; anything else is a true
+            # recurrence (read-behind) or an offset whose sign we cannot establish,
+            # both of which must stay sequential -> RAW. Canonicalization assumes
+            # symbols are nonnegative, so we test the offset *under that assumption*
+            # (``+K`` -> WAR; ``-K`` -> RAW). Critically, a difference like ``K - M``
+            # is NOT provably nonnegative even with that assumption, so it is refused
+            # as RAW rather than renamed: the old test (``could_extract_minus_sign``)
+            # is canonical-ordering-dependent and let ``K - M`` through as a guarded
+            # WAR (while refusing the algebraically equivalent ``M - K``), emitting an
+            # unsatisfiable runtime ``> 0`` guard that traps and, once DCE'd, silently
+            # corrupts the result.
+            if _provably_nonnegative_under_nonneg_symbols(carried_offset):
+                return ('WAR_symbolic', carried_offset)
+            return ('RAW', None)
         if loop is not None and sdfg is not None:
             arr = self._try_recognize_indirected(carried_offset, isym, loop, sdfg)
             if arr is not None:
@@ -321,7 +349,6 @@ class BreakAntiDependence(ppl.Pass):
         Returns the array name if matched, ``None`` otherwise.
         """
         import ast
-        from dace.sdfg import nodes as _nd
 
         isym_name = str(isym)
 
@@ -348,9 +375,9 @@ class BreakAntiDependence(ppl.Pass):
         writer_tasklet = None
         for st in loop.all_states():
             for n in st.nodes():
-                if isinstance(n, _nd.AccessNode) and n.data == scalar_name and st.in_degree(n) > 0:
+                if isinstance(n, nodes.AccessNode) and n.data == scalar_name and st.in_degree(n) > 0:
                     for e in st.in_edges(n):
-                        if isinstance(e.src, _nd.Tasklet):
+                        if isinstance(e.src, nodes.Tasklet):
                             writer_tasklet = (e.src, st)
                             break
                 if writer_tasklet is not None:
@@ -427,17 +454,15 @@ class BreakAntiDependence(ppl.Pass):
         rename would be unsound (the read position varies inside the loop body
         in a way that may overlap the write).
         """
-        from dace.sdfg.state import LoopRegion as _LR
         internal: Set[str] = set()
         if loop.loop_variable:
             internal.add(loop.loop_variable)
         for st in loop.all_states():
             for n in st.nodes():
-                from dace.sdfg import nodes as _nd
-                if isinstance(n, _nd.MapEntry):
+                if isinstance(n, nodes.MapEntry):
                     internal.update(str(p) for p in n.map.params)
         for cfr in loop.all_control_flow_regions():
-            if isinstance(cfr, _LR) and cfr is not loop and cfr.loop_variable:
+            if isinstance(cfr, LoopRegion) and cfr is not loop and cfr.loop_variable:
                 internal.add(cfr.loop_variable)
         return internal
 
@@ -509,7 +534,6 @@ class BreakAntiDependence(ppl.Pass):
         the whole array. The body is a tight ``for`` loop with ``__builtin_trap``
         on the first violation.
         """
-        from dace import dtypes as _dt
         desc = sdfg.arrays[arr_name]
         n_str = symbolic.symstr(desc.shape[0])
         conn = f'__arr_{arr_name}'
@@ -521,24 +545,30 @@ class BreakAntiDependence(ppl.Pass):
             inputs={conn},
             outputs=set(),
             code=code,
-            language=_dt.Language.CPP,
+            language=dtypes.Language.CPP,
         )
         pre.add_edge(pre.add_read(arr_name), None, tlet, conn, Memlet.from_array(arr_name, desc))
 
     def _emit_positive_guard(self, pre, expr) -> None:
-        """Add a side-effect-only tasklet to ``pre`` that traps when ``expr <= 0``.
+        """Add a side-effect-only tasklet to ``pre`` that traps when ``expr < 0``.
 
         The tasklet has zero connectors and is allowed to read free SDFG
         symbols by name (per the SDFG convention "init / symbol-only tasklets
         may have no src connectors"). Trips ``__builtin_trap`` on violation so
         the failure is loud at runtime and does not corrupt downstream output.
+
+        The soundness condition for the snapshot rename is ``offset >= 0`` (a
+        read ahead of, or at, the write index never aliases an earlier write), so
+        the guard tests ``>= 0`` -- a renamed ``+K`` offset that happens to be 0
+        at runtime is still sound and must not trap. The classifier only routes
+        provably-nonnegative offsets here, so in practice the guard never trips;
+        it is a defensive backstop.
         """
-        from dace import dtypes as _dt
         expr_str = symbolic.symstr(expr)
         # `assert(...)` is also valid but `__builtin_trap()` gives a hard fault
         # at any optimization level and matches the convention used elsewhere
         # in the pipeline (scatter guard).
-        code = f'if (!(({expr_str}) > 0)) {{ __builtin_trap(); }}'
+        code = f'if (!(({expr_str}) >= 0)) {{ __builtin_trap(); }}'
         # Tasklet with no input/output connectors. The CPU codegen still emits
         # its body; the symbols referenced in the code are resolved against
         # the enclosing scope.
@@ -547,7 +577,7 @@ class BreakAntiDependence(ppl.Pass):
             inputs={},
             outputs={},
             code=code,
-            language=_dt.Language.CPP,
+            language=dtypes.Language.CPP,
         )
         # Carry no edges -- the tasklet is purely a side-effect node.
         return guard
@@ -595,7 +625,43 @@ class BreakAntiDependence(ppl.Pass):
         for loop in self._loops(sdfg):
             if not self._safe_stride(loop, sdfg):
                 continue
+            n_before = renamed
             for name, sym_guards, array_guards in self._renamable_arrays(loop, sdfg):
                 self._snapshot_and_redirect(loop, name, sdfg, guards=sym_guards, array_guards=array_guards)
                 renamed += 1
+            if renamed > n_before:
+                self._forwardize_reverse_iterator(loop, sdfg)
         return renamed or None
+
+    def _forwardize_reverse_iterator(self, loop: LoopRegion, sdfg: SDFG) -> None:
+        """Inline a renamed loop's reverse-iterator binding (alpha -1 -> +1).
+
+        A loop that :class:`NormalizeNegativeStride` reversed indexes its body via
+        an iedge binding ``i := c - loop_var`` -- a body-defined symbol. That is
+        what makes the access a reverse (alpha=-1) form and what blocks
+        ``LoopToMap`` on the now-snapshot-renamed (hence carry-free) loop. Inlining
+        the binding into the body rewrites every memlet to index via the forward
+        iterator directly, so ``LoopToMap`` maps it. Scoped to *this* loop (the one
+        just renamed) and to *only* the iterator re-expression bindings
+        :meth:`_collect_iedge_substitutions` admits, so it does not disturb
+        unrelated loops the way a whole-SDFG ``SymbolPropagation`` would. A no-op
+        for genuinely forward loops (no such binding exists)."""
+        isym = symbolic.pystr_to_symbolic(loop.loop_variable)
+        subs = self._collect_iedge_substitutions(loop, isym, sdfg)
+        if not subs:
+            return
+        from dace.sdfg.replace import replace_dict
+        inlined = {str(k) for k in subs}
+        str_repl = {str(k): f'({symbolic.symstr(v)})' for k, v in subs.items()}
+        # Substitute the binding's RHS into every body memlet / tasklet so the
+        # body indexes via the forward iterator directly.
+        for st in loop.all_states():
+            replace_dict(st, str_repl)
+        # Substitute into interstate-edge conditions and other assignments' RHS
+        # (``replace_keys=False`` keeps the binding's own key intact), then drop
+        # the now-dead binding assignment(s).
+        for e in loop.all_interstate_edges():
+            e.data.replace_dict(str_repl, replace_keys=False)
+            for k in list((e.data.assignments or {}).keys()):
+                if k in inlined:
+                    del e.data.assignments[k]

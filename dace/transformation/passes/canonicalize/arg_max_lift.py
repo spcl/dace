@@ -121,6 +121,40 @@ class _Match(NamedTuple):
     gather_coeff: Any = 1
 
 
+class _Match2D(NamedTuple):
+    """A matched 2-D contiguous argmax/argmin over a nested ``for i: for j:`` loop.
+
+    The TSVC ``s3110`` / ``s13110`` shape: a value carrier ``maxv`` plus two index
+    carriers ``xindex := i`` (outer) / ``yindex := j`` (inner), all symbols,
+    updated together inside ``if aa[i, j] OP maxv``. When the full ``aa[i, j]``
+    access is a contiguous subset, the nested reduction is a single flat
+    arg-reduce over ``aa`` viewed as 1-D; the flat index ``m`` decomposes back to
+    ``xindex = m // ncols`` / ``yindex = m % ncols`` (``ncols`` = the contiguous /
+    inner dimension size).
+
+    :param op: ``Max`` or ``Min``.
+    :param outer_loop: The outer (``i``) LoopRegion -- the rewrite removes it
+        (and the inner loop it contains).
+    :param inner_loop: The inner (``j``) LoopRegion.
+    :param parent: ``outer_loop.parent_graph`` (cached).
+    :param carrier_name: The value carrier symbol (``maxv``).
+    :param x_idx_name: The outer index carrier symbol (``xindex := i``).
+    :param y_idx_name: The inner index carrier symbol (``yindex := j``).
+    :param input_array: The reduced-over 2-D array (``aa``).
+    :param ncols: The contiguous (inner) dimension size used to decompose the
+        flat index -- ``aa.shape[1]`` for a C-contiguous array.
+    """
+    op: dtypes.ReductionType
+    outer_loop: LoopRegion
+    inner_loop: LoopRegion
+    parent: ControlFlowRegion
+    carrier_name: str
+    x_idx_name: str
+    y_idx_name: str
+    input_array: str
+    ncols: Any
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class ArgMaxLift(ppl.Pass):
@@ -148,10 +182,15 @@ class ArgMaxLift(ppl.Pass):
                 if region.parent_graph is None or region not in region.parent_graph.nodes():
                     continue
                 m = self._match(region, sd)
-                if m is None:
+                if m is not None:
+                    self._rewrite(m, sd)
+                    rewritten += 1
                     continue
-                self._rewrite(m, sd)
-                rewritten += 1
+                # 2-D contiguous nested argmax (TSVC s3110 / s13110).
+                m2 = self._match_2d(region, sd)
+                if m2 is not None:
+                    self._rewrite_2d(m2, sd)
+                    rewritten += 1
         return rewritten or None
 
     def _match(self, loop: LoopRegion, sdfg: SDFG) -> Optional[_Match]:
@@ -293,6 +332,226 @@ class ArgMaxLift(ppl.Pass):
         )
 
     # ------------------------- match helpers -------------------------
+
+    # ------------------------------------------------------------------
+    # 2-D contiguous nested argmax (TSVC s3110 / s13110).
+    # ------------------------------------------------------------------
+
+    def _single_child_region(self, region, want_type):
+        """Return the unique child block of ``region`` of type ``want_type``,
+        requiring every other child to be an empty ``SDFGState``; else ``None``."""
+        found = None
+        for b in region.nodes():
+            if isinstance(b, want_type):
+                if found is not None:
+                    return None
+                found = b
+            elif isinstance(b, SDFGState):
+                if len(b.nodes()) > 0:
+                    return None
+            else:
+                return None
+        return found
+
+    def _unit_loop_from_zero(self, loop: LoopRegion):
+        """``(start, end)`` for a unit-stride loop starting at 0, else ``None``."""
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if start is None or end is None or stride is None:
+            return None
+        try:
+            if int(symbolic.simplify(stride)) != 1:
+                return None
+        except (TypeError, ValueError):
+            return None
+        if symbolic.simplify(start) != 0:
+            return None
+        return start, end
+
+    def _match_2d(self, outer_loop: LoopRegion, sdfg: SDFG) -> Optional[_Match2D]:
+        """Match a nested ``for i: for j: if aa[i, j] OP maxv: maxv = aa[i, j];
+        xindex = i; yindex = j`` over the full (contiguous) array. Matched on the
+        OUTER loop; the inner loop and the ConditionalBlock are validated below.
+        """
+        if not outer_loop.loop_variable:
+            return None
+        o_range = self._unit_loop_from_zero(outer_loop)
+        if o_range is None:
+            return None
+        inner_loop = self._single_child_region(outer_loop, LoopRegion)
+        if inner_loop is None or not inner_loop.loop_variable:
+            return None
+        i_range = self._unit_loop_from_zero(inner_loop)
+        if i_range is None:
+            return None
+        cond_block = self._single_child_region(inner_loop, ConditionalBlock)
+        if cond_block is None:
+            return None
+
+        non_else = [(c, br) for c, br in cond_block.branches if c is not None]
+        else_branches = [(c, br) for c, br in cond_block.branches if c is None]
+        if len(non_else) != 1 or any(self._branch_has_content(br) for _, br in else_branches):
+            return None
+        cond_codeblock, true_branch = non_else[0]
+        cond_expr_str = cond_codeblock.as_string.strip()
+        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
+            op_ast, gather_sym, carrier_name, transform = self._resolve_tmp_iedge(inner_loop, cond_block, cond_expr_str)
+        else:
+            op_ast, gather_sym, carrier_name, transform = self._parse_comparison(cond_expr_str)
+        if op_ast is None or transform is not None:
+            return None  # transforms (abs) are out of scope for the 2-D path
+        op = _CMP_AST_TO_RTYPE[op_ast]
+
+        outer_var, inner_var = outer_loop.loop_variable, inner_loop.loop_variable
+        array = self._resolve_gather_2d(inner_loop, gather_sym, outer_var, inner_var, sdfg)
+        if array is None:
+            return None
+        # Value carrier must be a symbol; the true-branch must write exactly the
+        # value (from the same gather) plus the two index carriers (i / j).
+        if carrier_name not in sdfg.symbols:
+            return None
+        idx = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, outer_var, inner_var, sdfg)
+        if idx is None:
+            return None
+        x_idx_name, y_idx_name = idx
+
+        # Contiguity: the nested iteration must visit EXACTLY the whole array, in
+        # C-contiguous memory order, so a flat 1-D arg-reduce is equivalent.
+        desc = sdfg.arrays[array]
+        if len(desc.shape) != 2 or not desc.is_packed_c_strides():
+            return None
+        if symbolic.simplify(o_range[1] - (desc.shape[0] - 1)) != 0:
+            return None
+        if symbolic.simplify(i_range[1] - (desc.shape[1] - 1)) != 0:
+            return None
+        full = subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)])
+        if not full.is_contiguous_subset(desc):
+            return None
+        return _Match2D(op=op,
+                        outer_loop=outer_loop,
+                        inner_loop=inner_loop,
+                        parent=outer_loop.parent_graph,
+                        carrier_name=carrier_name,
+                        x_idx_name=x_idx_name,
+                        y_idx_name=y_idx_name,
+                        input_array=array,
+                        ncols=desc.shape[1])
+
+    def _parse_2d_gather(self, rhs_str: str, outer_var: str, inner_var: str) -> Optional[str]:
+        """Return the array name iff ``rhs_str`` is exactly ``arr[outer_var,
+        inner_var]`` (a 2-D point access, outer index in dim 0, inner in dim 1)."""
+        try:
+            tree = ast.parse(str(rhs_str), mode='eval').body
+        except SyntaxError:
+            return None
+        if not isinstance(tree, ast.Subscript) or not isinstance(tree.value, ast.Name):
+            return None
+        idx = tree.slice
+        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+            idx = idx.value
+        if not isinstance(idx, ast.Tuple) or len(idx.elts) != 2:
+            return None
+        d0, d1 = idx.elts
+        if not (isinstance(d0, ast.Name) and d0.id == outer_var):
+            return None
+        if not (isinstance(d1, ast.Name) and d1.id == inner_var):
+            return None
+        return tree.value.id
+
+    def _resolve_gather_2d(self, inner_loop: LoopRegion, gather_sym: str, outer_var: str, inner_var: str,
+                           sdfg: SDFG) -> Optional[str]:
+        """Find an iedge binding ``gather_sym := arr[outer_var, inner_var]`` in the
+        inner loop and return ``arr`` (validated against ``sdfg.arrays``)."""
+        for e in inner_loop.all_interstate_edges():
+            rhs = (e.data.assignments or {}).get(gather_sym)
+            if rhs is None:
+                continue
+            arr = self._parse_2d_gather(rhs, outer_var, inner_var)
+            if arr is not None and arr in sdfg.arrays:
+                return arr
+        return None
+
+    def _match_2d_true_branch(self, true_branch, carrier: str, gather_sym: str, array: str, outer_var: str,
+                              inner_var: str, sdfg: SDFG):
+        """Verify the true-branch binds exactly ``carrier := arr[i, j]`` (or
+        ``:= gather_sym``), ``x := outer_var`` and ``y := inner_var`` via iedges,
+        with empty states and no other writes. Returns ``(x_name, y_name)`` or
+        ``None``."""
+        if not hasattr(true_branch, 'edges'):
+            return None
+        carrier_seen = False
+        x_idx = y_idx = None
+        for e in true_branch.edges():
+            for lhs, rhs in (e.data.assignments or {}).items():
+                rhs_str = str(rhs).strip()
+                if lhs == carrier:
+                    if rhs_str != gather_sym and self._parse_2d_gather(rhs_str, outer_var, inner_var) != array:
+                        return None
+                    carrier_seen = True
+                elif rhs_str == outer_var and x_idx is None:
+                    x_idx = lhs
+                elif rhs_str == inner_var and y_idx is None:
+                    y_idx = lhs
+                else:
+                    return None
+        for n in true_branch.nodes():
+            if isinstance(n, SDFGState) and len(n.nodes()) > 0:
+                return None
+            if not isinstance(n, SDFGState):
+                return None  # nested control flow unsupported
+        if not (carrier_seen and x_idx is not None and y_idx is not None):
+            return None
+        if x_idx not in sdfg.symbols or y_idx not in sdfg.symbols:
+            return None
+        return x_idx, y_idx
+
+    def _rewrite_2d(self, m: _Match2D, sdfg: SDFG):
+        """Replace the nested 2-D argmax with a flat :class:`ArgReduce` over the
+        whole (contiguous) array, decomposing the flat index back into the two
+        index carriers (``xindex = m // ncols``, ``yindex = m % ncols``)."""
+        from dace.libraries.standard.nodes import ArgReduce
+        desc = sdfg.arrays[m.input_array]
+        val_buf, _ = sdfg.add_scalar(f'_argmax2d_val_{m.outer_loop.label}', desc.dtype, transient=True,
+                                     find_new_name=True)
+        idx_buf, _ = sdfg.add_scalar(f'_argmax2d_idx_{m.outer_loop.label}', dtypes.int64, transient=True,
+                                     find_new_name=True)
+
+        argmax_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d')
+        # Re-route inbound edges, dropping pre-loop seeds of all three carriers.
+        for ie in list(m.parent.in_edges(m.outer_loop)):
+            new_assigns = dict(ie.data.assignments or {})
+            for k in (m.carrier_name, m.x_idx_name, m.y_idx_name):
+                new_assigns.pop(k, None)
+            m.parent.add_edge(ie.src, argmax_state,
+                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.remove_edge(ie)
+
+        ncols = symbolic.symstr(m.ncols)
+        bind_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d_bind')
+        m.parent.add_edge(
+            argmax_state, bind_state,
+            dace.InterstateEdge(assignments={
+                m.carrier_name: val_buf,
+                m.x_idx_name: f'({idx_buf} // ({ncols}))',
+                m.y_idx_name: f'({idx_buf} % ({ncols}))',
+            }))
+        for oe in list(m.parent.out_edges(m.outer_loop)):
+            m.parent.add_edge(bind_state, oe.dst, oe.data)
+            m.parent.remove_edge(oe)
+        m.parent.remove_node(m.outer_loop)
+
+        read = argmax_state.add_read(m.input_array)
+        wv = argmax_state.add_write(val_buf)
+        wi = argmax_state.add_write(idx_buf)
+        op = 'max' if m.op == dtypes.ReductionType.Max else 'min'
+        node = ArgReduce(name=f'{m.outer_loop.label}_argreduce2d', op=op)
+        argmax_state.add_node(node)
+        full = subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)])
+        argmax_state.add_edge(read, None, node, '_in', mm.Memlet(data=m.input_array, subset=full))
+        argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
+        sdfg.reset_cfg_list()
 
     def _branch_has_content(self, branch) -> bool:
         if not hasattr(branch, 'nodes'):

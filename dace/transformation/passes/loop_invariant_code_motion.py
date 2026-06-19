@@ -23,7 +23,7 @@ import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, SDFGState, properties, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import nodes, InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -219,7 +219,6 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> Non
     before ``loop``. Incoming edges to ``loop`` now go to ``child`` first,
     and a new unconditional edge ``child -> loop`` is added.
     """
-    import dace.sdfg as _sd
     # Detach internal edges touching child inside loop.
     for e in list(loop.in_edges(child)) + list(loop.out_edges(child)):
         loop.remove_edge(e)
@@ -235,7 +234,7 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> Non
     for e in list(parent.in_edges(loop)):
         parent.remove_edge(e)
         parent.add_edge(e.src, child, e.data)
-    parent.add_edge(child, loop, _sd.InterstateEdge())
+    parent.add_edge(child, loop, InterstateEdge())
 
 
 def _region_free_symbols(region: Any) -> Set[str]:
