@@ -9,6 +9,7 @@ vectorizer lowers to a SIMD blend. Only handles a two-branch
 element subsets and whose bodies are tasklets/access nodes; anything
 else raises :class:`NotImplementedError`.
 """
+import ast
 import copy
 import re
 from typing import Dict, Optional, Tuple
@@ -22,6 +23,43 @@ from dace.sdfg.construction_utils import (
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
+
+
+def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:
+    """Render a WCR reduction lambda as a Python expression over two connectors.
+
+    A WCR memlet stores its reduction as ``lambda a, b: <expr>`` where ``a`` is
+    the existing destination value and ``b`` the incoming contribution -- so
+    ``c[i] += s`` carries ``lambda a, b: a + b``. When such a WCR escape write is
+    predicated into an ITE, the ``_then`` value must be ``dest <op> contribution``
+    (the base ``dest`` the WCR memlet would have read from memory), NOT
+    ``identity <op> contribution`` (which silently drops the base).
+
+    The expression is emitted as Python (substituting ``a`` -> ``base_conn``,
+    ``b`` -> ``acc_conn``) and consumed by a Python-language tasklet so DaCe's
+    unparser lowers any operator with Python semantics -- crucially ``%`` becomes
+    ``dace::math::py_mod`` rather than C's truncated ``%`` (the two disagree in
+    sign for negative operands). Never hand-write the operator in C.
+
+    :param wcr_str: the memlet's ``wcr`` string (a two-argument lambda).
+    :param base_conn: connector name to substitute for the destination operand.
+    :param acc_conn: connector name to substitute for the contribution operand.
+    :returns: a Python expression string, e.g. ``"(_base + _acc)"``.
+    """
+    expr = ast.parse(wcr_str, mode="eval").body
+    if not isinstance(expr, ast.Lambda) or len(expr.args.args) != 2:
+        raise NotImplementedError(
+            f"SameWriteSetIfElseToITECFG: unsupported WCR (expected a 2-arg lambda): {wcr_str!r}")
+    a0, a1 = expr.args.args[0].arg, expr.args.args[1].arg
+    sub = {a0: base_conn, a1: acc_conn}
+
+    class _Rename(ast.NodeTransformer):
+        def visit_Name(self, node):  # noqa: N802
+            if node.id in sub:
+                return ast.copy_location(ast.Name(id=sub[node.id], ctx=node.ctx), node)
+            return node
+
+    return ast.unparse(ast.fix_missing_locations(_Rename().visit(expr.body)))
 
 
 def _rhs_is_predicate(rhs: str) -> bool:
@@ -460,11 +498,23 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         sdfg = dst.sdfg
         # Pass 1: escape-write redirects (caller-supplied).
         redirected_nodes: set = set()
+        # A predicated WCR escape (``c[i] += s`` under an ``if``) carries its
+        # reduction on the write memlet; redirecting it to the ``_then`` temp
+        # while keeping the WCR makes the temp accumulate onto its reduction
+        # identity (``0`` for ``+``), silently dropping the destination base
+        # ``c[i]``. Capture such edges here -- before the subset is rebound to
+        # ``[0]`` below -- and rebuild them as an explicit base-read accumulate
+        # in Pass 3.
+        wcr_escapes: list = []  # (edge, base_name, base_subset)
         for _old, new in node_map.items():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
             if new.data in rename and dst.in_degree(new) > 0:
-                new.data = rename[new.data]
+                base_name = new.data
+                for ie in dst.in_edges(new):
+                    if ie.data is not None and ie.data.wcr is not None:
+                        wcr_escapes.append((ie, base_name, copy.deepcopy(ie.data.subset)))
+                new.data = rename[base_name]
                 redirected_nodes.add(new)
         for e in dst.edges():
             if (e.src in redirected_nodes or e.dst in redirected_nodes) and e.data.data in rename:
@@ -493,6 +543,47 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             for e in dst.edges():
                 if e.data is not None and e.data.data in internal_renames:
                     e.data.data = internal_renames[e.data.data]
+        # Pass 3: rebuild predicated WCR escapes as ``_then = base <op> acc``.
+        for edge, base_name, base_subset in wcr_escapes:
+            self._seed_wcr_then(dst, edge, base_name, base_subset)
+
+    def _seed_wcr_then(self, state: dace.SDFGState, edge, base_name: str, base_subset):
+        """Replace a redirected WCR escape write with an explicit base accumulate.
+
+        ``edge`` is the (already-redirected) write ``src -[wcr]-> _then_arr[0]``.
+        Its reduction needs the destination base ``base_name[base_subset]`` that
+        the original WCR memlet would have read from memory. Rebuild it as a
+        Python tasklet ``_then = op(base, acc)`` (see :func:`_wcr_apply_code` for
+        why the operator stays Python -- correct ``%`` semantics) so the ITE then
+        operand carries ``c[i] + s`` rather than ``0 + s``.
+
+        :param state: the clone (compute-then / compute-else) state.
+        :param edge: the redirected WCR write edge (``_then_arr`` is its dst).
+        :param base_name: the destination array name (``c``).
+        :param base_subset: the original element subset of the WCR write (``i``).
+        """
+        write_node = edge.dst  # the _then_<arr> access node
+        src = edge.src
+        sdfg = state.sdfg
+        if not isinstance(src, dace.nodes.AccessNode) or sdfg.arrays[src.data].total_size != 1:
+            raise NotImplementedError(
+                "SameWriteSetIfElseToITECFG: predicated WCR write must come from a "
+                f"single-element access node (got {type(src).__name__} {getattr(src, 'data', '')!r})")
+        op_code = _wcr_apply_code(edge.data.wcr, "_base", "_acc")
+        then_name = write_node.data
+        src_name = src.data
+        src_conn = edge.src_conn
+        state.remove_edge(edge)
+        acc_t = state.add_tasklet(
+            name=f"wcr_acc_{base_name}",
+            inputs={"_base", "_acc"},
+            outputs={"_o"},
+            code=f"_o = {op_code}",
+        )
+        base_read = state.add_access(base_name)
+        state.add_edge(base_read, None, acc_t, "_base", dace.Memlet(expr=f"{base_name}[{base_subset}]"))
+        state.add_edge(src, src_conn, acc_t, "_acc", dace.Memlet(expr=f"{src_name}[0]"))
+        state.add_edge(acc_t, "_o", write_node, None, dace.Memlet(expr=f"{then_name}[0]"))
 
     def _emit_ite_tasklet(self,
                           sdfg: dace.SDFG,
