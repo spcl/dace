@@ -966,9 +966,9 @@ class Range(Subset):
                 break
             if (stride == 1) == False:
                 break  # The >1 size dimension is not associated to stride 1.
-            found_copy_dim = True
+            is_1d_slice = True
         else:
-            if found_copy_dim:
+            if is_1d_slice:
                 return True
 
         # Determine array layout and calculate expression lengths accordingly
