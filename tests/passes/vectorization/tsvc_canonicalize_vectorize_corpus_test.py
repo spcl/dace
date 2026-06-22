@@ -19,6 +19,18 @@ config.
 Known multidim gaps (legacy passes them) are marked ``xfail`` with the tracking
 reason -- see ``_MULTIDIM_XFAIL``.
 """
+import os
+
+# dace lazily ``from mpi4py import MPI`` during ``to_sdfg``. Left to auto-init,
+# mpi4py installs MPI's abort-on-error handler; the compile step's fork+exec
+# (cmake/g++) then aborts the whole interpreter partway through a single-process
+# sweep (SIGABRT in codegen). Skip MPI_Init -- nothing here uses MPI -- and steer
+# Open MPI off UCX, matching the canonicalize sibling. ``setdefault`` defers to
+# any externally-provided configuration.
+os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
+os.environ.setdefault("OMPI_MCA_pml", "ob1")
+os.environ.setdefault("OMPI_MCA_btl", "self,vader")
+os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import numpy as np
 import pytest
@@ -53,12 +65,20 @@ _MULTIDIM_XFAIL: dict = {
 }
 
 
-def _max_float_diff(got: dict, ref: dict) -> float:
-    md = 0.0
+def _assert_matches(name: str, got: dict, ref: dict, stage: str):
+    """Assert every float output matches the reference, ``nan``/``inf`` equal.
+
+    ``np.allclose(equal_nan=True)`` (not a raw ``max|diff|``) so a recurrence that
+    legitimately overflows to ``inf`` everywhere -- e.g. s232's squaring scan --
+    compares ``inf == inf`` instead of ``nanmax(inf - inf) == nan``; the latter is
+    never ``< tol`` and spuriously fails. Integer arrays are read-only indices.
+    """
     for n, a in got.items():
-        if isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size:
-            md = max(md, float(np.nanmax(np.abs(a - ref[n]))))
-    return md
+        if not (isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size):
+            continue
+        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9, equal_nan=True), (
+            f"{name}/{n}: {stage} diverges from numpy reference, "
+            f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
 
 
 def _canonicalized(name):
@@ -71,7 +91,7 @@ def _canonicalized(name):
     REFERENCES[kernel.name](**ref, **ck)
     work = {n: a.copy() for n, a in arrays.items()}
     sdfg.compile()(**work, **ck)
-    assert _max_float_diff(work, ref) < 1e-9, f"{name}: canonicalization changed the result"
+    _assert_matches(name, work, ref, "canonicalization")
     return kernel, sdfg, arrays, ck, ref
 
 
@@ -80,7 +100,7 @@ def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
     sdfg.validate()
     work = {n: a.copy() for n, a in arrays.items()}
     sdfg.compile()(**work, **ck)
-    assert _max_float_diff(work, ref) < 1e-9, f"{name}: vectorized result diverged from numpy"
+    _assert_matches(name, work, ref, "vectorization")
 
 
 @pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
