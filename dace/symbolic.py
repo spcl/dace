@@ -126,12 +126,15 @@ class symbol(sympy.Symbol):
 
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
-        if 'integer' in assumptions or not numpy.any(is_integer):
-            # Using __xnew__ as the regular __new__ is cached, which leads
-            # to modifying different references of symbols with the same name.
-            self = sympy.Symbol.__xnew__(cls, name, **assumptions)
-        else:
-            self = sympy.Symbol.__xnew__(cls, name, integer=True, **assumptions)
+
+        # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
+        # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
+        assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
+        if 'integer' not in assumptions and numpy.any(is_integer):
+            assumptions['integer'] = True
+        # Using __xnew__ as the regular __new__ is cached, which leads
+        # to modifying different references of symbols with the same name.
+        self = sympy.Symbol.__xnew__(cls, name, **assumptions)
 
         self.dtype = dtype
         self._constraints = []
@@ -1671,6 +1674,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     def _pow(a, b):
         a = sympy.sympify(a)
         b = sympy.sympify(b)
+        # Evaluate pure-numeric powers (8**-1 -> 1/8) so coefficients stay reduced Rationals; an
+        # unevaluated Pow reorders surrounding Mul terms on round-trip. TypedConstants keep dtype.
+        if (_is_sympy_number(a) and _is_sympy_number(b) and not isinstance(a, TypedConstant)
+                and not isinstance(b, TypedConstant)):
+            return a**b
         if hasattr(sympy.Pow, '_from_args'):
             return sympy.Pow._from_args((a, b))
         if hasattr(sympy.Pow, '__xnew__'):
@@ -1679,7 +1687,34 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_add(a, b):
-        return _SerializedSymbolicParser._add(*_SerializedSymbolicParser._flatten_args(sympy.Add, a, b))
+        flat = _SerializedSymbolicParser._flatten_args(sympy.Add, a, b)
+        flat.sort(key=sympy.default_sort_key)
+        return _SerializedSymbolicParser._add(*flat)
+
+    @staticmethod
+    def _binop_mul(a, b):
+        args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
+        args.sort(key=sympy.default_sort_key)
+
+        if len(args) > 1:
+            args = [arg for arg in args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
+
+        coeff = sympy.S.One
+        nonnumeric_args = []
+        for arg in args:
+            if not isinstance(arg, TypedConstant) and _is_sympy_number(arg):
+                coeff *= arg
+            else:
+                nonnumeric_args.append(arg)
+
+        if coeff != 1 or not nonnumeric_args:
+            args = [coeff] + nonnumeric_args
+        else:
+            args = nonnumeric_args
+
+        if not args:
+            return sympy.Integer(1)
+        return _SerializedSymbolicParser._mul(*args)
 
     @staticmethod
     def _negate(a):
@@ -1695,29 +1730,10 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             *_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b)))
 
     @staticmethod
-    def _binop_mul(a, b):
-        args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
-        if len(args) > 1:
-            args = [arg for arg in args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
-        coeff = sympy.S.One
-        nonnumeric_args = []
-        for arg in args:
-            if not isinstance(arg, TypedConstant) and _is_sympy_number(arg):
-                coeff *= arg
-            else:
-                nonnumeric_args.append(arg)
-        if coeff != 1 or not nonnumeric_args:
-            args = [coeff] + nonnumeric_args
-        else:
-            args = nonnumeric_args
-        if not args:
-            return sympy.Integer(1)
-        return _SerializedSymbolicParser._mul(*args)
-
-    @staticmethod
     def _binop_div(a, b):
-        return _SerializedSymbolicParser._mul(
-            *_SerializedSymbolicParser._flatten_args(sympy.Mul, a, _SerializedSymbolicParser._pow(b, -1)))
+        # Fold the numeric quotient into one reduced factor (1/3 -> Rational(1, 3))
+        # instead of leaving a stray identity 1*(1/3).
+        return _SerializedSymbolicParser._binop_mul(a, _SerializedSymbolicParser._pow(b, -1))
 
     @staticmethod
     def _binop_pow(a, b):
@@ -1758,10 +1774,15 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     }
     _functions = {
         'abs': sympy.Abs,
+        'Abs': sympy.Abs,
         'min': sympy.Min,
+        'Min': sympy.Min,
         'max': sympy.Max,
+        'Max': sympy.Max,
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
+        'ceiling': sympy.ceiling,
+        'sqrt': sympy.sqrt,
         'round': ROUND,
         'And': AND,
         'Or': OR,
@@ -1797,6 +1818,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'NoneSymbol': symbol('NoneSymbol'),
         'pi': sympy.pi,
         'E': sympy.E,
+        'I': sympy.I,
         'oo': sympy.oo,
         'nan': sympy.nan,
     }
@@ -1973,25 +1995,32 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return _format_float(float(sympy_numeric_fix(expr)))
 
     def _print_Add(self, expr):
+        # Sort arguments deterministically using SymPy's default_sort_key
+        sorted_args = sorted(expr.args, key=sympy.core.sorting.default_sort_key)
+
+        # Flatten the sorted arguments
         flat_args = []
 
-        def _flatten(arg):
-            if isinstance(arg, sympy.Add):
-                for nested in arg.args:
-                    _flatten(nested)
-            else:
-                flat_args.append(arg)
+        def _flatten(args):
+            for arg in args:
+                if isinstance(arg, sympy.Add):
+                    _flatten(sorted(arg.args, key=sympy.core.sorting.default_sort_key))
+                else:
+                    flat_args.append(arg)
 
-        _flatten(expr)
+        _flatten(sorted_args)
+
         parts = []
         for i, arg in enumerate(flat_args):
+            # Extract sign for printing
             negative = False
-            if isinstance(arg, sympy.Number) and arg < 0:
+            if isinstance(arg, (sympy.Number, TypedConstant)) and arg < 0:
                 negative = True
                 arg = -arg
             elif isinstance(arg, sympy.Basic) and arg.could_extract_minus_sign():
                 negative = True
                 arg = -arg
+
             rendered = self._print(arg)
             if i == 0:
                 parts.append(f'-{rendered}' if negative else rendered)
@@ -2000,26 +2029,33 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return ''.join(parts)
 
     def _print_Mul(self, expr):
+        sorted_args = sorted(expr.args, key=sympy.default_sort_key)
+
         flat_args = []
 
-        def _flatten(arg):
-            if isinstance(arg, sympy.Mul):
-                for nested in arg.args:
-                    _flatten(nested)
-            else:
-                flat_args.append(arg)
+        def _flatten(args):
+            for arg in args:
+                if isinstance(arg, sympy.Mul):
+                    _flatten(sorted(arg.args, key=sympy.default_sort_key))
+                else:
+                    flat_args.append(arg)
 
-        _flatten(expr)
+        _flatten(sorted_args)
+
         if len(flat_args) > 1:
             flat_args = [arg for arg in flat_args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
 
         coeff = sympy.S.One
         nonnumeric_args = []
         for arg in flat_args:
-            if not isinstance(arg, TypedConstant) and _is_sympy_number(arg):
+            # Fold only genuine numbers (Integer/Rational/Float). `_is_sympy_number` also matches
+            # `is_number` composites (pi, sqrt(2), I, (-1)**(1/3)); folding one into `coeff` rebuilds
+            # this same Mul, and `self._print(coeff)` below would then recurse forever.
+            if isinstance(arg, sympy.Number) and not isinstance(arg, TypedConstant):
                 coeff *= arg
             else:
                 nonnumeric_args.append(arg)
+
         if coeff != 1 or not nonnumeric_args:
             flat_args = [coeff] + nonnumeric_args
         else:
@@ -2050,7 +2086,7 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
     return str(expr)
 
 
-def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
+def serialize_symbolic(expr):
     return _serialize_symbolic_uncached(expr)
 
 
