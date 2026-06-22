@@ -1109,6 +1109,9 @@ class CPUCodeGen(TargetCodeGenerator):
         :return: String of C++ performing the write.
         """
         codegen = codegen or self
+        # Scalar-to-scalar with differing types: convert the value with a cast.
+        if src_dtype != dst_dtype and src_dtype.veclen == 1 and dst_dtype.veclen == 1:
+            return f"{dst_expr} = static_cast<{dst_dtype.ctype}>({src_expr});"
         # If there is a type mismatch, cast pointer
         dst_expr = codegen.make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, True, DefinedType.Pointer)
         return f"{dst_expr} = {src_expr};"
