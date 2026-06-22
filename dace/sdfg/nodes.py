@@ -758,6 +758,28 @@ class NestedSDFG(CodeNode):
                 raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
                                  f"output ({outputs}) arrays")
 
+        # Reject inner/outer array base-type mismatches across connectors.
+        if self.sdfg:
+            for conn in self.in_connectors.keys() | self.out_connectors.keys():
+                if conn not in self.sdfg.arrays:
+                    continue
+                inner_dtype = self.sdfg.arrays[conn].dtype
+                outer_arrays = set()
+                for edge in state.in_edges_by_connector(self, conn):
+                    src = utils.get_global_memlet_path_src(sdfg, state, edge)
+                    if isinstance(src, AccessNode):
+                        outer_arrays.add(src.data)
+                for edge in state.out_edges_by_connector(self, conn):
+                    dst = utils.get_global_memlet_path_dst(sdfg, state, edge)
+                    if isinstance(dst, AccessNode):
+                        outer_arrays.add(dst.data)
+                for outer_name in outer_arrays:
+                    outer_dtype = sdfg.arrays[outer_name].dtype
+                    if inner_dtype.base_type != outer_dtype.base_type:
+                        raise ValueError(
+                            f'Element type mismatch on nested SDFG connector "{conn}": inner array '
+                            f'is {inner_dtype} but outer array "{outer_name}" is {outer_dtype}. ')
+
         # Validate undefined symbols
         if self.sdfg:
             symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
