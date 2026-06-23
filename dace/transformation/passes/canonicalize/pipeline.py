@@ -15,6 +15,7 @@ from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
@@ -294,8 +295,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # condition before the structural transforms, the same way the break lift is
     # applied early). A no-op on kernels without a ``continue`` (e.g. the current
     # TSVC corpus emits none); it hardens the pipeline for kernels that do.
-    s += [('clean', NormalizeNegativeStride()), ('clean', _uniq), ('clean', SplitTasklets()),
-          ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()), ('clean', SimplifyPass())]
+    # RewriteModuloToPyMod runs first: normalise ``a % b`` -> ``py_mod(a, b)`` up
+    # front so the canonicalized reference, every downstream tasklet split, and the
+    # base codegen all carry Python/NumPy modulo semantics (cppunparse lowers a bare
+    # ``%`` to C's dividend-sign ``%``, which miscompiles negative operands).
+    s += [('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()), ('clean', _uniq),
+          ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()),
+          ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.

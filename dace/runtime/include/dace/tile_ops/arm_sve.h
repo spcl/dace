@@ -60,6 +60,7 @@
 #include <type_traits>
 
 
+
 #if !defined(__ARM_FEATURE_SVE)
 #error Included the SVE tile-op header without SVE support
 #endif
@@ -229,6 +230,17 @@ inline VecT sve_tile_apply(svbool_t pg, VecT a, VecT b) {
 template <typename T, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask, int vlen) {
+  // No SVE modulo intrinsic, and ``sve_tile_apply``'s catch-all is logical-OR;
+  // run a portable scalar lane loop (``py_mod`` = Python/NumPy ``%`` semantics).
+  if constexpr (Op == '%') {
+    for (int i = 0; i < vlen; ++i) {
+      const T av = BroadcastA ? a[0] : a[i];
+      const T bv = BroadcastB ? b[0] : b[i];
+      if constexpr (Masked) out[i] = mask[i] ? py_mod(av, bv) : T(0);
+      else out[i] = py_mod(av, bv);
+    }
+    return;
+  }
   using VecT = decltype(sve_dup(T(0)));  // vec type for T, from the sve_dup overload set
   const VecT zero = sve_dup(T(0));
   for (int i = 0; i < vlen; i += sve_cnt<T>()) {
@@ -246,6 +258,17 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask) {
+  // No SVE modulo intrinsic, and ``sve_tile_apply``'s catch-all is logical-OR;
+  // run a portable scalar lane loop (``py_mod`` = Python/NumPy ``%`` semantics).
+  if constexpr (Op == '%') {
+    for (int i = 0; i < VLEN; ++i) {
+      const T av = BroadcastA ? a[0] : a[i];
+      const T bv = BroadcastB ? b[0] : b[i];
+      if constexpr (Masked) out[i] = mask[i] ? py_mod(av, bv) : T(0);
+      else out[i] = py_mod(av, bv);
+    }
+    return;
+  }
   using VecT = decltype(sve_dup(T(0)));  // vec type for T, from the sve_dup overload set
   const VecT zero = sve_dup(T(0));
   for (int i = 0; i < VLEN; i += sve_cnt<T>()) {

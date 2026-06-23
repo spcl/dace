@@ -292,6 +292,19 @@ static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator,
   return (T)(numerator - quotient * denominator);
 }
 
+// Mixed-operand-type overload (e.g. ``i % 64`` where ``i`` is ``int64_t`` and the
+// literal ``64`` is ``int``): promote both operands to their common arithmetic
+// type and delegate. C's ``%`` applies the usual arithmetic conversions
+// implicitly, but the single-type template above cannot deduce ``T`` from two
+// different types. Guarded so the same-type call still binds the (more
+// specialized) overload above -- no ambiguity.
+template <typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denominator)
+    -> decltype(numerator + denominator) {
+  using T = decltype(numerator + denominator);
+  return py_mod<T>((T)numerator, (T)denominator);
+}
+
 // Computes C/C++ modulus (operator % and fmod)
 template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator,

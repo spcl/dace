@@ -6,7 +6,9 @@ import dace
 from typing import Any, Callable, Dict, Optional, Set
 import ast
 import re
+import sympy
 from dace import SDFG, properties, transformation
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
 
@@ -233,6 +235,99 @@ def _remove_math_prefix_from_source(source: str) -> str:
     return ast.unparse(tree)
 
 
+class ModuloToPyModExpander(ast.NodeTransformer):
+    """Rewrite every ``a % b`` (``ast.Mod`` binop) into a ``py_mod(a, b)`` call.
+
+    Python/NumPy modulo follows the divisor's sign; C's ``%`` follows the
+    dividend's. cppunparse lowers a bare ``%`` to C's ``%`` (and is ill-formed
+    for floats), so a tasklet ``a % b`` silently miscompiles negative operands.
+    ``py_mod`` resolves to ``dace::math::py_mod`` in generated code (the same
+    helper the ``np.mod`` ufunc emits), giving Python semantics everywhere. An
+    existing ``py_mod(...)`` call is a plain :class:`ast.Call` and is left
+    untouched, so the rewrite is idempotent.
+    """
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        self.generic_visit(node)  # rewrite nested ``%`` first
+        if isinstance(node.op, ast.Mod):
+            return ast.copy_location(
+                ast.Call(func=ast.Name(id="py_mod", ctx=ast.Load()), args=[node.left, node.right], keywords=[]), node)
+        return node
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
+        self.generic_visit(node)  # rewrite ``%`` in the value expression first
+        if isinstance(node.op, ast.Mod):
+            # ``t %= b`` -> ``t = py_mod(t, b)`` (the target is also a read here).
+            read_target = ast.copy_location(ast.Name(id=node.target.id, ctx=ast.Load()), node.target) \
+                if isinstance(node.target, ast.Name) else node.target
+            call = ast.Call(func=ast.Name(id="py_mod", ctx=ast.Load()), args=[read_target, node.value], keywords=[])
+            return ast.copy_location(ast.Assign(targets=[node.target], value=call), node)
+        return node
+
+
+def _rewrite_modulo(src: str) -> str:
+    """Rewrite ``%`` modulo to ``py_mod(...)`` in a Python source string.
+
+    Covers tasklet bodies, control-flow codeblocks (loop bounds, branch
+    conditions), and interstate-edge condition / assignment expressions -- any
+    place the operator appears as Python ``%``.
+
+    :param src: the Python source.
+    :returns: the rewritten source (unchanged when it carries no ``%``).
+    """
+    if "%" not in src:  # fast path: no modulo to rewrite
+        return src
+    tree = ast.parse(src)
+    tree = ModuloToPyModExpander().visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
+_PY_MOD = sympy.Function("py_mod")
+
+
+def _subs_py_mod_symbolic(expr):
+    """Rewrite every sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``.
+
+    Used for the symbolic sites a tasklet rewrite cannot reach: memlet subsets
+    and map ranges (and any other :class:`sympy.Basic`). ``symstr(cpp_mode)``
+    lowers a bare ``Mod`` to C's ``%`` just like cppunparse, so an index such as
+    ``A[(i - k) % n]`` would miscompile a negative offset; ``py_mod`` renders to
+    ``dace::math::py_mod``.
+
+    :param expr: a symbolic expression (or any value; non-symbolic is returned as-is).
+    :returns: the rewritten expression, or ``expr`` unchanged when it has no ``Mod``.
+    """
+    if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod):
+        return expr
+    return expr.replace(sympy.Mod, _PY_MOD)
+
+
+def _subset_has_mod(subset) -> bool:
+    """Whether any component expression of ``subset`` contains a sympy ``Mod``."""
+    if isinstance(subset, dace.subsets.Range):
+        exprs = [x for rng in subset.ranges for x in rng]
+    elif isinstance(subset, dace.subsets.Indices):
+        exprs = list(subset.indices)
+    else:
+        return False
+    return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod) for x in exprs)
+
+
+def _rewrite_subset_modulo(subset):
+    """Return a copy of ``subset`` with every ``Mod`` rewritten to ``py_mod``.
+
+    :param subset: a :class:`~dace.subsets.Range` or :class:`~dace.subsets.Indices`.
+    :returns: the rewritten subset (a new object), or ``subset`` for other types.
+    """
+    if isinstance(subset, dace.subsets.Range):
+        return dace.subsets.Range([(_subs_py_mod_symbolic(b), _subs_py_mod_symbolic(e), _subs_py_mod_symbolic(s))
+                                   for b, e, s in subset.ranges])
+    if isinstance(subset, dace.subsets.Indices):
+        return dace.subsets.Indices([_subs_py_mod_symbolic(i) for i in subset.indices])
+    return subset
+
+
 class _BodyRewritePass(ppl.Pass):
     """Base for vectorization preprocessing passes that rewrite Python tasklet bodies in place.
 
@@ -273,6 +368,113 @@ class PowerOperatorExpansion(_BodyRewritePass):
 
     def _rewrite(self, src: str) -> str:
         return _expand_pow(src)
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class RewriteModuloToPyMod(_BodyRewritePass):
+    """Rewrite every ``%`` modulo to ``py_mod`` everywhere it can appear in an SDFG.
+
+    Run early ("cleaning") in the canonicalize and vectorize pipelines so the
+    canonicalized reference, the vectorized body, and the base codegen all agree
+    on Python/NumPy modulo semantics (``dace::math::py_mod``) without changing
+    core ``cppunparse`` (whose bare ``%`` follows C's dividend-sign rule and
+    miscompiles negative operands; ``symstr(cpp_mode)`` lowers a sympy ``Mod`` the
+    same way). The operator can appear in five places, all covered here:
+
+    * **tasklet bodies** (Python) -- ``c = a % b``;
+    * **loop-range codeblocks** -- a ``LoopRegion`` condition / init / update,
+      e.g. ``range(0, x % 7)`` lowered to ``i < x % 7``;
+    * **branch conditions** -- a ``ConditionalBlock`` arm, e.g. ``if a % 2 == 0``;
+    * **memlet subsets** and **map ranges** -- symbolic, e.g. ``A[(i + k) % n]``;
+    * **interstate edges** -- the condition codeblock and every assignment RHS.
+
+    Idempotent: an existing ``py_mod(...)`` call (or a ``Function('py_mod')``) is
+    left as-is.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return (ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges | ppl.Modifies.Scopes)
+
+    def _rewrite(self, src: str) -> str:
+        # Retained so the pass still composes as a plain body rewrite if reused.
+        return _rewrite_modulo(src)
+
+    @staticmethod
+    def _rewritten_codeblock(cb):
+        """Return a CodeBlock with ``%`` -> ``py_mod``; the original if unchanged.
+
+        :param cb: a :class:`CodeBlock` or ``None``.
+        :returns: a new Python CodeBlock when a ``%`` was rewritten, else ``cb``.
+        """
+        if cb is None or cb.language != dace.dtypes.Language.Python:
+            return cb
+        src = cb.as_string
+        if not src or "%" not in src:
+            return cb
+        new = _rewrite_modulo(src)
+        return CodeBlock(new, language=dace.Language.Python) if new != src else cb
+
+    def _rewrite_control_flow(self, g: SDFG) -> None:
+        """Rewrite ``%`` in loop-bound codeblocks and branch conditions of ``g``."""
+        for cfg in g.all_control_flow_regions(recursive=True):
+            if isinstance(cfg, LoopRegion):
+                for attr in ("loop_condition", "init_statement", "update_statement"):
+                    cb = getattr(cfg, attr, None)
+                    new = self._rewritten_codeblock(cb)
+                    if new is not cb:
+                        setattr(cfg, attr, new)
+            elif isinstance(cfg, ConditionalBlock):
+                for branch in cfg.branches:  # each branch is a ``[condition, body]`` pair
+                    new = self._rewritten_codeblock(branch[0])
+                    if new is not branch[0]:
+                        branch[0] = new
+
+    def _rewrite_interstate_edges(self, g: SDFG) -> None:
+        """Rewrite ``%`` in interstate-edge conditions and assignment RHS of ``g``."""
+        for e in g.all_interstate_edges(recursive=True):
+            ise = e.data
+            new_cond = self._rewritten_codeblock(ise.condition)
+            if new_cond is not ise.condition:
+                ise.condition = new_cond
+            for var, rhs in list(ise.assignments.items()):
+                if "%" in rhs:
+                    new_rhs = _rewrite_modulo(rhs)
+                    if new_rhs != rhs:
+                        ise.assignments[var] = new_rhs
+
+    def _rewrite_memlets_and_ranges(self, g: SDFG) -> None:
+        """Rewrite symbolic ``Mod`` in memlet subsets and map ranges of ``g``."""
+        for state in g.all_states():
+            for e in state.edges():
+                m = e.data
+                if m is None:
+                    continue
+                if m.subset is not None and _subset_has_mod(m.subset):
+                    m.subset = _rewrite_subset_modulo(m.subset)
+                if m.other_subset is not None and _subset_has_mod(m.other_subset):
+                    m.other_subset = _rewrite_subset_modulo(m.other_subset)
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.MapEntry) and _subset_has_mod(node.map.range):
+                    node.map.range = _rewrite_subset_modulo(node.map.range)
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        """Rewrite ``%`` -> ``py_mod`` across every location of ``sdfg``, then validate.
+
+        :param sdfg: the SDFG rewritten in place.
+        :param pipeline_results: unused pipeline results.
+        :returns: None.
+        """
+        # Tasklet bodies (recurses through nested SDFGs on its own).
+        _rewrite_python_tasklet_bodies(sdfg, _rewrite_modulo)
+        # The remaining sites are per-SDFG (``all_states`` / ``all_control_flow_regions``
+        # / ``all_interstate_edges`` do NOT descend into nested SDFGs), so walk each.
+        for g in sdfg.all_sdfgs_recursive():
+            self._rewrite_control_flow(g)
+            self._rewrite_interstate_edges(g)
+            self._rewrite_memlets_and_ranges(g)
+        sdfg.validate()
+        return None
 
 
 @properties.make_properties

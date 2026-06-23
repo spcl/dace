@@ -48,8 +48,15 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 #: upstream rewrites integer-constant exponents (``x**2`` -> ``x*x``); only true runtime
 #: exponents reach this dispatch.
 _SUPPORTED_BINOPS = {
-    "+", "-", "*", "/", "%", "**", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"
+    "+", "-", "*", "/", "%", "py_mod", "**", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"
 }
+
+#: Binops written in function-call form ``op(a, b)`` rather than infix. ``min`` /
+#: ``max`` and ``py_mod`` (Python/NumPy modulo -> ``dace::math::py_mod``; the
+#: ``RewriteModuloToPyMod`` cleaning step rewrites every ``%`` to this so the
+#: backends pick up divisor-sign semantics). ``**`` keeps its own ``pow(a, b)``
+#: special-case (it is also valid infix).
+_FUNCTION_FORM_BINOPS = ("min", "max", "py_mod")
 
 #: Comparison ops whose result dtype is ``bool`` *by language semantics*, distinct
 #: from the operand dtype (``double > double -> bool``). The mixed-dtype guard in
@@ -77,6 +84,35 @@ _SUPPORTED_UNOPS = {
     "ceil",
     "tanh",
 }
+
+#: Registered dtype-cast call names (``float64`` / ``int32`` / ...), built from the
+#: dtype registry so they are never hardcoded. A call ``[dace.]<dtype>(<arg>)`` lowers
+#: to a ``TileUnop`` whose ``op`` IS the dtype name -- an explicit per-lane cast to
+#: that dtype -- so the cast is no longer stripped upstream. Set membership (rather
+#: than a name regex) naturally excludes non-cast calls such as ``int_floor``.
+_CAST_OP_NAMES = frozenset(s.split("::")[-1] for s in dace.dtypes.TYPECLASS_TO_STRING.values())
+
+
+def _cast_call_inner(rhs: str) -> Optional[Tuple[str, str]]:
+    """If ``rhs`` is a dtype-cast call ``[dace.]<dtype>(<arg>)``, return
+    ``(dtype_name, arg)``; otherwise ``None``.
+
+    :param rhs: The tasklet-body right-hand side (paren-stripped).
+    :returns: ``(dtype_name, arg)`` -- e.g. ``("float64", "(7 * _loop_it_0) % LEN_1D")``
+        -- where ``dtype_name`` is a registered cast op; ``None`` when ``rhs`` is not a
+        single recognised cast call.
+    """
+    rhs = rhs.strip()
+    open_idx = rhs.find("(")
+    if open_idx < 0 or not rhs.endswith(")"):
+        return None
+    name = rhs[:open_idx].strip()
+    if name.startswith("dace."):
+        name = name[len("dace."):]
+    if name not in _CAST_OP_NAMES:
+        return None
+    inner = rhs[open_idx + 1:-1].strip()
+    return (name, inner) if inner else None
 
 
 def _normalize_python_tasklet_body(body: str) -> Optional[str]:
@@ -381,7 +417,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             if body is None:
                 return None
             for op in _SUPPORTED_BINOPS:
-                if op in ("min", "max"):
+                if op in _FUNCTION_FORM_BINOPS:
                     continue
                 for form in (f"{out_conn} = {a_conn} {op} {a_conn}", f"{out_conn} = ({a_conn} {op} {a_conn})"):
                     if body == form:
@@ -402,7 +438,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # as well; ``pow(a, b)`` is the Python equivalent of ``a ** b``.
         for op in _SUPPORTED_BINOPS:
             for a, b in (in_conns, list(reversed(in_conns))):
-                if op in ("min", "max"):
+                if op in _FUNCTION_FORM_BINOPS:
                     forms = (f"{out_conn} = {op}({a}, {b})", f"{out_conn} = ({op}({a}, {b}))")
                 elif op == "**":
                     forms = (f"{out_conn} = {a} ** {b}", f"{out_conn} = ({a} ** {b})", f"{out_conn} = pow({a}, {b})",
@@ -442,7 +478,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # or ``<expr> <op> <a_conn>``. Function-form ops (min/max) handled via the
         # explicit ``min(x, y)`` parsing below.
         for op in _SUPPORTED_BINOPS:
-            if op in ("min", "max"):
+            if op in _FUNCTION_FORM_BINOPS:
                 # min(_a, expr) / min(expr, _a) -- accept both orderings.
                 for sym_side in ("b", "a"):
                     if sym_side == "b":
@@ -601,6 +637,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         rhs = body[len(f"{out_conn} = "):]
         if rhs.startswith("(") and rhs.endswith(")"):
             rhs = rhs[1:-1].strip()
+        # Explicit dtype cast of a symbol expr ``_o = dace.float64(<expr>)`` -> a
+        # TileUnop with kind_a=Symbol whose op IS the dtype name (``float64``).
+        hit = _cast_call_inner(rhs)
+        if hit is not None:
+            return out_conn, hit[0], hit[1]
         # Negation: `_o = -<expr>` / `_o = (- <expr>)`.
         if rhs.startswith("-"):
             expr = rhs[1:].strip()
@@ -639,7 +680,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if rhs.startswith("(") and rhs.endswith(")"):
             rhs = rhs[1:-1].strip()
         for op in _SUPPORTED_BINOPS:
-            if op in ("min", "max"):
+            if op in _FUNCTION_FORM_BINOPS:
                 prefix = f"{op}("
                 if rhs.startswith(prefix) and rhs.endswith(")"):
                     inner = rhs[len(prefix):-1]
@@ -696,6 +737,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         body = body.strip().rstrip(";").strip()
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
+        # Explicit dtype cast ``_o = dace.float64(_a)`` -> a TileUnop whose op IS the
+        # dtype name (``float64``). DaCe may wrap the RHS in an extra paren layer, so
+        # try the body as-is and with one outer layer stripped.
+        rhs = body[len(f"{out_conn} = "):].strip()
+        for cand in (rhs, rhs[1:-1].strip() if rhs.startswith("(") and rhs.endswith(")") else None):
+            if not cand:
+                continue
+            hit = _cast_call_inner(cand)
+            if hit is not None and hit[1] == a_conn:
+                return out_conn, a_conn, hit[0]
         # Negation: ``_o = -_a`` / ``_o = (-_a)`` / ``_o = (- _a)`` (DaCe sometimes inserts a
         # space between the unary minus and the operand).
         for form in (f"{out_conn} = -{a_conn}", f"{out_conn} = (-{a_conn})", f"{out_conn} = (- {a_conn})"):
@@ -781,7 +832,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
         for op in _SUPPORTED_REDUCE_OPS:
-            if op in ("min", "max"):
+            if op in _FUNCTION_FORM_BINOPS:
                 forms = (
                     f"{out_conn} = {op}({out_conn}, {other_conn})",
                     f"{out_conn} = ({op}({out_conn}, {other_conn}))",

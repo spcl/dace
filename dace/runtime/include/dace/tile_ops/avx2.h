@@ -38,6 +38,7 @@
 #include <type_traits>
 
 
+
 #if !defined(__AVX2__)
 #error Included the AVX2 tile-op header without AVX2 support
 #endif
@@ -55,6 +56,7 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '-') return a - b;
   else if constexpr (Op == '*') return a * b;
   else if constexpr (Op == '/') return a / b;
+  else if constexpr (Op == '%') return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
   else if constexpr (Op == 'm') return std::min(a, b);
   else if constexpr (Op == 'M') return std::max(a, b);
   else if constexpr (Op == '<') return (a < b) ? T(1) : T(0);
@@ -200,6 +202,15 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
     if constexpr (Masked) out[i] = mask[i] ? tile_apply<T, Op>(av, bv) : T(0);
     else out[i] = tile_apply<T, Op>(av, bv);
   };
+
+  // Modulo has no AVX2 vector intrinsic, and Python ``py_mod`` semantics differ
+  // from C ``%`` -- run the portable scalar lane loop (``tile_apply`` -> py_mod)
+  // for every element type, before the fp/int SIMD dispatch which has no ``%``
+  // case (``binop_ps`` would otherwise fall through to its logical-OR branch).
+  if constexpr (Op == '%') {
+    for (int i = 0; i < vlen; ++i) scalar_tail(i);
+    return;
+  }
 
   if constexpr (std::is_same<T, float>::value) {
     constexpr int W = 8;

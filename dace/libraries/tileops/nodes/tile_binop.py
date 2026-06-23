@@ -123,8 +123,12 @@ _OP_CPP = {
     # Python ``%`` differs from C ``%`` on negative operands (Python follows the divisor's
     # sign; C follows the dividend's). DaCe runtime ships ``dace::math::py_mod`` which
     # matches Python semantics; use it so the vectorised body matches the unvectorised
-    # reference bit-for-bit.
-    "%": ("dace::math::py_mod(", ", ", ")"),
+    # reference bit-for-bit. ``py_mod`` is the function-call spelling of the same op
+    # (the ``RewriteModuloToPyMod`` cleaning step rewrites ``%`` to it); both lower here.
+    # ``py_mod`` is a GLOBAL runtime function (it lives outside ``dace::math`` -- see
+    # math.h "must reside outside of the DaCe namespace"); call it unqualified.
+    "%": ("py_mod(", ", ", ")"),
+    "py_mod": ("py_mod(", ", ", ")"),
     "<": ("(", " < ", ")"),
     "<=": ("(", " <= ", ")"),
     ">": ("(", " > ", ")"),
@@ -284,7 +288,9 @@ _CUTE_OP_EXPR = {
     "-": "{lhs} - {rhs}",
     "*": "{lhs} * {rhs}",
     "/": "{lhs} / {rhs}",
+    # cuTile is Python-semantics, so a bare ``%`` already matches ``py_mod``.
     "%": "{lhs} % {rhs}",
+    "py_mod": "{lhs} % {rhs}",
     "<": "{lhs} < {rhs}",
     "<=": "{lhs} <= {rhs}",
     ">": "{lhs} > {rhs}",

@@ -84,6 +84,12 @@ _OP_TO_CHAR = {
     "-": "-",
     "*": "*",
     "/": "/",
+    # Python/NumPy modulo: the backend headers lower the ``%`` op char to
+    # ``dace::math::py_mod`` (divisor-sign semantics), never C's truncated ``%``.
+    # ``py_mod`` is the function-call spelling of the same op (emitted by the
+    # ``RewriteModuloToPyMod`` cleaning step) and maps to the SAME backend char.
+    "%": "%",
+    "py_mod": "%",
     "min": "m",
     "max": "M",
     "<": "<",
@@ -279,6 +285,14 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     ``has_mask`` -> ``Masked``.
     """
     node.validate(parent_sdfg, parent_state)
+    # A dtype-name cast op (``float64`` / ``int32`` / ...) changes dtype by definition;
+    # there is no per-ISA ``tile_unop`` op char for it, so lower it via the pure
+    # per-lane ``dace::<dtype>(x)`` cast (the operand != output fallback below also
+    # catches the usual differing-dtype cast, but a no-op same-dtype cast must route
+    # here too rather than KeyError on _UNOP_TO_CHAR).
+    from dace.libraries.tileops.nodes.tile_unop import _CAST_OP_TO_CPP, ExpandTileUnopPure
+    if node.op in _CAST_OP_TO_CPP:
+        return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_c")

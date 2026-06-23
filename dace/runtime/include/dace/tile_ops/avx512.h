@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <type_traits>
 
+
 #if !defined(__AVX512F__)
 #error Included the AVX-512 tile-op header without AVX-512 support (build with -mavx512f)
 #endif
@@ -43,6 +44,7 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '-') return a - b;
   else if constexpr (Op == '*') return a * b;
   else if constexpr (Op == '/') return a / b;
+  else if constexpr (Op == '%') return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
   else if constexpr (Op == 'm') return std::min(a, b);
   else if constexpr (Op == 'M') return std::max(a, b);
   else if constexpr (Op == '<') return (a < b) ? T(1) : T(0);

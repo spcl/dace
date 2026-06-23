@@ -450,6 +450,19 @@ class SplitTasklets(ppl.Pass):
                         if str(free_sym) in g.sdfg.symbols:
                             input_types.add(g.sdfg.symbols[str(free_sym)])
 
+                # Loop-region iterators (e.g. ``_loop_it_0``) are int64 index
+                # variables -- the tile path materialises an int64 lane-id tile for
+                # them -- but they are not registered in ``sdfg.symbols`` (only
+                # interstate-assignment targets are; see ``_add_missing_symbols``).
+                # Without counting them the width inference sees only a narrower
+                # visible symbol and mis-types an iterator-fed integer intermediate:
+                # TSVC s315 ``(7 * _loop_it_0) % LEN_1D`` with ``LEN_1D`` int32 yields
+                # an int32 intermediate that then narrows the int64 iterator operand.
+                # Count each unregistered free symbol as int64.
+                for free_sym in n.free_symbols:
+                    if str(free_sym) not in g.sdfg.symbols:
+                        input_types.add(dace.int64)
+
                 # It is complicated to split a tasklet with mixed precision input
                 # Need to bookkeep the mapping of intermediate results to precision
                 if len(input_types) > 1:

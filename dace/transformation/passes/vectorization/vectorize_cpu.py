@@ -7,7 +7,7 @@ from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pat
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
 from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall, RewriteModuloToPyMod
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import LowerInterstateConditionalAssignmentsToTasklets
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
@@ -396,8 +396,13 @@ class VectorizeCPU(ppl.Pipeline):
             # would survive into the vectorizer and be widened along the
             # wrong (contiguous) array dim for a non-contiguous vectorised
             # access (e.g. C-layout ``bb[i, j]`` with ``i`` innermost).
+            # RewriteModuloToPyMod runs first (cleaning): normalise every ``%`` --
+            # in tasklet bodies, loop/map ranges, branch conditions, memlet subsets,
+            # and interstate edges -- to ``py_mod`` so the vectorised body has
+            # Python/NumPy modulo semantics (C's ``%`` miscompiles negatives).
             if branch_normalization:
                 passes = [
+                    RewriteModuloToPyMod(),
                     CleanAccessNodeToScalarSliceToTaskletPattern(),
                     CleanTaskletToScalarSliceToAccessNodePattern(),
                     LowerInterstateConditionalAssignmentsToTasklets(),
@@ -406,6 +411,7 @@ class VectorizeCPU(ppl.Pipeline):
                 ]
             else:
                 passes = [
+                    RewriteModuloToPyMod(),
                     CleanAccessNodeToScalarSliceToTaskletPattern(),
                     CleanTaskletToScalarSliceToAccessNodePattern(),
                     EliminateBranches(),
@@ -433,8 +439,9 @@ class VectorizeCPU(ppl.Pipeline):
                 # by LoopToMap) into an explicit augmented-assign tasklet -- the
                 # vectorizer assumes no inner WCR. Runs right after LoopToMap.
                 _WCRToAugAssignPass(),
-                RemoveFPTypeCasts(),
-                RemoveIntTypeCasts(),
+                # dtype casts are NOT stripped -- kept as 1-input cast tasklets and
+                # lowered to a ``TileUnop(op='cast')`` (explicit per-lane convert), so
+                # the integer arithmetic feeding a cast keeps its natural width.
                 PowerOperatorExpansion(),
                 SplitTasklets(),
                 # Normalise direct ``MapEntry -> AccessNode`` / ``AccessNode -> MapExit``

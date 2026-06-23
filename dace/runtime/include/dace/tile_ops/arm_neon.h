@@ -43,6 +43,7 @@
 #include <type_traits>
 
 
+
 #if !defined(__ARM_NEON)
 #error Included the NEON tile-op header without NEON support (AArch64 Advanced SIMD)
 #endif
@@ -62,6 +63,7 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '-') return a - b;
   else if constexpr (Op == '*') return a * b;
   else if constexpr (Op == '/') return a / b;
+  else if constexpr (Op == '%') return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
   else if constexpr (Op == 'm') return std::min(a, b);
   else if constexpr (Op == 'M') return std::max(a, b);
   else if constexpr (Op == '<') return (a < b) ? T(1) : T(0);

@@ -20,9 +20,14 @@
 // loop is just a (vectorizer-hinted) per-lane loop.
 //
 // Op codes (single char, binop only):
-//   ``+`` add  ``-`` sub  ``*`` mul  ``/`` div  ``m`` min  ``M`` max
+//   ``+`` add  ``-`` sub  ``*`` mul  ``/`` div  ``%`` mod  ``m`` min  ``M`` max
 //   ``<`` lt   ``l`` le    ``>`` gt   ``g`` ge   ``=`` eq   ``!`` ne
 //   ``&`` and  ``|`` or
+// ``%`` is Python/NumPy modulo (``py_mod``: result follows the
+// divisor's sign), NOT C's truncated ``%`` (follows the dividend's) -- so the
+// tiled body matches the unvectorised reference bit-for-bit on negative
+// operands, and works for floating-point operands too (where C ``%`` is
+// ill-formed).
 // Comparisons / logicals yield ``T(1)`` / ``T(0)`` (the tile stores a condition
 // as the element type, matching the legacy vector_<op>).
 //
@@ -37,6 +42,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+
 
 #define STRINGIZE(x) STRINGIZE_IMPL(x)
 #define STRINGIZE_IMPL(x) #x
@@ -56,6 +62,7 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '-') return a - b;
   else if constexpr (Op == '*') return a * b;
   else if constexpr (Op == '/') return a / b;
+  else if constexpr (Op == '%') return py_mod(a, b);
   else if constexpr (Op == 'm') return std::min(a, b);
   else if constexpr (Op == 'M') return std::max(a, b);
   else if constexpr (Op == '<') return (a < b) ? T(1) : T(0);

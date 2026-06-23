@@ -66,6 +66,14 @@ _CUTE_UNOP_EXPR = {
     "tanh": "ct.tanh({a})",
 }
 
+# Explicit dtype-cast ops: the ``TileUnop.op`` label IS the target dtype name
+# (``float64`` / ``int32`` / ...), so a kept ``dace.float64(x)`` cast lowers to a
+# ``TileUnop`` whose op self-describes the conversion. Each maps to the
+# ``dace::<dtype>(x)`` cast function the C++ codegen already recognises (cppunparse
+# ``_typecast_func_to_cpp``) -- the sanctioned convert form, not a raw C cast. Built
+# from the dtype registry so dtype names are never hardcoded.
+_CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
+
 
 def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
     """Whether a Tile operand of dtype ``src`` may be promoted to the output
@@ -142,8 +150,22 @@ class ExpandTileUnopPure(ExpandTransformation):
             ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
             operand = f"{_cast}({ref})" if broadcast else ref
 
-        pre, post = _UNOP_CPP[node.op]
-        rhs_expr = f"{pre}{operand}{post}"
+        if node.op in _CAST_OP_TO_CPP:
+            # Explicit dtype conversion: the kept ``dace.float64(x)`` cast lowered as
+            # a unop whose op IS the target dtype. A cast is the one op that may
+            # narrow, emitted as the ``dace::<dtype>(x)`` cast function (the same form
+            # codegen lowers a bare ``float64(x)`` to), not an incidental C cast. The
+            # operand is read raw -- the cast function performs the conversion.
+            if node.kind_a == _SYMBOL:
+                cast_src = f"({node.expr_a})"
+            elif node.kind_a == _TILE:
+                cast_src = f"_a[{off}]"
+            else:  # Scalar: the descriptor-aware reference (uncast).
+                cast_src = ref
+            rhs_expr = f"{_CAST_OP_TO_CPP[node.op]}({cast_src})"
+        else:
+            pre, post = _UNOP_CPP[node.op]
+            rhs_expr = f"{pre}{operand}{post}"
         # Output kind dispatch (design 6.2): non-Tile input + Scalar / length-1 output -> single
         # assignment (no lane loop). Otherwise the K-fold tile loop.
         from .tile_binop import _is_scalar_shape
@@ -228,7 +250,8 @@ class TileUnop(nodes.LibraryNode):
         dtype=str,
         allow_none=False,
         default="abs",
-        desc="Unary op (one of: neg abs exp log sqrt sin cos floor ceil tanh).",
+        desc="Unary op (one of: neg not abs exp log sqrt sin cos floor ceil tanh, "
+        "or a dtype name like 'float64' / 'int32' for an explicit per-lane cast).",
     )
     widths = properties.ListProperty(
         element_type=int,
@@ -274,8 +297,9 @@ class TileUnop(nodes.LibraryNode):
         :raises ValueError: On invalid ``op``, ``widths`` length, kind, or a
             missing expression for the symbol kind.
         """
-        if op not in _UNOP_CPP:
-            raise ValueError(f"TileUnop: unknown op {op!r}; allowed: {sorted(_UNOP_CPP)}")
+        if op not in _UNOP_CPP and op not in _CAST_OP_TO_CPP:
+            raise ValueError(f"TileUnop: unknown op {op!r}; allowed: "
+                             f"{sorted(_UNOP_CPP) + sorted(_CAST_OP_TO_CPP)}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileUnop: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if kind_a not in _VALID_KINDS:
@@ -313,7 +337,11 @@ class TileUnop(nodes.LibraryNode):
         if self.kind_a in (_TILE, _SCALAR) and "_a" not in in_e:
             raise ValueError(f"{self.label}: kind_a={self.kind_a!r} but '_a' not connected")
         c_arr = sdfg.arrays[out_e["_c"].data.data]
-        if self.kind_a == _TILE:
+        # A dtype-name op (``float64`` / ``int32`` / ...) is the explicit conversion
+        # that MAY narrow (int64 -> int32, double -> float); that is its purpose, so
+        # the widening-only promotion guard is skipped. Every other unop preserves the
+        # operand dtype, so a narrowing to the output dtype there is a real bug.
+        if self.kind_a == _TILE and self.op not in _CAST_OP_TO_CPP:
             src = sdfg.arrays[in_e["_a"].data.data].dtype
             if not _promotion_ok(src, c_arr.dtype):
                 raise NotImplementedError(

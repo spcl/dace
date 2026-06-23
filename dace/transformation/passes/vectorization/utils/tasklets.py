@@ -122,6 +122,42 @@ BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", 
 # ``op in UNARY_OPERATORS`` check stay honest.
 UNARY_OPERATORS = {"!", "-"}
 
+# Dtype-cast op names (``float64`` / ``int32`` / ...). A kept ``dace.float64(x)`` cast
+# reaches the emit as a 1-input "function" op named by its dtype; it must lower to the
+# ``dace::<dtype>(x)`` cast function (cppunparse's typecast form) -- a bare ``float64(x)``
+# is not valid C++. Built from the dtype registry so names are never hardcoded.
+CAST_OP_NAMES = frozenset(s.split("::")[-1] for s in dace.dtypes.TYPECLASS_TO_STRING.values())
+
+
+def emit_op(op_: str) -> str:
+    """C++ spelling of a fallback op: a dtype cast becomes ``dace::<dtype>``.
+
+    :param op_: The op label (an operator symbol, a function name, or a dtype cast name).
+    :returns: ``dace::<dtype>`` for a cast op, else ``op_`` unchanged.
+    """
+    return f"dace::{op_}" if op_ in CAST_OP_NAMES else op_
+
+
+def binop_cpp(l_op: str, op_: str, r_op: str) -> str:
+    """C++ rendering of a binary operator in the CPP fallback lane loop.
+
+    ``%`` lowers to ``py_mod(l, r)`` -- Python/NumPy modulo (the result follows the
+    *divisor's* sign), NOT C's truncated ``%`` (follows the dividend's) -- so the
+    vectorised body matches the scalar reference on negative operands and is
+    well-formed for floating-point operands (where C ``%`` is ill-formed). ``py_mod``
+    is the GLOBAL runtime helper (it lives outside ``dace::math``), called unqualified
+    -- the same form the tile-op backends and the ``np.mod`` ufunc emit. Every other
+    operator is emitted infix.
+
+    :param l_op: Left operand expression.
+    :param op_: Operator symbol.
+    :param r_op: Right operand expression.
+    :returns: The C++ expression string.
+    """
+    if op_ == "%":
+        return f"py_mod({l_op}, {r_op})"
+    return f"({l_op} {op_} {r_op})"
+
 
 def _roundtrip_constant(s: Union[int, float, str, None]):
     """Return the constant verbatim for emission — no ``float()`` round-trip.
@@ -389,18 +425,19 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
             else:
                 code_lines.append(f"{lhs_expr} = {rhs}[_vi];")
         else:
+            # Function-form op (incl. a dtype cast, lowered to ``dace::<dtype>``).
             if rhs_left == const:
-                code_lines.append(f"{lhs_expr} = {op_}({rhs}){comparison_suffix};")
+                code_lines.append(f"{lhs_expr} = {emit_op(op_)}({rhs}){comparison_suffix};")
             else:
-                code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
+                code_lines.append(f"{lhs_expr} = {emit_op(op_)}({rhs}[_vi]){comparison_suffix};")
     else:
         if op_ in BINARY_OPERATORS:
-            if rhs_left == const1_:
-                code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
-            elif rhs_right == const2_:
-                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
-            else:
-                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}[_vi]){comparison_suffix};")
+            # A constant operand is emitted bare; an array operand is indexed
+            # ``[_vi]``. ``binop_cpp`` renders ``%`` as ``dace::math::py_mod`` (Python
+            # semantics) and every other operator infix.
+            l_operand = rhs_left if rhs_left == const1_ else f"{rhs_left}[_vi]"
+            r_operand = rhs_right if rhs_right == const2_ else f"{rhs_right}[_vi]"
+            code_lines.append(f"{lhs_expr} = {binop_cpp(l_operand, op_, r_operand)}{comparison_suffix};")
         else:
             if rhs_left == const1_:
                 code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}, {rhs_right}[_vi])){comparison_suffix};")
@@ -838,7 +875,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         l_op = rhs1 if rhs1 is not None else c1
         if op == "!=":
             raise Exception(lhs, rhs1, rhs2, c1, c2)
-        expr = f"{op}{l_op}"
+        # Distinguish a prefix operator (``-x`` / ``!x``) from a unary FUNCTION
+        # (``sqrt``/``exp``/``cos``/... and the dtype casts ``float64``/``int32``/...):
+        # a function is emitted in call syntax ``op(x)``, not the prefix form
+        # ``f"{op}{l_op}"`` (which fuses e.g. ``float64`` and ``S`` into a bogus symbol
+        # ``float64S``). This is a PYTHON tasklet, so the bare call is used (cppunparse
+        # lowers ``float64(x)`` -> ``dace::float64(x)``, ``sqrt(x)`` -> ``std::sqrt(x)``).
+        expr = f"{op}{l_op}" if op in UNARY_OPERATORS else f"{op}({l_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
                                                   language=dace.Language.Python)

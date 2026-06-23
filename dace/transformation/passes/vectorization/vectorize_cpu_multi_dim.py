@@ -63,6 +63,7 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     RemoveFPTypeCasts,
     RemoveIntTypeCasts,
     RemoveMathCall,
+    RewriteModuloToPyMod,
 )
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
@@ -360,6 +361,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         #     no `_out = _in` tasklet between. Runs early so the classifier and the staging pass see clean
         #     edges everywhere.
         passes = [
+            # Cleaning: normalise every ``%`` (tasklet bodies, loop/map ranges,
+            # branch conditions, memlet subsets, interstate edges) to ``py_mod`` so
+            # the tiled body keeps Python/NumPy modulo semantics (C ``%`` miscompiles
+            # negative operands and is ill-formed for floats).
+            RewriteModuloToPyMod(),
             ConvertLengthOneArraysToScalars(recursive=True, transient_only=True),
             NormalizeWCRSource(),
             BypassTrivialAssignTasklets(),
@@ -444,8 +450,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # copy nodes inserted after the tile compute (see the multi-dim K=1
         # and K=2 path docs in the orchestrator slice that follows).
         passes += [
-            RemoveFPTypeCasts(),
-            RemoveIntTypeCasts(),
+            # dtype casts (``dace.float64(x)`` / ``dace.int64(x)``) are NOT stripped:
+            # they are kept as 1-input cast tasklets, split out by ``SplitTasklets`` so
+            # the integer arithmetic feeding them stays in its natural width, and
+            # lowered by ``ConvertTaskletsToTileOps`` to a ``TileUnop(op='cast')`` --
+            # an explicit per-lane convert -- so binop/unop operands stay uniform-dtype.
             PowerOperatorExpansion(),
             SplitTasklets(),
             RemoveMathCall(),
