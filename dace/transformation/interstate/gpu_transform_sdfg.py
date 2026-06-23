@@ -377,21 +377,24 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             if isinstance(nnode, (nodes.EntryNode, nodes.LibraryNode)):
                                 nnode.schedule = dtypes.ScheduleType.Sequential
 
-        # NOTE: The outputs of LibraryNodes, NestedSDFGs and Map that have GPU schedule must be moved to GPU memory.
+        # NOTE: The outputs of LibraryNodes and Maps that have GPU schedule must be moved to GPU memory.
         # TODO: Also use GPU-shared and GPU-register memory when appropriate.
         for state, node in gpu_nodes:
-            if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+            if isinstance(node, (nodes.LibraryNode)):
                 for e in state.out_edges(node):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
                         desc = sdfg.arrays[dst.data]
                         desc.storage = dtypes.StorageType.GPU_Global
-            if isinstance(node, nodes.EntryNode):
+            elif isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
                         desc = sdfg.arrays[dst.data]
                         desc.storage = dtypes.StorageType.GPU_Global
+            else:
+                raise RuntimeError(
+                    f"GPU node of unexpected type. Expected `LibraryNode` or `EntryNode`, found {type(node)}.")
 
         #######################################################
         # Step 5: Collect free tasklets and check for scalars that have to be moved to the GPU
