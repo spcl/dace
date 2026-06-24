@@ -160,20 +160,26 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
             for d, (offset, collapsed) in enumerate(zip(offset_dims, collapsed_dims)):
                 if inner_is_full_rank:
                     (lo, hi, stp) = inner_subset[d]
-                    # Add the window base to a full-rank inner dim ONLY when the
-                    # inner begin is expressed RELATIVE to the window (an
-                    # intra-window stencil offset ``0`` / ``1`` / ``2``, or the
-                    # NSDFG-boundary connector binding ``[0:1]``). When the inner
-                    # begin ALREADY references the offset's iteration symbol(s) it
-                    # is in absolute outer coordinates -- an in-place RMW body
-                    # keeps ``A[i, j]`` verbatim (the inner SDFG receives ``i``,
-                    # ``j`` as symbols) -- and re-adding the base double-counts
-                    # (``i + i = 2*i``), reading/writing only every other element.
-                    # Detect the absolute case via free-symbol overlap with the
-                    # offset and leave such dims untouched.
-                    off_syms = sympy.sympify(offset).free_symbols
-                    lo_syms = sympy.sympify(lo).free_symbols
-                    if off_syms and (off_syms & lo_syms):
+                    # Nest rebases each access RELATIVE to the boundary begin
+                    # (``lo = original_begin - offset``): ``0`` for a collapsed
+                    # dim, an intra-window ``0`` / ``1`` / ``2`` for a stencil, or
+                    # ``begin - bbox_begin`` for a multi-access array whose bbox
+                    # begin is a non-affine ``Min(...)``. So the absolute outer
+                    # begin is ``lo + offset`` in every relative case. The ONE
+                    # exception is an in-place RMW body that keeps its access
+                    # ABSOLUTE (``A[i, j]`` verbatim, inner begin == the boundary
+                    # begin); re-adding there double-counts (``i + i = 2*i``).
+                    # Detect that exact case as ``lo == offset`` -- a free-symbol
+                    # overlap test instead mis-fires on a relative ``i - Min(i,
+                    # i + H)`` (its begin shares ``i`` with the offset yet must
+                    # still be re-based), silently dropping the per-iteration slide.
+                    # ``lo == offset`` (the absolute in-place case) is detected via
+                    # sympy's automatic Add cancellation -- ``i - i`` folds to the
+                    # literal ``0`` while a relative ``(i - Min) - Min`` stays
+                    # ``i - 2*Min`` (non-zero). No ``sympy.simplify`` -- it is far
+                    # too slow on ``Min`` / ``int_floor`` operands and ran in a
+                    # codegen-hot pass.
+                    if (sympy.sympify(lo) - sympy.sympify(offset)) == 0:
                         new_range_list.append((lo, hi, stp))
                     else:
                         new_range_list.append((lo + offset, hi + offset, stp))
@@ -202,7 +208,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
 
 def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGState, inner_name: str, outer_name: str,
                                       desc: data.Array, collapsed_dims: List[bool], offset_dims: List[sympy.Basic],
-                                      direction: str) -> None:
+                                      direction: str, apply_offset: bool = True) -> None:
     # Replace all occurencess of conn with outer name
     # Replace data descriptor
     assert isinstance(inner_name, str) and isinstance(outer_name, str)
@@ -225,7 +231,12 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGS
     # [1,0,0]. Iteration 2 would then rename ``__tmp_b`` -> ``A`` and match
     # BOTH already-A memlets, re-applying offset [0,0,0] and erasing the [1]
     # offset from iteration 1.
-    _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims)
+    # Offset the inner memlets only once per array (``apply_offset``). A second
+    # pass for the same array (it is both read and written, sharing the outer
+    # name) must still rename/widen its own direction's connector below, but
+    # re-offsetting already-rebased memlets would double-count the boundary begin.
+    if apply_offset:
+        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims)
 
     # Transform Subscript nodes during ``expr.replace(SubscriptClass, fn)``.
     # SymPy invokes ``fn(*matched.args)`` (the matched expression's args
@@ -501,23 +512,40 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
             write_subsets[out_conn] = (oedge.data.data, oedge.data.subset, collapsed_dims)
 
+        # ``_rewrite_memlets_with_offset`` (inside ``_replace_desc_and_uncollapse_dims``)
+        # offsets EVERY inner memlet referencing ``conn``'s array, not just the one
+        # boundary edge. When the SAME inner array is both read AND written (an
+        # in-place / disjoint-window kernel like s173 ``a[i+H] = a[i] + b[i]``) and
+        # the inner connector shares the outer array name, the array appears on an
+        # in-edge AND an out-edge; offsetting on both passes would re-base each of
+        # its memlets twice (``i - Min`` -> ``i`` -> ``i + Min``), collapsing the
+        # per-iteration slide. So offset the inner memlets only on the FIRST pass
+        # for an array (``apply_offset``); BOTH passes still rename/widen their own
+        # direction's connector (the rename is direction-gated -- skipping a pass
+        # leaves a dangling inner connector and the SDFG hangs downstream).
         for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in read_subsets.items():
+            apply_offset = conn not in processed_inner_arrays
+            processed_inner_arrays.add(conn)
             _replace_desc_and_uncollapse_dims(nsdfg_node,
                                               state,
                                               conn,
                                               outer_arr_name,
                                               sdfg.arrays[outer_arr_name],
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
-                                              direction='in')
+                                              direction='in',
+                                              apply_offset=apply_offset)
 
         for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in write_subsets.items():
+            apply_offset = conn not in processed_inner_arrays
+            processed_inner_arrays.add(conn)
             _replace_desc_and_uncollapse_dims(nsdfg_node,
                                               state,
                                               conn,
                                               outer_arr_name,
                                               sdfg.arrays[outer_arr_name],
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
-                                              direction='out')
+                                              direction='out',
+                                              apply_offset=apply_offset)
 
         defined_syms = set(sdfg.arrays.keys()) | set(inner_sdfg.symbols.keys()) | set(nsdfg_node.symbol_mapping.keys())
         for conn, (outer_arr_name, outer_subset, collapsed_dims) in read_subsets.items():

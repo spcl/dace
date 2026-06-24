@@ -81,10 +81,15 @@ def _assert_matches(name: str, got: dict, ref: dict, stage: str):
             f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
 
 
-def _canonicalized(name):
-    """Canonicalize ``name`` and assert post-canon e2e correctness; return the SDFG."""
+def _canonicalized(name, tag="cvc"):
+    """Canonicalize ``name`` and assert post-canon e2e correctness; return the SDFG.
+
+    ``tag`` distinguishes the build (.dacecache) directory per test variant -- the
+    ``name`` cache policy keys the folder on sdfg.name, so legacy and multidim must
+    not share a tag or they collide under a parallel sweep.
+    """
     kernel = tsvc.collect(name=name)[0]
-    sdfg = tsvc.to_sdfg(kernel, tag="cvc", simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, tag=tag, simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     arrays, ck = tsvc.make_inputs(kernel, seed=1234)
     ref = {n: a.copy() for n, a in arrays.items()}
@@ -117,7 +122,7 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
     if name in _MULTIDIM_XFAIL:
         pytest.xfail(_MULTIDIM_XFAIL[name])
-    kernel, sdfg, arrays, ck, ref = _canonicalized(name)
+    kernel, sdfg, arrays, ck, ref = _canonicalized(name, tag="cvc_multidim")
     map_param_counts = [len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
     # K=2 only when EVERY inner map is a genuine collapsed 2-D map. A kernel with
     # any 1-D map (an init / reduction / boundary beside a 2-D body) cannot be

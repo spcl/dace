@@ -162,6 +162,10 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
         pytest.xfail(_MULTIDIM_XFAIL[program.name])
     arrays, scalars, ref = _reference(program)
     sdfg = _canonicalized(program)
+    # The ``name`` cache policy keys the .dacecache folder on sdfg.name; suffix the
+    # multidim variant so it never shares a build directory with its legacy sibling
+    # (same kernel name) under a parallel sweep.
+    sdfg.name = f"{sdfg.name}_multidim"
     _run_and_check(program, sdfg, arrays, scalars, ref, "canonicalization")
     map_param_counts = [len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
     # K=2 only when EVERY inner map is a genuine collapsed 2-D map (mixed-K within

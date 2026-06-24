@@ -23,7 +23,6 @@ are derived at registration (``branch``/``reduction``/``gather``/``2d``) for
 import copy
 import dataclasses
 import inspect
-import os
 import re
 import textwrap
 import ast
@@ -1975,22 +1974,22 @@ def stable_seed(key) -> int:
 
 
 def _unique_name(base: str, tag: str) -> str:
-    """A valid, collision-free SDFG name from ``base`` + a test ``tag``.
+    """A valid SDFG name from ``base`` + a test ``tag``, sanitized to an identifier.
 
-    Embeds the ``pytest-xdist`` worker id (when set) so concurrent workers never
-    share a ``.dacecache`` build directory, and sanitizes to an identifier.
+    ``<base>_<tag>`` is unique per (kernel, test variant): each parametrized test
+    instance runs exactly once, so no two concurrently-building SDFGs share a name
+    and the ``name`` cache policy never collides on a ``.dacecache`` directory -- no
+    xdist worker-id disambiguation is needed.
     """
-    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
-    raw = f"{base}_{tag}_{worker}" if worker else f"{base}_{tag}"
-    return re.sub(r"\W+", "_", raw).strip("_")
+    return re.sub(r"\W+", "_", f"{base}_{tag}").strip("_")
 
 
 def to_sdfg(kernel: TSVCKernel, tag: str, *, simplify: bool = False) -> "dace.SDFG":
     """Build a fresh, uniquely-named SDFG for one test variant.
 
     The cached ``DaceProgram`` SDFG is deep-copied (a prior variant may have
-    mutated it in place) and renamed to ``<kernel>_<tag>[_<worker>]`` so that,
-    under ``pytest -n`` (xdist), no two concurrently-building SDFGs collide on a
+    mutated it in place) and renamed to ``<kernel>_<tag>`` so that, under
+    ``pytest -n`` (xdist), no two concurrently-building SDFGs collide on a
     ``.dacecache`` directory. Pass the pytest node/param id as ``tag``.
 
     :param kernel: the corpus kernel.

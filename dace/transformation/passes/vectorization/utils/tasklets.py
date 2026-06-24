@@ -534,22 +534,36 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
     nsdfg_node = state.sdfg.parent_nsdfg_node
     parent_state = nsdfg_node.sdfg.parent if nsdfg_node is not None else None
     if nsdfg_node is None or parent_state is None:
-        # Top-level vectorize: there is no outer memlet to consult, so
-        # restrict the lane-invariant classification to the unambiguous
-        # case -- a length-1 subset that does not depend on the lane
-        # parameter (TSVC s176-shape). A multi-element subset like
-        # ``[0:W]`` over a tile-local transient (e.g. ``B_slice_times_2``)
-        # is per-lane data, not a broadcast -- treating it as a scalar
-        # collapses W lane values to one and miscompiles
-        # ``test_knob_only_apply_vectorization_pass_bypass``.
+        # Top-level vectorize: there is no outer memlet to consult, so classify
+        # from the inner subset alone. A length-1 subset that does not depend on
+        # the lane parameter is the unambiguous lane-invariant case (TSVC
+        # s176-shape). A multi-element subset is lane-invariant ONLY when it is a
+        # fixed-position sub-slice of a LARGER source array -- the legacy widening
+        # inflates an invariant ``a[0]`` to ``a[0:W]`` (TSVC s113) but keeps its
+        # lane-invariant begin. A multi-element subset that spans an ENTIRE
+        # tile-width transient (e.g. ``B_slice_times_2[0:W]``) is per-lane data,
+        # not a broadcast -- treating it as a scalar collapses W lane values to
+        # one and miscompiles ``test_knob_only_apply_vectorization_pass_bypass``.
         for ie in state.in_edges(node):
             if ie.dst_conn == conn and ie.data.data is not None:
+                sub = ie.data.subset
+                if vector_map_param in {str(s) for s in sub.free_symbols}:
+                    return False
                 try:
-                    if int(ie.data.subset.num_elements()) != 1:
-                        return False
+                    if int(sub.num_elements()) == 1:
+                        return True
                 except (TypeError, ValueError):
                     return False
-                return vector_map_param not in {str(s) for s in ie.data.subset.free_symbols}
+                desc = state.sdfg.arrays.get(ie.data.data)
+                if desc is None:
+                    return False
+                # Broadcast iff the read does NOT span the whole descriptor: a
+                # sub-slice of a larger array (widened invariant read) vs a whole
+                # tile-width transient (genuine per-lane data).
+                try:
+                    return dace.symbolic.simplify(sub.num_elements() - desc.total_size) != 0
+                except (TypeError, ValueError):
+                    return False
         return False
     # Match the outer in-edge whose dst_conn equals our connector name --
     # NSDFG connector names mirror the inner data names.
@@ -698,16 +712,30 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         # the ``=`` template emits ``vector_copy<T,W>(_out, _in)`` and
         # the compile fails with ``cannot convert 'double' to 'const
         # double*'`` for ``_in``.
+        # A length-1 invariant read (s176 ``c[j]``) is typed by-value by codegen,
+        # so the connector name goes straight into the broadcast slot. A WIDENED
+        # invariant read (s113 ``a[0]`` inflated to ``a[0:W]``) is typed as a
+        # pointer, so it must be dereferenced via ``_scalar_operand_expr`` before
+        # entering the ``=c`` (``vector_copy_w_scalar``) broadcast template;
+        # otherwise the ``=`` template emits a per-lane ``vector_copy`` that reads
+        # ``a[0:W]`` instead of broadcasting ``a[0]``.
         in_scalar_rhs = None
+        in_widened_rhs = None
         for ie in ies:
             try:
-                if int(ie.data.subset.num_elements()) == 1:
-                    in_scalar_rhs = ie.dst_conn
-                    break
+                ne_one = int(ie.data.subset.num_elements()) == 1
             except Exception:
-                pass
+                ne_one = False
+            if ne_one:
+                in_scalar_rhs = ie.dst_conn
+                break
+            if _connector_reads_invariant_scalar(state, node, ie.dst_conn, vector_map_param):
+                in_widened_rhs = ie.dst_conn
+                break
         if in_scalar_rhs is not None:
             _set_template(ctx, None, None, in_scalar_rhs, None, lhs, "=")
+        elif in_widened_rhs is not None:
+            _set_template(ctx, None, None, _scalar_operand_expr(state, node, in_widened_rhs), None, lhs, "=")
         else:
             _set_template(ctx, rhs1, rhs2, c1, c2, lhs, "=")
     elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
