@@ -242,6 +242,46 @@ def kernel_sdfg():
 
     return example.to_sdfg()
 
+
+def edge_assignment_sdfg():
+    # State edge: edge.data.data = used array name
+    #             edge.data.is_empty() -> no array
+    # Interstate edge: edge.condition, edge.assignments as python code
+    #                  edge.used_arrays(sdfg.arrays, True) -> all arrays used by edge
+    # Note: Interstate assignment LHS must be a symbol name (not an array access).
+    #       Array accesses are allowed on the RHS (e.g., "k = A[0]").
+
+    sdfg = dace.SDFG("edge_condition_sdfg")
+
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_symbol("k", dace.int32)
+
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"k": "A[0]"}))
+
+    r1 = s1.add_read("A")
+    w1 = s1.add_write("A")
+    me1, mx1 = s1.add_map("m1", dict(i="0:4"))
+    t1 = s1.add_tasklet("add_one", {"a"}, {"b"}, "b = a + 1")
+    s1.add_memlet_path(r1, me1, t1, memlet=dace.Memlet("A[i]"), dst_conn="a")
+    s1.add_memlet_path(t1, mx1, w1, memlet=dace.Memlet("A[i]"), src_conn="b")
+
+    r2 = s2.add_read("A")
+    w2 = s2.add_write("A")
+    me2, mx2 = s2.add_map("m2", dict(j="0:4"))
+    t2 = s2.add_tasklet("mul_two", {"a"}, {"b"}, "b = a * 2")
+    s2.add_memlet_path(r2, me2, t2, memlet=dace.Memlet("A[j]"), dst_conn="a")
+    s2.add_memlet_path(t2, mx2, w2, memlet=dace.Memlet("A[j]"), src_conn="b")
+
+    sdfg.validate()
+    return sdfg
+
+
+def edge_condition_sdfg():
+    pass
+
 # ============================================================================
 # BASIC TESTS (single-state SDFGs, no offloading)
 # ============================================================================
@@ -507,7 +547,6 @@ def test_copy_scalar_to_gpu_and_back():
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-@pytest.mark.current
 @pytest.mark.gpu_offload
 def test_loopregion_offload():
     # not pretty but it passes
@@ -585,6 +624,21 @@ def test_kernel_sdfg():
         result_name="D",
     )
 
+@pytest.mark.gpu_offload
+@pytest.mark.current
+def test_edge_assignment_sdfg():
+    sdfg = edge_assignment_sdfg()
+    orig_A = np.array([1.0, -2.0, 3.5, 0.25], dtype=np.float64)
+    new_A = orig_A.copy()
+
+    run_numerical_offloading_test(
+        sdfg,
+        {},
+        orig_A,
+        new_A,
+        result_name="A",
+    )
+
 # ============================================================================
 # Fixtures and Helpers
 # ============================================================================
@@ -611,10 +665,7 @@ def pytest_configure(config):
 
 if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
-    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
-    pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
+    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
-    
-
-# get everything to run again
-# add npbench kernels, automate input somehow, get to work with the bugs
+ 

@@ -1,7 +1,6 @@
 
 from dace import dtypes, properties, data
-from dace.memlet import Memlet
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import nodes, SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
@@ -19,6 +18,7 @@ class OffloadingIRNode:
     CLOSE = 1
     OPEN_LOOP = 2
     OPEN_COND = 3
+    EDGE = 4 # interstate edge
 
     def __init__(self, type:int, block:ControlFlowBlock, cpu_set:set, gpu_set:set, next:list, close):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"
@@ -106,6 +106,11 @@ class OffloadingIRNode:
         state = OffloadingIRNode(OffloadingIRNode.STATE, block, cpu_set, gpu_set, [], None)
         state.debug_name = f"_state_{block.label}"
         return state
+    
+    def new_edge_node(edge:InterstateEdge, cpu_set:set):
+        edge_node = OffloadingIRNode(OffloadingIRNode.EDGE, edge, cpu_set, set(), [], None)
+        edge_node.debug_name = f"_edge_{edge.label}"
+        return edge_node
     
     def get_type_as_str(type:int):
         match type:
@@ -214,7 +219,6 @@ class OffloadToAccelerator(ppl.Pass):
     
     ### generic HELPERS ###
 
-
     def get_schedule(self, node):
         if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
             return node.map.schedule
@@ -244,24 +248,19 @@ class OffloadToAccelerator(ppl.Pass):
         arrays : set[str] = set()
 
         # if current node is access node
-        #print(f"incoming of {node}")
         if isinstance(node, nodes.AccessNode): 
             data_name = node.data
             arrays = {data_name} # add current access node
-            #print(f"accessing {data_name}")
 
             if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
                 original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
-                #print(f"is view of {original}")
                 arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, original)
                 
         # check if more access nodes UPstream
         for n in self.get_predecessors(state, node):
             if isinstance(n, nodes.AccessNode):
-                #print(f"found pred access node {n.data}")
                 arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, n)
 
-        #print(f"incoming of {node} are {arrays}") 
         return arrays
     
     def get_arrays_used_by_outgoing_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
@@ -365,8 +364,7 @@ class OffloadToAccelerator(ppl.Pass):
             
             # get all nodes within this map's scope
             map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry]
-            #print(f"map {map_entry}\n\tis_gpu: {is_gpu}\n\tmap nodes: {map_nodes}")
-
+           
             # input & output nodes
             if is_gpu:
                 gpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
@@ -377,7 +375,6 @@ class OffloadToAccelerator(ppl.Pass):
 
             # internal nodes
             for node in map_nodes:
-                #print(f"\tnode: {node}\n\t\tgpu:{gpu_set}, cpu:{cpu_set}")
                 if isinstance(node, nodes.MapEntry): # recurse on inner map
                     _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
                 
@@ -386,7 +383,6 @@ class OffloadToAccelerator(ppl.Pass):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
                 elif isinstance(node, nodes.Tasklet): # find accessed arrays -> add
-                    #print("map taSKLET:", node)
                     for name in self.get_arrays_used_by_node(sdfg, state, node):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
@@ -413,7 +409,6 @@ class OffloadToAccelerator(ppl.Pass):
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
         _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
-        #print(f"map {map_entry}, gpu {gpu_set}, cpu {cpu_set}\n")
         return gpu_set, cpu_set
 
 
@@ -443,17 +438,14 @@ class OffloadToAccelerator(ppl.Pass):
                     g = self.get_arrays_used_by_node(sdfg, state, node)
                 else:
                     c = self.get_arrays_used_by_node(sdfg, state, node)
-                #print(f"lib: {node}, gpu: {g}, cpu: {c}")
 
             # recurse if nested
             elif isinstance(node, ControlFlowRegion):
                 g,c = self.get_data_locations_of_cfregion(sdfg, node)
-                #print(f"cfr: {node}, gpu: {g}, cpu: {c}")
 
             # all else is definitely on CPU
             elif isinstance(node, nodes.Tasklet): # outside a map scope (else handled by locations_of_map) -> cpu
                 c = self.get_arrays_used_by_node(sdfg, state, node)
-                #print(f"task: {node}, gpu: {g}, cpu: {c}")
 
             elif isinstance(node, nodes.AccessNode):
                 pass # nothing to do; cannot be classified without context
@@ -565,21 +557,11 @@ class OffloadToAccelerator(ppl.Pass):
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
 
-        # 1) iterate through all nodes
-        #print(f"*** cfr {cfr}")
         for block in cfr.bfs_nodes():
             g,c = self.get_data_locations_of_cfblock(sdfg, block)
             gpu_set |= g
             cpu_set |= c
-            #print("gpu:", g, "\ncpu:", c)
-
-        # 2) iterate through all interstate edges
-        for edge in cfr.edges():
-            arrays = edge.data.used_arrays(sdfg.arrays)
-            cpu_set |= arrays # conditions are always on cpu
-            print("edge:", edge, "->", arrays)
         
-        #print(f"***cfr {cfr}, gpu {gpu_set}, cpu {cpu_set}\n")
         return gpu_set, cpu_set
 
 
@@ -591,24 +573,26 @@ class OffloadToAccelerator(ppl.Pass):
     ### STEP 3: Intermediate Representation ###
 
     def sdfg_to_IR(self, sdfg:SDFG):
-        all_arrays = {name for name in sdfg.arrays}
-        # TODO: check if anything is already GPU or not default and create error
+        for array in sdfg.arrays:
+            if sdfg.arrays[array].storage == dtypes.StorageType.GPU_Global:
+                raise RuntimeError(f"Graph cannot be offloaded because {array} is already set to GPU location. All arrays must first be in Default location.")
         
+        non_transients = {name for name in sdfg.arrays if not sdfg.arrays[name].transient}
+
         # create inital node where all arrays must be on CPU
         IR = OffloadingIRNode.new_open_node(sdfg)
-        IR.cpu_set = all_arrays # all arrays are initially assumed to be on CPU
+        IR.cpu_set = non_transients # all arrays are initially assumed to be on CPU
         
         # parse entire graph
         end = self._parse_to_IR(sdfg, sdfg, IR)
 
         # set final close node where all arrays must be on CPU again
         end.append_node(IR.close)
-        IR.close.cpu_set = all_arrays
+        IR.close.cpu_set = non_transients
     
         print(f"--- early IR ---\n{IR}\n")
 
         self._propagate_arrays(IR)
-        #self._fill_in_successor_copies(IR)
         
         print(f"--- full IR ---\n{IR}\n\n")
 
@@ -621,13 +605,23 @@ class OffloadToAccelerator(ppl.Pass):
 
     def _parse_to_IR(self, sdfg:SDFG, cfr:ControlFlowRegion, curr_node:OffloadingIRNode) -> OffloadingIRNode:
         # NOTE to self: ControlFlowRegion inherits from ControlFlowBlock
-        # edges: TODO
-        
-        # nodes
-        #print(f"{cfr} contains {", ".join([str(block) for block in cfr.bfs_nodes()])}")
         
         block : ControlFlowBlock
         for block in cfr.bfs_nodes():
+
+            # iterate through all (incoming) interstate edges
+            in_edge_arrays = set()
+            for edge in cfr.in_edges(block):
+                arrays = edge.data.used_arrays(sdfg.arrays)
+                in_edge_arrays |= arrays
+                print("EGDE:", cfr, " ", edge, "->", arrays)
+
+            if in_edge_arrays:
+                edge_node = OffloadingIRNode.new_edge_node(block, in_edge_arrays)
+                curr_node.append_node(edge_node)
+                curr_node = edge_node
+
+            # iterate through all nodes
             # non-nested state
             if isinstance(block, SDFGState):
                 state : SDFGState = block
@@ -720,7 +714,7 @@ class OffloadToAccelerator(ppl.Pass):
         queue = IR.next.copy()
         while queue:
             curr = queue.pop()
-            if curr.type == OffloadingIRNode.STATE: # data node
+            if curr.type == OffloadingIRNode.STATE or curr.type == OffloadingIRNode.EDGE: # data node
                 method(curr)
                 queue += curr.next
 
@@ -806,7 +800,7 @@ class OffloadToAccelerator(ppl.Pass):
         # This means that each branch will have to insert copies individually, usually leading to the least amount of necessary copies.
         # There is however a risk that this introduces copies within a loop unnecessarily.
         else:
-            print(f"{IR.debug_name} has tails: {[n.debug_name for n in tails]}")
+            print(f"copy_successor: {IR.debug_name} has tails: {[n.debug_name for n in tails]}")
             IR.copy_successor = True
         
     
@@ -880,12 +874,12 @@ class OffloadToAccelerator(ppl.Pass):
         def insert_copies(node, next, node_block, next_block):
             gpu_copies = node.cpu_set & next.gpu_set
             if gpu_copies:
-                print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
+                #print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
                 self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
                 
             cpu_copies = node.gpu_set & next.cpu_set
             if cpu_copies:
-                print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
+                #print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
                 self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
 
 
@@ -898,6 +892,10 @@ class OffloadToAccelerator(ppl.Pass):
                 # edge case: if this condition is true, both blocks are None, can't insert
                 if node.type == OffloadingIRNode.CLOSE and next.type == OffloadingIRNode.CLOSE:
                     insert_copies(node, next, node.open.block, None)
+
+                elif next.type == OffloadingIRNode.EDGE: # then I want the copy AFTER the node, not before
+                    insert_copies(node, next, node.block, None)
+
                 else: # the usual: copies between node -> next
                     insert_copies(node, next, node.block, next.block)
                     
@@ -909,11 +907,11 @@ class OffloadToAccelerator(ppl.Pass):
                 tails = OffloadingIRNode.get_all_tails(top) # INV: all are STATE or CLOSE if there's a nested loop
 
                 gpu_copies = bottom.cpu_set & top.gpu_set
-                print(f"LOOP COPIES for {node.debug_name}: {gpu_copies}")
+                #print(f"LOOP COPIES for {node.debug_name}: {gpu_copies}")
 
                 if gpu_copies:
                     for tail in tails:
-                        print(f"insert LOOP gpu copy for {gpu_copies} between {tail.debug_name} and {bottom.debug_name}")
+                        #print(f"insert LOOP gpu copy for {gpu_copies} between {tail.debug_name} and {bottom.debug_name}")
                         
                         if tail.type == OffloadingIRNode.CLOSE: # and bottom.type == OffloadingIRNode.CLOSE:
                             self.create_interstate_copy(sdfg, tail.open.block, None, gpu_copies, to_gpu=True)
@@ -923,7 +921,7 @@ class OffloadToAccelerator(ppl.Pass):
                 cpu_copies = bottom.gpu_set & top.cpu_set
                 if cpu_copies:
                     for tail in tails:
-                        print(f"insert LOOP cpu copy for {cpu_copies} between {tail.debug_name} ({tail.type}) and {bottom.debug_name} ({bottom.type})")
+                        #print(f"insert LOOP cpu copy for {cpu_copies} between {tail.debug_name} ({tail.type}) and {bottom.debug_name} ({bottom.type})")
                         if tail.type == OffloadingIRNode.CLOSE:
                             self.create_interstate_copy(sdfg, tail.open.block, None, cpu_copies, to_gpu=False)
                         else:
@@ -939,13 +937,9 @@ class OffloadToAccelerator(ppl.Pass):
     def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu:bool):
         assert state1 is not None or state2 is not None, "invalid: both states are None"
 
-        # do not copy transient arrays -> ASSUMPTION: NO REUSE OF TRANSIENTS WHICH REQUIRES COPIES
-        clean_array_names = [name for name in array_names if not sdfg.arrays[name].transient]
-        if not clean_array_names: return
-
         # insert new state
         copy_state : SDFGState
-        label = f"copy_{"_".join(sorted(clean_array_names))}_{'to_gpu' if to_gpu else 'to_cpu'}"
+        label = f"copy_{"_".join(sorted(array_names))}_{'to_gpu' if to_gpu else 'to_cpu'}"
         
         if state2 is not None:
             print("INSERT COPY BEFORE ", state2)
@@ -961,11 +955,12 @@ class OffloadToAccelerator(ppl.Pass):
             target_graph = state1.parent_graph if state1.parent_graph else state1
             assert target_graph is not None, "copy insertion requires a parent control-flow graph (s1)"
 
+            #copy_state = self.add_state_after(target_graph, state1, label)
             copy_state = target_graph.add_state_after(state1, label = label)
 
             
         # build all copies inside the new state (arrays were created and located previously)
-        copy_map = {(name if to_gpu else self.get_gpu_name(name)): (self.get_gpu_name(name) if to_gpu else name) for name in clean_array_names}
+        copy_map = {(name if to_gpu else self.get_gpu_name(name)): (self.get_gpu_name(name) if to_gpu else name) for name in array_names}
         
         for old_name, new_name in copy_map.items():
             assert new_name in sdfg.arrays
@@ -980,4 +975,14 @@ class OffloadToAccelerator(ppl.Pass):
         if cpu_name.startswith("__return"):
             return "return" + cpu_name[8:] + "_gpu"
         return cpu_name + "_gpu"
+    
+    def add_state_after(self, graph, state, label):
+        # adds new state after the given state
+        # difference to sdfg.add_state_after:
+        #   sdfg.add_state_after copies e.data of outgoing edges to the new connecting edge
+        #   this method does not, it inserts a brand new edge between the state and the new state & moves e.data to the outgoing edge of the new state
+        #   this is the desired behaviour for edge copies & makes no difference for other types of cpi
+
+        pass
+    
     # TODO: A -> A_gpu, A -> A_host
