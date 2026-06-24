@@ -7,6 +7,7 @@ import warnings
 import networkx as nx
 import time
 
+from dace import symbolic
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
@@ -2064,7 +2065,7 @@ def normalize_offsets(sdfg: SDFG):
                             subscript: ast.Subscript = ast.parse(str(m)).body[0].value
                             assert isinstance(node.value, ast.Name) and node.value.id == m.data
                             node.slice = ast.copy_location(subscript.slice, node.slice)
-                    newv = astutils.unparse(vast)
+                    newv = symbolic.pystr_to_symbolic(astutils.unparse(vast))
                     e.data.assignments[k] = newv
                 assert not memlets
             for state in sd.states():

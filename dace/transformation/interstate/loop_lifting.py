@@ -123,7 +123,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                 if not e in added:
                     added.add(e)
                     if e is incr_edge:
-                        if left_over_incr_assignments != {}:
+                        if left_over_incr_assignments:
                             assignments = left_over_incr_assignments
                             dst = e.dst
                             if e.dst is first_state:

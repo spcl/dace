@@ -412,7 +412,7 @@ def test_symbol_array_mix(overwrite):
     after = sdfg.add_state()
     sdfg.add_loop_state_machine(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
-    sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
+    sdfg.out_edges(init)[0].data.assignments['sym'] = dace.symbolic.pystr_to_symbolic('0.0')
 
     # Internal loop structure
     t = body_start.add_tasklet('def', {}, {'o'}, 'o = i')
@@ -440,7 +440,7 @@ def test_symbol_array_mix_2(parallel):
     after = sdfg.add_state()
     sdfg.add_loop_state_machine(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
 
-    sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
+    sdfg.out_edges(init)[0].data.assignments['sym'] = dace.symbolic.pystr_to_symbolic('0.0')
 
     # Internal loop structure
     if not parallel:

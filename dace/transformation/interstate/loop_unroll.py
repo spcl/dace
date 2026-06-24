@@ -172,10 +172,9 @@ class LoopUnroll(xf.MultiStateTransformation):
                 new_assignments = dict()
                 for k, v in edge.data.assignments.items():
                     k_ast = ast.parse(k)
-                    v_ast = ast.parse(v)
+                    v_new = v.subs({loop.loop_variable: value})
                     ASTFindReplace({loop.loop_variable: str(value)}).visit(k_ast)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(v_ast)
-                    new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
+                    new_assignments[ast.unparse(k_ast)] = v_new
                 edge.data.assignments = new_assignments
 
         for node in iteration_region.all_nodes_recursive():

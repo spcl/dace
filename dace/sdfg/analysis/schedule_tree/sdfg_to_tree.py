@@ -302,8 +302,9 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
         # TODO(later): Would be MUCH better to use MemletReplacer / e.data.replace_dict(repl_dict, replace_keys=False)
         for find, replace in repl_dict.items():
             for k, v in e.data.assignments.items():
-                if find in v:
-                    e.data.assignments[k] = v.replace(find, replace)
+                vstr = symbolic.symstr(v)
+                if find in vstr:
+                    e.data.assignments[k] = symbolic.pystr_to_symbolic(vstr.replace(find, replace))
             condstr = e.data.condition.as_string
             if find in condstr:
                 e.data.condition.as_string = condstr.replace(find, replace)

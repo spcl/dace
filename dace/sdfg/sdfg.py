@@ -10,6 +10,7 @@ import json
 from hashlib import md5, sha256
 import random
 import shutil
+import sympy
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
@@ -176,21 +177,9 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = DictProperty(
-        key_type=str,
-        value_type=str,
-        desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-        # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
-        #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
-        #       assignments as symbolic expressions without specialized to/from_json functions.
-        to_json=lambda d: {
-            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
-            for k, v in d.items()
-        },
-        from_json=(lambda d, *args, context=None, **kwargs: {
-            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
-            for k, v in d.items()
-        }))
+    assignments = DictProperty(key_type=str,
+                               value_type=sympy.Basic,
+                               desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
 
@@ -236,8 +225,8 @@ class InterstateEdge(object):
     @staticmethod
     def _convert_assignment(assignment) -> str:
         if isinstance(assignment, ast.AST):
-            return CodeBlock(assignment).as_string
-        return str(assignment)
+            return symbolic.pystr_to_symbolic(CodeBlock(assignment).as_string)
+        return symbolic.pystr_to_symbolic(str(assignment))
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
@@ -284,7 +273,7 @@ class InterstateEdge(object):
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs)
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
@@ -344,9 +333,7 @@ class InterstateEdge(object):
                 _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
+            newv = v.subs(repl)
             if newv != v:
                 self.assignments[k] = newv
         condition = ast.parse(self.condition.as_string)
@@ -386,7 +373,7 @@ class InterstateEdge(object):
         # Symbols already defined
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
-            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs)
             # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
             if lhs not in rhs_symbols:
                 lhs_symbols.add(lhs)
@@ -404,7 +391,7 @@ class InterstateEdge(object):
         result: List[mm.Memlet] = []
         result.extend(memlets_in_ast(self.condition.code[0], arrays))
         for assign in self.assignments.values():
-            vast = ast.parse(assign)
+            vast = ast.parse(symbolic.symstr(assign))
             result.extend(memlets_in_ast(vast, arrays))
 
         return result
