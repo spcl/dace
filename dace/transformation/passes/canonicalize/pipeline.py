@@ -37,7 +37,7 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign, WCRToAugAssignInjectiveMap
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern)
@@ -56,6 +56,7 @@ from dace.transformation.passes.canonicalize.normalize_negative_stride import No
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
+from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
@@ -522,6 +523,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
+    # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
+    # permissively, where the blocker is an algebraic side condition (TSVC s171's
+    # symbolic-stride in-place update ``a[i*inc] = a[i*inc] + b[i]``, injective iff
+    # ``inc != 0``). Emit a runtime ``ConditionalBlock`` -- parallel Map when the
+    # constraint holds, sequential loop otherwise -- rather than assuming it
+    # (unsound) or leaving it as a WCR-map the vectorizer rejects. Runs BEFORE
+    # ``reduction_to_wcr_map`` so the guarded loop is split out before that stage
+    # would otherwise lift it to a (non-vectorizable, WCR-carrying) reduction map.
+    s += [('parallelize_guarded', ParallelizeUnderConstraint())]
+
     # reduction_to_wcr_map: full "scalar accumulator loop -> parallel WCR-map
     # with a true scalar accumulator" pipeline. Loops that survived parallelize
     # as multi-tasklet 'compute then accumulate' shapes (LoopToReduce keeps
@@ -636,6 +647,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # vectorization-style map-body NSDFGs (pointer-typed output) would otherwise lose
     # the reduction and produce a parallel race.
     s += [('normalize_wcr', NormalizeWCRSource())]
+
+    # drop_injective_wcr: a WCR write that is INJECTIVE over its enclosing
+    # parallel map (an in-place ``a[c*i + d] = a[...] <op> ...`` update with a
+    # nonzero constant stride ``c``) is conflict-free, so its WCR is spurious --
+    # rewrite it to an explicit read-modify-write aug-assign. This restores the
+    # vectorizer's "no WCR inside a map body" invariant for in-place-update
+    # kernels (e.g. s115) without which the map cannot be vectorized. Runs after
+    # ``normalize_wcr`` so every WCR is in the canonical AccessNode-sourced shape.
+    # The injectivity gate in ``WCRToAugAssign`` leaves genuine reductions
+    # (constant target -- kept for the reduction codegen) and scatters
+    # (data-indexed, non-affine -- handled by the guarded parallelization passes)
+    # untouched, so this is a targeted cleanup, not a blanket WCR removal.
+    s += [('drop_injective_wcr', PatternMatchAndApplyRepeated([WCRToAugAssignInjectiveMap()]))]
 
     # end: the final SimplifyPass.
     #

@@ -5,7 +5,9 @@ The pure expansion emits a CPP tasklet whose body walks the K-fold
 nested index space using the source array's strides (which DaCe
 codegen passes via ``__<arr>_strides`` from the surrounding scope).
 """
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
+
+import sympy
 
 import dace
 from dace import library, properties
@@ -14,6 +16,105 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import (gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
+
+
+def _enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> List[str]:
+    """All map iter-var names enclosing ``node``, across nested-SDFG levels.
+
+    The tile body is nested one (or more) levels below the tile map
+    (``NestInnermostMapBodyIntoNSDFG``), so the map iter-var is a *free symbol*
+    of the inner SDFG, not a scope entry of ``parent_state``. Walk up: collect
+    map params in the current state's scope, then ascend through the owning
+    SDFG's ``parent_nsdfg_node`` into the outer state and repeat.
+
+    :param parent_state: State directly owning ``node``.
+    :param node: The node whose enclosing maps are sought.
+    :returns: Map param names from innermost to outermost (names as they appear
+        in the SDFG; identity-preserved by the body-nesting pass).
+    """
+    params: List[str] = []
+    cur_state = parent_state
+    cur_node = node
+    while cur_state is not None:
+        sd = cur_state.scope_dict()
+        p = sd.get(cur_node)
+        while p is not None:
+            if isinstance(p, nodes.MapEntry):
+                params.extend(p.map.params)
+            p = sd.get(p)
+        owning_sdfg = cur_state.sdfg
+        cur_node = owning_sdfg.parent_nsdfg_node
+        cur_state = owning_sdfg.parent  # outer state holding the nested-SDFG node
+    return params
+
+
+def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState, src_edge, dims: List[int],
+                            replicate: List) -> List[str]:
+    """Per-tile-dim per-lane source offset for non-dividing REPLICATE dims.
+
+    For a REPLICATE dim whose factor ``D`` does not (provably) divide the tile
+    width ``W`` -- a non-dividing static ``c[i // 3]`` (``W % 3 != 0``) or a
+    symbolic divisor ``c[i // DV]`` -- the contracted-box broadcast
+    ``_src[__l/D]`` over the base ``&src[(c*iter + c0)/D]`` is wrong unless every
+    tile starts on a phase boundary (``W % D == 0`` ⇒ ``iter % D == 0``). This
+    returns the phase-aware element offset RELATIVE to that base for lane
+    ``__l<d>``::
+
+        (c*iter + c0 + c*__l<d>) / D  -  (c*iter + c0) / D
+
+    which reduces to the box ``__l<d> / D`` exactly when ``iter % D == 0``. The
+    dividend ``c*iter + c0`` and divisor ``D`` are read from the source memlet's
+    begin (an ``int_floor`` node); the iter-var symbol is resolved against the
+    enclosing map scope so the rendered expression always uses the CURRENT
+    (post-rename) name. Dims that don't need it get ``""`` (standard box /
+    linear addressing). Integer ``/`` is floor for the non-negative index
+    operands (the canonicalization non-negativity assumption).
+
+    :param node: The ``TileLoad`` being expanded.
+    :param parent_state: State owning the node (for the map scope walk).
+    :param src_edge: The ``_src`` in-edge (carries the source memlet).
+    :param dims: Per-tile-dim source-array dim basis (``node.src_dims`` resolved).
+    :param replicate: Per-tile-dim replicate factors (may be int or symbolic).
+    :returns: A length-K list of per-lane offset C++ expressions; ``""`` where
+        the standard box addressing applies.
+    :raises NotImplementedError: On a non-``int_floor`` begin (e.g. ``int_ceil``)
+        or a dividend that does not contain exactly one enclosing map iter-var.
+    """
+    widths = list(node.widths)
+    K = len(widths)
+    exprs = [""] * K
+    # Collect enclosing map params -- the replicate dim's iter-var is one of them.
+    map_params = _enclosing_map_params(parent_state, node)
+    for d in range(K):
+        Dfac = replicate[d] if d < len(replicate) else 1
+        try:
+            Di = int(Dfac)
+            if Di <= 1 or (int(widths[d]) % Di) == 0:
+                continue  # no replicate, or D divides W -> the box path is correct
+        except (TypeError, ValueError):
+            if Dfac is None:
+                continue  # no replicate
+            # symbolic divisor -> can't prove W % D == 0 -> phase-aware
+        begin = src_edge.data.subset.ranges[dims[d]][0]
+        fname = type(begin).__name__
+        if fname not in ("int_floor", "__int_floor"):
+            raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} expected an int_floor "
+                                      f"begin in the source memlet, got {begin!r} ({fname}); int_ceil / "
+                                      f"non-floor replicate-with-remainder is not yet supported.")
+        dividend, divisor = begin.args
+        div_syms = {str(s) for s in dividend.free_symbols}
+        cand = [p for p in map_params if p in div_syms]
+        if len(cand) != 1:
+            raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} dividend {dividend!r} must "
+                                      f"contain exactly one enclosing map iter-var (found {cand} among {map_params}).")
+        psym = next(s for s in dividend.free_symbols if str(s) == cand[0])
+        from dace.symbolic import symstr
+        dividend_lane = dividend.subs(psym, psym + sympy.Symbol(f"__l{d}"))
+        div_str = symstr(divisor)
+        exprs[d] = (f"(({symstr(dividend_lane)}) / ({div_str})) - "
+                    f"(({symstr(dividend)}) / ({div_str}))")
+    return exprs
+
 
 #: Map the :attr:`TileLoad.pad_mode` property values to the cuTile
 #: ``ct.PaddingMode`` enum members. cuTile's padding enum offers ``+inf``
@@ -91,7 +192,11 @@ class ExpandTileLoadPure(ExpandTransformation):
             if not gather_set:
                 # Structured path: per-tile-dim affine contributions only.
                 src_strides_tile = [symstr(src_arr.strides[d]) for d in dims]
-                src_off = offset_via_strides(coeff, src_strides_tile, replicate)
+                # Non-dividing REPLICATE (``W % D != 0`` or symbolic ``D``) gets a
+                # phase-aware per-lane offset; dividing dims keep the contiguous
+                # ``__l/D`` box (empty entry).
+                lane_exprs = _phase_aware_lane_exprs(node, parent_state, src_edge, dims, replicate)
+                src_off = offset_via_strides(coeff, src_strides_tile, replicate, lane_exprs)
             else:
                 # Source-dim addressing (design section 9.2 / 9.3): per SOURCE dim k in range(ndim),
                 # if k in gather_dims contribute `_idx_<k>[<flat lane>] * src.strides[k]`; otherwise,
@@ -119,11 +224,27 @@ class ExpandTileLoadPure(ExpandTransformation):
                     elif k in src_to_tile:
                         d = src_to_tile[k]
                         lane = f"__l{d}"
-                        # Symbolic replicate factor: emit runtime division.
+                        # Replicate factor: the box ``__l/D`` is correct only when
+                        # ``D`` divides ``W`` (phase-0). A non-dividing / symbolic
+                        # factor mixed with a gather dim would need the phase-aware
+                        # offset the structured path emits, but the gather branch's
+                        # base addressing differs -- refuse loudly rather than emit
+                        # the phase-0-only box (no silent miscompile).
                         try:
-                            emit_div = int(replicate[d]) > 1
+                            Di = int(replicate[d])
+                            if Di > 1 and (int(widths[d]) % Di) != 0:
+                                raise NotImplementedError(
+                                    f"{node.label}: non-dividing REPLICATE factor {Di} on tile dim {d} "
+                                    f"(width {widths[d]}) mixed with a gather access is not supported "
+                                    f"(phase-aware replicate-with-remainder is only wired on the "
+                                    f"structured load path).")
+                            emit_div = Di > 1
                         except (TypeError, ValueError):
-                            emit_div = True
+                            raise NotImplementedError(
+                                f"{node.label}: symbolic REPLICATE factor {replicate[d]!r} on tile dim {d} "
+                                f"mixed with a gather access is not supported (cannot prove it divides "
+                                f"width {widths[d]}; phase-aware replicate-with-remainder is only wired "
+                                f"on the structured load path).")
                         if emit_div:
                             lane = f"({lane} / {replicate[d]})"
                         parts.append(f"({coeff[d]} * ({s}) * {lane})")
@@ -135,32 +256,6 @@ class ExpandTileLoadPure(ExpandTransformation):
         else:
             body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
-        # Per user direction 2026-06-10: ``For SYM we can add a runtime check
-        # and check for error ensuring W % SYM``. Emit a runtime ``W % SYM == 0``
-        # assertion for each tile dim whose ``replicate_factor`` is symbolic.
-        # The codegen formula ``__l / SYM`` is correct only when ``SYM`` divides
-        # the tile width; statically-known factors are validated in
-        # ``TileLoad.__init__``. The runtime check is added once (per
-        # expansion), prepended to the per-lane loops so a mis-sized divisor
-        # fails loudly with a descriptive abort message.
-        if node.replicate_factor_per_dim:
-            runtime_checks = []
-            for d, k in enumerate(node.replicate_factor_per_dim):
-                try:
-                    int(k)
-                    continue  # static -- already validated at construction
-                except (TypeError, ValueError):
-                    pass
-                if k is None:
-                    continue
-                w_d = int(widths[d])
-                runtime_checks.append(f'if (({w_d}) % ({k}) != 0) {{ '
-                                      f'fprintf(stderr, "TileLoad runtime check failed: width[{d}]=%d not divisible by '
-                                      f'replicate_factor=%lld (formula __l/factor requires W %% factor == 0)\\n", '
-                                      f'{w_d}, (long long)({k})); '
-                                      f'std::abort(); }}')
-            if runtime_checks:
-                code = "\n".join(runtime_checks) + "\n" + code
         inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
         inputs |= {f"_idx_{d}" for d in node.gather_dims}
         tasklet = nodes.Tasklet(
@@ -365,23 +460,19 @@ class TileLoad(nodes.LibraryNode):
                 raise ValueError(f"TileLoad: replicate_factor_per_dim length "
                                  f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
             for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
-                # Per user direction 2026-06-10: ``For SYM we can add a runtime
-                # check and check for error ensuring W % SYM``. The codegen
-                # formula ``__l / k`` is correct ONLY when ``W % k == 0``.
-                # * Static factor: validate ``W % k == 0`` here; refuse
-                #   construction on violation.
-                # * Symbolic factor (e.g. ``DV`` in ``c[i // DV]``): cannot
-                #   statically verify; defer to a runtime check emitted in
-                #   the pure expansion (see ExpandTileLoadPure).
+                # The factor only needs to be a positive integer. Divisibility
+                # ``W % k == 0`` is NOT required: when ``k`` divides ``W`` the
+                # pure expansion emits the contiguous box ``__l/k``; otherwise
+                # (a non-dividing static ``k``, or a symbolic divisor that can't
+                # be proven to divide) it emits the phase-aware per-lane offset
+                # ``(c*iter + c0 + c*__l)/k - (c*iter + c0)/k`` instead (see
+                # :func:`_phase_aware_lane_exprs`). Both are correct.
                 try:
                     k_int = int(k)
                 except (TypeError, ValueError):
-                    continue  # symbolic -- runtime check handles it
+                    continue  # symbolic -- the phase-aware expansion handles it
                 if k_int < 1:
                     raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must be >= 1")
-                if k_int > 1 and w % k_int != 0:
-                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must divide "
-                                     f"widths[{d}] = {w} (contracted-box load is W/k elements)")
         # Validate gather_dims: sorted, unique, non-negative source-dim indices.
         # The upper bound (max(gather_dims) < src_ndim) is checked at validate() time since
         # ``src_ndim`` depends on the wired ``_src`` connector descriptor (design section 9.3).

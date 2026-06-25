@@ -187,5 +187,34 @@ def test_unrolled_dot_product_becomes_map_or_reduce():
         f'expected a map or reduce, got maps={n_maps}, reduces={n_reduces}, loops={n_loops}')
 
 
+@dace.program
+def unrolled_dot_nonaligned(a: dace.float64[N], b: dace.float64[N], c: dace.float64[2]):
+    """Step-5 dot whose iteration range is NOT a multiple of the step, so the
+    source loop skips the final partial group. Pins the re-roll bound: the
+    re-rolled step-1 loop must cover exactly the original positions (alignment-
+    aware ``last_i``). A naive ``end + m*g`` bound would extend over the skipped
+    tail and add spurious reduction terms (the s352 corpus miscompile)."""
+    dot = 0.0
+    for i in range(0, N - 4, 5):
+        dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
+                     a[i + 4] * b[i + 4])
+    c[0] = dot
+
+
+def test_unrolled_dot_nonaligned_skips_tail():
+    n = 27  # range(0, 23, 5) = {0,5,10,15,20} -> covers 0..24; positions 25,26 skipped
+    rng = np.random.default_rng(11)
+    a, b = rng.standard_normal(n), rng.standard_normal(n)
+    sdfg = unrolled_dot_nonaligned.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    c = np.zeros(2)
+    sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
+    # Faithful reference: grouped-by-5, the unaligned tail (25, 26) skipped.
+    ref = 0.0
+    for i in range(0, n - 4, 5):
+        ref += sum(a[i + k] * b[i + k] for k in range(5))
+    assert np.isclose(c[0], ref), f'got {c[0]} expected {ref} (re-roll must skip the unaligned tail)'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

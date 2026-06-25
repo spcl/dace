@@ -56,7 +56,11 @@ def tile_offset(widths: Sequence[int]) -> str:
     return " + ".join(reversed(parts))
 
 
-def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_factors: Sequence[int] = ()) -> str:
+def offset_via_strides(
+    coeffs: Sequence[int],
+    strides: Sequence[str],
+    replicate_factors: Sequence[int] = (),
+    lane_index_exprs: Sequence[str] = ()) -> str:
     """Return the flat offset expression
     ``sum_d coeffs[d] * strides[d] * (__l<d> / replicate_factors[d])``.
 
@@ -68,6 +72,17 @@ def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_
     source element -- the within-dim group-broadcast lowering for the
     ``int_floor`` / ``int_ceil`` regime.
 
+    Per-lane override: when ``lane_index_exprs[d]`` is a non-empty string,
+    dim ``d`` uses it verbatim as the per-lane element offset *relative to
+    the connector base* (the dim contributes ``(lane_index_exprs[d]) *
+    strides[d]`` and the dim's ``coeffs`` / ``replicate_factors`` are
+    bypassed). The ``TileLoad`` pure expansion supplies it for a
+    non-dividing ``int_floor(c*iter + c0, D)`` (``W % D != 0`` or symbolic
+    ``D``): the contracted-box broadcast ``_src[__l/D]`` is correct only
+    when every tile starts on a phase boundary (``W % D == 0``), so the
+    expansion instead passes the phase-aware ``(c*iter + c0 + c*__l)/D -
+    (c*iter + c0)/D`` (relative to the box base ``&src[(c*iter+c0)/D]``).
+
     :param coeffs: Per-tile-dim integer coefficient (``1`` for
         contiguous; >1 for strided access).
     :param strides: Per-tile-dim source-array stride as a C++
@@ -77,12 +92,19 @@ def offset_via_strides(coeffs: Sequence[int], strides: Sequence[str], replicate_
         each lane reads a distinct element; ``k > 1`` = ``k`` lanes
         share each element). Defaults to all-1 (no replication) when
         empty or omitted.
+    :param lane_index_exprs: Per-tile-dim per-lane element offset C++
+        expression (relative to the connector base); an empty / missing
+        entry uses the standard ``coeff * stride * (__l / replicate)``
+        addressing. Defaults to all-empty.
     :returns: The C++ offset expression, or ``"0"`` if K==0.
     """
     if not coeffs:
         return "0"
     parts = []
     for d, (c, s) in enumerate(zip(coeffs, strides)):
+        if d < len(lane_index_exprs) and lane_index_exprs[d]:
+            parts.append(f"(({lane_index_exprs[d]}) * ({s}))")
+            continue
         lane = f"__l{d}"
         if d < len(replicate_factors):
             r = replicate_factors[d]

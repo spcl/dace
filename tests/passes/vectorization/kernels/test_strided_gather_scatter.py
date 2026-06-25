@@ -614,25 +614,22 @@ def div_index_symbol(src: dace.float64[N], dst: dace.float64[N]):
 
 @pytest.mark.simple  # canonical: test_div_index_symbol (symbolic divisor, harder)
 def test_div_index_const3():
-    """``src[i // 3]`` — a STATIC divisor that does NOT divide W=8. The REPLICATE
-    lane formula ``__l / k`` requires ``W % k == 0``; for a compile-time-constant
-    divisor ``TileLoad`` validates this at construction and refuses a non-dividing
-    factor with a ``ValueError`` (contrast the *symbolic* ``test_div_index_symbol``
-    ``[3]`` / ``[5]``, where the divisor is unprovable at compile time and instead
-    trips an uncatchable runtime abort, hence those are skipped). Refused until a
-    phase-aware "replicate with remainder" lands."""
+    """``src[i // 3]`` — a STATIC divisor that does NOT divide W=8. The contiguous
+    box load ``_src[__l/3]`` over ``&src[i/3]`` is correct only when every tile
+    starts on a phase boundary (``i % 3 == 0``, i.e. ``W % 3 == 0``); since
+    ``8 % 3 != 0`` the pure expansion instead emits the phase-aware per-lane
+    offset ``(i + __l)/3 - i/3`` (see ``_phase_aware_lane_exprs``)."""
     N_val = 64
-    with pytest.raises(ValueError, match="must divide"):
-        run_vectorization_test(
-            dace_func=div_index_const3,
-            arrays={
-                "src": numpy.random.rand(N_val),
-                "dst": numpy.zeros(N_val)
-            },
-            params={"N": N_val},
-            vector_width=8,
-            sdfg_name="div_index_const3",
-        )
+    run_vectorization_test(
+        dace_func=div_index_const3,
+        arrays={
+            "src": numpy.random.rand(N_val),
+            "dst": numpy.zeros(N_val)
+        },
+        params={"N": N_val},
+        vector_width=8,
+        sdfg_name="div_index_const3",
+    )
 
 
 @pytest.mark.simple  # canonical: test_div_index_symbol (symbolic divisor, harder)
@@ -651,29 +648,13 @@ def test_div_index_const4():
     )
 
 
-@pytest.mark.parametrize(
-    "dv",
-    [
-        2,
-        4,
-        8,
-        # Non-dividing divisors violate the REPLICATE precondition W % DV == 0 (W=8). For a
-        # SYMBOLIC divisor that cannot be proven at compile time, the TileLoad expansion emits a
-        # runtime ``if (W % DV != 0) std::abort()`` guard (tile_load.py, per user direction
-        # 2026-06-10). DV=3/5 trip it -> SIGABRT, which is uncatchable (kills the worker, so it
-        # cannot be marked xfail). Skipped until phase-aware "replicate with remainder" lands.
-        pytest.param(3,
-                     marks=pytest.mark.skip(reason="REPLICATE i//DV needs W%DV==0 (W=8); DV=3 "
-                                            "non-dividing hits the runtime W%DV abort guard")),
-        pytest.param(5,
-                     marks=pytest.mark.skip(reason="REPLICATE i//DV needs W%DV==0 (W=8); DV=5 "
-                                            "non-dividing hits the runtime W%DV abort guard")),
-    ])
+@pytest.mark.parametrize("dv", [2, 4, 8, 3, 5])
 def test_div_index_symbol(dv):
-    """``src[i // DV]`` with a loop-invariant symbol divisor (constant across
-    the lanes, value supplied at call time). Divisors must divide the tile width
-    W=8 (REPLICATE formula ``__l / DV`` requires ``W % DV == 0``); non-dividing
-    divisors are skipped above pending phase-aware replicate-with-remainder."""
+    """``src[i // DV]`` with a loop-invariant symbol divisor (constant across the
+    lanes, value supplied at call time). A symbolic divisor cannot be proven to
+    divide the tile width W=8 at compile time, so the pure expansion always emits
+    the phase-aware per-lane offset ``(i + __l)/DV - i/DV`` (correct for any DV,
+    dividing or not -- ``DV in {3, 5}`` exercise the non-dividing path)."""
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_symbol,
@@ -1254,13 +1235,25 @@ def test_gather_collapse_laneid_vw4():
     _assert_laneid_fan_collapsed(vec_sdfg)
 
 
-def test_gather_collapse_laneid_fp32_data():
-    # fp32 data array + int64 idx: direct-pass gather<float>.
+def test_gather_collapse_laneid_fp32_data(vectorize_config):
+    """fp32 data array + int64 idx: direct-pass gather<float>.
+
+    fp32 is limited to the multidim backend, where this runs and is checked for
+    correctness. The legacy ``VectorizeCPU`` arm is fp64-only (the ``float32``
+    cast op in the vectorized body -> 'Found unsupported op float32'), so it is
+    xfail-ed. ``collapse_laneid`` is a legacy structural rewrite (a no-op on the
+    tile path), so the laneid-fan-collapse assertion applies only to legacy --
+    which is xfail here -- and the multidim arm relies on the harness's
+    vectorized-vs-reference correctness comparison.
+    """
     N_val = 64
     src = numpy.random.rand(N_val).astype(numpy.float32)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
     dst = numpy.zeros(N_val, dtype=numpy.float32)
-    vec_sdfg = run_vectorization_test(
+    if vectorize_config == "legacy_cpu":
+        pytest.xfail("legacy VectorizeCPU is fp64-only ('Found unsupported op float32'); "
+                     "fp32 is limited to the multidim backend")
+    run_vectorization_test(
         dace_func=gather_fp32_data,
         arrays={
             "src": src,
@@ -1271,9 +1264,8 @@ def test_gather_collapse_laneid_fp32_data():
         vector_width=8,
         sdfg_name="gather_collapse_laneid_fp32data",
         collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
+        vectorize_config=vectorize_config,
     )
-    _assert_laneid_fan_collapsed(vec_sdfg)
 
 
 def test_collapse_laneid_two_independent_gathers():

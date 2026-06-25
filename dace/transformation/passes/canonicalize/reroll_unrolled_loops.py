@@ -116,7 +116,8 @@ class RerollUnrolledLoops(ppl.Pass):
         rerolled = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions(recursive=True)):
-                if isinstance(cfg, LoopRegion) and self._try_reroll(cfg):
+                if isinstance(cfg, LoopRegion) and (self._try_reroll(cfg)
+                                                    or self._try_reroll_accumulator_reduction(cfg)):
                     rerolled += 1
         return rerolled or None
 
@@ -214,6 +215,40 @@ class RerollUnrolledLoops(ppl.Pass):
         if len(expr.args) != 2:
             return None
         return self._ASSOC_SYMPY_KIND.get(type(expr).__name__)
+
+    def _is_transparent_spine(self, state: SDFGState, node) -> bool:
+        """Whether ``node`` carries a value through the reduction without itself
+        being a lane-unique computation or an associative merge op.
+
+        A manually-unrolled reduction (``acc += f(i) + f(i+g) + ...``; TSVC
+        ``s352`` dot, ``s31111`` sum) lowers to an SSA left-fold: associative
+        merge tasklets (``__out = __in1 + __in2``) interleaved with two kinds of
+        pass-through carriers that are reached by every lane but are NOT merges:
+
+        * a **transient AccessNode** -- the SSA value handed from one merge
+          tasklet to the next (``a_slice_b_slice_plus_...``, ``partial_v_k``);
+        * a single-input **pass-through tasklet** (``__out = __inp``) -- the
+          accumulator copy-back the frontend stages (``dot = __inp``).
+
+        Treating these as a transparent spine (rather than a disqualifying
+        non-associative merge) is what lets the chain collapse to lane 0.
+        """
+        if isinstance(node, nodes.AccessNode):
+            desc = state.sdfg.arrays.get(node.data)
+            return desc is not None and desc.transient
+        if isinstance(node, nodes.Tasklet):
+            code = node.code.as_string.strip()
+            if '=' not in code:
+                return False
+            lhs, rhs = code.split('=', 1)
+            if lhs.strip() != '__out':
+                return False
+            try:
+                expr = symbolic.pystr_to_symbolic(rhs.strip())
+            except Exception:
+                return False
+            return {str(s) for s in expr.free_symbols} == {'__inp'}
+        return False
 
     def _shared_nodes(self, state: SDFGState) -> Set:
         """Boundary access nodes of a state (external arrays + read-only sources).
@@ -394,6 +429,150 @@ class RerollUnrolledLoops(ppl.Pass):
         self._rewrite_step(loop, loop_var, g, m)
         return True
 
+    def _try_reroll_accumulator_reduction(self, loop: LoopRegion) -> bool:
+        """Re-roll a hand-unrolled *reduction* into a single-lane step-``g`` loop.
+
+        The lane-decomposition path (:meth:`_try_reroll`) cannot handle a manually
+        unrolled reduction (TSVC ``s352`` dot, ``s31111`` sum): the ``m`` lanes are
+        joined by an associative left-fold into one carried scalar accumulator, so
+        a bidirectional lane walk reaches every node from every lane (no separable
+        lane component). This matcher instead follows the fold dataflow with a
+        FORWARD-only reach from each lane's reads:
+
+        * a node reached forward from exactly one offset is that lane's private
+          computation (``s352``'s per-lane ``_Mult_`` ``a[i+k]*b[i+k]``);
+        * a node reached from >= 2 offsets is a fold node -- it must be an
+          associative merge tasklet of the single commutative fold op, or a
+          transparent spine carrier (SSA transient / ``__out = __inp`` copy-back).
+
+        Soundness: the loop must read each covered position exactly once
+        (``step == m*g``), write exactly one carried scalar accumulator (a pure
+        reduction with no other output), reduce with a commutative-associative op,
+        and have structurally identical lanes (same read arrays + same private
+        non-fold ops per offset). Keeping lane 0 and re-rolling to step ``g`` then
+        recomputes the identical reduction over every position. The GC-splice
+        rewrite drops the other lanes' reads, deletes their now-broken private ops,
+        and collapses each fold tasklet that lost a term to its surviving input.
+
+        :param loop: The candidate loop region.
+        :returns: ``True`` if it matched and was re-rolled.
+        """
+        loop_var = loop.loop_variable
+        if not loop_var:
+            return False
+        stride = loop_analysis.get_loop_stride(loop)
+        step = _const_int(stride) if stride is not None else None
+        if step is None or step < 2:
+            return False
+        states = self._body_states(loop)
+        if states is None or len(states) != 1:
+            return False
+        st = states[0]
+        # A pure in-state reduction: no per-lane interstate gather symbols.
+        if self._interstate_lane_symbols(loop, loop_var):
+            return False
+
+        # Lane offsets of the loop-dependent READ edges (src is an AccessNode).
+        per_lane_edges: Dict[int, List] = {}
+        for edge in st.edges():
+            if edge.data is None or not isinstance(edge.src, nodes.AccessNode):
+                continue
+            off, ok = self._edge_offset(edge.data.subset, loop_var, {})
+            if not ok:
+                return False
+            if off is not None:
+                per_lane_edges.setdefault(off, []).append(edge)
+        distinct = sorted(per_lane_edges)
+        m = len(distinct)
+        if m < 2 or distinct[0] != 0:
+            return False
+        g = distinct[1]
+        if g <= 0 or distinct != [j * g for j in range(m)]:
+            return False
+        # Contiguous, no-overlap coverage: each position read exactly once.
+        if step != m * g:
+            return False
+
+        # Exactly one carried scalar accumulator: a data name with both a source
+        # (in-degree 0) and a sink (out-degree 0) AccessNode in the state, scalar,
+        # and the loop's only sink -> the reduction has no other output.
+        sinks = [n for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.out_degree(n) == 0]
+        sources = {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) == 0}
+        if len(sinks) != 1 or sinks[0].data not in sources:
+            return False
+        acc_desc = st.sdfg.arrays.get(sinks[0].data)
+        if acc_desc is None or acc_desc.total_size != 1:
+            return False
+
+        # Forward reach: which offsets reach each node (out-edges only).
+        reached_by: Dict = {}
+        for d in distinct:
+            frontier = [e.dst for e in per_lane_edges[d]]
+            seen: Set = set()
+            while frontier:
+                n = frontier.pop()
+                if n in seen:
+                    continue
+                seen.add(n)
+                reached_by.setdefault(n, set()).add(d)
+                for e in st.out_edges(n):
+                    frontier.append(e.dst)
+
+        # Classify fold nodes (>=2 offsets): each must be an associative merge of
+        # ONE commutative op, or a transparent spine carrier.
+        fold_op: Optional[str] = None
+        for n, offs in reached_by.items():
+            if len(offs) < 2:
+                continue
+            op = self._associative_op_kind(n)
+            if op is None:
+                if self._is_transparent_spine(st, n):
+                    continue
+                return False
+            if fold_op is None:
+                fold_op = op
+            elif fold_op != op:
+                return False
+        if fold_op is None:
+            return False
+
+        # Per-offset lane signature: read arrays + private non-fold tasklet codes.
+        def _lane_sig(d: int) -> Tuple:
+            reads = sorted(e.src.data for e in per_lane_edges[d])
+            priv = sorted(n.code.as_string for n, offs in reached_by.items()
+                          if offs == {d} and isinstance(n, nodes.Tasklet) and self._associative_op_kind(n) != fold_op
+                          and not self._is_transparent_spine(st, n))
+            return (tuple(reads), tuple(priv))
+
+        sig0 = _lane_sig(0)
+        if not sig0[0] or any(_lane_sig(d) != sig0 for d in distinct[1:]):
+            return False
+
+        # Rewrite. Drop the other lanes' read edges (this also unhooks an
+        # edge-only lane, e.g. s31111's bare ``a[i + k]`` feeding the shared fold),
+        # then delete every node reached ONLY from dropped offsets -- the dropped
+        # lanes' private computation (s352's per-lane ``_Mult_`` and its product) --
+        # which is sound because such a node contributes to no surviving lane.
+        # Finally collapse each fold tasklet that lost a term to its one surviving
+        # input. Lane 0's private ops (reached from offset 0) and the carried
+        # accumulator spine are untouched.
+        drop_offsets = set(distinct[1:])
+        for d in distinct[1:]:
+            for edge in per_lane_edges[d]:
+                if edge in st.edges():
+                    st.remove_edge(edge)
+        for n in list(st.nodes()):
+            offs = reached_by.get(n)
+            if offs and offs <= drop_offsets:
+                st.remove_node(n)
+        self._collapse_merge_tree(st, {n for n in st.nodes() if self._associative_op_kind(n) == fold_op})
+        for n in list(st.nodes()):
+            if isinstance(n, nodes.AccessNode) and st.degree(n) == 0:
+                st.remove_node(n)
+
+        self._rewrite_step(loop, loop_var, g, m)
+        return True
+
     def _collapse_merge_tree(self, state: SDFGState, merges: Set) -> None:
         """Splice each surviving merge tasklet to passthrough its one live input.
 
@@ -467,16 +646,26 @@ class RerollUnrolledLoops(ppl.Pass):
     def _rewrite_step(self, loop: LoopRegion, loop_var: str, g: int, m: int) -> None:
         """Rewrite a step-``S`` loop to step ``g`` over the flattened range.
 
-        The original loop attains ``loop_var`` values ``init, ..., end`` and the
-        kept lane 0 sweeps positions ``init .. end + (m - 1) * g``. The re-rolled
-        loop steps by ``g`` with the exclusive bound ``end + m * g``.
+        The original loop runs ``loop_var = init, init + S, ..., last_i`` where
+        ``last_i`` is the LAST iteration value -- which is ``init + S *
+        floor((end - init) / S)``, NOT ``end`` itself when the range is not a
+        multiple of the step (``get_loop_end`` returns the largest *value* below
+        the bound, ignoring step alignment). Lane 0 of that last iteration sweeps
+        up to ``last_i + (m - 1) * g``, so the re-rolled step-``g`` loop's
+        exclusive bound is ``last_i + m * g``. Using ``end`` directly would
+        over-cover the unaligned tail by extra positions the original loop never
+        visits -- for a reduction that silently adds spurious terms (TSVC s352:
+        ``for i in range(0, LEN_1D - 4, 5)`` skips the final partial group).
 
         :param loop: The loop region to rewrite.
         :param loop_var: The loop variable name.
         :param g: The lane-offset spacing (the new step).
         :param m: The lane count.
         """
-        loop_end = loop_analysis.get_loop_end(loop)
-        new_excl = symbolic.pystr_to_symbolic(loop_end) + m * g
+        loop_end = symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(loop))
+        init = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(loop))
+        step = symbolic.pystr_to_symbolic(loop_analysis.get_loop_stride(loop))
+        last_i = init + step * symbolic.int_floor(loop_end - init, step)
+        new_excl = last_i + m * g
         loop.update_statement = dace.properties.CodeBlock(f"{loop_var} = {loop_var} + {g}")
         loop.loop_condition = dace.properties.CodeBlock(f"{loop_var} < ({symbolic.symstr(new_excl)})")

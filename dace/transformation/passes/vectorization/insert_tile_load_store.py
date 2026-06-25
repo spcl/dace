@@ -683,6 +683,18 @@ class InsertTileLoadStore(ppl.Pass):
                         const_sub = an_side_subset(s_edges[0], an, inner_sdfg)
                     except Exception:  # noqa: BLE001 -- exotic edge: fall back to descriptor-shape default
                         const_sub = None
+                    # ``stage_constant_access`` builds a SCALAR bridge -- valid only
+                    # for a genuinely single-element broadcast. A MULTI-element
+                    # iter-var-absent subset (e.g. a full-array ``a[0:N]`` boundary
+                    # buffer that coexists with the per-tile ``a[i:i+W]`` access in
+                    # the break-lifted / scan kernels s481/s482/s275) is NOT a
+                    # broadcast: collapsing it into one Scalar drops the array and
+                    # trips ``no_transient_scalar_stores``. Leave it for the plain-copy
+                    # path; the per-tile group is tile-loaded below. (No passing kernel
+                    # relies on multi-element const-staging -- that invariant forbids it.)
+                    import dace.symbolic as _sym
+                    if const_sub is not None and any(bool(_sym.simplify(sz - 1) != 0) for sz in const_sub.size()):
+                        continue
                     bridge_name = stage_constant_access(inner_state,
                                                         an,
                                                         name_hint=f"{an.data}_const",

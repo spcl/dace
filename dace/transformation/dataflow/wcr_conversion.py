@@ -3,13 +3,93 @@
 import ast
 import copy
 import re
-import copy
-from dace import nodes, dtypes, Memlet, data
+from typing import List
+import sympy
+from dace import nodes, dtypes, Memlet, data, symbolic
 from dace.frontend.python import astutils
 from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
 from dace import Memlet, SDFG, SDFGState
 from dace.sdfg.propagation import propagate_memlets_state
+
+
+def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> List[str]:
+    """Iteration parameters of every Map enclosing ``node`` (innermost outward)."""
+    params: List[str] = []
+    scope = state.scope_dict()
+    cur = scope.get(node)
+    while cur is not None:
+        if isinstance(cur, nodes.MapEntry):
+            params.extend(cur.map.params)
+        cur = scope.get(cur)
+    return params
+
+
+def _wcr_write_is_injective(write_subset, params: List[str]) -> bool:
+    """Whether a single-iteration write at ``write_subset`` lands on a DISTINCT
+    element for every distinct value of the enclosing-map ``params`` -- i.e. the
+    write is conflict-free, so its WCR can be dropped for an explicit
+    read-modify-write without introducing a cross-lane race.
+
+    Conservative by design: only the single-map-parameter affine case is decided
+    (the shape ``LoopToMap`` produces for in-place updates -- ``a[c*i + d]``).
+    Injective iff some dimension is ``c*i + d`` with ``c`` a NONZERO numeric
+    constant and no loop-varying multi-element range exists. A genuine reduction
+    (constant target, ``c == 0``) is NOT injective; a symbolic stride (``c`` not
+    a known-nonzero constant, e.g. ``i*inc``) is left to the guarded
+    parallelization passes. Anything else returns ``False`` (WCR kept).
+    """
+    if len(params) != 1:
+        return False
+    p = symbolic.pystr_to_symbolic(params[0])
+    monotone_dim = False
+    for (b, e, _step) in write_subset.ranges:
+        be = symbolic.pystr_to_symbolic(b)
+        en = symbolic.pystr_to_symbolic(e)
+        depends = p in be.free_symbols or p in en.free_symbols
+        if be != en:
+            # Multi-element range in this dim: if it varies with the loop var the
+            # per-iteration windows may overlap -> not provably injective.
+            if depends:
+                return False
+            continue
+        if depends:
+            slope = sympy.diff(be, p)
+            if slope.is_number and slope != 0:
+                monotone_dim = True
+            else:
+                # Non-affine, or a symbolic slope we cannot prove nonzero.
+                return False
+    return monotone_dim
+
+
+def _wcr_augassign_body(wcr_str: str) -> str:
+    """Render a binary WCR ``lambda <acc>, <new>: <body>`` as a tasklet
+    expression with the accumulator (FIRST lambda argument -- the existing
+    destination value) bound to ``__in1`` and the incoming value (SECOND
+    argument) bound to ``__in2``.
+
+    Renames by ARGUMENT NAME, not by operand position, so the result is correct
+    regardless of how the body is written (``a - b`` vs ``b - a``). Binding by
+    position -- as the prior code did via ``wcr.left``/``wcr.right`` -- silently
+    swapped operands for non-commutative ops. ``NotImplementedError`` for a
+    non-``BinOp`` body (e.g. ``max(a, b)``), preserving the prior contract.
+    """
+    lam = ast.parse(wcr_str).body[0].value
+    if not isinstance(lam.body, ast.BinOp) or len(lam.args.args) != 2:
+        raise NotImplementedError
+    acc_name, new_name = (a.arg for a in lam.args.args)
+
+    class _Rename(ast.NodeTransformer):
+
+        def visit_Name(self, node):
+            if node.id == acc_name:
+                node.id = '__in1'
+            elif node.id == new_name:
+                node.id = '__in2'
+            return node
+
+    return astutils.unparse(_Rename().visit(lam.body))
 
 
 class AugAssignToWCR(transformation.SingleStateTransformation):
@@ -528,41 +608,63 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # copy with no producing tasklet (e.g. canonicalisation lowers an
             # in-place ``a[i] = a[i] + b[i]`` to ``_wcr_priv -(+=)-> a``). Converted
             # to the same explicit read-modify-write tasklet as the tasklet-sourced
-            # forms so no stray WCR survives (it has the identical safety contract:
-            # the caller applies this only where the write is non-conflicting, i.e.
-            # genuine reductions have already been lifted to ``Reduce``).
+            # forms so no stray WCR survives. Soundness is enforced by
+            # ``can_be_applied`` (the write must be injective over any enclosing
+            # parallel map), not by trusting the caller.
             sdutil.node_path_graph(cls.inp, cls.output),
+            # ``AccessNode -[wcr]-> MapExit -> AccessNode``: the privatized-source
+            # variant of the previous shape but resolved AT the map boundary
+            # (``LoopToMap`` lowers an in-place ``a[i] = a[i] - x`` to
+            # ``_wcr_priv -(a-b)-> MapExit -> a``). The third pattern misses it
+            # because the MapExit sits between the two AccessNodes.
+            sdutil.node_path_graph(cls.inp, cls.map_exit, cls.output),
         ]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def _matched_wcr_edge(self, graph, expr_index):
+        """The single matched WCR edge for ``expr_index``, or ``None``."""
         if expr_index == 0:
             edges = graph.edges_between(self.tasklet, self.output)
         elif expr_index == 1:
             edges = graph.edges_between(self.tasklet, self.map_exit)
-        else:
+        elif expr_index == 2:
             edges = graph.edges_between(self.inp, self.output)
-        if len(edges) != 1:
-            return False
-        if edges[0].data.wcr is None:
+        else:
+            edges = graph.edges_between(self.inp, self.map_exit)
+        if len(edges) != 1 or edges[0].data.wcr is None:
+            return None
+        return edges[0]
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        edge = self._matched_wcr_edge(graph, expr_index)
+        if edge is None:
             return False
 
         # If the access subset on the WCR edge is overapproximated (i.e., the access may be dynamic), we do not support
         # swapping to an augmented assignment pattern with this transformation.
-        if edges[0].data.subset.num_elements() > edges[0].data.volume or edges[0].data.dynamic is True:
+        if edge.data.subset.num_elements() > edge.data.volume or edge.data.dynamic is True:
+            return False
+
+        # Soundness: dropping the WCR for an explicit read-modify-write is only
+        # safe where the write is conflict-free. In a sequential context (no
+        # enclosing Map) that always holds; inside a parallel Map it requires the
+        # write subset to be injective over the map parameters. A genuine
+        # reduction (constant target) is NOT injective and keeps its WCR (lifted
+        # to a ``Reduce`` libnode / OMP-reduction codegen elsewhere); a symbolic
+        # stride is left to the guarded parallelization passes.
+        params = _enclosing_map_params(graph, edge.src)
+        if params and not _wcr_write_is_injective(edge.data.subset, params):
             return False
 
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
+        # Operand order throughout follows the WCR convention ``lambda acc, new``:
+        # ``__in1`` = the existing destination value (read back), ``__in2`` = the
+        # incoming value the edge writes. ``_wcr_augassign_body`` binds those by
+        # argument name so non-commutative ops (e.g. ``a - b``) stay correct.
         if self.expr_index == 0:
             edge = state.edges_between(self.tasklet, self.output)[0]
-            wcr = ast.parse(edge.data.wcr).body[0].value.body
-            if isinstance(wcr, ast.BinOp):
-                wcr.left.id = '__in1'
-                wcr.right.id = '__in2'
-                code = astutils.unparse(wcr)
-            else:
-                raise NotImplementedError
+            code = _wcr_augassign_body(edge.data.wcr)
             edge.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
@@ -570,20 +672,14 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                                                    sdfg.arrays[self.output.data].dtype,
                                                    transient=True,
                                                    find_new_name=True)
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in1', Memlet.from_array(scal_name, scal_desc))
-            state.add_edge(in_access, None, new_tasklet, '__in2', copy.deepcopy(edge.data))
+            state.add_edge(in_access, None, new_tasklet, '__in1', copy.deepcopy(edge.data))
+            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
             state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, edge.data)
             state.remove_edge(edge)
         elif self.expr_index == 1:
             edge = state.edges_between(self.tasklet, self.map_exit)[0]
             map_entry = state.entry_node(self.map_exit)
-            wcr = ast.parse(edge.data.wcr).body[0].value.body
-            if isinstance(wcr, ast.BinOp):
-                wcr.left.id = '__in1'
-                wcr.right.id = '__in2'
-                code = astutils.unparse(wcr)
-            else:
-                raise NotImplementedError
+            code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
@@ -592,24 +688,17 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                                                    sdfg.arrays[self.output.data].dtype,
                                                    transient=True,
                                                    find_new_name=True)
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in1', Memlet.from_array(scal_name, scal_desc))
-            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in2')
+            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
+            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
-        else:
+        elif self.expr_index == 2:
             # AccessNode(inp) -[wcr]-> AccessNode(output) copy. Materialise the
-            # read-modify-write explicitly: ``output = inp <op> output`` (read the
-            # destination back, drop the WCR). ``inp`` is the incoming value (the
-            # ``new`` operand, as the tasklet output is in expr 0); the read-back of
-            # ``output`` is the existing (``old``) operand.
+            # read-modify-write explicitly: ``output = output <op> inp`` (read the
+            # destination back, drop the WCR). ``inp`` is the incoming value; the
+            # read-back of ``output`` is the existing (accumulator) operand.
             edge = state.edges_between(self.inp, self.output)[0]
-            wcr = ast.parse(edge.data.wcr).body[0].value.body
-            if isinstance(wcr, ast.BinOp):
-                wcr.left.id = '__in1'
-                wcr.right.id = '__in2'
-                code = astutils.unparse(wcr)
-            else:
-                raise NotImplementedError
+            code = _wcr_augassign_body(edge.data.wcr)
             # Resolve which side of the (possibly AN->AN) memlet addresses the
             # destination vs the source.
             m = edge.data
@@ -624,10 +713,48 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # Each memlet must own its subset object (DaCe rejects shared subset
             # references); ``in_subset`` / ``out_subset`` may alias ``m.subset``
             # when ``other_subset`` is None, and ``out_subset`` is used twice.
-            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in1',
-                           Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset)))
-            state.add_edge(read_back, None, new_tasklet, '__in2',
+            state.add_edge(read_back, None, new_tasklet, '__in1',
                            Memlet(data=self.output.data, subset=copy.deepcopy(out_subset)))
+            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2',
+                           Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset)))
             state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn,
                            Memlet(data=self.output.data, subset=copy.deepcopy(out_subset)))
             state.remove_edge(edge)
+        else:
+            # AccessNode(inp) -[wcr]-> MapExit -> AccessNode(output): the privatized
+            # source resolved at the map boundary. Mirror expr 1 but read the
+            # incoming operand from ``inp`` (an AccessNode) rather than a tasklet:
+            # ``output = output <op> inp``, reading the destination back through the
+            # map entry and dropping the WCR.
+            edge = state.edges_between(self.inp, self.map_exit)[0]
+            map_entry = state.entry_node(self.map_exit)
+            code = _wcr_augassign_body(edge.data.wcr)
+            for e in state.memlet_path(edge):
+                e.data.wcr = None
+            in_access = state.add_access(self.output.data)
+            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
+            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2',
+                           Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]))
+            state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
+            state.remove_edge(edge)
+
+
+class WCRToAugAssignInjectiveMap(WCRToAugAssign):
+    """:class:`WCRToAugAssign` restricted to a WCR write that is injective over an
+    ENCLOSING PARALLEL MAP -- the spurious-WCR cleanup run after ``LoopToMap``.
+
+    The base transform also normalizes sequential / no-map WCRs (so every
+    reduction reaches ``loop_to_reduce`` in one shape); this subclass additionally
+    requires an enclosing map, so it never touches a reduction writeback
+    (``_priv_sum[0] += ...`` -- kept for the reduction codegen) or a scatter. Only
+    an in-place ``a[c*i + d]`` update with a nonzero constant stride is converted,
+    which is exactly the spurious WCR that blocks vectorization of the map.
+    """
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+            return False
+        edge = self._matched_wcr_edge(graph, expr_index)
+        params = _enclosing_map_params(graph, edge.src)
+        return bool(params) and _wcr_write_is_injective(edge.data.subset, params)

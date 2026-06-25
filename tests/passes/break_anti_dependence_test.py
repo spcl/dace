@@ -139,6 +139,43 @@ def test_break_anti_dependence_symbolic_positive_offset():
     assert np.allclose(a_run, ref_a)
 
 
+def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
+    """The runtime positive guard for ``a[i] = a[i + inc] + b[i]`` (TSVC s175) must
+    survive the FULL canonicalize pipeline -- a connector-less side-effect tasklet
+    is otherwise pruned by dead-code elimination, silently restoring the unsound
+    assume-nonneg parallelization. Runs with a valid ``inc > 0`` (the trap must not
+    fire) and checks the snapshot-renamed parallel result."""
+    from dace.transformation.passes.canonicalize import canonicalize
+    inc = dace.symbol('inc')
+
+    @dace.program
+    def s175_like(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - inc):
+            a[i] = a[i + inc] + b[i]
+
+    sdfg = s175_like.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+
+    guards = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.Tasklet) and '__builtin_trap' in (n.code.as_string or '')
+    ]
+    assert len(guards) >= 1, 'the positive-offset guard must survive full canonicalize'
+    assert all(g.side_effects for g in guards), 'guard must be side-effecting so DCE keeps it'
+    assert any('inc' in g.code.as_string for g in guards)
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, 'the read-ahead loop should be parallelized'
+
+    n = 50
+    rng = np.random.default_rng(1)
+    a0, b = rng.standard_normal(n), rng.standard_normal(n)
+    got = a0.copy()
+    sdfg(a=got, b=b, N=n, inc=1)  # valid inc>0: trap does not fire
+    exp = a0.copy()
+    for i in range(n - 1):
+        exp[i] = a0[i + 1] + b[i]  # snapshot read of the ORIGINAL a (read-ahead)
+    assert np.allclose(got, exp)
+
+
 def test_break_anti_dependence_refuses_symbolic_difference_offset():
     """``a[i] = a[i + K - M] + b[i]`` -- the carried offset ``K - M`` is a difference
     of two (nonnegative) symbols whose sign is undecidable even under the

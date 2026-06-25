@@ -547,6 +547,9 @@ class BreakAntiDependence(ppl.Pass):
             code=code,
             language=dtypes.Language.CPP,
         )
+        # No output connector, so mark side-effecting to survive dead-code
+        # elimination (mirrors :meth:`_emit_positive_guard`).
+        tlet.side_effects = True
         pre.add_edge(pre.add_read(arr_name), None, tlet, conn, Memlet.from_array(arr_name, desc))
 
     def _emit_positive_guard(self, pre, expr) -> None:
@@ -579,7 +582,10 @@ class BreakAntiDependence(ppl.Pass):
             code=code,
             language=dtypes.Language.CPP,
         )
-        # Carry no edges -- the tasklet is purely a side-effect node.
+        # Carry no edges -- the tasklet is purely a side-effect node. Mark it
+        # side-effecting so dead-code elimination cannot prune the connector-less
+        # guard (which would silently restore the unsound assume-nonneg behaviour).
+        guard.side_effects = True
         return guard
 
     def _snapshot_and_redirect(self, loop: LoopRegion, name: str, sdfg: SDFG, guards=None, array_guards=None):

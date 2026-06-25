@@ -867,7 +867,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
           ``_o = ITE(_cond, <expr>, _e)`` (t_arm is a literal/Symbol).
         """
         n_in = len(tasklet.in_connectors)
-        if n_in not in (2, 3) or len(tasklet.out_connectors) != 1:
+        # n_in == 1: ``ITE(cond, <sym>, <sym>)`` -- only the cond is a connector,
+        # both arms are Symbols/literals (the find-first phi
+        # ``ITE(pred, _loop_it_0, LEN_1D)``). n_in in (2, 3): one or zero Symbol arms.
+        if n_in not in (1, 2, 3) or len(tasklet.out_connectors) != 1:
             return None
         body = tasklet.code.as_string
         body = body.strip().rstrip(";").strip()
@@ -906,6 +909,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     if not is_t_conn and is_e_conn:
                         # t is Symbol/literal.
                         return out_conn, cond_arg, t_arg, e_arg, True, False
+                    # BOTH arms Symbol/literal -- the find-first phi shape
+                    # ``ITE(cond, _loop_it_0, LEN_1D)`` (a lane-id index vs a
+                    # sentinel). ``_convert_ite`` lowers each arm independently
+                    # via ``_plan_arm`` (lane-id Symbol -> per-lane index tile,
+                    # invariant Symbol -> inline broadcast), so both-symbol is fine.
+                    return out_conn, cond_arg, t_arg, e_arg, True, True
         return None
 
     def _split_top_level_commas(self, s: str, expected_parts: int) -> Optional[list]:
@@ -1238,19 +1247,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 inner *= widths[q]
             parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
         flat = " + ".join(parts) if parts else "0"
-        # Reference the source by its descriptor kind -- NO C-style cast (user
-        # direction 2026-06-15: "we should never have c-type casts"). This runs
-        # in the *pass* (before downstream widening/staging finalises connector
-        # shapes), so the descriptor kind -- not the eventual codegen ABI -- is
-        # what is reliable here: a ``dace.data.Scalar`` is passed by value
-        # (``T _in``) and referenced bare; any ``Array`` source is staged to a
-        # pointer connector (``T* _in``), so its element 0 is broadcast to every
-        # lane via ``_in[0]`` -- a genuine pointer index (the connector is a
-        # pointer), not a by-value ``[0]``. The destination tile's element type
-        # drives the implicit conversion -- no cast needed.
-        import dace.data as _dd
-        src_desc = sdfg.arrays.get(src_edge.data.data)
-        src_ref = "_in" if isinstance(src_desc, _dd.Scalar) else "_in[0]"
+        # Reference the source by its connector ABI -- NO C-style cast (user
+        # direction 2026-06-15: "we should never have c-type casts"). The ABI is
+        # decided by the incoming memlet's element COUNT, not the descriptor kind:
+        # DaCe codegen declares a SINGLE-element read (whether from a ``Scalar`` or
+        # from a length-1 ``Array`` sliced at ``[0]``) as a by-value scalar
+        # connector (``T _in``), referenced bare; only a genuine multi-element
+        # source is staged to a pointer connector (``T* _in``), whose element 0 is
+        # read via ``_in[0]``. The destination tile's element type drives the
+        # implicit conversion -- no cast needed.
+        src_ref = "_in" if src_edge.data.subset.num_elements() == 1 else "_in[0]"
         code_lines = []
         for d in range(K):
             # constexpr lane-loop bound + full-unroll hint: every tile dim has a

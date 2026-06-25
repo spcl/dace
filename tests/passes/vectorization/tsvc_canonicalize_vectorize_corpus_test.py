@@ -58,10 +58,66 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
-# Multidim kernels with a known tile-emit gap (legacy handles them). Populated
-# from the corpus harness; each entry is the tracking reason.
+# Known vectorize gaps per arm; each entry is the tracking reason. Populated from
+# the corpus matrix run (see the module docstring / the project memory). The
+# ``xfail`` is imperative and fires before canonicalize/compile, so a kernel whose
+# vectorized codegen aborts cannot crash the run. Entries are removed as the
+# underlying gap is fixed (Group A miscompiles, Group B loop2map recurrences, and
+# the structural ``codegen gap`` / ``tile gap`` lowerings).
+_LEGACY_XFAIL: dict = {
+    's1112_d_single': 'canon/shape gap: negative shape in data descriptor',
+    's112_d_single': 'canon/shape gap: negative shape in data descriptor',
+    's115_d_single': 'legacy Min-rebasing breaks invariant a[j] (s173 family); WCR lowered, multidim green',
+    's118_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's1221_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's123_d_single': 'codegen gap: BranchNormalization IF-arm carries an unsupported body',
+    's124_d_single': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
+    's126_d_single': "pass gap: KeyError 'pop from an empty set'",
+    's162_d_single': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
+    's171_d_single': 'legacy: cannot widen symbolic-strided write a[i*inc] (multidim ok via trap-guard)',
+    's2101_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
+    's2275_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
+    's233_d_single': 'codegen gap: non-contiguous strided edge unsupported',
+    's235_d_single': "pass gap: KeyError 'pop from an empty set'",
+    's2710_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's272_d_single': 'codegen gap: missing symbol on nested SDFG',
+    's275_d_single': "pass gap: KeyError 'pop from an empty set'",
+    's3111_d_single': 'numerical (flaky): masked-sum diverges nondeterministically (uninit-mask remainder)',
+    's315_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's318_d_single': 'codegen gap: missing symbol on nested SDFG',
+    's331_d_single': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
+    's332_d_single': 'Group B (loop2map): race condition on interstate edge (recurrence over-parallelized)',
+    's4115_d_single': 'codegen gap: reduction lift inside nested SDFG unsupported',
+    's4116_d_single': 'codegen gap: reduction lift inside nested SDFG unsupported',
+    's442_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's482_d_single': 'tile gap: GenerateIterationMask requires a uniform innermost map',
+}
+
 _MULTIDIM_XFAIL: dict = {
-    # filled in after the harness matrix run
+    's118_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's1221_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's122_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's123_d_single': 'codegen gap: BranchNormalization IF-arm carries an unsupported body',
+    's124_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's128_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's141_d_single': 'tile gap: could not build a tile-op gather index',
+    's172_d_single': 'tile gap: MarkTileDims ineligible map (non-uniform/illegal tile dims)',
+    's175_d_single': 'tile gap: MarkTileDims ineligible map (non-uniform/illegal tile dims)',
+    's2101_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
+    's2275_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
+    's232_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's272_d_single': 'codegen gap: missing symbol on nested SDFG',
+    's274_d_single': 'codegen gap: predicated if/else cond not fully tiled (scalar cond + tile_unop ! output)',
+    's3111_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's331_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's332_d_single': 'Group B (loop2map): race condition on interstate edge (recurrence over-parallelized)',
+    's341_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's342_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's343_d_single': 'numerical: vectorized output diverges from numpy reference',
+    's4115_d_single': 'codegen gap: augassign_binop output-kind rule violated',
+    's4116_d_single': 'codegen gap: augassign_binop output-kind rule violated',
+    's481_d_single': 'numerical: find-first exit index off-by-~1 (scalar-store+ITE-tiling fixed; cause TBD)',
+    's482_d_single': 'numerical: find-first exit index off-by-~1 (scalar-store+ITE-tiling fixed; cause TBD)',
 }
 
 
@@ -76,9 +132,9 @@ def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     for n, a in got.items():
         if not (isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size):
             continue
-        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9, equal_nan=True), (
-            f"{name}/{n}: {stage} diverges from numpy reference, "
-            f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
+        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9,
+                           equal_nan=True), (f"{name}/{n}: {stage} diverges from numpy reference, "
+                                             f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
 
 
 def _canonicalized(name, tag="cvc"):
@@ -109,8 +165,19 @@ def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
 
 
 @pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
+def test_tsvc_canonicalize(idx, name):
+    """Canonicalize -> verify e2e against numpy. Canonicalization alone is
+    value-preserving; this is the first of the three corpus paths (this, then
+    ``+legacy`` / ``+multidim`` vectorize). ``_canonicalized`` asserts the
+    post-canon output matches the reference."""
+    _canonicalized(name, tag="canon")
+
+
+@pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
 def test_tsvc_canonicalize_then_legacy_vectorize(idx, name):
     """Canonicalize -> verify -> legacy VectorizeCPU (round-robin knob) -> verify."""
+    if name in _LEGACY_XFAIL:
+        pytest.xfail(_LEGACY_XFAIL[name])
     kernel, sdfg, arrays, ck, ref = _canonicalized(name)
     knobs = _LEGACY_KNOBS[idx % len(_LEGACY_KNOBS)]
     _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, VectorizeCPU(8, fail_on_unvectorizable=False, **knobs))

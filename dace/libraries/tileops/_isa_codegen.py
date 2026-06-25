@@ -187,21 +187,22 @@ def _operand_exprs(node, conns):
 def _scalar_ref(conn: str, desc, subset) -> str:
     """C++ reference for a Scalar/broadcast operand connector.
 
-    DaCe passes a tasklet input connector by value (``T conn``) for a true
-    :class:`dace.data.Scalar` and for a single-element access into a larger array
-    (``a[j]`` -> ``double conn = a[j]``); only a genuine length-1 *array*
-    connector is passed as a pointer (``T* conn``) and must be dereferenced
-    ``conn[0]``. The earlier code dereferenced every non-Scalar source, which
-    faulted on the ``a[j]`` loop-invariant broadcast (``conn[0]`` on a scalar).
+    DaCe passes a tasklet input connector by value (``T conn``) for ANY
+    single-element access -- a true :class:`dace.data.Scalar`, a single-element
+    read of a larger array (``a[j]`` -> ``double conn = a[j]``), AND a length-1
+    array sliced at its sole element (``a[0]`` -> ``bool conn = a[0]``). Only a
+    genuine MULTI-element source is staged to a pointer connector (``T* conn``)
+    and must be dereferenced ``conn[0]``. The discriminator is the access's
+    element COUNT, not the descriptor shape: a length-1 array read at ``[0]`` is
+    by value, so keying on ``isinstance(desc, Array)`` faulted (``conn[0]`` on a
+    by-value scalar).
 
     :param conn: Connector name.
-    :param desc: Source array/scalar descriptor.
+    :param desc: Source array/scalar descriptor (unused; kept for call-site symmetry).
     :param subset: The connector edge's subset (the access into ``desc``).
-    :returns: ``conn`` (by value) or ``conn[0]`` (length-1 array pointer).
+    :returns: ``conn`` (by value) or ``conn[0]`` (multi-element array pointer).
     """
-    is_len1_array = (isinstance(desc, dace.data.Array)
-                     and all(bool(dace.symbolic.simplify(s == 1)) for s in desc.shape))
-    return f"{conn}[0]" if is_len1_array else conn
+    return conn if subset.num_elements() == 1 else f"{conn}[0]"
 
 
 def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
@@ -355,14 +356,43 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
     vlen = _require_k1(node)
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_o")
     cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_mask")
-    call = (f"dace::tileops::tile_ite<{out_dtype}, {cond_dtype}, {vlen}, false, false, false>"
-            f"(_o, _mask, _t, _e, nullptr);")
+    in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
+    pre = []
+
+    def arm(kind, conn, expr):
+        """An arm lowers to a per-lane Tile read (``Broadcast=false``, via its
+        connector) or a length-1 broadcast buffer (``Broadcast=true``) for a
+        Scalar source / inline Symbol expression -- mirrors ``make_binop_tasklet``.
+        Returns ``(broadcast_flag, ptr_expr)``."""
+        if kind == _TILE:
+            return "false", conn
+        if kind == _SYMBOL:
+            val = f"({out_dtype})({expr})"
+        else:  # _SCALAR
+            desc = parent_sdfg.arrays[in_e[conn].data.data]
+            val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
+        buf = f"_bc{conn}"
+        pre.append(f"{out_dtype} {buf}[1] = {{ {val} }};")
+        return "true", buf
+
+    t_bcast, t_ptr = arm(node.kind_t, "_t", node.expr_t)
+    e_bcast, e_ptr = arm(node.kind_e, "_e", node.expr_e)
+    call = (f"dace::tileops::tile_ite<{out_dtype}, {cond_dtype}, {vlen}, "
+            f"{t_bcast}, {e_bcast}, false>(_o, _mask, {t_ptr}, {e_ptr}, nullptr);")
+    # A Symbol arm embeds its expression inline (no connector); only Tile / Scalar
+    # arms read through a connector. ``_mask`` is always a connector (the select
+    # predicate is materialised to a tile by ``_convert_ite``).
+    inputs = {"_mask"}
+    if node.kind_t in (_TILE, _SCALAR):
+        inputs.add("_t")
+    if node.kind_e in (_TILE, _SCALAR):
+        inputs.add("_e")
     return nodes.Tasklet(
         label=f"{node.label}_{suffix}",
         inputs={c: None
-                for c in ("_mask", "_t", "_e")},
+                for c in inputs},
         outputs={"_o": None},
-        code=call,
+        code="\n".join(pre + [call]),
         language=dace.dtypes.Language.CPP,
     )
 
@@ -510,6 +540,9 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     # ``replicate_factor_per_dim[d] > 1`` (e.g. ``c[i // 2]`` -> factor 2 means
     # lanes 0,1 share c[i//2], ...), the intrinsic produces wrong values. Fall
     # back to the pure expansion (``src[(__l/replicate) * stride]`` per lane).
+    # A non-dividing factor (``c[i // 3]`` with ``W % 3 != 0``, or a symbolic
+    # divisor) likewise routes here: ``_has_replicate_gt1`` treats both as >1,
+    # and the pure expansion emits the phase-aware per-lane index.
     if _has_replicate_gt1(node):
         from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
         return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)

@@ -1675,13 +1675,11 @@ def _composite_redirect_carrier_to_delta_buf(state: SDFGState, info: _CompositeB
         # Move every in-edge to the new AN with a re-subset memlet.
         for e in list(state.in_edges(an)):
             state.remove_edge(e)
-            state.add_edge(e.src, e.src_conn, new_an, None, mm.Memlet(data=delta_buf,
-                                                                      subset=copy.deepcopy(new_subset)))
+            state.add_edge(e.src, e.src_conn, new_an, None, mm.Memlet(data=delta_buf, subset=copy.deepcopy(new_subset)))
         # Move every out-edge from the new AN with a re-subset memlet.
         for e in list(state.out_edges(an)):
             state.remove_edge(e)
-            state.add_edge(new_an, None, e.dst, e.dst_conn, mm.Memlet(data=delta_buf,
-                                                                      subset=copy.deepcopy(new_subset)))
+            state.add_edge(new_an, None, e.dst, e.dst_conn, mm.Memlet(data=delta_buf, subset=copy.deepcopy(new_subset)))
         state.remove_node(an)
 
 
@@ -2952,9 +2950,10 @@ def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta
         mm.Memlet(data=info.out_name,
                   subset=subsets.Range([(seed_axis_expr, seed_axis_expr, 1)]),
                   other_subset=subsets.Range([(0, 0, 1)])))
-    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name, subset=subsets.Range([(0, 0, 1)])))
-    state.add_edge(delta_read, None, node, INPUT_CONNECTOR_NAME, mm.Memlet(data=delta_buf,
-                                                               subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name,
+                                                                       subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(delta_read, None, node, INPUT_CONNECTOR_NAME,
+                   mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
     state.add_edge(node, OUTPUT_CONNECTOR_NAME, out_write, None,
                    mm.Memlet(data=info.out_name, subset=subsets.Range([(write_start, write_end, 1)])))
 
@@ -3026,35 +3025,48 @@ def _find_carried_write_an(state: SDFGState, name: str) -> Optional[nodes.Access
 
 
 def _disconnect_carry_chain(state: SDFGState, tasklet: nodes.Tasklet, conn: str, anchor: nodes.AccessNode):
-    """Remove the tasklet's carry-input edge and the slice-copy intermediate chain
-    that fed it. Transient intermediates that become isolated are dropped. The
-    original carry-source ``out`` AccessNode in the body state is ALSO dropped if
-    it ends up isolated -- the post-loop seed-add reads from ``out`` in its own
-    state, so the body-state read AN is no longer needed.
+    """Remove the tasklet's carry-input edge and the now-dead chain that fed it.
+
+    The feeding chain is either a pure slice-copy (``out_read -> tmp ->`` carry)
+    or a frontend copy tasklet that materialises the carry element into a scalar
+    (``a_index = a[i - 1]`` -- the TSVC s242 family). Both become dead once the
+    carry edge is severed: the post-loop ``Scan`` supplies the recurrence carry
+    and the seed-add reads ``out`` from its own state, so nothing in the body
+    still needs the per-iteration carry read. The remaining ``a_index = a[i - 1]``
+    is an array->scalar read on a loop-varying subset, which the vectorizer
+    cannot lower (``SCALAR_ARRAY_ASSIGNMENT``) -- leaving it dead blocks the
+    otherwise-parallel delta-build Map from vectorizing.
+
+    Walk backward from ``anchor`` removing every node that no longer has
+    consumers, recursing into its producers. A node is safe to drop when its
+    out-degree is 0 and it is a ``Tasklet``, a transient AccessNode (a dead
+    transient write), or an isolated non-transient read AccessNode -- never a
+    live write to a non-transient array, nor a node still read elsewhere.
     """
     if conn in tasklet.in_connectors:
         for e in list(state.in_edges(tasklet)):
             if e.dst_conn == conn:
                 state.remove_edge(e)
         tasklet.remove_in_connector(conn)
-    # Walk backward from ``anchor`` (the AN the carry edge entered), pruning every
-    # ancestor that becomes isolated (in+out degree == 0). The walk stops once it
-    # finds a node with remaining incident edges (still in use elsewhere).
-    cur = anchor
-    while isinstance(cur, nodes.AccessNode) and cur in state.nodes():
-        if state.in_degree(cur) + state.out_degree(cur) != 0:
-            # Still in use (e.g. some other in-loop reader of ``out``); stop here.
-            break
-        upstream = None
-        ins = list(state.in_edges(cur))
-        if len(ins) == 1 and isinstance(ins[0].src, nodes.AccessNode):
-            upstream = ins[0].src
-        for ie in ins:
+    worklist = [anchor]
+    while worklist:
+        cur = worklist.pop()
+        if cur not in state.nodes() or state.out_degree(cur) != 0:
+            # Gone already, or still consumed elsewhere (e.g. another reader of
+            # ``out``, or the carry source also feeding the seed read).
+            continue
+        if isinstance(cur, nodes.AccessNode):
+            desc = state.sdfg.arrays.get(cur.data)
+            if (desc is None or not desc.transient) and state.in_degree(cur) != 0:
+                # A live write to a non-transient array -- never drop.
+                continue
+        elif not isinstance(cur, nodes.Tasklet):
+            continue
+        producers = [e.src for e in state.in_edges(cur)]
+        for ie in list(state.in_edges(cur)):
             state.remove_edge(ie)
         state.remove_node(cur)
-        if upstream is None:
-            break
-        cur = upstream
+        worklist.extend(producers)
 
 
 def _collect_output_chain(state: SDFGState, tasklet: nodes.Tasklet, out_conn: str) -> List[nodes.AccessNode]:
@@ -3093,8 +3105,10 @@ def _emit_scan(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, scan_b
     node = Scan(name=f'{state.label}_op', op=info.op, exclusive=False)
     node.stride = info.scan_stride
     state.add_node(node)
-    state.add_edge(r, None, node, INPUT_CONNECTOR_NAME, mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, w, None, mm.Memlet(data=scan_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(r, None, node, INPUT_CONNECTOR_NAME,
+                   mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, w, None,
+                   mm.Memlet(data=scan_buf, subset=subsets.Range([(0, trip - 1, 1)])))
 
 
 def _emit_seed_add(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: str, trip: Any):
@@ -3285,11 +3299,12 @@ def _emit_scalar_carry_scan(state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan
     state.add_edge(
         acc_read, None, seed_an, None,
         mm.Memlet(data=info.acc_name, subset=subsets.Range([(0, 0, 1)]), other_subset=subsets.Range([(0, 0, 1)])))
-    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name, subset=subsets.Range([(0, 0, 1)])))
-    state.add_edge(delta_read, None, node, INPUT_CONNECTOR_NAME, mm.Memlet(data=delta_buf,
-                                                               subset=subsets.Range([(0, trip - 1, 1)])))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, scan_write, None, mm.Memlet(data=scan_buf,
-                                                                subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name,
+                                                                       subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(delta_read, None, node, INPUT_CONNECTOR_NAME,
+                   mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, scan_write, None,
+                   mm.Memlet(data=scan_buf, subset=subsets.Range([(0, trip - 1, 1)])))
 
 
 def _emit_scalar_carry_out_write(state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan, scan_buf: str, trip: Any):

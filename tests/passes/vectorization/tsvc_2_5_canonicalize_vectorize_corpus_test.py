@@ -73,8 +73,47 @@ _MULTIDIM_KNOBS = [
 
 # Kernels with a known vectorize gap; each entry is the tracking reason. Filled
 # in after the corpus matrix run.
-_LEGACY_XFAIL: dict = {}
-_MULTIDIM_XFAIL: dict = {}
+_LEGACY_XFAIL: dict = {
+    'tests_corpus_tsvc_2_5_cond_reduce_sum':
+    'numerical (flaky): masked-sum diverges nondeterministically (uninit-mask remainder)',
+    'tests_corpus_tsvc_2_5_cond_reduce_sym': 'codegen gap: reduction lift inside nested SDFG unsupported',
+    'tests_corpus_tsvc_2_5_config_select_branch': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
+    'tests_corpus_tsvc_2_5_ext_gather_load': 'pass gap: could not find iedge assignment for a promoted temp',
+    'tests_corpus_tsvc_2_5_ext_strided_load_ssym': 'numerical: vectorized output diverges from numpy reference',
+    'tests_corpus_tsvc_2_5_masked_store_sym': 'codegen gap: generated code parse/SyntaxError',
+    'tests_corpus_tsvc_2_5_neg_stride_rev': 'canon/shape gap: negative shape in data descriptor',
+    'tests_corpus_tsvc_2_5_quasi_affine_floor_div_scatter':
+    'Group B (loop2map): WCR survives the map body (recurrence over-parallelized)',
+    'tests_corpus_tsvc_2_5_quasi_affine_reduce_even':
+    'Group B (loop2map): WCR survives the map body (recurrence over-parallelized)',
+    'tests_corpus_tsvc_2_5_quasi_affine_reduce_odd':
+    'Group B (loop2map): WCR survives the map body (recurrence over-parallelized)',
+    'tests_corpus_tsvc_2_5_reduce_inner_carry': 'codegen gap: generated C++ fails to compile',
+    'tests_corpus_tsvc_2_5_scan_strided_2': 'numerical: vectorized output diverges from numpy reference',
+}
+
+_MULTIDIM_XFAIL: dict = {
+    'tests_corpus_tsvc_2_5_cond_reduce_sum': 'numerical: vectorized output diverges from numpy reference',
+    'tests_corpus_tsvc_2_5_ext_break_capture': 'codegen gap: generated C++ fails to compile',
+    'tests_corpus_tsvc_2_5_ext_break_find_first': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
+    'tests_corpus_tsvc_2_5_ext_break_post_body': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
+    'tests_corpus_tsvc_2_5_ext_gather_load': 'codegen gap: generated C++ fails to compile',
+    'tests_corpus_tsvc_2_5_ext_scatter_store': 'codegen gap: generated C++ fails to compile',
+    'tests_corpus_tsvc_2_5_fission_gather_2body': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
+    'tests_corpus_tsvc_2_5_fission_scatter_2body': 'codegen gap: generated C++ fails to compile',
+    'tests_corpus_tsvc_2_5_fuse_move_ifs': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
+    'tests_corpus_tsvc_2_5_masked_store_sym': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
+    'tests_corpus_tsvc_2_5_move_if_data_dep_nest':
+    'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
+    'tests_corpus_tsvc_2_5_quasi_affine_floor_div_scatter':
+    'Group B (loop2map): loose WCR survives the tiled map (recurrence over-parallelized)',
+    'tests_corpus_tsvc_2_5_quasi_affine_reduce_even':
+    'Group B (loop2map): loose WCR survives the tiled map (recurrence over-parallelized)',
+    'tests_corpus_tsvc_2_5_quasi_affine_reduce_odd':
+    'Group B (loop2map): loose WCR survives the tiled map (recurrence over-parallelized)',
+    'tests_corpus_tsvc_2_5_reduce_inner_carry': 'numerical: vectorized output diverges from numpy reference',
+    'tests_corpus_tsvc_2_5_scan_strided_2': 'numerical: vectorized output diverges from numpy reference',
+}
 
 
 def _oracle(program):
@@ -95,9 +134,15 @@ def _reference(program):
     # values it declares (e.g. ``ssym``, ``k``); ``iv_*`` oracles take the trip
     # count as ``n``.
     pool = {
-        **{n: a.copy() for n, a in arrays.items()},
+        **{
+            n: a.copy()
+            for n, a in arrays.items()
+        },
         **scalars,
-        **{s.lower(): v for s, v in tsvc_2_5.SIZES.items()},
+        **{
+            s.lower(): v
+            for s, v in tsvc_2_5.SIZES.items()
+        },
         "n": tsvc_2_5.SIZES["LEN_1D"],
     }
     oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
@@ -135,9 +180,22 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # index/permutation arrays are read-only inputs
-        assert _allclose(ref[name], got[name]), (
-            f"{program.name}/{name}: {stage} diverges from numpy oracle, "
-            f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(
+            ref[name], got[name]), (f"{program.name}/{name}: {stage} diverges from numpy oracle, "
+                                    f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+
+
+@pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
+def test_tsvc_2_5_canonicalize(idx, program):
+    """Canonicalize -> verify against the numpy oracle. Canonicalization alone is
+    value-preserving; this is the first of the three corpus paths (this, then
+    ``+legacy`` / ``+multidim`` vectorize)."""
+    arrays, scalars, ref = _reference(program)
+    sdfg = _canonicalized(program)
+    # Distinct sdfg.name so the canon-only build never shares a .dacecache dir with
+    # the legacy arm (same base name) under the parallel sweep.
+    sdfg.name = f"{sdfg.name}_canononly"
+    _run_and_check(program, sdfg, arrays, scalars, ref, "canonicalization")
 
 
 @pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])

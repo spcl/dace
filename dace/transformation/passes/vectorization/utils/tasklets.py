@@ -575,6 +575,22 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
             if outer_ie.dst_conn != outer_conn or outer_ie.data.data is None:
                 continue
             outer_sub = outer_ie.data.subset
+            # A packed per-lane buffer -- the ``multiplexed_*`` transient from the
+            # halve-index rewrite (``a[i // 2]``; see utils/multiplex.py), or a
+            # packed strided-load buffer -- is a W-wide TRANSIENT read in FULL:
+            # every lane holds a DISTINCT value, so it is per-lane data, NOT a
+            # broadcast, even though its begin is the constant 0 (the outer-begin
+            # heuristic below would otherwise collapse the W lanes to element 0 and
+            # miscompile e.g. TSVC s4117 ``a[i] = b[i] + c[i // 2] * d[i]``).
+            # Mirror the top-level "spans the whole descriptor" rule.
+            outer_desc = parent_state.sdfg.arrays.get(outer_ie.data.data)
+            if outer_desc is not None and outer_desc.transient:
+                try:
+                    if (int(outer_sub.num_elements()) > 1
+                            and dace.symbolic.simplify(outer_sub.num_elements() - outer_desc.total_size) == 0):
+                        return False
+                except (TypeError, ValueError):
+                    pass
             # ALL dims' begins must be lane-invariant for a clean broadcast.
             for (b, _e, _s) in outer_sub:
                 if vector_map_param in {str(s) for s in b.free_symbols}:
