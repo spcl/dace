@@ -48,7 +48,7 @@ from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.corpus import tsvc_2_5, tsvc_2_5_numpy
+from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 _PEEL_LIMIT = 4
 _BREAK_ANTI_DEP = True

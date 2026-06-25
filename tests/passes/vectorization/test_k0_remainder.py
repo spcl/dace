@@ -30,7 +30,7 @@ import pytest
 import numpy as np
 import pytest
 
-from tests.corpus import tsvc
+from tests.corpus.tsvc import tsvc
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 _G1D = tsvc.collect(regime="1d")

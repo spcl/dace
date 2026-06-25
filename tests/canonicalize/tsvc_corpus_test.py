@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from tests.corpus import tsvc
-from tests.corpus.tsvc_numpy import REFERENCES
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 _PEEL_LIMIT = 4
 _BREAK_ANTI_DEP = True

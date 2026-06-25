@@ -38,7 +38,7 @@ LEN_1D = dace.symbol("LEN_1D")
 # vag / vas / s4113 / s491 / s4115 are TSVC kernels — import the canonical defs
 # from the shared :mod:`tests.corpus.tsvc` corpus rather than re-declaring them
 # (dedup; prefer the single source of TSVC).
-from tests.corpus.tsvc import (  # noqa: E402
+from tests.corpus.tsvc.tsvc import (  # noqa: E402
     vag_d_single as vag, vas_d_single as vas, s4113_d_single as s4113, s491_d_single as s491, s4115_d_single as s4115,
 )
 

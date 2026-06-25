@@ -1553,7 +1553,7 @@ def test_fuse_body_states_refuses_carry_through_state_boundary():
     landed in slice 2.4b-B. Pinned with the actual TSVC s252 kernel and
     verified end-to-end against the sequential reference.
     """
-    from tests.corpus.tsvc import s252_d_single
+    from tests.corpus.tsvc.tsvc import s252_d_single
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
     sdfg = s252_d_single.to_sdfg(simplify=True)

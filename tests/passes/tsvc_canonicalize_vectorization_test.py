@@ -28,7 +28,7 @@ import pytest
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from tests.corpus import tsvc
+from tests.corpus.tsvc import tsvc
 from tests.passes._tsvc_harness_helper import build_tsvc_matrix
 
 # Curated list of kernels whose vectorization is gated by the canonicalize

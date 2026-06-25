@@ -40,7 +40,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
-from tests.corpus.cloudsc import cloudsc_py
+from tests.corpus.cloudsc.cloudsc import cloudsc_py
 
 #: Shape symbols and named integer index scalars. The cloud species ``ncldq*``
 #: and ``ncldtop`` match the dwarf-p-cloudsc reference; the grid is kept small

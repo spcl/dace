@@ -25,7 +25,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-from tests.corpus import tsvc
+from tests.corpus.tsvc import tsvc
 
 #: Match the corpus-test settings.
 _PEEL_LIMIT = 4

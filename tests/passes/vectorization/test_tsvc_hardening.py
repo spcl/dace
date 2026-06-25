@@ -12,7 +12,7 @@ import pytest
 import pytest
 import numpy as np
 
-from tests.corpus import tsvc
+from tests.corpus.tsvc import tsvc
 
 _G1D = tsvc.collect(regime="1d")
 _G2D = tsvc.collect(regime="2d")

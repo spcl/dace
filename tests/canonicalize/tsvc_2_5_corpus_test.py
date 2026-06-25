@@ -29,7 +29,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from tests.corpus import tsvc_2_5, tsvc_2_5_numpy
+from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 _PEEL_LIMIT = 4
 _BREAK_ANTI_DEP = True

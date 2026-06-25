@@ -17,7 +17,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
-from tests.corpus import tsvc
+from tests.corpus.tsvc import tsvc
 
 
 def _host_flags():

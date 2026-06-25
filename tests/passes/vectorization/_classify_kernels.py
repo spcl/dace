@@ -138,7 +138,7 @@ def _try_count_maps(kernel) -> Optional[int]:
 def classify_tsvc() -> List[Dict]:
     """Walk the TSVC corpus, classify each kernel."""
     sys.path.insert(0, str(REPO_ROOT))
-    from tests.corpus import tsvc
+    from tests.corpus.tsvc import tsvc
     src = (REPO_ROOT / "tests" / "corpus" / "tsvc.py").read_text()
     module = ast.parse(src)
     results: List[Dict] = []

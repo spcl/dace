@@ -39,8 +39,8 @@ from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.corpus import tsvc
-from tests.corpus.tsvc_numpy import REFERENCES
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 _KERNELS = [k.name for k in tsvc.collect()]
 

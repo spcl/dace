@@ -23,7 +23,8 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-from tests.corpus import tsvc, tsvc_2_5
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc_2_5 import tsvc_2_5
 
 #: Corpus defaults, matching tsvc_corpus_test / measure_parallelization. The
 #: unroll cap keeps ``heat3d``'s constant tile-8 inner loops from unrolling 512x

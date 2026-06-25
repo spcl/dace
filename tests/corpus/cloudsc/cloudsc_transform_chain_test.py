@@ -8,7 +8,7 @@ Starting from the simplified CloudSC SDFG, the chain applies
 identical physical inputs and compares every output array to the non-transformed
 reference (built with ``simplify=False``).
 
-It runs in two build regimes (see :func:`~tests.corpus.generate_data_for_cloudsc`):
+It runs in two build regimes (see :func:`~tests.corpus.cloudsc.generate_data_for_cloudsc`):
 
 * ``ieee``    -- ``-O0``, no fast-math, no FP contraction, sequential schedules.
   The transforms are value-preserving, so this reproduces the reference
@@ -31,7 +31,7 @@ import dace
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-from tests.corpus.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
                                                     generate_cloudsc_inputs, make_sequential)
 
 #: (ieee_build, sequential, rtol, atol) per regime.

@@ -20,8 +20,8 @@ import io
 import numpy as np
 import pytest
 
-from tests.corpus import tsvc
-from tests.corpus.tsvc_numpy import REFERENCES
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 _CORPUS = tsvc.collect()
 _TOL = 1e-9

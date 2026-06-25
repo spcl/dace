@@ -17,7 +17,7 @@ and must stay very close to the reference (bit-exact in the ``ieee`` regime).
 ``LoopToReduce`` and ``LoopToMap`` reassociate accumulations and run them in
 parallel, so a small relative error is allowed there.
 
-Two build regimes (see :mod:`tests.corpus.generate_data_for_cloudsc`):
+Two build regimes (see :mod:`tests.corpus.cloudsc.generate_data_for_cloudsc`):
 
 * ``ieee``    -- ``-O0``, no fast-math, no FP contraction, sequential schedules.
 * ``o3``      -- ``-O3``, no fast-math, no FP contraction, parallel schedules.
@@ -71,7 +71,7 @@ from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-from tests.corpus.generate_data_for_cloudsc import (IEEE_CPU_ARGS, O3_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, O3_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
                                                     generate_cloudsc_inputs, make_sequential)
 
 #: (cpu_args, sequential, strict_tol, relaxed_tol) per regime. ``strict_tol``

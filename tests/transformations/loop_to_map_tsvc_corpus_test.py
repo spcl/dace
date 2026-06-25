@@ -22,8 +22,8 @@ import numpy as np
 import pytest
 
 from dace.transformation.interstate import LoopToMap
-from tests.corpus import tsvc
-from tests.corpus.tsvc_numpy import REFERENCES
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 _TOL = 1e-9
 

@@ -25,7 +25,7 @@ import pytest
 
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from tests.corpus import tsvc
+from tests.corpus.tsvc import tsvc
 from tests.passes._tsvc_harness_helper import build_tsvc_matrix
 
 _G1D = tsvc.collect(regime="1d")

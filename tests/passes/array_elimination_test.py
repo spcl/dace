@@ -203,7 +203,7 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
     state).
     """
     import numpy as np
-    from tests.corpus.tsvc import s254_d_single
+    from tests.corpus.tsvc.tsvc import s254_d_single
     from dace.transformation.passes.canonicalize.pipeline import _build_stages
 
     sdfg = s254_d_single.to_sdfg(simplify=True)
