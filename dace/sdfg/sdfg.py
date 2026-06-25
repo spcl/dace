@@ -1809,6 +1809,13 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
+        # Also avoid clashing with existing tasklet connector names: a transform
+        # minting e.g. ``add_scalar('tmp', find_new_name=True)`` must not pick a
+        # name already used as a connector (validation rejects the collision).
+        for st in self.states():
+            for n in st.nodes():
+                if isinstance(n, nd.CodeNode):
+                    names |= n.in_connectors.keys() | n.out_connectors.keys()
         return dt.find_new_name(name, names)
 
     def is_name_used(self, name: str) -> bool:

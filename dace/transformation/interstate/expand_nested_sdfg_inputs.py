@@ -113,6 +113,11 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
         conn = edge.src_conn
         if conn is None:
             continue
+        # WCR (reduction) boundary edges carry special meaning and are skipped during
+        # widening (mirrors the WCR skip in ``apply``); seeding them here would leave a
+        # stale 2-tuple that the 3-tuple consumer loop in ``apply`` cannot unpack.
+        if edge.data.wcr is not None:
+            continue
         write_subsets[conn] = (edge.data.data, edge.data.subset)
     return write_subsets
 
@@ -189,7 +194,10 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                     (lo, hi, stp) = inner_subset[memlet_access_idx]
                     new_range_list.append((lo + offset, hi + offset, stp))
                     memlet_access_idx += 1
-            assert memlet.wcr is None
+            # Preserve any WCR (reduction) when rebuilding the widened memlet -- a
+            # triangular in-place reduction (cholesky/lu/trisolv) routes its WCR
+            # accumulation memlet through here; dropping it would silently lose the
+            # reduction.
             if memlet.other_subset is not None:
                 src = edge.src
                 dst = edge.dst
@@ -197,18 +205,29 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                         and (memlet.other_subset == subsets.Range([(0, 0, 1)]) and memlet.data == src.data)):
                     new_memlet = Memlet(data=memlet.data,
                                         subset=subsets.Range(new_range_list),
-                                        other_subset=subsets.Range([(0, 0, 1)]))
+                                        other_subset=subsets.Range([(0, 0, 1)]),
+                                        wcr=memlet.wcr,
+                                        wcr_nonatomic=memlet.wcr_nonatomic)
                     edge.data = new_memlet
                 else:
                     raise NotImplementedError("Unsupported other subset case for memlet with data == outer array")
             else:
-                new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list))
+                new_memlet = Memlet(data=memlet.data,
+                                    subset=subsets.Range(new_range_list),
+                                    wcr=memlet.wcr,
+                                    wcr_nonatomic=memlet.wcr_nonatomic)
                 edge.data = new_memlet
 
 
-def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGState, inner_name: str, outer_name: str,
-                                      desc: data.Array, collapsed_dims: List[bool], offset_dims: List[sympy.Basic],
-                                      direction: str, apply_offset: bool = True) -> None:
+def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
+                                      state: SDFGState,
+                                      inner_name: str,
+                                      outer_name: str,
+                                      desc: data.Array,
+                                      collapsed_dims: List[bool],
+                                      offset_dims: List[sympy.Basic],
+                                      direction: str,
+                                      apply_offset: bool = True) -> None:
     # Replace all occurencess of conn with outer name
     # Replace data descriptor
     assert isinstance(inner_name, str) and isinstance(outer_name, str)

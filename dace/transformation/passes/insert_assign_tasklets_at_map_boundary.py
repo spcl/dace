@@ -65,6 +65,13 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 continue
             if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
                 continue
+            # A View's AccessNode->AccessNode edge (other_subset maps the viewed
+            # array onto the view's shape) is the view's DEFINING edge, not a copy
+            # to split; inserting a tasklet here breaks get_view_edge ("Ambiguous
+            # or invalid edge to/from a View access node").
+            if (isinstance(sdfg.arrays[e.src.data], dace.data.View)
+                    or isinstance(sdfg.arrays[e.dst.data], dace.data.View)):
+                continue
             if e.data.other_subset is None:
                 continue
             edges_to_process.append(e)

@@ -4727,6 +4727,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     funcname = f'{func_result}.{node.func.attr}'
                 else:
                     funcname = func_result
+            elif isinstance(func_result, dtypes.typeclass):
+                # A bare-name dtype cast (e.g. ``dc_float(0)`` where
+                # ``dc_float = dace.float32``) constant-folds the callee to a
+                # typeclass; route it through the same cast converter the attribute
+                # form (``dace.float32(0)``) uses, via its registered name.
+                funcname = func_result.to_string()
             else:
                 funcname = rname(node)
             # Check if the function exists as an SDFG in a different module

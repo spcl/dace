@@ -1,17 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """npbench corpus loader.
 
-Each benchmark is a self-contained module in this package exposing a ``CORPUS``
-descriptor (see e.g. :mod:`tests.corpus.npbench.go_fast`) fused from the npbench
-repo: the ``initialize`` input generator, the numpy ``reference`` kernel, the
-``@dace.program`` kernel, and the ``S`` dataset preset.
+Each benchmark is a self-contained module under this package's dwarf subfolders
+(e.g. ``map_reduce/go_fast.py``, ``ml/lenet.py``) exposing a ``CORPUS`` descriptor
+fused from the npbench repo: the ``initialize`` input generator, the numpy
+``reference`` kernel, the ``@dace.program`` kernel, and the ``S`` dataset preset
+(+ any non-array ``scalars``).
 
-This loader provides the uniform machinery to (a) generate inputs at preset ``S``,
-(b) compute the numpy reference outputs, and (c) run a (transformed) SDFG built
-from the kernel on identical inputs and compare -- a real numerical-correctness
-check. The kernel's parameters are matched to the initialized arrays / dataset
-symbols by NAME; outputs are taken from the program's return value (mapped to
-``output_args`` in order) or, for in-place kernels, from the mutated arrays.
+This loader generates inputs at preset ``S``, computes the numpy reference, runs a
+(transformed) SDFG built from the kernel on identical inputs, and compares -- a
+real numerical-correctness check. Kernel parameters are matched to the initialized
+arrays / scalar params / dataset symbols by NAME; outputs are taken from the
+program's return value (mapped to ``output_args`` in order) or, for in-place
+kernels, from the mutated arrays.
 """
 import importlib
 import inspect
@@ -23,45 +24,55 @@ import numpy as np
 import dace
 
 
-def _package() -> str:
-    return __name__.rsplit(".", 1)[0]
+def _package():
+    return importlib.import_module(__name__.rsplit(".", 1)[0])
 
 
 def collect(name: Optional[str] = None) -> List[dict]:
-    """Discover benchmark ``CORPUS`` descriptors in this package."""
-    pkg = importlib.import_module(_package())
+    """Discover benchmark ``CORPUS`` descriptors recursively across dwarf folders."""
+    pkg = _package()
     found: List[dict] = []
-    for info in pkgutil.iter_modules(pkg.__path__):
-        if info.name in ("npbench", "__init__"):
+    for info in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + "."):
+        if info.name.rsplit(".", 1)[-1] in ("npbench", "__init__"):
             continue
-        mod = importlib.import_module(f"{_package()}.{info.name}")
+        try:
+            mod = importlib.import_module(info.name)
+        except Exception:
+            continue
         descriptor = vars(mod).get("CORPUS")
         if isinstance(descriptor, dict):
             found.append(descriptor)
-    found.sort(key=lambda c: c["name"])
+    found.sort(key=lambda c: (c.get("dwarf", ""), c["name"]))
     if name is not None:
         found = [c for c in found if c["name"] == name]
     return found
 
 
-def make_inputs(c: dict) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
-    """Initialize the named input arrays at preset ``S`` plus the symbol values."""
+def make_inputs(c: dict) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
+    """Initialize the named arrays at preset ``S``; return ``(arrays, params)`` where
+    ``params`` holds the dataset symbols + any scalar kernel arguments."""
     args = [c["sizes"][a] for a in c["input_args"]]
     rets = c["initialize"](*args)
     if not isinstance(rets, tuple):
         rets = (rets, )
     arrays = dict(zip(c["array_args"], rets))
-    # Dataset symbols the kernel/SDFG needs (scalars not produced by initialize).
-    symbols = {k: v for k, v in c["sizes"].items() if not isinstance(v, float)}
-    return arrays, symbols
+    params = dict(c.get("scalars", {}))
+    params.update({k: v for k, v in c["sizes"].items() if not isinstance(v, float)})
+    return arrays, params
 
 
-def reference_outputs(c: dict, arrays: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Run the numpy reference on copies of the inputs; return the ``output_args``."""
-    work = {k: v.copy() for k, v in arrays.items()}
-    ref = c["reference"]
-    params = list(inspect.signature(ref).parameters)
-    ret = ref(*[work[p] for p in params if p in work])
+def _map_call(fn_or_program, arrays, params):
+    """Build call kwargs for a function/program: each parameter name is resolved
+    from the initialized arrays first, then the scalar/symbol params."""
+    if hasattr(fn_or_program, "argnames"):
+        names = fn_or_program.argnames
+    else:
+        names = list(inspect.signature(fn_or_program).parameters)
+    pool = {**arrays, **params}
+    return {n: pool[n] for n in names if n in pool}
+
+
+def _collect_outputs(c, ret, work):
     out: Dict[str, np.ndarray] = {}
     rets = ret if isinstance(ret, tuple) else (ret, )
     for i, name in enumerate(c["output_args"]):
@@ -70,6 +81,14 @@ def reference_outputs(c: dict, arrays: Dict[str, np.ndarray]) -> Dict[str, np.nd
         else:
             out[name] = work[name]
     return out
+
+
+def reference_outputs(c: dict, arrays: Dict[str, np.ndarray], params: Dict[str, object]) -> Dict[str, np.ndarray]:
+    """Run the numpy reference on copies of the inputs; return the ``output_args``."""
+    work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
+    call = _map_call(c["reference"], work, params)
+    ret = c["reference"](**call)
+    return _collect_outputs(c, ret, work)
 
 
 def fresh_sdfg(c: dict, *, simplify: bool = True) -> dace.SDFG:
@@ -78,20 +97,15 @@ def fresh_sdfg(c: dict, *, simplify: bool = True) -> dace.SDFG:
     return sdfg
 
 
-def run_outputs(c: dict, sdfg: dace.SDFG, arrays: Dict[str, np.ndarray], symbols: Dict[str,
-                                                                                       int]) -> Dict[str, np.ndarray]:
+def run_outputs(c: dict, sdfg: dace.SDFG, arrays: Dict[str, np.ndarray], params: Dict[str,
+                                                                                      object]) -> Dict[str, np.ndarray]:
     """Compile + run ``sdfg`` on copies of the inputs; return the ``output_args``."""
-    work = {k: v.copy() for k, v in arrays.items()}
-    call = {n: work[n] for n in c["program"].argnames if n in work}
-    ret = sdfg.compile()(**call, **symbols)
-    out: Dict[str, np.ndarray] = {}
-    rets = ret if isinstance(ret, tuple) else (ret, )
-    for i, name in enumerate(c["output_args"]):
-        if ret is not None and i < len(rets) and rets[i] is not None:
-            out[name] = np.asarray(rets[i])
-        else:
-            out[name] = work[name]
-    return out
+    work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
+    call = _map_call(c["program"], work, params)
+    # The SDFG also needs the dataset symbols it was parametrized over.
+    symbols = {k: v for k, v in params.items() if not isinstance(v, float)}
+    ret = sdfg.compile()(**call, **{k: v for k, v in symbols.items() if k not in call})
+    return _collect_outputs(c, ret, work)
 
 
 def outputs_match(ref: Dict[str, np.ndarray],

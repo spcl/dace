@@ -484,7 +484,11 @@ class SplitTasklets(ppl.Pass):
 
                 if c.language == dace.dtypes.Language.Python:
                     ssa_statements = to_ssa(c.as_string)
-                    if len(ssa_statements) != 1:
+                    # ``> 1`` (not ``!= 1``): an unsplittable tasklet (e.g. a masked
+                    # ``if cond: out = x`` that ``to_ssa`` cannot decompose, yielding 0
+                    # statements) must be left intact -- queueing it would delete the
+                    # original and never recreate it, orphaning its outputs.
+                    if len(ssa_statements) > 1:
                         tasklets_to_split.append((n, g, ssa_statements, input_type))
 
         # Previous tasklet:
@@ -600,6 +604,16 @@ class SplitTasklets(ppl.Pass):
                             matching_in_edge = next(iter(matching_in_edges))
                             state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
                                            copy.deepcopy(matching_in_edge.data))
+
+                    # A symbol/constant-only split statement (e.g. ``__t1 = double(N)``)
+                    # has no input connectors, so nothing anchors it inside the original
+                    # tasklet's map scope -- it floats to the top scope while its siblings
+                    # stay in the map, producing a cross-scope edge. Mirror the i==0
+                    # dependency edge, anchored only to scope-entry sources.
+                    if len(t.in_connectors) == 0 and tasklet_in_degree > 0:
+                        for ie in tasklet_in_edges:
+                            if isinstance(ie.src, dace.nodes.EntryNode):
+                                state.add_edge(ie.src, None, t, None, dace.memlet.Memlet(None))
 
                 # Then do the outputs
                 if i == len(added_tasklets) - 1:  # last tasklet

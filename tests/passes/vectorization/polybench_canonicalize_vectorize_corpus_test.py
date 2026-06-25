@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""npbench corpus: canonicalize / canonicalize+vectorize, numerical correctness.
+"""polybench corpus: canonicalize / canonicalize+vectorize, value-preserving.
 
-For every npbench benchmark (see :mod:`tests.corpus.npbench`) the corpus generates
-inputs at the ``S`` dataset preset, computes the numpy reference, then runs two
-pipelines on a fresh SDFG built from the kernel and checks each against that
-reference:
+For every polybench kernel (see :mod:`tests.corpus.polybench`) the corpus builds a
+fresh SDFG from the python frontend, runs two pipelines, and checks each end-to-end
+against the untransformed baseline run (polybench ships no numpy oracle, so this is
+a value-preservation check):
 
 1. ``canon``     -- canonicalize only.
 2. ``canon_vec`` -- canonicalize then multi-dim vectorize (round-robin knob).
@@ -33,14 +33,13 @@ pytestmark = pytest.mark.skip(
 
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.corpus.npbench import npbench
+from tests.corpus.polybench import polybench
 
-_CORPUS = {c["name"]: c for c in npbench.collect()}
-_KERNELS = sorted(_CORPUS)
+_KERNELS = [k.name for k in polybench.collect()]
 _PHASES = ("canon", "canon_vec")
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the
-# TSVC / polybench corpus tests.
+# TSVC / npbench corpus tests.
 _MULTIDIM_KNOBS = [
     dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
@@ -49,9 +48,7 @@ _MULTIDIM_KNOBS = [
 ]
 
 # Known gaps keyed by (kernel, phase) -> reason; removed as each is fixed.
-_XFAIL: dict = {
-    ("go_fast", "canon_vec"): "vectorizer gap: mixed fp32/fp64 tile copy (float32 array + fp64 `trace` accumulator)",
-}
+_XFAIL: dict = {}
 
 _BASE: dict = {}
 
@@ -62,26 +59,26 @@ def _multidim_pass(name):
 
 
 def _base(name):
-    """Memoized ``(canon_sdfg, arrays, symbols, reference)`` for one benchmark."""
+    """Memoized ``(canon_sdfg, call_arrays, psize, reference)`` for one kernel."""
     if name not in _BASE:
-        c = _CORPUS[name]
-        arrays, params = npbench.make_inputs(c)
-        ref = npbench.reference_outputs(c, arrays, params)
-        sdfg = npbench.fresh_sdfg(c)
+        kernel = polybench.collect(name=name)[0]
+        call_arrays, psize = polybench.make_inputs(kernel)
+        ref = polybench.reference(kernel, call_arrays, psize)
+        sdfg = polybench.fresh_sdfg(kernel)
         canonicalize(sdfg, validate=True)
-        _BASE[name] = (sdfg, arrays, params, ref)
+        _BASE[name] = (sdfg, call_arrays, psize, ref)
     return _BASE[name]
 
 
 @pytest.mark.parametrize("name", _KERNELS)
 @pytest.mark.parametrize("phase", _PHASES)
-def test_npbench_corpus(name, phase):
+def test_polybench_corpus(name, phase):
     if (name, phase) in _XFAIL:
         pytest.xfail(_XFAIL[(name, phase)])
-    canon, arrays, params, ref = _base(name)
+    canon, call_arrays, psize, ref = _base(name)
     sdfg = copy.deepcopy(canon)
     if phase == "canon_vec":
         _multidim_pass(name).apply_pass(sdfg, {})
     sdfg.validate()
-    got = npbench.run_outputs(_CORPUS[name], sdfg, arrays, params)
-    assert npbench.outputs_match(ref, got), f"{name}/{phase}: output diverges from npbench reference"
+    got = polybench.run(sdfg, call_arrays, psize)
+    assert polybench.outputs_match(ref, got), f"{name}/{phase}: output diverges from baseline"

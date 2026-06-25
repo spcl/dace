@@ -55,18 +55,21 @@ def _program(mod) -> DaceProgram:
 
 
 def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
-    """Discover polybench kernels in this package (skips the loader + ``__init__``)."""
+    """Discover polybench kernels recursively across the category subfolders
+    (datamining / linear_algebra / medley / stencils); skips the loader + ``__init__``."""
     pkg = importlib.import_module(_this_package())
     kernels: List[PolybenchKernel] = []
-    for info in pkgutil.iter_modules(pkg.__path__):
-        if info.name in ("polybench", "__init__"):
+    for info in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + "."):
+        if info.name.rsplit(".", 1)[-1] in ("polybench", "__init__"):
             continue
-        modpath = f"{_this_package()}.{info.name}"
-        mod = importlib.import_module(modpath)
+        try:
+            mod = importlib.import_module(info.name)
+        except Exception:
+            continue
         progs = [v for v in vars(mod).values() if isinstance(v, DaceProgram)]
         if not progs or not hasattr(mod, "sizes") or not hasattr(mod, "args") or not hasattr(mod, "init_array"):
             continue
-        kernels.append(PolybenchKernel(modpath=modpath, program_name=progs[0].name))
+        kernels.append(PolybenchKernel(modpath=info.name, program_name=progs[0].name))
     kernels.sort(key=lambda k: k.name)
     if name is not None:
         kernels = [k for k in kernels if k.name == name]

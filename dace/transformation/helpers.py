@@ -869,11 +869,15 @@ def isolate_nested_sdfg(
     visited: Set[nodes.Node] = set()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
-        if node_to_process in visited:
+        # Never walk into / add the NSDFG being isolated: an in-place self-update
+        # (``x -> NSDFG -> x``) otherwise classifies the NSDFG as a pre-node, which
+        # deep-copies it into the new pre-state and re-matches forever (unbounded
+        # ``_pre_state`` growth -> InlineMultistateSDFG never reaches a fixpoint).
+        if node_to_process in visited or node_to_process is nsdfg_node:
             continue
         visited.add(node_to_process)
         pre_nodes.add(node_to_process)
-        to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
+        to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process) if iedge.src is not nsdfg_node)
         if isinstance(node_to_process, nodes.AccessNode):
             for other_writer in data_writers.get(node_to_process.data, ()):
                 if other_writer is not node_to_process and other_writer not in visited:
