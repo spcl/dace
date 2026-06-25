@@ -13,7 +13,7 @@ import pytest
 import numpy as np
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.offloading.OffloadToAcceleratorV2 import OffloadToAccelerator as OtA
+from dace.dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
 # ============================================================================

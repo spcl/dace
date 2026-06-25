@@ -3,7 +3,7 @@ import numpy as np
 import dace
 import importlib
 import matplotlib.pyplot as plt
-from dace.transformation.passes.offloading.OffloadToAcceleratorV2 import OffloadToAccelerator as OtA
+from dace.dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 from pathlib import Path
 from time import time
@@ -25,15 +25,17 @@ pytest.mark.no_offload = pytest.mark.no_offload
 pytest.mark.polybench_small = pytest.mark.polybench_small
 pytest.mark.polybench_medium = pytest.mark.polybench_medium
 pytest.mark.polybench_large = pytest.mark.polybench_large
+pytest.mark.intrastate_copies = pytest.mark.intrastate_copies
 
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "polybench: mark test as NPBench/Polybench offload suite")
     config.addinivalue_line("markers", "current: tests of current interest")
-    config.addinivalue_line("markers", "no_offload: tests of graphs which actually no_offload")
+    config.addinivalue_line("markers", "no_offload: mark graphs which do not require/enable offloading")
     config.addinivalue_line("markers", "polybench_small: mark test as small Polybench SDFG")
     config.addinivalue_line("markers", "polybench_medium: mark test as medium Polybench SDFG")
     config.addinivalue_line("markers", "polybench_large: mark test as large Polybench SDFG")
+    config.addinivalue_line("markers", "intrastate_copies: mark graphs which require intrastate copies")
 
 VIEW_ORG = False
 VIEW_MOD = False
@@ -144,11 +146,10 @@ def _run_generic_offloading_test(sdfg: dace.SDFG):
     seq_time = time() - start_time
 
     OtA().apply_pass(sdfg, {})
-    sdfg.validate()
     if VIEW_MOD: sdfg.view()
-
+    sdfg.validate()
+    
     sdfg._recompile = True
-
     start_time = time()
     sdfg(**offload_inputs)
     offl_time = time() - start_time
@@ -195,6 +196,8 @@ def gather_polybench_runtime_data(shortnames):
 
         results[name] = [seq_time, offl_time]
 
+    results["doitgen"] = test_polybench_doitgen()
+
     if failed:
         num = len(failed)
         print(f"\n\n{num} FAILURE{"S" if num > 1 else ""}:")
@@ -205,7 +208,6 @@ def gather_polybench_runtime_data(shortnames):
     return results
 
 def create_graph(results):
-
     successful_names = list(results.keys())
     runtimes = np.array(list(results.values()))
     unoptimized_times = runtimes[:, 0]
@@ -307,7 +309,9 @@ def test_polybench_doitgen():
     if VIEW_ORG:
         sdfg.view()
 
+    start_time = time()
     sdfg(A=a_cpu, C4=c4_cpu)
+    seq_time = time() - start_time
 
     OtA().apply_pass(sdfg, {})
     sdfg.validate()
@@ -315,9 +319,13 @@ def test_polybench_doitgen():
         sdfg.view()
 
     sdfg._recompile = True
+    start_time = time()
     sdfg(A=a_offload, C4=c4_offload)
+    offl_time = time() - start_time
 
     assert np.allclose(a_cpu, a_offload)
+
+    return seq_time, offl_time
 
 @pytest.mark.polybench
 @pytest.mark.polybench_small
@@ -359,11 +367,12 @@ def test_polybench_cholesky(): test_polybench_offload("cholesky") # fine
 @pytest.mark.polybench
 @pytest.mark.polybench_medium
 @pytest.mark.current
-def test_polybench_cholesky2(): test_polybench_offload("cholesky2") # fails due to improper edge handling! TODO
+def test_polybench_cholesky2(): test_polybench_offload("cholesky2") # fails due to missing OpenBlas
 
 @pytest.mark.polybench
 @pytest.mark.polybench_medium
-def test_polybench_covariance(): test_polybench_offload("covariance") # fine, but requires unsupported intra-state copy
+@pytest.mark.intrastate_copies
+def test_polybench_covariance(): test_polybench_offload("covariance") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_medium
@@ -383,7 +392,8 @@ def test_polybench_k2mm(): test_polybench_offload("k2mm") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_medium
-def test_polybench_syrk(): test_polybench_offload("syrk") # fine, but requires unsupported intra-state copy
+@pytest.mark.intrastate_copies
+def test_polybench_syrk(): test_polybench_offload("syrk") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_medium
@@ -401,27 +411,33 @@ def test_polybench_gemver(): test_polybench_offload("gemver") # fine
 # Large SDFGs
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_nussinov(): test_polybench_offload("nussinov") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_adi(): test_polybench_offload("adi") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_correlation(): test_polybench_offload("correlation") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_deriche(): test_polybench_offload("deriche") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
 @pytest.mark.no_offload
-def test_polybench_durbin(): test_polybench_offload("durbin") # fine, no offload possible
+@pytest.mark.intrastate_copies
+def test_polybench_durbin(): test_polybench_offload("durbin") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_gramschmidt(): test_polybench_offload("gramschmidt") #fine
 
 @pytest.mark.polybench
@@ -430,6 +446,7 @@ def test_polybench_heat_3d(): test_polybench_offload("heat_3d") # fine
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_ludcmp(): test_polybench_offload("ludcmp") # fine
 
 @pytest.mark.polybench
@@ -438,6 +455,7 @@ def test_polybench_seidel_2d(): test_polybench_offload("seidel_2d") # fine (nest
 
 @pytest.mark.polybench
 @pytest.mark.polybench_large
+@pytest.mark.intrastate_copies
 def test_polybench_symm(): test_polybench_offload("symm") # fine
 
 
@@ -450,11 +468,11 @@ VIEW_MOD = False
 
 if __name__ == "__main__":
     # Run with: python npbench_testsuite.py
-    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "intrastate_copies"])
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "polybench_small"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "polybench"])
 
-    create_graph(gather_polybench_runtime_data(POLYBENCH_NAMES))
+    #create_graph(gather_polybench_runtime_data(POLYBENCH_NAMES))
 
 # intrastate copies
 # optimization passes
