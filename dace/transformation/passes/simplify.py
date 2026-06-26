@@ -21,6 +21,7 @@ from dace.transformation.passes.simplification.control_flow_raising import Contr
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
+from dace.transformation.passes.initialize_reduction_accumulators import InitializeReductionAccumulators
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -40,6 +41,11 @@ SIMPLIFY_PASSES = [
     ConsolidateEdges,
     ContinueToCondition,
     EmptyLoopElimination,
+    # Make fresh WCR reduction-accumulator initialization explicit (otherwise the
+    # reduction reads uninitialized memory; see the pass docstring). Runs last so it
+    # operates on the settled dataflow; self-recursive into nested SDFGs, hence kept
+    # out of ``_nonrecursive_passes``.
+    InitializeReductionAccumulators,
 ]
 
 _nonrecursive_passes = [
