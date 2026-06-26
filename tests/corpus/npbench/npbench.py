@@ -48,16 +48,32 @@ def collect(name: Optional[str] = None) -> List[dict]:
     return found
 
 
+#: Dataset symbols are clamped to this maximum for the corpus -- preset ``S`` is
+#: sized for performance benchmarking (e.g. N=400000) and far too large for a fast
+#: numerical-correctness check. Clamping the ints (the same value feeds the numpy
+#: reference and the SDFG, so correctness is preserved) keeps compile+run tractable.
+SIZE_CAP = 16
+
+
+def _capped_sizes(c: dict) -> Dict[str, object]:
+    return {
+        k: (min(v, SIZE_CAP) if isinstance(v, int) and not isinstance(v, bool) else v)
+        for k, v in c["sizes"].items()
+    }
+
+
 def make_inputs(c: dict) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
-    """Initialize the named arrays at preset ``S``; return ``(arrays, params)`` where
-    ``params`` holds the dataset symbols + any scalar kernel arguments."""
-    args = [c["sizes"][a] for a in c["input_args"]]
+    """Initialize the named arrays at the (capped) dataset size; return
+    ``(arrays, params)`` where ``params`` holds the dataset symbols + any scalar
+    kernel arguments."""
+    sizes = _capped_sizes(c)
+    args = [sizes[a] for a in c["input_args"]]
     rets = c["initialize"](*args)
     if not isinstance(rets, tuple):
         rets = (rets, )
     arrays = dict(zip(c["array_args"], rets))
     params = dict(c.get("scalars", {}))
-    params.update({k: v for k, v in c["sizes"].items() if not isinstance(v, float)})
+    params.update({k: v for k, v in sizes.items() if not isinstance(v, float)})
     return arrays, params
 
 

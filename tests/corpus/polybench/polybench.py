@@ -30,6 +30,9 @@ from dace.frontend.python.parser import DaceProgram
 #: Smallest dataset (``sizes`` index 0) -- keeps the corpus sweep fast.
 DEFAULT_SIZE_INDEX: int = 0
 
+#: Dataset symbols are clamped to this maximum for a fast value-preserving check.
+SIZE_CAP: int = 16
+
 
 @dataclass(frozen=True)
 class PolybenchKernel:
@@ -86,7 +89,10 @@ def make_inputs(kernel: PolybenchKernel,
     """
     mod = _module(kernel)
     program = _program(mod)
-    psize = {str(k): v for k, v in mod.sizes[size_index].items()}
+    # Clamp dataset symbols to a small size for a fast numerical-correctness check
+    # (the same value feeds the baseline and the candidate run, so value-preservation
+    # is unaffected); polybench ``mini`` is still up to ~2000 on some kernels.
+    psize = {str(k): min(int(v), SIZE_CAP) for k, v in mod.sizes[size_index].items()}
     arrays = []
     for shape, dtype in mod.args:
         concrete = [psize[str(s)] if isinstance(s, dace.symbol) else s for s in shape]
