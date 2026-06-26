@@ -90,6 +90,13 @@ class InitializeReductionAccumulators(ppl.Pass):
             # caller's buffer and may legitimately carry an incoming seed.
             if desc is None or not desc.transient:
                 continue
+            # Skip accumulators whose shape/strides depend on symbols not defined at
+            # this SDFG's scope -- e.g. a per-iteration privatized accumulator sized
+            # ``0:i+1`` by an enclosing loop variable. An init map placed in the start
+            # state cannot reference such a symbol; initializing it is the privatizing
+            # transform's responsibility, not ours.
+            if {str(s) for s in desc.free_symbols} - set(sdfg.symbols.keys()):
+                continue
             redtype = operations.detect_reduction_type(wcr)
             if redtype == dtypes.ReductionType.Custom:
                 continue  # unknown identity -- leave as-is
