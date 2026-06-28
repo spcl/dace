@@ -109,6 +109,12 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
     for edge in state.out_edges(nsdfg_node):
         if edge.data is None or edge.data.data is None:
             continue
+        # WCR edges are excluded from the offset/uncollapse handling (the reduction
+        # is handled separately; its subset is conceptually ``[0]``). The 3-tuple
+        # upgrade loop in ``apply`` skips them too, so collecting their 2-tuple here
+        # would leave a non-upgraded entry that crashes the 3-tuple unpack downstream.
+        if edge.data.wcr is not None:
+            continue
         # other_subset tolerated -- folded at widen time (see _collect_read_subsets).
         conn = edge.src_conn
         if conn is None:
@@ -189,26 +195,45 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                     (lo, hi, stp) = inner_subset[memlet_access_idx]
                     new_range_list.append((lo + offset, hi + offset, stp))
                     memlet_access_idx += 1
-            assert memlet.wcr is None
+            # A WCR (reduction) memlet only relocates -- its accumulation semantics
+            # are preserved. Offset the data subset as for any other memlet and carry
+            # the ``wcr`` lambda through to the rewritten memlet (asserting it away
+            # would drop the reduction and miscompile gramschmidt / correlation).
             if memlet.other_subset is not None:
                 src = edge.src
                 dst = edge.dst
+                # The memlet names the array being offset (``inner_name`` -> outer) on
+                # ONE side of an AccessNode<->AccessNode copy, with the OTHER side a
+                # single element (``other_subset == [0]``). This covers both the
+                # self-copy shape (``memlet.data == src.data``) AND a View<->array copy
+                # (e.g. a strided write ``a[2*i]`` whose View ``a_slice`` survives
+                # RemoveViews -- here ``memlet.data == dst.data`` while ``src`` is the
+                # View). In every such case the offset applies to the named-array
+                # subset and the single-element ``other_subset`` is unchanged.
                 if (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)
-                        and (memlet.other_subset == subsets.Range([(0, 0, 1)]) and memlet.data == src.data)):
+                        and memlet.other_subset == subsets.Range([(0, 0, 1)]) and memlet.data in (src.data, dst.data)):
                     new_memlet = Memlet(data=memlet.data,
                                         subset=subsets.Range(new_range_list),
                                         other_subset=subsets.Range([(0, 0, 1)]))
+                    new_memlet.wcr = memlet.wcr
                     edge.data = new_memlet
                 else:
                     raise NotImplementedError("Unsupported other subset case for memlet with data == outer array")
             else:
                 new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list))
+                new_memlet.wcr = memlet.wcr
                 edge.data = new_memlet
 
 
-def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG, state: SDFGState, inner_name: str, outer_name: str,
-                                      desc: data.Array, collapsed_dims: List[bool], offset_dims: List[sympy.Basic],
-                                      direction: str, apply_offset: bool = True) -> None:
+def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
+                                      state: SDFGState,
+                                      inner_name: str,
+                                      outer_name: str,
+                                      desc: data.Array,
+                                      collapsed_dims: List[bool],
+                                      offset_dims: List[sympy.Basic],
+                                      direction: str,
+                                      apply_offset: bool = True) -> None:
     # Replace all occurencess of conn with outer name
     # Replace data descriptor
     assert isinstance(inner_name, str) and isinstance(outer_name, str)

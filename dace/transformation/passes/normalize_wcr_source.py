@@ -132,6 +132,13 @@ class NormalizeWCRSource(ppl.Pass):
             if inner is None:
                 continue
             priv_desc = self._make_private_desc(inner)
+            # Skip when the private buffer's shape depends on symbols not defined at this
+            # SDFG's scope -- e.g. a triangular reduction whose output extent is ``i+1``
+            # in an enclosing loop variable. Materializing the buffer (and its memlets) at
+            # this scope would leak ``i`` as a free symbol. Leave the WCR on the direct
+            # edge so codegen falls back to its atomic-add path.
+            if {str(s) for s in priv_desc.free_symbols} - set(sdfg.symbols.keys()):
+                continue
             priv_name = sdfg.add_datadesc(f'_wcr_priv_{src.label}_{src_conn}', priv_desc, find_new_name=True)
             priv_node = state.add_access(priv_name)
 

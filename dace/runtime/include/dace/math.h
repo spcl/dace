@@ -617,8 +617,8 @@ static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
 
 template <typename T>
 DACE_HDFI T ipow(const T& a, const unsigned int& b) {
-  T result = a;
-  for (unsigned int i = 1; i < b; ++i) result *= a;
+  T result = T(1);
+  for (unsigned int i = 0; i < b; ++i) result *= a;
   return result;
 }
 

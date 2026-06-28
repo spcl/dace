@@ -6,6 +6,11 @@ import dace as dc
 dc_float = dc.float32
 dc_complex_float = dc.complex64
 
+
+def rng_complex(shape, rng, datatype):
+    return (rng.random(shape, dtype=datatype) + rng.random(shape, dtype=datatype) * 1j)
+
+
 SIZES = {'Nkz': 2, 'NE': 4, 'Nqz': 2, 'Nw': 2, 'N3D': 2, 'NA': 6, 'NB': 2, 'Norb': 3}
 INPUT_ARGS = ('Nkz', 'NE', 'Nqz', 'Nw', 'N3D', 'NA', 'NB', 'Norb')
 ARRAY_ARGS = ('neigh_idx', 'dH', 'G', 'D', 'Sigma')

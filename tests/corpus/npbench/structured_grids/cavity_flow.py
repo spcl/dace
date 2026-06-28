@@ -25,6 +25,29 @@ def initialize(ny, nx, datatype=np.float32):
     return (u, v, p, dx, dy, dt)
 
 
+# Numpy reference helpers (distinct names so they don't collide with the dace
+# ``@dc.program`` build_up_b/pressure_poisson used by the kernel below -- note the
+# dace ``pressure_poisson`` takes ``nit`` from a module symbol, not as an argument).
+def build_up_b_np(b, rho, dt, u, v, dx, dy):
+    b[1:-1, 1:-1] = (rho * (1 / dt * ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx) + (v[2:, 1:-1] - v[0:-2, 1:-1]) /
+                                      (2 * dy)) - ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx))**2 - 2 *
+                            ((u[2:, 1:-1] - u[0:-2, 1:-1]) / (2 * dy) * (v[1:-1, 2:] - v[1:-1, 0:-2]) /
+                             (2 * dx)) - ((v[2:, 1:-1] - v[0:-2, 1:-1]) / (2 * dy))**2))
+
+
+def pressure_poisson_np(nit, p, dx, dy, b):
+    pn = np.empty_like(p)
+    pn = p.copy()
+    for q in range(nit):
+        pn = p.copy()
+        p[1:-1, 1:-1] = (((pn[1:-1, 2:] + pn[1:-1, 0:-2]) * dy**2 + (pn[2:, 1:-1] + pn[0:-2, 1:-1]) * dx**2) /
+                         (2 * (dx**2 + dy**2)) - dx**2 * dy**2 / (2 * (dx**2 + dy**2)) * b[1:-1, 1:-1])
+        p[:, -1] = p[:, -2]
+        p[0, :] = p[1, :]
+        p[:, 0] = p[:, 1]
+        p[-1, :] = 0
+
+
 def reference(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
     un = np.empty_like(u)
     vn = np.empty_like(v)
@@ -32,8 +55,8 @@ def reference(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
     for n in range(nt):
         un = u.copy()
         vn = v.copy()
-        build_up_b(b, rho, dt, u, v, dx, dy)
-        pressure_poisson(nit, p, dx, dy, b)
+        build_up_b_np(b, rho, dt, u, v, dx, dy)
+        pressure_poisson_np(nit, p, dx, dy, b)
         u[1:-1, 1:-1] = un[1:-1, 1:-1] - un[1:-1, 1:-1] * dt / dx * (un[1:-1, 1:-1] - un[1:-1, 0:-2]) - vn[
             1:-1, 1:-1] * dt / dy * (un[1:-1, 1:-1] - un[0:-2, 1:-1]) - dt / (2 * rho * dx) * (
                 p[1:-1, 2:] - p[1:-1, 0:-2]) + nu * (dt / dx**2 *

@@ -6,7 +6,14 @@ import dace as dc
 dc_float = dc.float32
 dc_complex_float = dc.complex64
 
-SIZES = {'R': 2, 'K': 15, 'N': 32768}
+
+def rng_complex(shape, rng, datatype):
+    return (rng.random(shape, dtype=datatype) + rng.random(shape, dtype=datatype) * 1j)
+
+
+# N = R**K is derived (not an independent dataset symbol); keeping it out of SIZES
+# avoids the size-cap clobbering it out of sync with the R**K-sized arrays.
+SIZES = {'R': 2, 'K': 15}
 INPUT_ARGS = ('R', 'K')
 ARRAY_ARGS = ('x', 'y')
 SCALARS = {}
@@ -22,10 +29,11 @@ def initialize(R, K, datatype=np.float32):
     N = R**K
     X = rng_complex((N, ), rng, datatype)
     Y = np.zeros_like(X, dtype=X.dtype)
-    return (N, X, Y)
+    return (X, Y)
 
 
-def reference(N, R, K, x, y):
+def reference(R, K, x, y):
+    N = R**K
     i_coord, j_coord = np.mgrid[0:R, 0:R]
     dft_mat = np.empty((R, R), dtype=np.complex128)
     dft_mat = np.exp(-2j * np.pi * i_coord * j_coord / R)

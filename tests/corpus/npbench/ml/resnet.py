@@ -27,17 +27,45 @@ def initialize(N, W, H, C1, C2, datatype=np.float32):
     return (input, conv1, conv2, conv3, out)
 
 
+# Numpy reference helpers (distinct names so they don't collide with the dace
+# ``@dc.program`` operators of the same role used by the kernel below).
+def relu_np(x):
+    return np.maximum(x, 0)
+
+
+def conv2d_np(input, weights):
+    K = weights.shape[0]  # Assuming square kernel
+    N = input.shape[0]
+    H_out = input.shape[1] - K + 1
+    W_out = input.shape[2] - K + 1
+    C_out = weights.shape[3]
+    output = np.empty((N, H_out, W_out, C_out), dtype=input.dtype)
+    for i in range(H_out):
+        for j in range(W_out):
+            output[:, i, j, :] = np.sum(
+                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                axis=(1, 2, 3),
+            )
+    return output
+
+
+def batchnorm2d_np(x, eps=1e-5):
+    mean = np.mean(x, axis=0, keepdims=True)
+    std = np.std(x, axis=0, keepdims=True)
+    return (x - mean) / np.sqrt(std + eps)
+
+
 def reference(input, conv1, conv2, conv3, out):
-    padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]))
-    padded[:, 1:-1, 1:-1, :] = conv2d(input, conv1)
-    x = batchnorm2d(padded)
-    x = relu(x)
-    x = conv2d(x, conv2)
-    x = batchnorm2d(x)
-    x = relu(x)
-    x = conv2d(x, conv3)
-    x = batchnorm2d(x)
-    out[:] = relu(x + input)
+    padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]), dtype=input.dtype)
+    padded[:, 1:-1, 1:-1, :] = conv2d_np(input, conv1)
+    x = batchnorm2d_np(padded)
+    x = relu_np(x)
+    x = conv2d_np(x, conv2)
+    x = batchnorm2d_np(x)
+    x = relu_np(x)
+    x = conv2d_np(x, conv3)
+    x = batchnorm2d_np(x)
+    out[:] = relu_np(x + input)
 
 
 @dc.program

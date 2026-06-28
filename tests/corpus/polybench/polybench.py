@@ -80,19 +80,22 @@ def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
 
 
 def make_inputs(kernel: PolybenchKernel,
-                size_index: int = DEFAULT_SIZE_INDEX) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+                size_index: int = DEFAULT_SIZE_INDEX,
+                cap: Optional[int] = SIZE_CAP) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
     """Allocate + initialize one input set; return ``(call_arrays, symbol_values)``.
 
     ``call_arrays`` maps each kernel parameter name to its ndarray (``args`` order is
     aligned with the program's ``argnames``); ``symbol_values`` maps each dataset
-    symbol (e.g. ``N``) to its concrete value.
+    symbol (e.g. ``N``) to its concrete value. ``cap`` clamps dataset symbols (default
+    ``SIZE_CAP`` for a fast value-preserving check); pass ``cap=None`` for the full
+    ``sizes[size_index]`` preset (the perf/speedup test needs realistic sizes).
     """
     mod = _module(kernel)
     program = _program(mod)
     # Clamp dataset symbols to a small size for a fast numerical-correctness check
     # (the same value feeds the baseline and the candidate run, so value-preservation
     # is unaffected); polybench ``mini`` is still up to ~2000 on some kernels.
-    psize = {str(k): min(int(v), SIZE_CAP) for k, v in mod.sizes[size_index].items()}
+    psize = {str(k): (int(v) if cap is None else min(int(v), cap)) for k, v in mod.sizes[size_index].items()}
     arrays = []
     for shape, dtype in mod.args:
         concrete = [psize[str(s)] if isinstance(s, dace.symbol) else s for s in shape]

@@ -55,25 +55,34 @@ def collect(name: Optional[str] = None) -> List[dict]:
 SIZE_CAP = 16
 
 
-def _capped_sizes(c: dict) -> Dict[str, object]:
+def _capped_sizes(c: dict, cap: Optional[int] = SIZE_CAP) -> Dict[str, object]:
+    if cap is None:
+        return dict(c["sizes"])
     return {
-        k: (min(v, SIZE_CAP) if isinstance(v, int) and not isinstance(v, bool) else v)
+        k: (min(v, cap) if isinstance(v, int) and not isinstance(v, bool) else v)
         for k, v in c["sizes"].items()
     }
 
 
-def make_inputs(c: dict) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
-    """Initialize the named arrays at the (capped) dataset size; return
-    ``(arrays, params)`` where ``params`` holds the dataset symbols + any scalar
-    kernel arguments."""
-    sizes = _capped_sizes(c)
+def make_inputs(c: dict, cap: Optional[int] = SIZE_CAP) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
+    """Initialize the named arrays at the dataset size; return ``(arrays, params)``
+    where ``params`` holds the dataset symbols + any scalar kernel arguments.
+
+    ``cap`` clamps integer dataset symbols (default ``SIZE_CAP`` for a fast numerical
+    check); pass ``cap=None`` to use the full preset (e.g. the perf/speedup test, which
+    needs realistic sizes)."""
+    sizes = _capped_sizes(c, cap)
     args = [sizes[a] for a in c["input_args"]]
     rets = c["initialize"](*args)
     if not isinstance(rets, tuple):
         rets = (rets, )
     arrays = dict(zip(c["array_args"], rets))
     params = dict(c.get("scalars", {}))
-    params.update({k: v for k, v in sizes.items() if not isinstance(v, float)})
+    # Include ALL dataset sizes -- floats too (e.g. mandelbrot's xmin/horizon,
+    # nbody's dt/G/softening, cavity/channel's rho/nu/F). The reference and kernel
+    # resolve these by name; SDFG symbol binding in ``run_outputs`` filters floats
+    # out separately, so it is safe to keep them in ``params``.
+    params.update(sizes)
     return arrays, params
 
 

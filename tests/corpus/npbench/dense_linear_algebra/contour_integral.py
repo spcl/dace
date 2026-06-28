@@ -3,10 +3,19 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
-SIZES = {'NR': 50, 'NM': 150, 'slab_per_bc': 2, 'num_int_pts': 32}
+
+def rng_complex(shape, rng, datatype):
+    return (rng.random(shape, dtype=datatype) + rng.random(shape, dtype=datatype) * 1j)
+
+
+# S preset is NR=50, NM=150 (NR != NM, so the reference takes the non-square
+# ``np.linalg.solve`` branch that the dace kernel also uses). The harness caps ints
+# to 16, which would collapse 50 and 150 to an equal 16 and wrongly trip the square
+# ``np.linalg.inv`` branch -- so keep NR != NM with distinct sub-cap sizes.
+SIZES = {'NR': 8, 'NM': 12, 'slab_per_bc': 2, 'num_int_pts': 32}
 INPUT_ARGS = ('NR', 'NM', 'slab_per_bc', 'num_int_pts')
 ARRAY_ARGS = ('Ham', 'int_pts', 'Y', 'P0', 'P1')
 SCALARS = {}
@@ -15,7 +24,7 @@ OUTPUT_ARGS = ('P0', 'P1')
 NR, NM, slab_per_bc = (dc.symbol(s, dtype=dc.int64) for s in ('NR', 'NM', 'slab_per_bc'))
 
 
-def initialize(NR, NM, slab_per_bc, num_int_pts, datatype=np.float32):
+def initialize(NR, NM, slab_per_bc, num_int_pts, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     Ham = rng_complex((slab_per_bc + 1, NR, NR), rng, datatype)

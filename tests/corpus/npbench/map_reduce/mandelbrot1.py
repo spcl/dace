@@ -6,8 +6,27 @@ import dace as dc
 dc_float = dc.float32
 dc_complex_float = dc.complex64
 
-SIZES = {'xmin': -1.75, 'xmax': 0.25, 'xn': 125, 'ymin': -1.0, 'ymax': 1.0, 'yn': 125, 'maxiter': 60, 'horizon': 2.0}
-INPUT_ARGS = ('xn', 'yn')
+# numpy realizations matching the kernel precision (fp32 -> complex64); the npbench
+# numpy reference reads these from the framework's precision module.
+np_float = np.float32
+np_complex = np.complex64
+
+# The numpy reference reads lowercase ``xn``/``yn``; the dace kernel is parametrized
+# over the uppercase symbols ``XN``/``YN``. Provide both (equal) so name-resolution
+# works for the reference, ``initialize`` and the SDFG symbol binding alike.
+SIZES = {
+    'xmin': -1.75,
+    'xmax': 0.25,
+    'xn': 125,
+    'XN': 125,
+    'ymin': -1.0,
+    'ymax': 1.0,
+    'yn': 125,
+    'YN': 125,
+    'maxiter': 60,
+    'horizon': 2.0
+}
+INPUT_ARGS = ('XN', 'YN')
 ARRAY_ARGS = ('Z_out', 'N_out')
 SCALARS = {}
 OUTPUT_ARGS = ('Z_out', 'N_out')
@@ -15,7 +34,7 @@ OUTPUT_ARGS = ('Z_out', 'N_out')
 XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'N'])
 
 
-def initialize(XN, YN, datatype=np.float64):
+def initialize(XN, YN, datatype=np.float32):
     cdtype = np.complex64 if np.dtype(datatype) == np.float32 else np.complex128
     Z_out = np.zeros((YN, XN), dtype=cdtype)
     N_out = np.zeros((YN, XN), dtype=np.int64)

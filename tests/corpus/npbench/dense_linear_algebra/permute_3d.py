@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('B', )
 N = dc.symbol('N', dtype=dc.int64)
 
 
-def initialize(N, datatype=np.float64):
+def initialize(N, datatype=np.float32):
     A = np.fromfunction(lambda i, j, k: (i * N * N + j * N + k * N) / N, (N, N, N), dtype=datatype)
     B = np.zeros((N, N, N), dtype=datatype)
     return (A, B)

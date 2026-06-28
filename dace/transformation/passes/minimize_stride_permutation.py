@@ -62,6 +62,63 @@ def _to_float(value: object) -> float:
         return float('inf')
 
 
+def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, object, object]]:
+    """Score how each name in ``var_names`` indexes arrays across ``edges``.
+
+    For every array memlet on an edge, each axis the variable indexes is
+    examined. A variable "homes" on an axis when it appears there with unit
+    absolute coefficient; that axis's absolute stride is then a contiguity
+    score. Strides of other listed variables are zeroed out so the per-variable
+    constant offset reflects only that variable's contribution.
+
+    Shared by :class:`MinimizeStridePermutation` (map-nest reordering) and the
+    loop<->map interchange gate, which both rank variables by indexed stride.
+
+    :param edges: Iterable of graph edges to scan (each carrying a ``Memlet``).
+    :param sdfg: The SDFG owning the arrays (for descriptor strides).
+    :param var_names: The variable names to score.
+    :returns: ``{name: (min_home_stride, total_home_stride, abs_offset_sum)}``.
+              ``min_home_stride`` is :data:`_NO_HOME_SCORE` when the variable
+              never homes on any axis; ``total_home_stride`` sums home strides
+              over all accesses (repeated contiguous accesses weigh more);
+              ``abs_offset_sum`` accumulates the absolute constant offsets.
+    """
+    var_set = set(var_names)
+    min_stride: Dict[str, object] = {v: _NO_HOME_SCORE for v in var_set}
+    total_stride: Dict[str, object] = {v: sympy.S.Zero for v in var_set}
+    offset_sum: Dict[str, object] = {v: sympy.S.Zero for v in var_set}
+    for edge in edges:
+        memlet = edge.data
+        if memlet is None or memlet.data is None:
+            continue
+        desc = sdfg.arrays.get(memlet.data)
+        if not isinstance(desc, dt.Array):
+            continue
+        subset = memlet.subset
+        if subset is None or len(subset) != len(desc.strides):
+            continue
+        for rng, stride in zip(subset.ndrange(), desc.strides):
+            index_expr = sympy.sympify(rng[0])
+            stride_val = sympy.Abs(sympy.sympify(stride))
+            free_names = {str(s) for s in index_expr.free_symbols}
+            present = [v for v in var_set if v in free_names]
+            if not present:
+                continue
+            for vname in present:
+                vsym = pystr_to_symbolic(vname)
+                coeff = index_expr.coeff(vsym, 1)
+                if coeff == 0:
+                    continue
+                others = {s: 0 for s in index_expr.free_symbols if str(s) in var_set and str(s) != vname}
+                constant = index_expr.subs(others).subs({vsym: 0})
+                offset_sum[vname] = offset_sum[vname] + sympy.Abs(constant)
+                if sympy.Abs(coeff) == 1:
+                    total_stride[vname] = total_stride[vname] + stride_val
+                    prev = min_stride[vname]
+                    min_stride[vname] = stride_val if prev is _NO_HOME_SCORE else sympy.Min(prev, stride_val)
+    return {v: (min_stride[v], total_stride[v], offset_sum[v]) for v in var_set}
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MinimizeStridePermutation(ppl.Pass):
@@ -232,48 +289,10 @@ class MinimizeStridePermutation(ppl.Pass):
         :returns: A list of ``(min_indexed_stride, accumulated_abs_offset)``
                  tuples parallel to ``params``.
         """
-        param_set = set(params)
-        min_stride: List[object] = [_NO_HOME_SCORE] * len(params)
-        offset_sum: List[object] = [sympy.S.Zero] * len(params)
-        index_of = {p: i for i, p in enumerate(params)}
-
         # Include the innermost entry and exit so that the per-iteration
         # indexed memlets (which live on the edges between the inner map
         # entry/exit and the body) are part of the scanned subgraph.
         innermost_entry = nest[-1]
         body = state.scope_subgraph(innermost_entry, include_entry=True, include_exit=True)
-        for edge in body.edges():
-            memlet = edge.data
-            if memlet is None or memlet.data is None:
-                continue
-            desc = sdfg.arrays.get(memlet.data)
-            if not isinstance(desc, dt.Array):
-                continue
-            subset = memlet.subset
-            if subset is None or len(subset) != len(desc.strides):
-                continue
-            for rng, stride in zip(subset.ndrange(), desc.strides):
-                index_expr = sympy.sympify(rng[0])
-                stride_val = sympy.Abs(sympy.sympify(stride))
-                free_names = {str(s) for s in index_expr.free_symbols}
-                present = [p for p in param_set if p in free_names]
-                if not present:
-                    continue
-                # Zero out all *other* free symbols so the per-parameter
-                # constant offset reflects only this parameter's contribution.
-                for pname in present:
-                    pidx = index_of[pname]
-                    psym = pystr_to_symbolic(pname)
-                    coeff = index_expr.coeff(psym, 1)
-                    if coeff == 0:
-                        continue
-                    others = {s: 0 for s in index_expr.free_symbols if str(s) in param_set and str(s) != pname}
-                    constant = index_expr.subs(others).subs({psym: 0})
-                    offset_sum[pidx] = offset_sum[pidx] + sympy.Abs(constant)
-                    if sympy.Abs(coeff) == 1:
-                        prev = min_stride[pidx]
-                        if prev is _NO_HOME_SCORE:
-                            min_stride[pidx] = stride_val
-                        else:
-                            min_stride[pidx] = sympy.Min(prev, stride_val)
-        return list(zip(min_stride, offset_sum))
+        scores = score_indexed_strides(body.edges(), sdfg, params)
+        return [(scores[p][0], scores[p][2]) for p in params]

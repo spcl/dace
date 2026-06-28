@@ -508,6 +508,15 @@ class SplitTasklets(ppl.Pass):
 
             tasklet_in_degree = state.in_degree(tasklet)
             tasklet_in_edges = state.in_edges(tasklet)
+            # The scope entry (MapEntry) the tasklet lives under, captured before it
+            # is removed. A split sub-tasklet whose SSA statement is symbol-only (e.g.
+            # ``__t1 = double(N)`` -- N is a symbol inlined into the body, so the
+            # sub-tasklet has NO data inputs) would otherwise have zero in-edges and
+            # float OUTSIDE this scope, corrupting scope_dict and making the
+            # transient-feeding edges cross into the scope illegally ("sink node should
+            # be a data node"). Every such sub-tasklet is anchored to ``scope_entry``
+            # with an empty dependency memlet so it stays within the map.
+            scope_entry = state.entry_node(tasklet)
             # A body name is a symbol (to be inlined) rather than a data input
             # connector iff it is in scope as a symbol. ``symbols_defined_at`` and
             # ``sdfg.symbols`` miss loop-region iterators (e.g. ``_loop_it_0``),
@@ -627,6 +636,18 @@ class SplitTasklets(ppl.Pass):
                     state.add_edge(
                         t, out_conn, added_accesses[array_name], None,
                         dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]))
+
+            # Anchor every sub-tasklet that ended up with NO incoming edge into the
+            # original scope. A symbol-only SSA statement (``__t1 = double(N)``) has no
+            # data inputs, so its sub-tasklet has zero in-edges; without an edge from
+            # the scope entry it floats outside the map (the i==0 branch only anchors
+            # the FIRST sub-tasklet). The empty dependency memlet from ``scope_entry``
+            # keeps it inside the map scope (top-level tasklets, scope_entry=None, are
+            # legitimately allowed to be sources and need no anchor).
+            if scope_entry is not None:
+                for t in added_tasklets:
+                    if state.in_degree(t) == 0:
+                        state.add_edge(scope_entry, None, t, None, dace.memlet.Memlet(None))
 
             split_access_counter += 1
 

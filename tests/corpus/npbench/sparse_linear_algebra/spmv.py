@@ -8,14 +8,17 @@ dc_complex_float = dc.complex64
 
 SIZES = {'M': 4096, 'N': 4096, 'nnz': 8192}
 INPUT_ARGS = ('M', 'N', 'nnz')
-ARRAY_ARGS = ('x', 'y')
+# initialize returns the CSR triplet (indptr, indices, data) then x, y -- name them
+# so both the numpy reference (A_data/A_indices/A_indptr/x/y) and the dace kernel
+# resolve their parameters by name.
+ARRAY_ARGS = ('A_indptr', 'A_indices', 'A_data', 'x', 'y')
 SCALARS = {}
 OUTPUT_ARGS = ('y', )
 
 M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'nnz'))
 
 
-def initialize(M, N, nnz, datatype=np.float64):
+def initialize(M, N, nnz, datatype=np.float32):
     from numpy.random import default_rng
     rng = default_rng(42)
     x = rng.random((N, ), dtype=datatype)

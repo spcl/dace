@@ -30,6 +30,7 @@ from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
+from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -44,6 +45,7 @@ from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pat
 from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
     CleanTaskletToScalarSliceToAccessNodePattern)
 from dace.transformation.passes.scalar_fission import PrivatizeScalars
+from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
@@ -233,7 +235,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   peel_limit: int = 0,
                   break_anti_dependence: bool = False,
                   interchange_carry_with_map: bool = False,
-                  scatter_to_guarded_maps: bool = True) -> List[Tuple[str, ppl.Pass]]:
+                  scatter_to_guarded_maps: bool = True,
+                  target: str = 'cpu',
+                  fast: bool = False) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
@@ -300,13 +304,33 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # front so the canonicalized reference, every downstream tasklet split, and the
     # base codegen all carry Python/NumPy modulo semantics (cppunparse lowers a bare
     # ``%`` to C's dividend-sign ``%``, which miscompiles negative operands).
-    s += [('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()), ('clean', _uniq),
-          ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()),
-          ('clean', SimplifyPass())]
+    # RemoveViews runs FIRST in the initial cleanup (both the default and fast
+    # pipelines): strip View access nodes up front so every downstream matcher sees
+    # the underlying array directly (a slice/reshape view otherwise blocks LoopToMap's
+    # subset classifier, StateFusion's memlet rename, and the reduction lifts). The
+    # later _structural_cleanup RemoveViews calls then only have to mop up views that
+    # transforms (re)introduce.
+    # StateFusionExtended runs as an early cleaning pass (after SimplifyPass's
+    # own non-extended StateFusion): merging adjacent states up front collapses
+    # multi-state loop/branch bodies into the single-state shape the main
+    # LoopFission path (and the reduction lifts) require, so a body that was
+    # split across states becomes fissionable / liftable instead of being left
+    # alone. The later _structural_cleanup runs only have to mop up what the
+    # transforms re-introduce.
+    s += [('clean', RemoveViews()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
+          ('clean', _uniq), ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()),
+          ('clean', ContinueToCondition()), ('clean', SimplifyPass()),
+          ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
     s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConditionalComponentFission())]
+
+    # lift_reduce (still maps, BEFORE lower): turn WCR-reduction maps into the
+    # canonical "full map (products into a buffer) + Reduce node" form, while the
+    # reduction is still a Map -- once ``lower`` rewrites it to a LoopRegion+NestedSDFG
+    # the clean reduction shape is gone. The Reduce libnode carries its own identity.
+    s += [('lift_reduce', AccumulatorToMapAndReduce())]
 
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
     # structural cleanup (no SimplifyPass).
@@ -454,7 +478,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # a loop into siblings that keep the same ``_loop_it_<N>`` name; re-running
     # UniqueLoopIterators disambiguates those duplicates so the later LoopToMap is
     # not blocked by a sibling appearing to read the shared iterator.
-    s += [('fission', LoopFission()), ('fission', _uniq_fis)]
+    #
+    # FAST MODE skips the up-front broad fission: fissioning every loop (then fusing
+    # most of them back) is too costly on large programs (cloudsc / icon). Instead
+    # fast mode parallelizes first and fissions only the residual loops AFTER the
+    # first LoopToMap (see the ``fast`` block after the 'parallelize' stage) -- the
+    # already-lifted maps are no longer loops, so fission naturally touches only the
+    # loops that resisted parallelization.
+    if not fast:
+        s += [('fission', LoopFission()), ('fission', _uniq_fis)]
 
     # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
     # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
@@ -523,6 +555,28 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
+    # FAST MODE fission-on-demand: in fast mode the up-front broad fission was
+    # skipped, so the loops that survived the first LoopToX/LoopToMap above are
+    # exactly the ones that resisted parallelization (a loop carrying both a parallel
+    # and a sequential statement, etc.). Fission ONLY those now -- the loops that did
+    # become maps are no longer LoopRegions, so LoopFission cannot touch them -- then
+    # re-permute and retry the LoopToX/LoopToMap lift on the fragments. A fragment
+    # that became independent now parallelizes; the truly-sequential remainder stays a
+    # loop. This is the parallelize-first / fission-residual / retry shape: it pays
+    # the fission (+ fuse-back) cost only where it can unlock parallelism, instead of
+    # on every loop in the program.
+    if fast:
+        _uniq_fast_fis = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+        _uniq_fast_ssa = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+        s += [('fission', LoopFission()), ('fission', _uniq_fast_fis)]
+        s += [('loop_stride_permutation', LoopStridePermutation())]
+        s += [('loop_to_x', LoopToReduce()),
+              ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
+              ('loop_to_x', ArgMaxLift()), ('loop_to_x', EarlyExitToFindIndex()),
+              ('loop_to_x', LoopToConditionalReduce())]
+        s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', _uniq_fast_ssa)]
+        s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
     # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
     # permissively, where the blocker is an algebraic side condition (TSVC s171's
     # symbolic-stride in-place update ``a[i*inc] = a[i*inc] + b[i]``, injective iff
@@ -574,6 +628,18 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
+
+    # interchange (post-parallelize, both modes): a sequential loop that survived
+    # parallelize but wraps a parallel map (e.g. a recurrence sweep ``for t {
+    # map[i] }``) is interchanged to ``map[i] { for t }`` so the parallel axis is
+    # outer and the carry runs sequential-per-thread. Target-gated: always on GPU
+    # (one kernel instead of one launch per loop iteration); on CPU only when it
+    # lowers the innermost iterated stride (see MoveLoopIntoMapGated). This is the
+    # loop<->map stride minimizer -- the map-only (MinimizeStridePermutation) and
+    # loop-only (LoopStridePermutation) passes cannot cross that boundary. The
+    # produced ``map { nsdfg { loop } }`` is flattened by the following cleanup.
+    s += [('interchange', MoveLoopIntoMapGated(target=target))]
+    s += _structural_cleanup('interchange')
 
     # TODO: privatize_reduction -- PrivatizeReductionAccumulator rewrites
     # WCR-on-array-element reductions to WCR-on-scalar + init + writeback so
@@ -783,6 +849,10 @@ class CanonicalizationPipeline(ppl.Pass):
         dtype=bool,
         default=True,
         desc='Run ScatterToGuardedMaps in the scatter stage to lift scatter loops with a sort-based guard.')
+    fast = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Fast mode: parallelize first and fission only the residual loops (skip the up-front broad fission).')
 
     def __init__(self,
                  validate: bool = False,
@@ -793,7 +863,8 @@ class CanonicalizationPipeline(ppl.Pass):
                  target: str = 'cpu',
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
-                 symbol_constants: Optional[Dict[str, int]] = None):
+                 symbol_constants: Optional[Dict[str, int]] = None,
+                 fast: bool = False):
         if target not in _TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -814,6 +885,7 @@ class CanonicalizationPipeline(ppl.Pass):
                                                                'scatter_to_guarded_maps',
                                                                scatter_to_guarded_maps,
                                                                fallback=True)
+        self.fast = fast
         self._symbol_constants = symbol_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -844,7 +916,9 @@ class CanonicalizationPipeline(ppl.Pass):
                                peel_limit=self.peel_limit,
                                break_anti_dependence=self.break_anti_dependence,
                                interchange_carry_with_map=self.interchange_carry_with_map,
-                               scatter_to_guarded_maps=self.scatter_to_guarded_maps)
+                               scatter_to_guarded_maps=self.scatter_to_guarded_maps,
+                               target=self.target,
+                               fast=self.fast)
         for _label, unit in stages:
             _assert_self_contained(unit)
             unit.apply_pass(sdfg, {})
@@ -864,7 +938,8 @@ def canonicalize(sdfg: SDFG,
                  target: str = 'cpu',
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
-                 symbol_constants: Optional[Dict[str, int]] = None) -> SDFG:
+                 symbol_constants: Optional[Dict[str, int]] = None,
+                 fast: bool = False) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -888,6 +963,10 @@ def canonicalize(sdfg: SDFG,
     :param symbol_constants: Optional ``{symbol: value}`` substituted (``replace_dict``)
                              before canonicalization, so symbolic trip counts that
                              become concrete unroll (e.g. ``{'nclv': 5}``).
+    :param fast: Fast mode -- parallelize first and fission only the residual loops
+                 (skip the up-front broad fission). Cheaper on large programs
+                 (cloudsc / icon) where most loops are directly mappable; the few
+                 loops that resist parallelization are fissioned and re-lifted.
     :returns: The same ``sdfg`` instance, canonicalized.
     """
     CanonicalizationPipeline(validate=validate,
@@ -898,5 +977,6 @@ def canonicalize(sdfg: SDFG,
                              target=target,
                              interchange_carry_with_map=interchange_carry_with_map,
                              scatter_to_guarded_maps=scatter_to_guarded_maps,
-                             symbol_constants=symbol_constants).apply_pass(sdfg, {})
+                             symbol_constants=symbol_constants,
+                             fast=fast).apply_pass(sdfg, {})
     return sdfg

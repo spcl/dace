@@ -1042,3 +1042,38 @@ def test_split_handles_arbitrary_function_calls(body_expr):
                 # leaked through as a variable.
                 assert in_conn not in {"sqrt", "tanh", "sin", "cos", "my_custom_func"}, \
                     f"function name {in_conn!r} leaked as an in-connector on {n.label!r}"
+
+
+def test_split_anchors_symbol_only_substatement_into_map_scope():
+    """A multi-op tasklet whose SSA decomposition contains a SYMBOL-ONLY sub-statement
+    (e.g. ``__t1 = double(N)`` -- ``N`` is a symbol inlined into the body, so the
+    sub-tasklet has no data inputs) must keep that zero-input sub-tasklet INSIDE the map
+    scope by anchoring it to the MapEntry with an empty dependency memlet.
+
+    Regression: correlation's ``center_data`` tasklet
+    ``oud = (ind - m) / (math.sqrt(double(N)) * sd)`` split a symbol-only
+    ``__t1 = double(N)`` sub-tasklet that floated outside the map, corrupting scope_dict
+    and producing 'Memlet creates an invalid path (sink node ... should be a data node)'
+    at the tail ``sdfg.validate()``.
+    """
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("split_symbol_only")
+    for nm in ("ind", "m", "sd", "oud"):
+        sdfg.add_array(nm, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("mymap", dict(i="0:N"))
+    t = state.add_tasklet("center_data", {"cind", "cm", "csd"}, {"coud"},
+                          "coud = (cind - cm) / (math.sqrt(double(N)) * csd)")
+    for nm, conn in (("ind", "cind"), ("m", "cm"), ("sd", "csd")):
+        state.add_memlet_path(state.add_access(nm), me, t, dst_conn=conn, memlet=dace.Memlet(f"{nm}[i]"))
+    state.add_memlet_path(t, mx, state.add_access("oud"), src_conn="coud", memlet=dace.Memlet("oud[i]"))
+
+    SplitTasklets().apply_pass(sdfg, {})  # used to raise InvalidSDFGEdgeError at validate()
+
+    # Every resulting sub-tasklet must live under the MapEntry (in_degree >= 1), including
+    # the symbol-only ``__t1 = double(N)`` one (anchored via an empty memlet).
+    scope = state.scope_dict()
+    for n in state.nodes():
+        if isinstance(n, dace.nodes.Tasklet):
+            assert state.in_degree(n) >= 1, f"sub-tasklet {n.label!r} has no incoming edge (floats outside map)"
+            assert scope[n] is me, f"sub-tasklet {n.label!r} is not inside the map scope"

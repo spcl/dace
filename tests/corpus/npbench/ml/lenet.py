@@ -6,10 +6,14 @@ import dace as dc
 dc_float = dc.float32
 dc_complex_float = dc.complex64
 
-SIZES = {'N': 4, 'H': 28, 'W': 28}
+# C_before_fc1 = 16 * (H_pool2 * W_pool2). The dace kernel uses it as a free symbol
+# in ``np.reshape(x, (N, C_before_fc1))`` that cannot be inferred from a transient,
+# so it must be bound explicitly. With the harness size-cap clamping H=W=28 -> 16,
+# the conv/pool chain gives H_pool2 = W_pool2 = 1, hence C_before_fc1 = 16.
+SIZES = {'N': 4, 'H': 28, 'W': 28, 'C_before_fc1': 16}
 INPUT_ARGS = ('N', 'H', 'W')
 ARRAY_ARGS = ('input', 'conv1', 'conv1bias', 'conv2', 'conv2bias', 'fc1w', 'fc1b', 'fc2w', 'fc2b', 'fc3w', 'fc3b',
-              'out', 'C_before_fc1')
+              'out')
 SCALARS = {}
 OUTPUT_ARGS = ('out', )
 
@@ -42,17 +46,51 @@ def initialize(N, H, W, datatype=np.float32):
     fc3w = rng.random((84, 10), dtype=datatype)
     fc3b = rng.random((10, ), dtype=datatype)
     out = np.zeros((N, 10), dtype=datatype)
-    return (input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, out, C_before_fc1)
+    # C_before_fc1 is encoded in fc1w.shape[0]; the dace kernel infers the matching
+    # symbol from that input array's shape, and the reference recovers it the same way.
+    return (input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, out)
 
 
-def reference(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, N, C_before_fc1, out):
-    x = relu(conv2d(input, conv1) + conv1bias)
-    x = maxpool2d(x)
-    x = relu(conv2d(x, conv2) + conv2bias)
-    x = maxpool2d(x)
+# Numpy reference helpers (distinct names so they don't collide with the dace
+# ``@dc.program`` operators -- the dace ``conv2d``/``maxpool2d`` below are used by
+# the kernel; the numpy ``lenet5`` reference must use these numpy versions).
+def relu_np(x):
+    return np.maximum(x, 0)
+
+
+def conv2d_np(input, weights):
+    K = weights.shape[0]  # Assuming square kernel
+    N = input.shape[0]
+    H_out = input.shape[1] - K + 1
+    W_out = input.shape[2] - K + 1
+    C_out = weights.shape[3]
+    output = np.empty((N, H_out, W_out, C_out), dtype=input.dtype)
+    for i in range(H_out):
+        for j in range(W_out):
+            output[:, i, j, :] = np.sum(
+                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                axis=(1, 2, 3),
+            )
+    return output
+
+
+def maxpool2d_np(x):
+    output = np.empty([x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]], dtype=x.dtype)
+    for i in range(x.shape[1] // 2):
+        for j in range(x.shape[2] // 2):
+            output[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2, 2 * j:2 * j + 2, :], axis=(1, 2))
+    return output
+
+
+def reference(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, N, out):
+    C_before_fc1 = fc1w.shape[0]
+    x = relu_np(conv2d_np(input, conv1) + conv1bias)
+    x = maxpool2d_np(x)
+    x = relu_np(conv2d_np(x, conv2) + conv2bias)
+    x = maxpool2d_np(x)
     x = np.reshape(x, (N, C_before_fc1))
-    x = relu(x @ fc1w + fc1b)
-    x = relu(x @ fc2w + fc2b)
+    x = relu_np(x @ fc1w + fc1b)
+    x = relu_np(x @ fc2w + fc2b)
     out[:] = x @ fc3w + fc3b
 
 

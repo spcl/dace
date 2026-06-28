@@ -760,12 +760,20 @@ def _trace_wcr_chain(state: SDFGState, wcr_edge,
         return None
     accum = cur_node.data
     desc = sdfg.arrays.get(accum)
-    if desc is None or getattr(desc, 'transient', False) or accum.startswith(_BUF_PREFIX):
+    # Never re-process our own buffers, but transients ARE valid accumulators: a
+    # reduction into a fresh transient row-slot (e.g. matvec ``tmp[i]`` inside an
+    # i-loop, ``tmp = define_local(...)``) is exactly the dot/reduce we want to lift
+    # to a Reduce node. The single-element write check below still gates the shape.
+    if desc is None or accum.startswith(_BUF_PREFIX):
         return None
-    if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(s == 1 for s in desc.shape))):
+    if not isinstance(desc, (data.Scalar, data.Array)):
         return None
 
-    # Final destination subset must be loop-invariant single-element wrt all enclosing map params.
+    # The accumulator WRITE must be a single element (``tmp[i]`` / ``acc[c]`` / a
+    # scalar) -- that is what makes the chain a reduction folding into one slot. The
+    # slot may be indexed by an enclosing LOOP symbol (matvec ``tmp[i]``); it must
+    # NOT be indexed by an enclosing MAP parameter (that would be a per-lane store,
+    # not a reduction). The array itself may be larger than one element.
     final_subset = chain_edges[-1].data.subset
     if final_subset is None or _one_elem(final_subset) != 1:
         return None
@@ -783,6 +791,23 @@ def _trace_wcr_chain(state: SDFGState, wcr_edge,
     return cur_node, final_subset, map_exits, chain_edges
 
 
+def _accum_is_fresh(sdfg: SDFG, accum: str) -> bool:
+    """True iff ``accum`` is written ONLY by WCR edges anywhere in the SDFG (no plain
+    seed write) -- i.e. a fresh reduction accumulator that must fold from the identity
+    rather than from its (uninitialized) pre-existing value."""
+    saw_wcr = False
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data == accum:
+                for e in state.in_edges(node):
+                    if e.data is None or e.data.data is None:
+                        continue
+                    if e.data.wcr is None:
+                        return False
+                    saw_wcr = True
+    return saw_wcr
+
+
 def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):
     """Replace a WCR write chain into a scalar with a per-iteration buffer write +
     a post-state ``Reduce`` libnode folding the buffer back into the accumulator.
@@ -795,6 +820,11 @@ def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):
     """
     import dace
     sdfg = state.sdfg
+
+    # Capture accumulator freshness NOW, before the chain re-pointing below removes
+    # the accumulator's WCR write (which would make ``_accum_is_fresh`` see no WCR and
+    # wrongly report not-fresh). A fresh accumulator gets the reduction identity.
+    accum_fresh = _accum_is_fresh(sdfg, match.accum)
 
     # Compute per-axis (start, end, trip) for each enclosing map, innermost-first.
     axis_specs: List[Tuple[Any, Any, Any]] = []
@@ -852,23 +882,53 @@ def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):
     buf_write = state.add_write(buf_name)
     state.remove_edge(refreshed_final)
     state.add_edge(refreshed_final.src, refreshed_final.src_conn, buf_write, None, refreshed_final.data)
-    if state.degree(match.accum_an) == 0:
-        state.remove_node(match.accum_an)
 
-    # Append a state with the Reduce libnode that folds buf into acc (identity=None
-    # so the existing acc value seeds the fold, matching the original WCR semantics).
-    parent = state.parent_graph
-    out_edges = list(parent.out_edges(state))
-    red_state = parent.add_state(state.label + '_reduce')
-    parent.add_edge(state, red_state, dace.InterstateEdge())
-    for e in out_edges:
-        parent.remove_edge(e)
-        parent.add_edge(red_state, e.dst, e.data)
+    # Choose the Reduce identity. A *fresh* accumulator -- one written ONLY by WCR
+    # (no plain seed write anywhere) -- must fold from the reduction identity, NOT
+    # from the slot's pre-existing value: a fresh transient is uninitialized, so
+    # seeding from it (``identity=None``) would read garbage (the original WCR relied
+    # on the slot already holding the identity). A non-fresh accumulator (e.g.
+    # ``C = beta*C`` then ``+=``) keeps ``identity=None`` so its seed is honoured.
+    identity = None
+    if accum_fresh:
+        from dace.frontend import operations as _ops
+        redtype = _ops.detect_reduction_type(match.wcr)
+        if redtype != dtypes.ReductionType.Custom:
+            try:
+                identity = dtypes.reduction_identity(sdfg.arrays[match.accum].dtype, redtype)
+            except Exception:
+                identity = None
 
-    buf_read = red_state.add_read(buf_name)
-    acc_write = red_state.add_write(match.accum)
-    red = red_state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=None)
-    red_state.add_edge(buf_read, None, red, None, mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
-    red_state.add_edge(red, None, acc_write, None, mm.Memlet(data=match.accum, subset=match.accum_subset))
+    # Place the Reduce libnode that folds buf into the accumulator.
+    #
+    # If the accumulator AccessNode still has consumers IN THIS STATE (e.g. atax's
+    # ``compute_y`` reads ``tmp[i]`` produced by the just-lifted ``compute_tmp``),
+    # the Reduce MUST stay in-state so dataflow ordering holds (``buf -> Reduce ->
+    # tmp -> consumer``). Appending it as a post-state would let the consumer read the
+    # accumulator before the Reduce produced it. When the accumulator is consumed only
+    # in a LATER state (the scalar case), a post-state Reduce keeps the buffer-fill map
+    # and the reduce in separate states (the original, tested behaviour).
+    has_in_state_consumer = state.degree(match.accum_an) > 0
+    buf_full = mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc))
+    acc_memlet = mm.Memlet(data=match.accum, subset=match.accum_subset)
+    if has_in_state_consumer:
+        red = state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=identity)
+        state.add_edge(buf_write, None, red, None, buf_full)
+        state.add_edge(red, None, match.accum_an, None, acc_memlet)
+    else:
+        if state.degree(match.accum_an) == 0:
+            state.remove_node(match.accum_an)
+        parent = state.parent_graph
+        out_edges = list(parent.out_edges(state))
+        red_state = parent.add_state(state.label + '_reduce')
+        parent.add_edge(state, red_state, dace.InterstateEdge())
+        for e in out_edges:
+            parent.remove_edge(e)
+            parent.add_edge(red_state, e.dst, e.data)
+        buf_read = red_state.add_read(buf_name)
+        acc_write = red_state.add_write(match.accum)
+        red = red_state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=identity)
+        red_state.add_edge(buf_read, None, red, None, buf_full)
+        red_state.add_edge(red, None, acc_write, None, acc_memlet)
 
     sdfg.reset_cfg_list()

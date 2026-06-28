@@ -6,9 +6,15 @@ import dace as dc
 dc_float = dc.float32
 dc_complex_float = dc.complex64
 
-SIZES = {'N': 25, 'tEnd': 2.0, 'dt': 0.05, 'softening': 0.1, 'G': 1.0}
+# Nt = ceil(tEnd/dt) is a derived integer the dace kernel uses as a free symbol
+# (``np.ndarray(Nt + 1)`` / ``range(Nt)``), so it must be bound explicitly rather
+# than carried as an "array". The S preset gives Nt=40, but n-body is chaotic and
+# fp32 operation-order differences between numpy and the SDFG diverge fast over many
+# steps; a few timesteps keep the correctness check meaningful and stable (the same
+# small Nt feeds the numpy reference and the SDFG).
+SIZES = {'N': 25, 'tEnd': 2.0, 'dt': 0.05, 'softening': 0.1, 'G': 1.0, 'Nt': 3}
 INPUT_ARGS = ('N', 'tEnd', 'dt')
-ARRAY_ARGS = ('mass', 'pos', 'vel', 'Nt')
+ARRAY_ARGS = ('mass', 'pos', 'vel')
 SCALARS = {}
 OUTPUT_ARGS = ('pos', 'vel')
 
@@ -25,20 +31,52 @@ def initialize(N, tEnd, dt, datatype=np.float32):
     return (mass, pos, vel, Nt)
 
 
+# Numpy reference helpers (distinct names so they don't collide with the dace
+# ``@dc.program`` getAcc/getEnergy used by the kernel below).
+def getAcc_np(pos, mass, G, softening):
+    x = pos[:, 0:1]
+    y = pos[:, 1:2]
+    z = pos[:, 2:3]
+    dx = x.T - x
+    dy = y.T - y
+    dz = z.T - z
+    inv_r3 = (dx**2 + dy**2 + dz**2 + softening**2)
+    inv_r3[inv_r3 > 0] = inv_r3[inv_r3 > 0]**(-1.5)
+    ax = G * (dx * inv_r3) @ mass
+    ay = G * (dy * inv_r3) @ mass
+    az = G * (dz * inv_r3) @ mass
+    a = np.hstack((ax, ay, az))
+    return a
+
+
+def getEnergy_np(pos, vel, mass, G):
+    KE = 0.5 * np.sum(mass * vel**2)
+    x = pos[:, 0:1]
+    y = pos[:, 1:2]
+    z = pos[:, 2:3]
+    dx = x.T - x
+    dy = y.T - y
+    dz = z.T - z
+    inv_r = np.sqrt(dx**2 + dy**2 + dz**2)
+    inv_r[inv_r > 0] = 1.0 / inv_r[inv_r > 0]
+    PE = G * np.sum(np.triu(-(mass * mass.T) * inv_r, 1))
+    return KE, PE
+
+
 def reference(mass, pos, vel, N, Nt, dt, G, softening):
     vel -= np.mean(mass * vel, axis=0) / np.mean(mass)
-    acc = getAcc(pos, mass, G, softening)
+    acc = getAcc_np(pos, mass, G, softening)
     KE = np.ndarray(Nt + 1, dtype=mass.dtype)
     PE = np.ndarray(Nt + 1, dtype=mass.dtype)
-    KE[0], PE[0] = getEnergy(pos, vel, mass, G)
+    KE[0], PE[0] = getEnergy_np(pos, vel, mass, G)
     t = 0.0
     for i in range(Nt):
         vel += acc * dt / 2.0
         pos += vel * dt
-        acc = getAcc(pos, mass, G, softening)
+        acc = getAcc_np(pos, mass, G, softening)
         vel += acc * dt / 2.0
         t += dt
-        KE[i + 1], PE[i + 1] = getEnergy(pos, vel, mass, G)
+        KE[i + 1], PE[i + 1] = getEnergy_np(pos, vel, mass, G)
 
 
 @dc.program
@@ -115,7 +153,10 @@ def kernel(mass: dc_float[N], pos: dc_float[N, 3], vel: dc_float[N, 3], dt: dc_f
         vel += acc * dt / 2.0
         t += dt
         KE[i + 1], PE[i + 1] = getEnergy(pos, vel, mass, G)
-    return (KE, PE)
+    # The validated outputs are the in-place-mutated pos/vel (per the npbench
+    # ``output_args``); KE/PE are internal diagnostics. Return pos/vel so they map
+    # to ``output_args`` in order (and so the SDFG exposes them as outputs).
+    return (pos, vel)
 
 
 CORPUS = dict(name='nbody',

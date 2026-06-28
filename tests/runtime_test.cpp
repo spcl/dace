@@ -75,6 +75,20 @@ int main(int, char **) {
 
   delete[] bla2;
 
+  /////////////////////////////////////////////////////////
+  // Integer power (dace::math::ipow). Regression for the exponent-0 case,
+  // which must be the multiplicative identity 1 (the loop used to start at
+  // `a` and skip b==0, returning `a` instead of 1).
+  assert(dace::math::ipow(7, 0u) == 1);     // <-- the bug: was 7
+  assert(dace::math::ipow(7, 1u) == 7);
+  assert(dace::math::ipow(2, 3u) == 8);
+  assert(dace::math::ipow(5, 2u) == 25);
+  assert(dace::math::ipow(1, 0u) == 1);
+  assert(dace::math::ipow(0, 0u) == 1);     // 0**0 == 1 by this convention
+  assert(dace::math::ipow(0, 3u) == 0);
+  assert(dace::math::ipow(3.0, 0u) == 1.0);
+  assert(dace::math::ipow(2.0, 4u) == 16.0);
+
   printf("Success!\n");
   return 0;
 }
