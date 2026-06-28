@@ -97,6 +97,9 @@ namespace dace
     typedef std::complex<double> complex128;
     struct half {
         // source: https://stackoverflow.com/a/26779139/15853075
+        // Default constructor so float16 can be default-initialized (e.g.
+        // `new dace::half[N]`); half(float) alone suppresses the implicit one
+        half() : h(0) {}
         half(float f) {
             union { float fval; uint32_t x; } u;
             u.fval = f;
