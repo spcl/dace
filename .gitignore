@@ -258,3 +258,15 @@ _fresh_check.py
 _freshchk.txt
 _tol_check.py
 _tolchk.txt
+_numdbg.py
+_numdbg_*.txt
+_numdbg2.py
+_numdbg2_*.txt
+_jac_bisect.py
+_jacbisect.txt
+_jac_bisect2.py
+_jacbisect2.txt
+_jac_lower.py
+_jaclower.txt
+_jac_struct.py
+_jacstruct.txt
