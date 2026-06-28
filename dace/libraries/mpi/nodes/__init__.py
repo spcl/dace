@@ -11,5 +11,6 @@ from .reduce import Reduce
 from .allreduce import Allreduce
 from .allgather import Allgather
 from .alltoall import Alltoall
+from .barrier import Barrier
 from .dummy import Dummy
 from .redistribute import Redistribute
