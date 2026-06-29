@@ -41,7 +41,7 @@ class LiftTrivialIf(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     def depends_on(self):
-        return {}
+        return []
 
     def _make_unique_names(self, sdfg: dace.SDFG):
         """Relabel every block so labels are unique across the whole SDFG.

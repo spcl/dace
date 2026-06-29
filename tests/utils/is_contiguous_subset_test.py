@@ -233,6 +233,21 @@ def test_non_standard_strides_returns_false():
     assert result is False
 
 
+def test_1d_slice():
+    """Test a non packed 1D slice."""
+    array = create_array((10, 10, 10), (1, 20, 400))
+    subset_base = [(3, 8, 1), (4, 4, 1), (5, 5, 1)]
+
+    for res, sbs_func in [
+        (True, lambda x: x),  # a[3:9, 4, 5]
+        (False, reversed),  # a[5, 4, 3:9]
+        (False, lambda x: (x[0], (4, 5, 1), x[2])),  # a[3:9, 4:6, 5]
+    ]:
+        subset = create_subset(sbs_func(subset_base))
+        result = subset.is_contiguous_subset(array)
+        assert result is res
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in globals().items() if callable(obj) and name.startswith("test_")]
     for test_function in tests:

@@ -293,7 +293,7 @@ class SplitTasklets(ppl.Pass):
         return False
 
     def depends_on(self):
-        return {}
+        return []
 
     tmp_access_identifier = "_split_"
 
