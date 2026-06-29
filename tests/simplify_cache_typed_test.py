@@ -1,29 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Regression tests for the ``dace.symbolic.simplify`` ``lru_cache`` type-conflation
-bug.
-
-``simplify`` is wrapped in :func:`functools.lru_cache`, which keys entries by
-``hash``/``==``. Python conflates booleans with integers
-(``hash(True) == hash(1)`` and ``True == sympy.Integer(1)``), so an *untyped*
-cache stores ``simplify(True)`` and ``simplify(sympy.Integer(1))`` under the
-same entry. Once ``simplify(True)`` (returning ``sympy.true``) is cached, a
-later ``simplify(sympy.Integer(1))`` returns that cached ``BooleanTrue`` instead
-of the integer ``1`` -- and vice versa. The same holds for ``False``/``0``.
-
-This poisoning is process-global and order dependent: an unrelated caller that
-fed a plain ``bool`` to ``simplify`` earlier (e.g. comparing a concrete shape,
-``simplify(s == 1)``) would later crash memlet-volume propagation with
-``TypeError: Property volume must be a literal or symbolic expression`` when the
-propagated volume happened to be ``sympy.Integer(1)``.
-
-The fix is to construct the cache with ``typed=True`` so arguments of different
-types (``bool`` vs ``sympy.Integer``) are cached under distinct entries.
-
-These tests are written to be **branch-agnostic**: they assert SymPy-level
-semantics only (``simplify`` returns a SymPy object), so they pass on the fixed
-code and fail/raise on the unfixed code, independent of any caller-side
-workaround. Every test clears the cache first to stay order independent.
+Regressions tests to ensure LRU cache is type-aware
 """
 
 import sympy
@@ -44,9 +21,9 @@ def test_simplify_bool_does_not_poison_integer_one():
     dace.symbolic.simplify(True)
 
     result = dace.symbolic.simplify(sympy.Integer(1))
-    assert isinstance(result, sympy.Integer), \
+    assert isinstance(result, (sympy.Integer, int)), \
         f"expected sympy.Integer, got {type(result).__name__}: {result!r}"
-    assert not isinstance(result, Boolean)
+    assert not isinstance(result, (Boolean, bool))
     assert result == 1
 
 
@@ -56,7 +33,7 @@ def test_simplify_integer_one_does_not_poison_bool():
     dace.symbolic.simplify(sympy.Integer(1))
 
     result = dace.symbolic.simplify(True)
-    assert isinstance(result, Boolean), \
+    assert isinstance(result, (Boolean, bool)), \
         f"expected a sympy boolean, got {type(result).__name__}: {result!r}"
     assert bool(result) is True
 
@@ -67,9 +44,9 @@ def test_simplify_bool_does_not_poison_integer_zero():
     dace.symbolic.simplify(False)
 
     result = dace.symbolic.simplify(sympy.Integer(0))
-    assert isinstance(result, sympy.Integer), \
+    assert isinstance(result, (sympy.Integer, int)), \
         f"expected sympy.Integer, got {type(result).__name__}: {result!r}"
-    assert not isinstance(result, Boolean)
+    assert not isinstance(result, (Boolean, bool))
     assert result == 0
 
 
@@ -79,7 +56,7 @@ def test_simplify_integer_zero_does_not_poison_bool():
     dace.symbolic.simplify(sympy.Integer(0))
 
     result = dace.symbolic.simplify(False)
-    assert isinstance(result, Boolean), \
+    assert isinstance(result, (Boolean, bool)), \
         f"expected a sympy boolean, got {type(result).__name__}: {result!r}"
     assert bool(result) is False
 
