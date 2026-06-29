@@ -4,9 +4,11 @@ import contextlib
 from collections import Counter
 from functools import lru_cache
 import sympy
+import threading
 import pickle
 import re
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
+import types
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING, List
 import numpy
 
 import sympy.abc
@@ -18,6 +20,52 @@ from dace import dtypes
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
+
+class _SymbolDTypeContext(threading.local):
+
+    def __init__(self):
+
+        # The lowest level in the stack is reserved for "no stack active".
+        self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
+
+    def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
+        """
+        Adds a new level of authoritative dtype to the context.
+
+        :param authority: Mapping from symbol name to its authoritative dtype.
+        """
+        new_stack_level = types.MappingProxyType({
+            n: dt
+            for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
+        })
+        self.ctx_stack.append(new_stack_level)
+        return self.ctx_stack[-1]
+
+    def pop(self) -> "_SymbolDTypeContext":
+        """Remove the current active level of authoritative dtype."""
+        if len(self.ctx_stack) == 1:
+            raise IndexError("Tried to `pop()` from an empty symbol type stack.")
+        self.ctx_stack.pop()
+        return self
+
+    def get(self) -> types.MappingProxyType:
+        """Get the current active set of authoritative dtype."""
+        if len(self.ctx_stack) == 0:
+            raise IndexError("Symbol type stack is empty.")
+        return self.ctx_stack[-1]
+
+    @staticmethod
+    def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
+        """
+        Whether a dtype is a concrete scalar that can override a symbol's serialized
+        dtype: a plain :class:`~dace.dtypes.typeclass` with a real numpy scalar type.
+        Subclasses such as ``pointer``/``callback``/``vector`` are excluded even
+        though their ``.type`` may be a numpy scalar (a pointer's is its target's),
+        as is the typeless ``void`` of an untyped dynamic map-range connector.
+        """
+        return type(dtype) is dtypes.typeclass and dtype.type is not None
+
+
 # Authoritative dtype of the symbols an enclosing scope declares while an SDFG
 # element is being serialized (name -> typeclass). ``DaceSympySerializer._print_Symbol``
 # consults this so a scoped symbol's emitted dtype is a deterministic function of the
@@ -25,18 +73,7 @@ DEFAULT_SYMBOL_TYPE = dtypes.int32
 # cache can leave stale (it conflates same-named symbols of different dtypes). The map
 # only ever *overrides*: a name it does not declare keeps the symbol's own dtype, so a
 # bare ``serialize_symbolic`` call (empty map) behaves exactly as before.
-_SERIALIZATION_SYMBOL_DTYPES: Dict[str, 'dtypes.typeclass'] = {}
-
-
-def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
-    """
-    Whether a dtype is a concrete scalar that can override a symbol's serialized
-    dtype: a plain :class:`~dace.dtypes.typeclass` with a real numpy scalar type.
-    Subclasses such as ``pointer``/``callback``/``vector`` are excluded even
-    though their ``.type`` may be a numpy scalar (a pointer's is its target's),
-    as is the typeless ``void`` of an untyped dynamic map-range connector.
-    """
-    return type(dtype) is dtypes.typeclass and dtype.type is not None
+_SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 
 
 @contextlib.contextmanager
@@ -49,13 +86,11 @@ def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
 
     :param authority: Mapping from symbol name to its authoritative dtype.
     """
-    global _SERIALIZATION_SYMBOL_DTYPES
-    previous = _SERIALIZATION_SYMBOL_DTYPES
-    _SERIALIZATION_SYMBOL_DTYPES = {n: dt for n, dt in authority.items() if _is_scalar_symbol_dtype(dt)}
+    _SERIALIZATION_SYMBOL_DTYPES.push(authority)
     try:
         yield
     finally:
-        _SERIALIZATION_SYMBOL_DTYPES = previous
+        _SERIALIZATION_SYMBOL_DTYPES.pop()
 
 
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
@@ -1977,7 +2012,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             # Prefer the dtype the enclosing scope declares for this name over the
             # instance's own (possibly cache-stale) dtype; a name the scope does not
             # declare keeps the instance dtype (the authority only overrides).
-            dtype = _SERIALIZATION_SYMBOL_DTYPES.get(expr.name, expr.dtype)
+            dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
             kwargs = _symbol_serializer_kwargs(expr, dtype)
             if not kwargs:
                 return f'${expr.name}'
