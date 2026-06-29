@@ -406,7 +406,15 @@ def _create_einsum_internal(sdfg: SDFG,
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
 
-        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, strides)
+        # ``strides`` is an explicit symbol mapping, so it bypasses auto-detection.
+        # When alpha/beta carry runtime-scalar coefficient symbols (e.g. gemm's
+        # ``alpha``, promoted to a symbol by LiftEinsum), the inner GEMM library
+        # node reports them as free symbols; identity-map any such symbol so it is
+        # plumbed through the nested SDFG (and propagates up to the parent).
+        sym_mapping = dict(strides)
+        for s in nsdfg.free_symbols:
+            sym_mapping.setdefault(s, s)
+        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, sym_mapping)
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))

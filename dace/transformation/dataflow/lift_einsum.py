@@ -33,10 +33,21 @@ class LiftEinsum(xf.SingleStateTransformation):
         if len(contents.nodes()) != 1:
             return False
 
+        # The einsum/GEMM contracts over the FULL rectangular product of the map
+        # ranges. Refuse a non-rectangular (parameter-dependent) iteration space --
+        # e.g. a triangular ``j: 0:i+1`` (syrk/syr2k) -- whose dense-GEMM lowering
+        # would compute the wrong (full instead of triangular) result.
+        params = set(self.map_entry.map.params)
+        for rng in self.map_entry.map.range:
+            for bound in rng:
+                if set(map(str, pystr_to_symbolic(bound).free_symbols)) & params:
+                    return False
+
         # Check that indices match map indices
         unique_chars = set()
         input_chars = set()
         output_chars = set()
+        num_coeffs = 0  # scalar (map-parameter-free) inputs, e.g. a runtime alpha
         for e in state.all_edges(self.tasklet):
             memlet = e.data
             if memlet.is_empty():
@@ -53,10 +64,17 @@ class LiftEinsum(xf.SingleStateTransformation):
             # Keep track of input/output indices for WCR check
             if e.dst is self.tasklet:
                 input_chars |= ind
+                if not (ind - {'0'}):
+                    num_coeffs += 1
             else:
                 output_chars |= ind
 
         if len(input_chars) == 0:
+            return False
+
+        # At most one runtime scalar coefficient is supported (wired as the
+        # einsum's single ``_alpha`` connector); refuse multi-scalar products.
+        if num_coeffs > 1:
             return False
 
         # If there are too many characters for an einsum expression, fail
@@ -111,28 +129,51 @@ class LiftEinsum(xf.SingleStateTransformation):
         scope = state.scope_subgraph(self.map_entry)
         einsum = blas.Einsum('einsum')
 
-        connector_product = 1  # Needed to compute alpha (input) coefficient
+        connector_product = 1  # product of TENSOR-operand connectors (for alpha)
 
-        # Map connectors from tasklet to library node
+        # Map connectors from tasklet to library node. A tasklet input whose subset
+        # carries a map parameter is an einsum tensor OPERAND; a single-element,
+        # map-parameter-free input (e.g. ``alpha[0]``) is a runtime scalar
+        # COEFFICIENT, wired as the einsum's explicit ``_alpha`` scalar input
+        # connector (the data read stays explicit; the expansion consumes it).
         connectors: Dict[str, str] = {}
         in_edges = []
         out_edge = None
+        coeff_edges = []  # scalar-coefficient input edges (alpha-like)
+        coeff_map_conns: Dict[str, str] = {}  # map-entry IN-conn -> einsum coeff conn
         for e in state.in_edges(self.tasklet):
-            if not e.data.is_empty():
-                connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
-                connector_product *= symbolic.symbol(e.dst_conn)
-                einsum.add_in_connector(e.dst_conn, self.tasklet.in_connectors[e.dst_conn])
-                in_edges.append(e)
+            if e.data.is_empty():
+                continue
+            ind = set(str(rb) for rb, _, _ in e.data.subset.ndrange())
+            if not (ind - {'0'}):  # scalar coefficient: no map parameter
+                coeff_edges.append(e)
+                coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = '_alpha'
+                continue
+            connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
+            connector_product *= symbolic.symbol(e.dst_conn)
+            einsum.add_in_connector(e.dst_conn, self.tasklet.in_connectors[e.dst_conn])
+            in_edges.append(e)
         for e in state.out_edges(self.tasklet):
             if not e.data.is_empty():
                 connectors[state.memlet_path(e)[1].src_conn] = e.src_conn
                 einsum.add_out_connector(e.src_conn, self.tasklet.out_connectors[e.src_conn])
                 out_edge = e
 
-        # Compute alpha coefficient from tasklet code
+        # Compute the coefficient from the tasklet code. Dividing by the product of
+        # the TENSOR connectors leaves the scalar-coefficient connectors (and any
+        # numeric factor) as the coefficient.
         expr = self.tasklet.code.code[0]
         symexpr = pystr_to_symbolic(astutils.unparse(expr.value))
-        einsum.alpha = symexpr / connector_product
+        alpha = symexpr / connector_product
+
+        # Wire each runtime scalar coefficient as the einsum's ``_alpha`` input
+        # connector and remove it from the symbolic alpha (set to 1); the residual
+        # numeric factor stays on ``einsum.alpha`` so a mixed ``2.0 * alpha_data``
+        # coefficient composes (the expansion multiplies property by connector).
+        for e in coeff_edges:
+            alpha = alpha.subs(symbolic.symbol(e.dst_conn), 1)
+            einsum.add_in_connector('_alpha', self.tasklet.in_connectors[e.dst_conn])
+        einsum.alpha = alpha
 
         # Collect einsum string from sorted memlets
         param_mapping: Dict[str, str] = {}
@@ -157,14 +198,44 @@ class LiftEinsum(xf.SingleStateTransformation):
         # Make einsum string
         einsum.einsum_str = f"{','.join(einsum_inputs)}->{einsum_output}"
 
-        # Set beta (output) coefficient based on WCR
+        # Set beta (the output coefficient): the einsum computes
+        # ``out = alpha * contraction + beta * out_prior``. beta=1 folds onto the
+        # output's prior value; beta=0 overwrites. The prior value is meaningful --
+        # so beta MUST be 1 -- exactly when it is well-defined; folding onto
+        # undefined memory (beta=1 on a fresh slot) or discarding a meaningful value
+        # (beta=0 on a pre-filled one) both miscompile. Decide from three signals,
+        # in order:
+        #   1. The WCR carries an identity (a Sum WCR's identity is 0, materialized
+        #      as ``setzero`` on the accumulator AccessNode, e.g. 3mm ``E(1,+,0)``)
+        #      -> the slot is initialized to 0 -> OVERWRITE (beta=0).
+        #   2. Else there is an in-SDFG prior writer (e.g. gemm's ``C = beta*C``
+        #      map, or a materialized zero-init) -> FOLD onto it (beta=1).
+        #   3. Else the output is a non-transient argument -> the CALLER provides
+        #      the prior value (a bare ``C += A@B`` over an input) -> FOLD (beta=1).
+        #   4. Else it is a fresh, uninitialized transient -> OVERWRITE (beta=0)
+        #      rather than fold garbage (the AccumulatorToMapAndReduce seed hazard).
         if out_edge.data.wcr is not None:
-            einsum.beta = 1.0
+            out_data = out_edge.data.data
+            out_node = state.memlet_path(out_edge)[-1].dst
+            has_identity = isinstance(out_node, nodes.AccessNode) and out_node.setzero
+            # Scoped to THIS sdfg (not all_sdfgs_recursive) so a same-named array in
+            # an unrelated nested SDFG cannot false-positive a prior writer.
+            has_prior_writer = any(n.data == out_data and st.in_degree(n) > 0 and n is not out_node
+                                   for st in sdfg.states() for n in st.data_nodes())
+            if has_identity:
+                einsum.beta = 0.0
+            elif has_prior_writer or not sdfg.arrays[out_data].transient:
+                einsum.beta = 1.0
+            else:
+                einsum.beta = 0.0
 
         # Add new subgraph
         state.add_node(einsum)
         for e in state.in_edges(self.map_entry):
-            state.add_edge(e.src, e.src_conn, einsum, connectors[e.dst_conn], e.data)
+            if e.dst_conn in connectors:  # einsum tensor operand
+                state.add_edge(e.src, e.src_conn, einsum, connectors[e.dst_conn], e.data)
+            elif e.dst_conn in coeff_map_conns:  # runtime scalar coefficient
+                state.add_edge(e.src, e.src_conn, einsum, coeff_map_conns[e.dst_conn], e.data)
         for e in state.out_edges(map_exit):
             e.data.wcr = None  # Cancel WCR now that it is nested in the einsum
             state.add_edge(einsum, connectors[e.src_conn], e.dst, e.dst_conn, e.data)

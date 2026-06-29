@@ -33,6 +33,7 @@ from dace.transformation.passes.minimize_stride_permutation import MinimizeStrid
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
+from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
@@ -682,6 +683,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('fuse', LiftTrivialIf())]
     s += _structural_cleanup('fuse')
     s += [('fuse', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+
+    # lift: recognize a tensor-contraction map (``map[i, k, j]: c(+)[i, j] =
+    # alpha * a[i, k] * b[k, j]``) as an ``Einsum`` library node so a chain of
+    # matmuls (2mm/3mm/gemm) lowers to one BLAS GEMM per contraction at finalize
+    # instead of a naive WCR loop nest. Runs AFTER fuse (the contraction map is in
+    # final shape; the pipeline deliberately leaves 3-input WCR contractions
+    # un-reduced -- LoopToReduce refuses them -- precisely so they survive to here)
+    # and BEFORE the WCR-normalization stages (LiftEinsum cancels the map's WCR and
+    # folds it into the Einsum's beta, so it must precede normalize_wcr). A runtime
+    # scalar coefficient (gemm's ``alpha``) is wired as the Einsum's explicit
+    # ``_alpha`` connector; ``finalize_for_target`` expands the node (fast BLAS if
+    # available, else a pure contraction SDFG). Non-contraction maps do not match.
+    s += [('lift', PatternMatchAndApplyRepeated([LiftEinsum()]))]
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]

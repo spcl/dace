@@ -90,7 +90,7 @@ def adi(u: datatype[N, N]):
                     pij = -c / (a * pjm1 + b)
                     qij = (-d * uim1 + (1.0 + 2.0 * d) * uji - f * uip1 - a * qjm1) / (a * pjm1 + b)
             with dace.tasklet:
-                out >> u[i, N - 1]
+                out >> v[N - 1, i]
                 out = 1.0
             for j in range(N - 2, 0, -1):
                 with dace.tasklet:

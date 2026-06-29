@@ -270,3 +270,6 @@ _jac_lower.py
 _jaclower.txt
 _jac_struct.py
 _jacstruct.txt
+
+# canonicalize perf harness per-kernel result files
+perf_results/
