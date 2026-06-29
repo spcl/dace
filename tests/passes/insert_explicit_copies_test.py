@@ -137,8 +137,7 @@ def test_insert_cpu_to_cpu_2d_slice():
 ],
                          ids=["data_is_dst", "data_is_src"])
 def test_insert_other_subset_data_convention(sdfg_name, memlet):
-    """Either memlet convention (``data=src`` or ``data=dst``) yields the same copy ``_in=A[2:10]``,
-    ``_out=B[0:8]`` with no ``other_subset``."""
+    """Both memlet conventions yield the same copy ``_in=A[2:10]``, ``_out=B[0:8]`` with no ``other_subset``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, st, _, _ = _build_copy_sdfg(sdfg_name, [("A", [20], cpu), ("B", [20], cpu)], memlet)
 
@@ -271,10 +270,8 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
     gpu = dace.StorageType.GPU_Global
 
     sdfg = dace.SDFG("scalar_copies")
-    # Cross-CPU storage scalars (CPU_Heap -> CPU_Pinned, single element).
     sdfg.add_array("c_in", [1], dace.float64, cpu)
     sdfg.add_array("c_out", [1], dace.float64, pinned)
-    # Same-side GPU register scalars.
     sdfg.add_array("r_in", [1], dace.float64, register, transient=True)
     sdfg.add_array("r_out", [1], dace.float64, register, transient=True)
 
@@ -295,7 +292,6 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
         "Single-element copies should expand to a direct Tasklet, not a NestedSDFG. "
         f"Found {_count_nested_sdfgs(sdfg)} NestedSDFG(s) after expansion.")
 
-    # Sanity: the expansions left tasklets behind that do the copy assignment.
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
     assert any(
         "_cpy_out = _cpy_in" in t.code.as_string
@@ -317,7 +313,7 @@ def _make_view_round_trip_sdfg(name, *, dst_side=False):
     """Build a round-trip through ``A_view``, a 5x6 view of the 4x5x6 array ``A``.
 
     Source-side (default) flows ``A[1] -> A_view -> other``; dst-side flows
-    ``other -> A_view -> A[1]`` (the view aliases the write target).
+    ``other -> A_view -> A[1]`` (view aliases the write target).
 
     :returns: ``(sdfg, state, a, view, other)`` -- ``a`` is the 4x5x6 array, ``other`` the 5x6 one.
     """
@@ -381,8 +377,8 @@ def test_insert_view_dst_round_trip_numerical():
 
 
 def test_insert_self_copy_subset_is_dst_side():
-    """On a self-copy ``p -> p`` the ``subset`` side maps to the ``_out`` (dst) edge and ``other_subset`` to
-    ``_in`` (src); reversing them would silently produce a backwards copy."""
+    """Self-copy ``p -> p``: ``subset`` maps to ``_out`` (dst), ``other_subset`` to ``_in`` (src); reversing them
+    would silently produce a backwards copy."""
     sdfg = dace.SDFG("self_copy_subset_dst")
     sdfg.add_array("p", [4, 5], dace.float64)
 
@@ -405,8 +401,7 @@ def test_insert_self_copy_subset_is_dst_side():
 
 
 def _check_reshape_copy(sdfg, dst_name, dst_shape):
-    """Assert the SDFG validates and the single lifted ``CopyLibraryNode``'s output memlet spans the full
-    ``dst_shape``."""
+    """Assert the SDFG validates and the single lifted ``CopyLibraryNode`` output memlet spans the full ``dst_shape``."""
     sdfg.validate()
     copies = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)]
     assert len(copies) == 1, f"expected exactly one CopyLibraryNode, got {len(copies)}"
@@ -419,8 +414,7 @@ def _check_reshape_copy(sdfg, dst_name, dst_shape):
 
 
 def _run_reshape_copy_test(prefix, src_shape, dst_shape):
-    """Build ``A[full] -> B`` (no other_subset) via the shared builder, lift, and assert the derived
-    destination range spans all of ``B``."""
+    """Build ``A[full] -> B`` (no other_subset), lift, and assert the derived destination range spans all of ``B``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, _, _, _ = _build_copy_sdfg(f"{prefix}_{len(src_shape)}_to_{len(dst_shape)}", [("A", src_shape, cpu),
                                                                                         ("B", dst_shape, cpu)],
@@ -439,8 +433,7 @@ def _run_reshape_copy_test(prefix, src_shape, dst_shape):
         ([8, 12, 5, 3], [1440]),  # full flatten
     ])
 def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
-    """When the destination shape collapses contiguous source dims, the pass derives a full-destination subset
-    rather than reusing the rank-mismatched ``src_subset``."""
+    """Collapsing contiguous source dims derives a full-destination subset, not the rank-mismatched ``src_subset``."""
     _run_reshape_copy_test("reshape_collapse", src_shape, dst_shape)
 
 
@@ -453,8 +446,7 @@ def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
         ([6, 20], [2, 3, 4, 5]),  # double split
     ])
 def test_insert_consecutive_split_reshape(src_shape, dst_shape):
-    """The inverse split case: a higher-rank destination reached by splitting source dims is handled by the same
-    symmetric code path."""
+    """Inverse split case: a higher-rank destination by splitting source dims, via the same symmetric code path."""
     _run_reshape_copy_test("reshape_split", src_shape, dst_shape)
 
 
@@ -466,13 +458,13 @@ def test_insert_consecutive_split_reshape(src_shape, dst_shape):
         ([1, 96, 5, 3], [8, 12, 5, 3]),  # leading 1 + split
     ])
 def test_insert_reshape_with_squeezed_ones(src_shape, dst_shape):
-    """Unit-length dimensions on either side are ignored when matching a consecutive collapse or split."""
+    """Unit-length dims on either side are ignored when matching a consecutive collapse or split."""
     _run_reshape_copy_test("reshape_squeeze", src_shape, dst_shape)
 
 
 def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
-    """Repeated ``apply_pass`` calls do not accumulate extra ``CopyLibraryNode``s; runs after the first are
-    no-ops since the only remaining ``AN -> AN`` edge is the view's alias edge."""
+    """Repeated ``apply_pass`` calls do not accumulate extra ``CopyLibraryNode``s; the only remaining ``AN -> AN``
+    edge is the view's alias edge, so later runs are no-ops."""
     sdfg, st, _, _, _ = _make_view_round_trip_sdfg("view_rewrite_idempotent")
     p = InsertExplicitCopies()
     p.apply_pass(sdfg, {})
@@ -619,11 +611,9 @@ def test_iec_reinterpret_does_not_lift_view():
     assert np.array_equal(A, expected)
 
 
-# Map-staging lift: AN -> MapEntry -> AN and AN -> MapExit -> AN copies are
-# rewritten to put a CopyLibraryNode INSIDE the map scope, wired directly to
-# the map node's connector. Views on the outer side stay in place. Chained
-# MapEntries / MapExits are followed via memlet_path. Generated code emits
-# no CopyND template instantiations.
+# Map-staging lift: AN -> MapEntry/MapExit -> AN copies put a CopyLibraryNode INSIDE the map
+# scope, wired directly to the map connector; outer-side Views stay in place; chained
+# MapEntries/MapExits are followed via memlet_path; generated code emits no CopyND.
 
 _CPU = dace.dtypes.StorageType.CPU_Heap
 _N_STAGE = 128
@@ -700,8 +690,8 @@ def _assert_lifted_libnode(state, side: str, expected_scope=None):
 
     :param side: ``'in'`` for stage-in (libnode input edge from MapEntry) or
         ``'out'`` for stage-out (libnode output edge to MapExit).
-    :param expected_scope: optional MapEntry node identity to require for the
-        libnode's enclosing scope; when ``None``, any MapEntry passes.
+    :param expected_scope: optional MapEntry to require for the libnode's
+        enclosing scope; when ``None``, any MapEntry passes.
     :returns: ``(libnode, enclosing_map_entry)``.
     """
     cn, parent = _find_libnode_and_scope(state)
@@ -878,13 +868,11 @@ def test_lift_stage_in_copy_with_nested_sdfg_consumer():
 
 
 # Polybench-derived tests: the pass must preserve numerical output on real programs.
-# Kernels are imported from the canonical tests/polybench programs; the init wrappers
-# allocate the arrays and delegate to those programs' ``init_array``.
+# Init wrappers allocate the arrays and delegate to the canonical programs' ``init_array``.
 
 
 def _run_and_compare(program, init_fn, check_arrays, sizes, name):
-    """Run a DaCe program before and after InsertExplicitCopies,
-    assert numerical correctness."""
+    """Run a program before and after InsertExplicitCopies, asserting numerical correctness."""
     sdfg_ref = program.to_sdfg(simplify=True)
     ref_exe = sdfg_ref.compile()
     ref_arrays = init_fn(**sizes)

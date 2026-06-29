@@ -921,11 +921,10 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets. The Memlet leaving the
-                # scope may be source-relative (naming the inner transient rather than
-                # the external array), so resolve the written array from the memlet
-                # tree's root -- the outermost-scope node, i.e. the destination the
-                # data fans out to (fall back to the Memlet's data otherwise).
+                # Outgoing-Memlet counterpart of the above. A source-relative Memlet here
+                # (.data names the inner transient, not the written array) would drop that
+                # array -- and its shape/stride symbols -- from the kernel signature, so
+                # resolve the real destination from the memlet-tree root.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):

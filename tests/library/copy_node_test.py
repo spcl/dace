@@ -41,7 +41,7 @@ def _make_copy_sdfg(src: _ArraySpec,
                     name: str = "copy_sdfg",
                     libnode_name: str = "cp",
                     dtype: dace.dtypes.typeclass = dace.float64) -> Tuple[dace.SDFG, CopyLibraryNode]:
-    """Build a one-state SDFG that copies ``src`` -> ``dst`` via a single ``CopyLibraryNode``.
+    """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode``.
 
     :param src: source-side array spec.
     :param dst: destination-side array spec.
@@ -64,11 +64,7 @@ def _make_copy_sdfg(src: _ArraySpec,
 
 
 def _make_copy_skeleton(src: _ArraySpec, dst: _ArraySpec, name: str, dtype: dace.dtypes.typeclass):
-    """Build a one-state SDFG with ``src`` / ``dst`` arrays + AccessNodes, returning subsets too.
-
-    Shared scaffolding for :func:`_make_copy_sdfg` (libnode form) and
-    :func:`_make_legacy_copy_sdfg` (canonical direct-edge form).
-    """
+    """Shared scaffolding for :func:`_make_copy_sdfg` and :func:`_make_legacy_copy_sdfg`: builds the arrays + AccessNodes and returns the subsets."""
     sdfg = dace.SDFG(name)
     src_name = src.name or "src"
     dst_name = dst.name or "dst"
@@ -94,12 +90,11 @@ def _make_legacy_copy_sdfg(src: _ArraySpec,
                            *,
                            name: str = "copy_legacy",
                            dtype: dace.dtypes.typeclass = dace.float64) -> dace.SDFG:
-    """Build a one-state SDFG that copies ``src`` -> ``dst`` via a canonical direct AN -> AN edge.
+    """One-state SDFG copying ``src`` -> ``dst`` via a canonical direct AN -> AN edge.
 
-    Uses the legacy DaCe memlet convention: ``data=dst``, ``subset`` is the dst
-    write region, ``other_subset`` is the src read region. This is what the
-    standard DaCe copy lowering produces and the basis for comparing against
-    the :class:`CopyLibraryNode` path.
+    Legacy DaCe memlet convention (``data=dst``, ``subset``=dst write region,
+    ``other_subset``=src read region) -- the standard copy lowering's output and
+    the baseline for comparing against the :class:`CopyLibraryNode` path.
     """
     sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
     sdfg.start_state.add_edge(src_acc, None, dst_acc, None,
@@ -113,12 +108,11 @@ def _fortran_strides(shape):
 
 
 def _compile_no_copynd(sdfg: dace.SDFG):
-    """Assert the SDFG's generated C++ contains no ``dace::CopyND`` template, then compile.
+    """Assert the generated C++ contains no ``dace::CopyND`` template, then compile.
 
-    The libnodes are designed to displace the runtime CopyND fallback entirely. The only
-    intentional ``CopyND`` user is ``ExpandSharedMemoryCollective`` (block-collective shared
-    memory load); tests exercising that expansion inspect tasklet bodies directly and don't
-    run codegen, so a universal post-codegen assertion is safe here.
+    The libnodes displace the runtime CopyND fallback entirely. The only intentional
+    ``CopyND`` user is ``ExpandSharedMemoryCollective``; tests exercising that expansion
+    inspect tasklet bodies directly and don't run codegen, so this assertion is safe here.
     """
     for obj in sdfg.generate_code():
         assert 'CopyND<' not in obj.code, f"unexpected dace::CopyND in generated code object {obj.name}"
@@ -1062,7 +1056,7 @@ def test_auto_dispatch_global_shared_outside_tblock_routes_to_collective():
 
 
 def test_auto_dispatch_single_element_global_shared_outside_tblock_still_collective():
-    """Rule 3 (single): Global <-> Shared single-element outside ThreadBlock routes to ``SharedMemoryCollective`` (the surrounding scope expects all threads to participate)."""
+    """Rule 3 (single): Global <-> Shared single-element outside ThreadBlock -> ``SharedMemoryCollective``."""
     sdfg, node = _make_copy_sdfg(
         _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, subset="5", name="G_in"),
         _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, subset="3", name="S_out"),
@@ -1127,7 +1121,7 @@ _SINGLE_ELT_STORAGES = [
 @pytest.mark.parametrize("src_storage", _SINGLE_ELT_STORAGES)
 @pytest.mark.parametrize("dst_storage", _SINGLE_ELT_STORAGES)
 def test_auto_dispatch_single_element_never_mapped_tasklet(src_storage, dst_storage):
-    """Invariant: no single-element copy is ever routed to ``MappedTasklet`` (a 0-D map crashes in propagation). Enumerated over every storage-pair combination."""
+    """Invariant: no single-element copy is ever routed to ``MappedTasklet`` (a 0-D map crashes in propagation), over every storage pair."""
     src_kwargs = {"transient": True} if src_storage != dace.dtypes.StorageType.CPU_Heap else {}
     dst_kwargs = {"transient": True} if dst_storage != dace.dtypes.StorageType.CPU_Heap else {}
     sdfg, node = _make_copy_sdfg(
@@ -1206,9 +1200,7 @@ def test_shared_memory_copy_rejects_inside_tblock_map():
 
 @pytest.mark.gpu
 def test_copy_roundtrip_variant_a_cooperative_load():
-    """Variant A: collective load OUTSIDE the tblock_map -- ``A`` -> Shared tile is
-    block-cooperative (``dace::CopyND`` + ``__syncthreads()``); per-thread writeback
-    inside the tblock_map round-trips through Global ``B``."""
+    """Variant A: collective load OUTSIDE the tblock_map (block-cooperative ``dace::CopyND`` + ``__syncthreads()``), per-thread writeback inside it, round-tripping through Global ``B``."""
     import cupy as cp
 
     N = 256
@@ -1251,9 +1243,7 @@ def test_copy_roundtrip_variant_a_cooperative_load():
 
 @pytest.mark.gpu
 def test_copy_roundtrip_variant_b_per_thread_load():
-    """Variant B: per-thread load INSIDE the tblock_map -- each thread copies
-    ``A[bi+ti] -> tile[ti] -> B[bi+ti]`` via its own ``Tasklet`` (no
-    block-collective); round-trips through Global ``B``."""
+    """Variant B: per-thread load INSIDE the tblock_map -- each thread copies ``A[bi+ti] -> tile[ti] -> B[bi+ti]`` via its own ``Tasklet`` (no block-collective)."""
     import cupy as cp
 
     N = 256
@@ -1303,9 +1293,7 @@ def test_copy_roundtrip_variant_b_per_thread_load():
 
 @pytest.mark.gpu
 def test_copy_full_pipeline_roundtrip():
-    """Pipeline: Global -> Shared (collective) -> per-thread (Register -> Register
-    -> Shared) -> Global. Exercises auto-dispatched Shared<->Register libnodes
-    alongside the block-cooperative load; verifies end-to-end data preservation."""
+    """Pipeline: Global -> Shared (collective) -> per-thread (Register -> Register -> Shared) -> Global; exercises auto-dispatched Shared<->Register libnodes alongside the block-cooperative load."""
     import cupy as cp
 
     N = 256
@@ -1545,7 +1533,7 @@ def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
 
 
 def test_register_location_detection():
-    """Test that the register location detection logic correctly identifies when a copy is in-kernel vs. host-side."""
+    """Register location detection distinguishes in-kernel from host-side copies."""
     sdfg = dace.SDFG('register_location_detection')
     sdfg.add_array('R', [1], dace.float64, dace.StorageType.Register, transient=True)
     sdfg.add_array('G', [1], dace.float64, dace.StorageType.GPU_Global, transient=True)

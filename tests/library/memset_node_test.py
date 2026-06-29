@@ -49,7 +49,7 @@ def _get_multi_dim_sdfg(implementation: Optional[str], gpu: bool = True) -> dace
 
 
 def test_memset_pure_1d_cpu():
-    """The ``pure`` expansion zeros the CPU slice and leaves the rest unchanged."""
+    """``pure`` zeros the 1D CPU slice, leaving the rest unchanged."""
     sdfg = _get_sdfg("pure", gpu=False)
     sdfg.name += "_pure_cpu"
     sdfg.validate()
@@ -66,7 +66,7 @@ def test_memset_pure_1d_cpu():
 
 
 def test_memset_pure_3d_cpu():
-    """The ``pure`` expansion zeros a 3D CPU sub-block and leaves the rest unchanged."""
+    """``pure`` zeros the 3D CPU sub-block, leaving the rest unchanged."""
     sdfg = _get_multi_dim_sdfg("pure", gpu=False)
     sdfg.name += "_pure_cpu_multi_dim"
     sdfg.validate()
@@ -83,7 +83,7 @@ def test_memset_pure_3d_cpu():
 
 @pytest.mark.gpu
 def test_memset_pure_1d_gpu():
-    """The ``pure`` expansion zeros the GPU slice and leaves the rest unchanged."""
+    """``pure`` zeros the 1D GPU slice, leaving the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_sdfg("pure", gpu=True)
@@ -103,7 +103,7 @@ def test_memset_pure_1d_gpu():
 
 @pytest.mark.gpu
 def test_memset_pure_3d_gpu():
-    """The ``pure`` expansion zeros a 3D GPU sub-block and leaves the rest unchanged."""
+    """``pure`` zeros the 3D GPU sub-block, leaving the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_multi_dim_sdfg("pure", gpu=True)
@@ -122,7 +122,7 @@ def test_memset_pure_3d_gpu():
 
 @pytest.mark.gpu
 def test_memset_cuda_1d_gpu():
-    """The ``CUDA`` expansion zeros the GPU slice and leaves the rest unchanged."""
+    """``CUDA`` zeros the 1D GPU slice, leaving the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_sdfg("CUDA", gpu=True)
@@ -142,7 +142,7 @@ def test_memset_cuda_1d_gpu():
 
 @pytest.mark.gpu
 def test_memset_cuda_3d_gpu():
-    """The ``CUDA`` expansion zeros a 3D GPU sub-block and leaves the rest unchanged."""
+    """``CUDA`` zeros the 3D GPU sub-block, leaving the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_multi_dim_sdfg("CUDA", gpu=True)
@@ -161,7 +161,7 @@ def test_memset_cuda_3d_gpu():
 
 @pytest.mark.gpu
 def test_memset_cuda_rejects_cpu_storage():
-    """The ``CUDA`` expansion targeting a CPU array is rejected."""
+    """``CUDA`` targeting a CPU array is rejected."""
     sdfg = _get_sdfg("CUDA", gpu=False)
     sdfg.name += "_cuda_cpu"
     sdfg.validate()
@@ -172,7 +172,7 @@ def test_memset_cuda_rejects_cpu_storage():
 
 
 def test_memset_auto_routes_non_contiguous_to_pure_cpu():
-    """Auto routes a non-contiguous CPU subset to ``pure`` (the single-call ``memset`` would zero outside the region)."""
+    """Auto routes a non-contiguous CPU subset to ``pure`` (a single ``memset`` would zero outside the region)."""
     sdfg = _make_memset_sdfg(None, (10, 20), "2:8, 5:15", gpu=False, name="memset_noncontig_cpu_auto")
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -235,7 +235,6 @@ def test_memset_register_inside_kernel_routes_to_sequential():
     sdfg.add_array('R', [4], dace.float64, dace.StorageType.Register, transient=True)
     state = sdfg.add_state('s')
 
-    # Wrap inside a GPU_Device map scope
     me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
     r = state.add_access('R')
     memset_node = MemsetLibraryNode(name='memset_r')

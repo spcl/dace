@@ -87,16 +87,6 @@ GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
-GPU_RESIDENT_STORAGES = frozenset({
-    StorageType.GPU_Global,
-    StorageType.GPU_Shared,
-})
-CPU_RESIDENT_STORAGES = frozenset({
-    StorageType.CPU_Heap,
-    StorageType.CPU_Pinned,
-    StorageType.CPU_ThreadLocal,
-})
-
 
 class ReductionType(Enum):
     """ Reduction types natively supported by the SDFG compiler. """
