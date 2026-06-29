@@ -856,6 +856,23 @@ def isolate_nested_sdfg(
         if isinstance(n, nodes.AccessNode) and state.in_degree(n) != 0 and n not in middle_nodes:
             data_writers.setdefault(n.data, set()).add(n)
 
+    # Nodes reachable FORWARD from the nested SDFG (its transitive successors
+    # via value-flow edges) are genuine POST-state nodes. The same-array
+    # ``data_writers`` heuristic below must never pull one of them into the
+    # pre set: a writer that consumes the NSDFG's output and writes back to an
+    # array the NSDFG also reads (a read-then-overwrite alias, as in a stencil's
+    # ``B = f(A); A = f(B)`` pair) is sequenced AFTER the NSDFG by the real
+    # output-edge chain, even though it shares the input's data name. The
+    # edge-implied ordering is authoritative and wins over the name-based guess.
+    forward_from_nsdfg: Set[nodes.Node] = set()
+    fwd_stack: List[nodes.Node] = [oedge.dst for oedge in state.out_edges(nsdfg_node)]
+    while fwd_stack:
+        fnode = fwd_stack.pop()
+        if fnode in forward_from_nsdfg:
+            continue
+        forward_from_nsdfg.add(fnode)
+        fwd_stack.extend(oedge.dst for oedge in state.out_edges(fnode))
+
     pre_nodes: Set[nodes.Node] = set()
     to_visit: List[nodes.Node] = []
     for iedge in state.in_edges(nsdfg_node):
@@ -864,7 +881,7 @@ def isolate_nested_sdfg(
         if state.in_degree(input_node) != 0:
             to_visit.append(input_node)
         for other_writer in data_writers.get(input_node.data, ()):
-            if other_writer is not input_node:
+            if other_writer is not input_node and other_writer not in forward_from_nsdfg:
                 to_visit.append(other_writer)
     visited: Set[nodes.Node] = set()
     while len(to_visit) > 0:
@@ -876,7 +893,8 @@ def isolate_nested_sdfg(
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
         if isinstance(node_to_process, nodes.AccessNode):
             for other_writer in data_writers.get(node_to_process.data, ()):
-                if other_writer is not node_to_process and other_writer not in visited:
+                if (other_writer is not node_to_process and other_writer not in visited
+                        and other_writer not in forward_from_nsdfg):
                     to_visit.append(other_writer)
 
     # These are the nodes that belongs to the Post State. There are two reasons why a

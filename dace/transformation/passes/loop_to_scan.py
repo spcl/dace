@@ -743,23 +743,33 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
                         return []
 
     # Refuse when the body reads the carrier at more than one distinct subset
-    # (multi-step recurrence: ``b[i] = b[i+1] + b[i+2] + a[i]``). The scan
-    # rewrite emits a single carry buffer for the one-step recurrence the
-    # matcher accepted; a second carrier read at a different offset is NOT
+    # (multi-step recurrence ``b[i] = b[i+1] + b[i+2] + a[i]``, or a stencil
+    # whose in-place carrier is read at several offsets -- seidel_2d's
+    # ``A[i,j] = (A[i-1,j-1] + ... + A[i,j-1] + A[i,j+1] + ... ) / 9``). The
+    # scan rewrite emits a single carry buffer for the one-step recurrence the
+    # matcher accepted; any OTHER carrier read at a different offset is NOT
     # routed through that buffer and remains a direct array load. For an
-    # in-place carrier (``b`` read AND written) those direct loads see the
-    # wrong values once the scan reorders iterations.
+    # in-place carrier (read AND written) those direct loads see the wrong
+    # values once the scan reorders iterations.
+    #
+    # The distinct read subsets must be AGGREGATED ACROSS ALL AccessNodes of
+    # the carrier, not counted per node: after ``SplitTasklets`` a 9-point
+    # stencil reads the carrier through nine SEPARATE single-edge AccessNodes,
+    # so a per-node tally sees ``1`` at each and never trips. Aggregating
+    # restores the documented "the body reads the carrier at more than one
+    # distinct subset" intent. A legitimate scan reads its carrier at exactly
+    # the one carry offset, so its aggregate count is 1 and it still matches.
+    carrier_reads: Dict[str, set] = {name: set() for name in carrier_set}
     for st in loop.all_states():
         for n in st.data_nodes():
             if n.data not in carrier_set:
                 continue
-            read_subsets = set()
             for e in st.out_edges(n):
                 if e.data is None or e.data.subset is None:
                     continue
-                read_subsets.add(str(e.data.subset))
-            if len(read_subsets) > 1:
-                return []
+                carrier_reads[n.data].add(str(e.data.subset))
+    if any(len(subs) > 1 for subs in carrier_reads.values()):
+        return []
 
     # Refuse the multi-slot shape: several matched scan recurrences on the SAME
     # carrier array at distinct constant slots (e.g. ``acc[0, i]``, ``acc[1, i]``,

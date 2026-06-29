@@ -390,3 +390,61 @@ def test_scalar_source_not_subscripted_in_interstate_assignment():
     expr = next((a for a in found_assigns if "c1" in a and "c2" in a), None)
     assert expr is not None, f"expected an assignment referencing c1 and c2; got {found_assigns}"
     assert "[0]" not in expr, f"Scalar reference should not be subscripted; got {expr!r}"
+
+
+@dace.program
+def _inplace_tile_rmw(a: dace.float64[N, M], b: dace.float64[N, M]):
+    for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:
+        for i, j in dace.map[0:K, 0:K]:
+            a[ii + i + 1, jj + j + 1] = a[ii + i + 1, jj + j + 1] * 2.0 + b[ii + i + 1, jj + j + 1]
+
+
+def test_inplace_same_array_read_and_write_no_double_offset():
+    """In-place RMW (``a[idx] = a[idx]*2 + b[idx]``) makes the SAME array ``a``
+    both an in- AND out-connector of the post-MapToForLoop NSDFG.
+    ``ExpandNestedSDFGInputs`` must widen BOTH directions to full ``a`` while
+    offsetting the shared inner memlets exactly ONCE (``apply_offset`` dedup
+    via ``processed_inner_arrays``); a second offset pass would re-base
+    ``a[ii+i+1, jj+j+1]`` and miscompile. Verified end-to-end against the
+    un-transformed program."""
+    sdfg = _inplace_tile_rmw.to_sdfg(simplify=True)
+    PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+
+    # Sanity: at least one top-level NSDFG binds outer ``a`` on both an in- and
+    # out-edge (the in-place shape this test exists to cover).
+    from dace import subsets
+    saw_inplace = False
+    for state in sdfg.states():
+        for nd in state.nodes():
+            if not isinstance(nd, nodes.NestedSDFG) or state.entry_node(nd) is not None:
+                continue
+            in_arrs = {e.data.data for e in state.in_edges(nd) if e.data and e.data.data}
+            out_arrs = {e.data.data for e in state.out_edges(nd) if e.data and e.data.data}
+            if "a" in in_arrs and "a" in out_arrs:
+                saw_inplace = True
+    assert saw_inplace, "expected an NSDFG reading AND writing outer 'a'"
+
+    PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+    # Both directions widened to full ``a``.
+    for state in sdfg.states():
+        for nd in state.nodes():
+            if not isinstance(nd, nodes.NestedSDFG) or state.entry_node(nd) is not None:
+                continue
+            for e in (*state.in_edges(nd), *state.out_edges(nd)):
+                if e.data is None or e.data.data is None:
+                    continue
+                full = subsets.Range.from_array(sdfg.arrays[e.data.data])
+                assert e.data.subset == full, f"{e.data.data!r}: want full {full}, got {e.data.subset}"
+
+    PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n, m = 10, 10
+    rng = np.random.default_rng(0xF00D)
+    a = rng.standard_normal((n, m))
+    b = rng.standard_normal((n, m))
+    a_ref, b_ref = a.copy(), b.copy()
+    copy.deepcopy(_inplace_tile_rmw.to_sdfg(simplify=True))(a=a_ref, b=b_ref, N=n, M=m)
+    sdfg(a=a, b=b, N=n, M=m)
+    assert np.allclose(a, a_ref), f"max diff: {np.abs(a - a_ref).max():.3e}"
