@@ -180,11 +180,11 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
-    # ``cudaMemcpy2D``. A 2D pattern is supported when
-    # either dim has stride 1 on both sides, or the outer/inner stride ratio equals the inner width.
     src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
-    cuda2d_2d = False
     if src_rank == 2 and dst_rank == 2:
+        # It is a 2D copy if the stride 1 dimensions are compatible, i.e. are at the same place
+        # or the outer/inner stride ratio equals the inner width.
+        cuda2d_2d = False
         s0, s1 = in_strides_collapsed
         d0, d1 = out_strides_collapsed
         w = in_shape_collapsed[1]
@@ -198,10 +198,14 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
                 cuda2d_2d = (not symbolic.inequal_symbols(s0 / s1, w) and not symbolic.inequal_symbols(d0 / d1, w))
             except (TypeError, ZeroDivisionError):
                 pass
-    cuda2d_1d = (src_rank == 1 and dst_rank == 1
-                 and not symbolic.inequal_symbols(in_shape_collapsed[0], out_shape_collapsed[0]))
-    if cuda2d_2d or cuda2d_1d:
-        return 'MemcpyCUDA2D'
+        if cuda2d_2d:
+            return 'MemcpyCUDA2D'
+
+    elif src_rank == 1 and dst_rank == 1:
+        # Special case of 1D copy were either the source or the destination (or both) does not have
+        #  stride 1 increment, i.e. `a[:, 1] = b[4, :]` and both have C order.
+        if not symbolic.inequal_symbols(in_shape_collapsed[0], out_shape_collapsed[0]):
+            return 'MemcpyCUDA2D'
 
     # Same-side strided ND -- MappedTasklet.
     if not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
