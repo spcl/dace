@@ -14,7 +14,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace import data as dt
 from dace import dtypes
 
-import sys
 from typing import Literal
 
 dirtype = Literal['in', 'out']
@@ -356,7 +355,7 @@ class LiftStructViews(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes & ppl.Modifies.Tasklets & ppl.Modifies.Memlets
 
     def depends_on(self):
-        return {}
+        return []
 
     def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: Dict[str, Set[str]]) -> bool:
         lifted_something = False

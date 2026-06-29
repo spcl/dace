@@ -4,7 +4,6 @@ from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
-import warnings
 
 import dace
 from dace.sdfg.graph import generate_element_id
@@ -176,7 +175,7 @@ class Memlet(object):
         attrs['is_data_src'] = self._is_data_src
 
         # Fill in legacy (DEPRECATED) values for backwards compatibility
-        attrs['num_accesses'] = str(self.volume) if not self.dynamic else -1
+        attrs['num_accesses'] = symbolic.serialize_symbolic(self.volume) if not self.dynamic else -1
 
         return {"type": "Memlet", "attributes": attrs}
 

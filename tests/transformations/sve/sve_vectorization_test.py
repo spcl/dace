@@ -1,7 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.sdfg.graph import NodeNotFoundError
 import dace
-import numpy as np
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 from dace import SDFG
 import dace.dtypes as dtypes

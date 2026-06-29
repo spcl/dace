@@ -93,50 +93,54 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
 
     expr = ''
 
-    if loop.update_statement and loop.init_statement and loop.loop_variable:
-        lsyms = {}
-        lsyms.update(symbols)
-        if codegen.dispatcher.defined_vars.has(loop.loop_variable) and not loop.loop_variable in lsyms:
-            lsyms[loop.loop_variable] = codegen.dispatcher.defined_vars.get(loop.loop_variable)[1]
+    lsyms = {}
+    lsyms.update(symbols)
+    if (loop.loop_variable and codegen.dispatcher.defined_vars.has(loop.loop_variable)
+            and not loop.loop_variable in lsyms):
+        lsyms[loop.loop_variable] = codegen.dispatcher.defined_vars.get(loop.loop_variable)[1]
+
+    if loop.init_statement:
         init = unparse_interstate_edge(loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
         init = init.strip(';')
+    else:
+        init = ''
 
+    if loop.update_statement:
         update = unparse_interstate_edge(loop.update_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
         update = update.strip(';')
-
-        if loop.inverted:
-            if loop.update_before_condition:
-                expr += f'{init};\n'
-                expr += 'do {\n'
-                expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
-                expr += f'{update};\n'
-                expr += f'}} while({cond});\n'
-            else:
-                expr += f'{init};\n'
-                expr += 'while (1) {\n'
-                expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
-                expr += f'if (!({cond}))\n'
-                expr += 'break;\n'
-                expr += f'{update};\n'
-                expr += '}\n'
-        else:
-            if loop.unroll:
-                if loop.unroll_factor >= 1:
-                    expr += f'#pragma unroll {loop.unroll_factor}\n'
-                else:
-                    expr += f'#pragma unroll\n'
-            expr += f'for ({init}; {cond}; {update}) {{\n'
-            expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
-            expr += '\n}\n'
     else:
-        if loop.inverted:
+        update = ''
+
+    if loop.inverted:
+        if loop.update_before_condition:
+            if init:
+                expr += f'{init};\n'
             expr += 'do {\n'
             expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
-            expr += f'\n}} while({cond});\n'
+            if update:
+                expr += f'{update};\n'
+            else:
+                expr += '\n'
+            expr += f'}} while({cond});\n'
         else:
-            expr += f'while ({cond}) {{\n'
+            if init:
+                expr += f'{init};\n'
+            expr += 'while (1) {\n'
             expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
-            expr += '\n}\n'
+            expr += f'if (!({cond}))\n'
+            expr += 'break;\n'
+            if update:
+                expr += f'{update};\n'
+            expr += '}\n'
+    else:
+        if loop.unroll:
+            if loop.unroll_factor >= 1:
+                expr += f'#pragma unroll {loop.unroll_factor}\n'
+            else:
+                expr += f'#pragma unroll\n'
+        expr += f'for ({init}; {cond}; {update}) {{\n'
+        expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
+        expr += '\n}\n'
 
     return expr
 

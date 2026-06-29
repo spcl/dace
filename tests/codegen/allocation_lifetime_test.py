@@ -287,7 +287,7 @@ def test_alloc_multistate():
     init = sdfg.add_state()
     end = sdfg.add_state()
     s2 = sdfg.add_state()
-    sdfg.add_loop(init, s2, end, 'i', '0', 'i < 5', 'i + 1')
+    sdfg.add_loop_state_machine(init, s2, end, 'i', '0', 'i < 5', 'i + 1')
 
     s1 = sdfg.add_state_before(s2)
 
