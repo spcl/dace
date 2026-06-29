@@ -44,8 +44,8 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         # If dataflow or states changed, new dead code may be exposed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
-    def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.ControlFlowBlockReachability, ap.AccessSets}
+    def depends_on(self) -> List[Type[ppl.Pass]]:
+        return [ap.ControlFlowBlockReachability, ap.AccessSets]
 
     def apply(self, region, pipeline_results):
         """

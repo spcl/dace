@@ -26,7 +26,7 @@ class ReferenceToView(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.FindAccessStates, ap.FindReferenceSources}
+        return [ap.FindAccessStates, ap.FindReferenceSources]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
