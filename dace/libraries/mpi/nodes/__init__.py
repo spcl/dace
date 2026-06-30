@@ -12,5 +12,6 @@ from .allreduce import Allreduce
 from .allgather import Allgather
 from .alltoall import Alltoall
 from .barrier import Barrier
+from .comm_f2c import CommF2c
 from .dummy import Dummy
 from .redistribute import Redistribute

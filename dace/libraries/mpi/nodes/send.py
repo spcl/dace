@@ -4,8 +4,8 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import (MPINode, validate_integer_descriptor, expanded_input_connectors,
-                                           input_descriptor_name)
+from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, validate_integer_descriptor,
+                                           expanded_input_connectors)
 
 
 @dace.library.expansion
@@ -33,10 +33,7 @@ class ExpandSendMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = "1"
         buffer_offset = 0
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
-        if grid:
-            comm = "_grid"
+        comm = resolve_comm(node, parent_state)
         code += f"""
                 MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm});
                 """

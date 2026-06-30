@@ -5,7 +5,7 @@ import dace.sdfg.nodes
 from dace import dtypes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, input_descriptor_name
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm
 
 
 @dace.library.expansion
@@ -19,11 +19,11 @@ class ExpandBarrierMPI(ExpandTransformation):
         # a wired ``_grid`` cartesian sub-comm, else a Fortran handle converted
         # with ``MPI_Comm_f2c``, else the default world.
         init = ""
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
-        if grid:
-            comm = "_grid"
-        elif node.fcomm:
+        comm = resolve_comm(node, parent_state)
+        if comm == "MPI_COMM_WORLD" and node.fcomm:
+            # Legacy Fortran-comm-handle node property (superseded by a ``_comm``
+            # connector fed from a ``Comm_f2c`` node, but kept for direct callers
+            # that set ``fcomm`` instead of wiring a connector).
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
         code = f"""

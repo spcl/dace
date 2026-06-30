@@ -6,7 +6,7 @@ from dace import dtypes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
 
 
 @dace.library.expansion
@@ -43,11 +43,10 @@ class ExpandBcastMPI(ExpandTransformation):
             ref = "&"
 
         init = ""
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
-        if grid:
-            comm = "_grid"
-        elif node.fcomm:
+        comm = resolve_comm(node, parent_state)
+        if comm == "MPI_COMM_WORLD" and node.fcomm:
+            # Legacy Fortran-comm-handle node property (superseded by a ``_comm``
+            # connector fed from a ``Comm_f2c`` node, but kept for direct callers).
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 
