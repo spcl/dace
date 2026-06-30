@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.helpers import all_isedges_between
+from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
 
 
@@ -26,7 +26,7 @@ class ReferenceToView(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.StateReachability, ap.FindAccessStates, ap.FindReferenceSources}
+        return [ap.FindAccessStates, ap.FindReferenceSources]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
@@ -38,7 +38,6 @@ class ReferenceToView(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
         reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.cfg_id]
 
@@ -52,7 +51,7 @@ class ReferenceToView(ppl.Pass):
 
         refsets = self.find_refsets(candidates, access_states)
 
-        result: Set[str] = self.find_candidates(sdfg, reference_sources, refsets, access_states, reachable)
+        result: Set[str] = self.find_candidates(sdfg, reference_sources, refsets, access_states)
         if not result:
             return None
 
@@ -98,7 +97,6 @@ class ReferenceToView(ppl.Pass):
         reference_sources: Dict[str, Set[Memlet]],
         refsets: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]],
         access_states: Dict[str, Set[SDFGState]],
-        reachable_states: Dict[SDFGState, Set[SDFGState]],
     ) -> Set[str]:
         """
         Returns a set of candidates for conversion to views.
@@ -129,18 +127,13 @@ class ReferenceToView(ppl.Pass):
                 if cand not in result:
                     break
 
-                # Otherwise, they are only inter-state or free symbols. Test all paths to uses in different states
-                # NOTE: This is an expensive check!
+                # Otherwise, they are only inter-state or free symbols. Check whether any such symbol may be
+                # reassigned on a path to another use, even across sibling control-flow regions.
                 for other_state in access_states[cand]:
-                    # Filter self and unreachable states
-                    if other_state is state or other_state not in reachable_states[state]:
+                    if other_state is state:
                         continue
-                    for e in all_isedges_between(state, other_state):
-                        # The symbol was modified/reassigned in one of the paths, skip
-                        if fsyms & e.data.assignments.keys():
-                            result.remove(cand)
-                            break
-                    if cand not in result:
+                    if fsyms & modified_symbols_between(state, other_state):
+                        result.remove(cand)
                         break
 
         return result

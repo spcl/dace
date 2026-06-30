@@ -303,7 +303,7 @@ def test_need_for_tasklet():
     aname, _ = sdfg.add_array('A', (10, ), dace.int32)
     bname, _ = sdfg.add_array('B', (10, ), dace.int32)
     body = sdfg.add_state('body')
-    _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
+    _, _, _ = sdfg.add_loop_state_machine(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
     anode = body.add_access(aname)
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='i', other_subset='9 - i'))
@@ -325,7 +325,7 @@ def test_need_for_transient():
     aname, _ = sdfg.add_array('A', (10, 10), dace.int32)
     bname, _ = sdfg.add_array('B', (10, 10), dace.int32)
     body = sdfg.add_state('body')
-    _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
+    _, _, _ = sdfg.add_loop_state_machine(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
     anode = body.add_access(aname)
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='0:10, i', other_subset='0:10, 9 - i'))
@@ -390,7 +390,7 @@ def test_symbol_write_before_read():
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
-    sdfg.add_loop(init, body_start, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     # Internal loop structure
     sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
@@ -410,7 +410,7 @@ def test_symbol_array_mix(overwrite):
     body = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
-    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
 
@@ -438,7 +438,7 @@ def test_symbol_array_mix_2(parallel):
     body_start = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
-    sdfg.add_loop(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
 
@@ -463,7 +463,7 @@ def test_internal_symbol_used_outside(overwrite):
     body = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
-    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     # Internal loop structure
     sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
@@ -800,6 +800,146 @@ def test_nested_sdfg_nested_loop():
     assert sdfg.apply_transformations_repeated(LoopToMap) == 2
 
 
+def test_stride_symbol_propagated_to_nested_sdfg():
+    """A ``ConditionalBlock`` guard that indexes a 2D array whose stride uses
+    a free symbol ``S``. After two applications of ``LoopToMap``, both the
+    level-1 and level-2 ``NestedSDFG``s must carry ``S`` in their
+    ``symbol_mapping`` AND in the free-symbol set consumed by
+    ``generate_nsdfg_header`` -- otherwise codegen emits a ``loop_body_*``
+    function using ``S`` without declaring it. Regression for a bug observed
+    on the velocity-tendencies pipeline where compile fails with
+    ``'S' was not declared in this scope``.
+    """
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+
+    sdfg = dace.SDFG("loop_to_map_missing_stride_symbol")
+    sdfg.add_symbol("S", dace.int32)
+    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
+    sdfg.add_scalar("acc", dace.int32, transient=True)
+
+    outer = LoopRegion("outer", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
+    sdfg.add_node(outer, is_start_block=True)
+
+    init = outer.add_state("init", is_start_block=True)
+    t0 = init.add_tasklet("t_init", {}, {"o"}, "o = 0")
+    init.add_edge(t0, "o", init.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    inner = LoopRegion("inner", condition_expr="j < 5", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1")
+    outer.add_node(inner)
+    outer.add_edge(init, inner, dace.InterstateEdge())
+
+    cb = ConditionalBlock("cb")
+    inner.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("A[j, k] == 1"), branch)
+
+    set_one = branch.add_state("set_one", is_start_block=True)
+    t1 = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
+    set_one.add_edge(t1, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    sdfg.validate()
+    applied = sdfg.apply_transformations_repeated(LoopToMap, permissive=True)
+    assert applied == 2
+
+    # Every ``NestedSDFG`` the pass created must have ``S`` in both its
+    # ``symbol_mapping`` and its inner ``sdfg.symbols``. Otherwise the
+    # stride-using subscript is emitted without the declaration.
+    for node, _ in sdfg.all_nodes_recursive():
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        if any('S' in {str(s) for s in d.free_symbols} for d in node.sdfg.arrays.values()):
+            assert 'S' in node.symbol_mapping, node.symbol_mapping
+            assert 'S' in node.sdfg.symbols, sorted(node.sdfg.symbols)
+
+    # End-to-end: the SDFG must compile cleanly. Before the fix this emits
+    # ``'S' was not declared in this scope`` inside ``loop_body_*``.
+    sdfg.compile()
+
+
+def test_dynamic_write_slab_separated_by_iteration_var():
+    """Loop whose body contains a Map that writes conditionally to a 2D
+    array at ``[nproma_i, level]``: per-lane dynamic, but each outer
+    iteration pins the ``level`` axis so no two iterations touch the same
+    slab. Earlier LoopToMap unconditionally rejected any dynamic-volume
+    write (``Dynamic memlet without WCR``); now it accepts the write when
+    the destination subset passes the same ``a*i+b`` check used for
+    non-dynamic writes.
+
+    Shape is the ``_for_it_35`` level loop reduced to its essentials.
+    """
+    from dace import memlet as mm
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+    from dace.sdfg.propagation import propagate_memlets_sdfg
+
+    sdfg = dace.SDFG("for_it_35_repro")
+    NLEV = dace.symbol("NLEV", dace.int32)
+    NPROMA = dace.symbol("NPROMA", dace.int32)
+    sdfg.add_array("src", [NPROMA, NLEV], dace.float64)
+    sdfg.add_array("cfl_clipping", [NPROMA, NLEV], dace.int32)
+
+    outer = LoopRegion(
+        "level_loop",
+        condition_expr="level <= NLEV - 3",
+        loop_var="level",
+        initialize_expr="level = 3",
+        update_expr="level = level + 1",
+    )
+    sdfg.add_node(outer, is_start_block=True)
+    body = outer.add_state("body", is_start_block=True)
+
+    r_src = body.add_read("src")
+    w_cfl = body.add_write("cfl_clipping")
+    me, mx = body.add_map("nproma", {"i": "0:NPROMA"})
+    me.add_in_connector("IN_src")
+    me.add_out_connector("OUT_src")
+    mx.add_in_connector("IN_cfl")
+    mx.add_out_connector("OUT_cfl")
+
+    # Inner conditional write wrapped in a nested SDFG (this is what makes
+    # the aggregated MapExit memlet dynamic).
+    nsdfg = dace.SDFG("inner")
+    nsdfg.add_array("src", [1], dace.float64)
+    nsdfg.add_array("cfl", [1], dace.int32)
+    cb = ConditionalBlock("cb")
+    nsdfg.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=nsdfg)
+    cb.add_branch(CodeBlock("(1 == 1)"), branch)
+    s = branch.add_state("s", is_start_block=True)
+    r_in = s.add_read("src")
+    w_out = s.add_write("cfl")
+    tk = s.add_tasklet("cmp", {"s"}, {"o"}, "o = (s > 0.5)")
+    s.add_edge(r_in, None, tk, "s", mm.Memlet("src[0]"))
+    s.add_edge(tk, "o", w_out, None, mm.Memlet("cfl[0]"))
+
+    nested = body.add_nested_sdfg(nsdfg, {"src"}, {"cfl"})
+    body.add_edge(r_src, None, me, "IN_src", mm.Memlet("src[0:NPROMA, level]"))
+    body.add_edge(me, "OUT_src", nested, "src", mm.Memlet("src[i, level]"))
+    body.add_edge(nested, "cfl", mx, "IN_cfl", mm.Memlet("cfl_clipping[i, level]"))
+    body.add_edge(mx, "OUT_cfl", w_cfl, None, mm.Memlet("cfl_clipping[0:NPROMA, level]"))
+
+    sdfg.validate()
+    propagate_memlets_sdfg(sdfg)
+
+    # The aggregated MapExit memlet is dynamic (conditional write), with
+    # dst_subset ``[0:NPROMA, level]``.
+    found_dyn = False
+    for state in sdfg.all_states():
+        for n in state.nodes():
+            if isinstance(n, nodes.MapExit):
+                for e in state.out_edges(n):
+                    if e.data.dynamic:
+                        found_dyn = True
+    assert found_dyn, "expected a dynamic memlet before LoopToMap"
+
+    applied = sdfg.apply_transformations_repeated(LoopToMap, permissive=True)
+    assert applied == 1, f"LoopToMap should lift the level loop (got {applied})"
+
+    # No LoopRegion should remain.
+    assert not any(isinstance(n, LoopRegion) for n, _ in sdfg.all_nodes_recursive())
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -840,3 +980,5 @@ if __name__ == "__main__":
     test_rotated_loop_to_map(True)
     test_self_loop_to_map()
     test_nested_sdfg_nested_loop()
+    test_stride_symbol_propagated_to_nested_sdfg()
+    test_dynamic_write_slab_separated_by_iteration_var()

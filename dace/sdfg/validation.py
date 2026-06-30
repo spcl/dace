@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, List, Set
 
 import networkx as nx
 
-from dace import dtypes, subsets, symbolic, data
+from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo
 
 if TYPE_CHECKING:
@@ -255,11 +255,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
         # Check the names of data descriptors and co.
         seen_names: Set[str] = set()
-        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()]:
+        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
                     f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
-                    'that the names of symbols, data descriptors, subarrays and rdistarrays are unique.', sdfg, None)
+                    'that the names of symbols and data descriptors are unique.', sdfg, None)
             seen_names.update(obj_names)
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
@@ -413,7 +413,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace import data as dt
     from dace import subsets as sbs
     from dace.config import Config
-    from dace.sdfg import SDFG
     from dace.sdfg import nodes as nd
     from dace.sdfg import utils as sdutil
     from dace.sdfg.scope import is_devicelevel_gpu, scope_contains_scope
@@ -469,7 +468,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
-            raise InvalidSDFGNodeError("Node validation failed: " + str(ex), sdfg, state_id, nid) from ex
+            raise InvalidSDFGNodeError(f"Node validation failed: {ex}", sdfg, state_id, nid) from ex
 
         # Isolated nodes
         ########################################
@@ -674,6 +673,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 f'Duplicate memlet detected: "{e.data}". Please copy objects '
                 'rather than using multiple references to the same one', sdfg, state_id, eid)
         references.add(id(e.data))
+
+        for subset in (e.data.subset, e.data.other_subset):
+            if subset is None:
+                continue
+            if id(subset) in references:
+                raise InvalidSDFGEdgeError(
+                    f'Duplicate subset detected in memlet "{e.data}". Please copy objects '
+                    'rather than using multiple references to the same one', sdfg, state_id, eid)
+            references.add(id(subset))
 
         # Edge validation
         try:
@@ -1015,8 +1023,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     def __str__(self):
         if self.edge_id is not None:
             e = self.sdfg.edges()[self.edge_id]
-            edgestr = ' (at edge "%s" (%s -> %s)' % (
-                e.data.label,
+            edgestr = ' (at edge %s -> %s)' % (
                 str(e.src),
                 str(e.dst),
             )

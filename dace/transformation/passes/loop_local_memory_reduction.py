@@ -3,8 +3,7 @@
 import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
-from dace.sdfg import SDFGState
-from dace.sdfg.state import LoopRegion, ConditionalBlock
+from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
@@ -115,7 +114,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return modified != ppl.Modifies.Nothing
 
     def depends_on(self):
-        return {StateReachability, FindAccessStates, ConditionUniqueWrites}
+        return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
     def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         self.num_applications = 0

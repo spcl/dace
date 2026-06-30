@@ -26,7 +26,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     e = next(state.out_edges_by_connector(node, cname))
     if cname is None:
         return None
-    scalar = (e.data.subset and e.data.subset.num_elements() == 1
+    scalar = (bool(e.data.subset) and e.data.subset.num_elements() == 1
               and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
     if e.data.data is not None:
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
@@ -64,7 +64,7 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = (e.data.subset and e.data.subset.num_elements() == 1)
+                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
                 if e.data.data is not None:
                     allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
@@ -143,6 +143,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
     ``dtypes.DEFAULT_TOPLEVEL_SCHEDULE``.
     May raise ``InvalidSDFGNodeError`` if a default scope is ambiguous based on surrounding
     storage types.
+
     :param scope: The SDFG, state, or scope to infer.
     :param parent_schedules: A list of ScheduleType elements representing
                              an ordered list of schedules, from the global schedule

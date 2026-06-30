@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg import utils
-import dace.dtypes as dtypes
 import numpy as np
 import pytest
 
@@ -321,8 +320,8 @@ def test_send_recv():
 
     @dace.program
     def mpi4py_send_recv(rank: dace.int32, size: dace.int32):
-        src = np.full([1], (rank - 1) % size, dtype=np.int32)
-        dst = np.full([1], (rank + 1) % size, dtype=np.int32)
+        src = (rank - 1) % size
+        dst = (rank + 1) % size
         sbuf = np.full((1, ), rank, dtype=np.int32)
         commworld.Send(sbuf, dst, tag=0)
         rbuf = np.empty((1, ), dtype=np.int32)

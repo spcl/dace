@@ -5,7 +5,7 @@ import ast
 import copy
 from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic, serialize
+from dace import sdfg as sd, symbolic, serialize, version
 from dace.properties import Property, make_properties
 from dace.sdfg import InterstateEdge, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
@@ -140,10 +140,15 @@ class LoopUnroll(xf.MultiStateTransformation):
         block_map = {}
 
         for block in loop.nodes():
-            # Using to/from JSON copies faster than deepcopy.
-            new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
+            # Using to/from JSON is faster for copying blocks than deep copying.
+            new_block = serialize.from_json(serialize.to_json(block),
+                                            context={
+                                                'sdfg': graph.sdfg,
+                                                'version': version.__version__,
+                                            })
             assert block not in block_map
             block_map[block] = new_block
+            # The JSON copy is created with SDFG context, so replacement can run before insertion.
             new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 

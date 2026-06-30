@@ -32,7 +32,7 @@ class ArrayElimination(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.StateReachability, ap.FindAccessStates}
+        return [ap.StateReachability, ap.FindAccessStates]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
@@ -85,6 +85,8 @@ class ArrayElimination(ppl.Pass):
 
         # If node is completely removed from graph, erase data descriptor
         for aname, desc in list(sdfg.arrays.items()):
+            if isinstance(desc, data.DistributedDescriptor):
+                continue
             if not desc.transient or isinstance(desc, data.Scalar):
                 continue
             if aname not in access_sets or not access_sets[aname]:

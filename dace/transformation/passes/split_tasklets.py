@@ -9,8 +9,6 @@ from dace.transformation import pass_pipeline as ppl, transformation
 import ast
 from dace.sdfg.nodes import CodeBlock
 
-import re
-
 
 class ASTSplitter:
 
@@ -107,7 +105,7 @@ class SplitTasklets(ppl.Pass):
         return modified & ppl.Modifies.Tasklets
 
     def depends_on(self):
-        return {}
+        return []
 
     tmp_access_identifier = "_split_"
 

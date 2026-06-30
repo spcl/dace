@@ -120,7 +120,7 @@ jobs:
         ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
 
-    - uses: codecov/codecov-action@v5
+    - uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         verbose: true

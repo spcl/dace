@@ -1,7 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library, properties, subsets, symbolic
-from dace.utils import prod as _prod
-from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
@@ -93,7 +91,7 @@ class Redistribute(MPINode):
     }
     default_implementation = "MPI"
 
-    redistr = properties.Property(dtype=str, default='tmp')
+    redistr = properties.DataProperty(default='tmp')
 
     def __init__(self, name, redistr='tmp', *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)

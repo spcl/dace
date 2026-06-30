@@ -15,6 +15,7 @@ from dace.config import Config
 from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
 from dace.registry import undefined_safe_enum
+from dace.version import __version__
 
 
 @undefined_safe_enum
@@ -379,10 +380,10 @@ class typeclass(object):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return other is not None and self.ctype == other.ctype
+        return other is not None and self.ctype == getattr(other, 'ctype', False)
 
     def __ne__(self, other):
-        return other is not None and self.ctype != other.ctype
+        return other is not None and self.ctype != getattr(other, 'ctype', False)
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
@@ -721,8 +722,6 @@ class struct(typeclass):
         if json_obj['type'] != "struct":
             raise TypeError("Invalid type for struct")
 
-        import dace.serialize  # Avoid import loop
-
         ret = struct(json_obj['name'])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
         ret._length = {k: v for k, v in json_obj['length']}
@@ -872,7 +871,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Data):
                 pass
             elif isinstance(arg, str):
-                arg = json_to_typeclass(arg)
+                arg = json_to_typeclass(arg, {'version': __version__})
             else:
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
@@ -1103,7 +1102,7 @@ class callback(typeclass):
 
         import dace.serialize  # Avoid import loop
 
-        return callback([json_to_typeclass(rettype) if rettype else None for rettype in rettypes],
+        return callback([json_to_typeclass(rettype, context) if rettype else None for rettype in rettypes],
                         *(dace.serialize.from_json(arg, context) for arg in json_obj['arguments']))
 
     def __str__(self):
@@ -1263,12 +1262,67 @@ TYPECLASS_TO_STRING = {
     complex128: "dace::complex128"
 }
 
+TYPECLASS_TO_LITERAL_SUFFIX = {
+    int8: 'i8',
+    int16: 'i16',
+    int32: 'i32',
+    int64: 'i64',
+    uint8: 'u8',
+    uint16: 'u16',
+    uint32: 'u32',
+    uint64: 'u64',
+    float16: 'f16',
+    float32: 'f32',
+    float64: 'f64',
+}
+
+LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_LITERAL_SUFFIX.items()}
+
+# Inverse of _CTYPES for numeric types, to parse C++ cast fallbacks.
+CTYPE_TO_TYPECLASS = {
+    ctype: dtype_to_typeclass(nptype)
+    for nptype, ctype in _CTYPES.items()
+    if nptype is not None and (numpy.issubdtype(nptype, numpy.integer) or numpy.issubdtype(nptype, numpy.floating))
+}
+
+TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
+    float32: 'f',
+    uint32: 'U',
+    int64: 'LL',
+    uint64: 'ULL',
+}
+
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
     "uint64", "float16", "float32", "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64]
+
+
+def typeclass_to_literal_suffix(dtype):
+    return TYPECLASS_TO_LITERAL_SUFFIX[dtype]
+
+
+def literal_suffix_to_typeclass(suffix):
+    return LITERAL_SUFFIX_TO_TYPECLASS[suffix]
+
+
+def cpp_typed_literal(value, dtype):
+    """Format a typed constant as a native C++ literal when possible.
+
+    :param value: Constant value to emit.
+    :param dtype: DaCe typeclass of the constant.
+    :return: C++ literal string such as ``'1ULL'`` or ``'1.5f'``, or
+             ``None`` if the dtype should be emitted via an explicit cast.
+    """
+    suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype, '')
+    if not suffix:
+        return None
+    if dtype == float32:
+        return f'{float(value)}{suffix}'
+    return f'{int(value)}{suffix}'
+
 
 #######################################################
 # Allowed types

@@ -1,13 +1,28 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the use of Reference data descriptors. """
+import json
+import tempfile
+
 import dace
 from dace.sdfg import validation
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.analysis import FindReferenceSources
+from dace.transformation.helpers import modified_symbols_between
+from dace.transformation.passes.analysis import ControlFlowBlockReachability, FindReferenceSources, StateReachability
 from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
 import networkx as nx
+
+
+def _assert_roundtrip_json_stable(sdfg):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path1 = f'{tmpdir}/test.sdfg'
+        path2 = f'{tmpdir}/test2.sdfg'
+        sdfg.save(path1, hash=False)
+        dace.SDFG.from_file(path1).save(path2, hash=False)
+
+        with open(path1, 'r') as fp1, open(path2, 'r') as fp2:
+            assert json.load(fp1) == json.load(fp2)
 
 
 def test_frontend_reference():
@@ -336,7 +351,7 @@ def _create_loop_reference_internal_use():
     state = sdfg.add_state()
     after = sdfg.add_state()
     sdfg.add_edge(state, after, dace.InterstateEdge())
-    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=after)
+    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_block=after)
 
     # Reference set inside loop
     state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i]'))
@@ -363,11 +378,11 @@ def _create_loop_reference_nonfree_internal_use():
 
     # First loop
     state1 = sdfg.add_state()
-    sdfg.add_loop(istate, state1, between_loops, 'i', '0', 'i < 20', 'i + 1')
+    sdfg.add_loop(istate, state1, between_loops, 'i', '0', 'i < 20', 'i + 1', label='set_loop')
 
     # Second loop
     state2 = sdfg.add_state()
-    sdfg.add_loop(between_loops, state2, None, 'i', '0', 'i < 20', 'i + 1')
+    sdfg.add_loop(between_loops, state2, None, 'i', '0', 'i < 20', 'i + 1', label='use_loop')
 
     # Reference set inside first loop
     state1.add_edge(state1.add_read('A'), None, state1.add_write('ref'), 'set', dace.Memlet('A[i]'))
@@ -523,6 +538,10 @@ def test_scoped(reftoview):
     assert np.allclose(A, ref)
 
 
+def test_scoped_roundtrip_is_stable():
+    _assert_roundtrip_json_stable(_create_scoped_sdfg())
+
+
 @pytest.mark.parametrize('reftoview', (False, True))
 def test_scoped_empty_memlet(reftoview):
     sdfg = _create_scoped_empty_memlet_sdfg()
@@ -646,6 +665,29 @@ def test_reference_loop_nonfree_internal_use():
     assert np.allclose(ref, A)
 
 
+def test_reachability_across_sibling_loops():
+    sdfg = _create_loop_reference_nonfree_internal_use()
+    blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
+
+    block_reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
+    assert blocks['block_0'] in block_reach[blocks['block_1'].parent_graph.cfg_id][blocks['block_1']]
+    assert blocks['block_2'] in block_reach[blocks['block_1'].parent_graph.cfg_id][blocks['block_1']]
+
+    state_reach = StateReachability().apply_pass(sdfg, {})
+    assert blocks['block_0'] in state_reach[sdfg.cfg_id][blocks['block_1']]
+    assert blocks['block_2'] in state_reach[sdfg.cfg_id][blocks['block_1']]
+
+
+def test_modified_symbols_between_control_flow_blocks():
+    sdfg = _create_loop_reference_internal_use()
+    blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
+    assert modified_symbols_between(blocks['block_0'], blocks['block_1']) == set()
+
+    sdfg = _create_loop_reference_nonfree_internal_use()
+    blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
+    assert modified_symbols_between(blocks['block_1'], blocks['block_2']) == {'i'}
+
+
 @pytest.mark.parametrize(('array_outside_scope', 'depends_on_iterate'), ((False, True), (False, True)))
 def test_ref2view_refset_in_scope(array_outside_scope, depends_on_iterate):
     sdfg = dace.SDFG('reftest')
@@ -762,6 +804,7 @@ if __name__ == '__main__':
     test_multisubset(True)
     test_scoped(False)
     test_scoped(True)
+    test_scoped_roundtrip_is_stable()
     test_scoped_empty_memlet(False)
     test_scoped_empty_memlet(True)
     test_reference_neighbors(False)
@@ -775,3 +818,4 @@ if __name__ == '__main__':
     test_ref2view_refset_in_scope(True, False)
     test_ref2view_refset_in_scope(True, True)
     test_ref2view_reconnection()
+    test_modified_symbols_between_control_flow_blocks()
