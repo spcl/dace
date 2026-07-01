@@ -13,7 +13,7 @@ import pytest
 import numpy as np
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
+from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
 # ============================================================================
@@ -466,8 +466,11 @@ def test_branch_with_cpu_else_gpu():
     print(IR)
     #sdfg.view()
 
-def test_nested_state():
-    pass
+def test_nested_IR():
+    sdfg = nested_sdfg()
+    sdfg.view()
+    IR = OtA().get_IR(sdfg)
+    print(IR)
 
 # ============================================================================
 # OFFLOADING TESTS
@@ -665,7 +668,7 @@ def pytest_configure(config):
 
 if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
-    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
-
+    test_nested_IR()
  

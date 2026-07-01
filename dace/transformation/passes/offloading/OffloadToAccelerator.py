@@ -1,5 +1,5 @@
 
-from dace import dtypes, properties, data, Memlet
+from dace import dtypes, properties, data, Memlet, subsets
 from dace.sdfg import nodes, SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock
 from dace.sdfg.utils import get_last_view_node
@@ -44,7 +44,7 @@ class OffloadingIRNode:
     def _get_str(self, visited_set, len_before):
         s = f"{self.debug_name}:"
         spaces = 50 - (len_before + len(s))
-        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set if len(name) <= 5])}, gpu = {sorted([name for name in self.gpu_set if len(name) <= 5])}\n"
+        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set if len(name) <= 500])}, gpu = {sorted([name for name in self.gpu_set if len(name) <= 5])}\n"
 
         if self in visited_set:
             return s
@@ -179,6 +179,7 @@ class OffloadToAccelerator(ppl.Pass):
         # step 2 & 3: copy analysis & create IR to store analysis results
         print("--- Analysis---")
         sdfgIR = self.sdfg_to_IR(sdfg)
+        print(f"--- full IR ---\n{sdfgIR}\n\n")
         
         # step 4: insert copies based on IR
         print("--- Copies ---")
@@ -245,42 +246,61 @@ class OffloadToAccelerator(ppl.Pass):
     # helpers to get the set of arrays accessed / connected to nodes or edges #
         
     def get_arrays_used_by_incoming_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
-        arrays : set[str] = set()
 
-        # if current node is access node
-        if isinstance(node, nodes.AccessNode): 
-            data_name = node.data
-            arrays = {data_name} # add current access node
+        def recursion(node:nodes.Node, visited_set:set[nodes.Node]):
+            if node in visited_set: # the visited set is necessary for edge cases, e.g. an access node A whose predecessor B is a view node refering back to A
+                return set()
+            visited_set.add(node)
 
-            if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
-                original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
-                arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, original)
-                
-        # check if more access nodes UPstream
-        for n in self.get_predecessors(state, node):
-            if isinstance(n, nodes.AccessNode):
-                arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, n)
+            arrays : set[str] = set()
 
-        return arrays
+            # if current node is access node
+            if isinstance(node, nodes.AccessNode): 
+                data_name = node.data
+                arrays = {data_name} # add current access node
+                #print("ACCESS:", data_name, " IS VIEW:", isinstance(sdfg.arrays[data_name], data.View))
+
+                if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
+                    original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
+                    arrays |= recursion(original, visited_set)
+                    
+
+            # check if more access nodes UPstream
+            #print("NODE:", node, "PREDS:", self.get_predecessors(state, node))
+            for n in self.get_predecessors(state, node):
+                if isinstance(n, nodes.AccessNode):
+                    arrays |= recursion(n, visited_set)
+
+            return arrays
+        
+        return recursion(node, set())
     
     def get_arrays_used_by_outgoing_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
-        arrays : set[str] = set()
+        
+        def recursion(node:nodes.Node, visited_set:set[nodes.Node]):
+            if node in visited_set: # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node refering back to A
+                return set()
+            visited_set.add(node)
 
-        # if current node is access node
-        if isinstance(node, nodes.AccessNode): 
-            data_name = node.data
-            arrays = {data_name} # add current access node
+            arrays : set[str] = set()
 
-            if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
-                original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
-                arrays |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, original)
-                
-        # check if more access nodes DOWNstream
-        for n in self.get_children(state, node):
-            if isinstance(n, nodes.AccessNode):
-                arrays |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, n)
-                 
-        return arrays
+            # if current node is access node
+            if isinstance(node, nodes.AccessNode): 
+                data_name = node.data
+                arrays = {data_name} # add current access node
+
+                if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
+                    original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
+                    arrays |= recursion(original, visited_set)
+                    
+            # check if more access nodes DOWNstream
+            for n in self.get_children(state, node):
+                if isinstance(n, nodes.AccessNode):
+                    arrays |= recursion(n, visited_set)
+                    
+            return arrays
+        
+        return recursion(node, set())
 
 
     def get_arrays_used_by_edge(self, sdfg:SDFG, state:SDFGState, edge, is_out_edge:bool):
@@ -386,8 +406,11 @@ class OffloadToAccelerator(ppl.Pass):
                     for name in self.get_arrays_used_by_node(sdfg, state, node):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
-                elif isinstance(node, (ControlFlowRegion, nodes.NestedSDFG)):
-                    g,c = self.get_data_locations_of_cfregion(sdfg, node) if isinstance(node, ControlFlowRegion) else self.get_data_locations(node.sdfg)
+                elif isinstance(node, (nodes.NestedSDFG)):
+                   pass # do not analyse the arrays within a nested sdfg
+
+                elif isinstance(node, (ControlFlowRegion)):
+                    g,c = self.get_data_locations_of_cfregion(sdfg, node)
                     if not is_gpu:
                         gpu_set |= g
                         cpu_set |= c
@@ -751,6 +774,9 @@ class OffloadToAccelerator(ppl.Pass):
         # this can lead to unnecessary copies in the other paths
         location_on_gpu = {}
         def gather_data(node:OffloadingIRNode):
+            if isinstance(node.block, nodes.NestedSDFG): # Nested SDFGs do not share namespace, array names should not leak to outer scope
+                return 
+            
             for array_name in node.gpu_set:
                 if not array_name in location_on_gpu:
                     location_on_gpu[array_name] = True
@@ -780,6 +806,9 @@ class OffloadToAccelerator(ppl.Pass):
             # define data gathering function
             location_on_gpu = {}
             def gather_data(node:OffloadingIRNode):
+                if isinstance(node.block, nodes.NestedSDFG): # Nested SDFGs do not share namespace, array names should not leak to outer scope
+                    return
+                
                 for array_name in node.gpu_set:
                     location_on_gpu[array_name] = True
 
@@ -874,12 +903,12 @@ class OffloadToAccelerator(ppl.Pass):
         def insert_copies(node, next, node_block, next_block):
             gpu_copies = node.cpu_set & next.gpu_set
             if gpu_copies:
-                #print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
+                print(f"insert gpu copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
                 self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
                 
             cpu_copies = node.gpu_set & next.cpu_set
             if cpu_copies:
-                #print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
+                print(f"insert cpu copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
                 self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
 
 
@@ -897,6 +926,7 @@ class OffloadToAccelerator(ppl.Pass):
                     insert_copies(node, next, node.block, None)
 
                 else: # the usual: copies between node -> next
+                    #print(f"node {node.debug_name}: cpu = {node.cpu_set} gpu = {node.gpu_set}\nnext {next.debug_name}: cpu = {next.cpu_set} gpu = {next.gpu_set}\n\n")
                     insert_copies(node, next, node.block, next.block)
                     
 
@@ -963,26 +993,29 @@ class OffloadToAccelerator(ppl.Pass):
         copy_map = {(name if to_gpu else self.get_gpu_name(name)): (self.get_gpu_name(name) if to_gpu else name) for name in array_names}
         
         for old_name, new_name in copy_map.items():
-            assert new_name in sdfg.arrays
-            assert old_name in sdfg.arrays
+            assert new_name in sdfg.arrays, f"new_name {new_name} is part of a nested sdfg"
+            assert old_name in sdfg.arrays, f"old_name {old_name} is part of a nested sdfg"
 
             copy_in = copy_state.add_access(old_name)
             copy_out = copy_state.add_access(new_name)
-            copy_state.add_edge(copy_in, None, copy_out, None, Memlet(f"{old_name} -> {new_name}"))
+
+            src_desc = sdfg.arrays[old_name]
+            dst_desc = sdfg.arrays[new_name]
+            src_subset = subsets.Range.from_array(src_desc)
+            dst_subset = subsets.Range.from_array(dst_desc)
+
+            copy_memlet = Memlet(
+                data=old_name,
+                subset=src_subset,
+                other_subset=dst_subset,
+            )
+            # copy_memlet = Memlet(f"{old_name} -> {new_name}"
+
+            copy_state.add_edge(copy_in, None, copy_out, None, copy_memlet)
                 
         
     def get_gpu_name(self, cpu_name):
         if cpu_name.startswith("__return"):
             return "return" + cpu_name[8:] + "_gpu"
         return cpu_name + "_gpu"
-    
-    def add_state_after(self, graph, state, label):
-        # adds new state after the given state
-        # difference to sdfg.add_state_after:
-        #   sdfg.add_state_after copies e.data of outgoing edges to the new connecting edge
-        #   this method does not, it inserts a brand new edge between the state and the new state & moves e.data to the outgoing edge of the new state
-        #   this is the desired behaviour for edge copies & makes no difference for other types of cpi
-
-        pass
-    
     # TODO: A -> A_gpu, A -> A_host
