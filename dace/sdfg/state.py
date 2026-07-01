@@ -161,7 +161,7 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
         """ Returns the exit node leaving the context opened by the given entry node. """
-        raise None
+        return None
 
     ###################################################################
     # Memlet-tracking methods
@@ -3593,11 +3593,11 @@ class LoopRegion(ControlFlowRegion):
 
         arrays = arrays if arrays is not None else self.sdfg.arrays
 
-        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays)
+        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays, include_scalars=True)
         if self.init_statement:
-            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays))
+            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays, include_scalars=True))
         if self.update_statement:
-            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays))
+            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays, include_scalars=True))
         return read_memlets
 
     def replace_meta_accesses(self, replacements):
@@ -3855,13 +3855,22 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 codes.append(c)
         return codes
 
-    def get_meta_read_memlets(self) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self, arrays: Optional[Dict[str, dt.Data]] = None) -> List[mm.Memlet]:
+        """
+        Get a list of all (read) memlets in meta codeblocks.
+
+        :param arrays: An optional dictionary mapping array names to their data descriptors.
+            If not not given defaults to ``self.sdfg.arrays``.
+        """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
+
+        arrays = arrays if arrays is not None else self.sdfg.arrays
+
         read_memlets = []
         for c, _ in self.branches:
             if c is not None:
-                read_memlets.extend(memlets_in_ast(c.code[0], self.sdfg.arrays))
+                read_memlets.extend(memlets_in_ast(c.code[0], arrays, include_scalars=True))
         return read_memlets
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:

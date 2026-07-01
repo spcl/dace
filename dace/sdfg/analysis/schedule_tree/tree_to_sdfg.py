@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
-from typing import Final
+from typing import Final, Sequence
 
 from dace import symbolic
 from dace.memlet import Memlet
@@ -23,6 +23,7 @@ class StateBoundaryBehavior(Enum):
 
 PREFIX_PASSTHROUGH_IN: Final[str] = "IN_"
 PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
+PREFIX_SINK_TASKLET: Final[str] = "__stree_sink_tasklet"
 
 
 @dataclass
@@ -223,51 +224,79 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if memlet.data not in sdfg.arrays:
                 raise ValueError(f"Parsing AssignNode {node} failed. Can't find {memlet.data} in {sdfg}.")
 
-    def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
+    def _loop_state_name_prefix(self, node: tn.ForScope | tn.WhileScope) -> str:
+        if isinstance(node, tn.ForScope):
+            return "for"
+
+        if isinstance(node, tn.WhileScope):
+            return "while"
+
+        raise NotImplementedError(f"Loop state name prefix not implemented for loop of type {type(node)}.")
+
+    def _add_loop_region(self, node: tn.ForScope | tn.WhileScope, sdfg: SDFG) -> None:
         current_state = self._current_state
-        assert current_state is not None
+        assert current_state is not None  # just to keep pyright happy
         cf_region = current_state.parent_graph
 
-        loop_region = LoopRegion(label=node.loop.label,
-                                 condition_expr=node.loop.loop_condition,
-                                 loop_var=node.loop.loop_variable,
-                                 initialize_expr=node.loop.init_statement,
-                                 update_expr=node.loop.update_statement,
-                                 unroll=node.loop.unroll,
-                                 unroll_factor=node.loop.unroll_factor)
-        cf_region.add_node(loop_region)
-        loop_state = loop_region.add_state(f"for_loop_state_{id(node)}", is_start_block=True)
+        loop_region = LoopRegion(
+            label=node.loop.label,
+            condition_expr=node.loop.loop_condition,
+            loop_var=node.loop.loop_variable,
+            initialize_expr=node.loop.init_statement,
+            update_expr=node.loop.update_statement,
+            unroll=node.loop.unroll,
+            unroll_factor=node.loop.unroll_factor,
+            inverted=node.loop.inverted,
+            update_before_condition=node.loop.update_before_condition,
+        )
+
+        memlets = loop_region.get_meta_read_memlets(self._ctx.root.containers)
+        self._ensure_data_descriptors(memlets, sdfg)
+
+        cf_region.add_node(loop_region, ensure_unique_name=True)
+        prefix = self._loop_state_name_prefix(node)
+        loop_state = loop_region.add_state(f"{prefix}_loop_state_{id(node)}", is_start_block=True)
 
         _insert_and_split_assignments(current_state, loop_region)
 
         self._current_state = loop_state
         self.visit(node.children, sdfg=sdfg)
 
-        after_state = _insert_and_split_assignments(loop_region, label="loop_after")
+        after_state = _insert_and_split_assignments(loop_region, label=f"{prefix}_loop_after")
         self._current_state = after_state
+
+    def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
+        self._add_loop_region(node, sdfg)
 
     def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
-        current_state = self._current_state
-        assert current_state is not None
-        cf_region = current_state.parent_graph
-
-        loop_region = node.loop
-        cf_region.add_node(loop_region)
-        loop_state = loop_region.add_state(f"while_loop_state_{id(node)}", is_start_block=True)
-
-        _insert_and_split_assignments(current_state, loop_region)
-
-        self._current_state = loop_state
-        self.visit(node.children, sdfg=sdfg)
-
-        after_state = _insert_and_split_assignments(loop_region, label="loop_after")
-        self._current_state = after_state
+        self._add_loop_region(node, sdfg)
 
     def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_LoopScope(self, node: tn.LoopScope, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+
+    def _ensure_data_descriptors(self, memlets: Sequence[Memlet], sdfg: SDFG) -> None:
+        scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
+        if isinstance(scope_node, SDFG):
+            for memlet in memlets:
+                # Copy data descriptor from parent SDFG and add input connector
+                if memlet.data not in sdfg.arrays:
+                    parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
+
+                    # Support for  NView nodes
+                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
+                    if not use_nview:
+                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
+
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[memlet.data].transient:
+                            sdfg.arrays[memlet.data].transient = False
+
+                    # Dev note: memlet.data and nview.target are identical
+                    assert memlet.data not in to_connect["inputs"]
+                    to_connect["inputs"].add(memlet.data)
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
         before_state = self._current_state
@@ -284,6 +313,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         if_body = ControlFlowRegion("if_body", sdfg=sdfg)
         conditional_block.add_branch(node.condition, if_body)
+
+        memlets = conditional_block.get_meta_read_memlets(self._ctx.root.containers)
+        self._ensure_data_descriptors(memlets, sdfg)
 
         if_state = if_body.add_state("if_state", is_start_block=True)
         self._current_state = if_state
@@ -479,10 +511,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             # connect to local access node (if available)
             if memlet_data in access_cache:
                 cached_access = access_cache[memlet_data]
-                self._current_state.add_memlet_path(cached_access,
-                                                    map_entry,
-                                                    dst_conn=connector,
-                                                    memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
+                self._current_state.add_memlet_path(
+                    cached_access,
+                    map_entry,
+                    dst_conn=connector,
+                    memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]),
+                )
                 continue
 
             if isinstance(outer_map_entry, nodes.EntryNode):
@@ -495,8 +529,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     assert new_in_connector == True
                     assert new_in_connector == new_out_connector
 
+                if memlet_data in sdfg.arrays:
+                    data_descriptor = sdfg.arrays[memlet_data]
+                else:
+                    _sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
+                    data_descriptor = _sdfg.arrays[memlet_data]
                 self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector,
-                                             Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
+                                             Memlet.from_array(memlet_data, data_descriptor))
             else:
                 if isinstance(outer_map_entry, SDFG):
                     # Copy data descriptor from parent SDFG and add input connector
@@ -522,10 +561,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 assert memlet_data not in access_cache
                 access_cache[memlet_data] = self._current_state.add_read(memlet_data)
                 cached_access = access_cache[memlet_data]
-                self._current_state.add_memlet_path(cached_access,
-                                                    map_entry,
-                                                    dst_conn=connector,
-                                                    memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
+                self._current_state.add_memlet_path(
+                    cached_access,
+                    map_entry,
+                    dst_conn=connector,
+                    memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]),
+                )
 
         if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.out_degree(outer_map_entry) < 1:
             self._current_state.add_nedge(outer_map_entry, map_entry, Memlet())
@@ -537,6 +578,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect writes to map_exit node
         for name in to_connect:
+            # Special case:
+            # This tasklet is a sink node and just needs an (empty) memlet connection to the MapExit node.
+            if name.startswith(PREFIX_SINK_TASKLET):
+                tasklet_to_connect, empty_memlet = to_connect[name]
+                self._current_state.add_nedge(tasklet_to_connect, map_exit, empty_memlet)
+                continue
+
             in_connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
             out_connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
             new_in_connector = map_exit.add_in_connector(in_connector_name)
@@ -593,13 +641,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 access_cache[name] = write_access_node
 
             access_node = access_cache[name]
+            if name in sdfg.arrays:
+                data_descriptor = sdfg.arrays[name]
+            else:
+                _sdfg = self._parent_sdfg_with_array(name, sdfg)
+                data_descriptor = _sdfg.arrays[name]
             self._current_state.add_memlet_path(map_exit,
                                                 access_node,
                                                 src_conn=out_connector_name,
-                                                memlet=Memlet.from_array(name, sdfg.arrays[name]))
+                                                memlet=Memlet.from_array(name, data_descriptor))
 
             if isinstance(outer_map_entry, nodes.EntryNode):
-                outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
+                outer_to_connect[name] = (access_node, Memlet.from_array(name, data_descriptor))
             else:
                 assert isinstance(outer_map_entry, SDFG) or outer_map_entry is None
 
@@ -668,8 +721,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             cached_access = cache[memlet.data]
             self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
 
-        # Add empty memlet if map_entry has no out_connectors to connect to
-        if isinstance(scope_node, nodes.MapEntry) and self._current_state.out_degree(scope_node) < 1:
+        # Add empty memlet if this tasklet is a source node
+        if isinstance(scope_node, nodes.MapEntry) and not node.in_memlets:
             self._current_state.add_nedge(scope_node, tasklet, Memlet())
 
         # Connect output memlets
@@ -709,6 +762,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             else:
                 assert scope_node is None
 
+        # Add empty memlet if this tasklet is a sink node
+        if isinstance(scope_node, nodes.MapEntry) and not node.out_memlets:
+            to_connect[f"{PREFIX_SINK_TASKLET}_{id(tasklet)}"] = (tasklet, Memlet())
+
     def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
@@ -719,13 +776,23 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._ctx.access_cache[cache_key] = {}
         access_cache = self._ctx.access_cache[cache_key]
 
-        # assumption source access may or may not yet exist (in this state)
+        # both, source and target nodes, may or may not exist (in this state)
         src_name = node.memlet.data
-        source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
+        if src_name not in access_cache:
+            # cache new read access
+            source_access_node = self._current_state.add_read(src_name)
+            access_cache[src_name] = source_access_node
+        source = access_cache[src_name]
 
-        # assumption: target access node doesn't exist yet
-        assert node.target not in access_cache
-        target = self._current_state.add_write(node.target)
+        target_name = node.target
+        # only re-use cached write-only nodes, e.g. don't create a cycle for
+        # field[5, 0, 0:73] = copy field[0, 0, 0:73]
+        if target_name not in access_cache or self._current_state.out_degree(
+                access_cache[target_name]) > 0 or src_name == target_name:
+            # cache new write access node
+            target_access_node = self._current_state.add_write(node.target)
+            access_cache[node.target] = target_access_node
+        target = access_cache[node.target]
 
         self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 

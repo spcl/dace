@@ -501,6 +501,41 @@ def test_create_map_scope_write():
     sdfg.validate()
 
 
+def test_create_map_scope_read():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("print_i", {"read"}, {}, "print(read)"), {"read": dace.Memlet("A[i]")},
+                                   {})
+                ],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    sdfg.validate()
+
+
+def test_create_map_scope_hello_world():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+                children=[tn.TaskletNode(nodes.Tasklet("print_hi", {}, {}, "print('Hello world!')"), {}, {})],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    sdfg.validate()
+
+
 def test_create_map_scope_read_after_write():
     stree = tn.ScheduleTreeRoot(
         name="tester",
@@ -581,6 +616,28 @@ def test_create_map_scope_double_memlet():
                             }, {"out": dace.Memlet("B[i]")})
                         ])
         ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_map_scope_write_in_two_tasklets():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float32, [20]),
+        },
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("assign_i", {}, {"out"}, "out = i"), {}, {"out": dace.Memlet("A[i]")}),
+                    tn.TaskletNode(nodes.Tasklet("assign_i", {}, {"out"}, "out = i"), {}, {"out": dace.Memlet("B[i]")}),
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -728,6 +785,50 @@ def test_triple_map_nested_if():
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
+
+
+def test_triple_map_if_condition_outside():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': data.Array(dace.float64, [60]),
+            'tmp': data.Scalar(dace.float64, transient=True),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('assign', {'read'}, {'out'}, 'out = read'), {'read': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet("tmp[0]")}),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:4"))),
+                children=[
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:5"))),
+                        children=[
+                            tn.MapScope(
+                                node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("0:3"))),
+                                children=[
+                                    tn.IfScope(
+                                        condition=CodeBlock("tmp + 1 > 0"),
+                                        children=[
+                                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1"), {},
+                                                           {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                        ],
+                                    ),
+                                    tn.ElseScope(children=[
+                                        tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 2"), {},
+                                                       {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                    ], ),
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    sdfg.validate()
+    sdfg.compile()
 
 
 def test_create_nested_map_scope_multi_read():
@@ -886,6 +987,31 @@ def test_assign_nodes_avoid_duplicate_boundaries():
     assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
 
 
+def test_multiple_copy_nodes() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.CopyNode('A', dace.Memlet("A[0] -> [10]")),
+            tn.CopyNode('A', dace.Memlet("A[1] -> [11]")),
+            tn.CopyNode('A', dace.Memlet("A[2] -> [12]")),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+
+    states = sdfg.states()
+    assert len(states) == 1, "expect one state"
+
+    nodes = states[0].nodes()
+    assert len(nodes) == 4, "expect four access nodes"
+    for node in nodes:
+        assert isinstance(node, dace.nodes.AccessNode)
+        assert node.data == "A"
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -903,14 +1029,29 @@ if __name__ == '__main__':
     # test_create_state_boundary_empty_memlet()
     test_create_tasklet_raw()
     test_create_tasklet_waw()
+    test_create_tasklet_war()
     test_create_loop_for()
     test_create_loop_while()
     test_create_if_else()
+    test_create_if_elif_else()
     test_create_if_without_else()
     test_create_map_scope_write()
+    test_create_map_scope_read()
+    test_create_map_scope_hello_world()
+    test_create_map_scope_read_after_write()
+    test_create_map_scope_write_after_read()
     test_create_map_scope_copy()
     test_create_map_scope_double_memlet()
+    test_create_map_scope_write_in_two_tasklets()
     test_create_nested_map_scope()
+    test_double_map_with_for_loop()
+    test_triple_map_flat_if()
+    test_triple_map_if_condition_outside()
     test_create_nested_map_scope_multi_read()
     test_map_with_state_boundary_inside()
+    test_map_calculate_temporary_in_two_loops()
     test_edge_assignment_read_after_write()
+    test_assign_nodes_force_state_transition()
+    test_assign_nodes_multiple_force_one_transition()
+    test_assign_nodes_avoid_duplicate_boundaries()
+    test_multiple_copy_nodes()

@@ -108,7 +108,25 @@ class ScheduleTreeScope(ScheduleTreeNode):
 
         # Fast path, no propagation necessary
         if keep_locals:
-            return MemletSet().union(*(gather(c, root) for c in self.children))
+            if not inputs:
+                # for outputs we don't need to care about read after write
+                return MemletSet().union(*(gather(c, root) for c in self.children))
+
+            # for inputs, make sure read-after-write doesn't show up in inputs
+            result = MemletSet()
+            previously_written = MemletSet()
+
+            for child in self.children:
+                c_reads = child.input_memlets(root, **kwargs)
+                for read in c_reads:
+                    if read not in previously_written:
+                        result.add(read)
+
+                # register writes
+                for c_write in child.output_memlets(root, **kwargs):
+                    previously_written.add(c_write)
+
+            return result
 
         root = root if root is not None else self.get_root()
 
@@ -120,6 +138,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
         current_locals = set()
         current_locals |= disallow_propagation
         result = MemletSet()
+        previously_written = MemletSet()
 
         # Loop over children in order, if any new symbol is defined within this scope (e.g., symbol assignment,
         # dynamic map range), consider it as a new local
@@ -133,6 +152,8 @@ class ScheduleTreeScope(ScheduleTreeNode):
             internal_memlets: MemletSet = gather(c, root)
             if propagate:
                 for memlet in internal_memlets:
+                    if memlet in previously_written:
+                        continue
                     result.add(
                         propagate_subset([memlet],
                                          root.containers[memlet.data],
@@ -140,6 +161,11 @@ class ScheduleTreeScope(ScheduleTreeNode):
                                          propagate_values,
                                          undefined_variables=current_locals,
                                          use_dst=not inputs))
+
+            if inputs:
+                # register writes to keep track of read-after-write
+                for c_write in c.output_memlets(root, **kwargs):
+                    previously_written.add(c_write)
 
         return result
 
@@ -540,7 +566,7 @@ class IfScope(ControlFlowScope):
                       **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
-        result.update(memlets_in_ast(self.condition.code[0], root.containers))
+        result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
         result.update(super().input_memlets(root, **kwargs))
         return result
 
@@ -623,7 +649,7 @@ class ElifScope(ControlFlowScope):
                       **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
-        result.update(memlets_in_ast(self.condition.code[0], root.containers))
+        result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
         result.update(super().input_memlets(root, **kwargs))
         return result
 
