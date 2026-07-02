@@ -112,7 +112,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES else 'kCPU'})
                     .layout(torch::kStrided)).clone();
             """
     else:
@@ -122,7 +122,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES else 'kCPU'})
                     .layout(torch::kStrided));
             """
 

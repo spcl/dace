@@ -41,7 +41,7 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
                              f"not an input or output of the PyTorch Module, and not a"
                              f" constant.")
         constants[name] = module.dace_model.clean_weights[name]
-        if fwd_arglist[name].storage in dace.dtypes.GPU_STORAGES:
+        if fwd_arglist[name].storage in dace.dtypes.GPU_RESIDENT_STORAGES:
             constants[name] = constants[name].cuda()
     return constants
 
