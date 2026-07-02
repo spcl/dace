@@ -133,7 +133,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if (isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
+            # Match the schedules this target registers as a map dispatcher for (see __init__):
+            # any of these can reach ``generate_scope`` as a top-level kernel scope, and
+            # ``KernelSpec`` will look its arglist up here.
+            if (isinstance(node, nodes.MapEntry) and node.map.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
@@ -1029,7 +1032,16 @@ class KernelSpec:
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
         self.kernel_constants: Set[str] = kernel_const_data | kernel_const_symbols
 
-        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # The arglist cache is populated once in ``preprocess``; graphs restructured between
+        # preprocessing and generation (e.g. library-expansion init states such as ``gemm_init``)
+        # can surface kernel scopes that were not visible then. Compute the arglist on miss with
+        # the same construction ``preprocess`` uses, so the cache is a cache and not a snapshot.
+        arglist = cudaCodeGen._kernel_arglists.get(kernel_map_entry)
+        if arglist is None:
+            arglist = kernel_parent_state.scope_subgraph(kernel_map_entry).arglist(
+                shared_transients=kernel_parent_state.parent.shared_transients())
+            cudaCodeGen._kernel_arglists[kernel_map_entry] = arglist
+        self.arglist: Dict[str, dt.Data] = arglist
 
         restore_in_device_code = cudaCodeGen._in_device_code
 
@@ -1078,6 +1090,17 @@ class KernelSpec:
 
         cudaCodeGen._in_device_code = restore_in_device_code
 
+        # Launch dimensions are precomputed by ``AddThreadBlockMaps`` in ``preprocess``; like the
+        # arglist above, fall back to on-the-spot inference for kernel scopes that surfaced after
+        # that snapshot was taken (raises a descriptive error if the kernel is unconfigurable,
+        # instead of an opaque KeyError).
+        if kernel_map_entry not in cudaCodeGen._kernel_dimensions_map:
+            from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
+            inferred = InferGPUGridAndBlockSize().apply_pass(kernel_parent_state.parent, set())
+            if kernel_map_entry in inferred:
+                # Only fill the missing entry; entries computed in ``preprocess`` (with
+                # knowledge of which thread-block maps were inserted) take precedence.
+                cudaCodeGen._kernel_dimensions_map[kernel_map_entry] = inferred[kernel_map_entry]
         self.grid_dims, self.block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
         self.gpu_index_ctype: str = self.get_gpu_index_ctype()
 

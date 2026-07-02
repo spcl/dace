@@ -1134,6 +1134,53 @@ def offset_map(state: SDFGState, entry: nodes.MapEntry, dim: int, offset: symbol
         subgraph.replace(param, f'({param} - {offset})')
 
 
+def wrap_code_node_in_unit_gpu_map(state: SDFGState,
+                                   node: nodes.CodeNode) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+    """
+    Wraps a free (top-level) code node in a one-iteration ``GPU_Device`` map, so that it executes
+    as a single-thread GPU kernel instead of host code.
+
+    All edges of the node are rerouted through the new map entry/exit. Edges without connectors
+    (empty dependency memlets, common in autodiff-generated graphs) are rerouted without
+    connectors instead of being turned into ``IN_None``/``OUT_None`` connector names.
+
+    :param state: The state in which the code node resides.
+    :param node: The code node to wrap. Must be at the top level of the state.
+    :return: The new map entry and exit nodes.
+    """
+    me, mx = state.add_map(node.label + '_gmap', {node.label + '__gmapi': '0:1'},
+                           schedule=dtypes.ScheduleType.GPU_Device)
+    in_edges = list(state.in_edges(node))
+    out_edges = list(state.out_edges(node))
+    me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+    me.out_connectors = {('OUT_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+    mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
+    mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
+
+    for e in in_edges:
+        state.remove_edge(e)
+        if e.dst_conn is None:
+            state.add_edge(e.src, e.src_conn, me, None, e.data)
+            state.add_edge(me, None, e.dst, None, copy.deepcopy(e.data))
+        else:
+            state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
+            state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+    for e in out_edges:
+        state.remove_edge(e)
+        if e.src_conn is None:
+            state.add_edge(e.src, None, mx, None, e.data)
+            state.add_edge(mx, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
+        else:
+            state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
+            state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+
+    # Keep the node inside the new scope even if it has no (remaining) inputs
+    if len(in_edges) == 0:
+        state.add_nedge(me, node, Memlet())
+
+    return me, mx
+
+
 def split_interstate_edges(cfg: ControlFlowRegion) -> None:
     """
     Splits all inter-state edges into edges with conditions and edges with assignments.

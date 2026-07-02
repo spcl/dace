@@ -60,9 +60,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # ``dace.transformation`` package init.
         from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
             AssignmentAndCopyKernelToMemsetAndMemcpy)
-        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (AddThreadBlockMaps,
-                                                                                             ExpandLibraryNodes,
-                                                                                             ReinferConnectorTypes)
+        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
+            AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules, ReinferConnectorTypes)
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
@@ -93,6 +92,10 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             AssignmentAndCopyKernelToMemsetAndMemcpy(),
             InsertExplicitGPUGlobalMemoryCopies(),
             ExpandLibraryNodes(),
+            # After all expansions: repair host-level maps that inherited kernel-internal
+            # schedules (GPU_ThreadBlock & co.) through nested library expansions -- they are
+            # kernels and must be GPU_Device before stream scheduling and tiling see them.
+            NormalizeHostLevelGPUSchedules(),
             # NOTE: This is a bit strange since the `strategy` is called on its own and then as
             #   a proper strategy, i.e. a subobject encapsulating something. Data should be
             #   transmitted through the second argument of `apply_pass()`. Also this explains
