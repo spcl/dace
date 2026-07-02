@@ -121,6 +121,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # the framecode's symbol/constant cache so lookups succeed for them.
         self._rebuild_frame_symbol_cache(sdfg)
 
+        # Descriptor-mutating pipeline passes (e.g. ``PromoteGPUScalarsToArrays`` widening a
+        # Scalar argument to a length-1 Array) invalidate the frame's arglist snapshot and the
+        # CPU codegen's argument registrations, both taken at construction time -- emitters
+        # would still treat the promoted argument as a value-typed scalar (``&arg`` -> ``T**``).
+        # Refresh both to the post-pipeline descriptors.
+        self._refresh_frame_arglist(sdfg)
+
         # Stream assignment is persisted per node via ``Node.gpu_stream_id``
         # (set by ``GPUStreamSchedulingStrategy``); the manager reads it
         # directly so a deserialised SDFG round-trips without re-scheduling.
@@ -141,6 +148,21 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+
+    def _refresh_frame_arglist(self, sdfg: SDFG):
+        """Recompute the frame's arglist and re-register argument defined-types whose
+        descriptor class changed during preprocessing (Scalar -> Array promotions)."""
+        frame = self._frame
+        fsyms = frame.free_symbols(sdfg)
+        frame.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        defined_vars = self._dispatcher.defined_vars
+        for name, desc in frame.arglist.items():
+            if not (isinstance(desc, dt.Array) and defined_vars.has(name)):
+                continue
+            old_type, _ = defined_vars.get(name)
+            if old_type == DefinedType.Scalar:
+                defined_vars.remove(name)
+                defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(desc.dtype).ctype)
 
     def _rebuild_frame_symbol_cache(self, sdfg: SDFG):
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.
