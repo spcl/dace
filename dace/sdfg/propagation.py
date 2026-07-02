@@ -1572,9 +1572,6 @@ def propagate_memlet(dfg_state,
                                   neighboring internal memlets within the same
                                   scope into account.
     """
-    if memlet.is_empty():
-        return Memlet()
-
     use_dst = False
     if isinstance(scope_node, nodes.EntryNode):
         use_dst = False
@@ -1590,8 +1587,9 @@ def propagate_memlet(dfg_state,
             neighboring_edges = [e for e in neighboring_edges if e.dst_conn and e.dst_conn[3:] == connector]
     else:
         raise TypeError('Trying to propagate through a non-scope node')
+    if memlet.is_empty():
+        return Memlet()
 
-    assert entry_node is not None
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
     defined_vars = [
