@@ -211,6 +211,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     accesses = self._get_marked_inputs_and_outputs(state, node)
                     self.host_data.extend(accesses)
 
+        # Data read on interstate edges or control-flow meta-expressions is evaluated on the
+        # host; promoting it to GPU_Global would make the generated host code dereference a
+        # device pointer (caught by validation as "stored as GPU_Global but accessed on host").
+        # Keep such containers host-side unless they already live on the GPU (the copy-out
+        # machinery below handles that case).
+        interstate_read_memlets: List[memlet.Memlet] = []
+        for edge in sdfg.all_interstate_edges():
+            interstate_read_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
+        for blk in sdfg.all_control_flow_blocks():
+            if isinstance(blk, AbstractControlFlowRegion):
+                interstate_read_memlets.extend(blk.get_meta_read_memlets())
+        for mem in interstate_read_memlets:
+            if (mem.data not in self.host_data
+                    and sdfg.arrays[mem.data].storage not in [dtypes.StorageType.GPU_Global]):
+                self.host_data.append(mem.data)
+
         for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():

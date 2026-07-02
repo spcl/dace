@@ -472,7 +472,8 @@ class ONNXModel:
                                         dace.Memlet.from_array(clean_onnx_name(name), data_desc))
 
         # scalars need to be promoted to arrays so that we can return them from the dace program
-        # however, this is only for CPU: on GPU, scalars are already pointers
+        # (top-level scalar "__return" descriptors are rejected by SDFG validation); the caller
+        # reshapes them back to () after the call
         self._promoted_scalars = set()
 
         # insert copies from outputs to __return arrays
@@ -486,8 +487,8 @@ class ONNXModel:
             new_output_names.append(new_output_name)
 
             desc = copy.deepcopy(self.sdfg.arrays[clean_name])
-            if isinstance(desc, dt.Scalar) and not self.cuda:
-                desc = dt.Array(desc.dtype, (1, ))
+            if isinstance(desc, dt.Scalar):
+                desc = dt.Array(desc.dtype, (1, ), storage=desc.storage)
                 self._promoted_scalars.add(new_output_name)
 
             # insert new descriptor
