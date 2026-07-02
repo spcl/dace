@@ -632,12 +632,30 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     unique_build_dir = os.path.join(build_root, unique_name)
     os.makedirs(unique_build_dir, exist_ok=True)
 
+    # GPU SDFGs: the DaCe-generated CPU sources reference CUDA declarations
+    # (gpuStream_t, dace::cuda::Context, kernel-launch wrappers) that the DaCe runtime
+    # headers gate behind WITH_CUDA, and the kernel definitions live in the
+    # separately-built SDFG libraries. Mirror the generated CMake (-DWITH_CUDA, CUDA
+    # include dirs via with_cuda=True) and link the SDFG libraries so those symbols
+    # resolve in the extension.
+    extra_cflags = ["-g"]
+    extra_ldflags = []
+    with_cuda = any(c.has_gpu_code for c in compiled_sdfgs)
+    if with_cuda:
+        extra_cflags.append("-DWITH_CUDA")
+        for c in compiled_sdfgs:
+            libpath = os.path.abspath(c.filename)
+            extra_ldflags.append(libpath)
+            extra_ldflags.append(f"-Wl,-rpath,{os.path.dirname(libpath)}")
+
     # We pass unique name + unique build directory to avoid FileBaton contention
     torch_load(
         name=unique_name,
         sources=sources,
         build_directory=unique_build_dir,
-        extra_cflags=["-g"],
+        extra_cflags=extra_cflags,
+        extra_ldflags=extra_ldflags,
+        with_cuda=with_cuda,
         extra_include_paths=[
             p for p in {
                 include_path,
