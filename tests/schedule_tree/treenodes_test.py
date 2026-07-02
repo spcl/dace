@@ -9,7 +9,7 @@ import pytest
 
 
 @pytest.fixture
-def tasklet() -> nodes.Tasklet:
+def tasklet() -> tn.TaskletNode:
     return tn.TaskletNode(nodes.Tasklet("noop", {}, {}, code="pass"), {}, {})
 
 
@@ -19,7 +19,7 @@ def tasklet() -> nodes.Tasklet:
     tn.GBlock,
     tn.ElseScope,
 ))
-def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], tasklet: nodes.Tasklet) -> None:
+def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], tasklet: tn.TaskletNode) -> None:
     scope = ScopeClass(children=[tasklet])
 
     for child in scope.children:
@@ -44,7 +44,7 @@ def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], ta
     tn.WhileScope,
     tn.DoWhileScope,
 ))
-def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: nodes.Tasklet) -> None:
+def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: tn.TaskletNode) -> None:
     scope = LoopScope(loop=None, children=[tasklet])
 
     for child in scope.children:
@@ -68,7 +68,7 @@ def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: nodes.Taskl
     tn.StateIfScope,
     tn.ElifScope,
 ))
-def test_if_scope_children(IfScope: type[tn.IfScope], tasklet: nodes.Tasklet) -> None:
+def test_if_scope_children(IfScope: type[tn.IfScope | tn.ElifScope], tasklet: tn.TaskletNode) -> None:
     scope = IfScope(condition=None, children=[tasklet])
 
     for child in scope.children:
@@ -92,7 +92,7 @@ def test_if_scope_children(IfScope: type[tn.IfScope], tasklet: nodes.Tasklet) ->
     tn.MapScope,
     tn.ConsumeScope,
 ))
-def test_dataflow_scope_children(DataflowScope: type[tn.DataflowScope], tasklet: nodes.Tasklet) -> None:
+def test_dataflow_scope_children(DataflowScope: type[tn.DataflowScope], tasklet: tn.TaskletNode) -> None:
     scope = DataflowScope(node=None, children=[tasklet])
 
     for child in scope.children:
@@ -136,6 +136,7 @@ def test_scope_inputs_outputs() -> None:
         children=[map_scope],
     )
 
+    assert stree
     assert len(map_scope.input_memlets()) == 0
     assert len(map_scope.output_memlets()) == 2
 
@@ -155,3 +156,4 @@ if __name__ == '__main__':
     test_dataflow_scope_children(tn.DataflowScope, tasklet)
     test_dataflow_scope_children(tn.MapScope, tasklet)
     test_dataflow_scope_children(tn.ConsumeScope, tasklet)
+    test_scope_inputs_outputs()
