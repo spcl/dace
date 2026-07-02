@@ -232,7 +232,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None:
+                if e.data.wcr is not None and not e.data.is_empty():
                     if (e.data.data not in input_nodes and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append((e.data.data, sdfg.arrays[e.data.data]))
 
@@ -436,12 +436,17 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for node, state in nsdfgs:
             excl_copyin = set()
             for e in state.in_edges(node):
+                # Empty dependency edges carry no data and map to no inner connector
+                if e.dst_conn is None or e.data.is_empty():
+                    continue
                 src = state.memlet_path(e)[0].src
                 if isinstance(src, nodes.AccessNode) and sdfg.arrays[src.data].storage in gpu_storage:
                     excl_copyin.add(e.dst_conn)
                     node.sdfg.arrays[e.dst_conn].storage = sdfg.arrays[src.data].storage
             excl_copyout = set()
             for e in state.out_edges(node):
+                if e.src_conn is None or e.data.is_empty():
+                    continue
                 dst = state.memlet_path(e)[-1].dst
                 if isinstance(dst, nodes.AccessNode) and sdfg.arrays[dst.data].storage in gpu_storage:
                     excl_copyout.add(e.src_conn)
@@ -517,30 +522,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for gcode in gcodes:
                 if gcode.label in self.exclude_tasklets.split(','):
                     continue
-                # Create map and connectors
-                me, mx = state.add_map(gcode.label + '_gmap', {gcode.label + '__gmapi': '0:1'},
-                                       schedule=dtypes.ScheduleType.GPU_Device)
-                # Store in/out edges in lists so that they don't get corrupted when they are removed from the graph.
-                in_edges = list(state.in_edges(gcode))
-                out_edges = list(state.out_edges(gcode))
-                me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges}
-                me.out_connectors = {('OUT_' + e.dst_conn): None for e in in_edges}
-                mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges}
-                mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges}
-
-                # Create memlets through map
-                for e in in_edges:
-                    state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
-                    state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
-                for e in out_edges:
-                    state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
-                    state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, dc(e.data))
-
-                # Map without inputs
-                if len(in_edges) == 0:
-                    state.add_nedge(me, gcode, memlet.Memlet())
+                # Wrap in a unit GPU map (robust to connector-less dependency edges)
+                xfh.wrap_code_node_in_unit_gpu_map(state, gcode)
 
         #######################################################
         # Step 8: Introduce copy-out if data used in outgoing interstate edges

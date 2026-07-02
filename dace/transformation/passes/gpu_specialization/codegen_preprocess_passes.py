@@ -51,6 +51,12 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
     dereferences device pointers and crashes at runtime. Those tasklets are wrapped in a
     one-iteration ``GPU_Device`` map (mirroring ``GPUTransformSDFG`` step 7, which performs the
     same wrapping for graphs whose expansion happened *before* the GPU transform).
+
+    Finally, host-level access-to-access *WCR copies* over GPU-resident data (e.g. the ONNX
+    Reshape backward's gradient accumulation) lower to a host-side ``CopyND::Accumulate`` loop
+    over device pointers, which also crashes at runtime. Those edges are converted to
+    ``GPU_Device`` copy maps (via :func:`~dace.sdfg.memlet_utils.memlet_to_map`) with the WCR
+    re-attached, so the accumulation runs as an atomic device kernel.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -89,6 +95,28 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
         # Wrap after the scan: wrapping mutates the graphs being traversed.
         for state, node in host_gpu_tasklets:
             wrap_code_node_in_unit_gpu_map(state, node)
+            modified = True
+
+        # Host-level WCR copies over GPU-resident data -> GPU copy maps with the WCR re-attached.
+        from dace.sdfg import memlet_utils as mutils
+        wcr_copies = []
+        for cursdfg in sdfg.all_sdfgs_recursive():
+            for state in cursdfg.states():
+                for e in state.edges():
+                    if (e.data.wcr is not None and not e.data.is_empty() and isinstance(e.src, nodes.AccessNode)
+                            and isinstance(e.dst, nodes.AccessNode) and state.entry_node(e.dst) is None
+                            and not is_devicelevel_gpu(state.parent, state, e.dst)
+                            and (cursdfg.arrays[e.src.data].storage in gpu_storage
+                                 or cursdfg.arrays[e.dst.data].storage in gpu_storage)
+                            and mutils.can_memlet_be_turned_into_a_map(
+                                edge=e, state=state, sdfg=cursdfg, ignore_strides=True)):
+                        wcr_copies.append((cursdfg, state, e))
+        for cursdfg, state, e in wcr_copies:
+            wcr = e.data.wcr
+            _, mx = mutils.memlet_to_map(edge=e, state=state, sdfg=cursdfg, ignore_strides=True)
+            # memlet_to_map builds plain overwrite memlets; restore the accumulation
+            for out_e in state.in_edges(mx) + state.out_edges(mx):
+                out_e.data.wcr = wcr
             modified = True
 
         return modified or None
