@@ -243,3 +243,9 @@ def dot_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y, result
     state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
 
     return []
+
+
+@oprepo.infers_descriptor('dace.libraries.blas.dot')
+@oprepo.infers_descriptor('dace.libraries.blas.Dot')
+def _infer_dot_libnode(input_descs, x, y, result, acctype=None, **_kw):
+    return ()

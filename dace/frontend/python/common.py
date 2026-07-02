@@ -2,10 +2,13 @@
 import ast
 import collections
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TYPE_CHECKING, Union
 
 from dace import data
 from dace.sdfg.sdfg import SDFG
+
+if TYPE_CHECKING:
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
 class DaceSyntaxError(Exception):
@@ -56,6 +59,18 @@ class StringLiteral:
 
     def __gt__(self, other) -> bool:
         return self.value > str(other)
+
+
+@dataclass(frozen=True)
+class ListLiteral:
+    """A list literal found in a parsed DaCe program."""
+    value: Tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class TupleLiteral:
+    """A tuple literal found in a parsed DaCe program."""
+    value: Tuple[Any, ...]
 
 
 class SDFGConvertible(object):
@@ -117,6 +132,44 @@ class SDFGConvertible(object):
         :return: New SDFG closure object representing the convertible object.
         """
         return SDFGClosure()
+
+
+class ScheduleTreeConvertible:
+    """
+    A mixin that defines the interface to annotate schedule-tree-convertible
+    objects.
+    """
+
+    def __schedule_tree__(self,
+                          *args,
+                          lambda_bindings: Optional[Dict[str, ast.AST]] = None,
+                          callable_bindings: Optional[Dict[str, Any]] = None,
+                          **kwargs) -> 'ScheduleTreeRoot':
+        """
+        Returns a schedule-tree representation of this object.
+
+        :param args: Arguments or argument types that can be used for
+                     specialization.
+        :param lambda_bindings: Optional lambda specializations propagated from
+                                the caller.
+        :param callable_bindings: Optional callable specializations propagated
+                                  from the caller.
+        :param kwargs: Keyword arguments or argument types that can be used for
+                       specialization.
+        :return: A schedule-tree root representing this object.
+        """
+        raise NotImplementedError
+
+    def __schedule_tree_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        """
+        Returns the schedule-tree call signature represented by this object as
+        a sequence of all argument names that will be found in a call to this
+        object and a sequence of the constant argument names from the first
+        sequence.
+
+        :return: A 2-tuple of (all arguments, constant arguments).
+        """
+        raise NotImplementedError
 
 
 @dataclass

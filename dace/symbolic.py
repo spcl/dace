@@ -911,8 +911,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round'
+    'int_floor', 'int_ceil', 'pyindex', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne',
+    'AND', 'OR', 'pow', 'round'
 }
 
 
@@ -1091,6 +1091,28 @@ class int_ceil(sympy.Function):
 
     def _eval_is_integer(self):
         return True
+
+
+class pyindex(sympy.Function):
+    """Python-style wraparound for scalar element indices.
+
+    This is intentionally not used for slice bounds, where positive ``stop``
+    values such as ``size`` must not wrap to zero.
+    """
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return sympy.Mod(x, y)
+        if y.is_Number and y == 1:
+            return 0
+
+    def _eval_is_integer(self):
+        return True
+
+    def _eval_is_nonnegative(self):
+        if self.args[1].is_nonnegative is True:
+            return True
 
 
 class OR(sympy.Function):
@@ -1845,6 +1867,10 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'RightShift': right_shift,
         'left_shift': left_shift,
         'right_shift': right_shift,
+        'pyindex': pyindex,
+        'id': sympy.Symbol('id'),
+        'diag': sympy.Symbol('diag'),
+        'jn': sympy.Symbol('jn'),
     }
     _constants = {
         'True': sympy.true,
@@ -2312,6 +2338,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f'{expr.func}[{indices}]'
+        if self.cpp_mode and str(expr.func) == 'int_floor':
+            return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        if self.cpp_mode and str(expr.func) == 'pyindex':
+            return 'py_mod(%s, %s)' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':

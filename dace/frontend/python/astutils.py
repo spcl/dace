@@ -456,6 +456,13 @@ def copy_tree(node: ast.AST) -> ast.AST:
                         setattr(node, field, new_node)
             return node
 
+    if isinstance(node, list):
+        return [copy_tree(n) for n in node]
+    if not isinstance(node, ast.AST):
+        import warnings
+        warnings.warn(f'copy_tree expected an AST node or list of AST nodes, got {type(node).__name__}', stacklevel=2)
+        return copy.deepcopy(node)
+
     return Copier().visit(node)
 
 

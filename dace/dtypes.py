@@ -299,6 +299,8 @@ class typeclass(object):
             try:
                 if wrapped_type == "bool":
                     wrapped_type = numpy.bool_
+                elif wrapped_type == "object":
+                    wrapped_type = numpy.object_
                 else:
                     wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:

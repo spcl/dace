@@ -19,7 +19,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -44,10 +44,23 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
 
+        def _visit_pythonclass_members(struct: data.Structure, args: dict, root_name: str, prefix: str = ''):
+            for k, v in struct.members.items():
+                member_path = f'{prefix}.{k}' if prefix else k
+                if isinstance(v, data.Structure):
+                    _visit_pythonclass_members(v, args, root_name, member_path)
+                elif isinstance(v, data.ContainerArray):
+                    _visit_pythonclass_members(v.stype, args, root_name, member_path)
+
+                if isinstance(v, (data.Array, data.Scalar)):
+                    args[cpp.pyobject_member_expr(root_name, member_path, v)] = v
+
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         args = dict(arglist)
         for name, arg_type in arglist.items():
-            if isinstance(arg_type, data.Structure):
+            if isinstance(arg_type, data.PythonClass):
+                _visit_pythonclass_members(arg_type, args, name)
+            elif isinstance(arg_type, data.Structure):
                 desc = sdfg.arrays[name]
                 _visit_structure(arg_type, args, name)
             elif isinstance(arg_type, data.ContainerArray):
@@ -55,6 +68,15 @@ class CPUCodeGen(TargetCodeGenerator):
                 desc = desc.stype
                 if isinstance(desc, data.Structure):
                     _visit_structure(desc, args, name)
+
+        for name in sdfg.arrays.keys():
+            desc = sdfg.arrays[name]
+            if '.' not in name or not isinstance(desc, (data.Array, data.Scalar)):
+                continue
+            root_name, member_path = name.split('.', 1)
+            root_desc = sdfg.arrays.get(root_name)
+            if isinstance(root_desc, data.PythonClass):
+                args[cpp.pyobject_member_expr(root_name, member_path, desc)] = desc
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
@@ -72,6 +94,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
                 else:
                     self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
+            elif isinstance(arg_type, data.PythonClass):
+                self._dispatcher.defined_vars.add(name, DefinedType.Object, arg_type.dtype.ctype)
             elif isinstance(arg_type, data.Structure):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
             else:
@@ -705,6 +729,15 @@ class CPUCodeGen(TargetCodeGenerator):
             src_nodedesc = src_node.desc(sdfg)
             dst_nodedesc = dst_node.desc(sdfg)
 
+            if (write and isinstance(dst_nodedesc, data.Scalar) and '.' in dst_node.data
+                    and isinstance(sdfg.arrays[dst_node.data.split('.')[0]], data.PythonClass)):
+                self._emit_pythonclass_scalar_setter(
+                    dst_node.data, dst_nodedesc.dtype.ctype,
+                    self._pythonclass_scalar_source_expr(sdfg,
+                                                         cfg.nodes()[state_id], edge, src_node, dst_node), stream, cfg,
+                    state_id, [src_node, dst_node])
+                return
+
             if write:
                 vconn = self.ptr(dst_node.data, dst_nodedesc, sdfg)
             ctype = dst_nodedesc.dtype.ctype
@@ -714,6 +747,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Setting a reference
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
+                if '.' in dst_node.data and isinstance(sdfg.arrays[dst_node.data.split('.')[0]], data.PythonClass):
+                    self._emit_pythonclass_array_reference_set(sdfg,
+                                                               cfg.nodes()[state_id], edge, src_node, dst_node,
+                                                               src_nodedesc, stream, cfg, state_id)
+                    return
                 srcptr = self.ptr(src_node.data, src_nodedesc, sdfg)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
                 stream.write(
@@ -794,6 +832,10 @@ class CPUCodeGen(TargetCodeGenerator):
             #############################################
 
             state_dfg: SDFGState = cfg.nodes()[state_id]
+
+            if (isinstance(dst_nodedesc, data.Reference) and edge.dst_conn == 'set' and '.' in dst_node.data
+                    and isinstance(sdfg.arrays[dst_node.data.split('.')[0]], data.PythonClass)):
+                return
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node)
@@ -1043,8 +1085,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     is_scalar = True  # Pointer to pointer assignment
                 is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
                 is_refset = isinstance(sdfg.arrays[memlet.data], data.Reference) and dst_edge.dst_conn == 'set'
+                is_pythonclass_scalar = (is_scalar and '.' in memlet.data
+                                         and isinstance(sdfg.arrays[memlet.data], data.Scalar)
+                                         and isinstance(sdfg.arrays[memlet.data.split('.')[0]], data.PythonClass))
 
                 if (is_scalar and not memlet.dynamic and not is_stream) or is_refset:
+                    if (is_refset and '.' in memlet.data
+                            and isinstance(sdfg.arrays[memlet.data.split('.')[0]], data.PythonClass)):
+                        continue
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
@@ -1063,6 +1111,11 @@ class CPUCodeGen(TargetCodeGenerator):
                             # which we skip since the memlets are references
                             continue
                         desc = sdfg.arrays[memlet.data]
+                        if is_pythonclass_scalar:
+                            write_expr = self._emit_pythonclass_scalar_setter_expr(memlet.data, desc.dtype.ctype,
+                                                                                   in_local_name)
+                            result.write(write_expr, cfg, state_id, node)
+                            continue
                         ptrname = codegen.ptr(memlet.data, desc, sdfg)
                         is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
                                                       dtypes.AllocationLifetime.Persistent,
@@ -1112,6 +1165,41 @@ class CPUCodeGen(TargetCodeGenerator):
         # If there is a type mismatch, cast pointer
         dst_expr = codegen.make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, True, DefinedType.Pointer)
         return f"{dst_expr} = {src_expr};"
+
+    def _emit_pythonclass_array_reference_set(self, sdfg: SDFG, state_dfg: SDFGState,
+                                              edge: MultiConnectorEdge[mmlt.Memlet], src_node: nodes.AccessNode,
+                                              dst_node: nodes.AccessNode, src_nodedesc: data.Data, stream: CodeIOStream,
+                                              cfg: ControlFlowRegion, state_id: int) -> None:
+        copy_shape, src_strides, _, src_expr, _ = cpp.memlet_copy_to_absolute_strides(
+            self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node)
+        attr_path = dst_node.data.split('.', 1)[1]
+        root_name = dst_node.data.split('.', 1)[0]
+        shape = ', '.join(cpp.sym2cpp(s) for s in copy_shape)
+        strides = ', '.join(cpp.sym2cpp(s * src_nodedesc.dtype.bytes) for s in src_strides)
+        stream.write(
+            f'''{{
+            Py_ssize_t __shape[{len(copy_shape)}] = {{{shape}}};
+            Py_ssize_t __strides[{len(copy_shape)}] = {{{strides}}};
+            dace_set_pyobject_attr_array<{src_nodedesc.dtype.ctype}>({root_name}, "{attr_path}", {src_expr}, __shape,
+                                                                      __strides, {len(copy_shape)});
+        }}''', cfg, state_id, [src_node, dst_node])
+
+    def _pythonclass_scalar_source_expr(self, sdfg: SDFG, state_dfg: SDFGState, edge: MultiConnectorEdge[mmlt.Memlet],
+                                        src_node: nodes.AccessNode, dst_node: nodes.AccessNode) -> str:
+        _, _, _, src_expr, _ = cpp.memlet_copy_to_absolute_strides(self._dispatcher, sdfg, state_dfg, edge, src_node,
+                                                                   dst_node)
+        return f'*({src_expr})'
+
+    def _emit_pythonclass_scalar_setter(self, dst_data: str, ctype: str, value_expr: str, stream: CodeIOStream,
+                                        cfg: ControlFlowRegion, state_id: int,
+                                        nodes_to_track: Sequence[nodes.Node]) -> None:
+        stream.write(self._emit_pythonclass_scalar_setter_expr(dst_data, ctype, value_expr), cfg, state_id,
+                     nodes_to_track)
+
+    def _emit_pythonclass_scalar_setter_expr(self, dst_data: str, ctype: str, value_expr: str) -> str:
+        attr_path = dst_data.split('.', 1)[1]
+        root_name = dst_data.split('.', 1)[0]
+        return f'dace_set_pyobject_attr<{ctype}>({root_name}, "{attr_path}", static_cast<{ctype}>({value_expr}));'
 
     def memlet_view_ctor(self, sdfg: SDFG, memlet: mmlt.Memlet, dtype, is_output: bool) -> str:
         memlet_params = []
@@ -1288,6 +1376,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Stream
+        elif var_type == DefinedType.Object:
+            if output:
+                result += "{} {};".format(ctypedef, local_name)
+            else:
+                result += "{} &{} = {};".format(ctypedef, local_name, expr)
+            defined = DefinedType.Object
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
 

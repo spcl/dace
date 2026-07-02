@@ -519,3 +519,8 @@ def bmmnode(pv, sdfg: dace.SDFG, state: dace.SDFGState, A, B, C, alpha=1, beta=0
     state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
 
     return []
+
+
+@oprepo.infers_descriptor('dace.libraries.blas.bmm')
+def _infer_bmmnode(input_descs, A, B, C, alpha=1, beta=0, trans_a=False, trans_b=False, **_kw):
+    return ()
