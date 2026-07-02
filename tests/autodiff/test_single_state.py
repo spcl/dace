@@ -14,17 +14,20 @@ from dace.transformation.interstate import StateFusion
 import dace.libraries.onnx as donnx
 from dace.autodiff import add_backward_pass
 
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu
+
 
 ##################################
 # Testing utilities
 def run_correctness(func):
 
-    def test_correctness():
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_correctness(device):
         runner, pytorch_func, inputs = func()
         sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
         torch_dict = {name: torch.tensor(arr.copy(), requires_grad=True) for name, arr in inputs.items()}
 
-        sdfg_results = runner.run(**sdfg_dict)
+        sdfg_results = runner.run(device, **sdfg_dict)
         torch_results = pytorch_func(**torch_dict)
 
         for k, v in torch_results.items():
@@ -57,7 +60,7 @@ class SDFGBackwardRunner:
 
         add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads, simplify=simplify)
 
-    def run(self, **inputs):
+    def run(self, device="cpu", **inputs):
 
         # Zero out all arrays
         intermediate_arrs = {}
@@ -75,7 +78,17 @@ class SDFGBackwardRunner:
         inputs["gradient_" + self.target] = np.ones((1, ),
                                                     dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
 
-        self.sdfg(**inputs)
+        if is_gpu(device):
+            # Isolate the GPU build folder from the CPU variant, lower the (already
+            # backward-augmented) SDFG onto the GPU, and generate/run with the
+            # experimental CUDA code generator. Host (numpy) arrays above are copied
+            # in/out by the generated copy states.
+            self.sdfg.name = f"{self.sdfg.name}_gpu"
+            self.sdfg.apply_gpu_transformations()
+            with experimental_cuda():
+                self.sdfg(**inputs)
+        else:
+            self.sdfg(**inputs)
 
         results = {name: arr for name, arr in inputs.items()}
         return results
@@ -620,16 +633,16 @@ def test_reshape_reuse_in_same_state():
 
 
 if __name__ == "__main__":
-    test_gemm()
-    test_sum()
-    test_complex_tasklet()
-    test_tasklets_only_reuse()
-    test_tasklets_multioutput()
-    test_tasklets_only()
-    test_add_mmul_transpose_log()
-    test_reduce_node_1_axis_and_none_axis()
-    test_reduce_max_simple()
-    test_reduce_max_node_1_axis()
-    test_reshape()
-    test_reshape_on_memlet_path()
-    test_reshape_reuse_in_same_state()
+    test_gemm(device="cpu")
+    test_sum(device="cpu")
+    test_complex_tasklet(device="cpu")
+    test_tasklets_only_reuse(device="cpu")
+    test_tasklets_multioutput(device="cpu")
+    test_tasklets_only(device="cpu")
+    test_add_mmul_transpose_log(device="cpu")
+    test_reduce_node_1_axis_and_none_axis(device="cpu")
+    test_reduce_max_simple(device="cpu")
+    test_reduce_max_node_1_axis(device="cpu")
+    test_reshape(device="cpu")
+    test_reshape_on_memlet_path(device="cpu")
+    test_reshape_reuse_in_same_state(device="cpu")

@@ -168,7 +168,7 @@ def test_view_forwarding():
 
 
 if __name__ == "__main__":
-    test_nested()
-    test_nested_forwarding()
-    test_triple_nested_forwarding()
-    test_view_forwarding()
+    test_nested(device="cpu")
+    test_nested_forwarding(device="cpu")
+    test_triple_nested_forwarding(device="cpu")
+    test_view_forwarding(device="cpu")
