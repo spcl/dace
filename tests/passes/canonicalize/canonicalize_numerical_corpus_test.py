@@ -61,18 +61,13 @@ _CANON_XFAIL = {
 }
 # npbench-suite canon gaps (established by the subprocess-isolated corpus sweep).
 _NP_CANON_XFAIL = {
-    # azimint_naive / nbody: a conditional accumulator inside a dc.map nsdfg
-    # (``if mask: tmp += data[j]``) reduces via an in-nsdfg WCR whose output connector is
-    # a POINTER to the caller's accumulator -- codegen lowers it to
-    # ``reduce_atomic(&tmp, addend)`` across the parallel map lanes (verified in the
-    # baseline C++). MapToForLoop sequentializes the map, but the accumulator stays a
-    # WRITE-ONLY nsdfg output (no read-back of the running value is wired), so the loop
-    # cannot carry the sum; SimplifyPass then removes the now-dead reduction. Fix = keep
-    # the reduction parallel (refuse to sequentialize an in-nsdfg WCR reduction) OR make
-    # the accumulator an InOut nsdfg interface before lowering. nbody additionally has an
-    # independent canon-introduced GEMM ``ldc`` corruption from a layout transform.
-    'azimint_naive': 'canon: in-nsdfg atomic reduction lost when MapToForLoop sequentializes the map',
-    'nbody': 'canon: same in-nsdfg reduction-lowering gap as azimint + separate GEMM ldc corruption',
+    # azimint_naive FIXED by NormalizeNestedReduction (the first canon stage): its masked
+    # ``if mask: tmp += data[j]`` reduction, emitted as an in-nsdfg WCR into a write-only
+    # output connector, is rewritten to the seeded-local + map-exit-WCR shape before the
+    # reduction-aware stages, so it lowers to a clean OpenMP reduction. nbody has NO such
+    # in-nsdfg reduction (untouched by the pass); it fails on an independent canon-introduced
+    # GEMM ``ldc`` corruption from a layout transform.
+    'nbody': 'canon: GEMM ldc corruption from a layout transform (independent of the reduction path)',
     # cavity_flow: structured-grid CFD solver -- baseline SDFG is bit-exact vs numpy, canon
     # diverges (real canon bug, not a port). Root cause not yet isolated (stencil +
     # boundary-assignment + inner pressure-poisson nit-loop). Tracked.

@@ -61,6 +61,7 @@ from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols impor
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.normalize_nested_reduction import NormalizeNestedReduction
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
@@ -324,6 +325,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # split across states becomes fissionable / liftable instead of being left
     # alone. The later _structural_cleanup runs only have to mop up what the
     # transforms re-introduce.
+    # normalize_reduction (FIRST, on the frontend shape): a masked reduction emitted as an
+    # in-nsdfg WCR into a write-only output connector (plain map-exit edge) is rewritten to
+    # the seeded-local + map-exit-WCR shape the frontend already emits for the equivalent
+    # polybench reduction (symm). Downstream then treats it like any map-exit reduction:
+    # WCRToAugAssign keeps the scalar WCR, MapToForLoop's map-exit-WCR refusal keeps it a
+    # parallel map, MapFusionVertical's seeded-reduction guard fires -- so it is neither
+    # severed nor double-counted. Idempotent, so the vectorizer can also run it standalone.
+    s += [('normalize_reduction', NormalizeNestedReduction())]
+
     s += [('clean', RemoveViews()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
           ('clean', _uniq), ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()),
           ('clean', ContinueToCondition()), ('clean', SimplifyPass()),
