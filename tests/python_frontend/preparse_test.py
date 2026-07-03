@@ -3,7 +3,10 @@
 import dace
 import numpy as np
 import os
+import pytest
+import sys
 import tempfile
+from dace.frontend.python.common import DaceSyntaxError
 
 
 def test_nested_objects_same_name():
@@ -88,6 +91,62 @@ def test_calltree():
     obj = ObjB(5)
     res = obj.outer.closure_resolver(None, None)
     assert res.call_tree_length() == 2
+
+
+def test_type_alias_is_compile_time_only_in_dace_program(temp_python_module):
+    if sys.version_info < (3, 12):
+        pytest.skip('Type alias statements require Python 3.12+')
+
+    with temp_python_module('''
+import dace
+
+@dace.program
+def prog(A: dace.float32[4]):
+    type dtype = dace.float32
+    tmp: dtype = 1
+    A[0] = tmp
+''',
+                            module_name_prefix='dace_preparse_typealias') as module:
+        array = np.zeros(4, dtype=np.float32)
+        module.prog(array)
+
+    assert array[0] == np.float32(1)
+
+
+def test_generic_type_alias_is_rejected_in_dace_program(temp_python_module):
+    if sys.version_info < (3, 12):
+        pytest.skip('Type alias statements require Python 3.12+')
+
+    with temp_python_module('''
+import dace
+
+@dace.program
+def prog(A: dace.float32[4]):
+    type dtype[T] = T
+    return A
+''',
+                            module_name_prefix='dace_preparse_typealias') as module:
+        array = np.zeros(4, dtype=np.float32)
+        with pytest.raises(DaceSyntaxError, match='Generic type aliases'):
+            module.prog(array)
+
+
+def test_type_var_tuple_alias_is_rejected_in_dace_program(temp_python_module):
+    if sys.version_info < (3, 12):
+        pytest.skip('Type alias statements require Python 3.12+')
+
+    with temp_python_module('''
+import dace
+
+@dace.program
+def prog(A: dace.float32[4]):
+    type dtype[*Ts] = tuple[*Ts]
+    return A
+''',
+                            module_name_prefix='dace_preparse_typealias') as module:
+        array = np.zeros(4, dtype=np.float32)
+        with pytest.raises(DaceSyntaxError, match='Generic type aliases'):
+            module.prog(array)
 
 
 def test_same_function_different_closure():

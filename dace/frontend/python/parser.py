@@ -6,15 +6,18 @@ import copy
 import os
 import sympy
 import sys
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 from typing import get_origin, get_args
 import warnings
 
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
-from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
+from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing, schedule_tree_frontend)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+
+if TYPE_CHECKING:
+    from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 try:
     import mpi4py
@@ -43,6 +46,27 @@ def _get_cell_contents_or_none(cell):
         return cell.cell_contents
     except ValueError:  # Empty cell
         return None
+
+
+def _collect_annotation_class_globals(annotation: Any) -> Dict[str, type]:
+    result: Dict[str, type] = {}
+
+    origin = get_origin(annotation)
+    if origin is not None:
+        for arg in get_args(annotation):
+            result.update(_collect_annotation_class_globals(arg))
+        return result
+
+    if not isinstance(annotation, type):
+        return result
+
+    try:
+        data.Structure.from_class(annotation)
+    except (TypeError, ValueError):
+        return result
+
+    result[annotation.__name__] = annotation
+    return result
 
 
 def _get_locals_and_globals(f):
@@ -74,6 +98,14 @@ def _get_locals_and_globals(f):
                 for k, v in zip(annotate_func.__code__.co_freevars,
                                 [_get_cell_contents_or_none(x) for x in annotate_func.__closure__])
             })
+
+    # Python 3.10-3.13 do not expose annotation-only local names through
+    # ``__annotate__``. Recover direct class annotations from resolved
+    # annotations so schedule-tree lowering can still identify PythonClass
+    # promotion candidates.
+    for annotation in getattr(f, '__annotations__', {}).values():
+        for name, value in _collect_annotation_class_globals(annotation).items():
+            result.setdefault(name, value)
 
     return result
 
@@ -151,7 +183,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     return {str(k)[8:]: v for k, v in result.items()}
 
 
-class DaceProgram(pycommon.SDFGConvertible):
+class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
 
@@ -170,11 +202,14 @@ class DaceProgram(pycommon.SDFGConvertible):
                  use_explicit_cf: bool = True,
                  ignore_type_hints: bool = False):
 
+        signature_source = f.__func__ if method and inspect.ismethod(f) and getattr(f, '__self__',
+                                                                                    None) is not None else f
+
         self.f = f
         self.dec_args = args
         self.dec_kwargs = kwargs
         self.resolve_functions = constant_functions
-        self.argnames = _get_argnames(f)
+        self.argnames = _get_argnames(signature_source)
         if method:
             self.objname = self.argnames[0]
             self.argnames = self.argnames[1:]
@@ -192,7 +227,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.ignore_type_hints = ignore_type_hints
 
         self.global_vars = _get_locals_and_globals(f)
-        self.signature = inspect.signature(f)
+        self.signature = inspect.signature(signature_source)
         self.default_args = {
             pname: pval.default
             for pname, pval in self.signature.parameters.items() if not _is_empty(pval.default)
@@ -217,6 +252,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Cache SDFGs with last used arguments
         self._cache = cached_program.DaceProgramCache(self._eval_closure)
+        self._schedule_tree_cache: Dict[cached_program.ProgramCacheKey,
+                                        'tn.ScheduleTreeRoot'] = (cached_program.LimitedSizeDict(
+                                            size_limit=self._cache.size))
         # These sets fill up after the first parsing of the program and stay
         # the same unless the argument types change
         self.closure_array_keys: Set[str] = set()
@@ -236,6 +274,11 @@ class DaceProgram(pycommon.SDFGConvertible):
             else:
                 setattr(result, k, copy.deepcopy(v, memo))
         return result
+
+    def _reject_async_program(self) -> None:
+        if inspect.iscoroutinefunction(self.f) or inspect.isasyncgenfunction(self.f):
+            raise SyntaxError('Async @dace.program functions are unsupported. '
+                              'Use a synchronous @dace.program and call async helpers as callbacks.')
 
     def auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
@@ -288,6 +331,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             if self._cache.has(cachekey):
                 entry = self._cache.get(cachekey)
+                self._run_parallel_schedule_tree_lowering_checks(args, kwargs, entry.sdfg)
                 return entry.sdfg
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
@@ -297,6 +341,48 @@ class DaceProgram(pycommon.SDFGConvertible):
             self._cache.add(cachekey, sdfg, None)
 
         return sdfg
+
+    def to_schedule_tree(self, *args, use_cache: bool = False, **kwargs) -> 'tn.ScheduleTreeRoot':
+        """
+        Creates a schedule tree directly from the DaCe Python frontend.
+
+        :param args: JIT argument examples.
+        :param kwargs: JIT keyword argument examples.
+        :param use_cache: If True, reuses a cached schedule tree when possible.
+        :return: A schedule-tree root object.
+        """
+        self._reject_async_program()
+        self.global_vars = _get_locals_and_globals(self.f)
+
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
+
+        argtypes, _, constant_args, specified = self._get_type_annotations(args, kwargs)
+        self.global_vars.update(constant_args)
+
+        cachekey = None
+        if use_cache:
+            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                            constant_args)
+            if cachekey in self._schedule_tree_cache:
+                return copy.deepcopy(self._schedule_tree_cache[cachekey])
+
+        stree = self._generate_schedule_tree(args, kwargs)
+
+        if use_cache:
+            self._schedule_tree_cache[cachekey] = copy.deepcopy(stree)
+
+        return stree
+
+    def __schedule_tree__(self,
+                          *args,
+                          lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                          callable_bindings: Optional[Dict[str, Any]] = None,
+                          **kwargs) -> 'tn.ScheduleTreeRoot':
+        return self._generate_schedule_tree(tuple(args),
+                                            dict(kwargs),
+                                            lambda_bindings=lambda_bindings,
+                                            callable_bindings=callable_bindings)
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
@@ -333,6 +419,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
         return self.argnames, self.constant_args
+
+    def __schedule_tree_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        return self.__sdfg_signature__()
 
     def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
@@ -405,6 +494,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         return eval(arg, self.global_vars, extra_constants)
 
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        annotated_argtypes, _, _, _ = self._get_type_annotations(args, kwargs)
+
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
         # Reconstruct keyword arguments
@@ -417,10 +508,23 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Update closure with respect to callback mapping
         result.update({k: result[v] for k, v in sdfg.callback_mapping.items()})
 
+        def _try_create_datadescriptor(key: str, val: Any) -> data.Data:
+            """
+            Tries to create a data descriptor from the given argument. If this fails but the argument has a type
+            annotation, uses the annotation to create the data descriptor instead. This allows users to pass in
+            ``PythonClass`` arguments.
+            """
+            try:
+                return create_datadescriptor(val)
+            except TypeError:
+                if key in annotated_argtypes:
+                    return annotated_argtypes[key]
+                raise
+
         # Update arguments with symbols in data shapes
         result.update(
             infer_symbols_from_datadescriptor(sdfg, {
-                k: create_datadescriptor(v)
+                k: _try_create_datadescriptor(k, v)
                 for k, v in result.items() if k not in self.constant_args
             }))
         return result
@@ -502,6 +606,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         :return: The generated SDFG object.
         """
 
+        self._reject_async_program()
+
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
@@ -536,6 +642,36 @@ class DaceProgram(pycommon.SDFGConvertible):
         except:
             # Evaluating arbitrary code - anything can happen. Good luck.
             return dtypes.compiletime
+
+    def _resolved_schedule_tree_arg_annotations(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+
+        for aname, sig_arg in self.signature.parameters.items():
+            if self.objname is not None and aname == self.objname:
+                continue
+
+            ann = sig_arg.annotation
+            if self.ignore_type_hints or _is_empty(ann) or ann is dtypes.compiletime:
+                continue
+
+            try:
+                if get_origin(ann) is Union:
+                    hint_args = get_args(ann)
+                    if len(hint_args) == 1:
+                        ann = hint_args[0]
+                    elif len(hint_args) == 2 and (hint_args[0] is type(None) or hint_args[1] is type(None)):
+                        ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
+
+                ann = self._evaluate_annotation(ann)
+            except (TypeError, ValueError):
+                continue
+
+            if ann is dtypes.compiletime:
+                continue
+
+            result[aname] = ann
+
+        return result
 
     def _get_type_annotations(
             self, given_args: Tuple[Any],
@@ -824,6 +960,203 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
+    def _generate_schedule_tree(self,
+                                args: Tuple[Any],
+                                kwargs: Dict[str, Any],
+                                *,
+                                lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                                callable_bindings: Optional[Dict[str, Any]] = None,
+                                update_program_state: bool = True) -> 'tn.ScheduleTreeRoot':
+        """Generates a schedule tree directly from the preprocessed frontend AST."""
+        dace_func = self.f
+
+        argtypes, _, gvars, specified = self._get_type_annotations(args, kwargs)
+        runtime_args = self._bind_schedule_tree_arguments(args, kwargs)
+
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
+
+        for name, descriptor in argtypes.items():
+            if isinstance(descriptor, data.View):
+                argtypes[name] = descriptor.as_array()
+                argtypes[name].transient = False
+            else:
+                descriptor_copy = copy.deepcopy(descriptor)
+                if descriptor_copy.transient:
+                    descriptor_copy.transient = False
+                argtypes[name] = descriptor_copy
+
+        global_vars = copy.copy(self.global_vars)
+
+        removed_args = set()
+        for name, descriptor in argtypes.items():
+            if descriptor.dtype.type is None:
+                global_vars[name] = None
+                removed_args.add(name)
+
+        modules = {k: v.__name__ for k, v in global_vars.items() if dtypes.ismodule(v)}
+        modules['builtins'] = ''
+
+        global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
+
+        unspecified_default_args = {k: v for k, v in self.default_args.items() if k not in specified}
+        removed_args.update(unspecified_default_args)
+        gvars.update(unspecified_default_args)
+
+        global_vars.update(gvars)
+
+        argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        for argtype in argtypes.values():
+            global_vars.update({v.name: v for v in argtype.free_symbols})
+
+        parsed_ast, closure = preprocessing.preprocess_dace_program(
+            dace_func,
+            argtypes,
+            global_vars,
+            modules,
+            resolve_functions=self.resolve_functions,
+            default_args=unspecified_default_args.keys(),
+            normalize_generic_for_loops=True,
+            preserve_object_attributes=True,
+            prefer_resolved_object_attributes=({self.objname}
+                                               if self.methodobj is not None and self.objname is not None else None),
+            disallowed_stmts=set(),
+            preserve_raises=True,
+            preserve_fstrings=True,
+            preserve_uninlinable_context_managers=True,
+            preserve_call_expansions=True)
+        parsed_ast.resolved_arg_annotations = self._resolved_schedule_tree_arg_annotations()
+
+        if update_program_state:
+            self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
+            self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
+            self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
+            self.resolver = closure
+
+        constants: Dict[str, Tuple[Data, Any]] = {}
+        for name, value in closure.closure_constants.items():
+            if name in removed_args:
+                continue
+            try:
+                descriptor = create_datadescriptor(value)
+            except (TypeError, ValueError):
+                descriptor = None
+            if descriptor is not None:
+                constants[name] = (descriptor, value)
+
+        callback_mapping = {name: original_name for name, (original_name, _, _) in closure.callbacks.items()}
+        arg_names = [name for name in self.argnames if name in argtypes]
+
+        seeded_callable_bindings = dict(callable_bindings or {})
+        for name, value in runtime_args.items():
+            if name in removed_args or name in seeded_callable_bindings:
+                continue
+            if callable(value):
+                seeded_callable_bindings[name] = value
+
+        seed_bindings = None
+        if self.methodobj is not None and self.objname is not None:
+            from dace.data.core import infer_structured_object_members
+            from dace.data.pydata import PythonClass
+
+            try:
+                self_descriptor = PythonClass(infer_structured_object_members(self.methodobj),
+                                              name=type(self.methodobj).__name__)
+            except (TypeError, ValueError):
+                # Keep bound-method self available to the schedule-tree frontend
+                # even when the object has no currently inferable typed members.
+                self_descriptor = PythonClass({}, name=type(self.methodobj).__name__)
+
+            if self_descriptor is not None:
+                seed_bindings = {
+                    self.objname: schedule_tree_frontend._Binding(descriptor=self_descriptor, kind='container')
+                }
+
+        stree = schedule_tree_frontend.build_schedule_tree(self.name,
+                                                           parsed_ast,
+                                                           argtypes,
+                                                           constants=constants,
+                                                           callback_mapping=callback_mapping,
+                                                           arg_names=arg_names,
+                                                           lambda_bindings=lambda_bindings,
+                                                           callable_bindings=seeded_callable_bindings,
+                                                           seed_bindings=seed_bindings)
+
+        for name, (_, descriptor, _, _) in closure.closure_arrays.items():
+            if name in removed_args or name in stree.containers:
+                continue
+            stree.containers[name] = copy.deepcopy(descriptor)
+            for free_symbol in descriptor.free_symbols:
+                stree.symbols.setdefault(free_symbol.name, free_symbol)
+
+        return stree
+
+    def _run_parallel_schedule_tree_lowering_checks(self, args: Tuple[Any], kwargs: Dict[str, Any], sdfg: SDFG) -> None:
+        stree = self._generate_schedule_tree(args, kwargs, update_program_state=False)
+        self._check_schedule_tree_parallel_lowering(stree, sdfg)
+
+    def _check_schedule_tree_parallel_lowering(self, stree: 'tn.ScheduleTreeRoot', sdfg: SDFG) -> None:
+        from dace.data.pydata import PythonClass
+        from dace.sdfg.analysis.schedule_tree import treenodes as tn
+
+        statement_nodes: List[tn.StatementNode] = []
+        refset_nodes: List[tn.RefSetNode] = []
+        pythonclass_names: List[str] = []
+
+        for node in stree.preorder_traversal():
+            if isinstance(node, tn.StatementNode):
+                statement_nodes.append(node)
+            elif isinstance(node, tn.RefSetNode):
+                refset_nodes.append(node)
+
+        for name, descriptor in stree.containers.items():
+            if isinstance(descriptor, PythonClass):
+                pythonclass_names.append(name)
+
+        if statement_nodes:
+            examples = ', '.join(repr(node.code.as_string) for node in statement_nodes[:3])
+            raise RuntimeError(f'Schedule-tree parallel lowering failed for {self.name}: '
+                               f'generated {len(statement_nodes)} StatementNode(s); examples: {examples}')
+
+        if refset_nodes:
+            if not self._sdfg_contains_reference_descriptors(sdfg):
+                targets = ', '.join(sorted({node.target for node in refset_nodes})[:5])
+                warnings.warn(
+                    'Schedule-tree parallel lowering failed for '
+                    f'{self.name}: generated RefSetNode(s) for {targets}, '
+                    'but the SDFG contains no reference descriptors',
+                    UserWarning,
+                    stacklevel=4)
+
+            for node in refset_nodes:
+                source_text = node.source_expr
+                if source_text is None and node.memlet is not None:
+                    source_text = str(node.memlet)
+                if source_text is None:
+                    source_text = type(node.src_desc).__name__
+                warnings.warn(
+                    'Schedule-tree parallel lowering warning for '
+                    f'{self.name}: RefSetNode target "{node.target}" from {source_text}',
+                    UserWarning,
+                    stacklevel=4)
+
+        for name in pythonclass_names:
+            warnings.warn(f'Schedule-tree parallel lowering warning for {self.name}: PythonClass container "{name}"',
+                          UserWarning,
+                          stacklevel=4)
+
+    def _sdfg_contains_reference_descriptors(self, sdfg: SDFG) -> bool:
+        return any(
+            isinstance(descriptor, data.Reference)
+            for _, _, descriptor in sdfg.arrays_recursive(include_nested_data=True))
+
+    def _bind_schedule_tree_arguments(self, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a parameter-to-value map for direct schedule-tree specialization."""
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in self.symbols}
+        parameters = [p for p in self.signature.parameters.values() if self.objname is None or p.name != self.objname]
+        bound = inspect.Signature(parameters).bind_partial(*args, **filtered_kwargs)
+        return dict(bound.arguments)
+
     def _generate_pdp(self,
                       args: Tuple[Any],
                       kwargs: Dict[str, Any],
@@ -949,5 +1282,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Set regenerate and recompile flags
             sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
+
+        self._run_parallel_schedule_tree_lowering_checks(args, kwargs, sdfg)
 
         return sdfg, cached
