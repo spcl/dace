@@ -150,40 +150,30 @@ class BufferExpansion(ppl.Pass):
         if not candidates:
             return {}
 
-        before = self._mappable_labels(sdfg)
         order = self._ambient_order(sdfg)
 
-        # Speculatively expand the safe buffers of every currently-unmappable loop. Buffers
-        # are loop-local (verified below), so different loops never share a buffer and their
-        # expansions do not interfere -- one LoopToMap re-match then decides each loop.
-        plan: Dict[str, Tuple[LoopRegion, List[_Expansion], List[str]]] = {}
-        for loop, ((index, size), buffers) in candidates.items():
-            if loop.label in before:
-                continue
-            applied = [self._expand(sdfg, loop, arr, index, size, order) for arr in buffers]
-            plan[loop.label] = (loop, applied, list(buffers))
-
-        if not plan:
-            return {}
-        after = self._mappable_labels(sdfg)
-
+        # Decide each candidate loop on its own: its buffers are loop-local (verified in
+        # ``_privatizable_buffers``), so one loop's expansion never changes another loop's
+        # mappability. Probe ``LoopToMap`` on THAT loop only -- a whole-SDFG re-match here is
+        # quadratic on a big kernel (channel_flow: 158 post-MapToForLoop loops -> minutes).
         kept: Dict[str, List[str]] = {}
-        for label, (loop, applied, buffers) in plan.items():
-            if label in after:
-                kept[label] = buffers
+        for loop, ((index, size), buffers) in candidates.items():
+            if self._loop_mappable(sdfg, loop):
+                continue  # already parallelizable -> expanding would only grow the SDFG
+            applied = [self._expand(sdfg, loop, arr, index, size, order) for arr in buffers]
+            if self._loop_mappable(sdfg, loop):
+                kept[loop.label] = list(buffers)
             else:
                 for exp in applied:
                     exp.undo()
         return kept
 
     @staticmethod
-    def _mappable_labels(sdfg: SDFG) -> Set[str]:
-        """Labels of the loops ``LoopToMap`` would parallelize right now (refusals silenced)."""
+    def _loop_mappable(sdfg: SDFG, loop: LoopRegion) -> bool:
+        """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced)."""
         from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
-        from dace.transformation.passes.pattern_matching import match_patterns
-
         with contextlib.redirect_stdout(io.StringIO()):
-            return {m.loop.label for m in match_patterns(sdfg, LoopToMap)}
+            return LoopToMap.can_be_applied_to(sdfg, loop=loop)
 
     @staticmethod
     def _loop_index(loop: LoopRegion):
