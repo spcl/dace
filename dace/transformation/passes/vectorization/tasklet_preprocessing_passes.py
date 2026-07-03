@@ -87,15 +87,16 @@ class PowerOperatorExpander(ast.NodeTransformer):
                 # n in {0, 1} → leave the original `left ** right` shape as a BinOp; caller decides
                 return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
-        # Case 2: non-integer exponent → exp(right * log(left))
-        log_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()), attr="log", ctx=ast.Load()),
-                            args=[ast.copy_location(left, left)],
-                            keywords=[])
-        mul_expr = ast.BinOp(left=ast.copy_location(right, right), op=ast.Mult(), right=log_call)
-        exp_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()), attr="exp", ctx=ast.Load()),
-                            args=[mul_expr],
-                            keywords=[])
-        return ast.copy_location(exp_call, loc)
+        # Case 2: non-constant / non-integer exponent → leave it as ``left ** right``
+        # for the tile binop to lower to ``std::pow``. The former ``exp(right *
+        # log(left))`` identity is only valid for a POSITIVE base: ``log(left)`` is NaN
+        # for a negative ``left``, so ``sin(x)**2`` -- whose exponent arrives as a
+        # connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1 does not
+        # fire -- produced NaN on every lane where ``sin(x) < 0`` (npbench arc_distance).
+        # ``std::pow`` computes a negative base with an integer exponent correctly and
+        # matches numpy's ``**``; ``**`` carries an ISA-less pure lowering
+        # (``_PURE_ONLY_MATH_OPS`` / ``_OP_CPP["**"]``) so it vectorizes via libmvec.
+        return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
     def visit_BinOp(self, node):
         """Expand a ``**`` binary operation, recursing into children first.
