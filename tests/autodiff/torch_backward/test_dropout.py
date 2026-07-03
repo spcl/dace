@@ -16,11 +16,13 @@ def test_dropout_fwd_training(device):
     dev = torch_device(device)
     p = 0.5
     module = nn.Dropout(p=p).train().to(dev)
-    dace_module = DaceModule(module,
-                             sdfg_name=f"test_dropout_fwd_training_{device}",
-                             dummy_inputs=(torch.ones(10, 10, device=dev), ),
-                             training=True,
-                             cuda=is_gpu(device))
+    # dummy_inputs triggers compilation in the constructor -> keep it under experimental_cuda()
+    with experimental_cuda():
+        dace_module = DaceModule(module,
+                                 sdfg_name=f"test_dropout_fwd_training_{device}",
+                                 dummy_inputs=(torch.ones(10, 10, device=dev), ),
+                                 training=True,
+                                 cuda=is_gpu(device))
 
     # dropout will set some of these to zero
     test_data = torch.randint(1, 10, (10, 10)).float().to(dev)
@@ -41,12 +43,14 @@ def test_dropout_bwd(p: Union[float, Literal[0]], device):
     dev = torch_device(device)
     module = nn.Dropout(p=p).train().to(dev)
     sdfg_name = f"test_dropout_{str(p).replace('.', '_')}_bwd_{device}"
-    dace_module = DaceModule(module,
-                             sdfg_name=sdfg_name,
-                             dummy_inputs=(torch.ones(10, 10, device=dev), ),
-                             backward=True,
-                             training=True,
-                             cuda=is_gpu(device))
+    # dummy_inputs triggers compilation in the constructor -> keep it under experimental_cuda()
+    with experimental_cuda():
+        dace_module = DaceModule(module,
+                                 sdfg_name=sdfg_name,
+                                 dummy_inputs=(torch.ones(10, 10, device=dev), ),
+                                 backward=True,
+                                 training=True,
+                                 cuda=is_gpu(device))
 
     test_data = torch.randint(1, 10, (10, 10)).float().to(dev)
     test_data.requires_grad = True
