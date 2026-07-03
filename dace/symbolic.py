@@ -2007,6 +2007,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'right_shift': right_shift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
+        'ipow': ipow,
         'IfExpr': IfExpr,
         'ITE': ITE,
         'Mod': sympy.Mod,

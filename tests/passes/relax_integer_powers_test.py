@@ -51,7 +51,15 @@ def test_ipow_roundtrips_through_serialization():
     e = R * ipow(R, K - i - 1) + ipow(R, K - i - 1)
     back = pystr_to_symbolic(str(e))
     assert symstr(e, cpp_mode=True) == symstr(back, cpp_mode=True)
-    assert any(type(a).__name__ == 'ipow' for a in sympy.preorder_traversal(back))
+    assert any(type(a) is ipow for a in sympy.preorder_traversal(back))
+
+
+def test_ipow_survives_property_json_roundtrip_and_folds():
+    P = symbolic.symbol('P')
+    e = 64 * ipow(P, 2)
+    back = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(e))
+    assert any(type(a) is ipow for a in sympy.preorder_traversal(back))
+    assert int(symbolic.evaluate(back, {P: 4})) == 64 * 16
 
 
 def test_ipow_is_integer_and_positive():
