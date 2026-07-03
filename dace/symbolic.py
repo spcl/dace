@@ -911,8 +911,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round'
+    'int_floor', 'int_ceil', 'ipow', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne',
+    'AND', 'OR', 'pow', 'round'
 }
 
 
@@ -1091,6 +1091,28 @@ class int_ceil(sympy.Function):
 
     def _eval_is_integer(self):
         return True
+
+
+class ipow(sympy.Function):
+    """Integer power ``base ** exp`` with a non-negative integer exponent, lowered
+    to ``dace::math::ipow`` (repeated multiply, exact integer) -- valid where
+    ``dace::math::pow`` (libm ``double``) is not: an array size, subscript or loop
+    bound.  ``RelaxIntegerPowers`` mints these from ``Pow``."""
+
+    @classmethod
+    def eval(cls, base, exp):
+        if base.is_Number and exp.is_Number and exp.is_integer and exp.is_nonnegative:
+            return base**exp
+
+    def _eval_is_integer(self):
+        base, exp = self.args
+        if base.is_integer and exp.is_integer:
+            return True
+
+    def _eval_is_positive(self):
+        base, _exp = self.args
+        if base.is_positive:
+            return True
 
 
 class OR(sympy.Function):
@@ -2203,6 +2225,7 @@ _PYSTR2SYM_locals = {
     'int_floor': int_floor,
     '__int_floor': __int_floor,
     'int_ceil': int_ceil,
+    'ipow': ipow,
     'IfExpr': IfExpr,
     'Mod': sympy.Mod,
     'Attr': Attr,
@@ -2348,6 +2371,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if base == 'int_floor' and as_operator:
             op = '/' if self.cpp_mode else '//'
             return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
+        if str(expr.func) == 'ipow' and self.cpp_mode:
+            return 'dace::math::ipow(%s, %s)' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'IfExpr':
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:

@@ -131,7 +131,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                     sym_dim = sym_dim.subs(repldict)
 
                 if symbolic.issymbolic(sym_dim - real_dim):
-                    equations.append(sym_dim - real_dim)
+                    # ipow is semantically Pow; restore it so the solver can invert the shape.
+                    equations.append((sym_dim - real_dim).replace(symbolic.ipow, lambda b, e: b**e))
 
     if len(symbols) == 0:
         return {}
