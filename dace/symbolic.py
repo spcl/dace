@@ -776,7 +776,7 @@ def overapproximate(expr):
     return _overapproximate(expr)
 
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=2048, typed=True)
 def _overapproximate(expr):
     if isinstance(expr, SymExpr):
         if expr.expr != expr.approx:
@@ -2147,7 +2147,7 @@ def serialize_symbolic(expr):
     return _serialize_symbolic_uncached(expr)
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def deserialize_symbolic(expr) -> SymbolicType:
     """Deserialize a string produced by :func:`serialize_symbolic`."""
     if isinstance(expr, (SymExpr, sympy.Basic)):
@@ -2258,7 +2258,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def _pystr_to_symbolic_cached(expr, simplify=None) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, None, simplify)
 
@@ -2299,7 +2299,7 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
     return sympy_to_dace(result, symbol_map)
 
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=2048, typed=True)
 def simplify(expr: SymbolicType) -> SymbolicType:
     return sympy.simplify(expr)
 
@@ -2447,7 +2447,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return f'({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})'
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
@@ -2545,7 +2545,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     replace_callback(invrepl)
 
 
-@lru_cache(16384)
+@lru_cache(maxsize=16384, typed=True)
 def _spickle(obj):
     return str(obj)
 
