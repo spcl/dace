@@ -81,7 +81,7 @@ def test_fast_mb(use_cpp_dispatcher: bool, device):
 
     torch_model = MBConvBlock(block_params[0], global_params).eval().to(dev)
     torch_model.set_swish(memory_efficient=False)
-    dace_model = MBConvBlock(block_params[0], global_params).eval()
+    dace_model = MBConvBlock(block_params[0], global_params).eval().to(dev)
     dace_model.set_swish(memory_efficient=False)
 
     # Get the DaceModule

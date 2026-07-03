@@ -640,7 +640,16 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     # resolve in the extension.
     extra_cflags = ["-g"]
     extra_ldflags = []
-    with_cuda = any(c.has_gpu_code for c in compiled_sdfgs)
+    # ``has_gpu_code`` keys off dtypes.GPU_STORAGES (only GPU_Shared) + GPU schedules, so an SDFG
+    # that is GPU-resident but only moves data (GPU_Global arrays + stream copies, no kernels --
+    # e.g. a pure Reshape) reports False. The generated CPU source still references gpuStream_t /
+    # dace::cuda::Context, so detect GPU residency broadly.
+    def _is_gpu_sdfg(c):
+        if c.has_gpu_code:
+            return True
+        return any(desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES for _, _, desc in c.sdfg.arrays_recursive())
+
+    with_cuda = any(_is_gpu_sdfg(c) for c in compiled_sdfgs)
     if with_cuda:
         extra_cflags.append("-DWITH_CUDA")
         for c in compiled_sdfgs:
