@@ -4,20 +4,12 @@ is a non-negative integer.
 
 DaCe's symbolic C++ printer emits ``dace::math::pow`` (libm, ``double``) for a
 non-constant exponent, which is illegal where an integer is required -- an array
-size, a subscript, or a loop bound.  ``dace::math::ipow`` (repeated multiply,
-exact integer) is correct there iff the exponent is a non-negative integer.
+size, a subscript, or a loop bound.
 
 ``Pow(base, exp) -> ipow(base, exp)`` whenever ``exp`` is a provable non-negative
 integer: a non-negative integer constant, an integer-valued float literal, or a
 symbolic integer proven ``>= 0`` by interval analysis over the enclosing iterator
-ranges (``K - i - 1`` with ``for i in range(K)`` bottoms out at ``0``).
-
-The ranges and the symbols' sign / integrality are gathered by a scoped recursive
-descent: entering an SDFG records the sign assumptions its symbols were declared
-with (a transform may have stripped them off a duplicate symbol); entering a loop,
-a map, or a nested SDFG binds its iterators (a map may also rebind symbols via
-dynamic input connectors); leaving drops those bindings.  So every expression is
-proven against exactly the facts live at its own nesting depth.
+ranges (``K - i - 1`` with ``for i in range(K)``.
 """
 from typing import Any, Dict, Optional, Tuple
 
@@ -29,9 +21,6 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.symbolic import equalize_symbol, ipow
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
-
-#: A live iteration range ``symbol name -> (low, high)`` (inclusive).
-_Ranges = Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
 
 
 def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
@@ -66,7 +55,6 @@ class RelaxIntegerPowers(ppl.Pass):
         self._visit_sdfg(sdfg, {})
         return self._relaxed or None
 
-    # ---- proof ------------------------------------------------------------- #
     def _assumptions(self, symbols):
         """SymPy predicates for ``symbols`` under the current SDFG's declared
         signs / integrality (proven even when a duplicate symbol lost them)."""
@@ -80,12 +68,9 @@ class RelaxIntegerPowers(ppl.Pass):
                 facts.append(sympy.Q.nonnegative(sym))
         return facts
 
-    def _proven_nonnegative(self, exp: sympy.Expr, ranges: _Ranges) -> bool:
-        """Is ``exp`` provably ``>= 0``?  Minimise it over the iterator box (an
-        affine exponent's minimum sits at a corner -- an iterator's high end where
-        its coefficient is negative, its low end otherwise), reconcile same-named
-        symbols the corners introduced (``equalize_symbol``), then ask SymPy under
-        the declared assumptions."""
+    def _proven_nonnegative(self, exp: sympy.Expr, ranges: Dict[str, Tuple[symbolic.SymbolicType,
+                                                                           symbolic.SymbolicType]]) -> bool:
+        """Is ``exp`` provably ``>= 0``? Ask SymPy under the declared assumptions."""
         corners = {}
         for sym in exp.free_symbols:
             if sym.name not in ranges:
@@ -99,7 +84,9 @@ class RelaxIntegerPowers(ppl.Pass):
         with sympy.assuming(*self._assumptions(residual.free_symbols)):
             return sympy.ask(sympy.Q.nonnegative(residual)) is True
 
-    def _relaxed_exponent(self, exp: sympy.Expr, ranges: _Ranges) -> Optional[sympy.Expr]:
+    def _relaxed_exponent(
+            self, exp: sympy.Expr, ranges: Dict[str, Tuple[symbolic.SymbolicType,
+                                                           symbolic.SymbolicType]]) -> Optional[sympy.Expr]:
         """The integer exponent to feed ``ipow``, or ``None`` to keep ``pow``."""
         if exp.is_Number:
             if exp.is_integer:
@@ -114,8 +101,7 @@ class RelaxIntegerPowers(ppl.Pass):
                 return None
         return exp if self._proven_nonnegative(exp, ranges) else None
 
-    # ---- rewriting --------------------------------------------------------- #
-    def _relax(self, expr, ranges: _Ranges):
+    def _relax(self, expr, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]):
         """Rewrite each provable ``Pow`` in ``expr`` to ``ipow``."""
         core = expr.expr if isinstance(expr, symbolic.SymExpr) else expr
         if not isinstance(core, sympy.Basic) or not core.has(sympy.Pow):
@@ -130,29 +116,31 @@ class RelaxIntegerPowers(ppl.Pass):
 
         return core.replace(sympy.Pow, to_ipow)
 
-    def _relax_subset(self, sub, ranges: _Ranges) -> None:
+    def _relax_subset(self, sub, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]) -> None:
         if isinstance(sub, subsets.Range):
             sub.ranges = [tuple(self._relax(component, ranges) for component in rng) for rng in sub.ranges]
         elif isinstance(sub, subsets.Indices):
             sub.indices = [self._relax(idx, ranges) for idx in sub.indices]
 
-    def _relax_descriptor(self, desc: data.Array, ranges: _Ranges) -> None:
+    def _relax_descriptor(self, desc: data.Array, ranges: Dict[str, Tuple[symbolic.SymbolicType,
+                                                                          symbolic.SymbolicType]]) -> None:
         desc.shape = tuple(self._relax(item, ranges) for item in desc.shape)
         desc.strides = tuple(self._relax(item, ranges) for item in desc.strides)
         desc.offset = tuple(self._relax(item, ranges) for item in desc.offset)
         desc.total_size = self._relax(desc.total_size, ranges)
 
-    # ---- scoped recursive descent ------------------------------------------ #
-    def _nested_ranges(self, nsdfg: nodes.NestedSDFG, ranges: _Ranges) -> _Ranges:
+    def _nested_ranges(
+        self, nsdfg: nodes.NestedSDFG, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
+    ) -> Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
         """Carry outer ranges through a nested SDFG's symbol mapping."""
-        inner: _Ranges = {}
+        inner: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = {}
         for name, value in nsdfg.symbol_mapping.items():
             value = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value
             if isinstance(value, sympy.Symbol) and value.name in ranges:
                 inner[str(name)] = ranges[value.name]
         return inner
 
-    def _visit_sdfg(self, sdfg: SDFG, ranges: _Ranges) -> None:
+    def _visit_sdfg(self, sdfg: SDFG, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]) -> None:
         # ``sdfg.free_symbols`` yields names; the sign / integrality assumptions
         # live on the symbol objects in the array descriptors, so collect those.
         saved = (self._pos, self._nonneg, self._int)
@@ -166,7 +154,8 @@ class RelaxIntegerPowers(ppl.Pass):
         self._visit_region(sdfg, ranges, set())
         self._pos, self._nonneg, self._int = saved
 
-    def _visit_region(self, region, ranges: _Ranges, relaxed_arrays: set) -> None:
+    def _visit_region(self, region, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
+                      relaxed_arrays: set) -> None:
         for block in region.nodes():
             if isinstance(block, LoopRegion):
                 inner = dict(ranges)
@@ -186,20 +175,21 @@ class RelaxIntegerPowers(ppl.Pass):
             elif isinstance(block, ControlFlowRegion):
                 self._visit_region(block, ranges, relaxed_arrays)
 
-    def _visit_state(self, state: SDFGState, ranges: _Ranges, relaxed_arrays: set) -> None:
+    def _visit_state(self, state: SDFGState, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
+                     relaxed_arrays: set) -> None:
         sdfg = state.sdfg
         children = state.scope_children()
         scope_ranges = {}  # scope entry (or None) -> live ranges there
 
-        def descend(entry, live: _Ranges) -> None:
+        def descend(entry, live: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]) -> None:
             scope_ranges[entry] = live
             for node in children[entry]:
                 if isinstance(node, nodes.MapEntry):
-                    self._relax_subset(node.map.range, live)  # the range lives in the parent scope
+                    self._relax_subset(node.map.range, live)
                     inner = dict(live)
                     for conn in node.in_connectors:
                         if not conn.startswith('IN_'):
-                            inner.pop(conn, None)  # a dynamic-range symbol rebinds this name
+                            inner.pop(conn, None)
                     for param, rng in zip(node.map.params, node.map.range.ranges):
                         inner[str(param)] = (rng[0], rng[1])
                     descend(node, inner)
@@ -221,6 +211,3 @@ class RelaxIntegerPowers(ppl.Pass):
             for sub in (edge.data.subset, edge.data.other_subset):
                 if sub is not None:
                     self._relax_subset(sub, live)
-
-
-__all__ = ['RelaxIntegerPowers']

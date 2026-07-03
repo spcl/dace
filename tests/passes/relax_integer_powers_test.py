@@ -38,9 +38,6 @@ def _prover() -> RelaxIntegerPowers:
     return p
 
 
-# --------------------------------------------------------------------------- #
-# ipow symbolic Function
-# --------------------------------------------------------------------------- #
 def test_ipow_lowers_to_cpp_ipow():
     R, K = (symbolic.symbol(s, positive=True, integer=True) for s in ('R', 'K'))
     assert 'dace::math::ipow(R, K)' in symstr(ipow(R, K), cpp_mode=True)
@@ -64,9 +61,6 @@ def test_ipow_folds_constant_power():
     assert ipow(sympy.Integer(2), sympy.Integer(10)) == 1024
 
 
-# --------------------------------------------------------------------------- #
-# Interval analysis (the soundness crux)
-# --------------------------------------------------------------------------- #
 def test_interval_proves_radix_decomposition():
     K = symbolic.symbol('K', positive=True, integer=True)
     i = symbolic.symbol('i', integer=True)
@@ -83,9 +77,6 @@ def test_interval_refuses_unbounded_iterator():
     assert _prover()._proven_nonnegative(K - i - 1, {}) is False
 
 
-# --------------------------------------------------------------------------- #
-# End-to-end pass behaviour
-# --------------------------------------------------------------------------- #
 def test_relaxes_pow_inside_loop():
     """A radix subscript ``R**(K-i-1)`` in a memlet under ``for i in range(K)``
     relaxes via the iterator range the loop binds during the descent."""
@@ -154,7 +145,6 @@ def test_refuses_unprovable_and_negative_exponents():
     K = dace.symbol('K', positive=True, integer=True)
     M = dace.symbol('M', integer=True)  # no sign assumption
 
-    # R**M with M sign-unknown must not relax (apply_pass on a real descriptor).
     sdfg = dace.SDFG('unprovable')
     sdfg.add_array('u', [R**M], dace.float64)
     sdfg.add_state().add_access('u')
@@ -162,15 +152,11 @@ def test_refuses_unprovable_and_negative_exponents():
     assert _ipow_count(sdfg) == 0
     assert sdfg.arrays['u'].shape[0].has(sympy.Pow)  # R**M unchanged
 
-    # Provably-negative (reciprocal) and fractional (sqrt) exponents stay on pow.
     classify = _prover()._relaxed_exponent
     assert classify(-K, {}) is None
     assert classify(sympy.Rational(1, 2), {}) is None
 
 
-# --------------------------------------------------------------------------- #
-# End-to-end: complex power-shape array compiles + runs bit-exact
-# --------------------------------------------------------------------------- #
 def test_end_to_end_complex_power_shape_compiles():
     """A ``complex128`` array whose shape ``R**K`` is a symbolic power (the
     stockham-fft shape) must relax to ``ipow`` -- ``pow`` would be an illegal
