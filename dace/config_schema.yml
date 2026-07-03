@@ -345,19 +345,28 @@ required:
                         type: str
                         title: Additional CUDA architectures
                         description: >
-                            Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
+                            Additional CUDA architectures (separated by commas) to compile GPU
+                            code for, excluding the current architecture on the compiling machine.
+                            See also 'no_gpu_arch_detection'.
                         default: '60'
 
                     hip_arch:
                         type: str
                         title: Additional HIP architectures
                         description: >
-                            Additional HIP architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
+                            Additional HIP architectures (separated by commas) to compile GPU
+                            code for, excluding the current architecture on the compiling machine.
+                            See also 'no_gpu_arch_detection'.
                         default: 'gfx906'
+
+                    no_gpu_arch_detection:
+                        type: bool
+                        title: Disable GPU architecture detection
+                        description: >
+                          If set to 'true' then there will be no GPU detection set before compilation,
+                          which prevents the creation of a CUDA/HIP context. Instead the value
+                          specified in 'hip_arc' and 'cuda_arch' will be used, respectvely.
+                        default: false
 
                     default_block_size:
                         type: str
