@@ -47,6 +47,17 @@ def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
         out >> y[i]
         out = 0.0
 
+    # Zero ``tmp`` before the accumulation (polybench sets ``tmp[i] = 0`` inside the
+    # i-loop). The source expressed this via the WCR identity ``tmp(1, ..., 0)``, but
+    # the Python frontend drops the identity third argument, so the accumulation would
+    # otherwise read uninitialised memory -- making even the untransformed reference
+    # process-dependent. ``tmp[i]`` is produced and consumed within the same i, so a
+    # single up-front zero is equivalent to per-iteration reset.
+    @dace.map
+    def reset_tmp(i: _[0:M]):
+        out >> tmp[i]
+        out = 0.0
+
     for i in range(M):
 
         @dace.map

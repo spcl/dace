@@ -38,6 +38,16 @@ _ISA_TO_IMPL = {
     "SCALAR": "scalar",
 }
 
+# TileBinop / TileUnop ops that have NO per-ISA single-char lowering and must use the
+# ``pure`` loop expansion even at K=1 (a ``std::<fn>`` call the compiler's vector-math
+# library / libmvec captures). These are the elemental math functions the frontend
+# emits as bare calls: binary ``atan2`` / ``hypot`` / ``fmod`` and the extended trig
+# ``tan`` / ``asin`` / ``acos`` / ``atan`` / ``sinh`` / ``cosh``; ``pow`` / ``**`` for a
+# true runtime exponent likewise has no ISA char. (``sin`` / ``cos`` / ``exp`` / ``log``
+# / ``sqrt`` / ``tanh`` DO carry ISA char codes and stay on the intrinsic path.)
+_PURE_ONLY_MATH_OPS = frozenset(
+    {"atan2", "hypot", "fmod", "tan", "asin", "acos", "atan", "sinh", "cosh", "pow", "**"})
+
 
 @functools.lru_cache(maxsize=1)
 def detect_host_isa() -> str:
@@ -85,8 +95,43 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     """
     if len(node.widths) != 1:
         return "pure"
+    # Elemental math ops with no per-ISA intrinsic lowering -- ``atan2`` / ``hypot`` /
+    # ``fmod`` (binop) and the extended trig ``tan`` / ``asin`` / ``acos`` / ``atan`` /
+    # ``sinh`` / ``cosh`` (unop), plus ``**`` / ``pow`` -- use the ``pure`` loop
+    # expansion even at K=1: a per-lane ``std::<fn>`` call inside the tile for-loop
+    # (under the ``_dace_tile_vectorize`` pragma) that the compiler's vector-math
+    # library (libmvec) captures. The K=1 per-ISA backend has no single-char op code
+    # for them (see ``_isa_codegen._OP_TO_CHAR`` / ``_UNOP_TO_CHAR``), so routing them
+    # to the intrinsic path would ``KeyError``.
+    if getattr(node, "op", None) in _PURE_ONLY_MATH_OPS:
+        return "pure"
     target_isa = getattr(node, "target_isa", "SCALAR")
     if target_isa == "AUTO":
         target_isa = detect_host_isa()
+    # Complex operands have no packed-SIMD lowering on the CPU ISAs (add/sub are a trivial
+    # interleaved real add, but mul needs shuffle/FCMLA sequences and abs/div have no SIMD
+    # form), so route a complex tile op to the scalar ``pure`` loop over ``std::complex`` --
+    # correct on every target, and the compiler may still auto-vectorize it. CUDA/CuTile
+    # carries complex natively (``cuComplex``, scalar-per-lane warps) so it keeps its path.
+    if target_isa != "CUDA" and _tile_has_complex_operand(node, parent_state):
+        return "pure"
     impl = _ISA_TO_IMPL.get(target_isa, "pure")
     return impl if impl in node.implementations else "pure"
+
+
+def _tile_has_complex_operand(node: nodes.LibraryNode, parent_state) -> bool:
+    """True iff any connected operand / output of the tile op is a complex dtype.
+
+    ``parent_state`` is the containing :class:`~dace.sdfg.state.SDFGState`; ``None``
+    (unknown context) conservatively returns False (keep the ISA path).
+    """
+    if parent_state is None:
+        return False
+    sdfg = parent_state.sdfg
+    for e in (*parent_state.in_edges(node), *parent_state.out_edges(node)):
+        if e.data is None or e.data.data is None:
+            continue
+        desc = sdfg.arrays.get(e.data.data)
+        if desc is not None and desc.dtype in (dace.dtypes.complex64, dace.dtypes.complex128):
+            return True
+    return False

@@ -45,7 +45,8 @@ from typing import Optional, Tuple
 
 from dace import SDFG, dtypes, nodes, properties, symbolic
 from dace.sdfg import SDFGState
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -90,22 +91,34 @@ class InductionVariableSubstitution(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        # Fixed point: substituting a primary IV frees the symbols derived from
+        # it. e.g. TSVC s128 -- substituting ``j := j + 2`` rewrites ``k := j + 1``
+        # to ``k := 2*i`` (a pure loop-var expression), which the next round's
+        # ``_try_substitute_derived_symbol`` then folds into the ``b[k]`` gathers.
+        # Each substitution strictly removes one carried symbol / loop, so this
+        # terminates; the cap is a runaway backstop.
         count = 0
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion):
-                continue
-            if _try_substitute(parent, node, sdfg):
-                count += 1
-                continue
-            # Multi-statement bodies where one of the statements is a scalar IV
-            # recurrence on an interstate edge (``sym := sym + literal``) -- the
-            # canonical TSVC counter-IV shape (s122/s125/s126: ``k = k + 1``
-            # alongside ``flat[k] = ...``). Substitute the body's reads of
-            # ``sym`` with the closed form so the cross-iter dependency is gone
-            # and the surviving loop is parallelisable. Unlike ``_try_substitute``
-            # (which eliminates the loop), this preserves it.
-            if _try_substitute_iedge_iv(parent, node, sdfg):
-                count += 1
+        for _ in range(1000):
+            progressed = False
+            for node, parent in list(sdfg.all_nodes_recursive()):
+                if not isinstance(node, LoopRegion):
+                    continue
+                # (1) whole-loop collapse ``acc = acc OP const`` -> closed form
+                #     (eliminates the loop; the exponentiation collapse s317);
+                # (2) an interstate-edge recurrence ``sym := sym + step`` -> closed
+                #     form in the body (keeps the loop; the counter-IV shape);
+                # (3) a symbol defined purely by a loop-var expression -> inline it
+                #     (the derived symbol a primary-IV substitution just freed);
+                # (4) an IV incremented identically in every branch of a body
+                #     conditional -> hoist it out so (2) can then close it (s124).
+                if (_try_substitute(parent, node, sdfg) or _try_substitute_iedge_iv(parent, node, sdfg)
+                        or _try_substitute_derived_symbol(parent, node, sdfg)
+                        or _hoist_branch_uniform_iv(parent, node, sdfg)):
+                    count += 1
+                    progressed = True
+                    break  # SDFG mutated -> restart the scan on fresh node list
+            if not progressed:
+                break
         return count or None
 
 
@@ -326,6 +339,180 @@ def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -
     return False
 
 
+def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Hoist an IV increment that EVERY branch of a body ``ConditionalBlock``
+    performs identically (``sym := sym + step`` on all paths) to a single
+    pre-conditional iedge, so the branches share one increment.
+
+    This is a structural enabler, not itself a substitution: after the hoist the
+    increment is a plain between-blocks iedge that :func:`_try_substitute_iedge_iv`
+    (next fixed-point round) closes. TSVC ``s124`` -- ``j += 1`` in BOTH the ``if``
+    and the ``else`` -- becomes ``j = i`` so ``a[j]`` is the parallel ``a[i]``.
+    Requires an exhaustive conditional (an ``else`` branch): with an implicit
+    fall-through some path skips the increment and the hoist would be unsound.
+    """
+    import dace
+    for cb in [b for b in loop.nodes() if isinstance(b, ConditionalBlock)]:
+        conds = [c for c, _ in cb.branches]
+        branches = [br for _, br in cb.branches]
+        if len(branches) < 2 or all(c is not None for c in conds):
+            continue  # no else branch -> a path skips the increment -> unsound to hoist
+
+        def branch_increments(br):
+            incs = {}
+            for e in br.edges():
+                for lhs, rhs in (e.data.assignments or {}).items():
+                    try:
+                        delta = symbolic.simplify(symbolic.pystr_to_symbolic(rhs) - symbolic.pystr_to_symbolic(lhs))
+                    except Exception:
+                        continue
+                    if getattr(delta, 'is_number', False):
+                        incs.setdefault(lhs, []).append((e, delta))
+            return incs
+
+        per = [branch_increments(br) for br in branches]
+        common = set.intersection(*[set(p) for p in per]) if per else set()
+        for sym in common:
+            if sym == loop.loop_variable or (sym not in sdfg.symbols and sym not in sdfg.free_symbols):
+                continue
+            if any(len(p[sym]) != 1 for p in per):
+                continue  # a branch increments sym more than once
+            steps = {p[sym][0][1] for p in per}
+            if len(steps) != 1:
+                continue  # branches disagree on the step
+            step = next(iter(steps))
+            branch_edges = {id(p[sym][0][0]) for p in per}
+            if any(sym in (e2.data.assignments or {}) and id(e2) not in branch_edges
+                   for e2 in loop.all_interstate_edges()):
+                continue  # sym also written outside the per-branch increments (incl. nested) -> not clean
+            # Strip the increment from each branch, then plant one pre-cb iedge.
+            for p in per:
+                e, _ = p[sym][0]
+                assigns = dict(e.data.assignments)
+                assigns.pop(sym, None)
+                e.data.assignments = assigns
+            hoist = loop.add_state(cb.label + '_iv_hoist')
+            was_start = loop.start_block is cb
+            for ie in list(loop.in_edges(cb)):
+                loop.add_edge(ie.src, hoist, ie.data)
+                loop.remove_edge(ie)
+            new_rhs = symbolic.symstr(symbolic.pystr_to_symbolic(sym) + step)
+            loop.add_edge(hoist, cb, dace.InterstateEdge(assignments={sym: new_rhs}))
+            if was_start:
+                loop.start_block = loop.node_id(hoist)
+            return True
+    return False
+
+
+def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[str]:
+    """Whether every USE of ``sym_name`` in the loop body executes on ONE side of
+    the IV increment ``iv_edge`` (``sym := sym + step``).
+
+    Returns ``'before'`` if all uses run before the increment (pre-increment: the
+    body sees ``sym_init + norm_iter * step``), ``'after'`` if all run after it
+    (post-increment: ``... + (norm_iter + 1) * step``), or ``None`` if the uses
+    straddle both sides (which would need per-block offsets) or none are found.
+
+    This generalizes the TOP / BOTTOM shape check to an IV increment sitting
+    *between* content blocks (TSVC ``s128``: ``k := j + 1`` before ``j := j + 2``
+    -- the only ``j`` use is the ``k`` iedge, which precedes the increment). Sides
+    are decided by reverse/forward reachability from the increment's endpoints;
+    the loop body is a DAG (the back-edge is the region boundary, not a body
+    edge), so reachability is exact.
+    """
+    before = set(sdutil.dfs_conditional(loop, sources=[iv_edge.src], reverse=True))
+    before.add(iv_edge.src)
+    after = set(sdutil.dfs_conditional(loop, sources=[iv_edge.dst]))
+    after.add(iv_edge.dst)
+
+    saw_before = saw_after = False
+    # Block uses: any body block that reads ``sym`` -- a state (memlet / tasklet)
+    # OR a nested region (a ConditionalBlock whose branches read ``sym``, e.g. the
+    # ``a[j]`` writes in s124). ``free_symbols`` is defined for every block type.
+    for b in loop.nodes():
+        if sym_name in {str(s) for s in b.free_symbols}:
+            if b in before:
+                saw_before = True
+            elif b in after:
+                saw_after = True
+            else:
+                return None  # neither strictly before nor after the increment
+    # Interstate-edge uses (RHS assignments / condition), excluding the IV edge.
+    for e in loop.edges():
+        if e is iv_edge or sym_name not in {str(s) for s in e.data.free_symbols}:
+            continue
+        if e.dst in before:  # the edge completes at-or-before the increment's source
+            saw_before = True
+        elif e.src in after:  # the edge starts at-or-after the increment's destination
+            saw_after = True
+        else:
+            return None
+    if saw_before and saw_after:
+        return None  # straddles the increment -> per-block offsets needed (unsupported)
+    if saw_before:
+        return 'before'
+    if saw_after:
+        return 'after'
+    return None  # no uses -> nothing meaningful to substitute
+
+
+def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Substitute a symbol defined *purely* by a loop-variable expression.
+
+    A body iedge ``sym := f(loop_var, <loop-invariant symbols>)`` with NO
+    self-reference (``sym`` not in ``f``) makes ``sym`` a plain derived quantity,
+    not a recurrence -- every iteration's value is a closed-form function of the
+    loop variable. Inline it: replace ``sym`` with ``f`` throughout the body and
+    drop the defining iedge.
+
+    This is the second half of the fixed-point (see :meth:`apply_pass`): once
+    :func:`_try_substitute_iedge_iv` turns a primary IV ``j`` into a constant, a
+    derived ``k := j + 1`` becomes ``k := 2*i`` -- now a pure loop-var expression
+    this catches, folding it into the ``b[k]`` gathers so ``LoopToMap`` can
+    parallelize (TSVC s128). Requires every use of ``sym`` to FOLLOW the
+    definition (same-iteration value); a use before it would read the previous
+    iteration's value and is refused.
+    """
+    if not loop.loop_variable:
+        return False
+    loop_var = loop.loop_variable
+    for e in loop.edges():
+        if e.data.condition.as_string not in ('1', 'True', '(1)') or len(e.data.assignments) != 1:
+            continue
+        ((sym, rhs), ) = e.data.assignments.items()
+        if sym == loop_var or (sym not in sdfg.symbols and sym not in sdfg.free_symbols):
+            continue
+        try:
+            rhs_expr = symbolic.pystr_to_symbolic(rhs)
+        except Exception:
+            continue
+        free = {str(s) for s in rhs_expr.free_symbols}
+        if sym in free:
+            continue  # self-reference -> a recurrence, not a derived symbol
+        if not all(s == loop_var or _is_loop_invariant_symbol(s, loop, sdfg) for s in free):
+            continue  # depends on another loop-carried symbol -> substitute that first (fixed point)
+        if any(oe is not e and sym in (oe.data.assignments or {}) for oe in loop.all_interstate_edges()):
+            continue  # sym written elsewhere (incl. a NESTED loop, s141) -> not a clean single definition
+        if _consistent_use_side(loop, e, sym) != 'after':
+            continue  # a use before the definition would see the previous iteration's value
+
+        e.data.assignments = {}
+        loop.replace_dict({sym: symbolic.symstr(rhs_expr)})
+        # Materialise the post-loop value (the last iteration's) for any reader
+        # after the loop; harmless (dead) when ``sym`` is loop-local.
+        end = loop_analysis.get_loop_end(loop)
+        if end is not None:
+            import dace
+            post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop_var), end))
+            dsym_post = parent.add_state(loop.label + '_dsym_post')
+            for oe in list(parent.out_edges(loop)):
+                parent.add_edge(dsym_post, oe.dst, oe.data)
+                parent.remove_edge(oe)
+            parent.add_edge(loop, dsym_post, dace.InterstateEdge(assignments={sym: post_val}))
+        return True
+    return False
+
+
 def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
     """Substitute an interstate-edge induction variable (``sym := sym + literal``)
     in the loop body with its closed form.
@@ -468,7 +655,19 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     elif dst_is_unique_empty_sink:
         body_offset = norm_iter  # update-at-bottom: body is pre-increment
     else:
-        return False
+        # The increment sits BETWEEN content blocks. It is still substitutable
+        # with a single offset iff every use of ``sym`` is consistently on one
+        # side of it -- TSVC s128, where the only ``j`` use (the ``k := j + 1``
+        # iedge) precedes ``j := j + 2``. Substituting ``j`` then rewrites that
+        # iedge to ``k := 2 * i``, which a fixed-point re-run (see the pass'
+        # apply loop) / symbol propagation folds into the ``b[k]`` gathers.
+        side = _consistent_use_side(loop, iv_edge, sym_name)
+        if side == 'before':
+            body_offset = norm_iter
+        elif side == 'after':
+            body_offset = norm_iter + 1
+        else:
+            return False
 
     # 3. Build the closed form. The SDFG symbol ``sym`` evaluates to its current
     #    value (which IS ``sym_init`` once we strip the iedge increment), so the

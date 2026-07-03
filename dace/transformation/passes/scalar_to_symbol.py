@@ -782,6 +782,17 @@ class ScalarToSymbolPromotion(passes.Pass):
         if len(to_promote) == 0:
             return None
 
+        # Postcondition guard (checked at the end): promotion must DEFINE every
+        # symbol it introduces -- a promoted scalar's writer becomes an interstate
+        # assignment, so the new symbol is bound. Record the pre-promotion free
+        # symbols and which promotions are transient, so a promoted *transient*
+        # scalar that ends up as a NEW free (undefined) symbol -- e.g. one whose
+        # writer was removed while it was referenced only by a control-flow
+        # condition -- is caught here instead of leaking into codegen. Read-only
+        # *input* scalars legitimately become argument symbols and are excluded.
+        before_free: Set[str] = {str(s) for s in sdfg.free_symbols}
+        transient_promotions: Set[str] = {s for s in to_promote if s in sdfg.arrays and sdfg.arrays[s].transient}
+
         for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
@@ -891,6 +902,19 @@ class ScalarToSymbolPromotion(passes.Pass):
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
+
+        # Postcondition: a valid promotion never leaves a promoted transient scalar
+        # as a NEW free (undefined) symbol -- every introduced symbol must be bound
+        # by the interstate assignment built from its writer. A violation means the
+        # writer was already gone before promotion (e.g. removed while the scalar was
+        # referenced only by a branch/loop condition), so the symbol has no binding;
+        # fail loudly here rather than emit an SDFG that errors at compile/run time.
+        new_free: Set[str] = {str(s) for s in sdfg.free_symbols} - before_free
+        orphaned = new_free & transient_promotions
+        if orphaned:
+            raise ValueError(f"ScalarToSymbolPromotion would introduce undefined symbol(s) {sorted(orphaned)}: "
+                             f"a promoted transient scalar has no defining assignment (its writer was removed "
+                             f"while it was still referenced by a control-flow condition).")
 
         return to_promote or None
 

@@ -75,14 +75,54 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
 # EmitTileOps boundary emission. Tasklet-to-TileBinop / TileITE / TileReduce conversion is
 # pending; for now the SDFG returns with raw tasklets between staged tile transients and lib-node
 # expansion handles only TileLoad / TileStore / TileMaskGen.
-from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
+from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
+from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
+from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
 from dace.libraries.tileops.nodes import (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
 _TILE_NODE_TYPES = (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
+
+
+class _MultiOutputReductionMapFission(MapFission):
+    """:class:`MapFission` restricted to a map that separates >= 2 distinct WCR
+    (reduction / contraction) outputs.
+
+    The prep phase fissions a fused multi-output reduction map -- e.g. gesummv's
+    ``tmp(+)= A[i,j]*x[j]; y(+)= B[i,j]*x[j]`` (two independent matvecs in one map,
+    exposed as two single-output tasklets by :class:`SplitMultiOutputTasklets`) --
+    into one single-contraction map per output so ``LiftEinsum`` / the reduction lift
+    can match each. Plain :class:`MapFission` would ALSO fragment a single-output
+    *elementwise* chain (arc_distance's ``sin(a)**2 + cos(b)*cos(c)*sin(d)**2`` has
+    many independent sub-expressions) into per-op maps, undoing the base ``MapFusion``
+    and tripping a copy-scope codegen bug. Gate on >= 2 distinct WCR outputs at the
+    map exit so only the genuine multi-output reduction/contraction case fissions.
+    """
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # Base ``MapFission.can_be_applied`` can raise (a ``KeyError`` was observed on
+        # adi) while analysing a map it cannot handle. A transformation that cannot even
+        # decide applicability must DECLINE, not propagate: ``apply_transformations_repeated``
+        # only downgrades the exception to a warning, leaving the map un-fissioned and
+        # surfacing later as an opaque codegen error. Treat any analysis failure as "not
+        # applicable".
+        try:
+            if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+                return False
+        except Exception:
+            return False
+        map_exit = graph.exit_node(self.map_entry)
+        wcr_arrays = {
+            e.data.data
+            for e in graph.out_edges(map_exit)
+            if e.data is not None and e.data.data is not None and e.data.wcr is not None
+        }
+        return len(wcr_arrays) >= 2
 
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
@@ -286,7 +326,8 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  loop_to_map_permissive: bool = False,
                  nest_map_bodies: bool = False,
                  scalar_remainder_emit: Literal["scalar", "tile_k1"] = "scalar",
-                 expand_tile_nodes: bool = True):
+                 expand_tile_nodes: bool = True,
+                 validate_all: bool = False):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -340,6 +381,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             ``sdfg.expand_library_nodes()`` is the caller's responsibility
             and the post-expansion ``assert_no_laneid_in_tile_path``
             audit is skipped (it can only run after expansion).
+        :param validate_all: Forwarded to the up-front ``sdfg.simplify(...)``
+            in :meth:`apply_pass` (``validate_all=True`` runs the deep
+            per-transformation validation). Off by default so callers pay the
+            heavier check only when they ask; the corpus harness turns it on.
         :raises NotImplementedError: On any disallowed combination (e.g. a
             K=1-only knob at K>=2, or fp_factor with a masked remainder).
         """
@@ -479,6 +524,17 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             else:
                 tail_mode = "masked"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
+        # Restore the "no bare-if in a Python tasklet" invariant for the TILED bodies only.
+        # The frontend lowers a boolean-masked assignment ``A[mask] = value`` to a bare-if
+        # tasklet ``if __in_cond: __out = value`` (newast.py). ``SplitTasklets`` (run above)
+        # leaves it intact via its bare-if guard, and ``SplitMapForTileRemainder`` has now
+        # copied it into any scalar / tile-K1 remainder tail. Rewrite it to the first-class
+        # ``__out = IT(__in_cond, value)`` conditional-write form -- analysed uniformly like
+        # ``ITE`` (no old-value read) and lowered by ``ConvertTaskletsToTileOps`` to a masked
+        # ``TileStore`` -- but ONLY in the tiled bodies (the divisible interior and the
+        # masked-tail slab); the pass skips the scalar-tail scopes, which stay plain step-1
+        # loops that keep the valid bare-if. So it MUST run AFTER the remainder split.
+        passes.append(NormalizeMaskedWriteTasklets())
         # Always-on under walker-primary: every innermost map body must be nested in a body
         # NSDFG so the walker (InsertTileLoadStore) has something to traverse. The walker is the
         # ONLY emit path now -- the legacy ``EmitTileOps`` / ``PromoteNSDFGBodyToTiles``
@@ -581,6 +637,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._nest_map_bodies = nest_map_bodies
         self._loop_to_map_permissive = loop_to_map_permissive
         self._expand_tile_nodes = expand_tile_nodes
+        self._validate_all = validate_all
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -608,7 +665,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # up front gives every downstream pass a canonical, flat-state body
         # (FunctionCallRegions inlined, dead dataflow swept) regardless of how the
         # SDFG was built — already-simplified inputs are a near no-op.
-        sdfg.simplify()
+        sdfg.simplify(validate_all=self._validate_all)
         # Lift pure-WCR boundary reductions (``acc = sum(A)`` -- a MapExit
         # ``CR:op`` WCR with no carry-in read) to a product buffer + vectorized
         # ``Reduce`` BEFORE ``WCRToAugAssign`` rewrites the WCR into an in-place
@@ -618,6 +675,27 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # after ``LoopToMap`` produces its map.
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
         LiftMapReductionToReduce(vectorized=True, pure_wcr_only=True).apply_pass(sdfg, {})
+        # Prep for the einsum / reduction lifts: fission fused compute so each
+        # contraction / reduction is a single-output map the lifts can match. A fused
+        # multi-output tasklet (gesummv's ``ot = A[i,j]*x[j]; oy = B[i,j]*x[j]`` -- two
+        # matvecs in one node) blocks both MapFission (one component) and LiftEinsum
+        # (two contractions). SplitMultiOutputTasklets fissions the node into one
+        # single-output tasklet per output; MapFission then separates the now-independent
+        # components into their own maps, each a clean single-contraction map. Runs
+        # BEFORE WCRToAugAssign so the reduction WCR the lift matches is still intact.
+        SplitMultiOutputTasklets().apply_pass(sdfg, {})
+        sdfg.apply_transformations_repeated(_MultiOutputReductionMapFission, permissive=False, validate=False)
+        # Lift tensor-contraction maps (matmul / matvec: ``c(+)[i, j] = alpha *
+        # a[i, k] * b[k, j]``, ``ij,j->i``, ...) to ``Einsum`` library nodes BEFORE
+        # ``WCRToAugAssign`` rewrites the contraction's WCR into an in-place RMW that
+        # ``LiftEinsum`` can no longer match. A contraction cannot be tiled as a plain
+        # element-wise tile op (the K-reduction is not a per-lane broadcast); lifting it
+        # to an ``Einsum`` removes the map -- and its WCR -- from the tile path, and the
+        # node carries its own fast (BLAS-when-available, ``pure`` at small/known sizes)
+        # expansion, selected in ``_finalize_lifted_library_nodes`` before the tile-node
+        # expansion. No-op on non-contraction kernels (``LiftEinsum`` requires >= 2
+        # tensor operands), so the elementwise / stencil corpus is unaffected.
+        PatternMatchAndApplyRepeated([LiftEinsum()]).apply_pass(sdfg, {})
         # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction shape into an
         # in-place RMW tasklet. The recognised tile-path reductions (post-NormalizeWCRSource in the
         # constructor pipeline) land as `tile -> scalar -[wcr]-> sink` and are left alone -- they're
@@ -655,6 +733,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``_laneid_<i>``-style leak would be visible. Skip it on the
         # deferred path.
         if self._expand_tile_nodes:
+            # Contraction/reduction library nodes lifted up front (Einsum, and any
+            # Reduce the reduction lift produced) get a fast implementation selected
+            # the same way canonicalize's finalize tail does -- BLAS when a dimension
+            # is large/symbolic, the inlined ``pure`` loop nest at small known sizes --
+            # so they lower correctly alongside the tile nodes below.
+            self._finalize_lifted_library_nodes(sdfg)
             self._select_tile_implementations(sdfg)
             sdfg.expand_library_nodes()
             # Sweep any per-lane SDFG symbols that the indirect-access (gather)
@@ -767,6 +851,39 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # downstream pipeline handles whole-array boundary memlets natively
         # via ExpandNestedSDFGInputs + the staging chain.
 
+    def _finalize_lifted_library_nodes(self, sdfg: dace.SDFG) -> None:
+        """Select **native BLAS** implementations for any NON-tile library node lifted
+        during the prep phase (an ``Einsum`` contraction -> GEMM/GEMV, a ``Reduce``
+        reduction, ...) so it expands to a fast library call at the tail.
+
+        Uses :func:`~dace.transformation.auto.auto_optimize.set_fast_implementations`
+        directly (per user direction: the vectorization prep lifts to native BLAS
+        calls). Unlike canonicalize's finalize selector, it does NOT override a
+        small-constant-dimension matmul to the inlined ``pure`` nest -- the
+        vectorizer always prefers the BLAS call when the environment provides one
+        (falling back to ``pure`` only when no fast implementation is registered).
+        ``infer_connector_types`` / ``set_default_schedule_and_storage_types`` run
+        first because a library node may expand into further library nodes whose
+        connector types / schedules must be resolved (mirrors ``finalize_for_target``).
+
+        No-op when the SDFG carries no non-tile library node (the common
+        elementwise / stencil case) -- the selector is skipped entirely so
+        tile-only runs are unaffected. The tile lib nodes are handled separately by
+        :meth:`_select_tile_implementations`, which runs AFTER this and re-pins their
+        implementations regardless of anything the selector touched.
+        """
+        from dace.sdfg import infer_types
+        from dace.transformation.auto.auto_optimize import set_fast_implementations
+
+        has_nontile_libnode = any(
+            isinstance(node, dace.nodes.LibraryNode) and not isinstance(node, _TILE_NODE_TYPES)
+            for node, _ in sdfg.all_nodes_recursive())
+        if not has_nontile_libnode:
+            return
+        set_fast_implementations(sdfg, dace.dtypes.DeviceType.CPU)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
     def _select_tile_implementations(self, sdfg: dace.SDFG) -> None:
         """Stamp ``target_isa`` on every emitted tile lib node and resolve its
         concrete implementation before expansion.
@@ -781,7 +898,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
 
         :param sdfg: SDFG whose tile lib nodes are resolved in place.
         """
-        for node, _ in sdfg.all_nodes_recursive():
+        for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, _TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
-                node.implementation = select_tile_implementation(node)
+                node.implementation = select_tile_implementation(node, parent)

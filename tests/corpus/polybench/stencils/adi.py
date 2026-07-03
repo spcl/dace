@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
@@ -36,9 +37,14 @@ def init_array(u, tsteps, n):
 
 @dace.program
 def adi(u: datatype[N, N]):
-    v = dace.define_local([N, N], datatype)
-    p = dace.define_local([N, N], datatype)
-    q = dace.define_local([N, N], datatype)
+    # Zero-initialise the scratch arrays. The polybench reference leaves the
+    # boundary columns/rows of these locals at their (zero-initialised) default;
+    # the original port left them uninitialised, making even the untransformed
+    # baseline process-dependent (nan / overflow). Explicit zeros restore the
+    # faithful, deterministic semantics.
+    v = np.zeros([N, N], datatype)
+    p = np.zeros([N, N], datatype)
+    q = np.zeros([N, N], datatype)
 
     A = dace.define_local([1], datatype)
     B = dace.define_local([1], datatype)
@@ -63,7 +69,7 @@ def adi(u: datatype[N, N]):
 
     for t in range(tsteps):
         # Column Sweep
-        for i in dace.map[1:N - 1]:
+        for i in range(1, N - 1):
             with dace.tasklet:
                 v0i >> v[0, i]
                 pi0 >> p[i, 0]
@@ -101,7 +107,7 @@ def adi(u: datatype[N, N]):
                     vji = pij * vjp1 + qij
 
         # Row Sweep
-        for i in dace.map[1:N - 1]:
+        for i in range(1, N - 1):
             with dace.tasklet:
                 ui0 >> u[i, 0]
                 pi0 >> p[i, 0]

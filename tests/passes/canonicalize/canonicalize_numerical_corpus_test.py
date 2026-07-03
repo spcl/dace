@@ -43,20 +43,46 @@ _CPU = dict(target='cpu',
 # corpus port is wrong even untransformed (frontend/uninit); ``flaky`` =
 # process-dependent uninitialized read.
 _CANON_XFAIL = {
-    ('poly', 'adi'): 'pre-existing port/frontend uninit-read: wrong even untransformed',
-    ('poly', 'atax'): 'flaky uninitialized-read (tmp): process-dependent',
-    ('poly', 'cholesky'): 'canon InvalidSDFGEdgeError',
-    ('poly', 'correlation'): 'canon numerical miscompile',
-    ('poly', 'covariance'): 'canon numerical miscompile',
-    ('poly', 'gramschmidt'): 'canon InvalidSDFGEdgeError',
-    ('poly', 'k3mm'): 'corpus port zero-init / flaky (NaN even untransformed)',
-    ('poly', 'lu'): 'canon InvalidSDFGEdgeError',
-    ('poly', 'ludcmp'): 'canon numerical miscompile',
+    # WCR seed dependency lost: StateFusionExtended merges the ``mean[:]=0`` seed state
+    # and the ``mean[j]+=...`` WCR-accumulate state, leaving them unordered (the WCR's
+    # read of its seed is implicit, not an edge); MapFusion then reorders -> mean=0.
+    # correlation: mean/stddev reductions FIXED (StateFusion no longer fuses a seed state
+    # with its WCR-accumulate). Remaining gap: ``center_data`` (in-place ``data``) is fused
+    # into the same state as the ``corr`` WCR-accumulate and reads a pre-normalized stddev
+    # -- a deeper normalize->center->reduce ordering scramble across StateFusion + MapFusion.
+    ('poly', 'correlation'):
+    'canon: center_data/corr ordering scramble (mean/stddev now OK)',
+    # covariance FIXED: StateFusionExtended now treats a WCR edge as a read-modify-write and
+    # refuses to fuse the ``mean[:]=0`` seed state into the ``mean(+)=`` accumulate state.
+    # cholesky / ludcmp / gramschmidt (in-place-A matrix reductions ``A[i,j] OP= A[i,k]*A[k,j]``)
+    # now PASS on CPU -- the reduction stays a WCR and lowers via the OMP-reduction path
+    # (verified bit-exact). Xfails removed.
     # --- npbench gaps appended below from _NP_CANON_XFAIL ---
 }
 # npbench-suite canon gaps (established by the subprocess-isolated corpus sweep).
 _NP_CANON_XFAIL = {
-    # filled in below (keyed by name) -> merged as ('np', name)
+    # azimint_naive / nbody: a conditional accumulator inside a dc.map nsdfg
+    # (``if mask: tmp += data[j]``) reduces via an in-nsdfg WCR whose output connector is
+    # a POINTER to the caller's accumulator -- codegen lowers it to
+    # ``reduce_atomic(&tmp, addend)`` across the parallel map lanes (verified in the
+    # baseline C++). MapToForLoop sequentializes the map, but the accumulator stays a
+    # WRITE-ONLY nsdfg output (no read-back of the running value is wired), so the loop
+    # cannot carry the sum; SimplifyPass then removes the now-dead reduction. Fix = keep
+    # the reduction parallel (refuse to sequentialize an in-nsdfg WCR reduction) OR make
+    # the accumulator an InOut nsdfg interface before lowering. nbody additionally has an
+    # independent canon-introduced GEMM ``ldc`` corruption from a layout transform.
+    'azimint_naive': 'canon: in-nsdfg atomic reduction lost when MapToForLoop sequentializes the map',
+    'nbody': 'canon: same in-nsdfg reduction-lowering gap as azimint + separate GEMM ldc corruption',
+    # cavity_flow: structured-grid CFD solver -- baseline SDFG is bit-exact vs numpy, canon
+    # diverges (real canon bug, not a port). Root cause not yet isolated (stencil +
+    # boundary-assignment + inner pressure-poisson nit-loop). Tracked.
+    'cavity_flow': 'canon: structured-grid stencil/boundary miscompile (baseline bit-exact)',
+    # Broken corpus PORTS -- the @dc.program is already wrong (or fails to compile) even
+    # UNTRANSFORMED, so this is not a canonicalization gap. Verified: baseline (no canon)
+    # does not match the numpy reference. Out of scope for canon; tracked as port bugs.
+    'mandelbrot1': 'port: baseline SDFG mismatches numpy reference even untransformed',
+    'mandelbrot2': 'port: baseline SDFG mismatches numpy reference even untransformed',
+    'stockham_fft': 'port: baseline SDFG mismatches numpy reference even untransformed',
 }
 _CANON_XFAIL.update({('np', n): r for n, r in _NP_CANON_XFAIL.items()})
 

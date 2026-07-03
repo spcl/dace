@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 NI = dace.symbol('NI')
 NJ = dace.symbol('NJ')
@@ -63,8 +64,18 @@ def init_array(A, B, C, D, G, ni, nj, nk, nl, nm):
 
 @dace.program
 def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datatype[NM, NL], G: datatype[NI, NL]):
-    E = dace.define_local([NI, NJ], dtype=datatype)
-    F = dace.define_local([NJ, NL], dtype=datatype)
+    # Zero-initialise the accumulators. The matmuls accumulate via a WCR whose
+    # identity third argument (``E(1, ..., 0)``) is dropped by the Python frontend,
+    # so without an explicit zero the reduction reads uninitialised memory -- a latent
+    # bug masked only by fresh (zeroed) pages. polybench zeroes E/F/G before each dot
+    # product; do the same. ``G`` is the output parameter, reset with a map below.
+    E = np.zeros([NI, NJ], dtype=datatype)
+    F = np.zeros([NJ, NL], dtype=datatype)
+
+    @dace.map
+    def reset_G(i: _[0:NI], j: _[0:NL]):
+        out >> G[i, j]
+        out = 0.0
 
     @dace.map
     def mult_E(i: _[0:NI], j: _[0:NJ], k: _[0:NK]):

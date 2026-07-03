@@ -24,7 +24,8 @@ from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
@@ -34,12 +35,14 @@ from dace.transformation.passes.canonicalize.move_loop_into_map_gated import Mov
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
+from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
+    AssignmentAndCopyKernelToMemsetAndMemcpy)
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign, WCRToAugAssignInjectiveMap
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern)
@@ -238,7 +241,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   interchange_carry_with_map: bool = False,
                   scatter_to_guarded_maps: bool = True,
                   target: str = 'cpu',
-                  fast: bool = False) -> List[Tuple[str, ppl.Pass]]:
+                  fast: bool = False,
+                  lift: bool = True,
+                  lift_copy: bool = True,
+                  semantic_lifting: bool = True) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
@@ -323,16 +329,35 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
           ('clean', ContinueToCondition()), ('clean', SimplifyPass()),
           ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
 
-    # prep (still maps): push guarding conditionals into maps, then replicate
-    # a conditional per independent output so it can fission later.
-    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConditionalComponentFission())]
+    # prep (still maps): push guarding conditionals into maps, then split
+    # statements -- replicate a conditional / gather-scatter NestedSDFG per
+    # independent output so it can fission later (SplitStatements subsumes the
+    # former ConditionalComponentFission and also handles forward-read anti-deps).
+    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', SplitStatements())]
 
-    # lift_reduce (still maps, BEFORE lower): turn WCR-reduction maps into the
-    # canonical "full map (products into a buffer) + Reduce node" form, while the
-    # reduction is still a Map -- once ``lower`` rewrites it to a LoopRegion+NestedSDFG
-    # the clean reduction shape is gone. The Reduce libnode carries its own identity.
-    s += [('lift_reduce', AccumulatorToMapAndReduce())]
+    # lift_reduce (GPU only): rewrite an accumulator loop into the "per-iteration
+    # deltas into a buffer + Reduce libnode" form (while the reduction is still a Map --
+    # once ``lower`` rewrites it to a LoopRegion+NestedSDFG the clean shape is gone; the
+    # Reduce libnode carries its own identity). This buffer+Reduce form is the
+    # GPU-efficient reduction: the Reduce node expands to a warp/block tree-reduce,
+    # whereas a WCR scalar on GPU lowers to a contended per-thread ``atomicAdd``.
+    #
+    # On CPU we deliberately do NOT lift to buffer+Reduce: the WCR-on-map form produced
+    # later by ``reduction_to_wcr_map`` (``LoopToReduce(prefer='wcr-scalar')``) lowers to
+    # an OpenMP ``reduction(op:var)`` clause (per-thread privatization + tree-reduce),
+    # which is the CPU-efficient form and needs no intermediate buffer.
+    #
+    # TODO: implement scalar -> MapExit WCR reduction lowering for GPU (hierarchical
+    # warp/block reduce) so the GPU path can lower the WCR form directly, matching the
+    # CPU OMP-reduction path, instead of relying on this buffer+Reduce fallback.
+    if target == 'gpu':
+        s += [('lift_reduce', AccumulatorToMapAndReduce())]
 
+    # WCRToAugAssign BEFORE lower: rewrite every conflict-free (injective) WCR back to
+    # an explicit RMW while maps are still maps; what stays WCR is a genuine reduction
+    # that MapToForLoop then refuses to lower (kept parallel -> OMP reduction), so the
+    # in-state producer->consumer edge is never severed by the map->loop round-trip.
+    s += [('lower', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
     # structural cleanup (no SimplifyPass).
     s += [('lower', PatternMatchAndApplyRepeated([MapToForLoop()]))]
@@ -486,8 +511,21 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # first LoopToMap (see the ``fast`` block after the 'parallelize' stage) -- the
     # already-lifted maps are no longer loops, so fission naturally touches only the
     # loops that resisted parallelization.
+    # break_antidep (before fission): a forward-read anti-dependence -- a body that
+    # reads ``a[i+1]`` off the same array a sibling statement writes at ``a[i]`` (s1244
+    # ``d[i] = a[i] + a[i+1]``) -- is a cross-iteration bridge LoopFission cannot sever,
+    # so the whole body stays one sequential loop. BreakAntiDependence's per-edge mixed
+    # break (arrays its whole-array rename skips because a sibling read is RAW)
+    # snapshots the array and redirects ONLY the read-ahead access to the snapshot
+    # (same-index / read-behind reads keep their live-array RAW value), leaving just
+    # per-iteration bridges for LoopFission to distribute into siblings. It runs here,
+    # on the now single-compute-state body, in addition to the earlier 'break_antidep'
+    # stage (which sees the loop before its slice states fuse and so only breaks the
+    # whole-array pure-WAR loops). Gated on the same knob as that stage.
     if not fast:
-        s += [('fission', LoopFission()), ('fission', _uniq_fis)]
+        if break_anti_dependence:
+            s += [('fission', BreakAntiDependence())]
+        s += [('fission', PerfectLoopNesting()), ('fission', _uniq_fis)]
 
     # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
     # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
@@ -630,6 +668,18 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
 
+    # lift_copy (cleaning, post-parallelize): now that loops are maps, extract pure
+    # data-movement out of them -- a contiguous element-wise copy -> a Copy library
+    # node, a constant-zero write -> a Memset node (the map is fissioned first if it
+    # mixes compute with data movement). This is the proper home for a unary copy /
+    # transpose (einsum 'i->i' / 'ij->ji'): LiftEinsum deliberately skips those (it
+    # requires >=2 tensor operands), so without this pass durbin's ``y[i] = z[i]``
+    # would stay a naive map. Must run AFTER the loop->map lifting (it only matches
+    # MapEntry nodes) and before the compute-map transforms / the einsum lift.
+    if semantic_lifting and lift_copy:
+        s += [('lift_copy', AssignmentAndCopyKernelToMemsetAndMemcpy())]
+        s += _structural_cleanup('lift_copy')
+
     # interchange (post-parallelize, both modes): a sequential loop that survived
     # parallelize but wraps a parallel map (e.g. a recurrence sweep ``for t {
     # map[i] }``) is interchanged to ``map[i] { for t }`` so the parallel axis is
@@ -695,7 +745,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # scalar coefficient (gemm's ``alpha``) is wired as the Einsum's explicit
     # ``_alpha`` connector; ``finalize_for_target`` expands the node (fast BLAS if
     # available, else a pure contraction SDFG). Non-contraction maps do not match.
-    s += [('lift', PatternMatchAndApplyRepeated([LiftEinsum()]))]
+    # ``lift=False`` skips this optimization entirely (the matmul stays a correct WCR
+    # loop nest) -- a correctness-safe escape hatch while the Einsum lowering is hardened.
+    # ``semantic_lifting=False`` (set by the vectorizer) skips BOTH map->library-node
+    # lifts -- this einsum lift and the lift_copy memset/memcpy above -- so the residual
+    # stays as raw maps the vectorizer can lower (a library node is not vectorizable).
+    if semantic_lifting and lift:
+        s += [('lift', PatternMatchAndApplyRepeated([LiftEinsum()]))]
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
@@ -728,18 +784,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the reduction and produce a parallel race.
     s += [('normalize_wcr', NormalizeWCRSource())]
 
-    # drop_injective_wcr: a WCR write that is INJECTIVE over its enclosing
-    # parallel map (an in-place ``a[c*i + d] = a[...] <op> ...`` update with a
-    # nonzero constant stride ``c``) is conflict-free, so its WCR is spurious --
-    # rewrite it to an explicit read-modify-write aug-assign. This restores the
-    # vectorizer's "no WCR inside a map body" invariant for in-place-update
-    # kernels (e.g. s115) without which the map cannot be vectorized. Runs after
-    # ``normalize_wcr`` so every WCR is in the canonical AccessNode-sourced shape.
-    # The injectivity gate in ``WCRToAugAssign`` leaves genuine reductions
-    # (constant target -- kept for the reduction codegen) and scatters
-    # (data-indexed, non-affine -- handled by the guarded parallelization passes)
-    # untouched, so this is a targeted cleanup, not a blanket WCR removal.
-    s += [('drop_injective_wcr', PatternMatchAndApplyRepeated([WCRToAugAssignInjectiveMap()]))]
+    # revert_nonreduction_wcr: WCRs that never became a genuine reduction (left in
+    # sequential loops, or injective in-place updates) go back to explicit aug-assigns;
+    # WCRToAugAssign's injectivity gate keeps real in-map reductions + scatters as WCR.
+    s += [('revert_nonreduction_wcr', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
 
     # end: the final SimplifyPass.
     #
@@ -829,20 +877,23 @@ class CanonicalizationPipeline(ppl.Pass):
                                        ``LoopRegion`` INTO the per-column Map so
                                        the scan runs sequential-per-thread.
                                        ``None`` (default) -> per-target preset.
-    :param symbol_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
-                             ``{'nclv': 5}``) substituted into the SDFG via
-                             ``replace_dict`` BEFORE canonicalization. Symbolic
-                             trip counts that become concrete (the ``nclv`` /
-                             ``nclv - 1`` species loops) then unroll under
-                             ``ShortLoopUnroll``; on the unspecialized build they
-                             stay symbolic and unroll nothing. ``None`` leaves
-                             every symbol symbolic.
+    :param specialize_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
+                             ``{'nclv': 5}``, or a kernel's shape symbols like
+                             ``{'Norb': 3}``) baked into the SDFG via
+                             ``specialize_symbol`` (recursively, dropping the symbol)
+                             BEFORE canonicalization -- the same specialization the
+                             cloudsc parallelization pipeline does. Symbolic trip
+                             counts that become concrete then unroll under
+                             ``ShortLoopUnroll``, and concrete matmul extents let
+                             ``canonicalize_set_fast_implementations`` pick the inlined
+                             ``'pure'`` GEMM for known-small dims. ``None`` leaves every
+                             symbol symbolic.
     """
 
     CATEGORY: str = 'Canonicalization'
 
     validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
-    validate_all = properties.Property(dtype=bool, default=False, desc='Validate the SDFG after each stage.')
+    validate_all = properties.Property(dtype=bool, default=True, desc='Validate the SDFG after each stage.')
     unroll_limit = properties.Property(dtype=int,
                                        default=DEFAULT_UNROLL_LIMIT,
                                        desc='Unroll constant-trip loops <= this many iterations (0 disables).')
@@ -867,18 +918,34 @@ class CanonicalizationPipeline(ppl.Pass):
         dtype=bool,
         default=False,
         desc='Fast mode: parallelize first and fission only the residual loops (skip the up-front broad fission).')
+    lift = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Lift tensor-contraction (matmul) maps to Einsum library nodes (False keeps them as WCR loop nests).')
+    lift_copy = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Lift contiguous copy/zero-init maps to Copy/Memset library nodes (False keeps them as maps).')
+    semantic_lifting = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Memset). '
+        'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
 
     def __init__(self,
                  validate: bool = False,
-                 validate_all: bool = False,
+                 validate_all: bool = True,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
                  target: str = 'cpu',
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
-                 symbol_constants: Optional[Dict[str, int]] = None,
-                 fast: bool = False):
+                 specialize_constants: Optional[Dict[str, int]] = None,
+                 fast: bool = False,
+                 lift: bool = True,
+                 lift_copy: bool = True,
+                 semantic_lifting: bool = True):
         if target not in _TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -900,7 +967,10 @@ class CanonicalizationPipeline(ppl.Pass):
                                                                scatter_to_guarded_maps,
                                                                fallback=True)
         self.fast = fast
-        self._symbol_constants = symbol_constants or {}
+        self.lift = lift
+        self.lift_copy = lift_copy
+        self.semantic_lifting = semantic_lifting
+        self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -922,9 +992,9 @@ class CanonicalizationPipeline(ppl.Pass):
         # ``specialize_symbol`` descends into nested SDFGs (and strips their
         # ``symbol_mapping``); a plain ``replace_dict`` would leave nested-SDFG
         # bodies -- the bulk of a real cloudsc build -- unspecialized.
-        if self._symbol_constants:
+        if self._specialize_constants:
             from dace.sdfg.utils import specialize_symbol
-            for sym, val in self._symbol_constants.items():
+            for sym, val in self._specialize_constants.items():
                 specialize_symbol(sdfg, sym, val)
         stages = _build_stages(unroll_limit=self.unroll_limit,
                                peel_limit=self.peel_limit,
@@ -932,7 +1002,10 @@ class CanonicalizationPipeline(ppl.Pass):
                                interchange_carry_with_map=self.interchange_carry_with_map,
                                scatter_to_guarded_maps=self.scatter_to_guarded_maps,
                                target=self.target,
-                               fast=self.fast)
+                               fast=self.fast,
+                               lift=self.lift,
+                               lift_copy=self.lift_copy,
+                               semantic_lifting=self.semantic_lifting)
         for _label, unit in stages:
             _assert_self_contained(unit)
             unit.apply_pass(sdfg, {})
@@ -945,15 +1018,18 @@ class CanonicalizationPipeline(ppl.Pass):
 
 def canonicalize(sdfg: SDFG,
                  validate: bool = True,
-                 validate_all: bool = False,
+                 validate_all: bool = True,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
                  target: str = 'cpu',
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
-                 symbol_constants: Optional[Dict[str, int]] = None,
-                 fast: bool = False) -> SDFG:
+                 specialize_constants: Optional[Dict[str, int]] = None,
+                 fast: bool = False,
+                 lift: bool = True,
+                 lift_copy: bool = True,
+                 semantic_lifting: bool = True) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -974,13 +1050,26 @@ def canonicalize(sdfg: SDFG,
                    knob args override the preset.
     :param interchange_carry_with_map: ``LoopToScan`` knob; ``None`` (default) ->
                                        per-target preset (CPU=True, GPU=False).
-    :param symbol_constants: Optional ``{symbol: value}`` substituted (``replace_dict``)
-                             before canonicalization, so symbolic trip counts that
-                             become concrete unroll (e.g. ``{'nclv': 5}``).
+    :param specialize_constants: Optional ``{symbol: value}`` baked in via
+                             ``specialize_symbol`` (cloudsc-style, recursive into nested
+                             SDFGs) before canonicalization, so symbolic trip counts
+                             unroll (e.g. ``{'nclv': 5}``) and concrete matmul extents
+                             (e.g. ``{'Norb': 3}``) enable the small-GEMM ``'pure'`` path.
     :param fast: Fast mode -- parallelize first and fission only the residual loops
                  (skip the up-front broad fission). Cheaper on large programs
                  (cloudsc / icon) where most loops are directly mappable; the few
                  loops that resist parallelization are fissioned and re-lifted.
+    :param lift: Lift tensor-contraction maps (matmul chains) to ``Einsum`` library
+                 nodes for BLAS lowering (default ``True``). Set ``False`` to skip
+                 that optimization and keep matmuls as plain WCR loop nests -- a
+                 correctness-safe escape hatch.
+    :param lift_copy: Lift contiguous element-wise-copy / constant-zero maps to
+                      ``Copy`` / ``Memset`` library nodes (default ``True``). Set
+                      ``False`` to keep them as plain maps.
+    :param semantic_lifting: Master gate for the post-LoopToMap map->library-node
+                             lifts (Einsum + Copy/Memset). Default ``True``; the
+                             vectorizer sets ``False`` to keep the residual as raw
+                             maps (a library node is not vectorizable).
     :returns: The same ``sdfg`` instance, canonicalized.
     """
     CanonicalizationPipeline(validate=validate,
@@ -991,6 +1080,9 @@ def canonicalize(sdfg: SDFG,
                              target=target,
                              interchange_carry_with_map=interchange_carry_with_map,
                              scatter_to_guarded_maps=scatter_to_guarded_maps,
-                             symbol_constants=symbol_constants,
-                             fast=fast).apply_pass(sdfg, {})
+                             specialize_constants=specialize_constants,
+                             fast=fast,
+                             lift=lift,
+                             lift_copy=lift_copy,
+                             semantic_lifting=semantic_lifting).apply_pass(sdfg, {})
     return sdfg

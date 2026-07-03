@@ -970,7 +970,84 @@ def test_complex_expression_with_scalars():
     assert numpy.allclose(os_orig, os_vec)
 
 
+def test_split_infers_complex_intermediate_with_int_symbol():
+    """A complex value combined with integer symbols (contour_integral's
+    ``z ** (slab_per_bc / 2 - n)``) must keep its complex intermediates.
+
+    Regression: the old single ``input_type`` stamped the WHOLE split chain with one
+    dtype; for a complex base mixed with int symbols (no float operand) that bucket
+    was ``int64``, so the power result became an int64 register and dropped the
+    imaginary part. Rigorous per-intermediate inference types the power result complex.
+    """
+    sdfg = dace.SDFG("split_complex_int")
+    sdfg.add_symbol("S", dace.int64)
+    sdfg.add_symbol("Ncnt", dace.int64)
+    sdfg.add_array("z_ARR", (1, ), dace.complex128, transient=False)
+    sdfg.add_array("o_ARR", (1, ), dace.complex128, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"z"}, {"o"}, "o = z ** (S - Ncnt) + z")
+    state.add_edge(state.add_access("z_ARR"), None, t, "z", dace.Memlet("z_ARR[0]"))
+    state.add_edge(t, "o", state.add_access("o_ARR"), None, dace.Memlet("o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    split_dtypes = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert split_dtypes, "expected at least one split intermediate"
+    # The power result is complex (was collapsed to int64 by the coarse input_type).
+    assert dace.complex128 in split_dtypes.values(), f"complex intermediate lost to coarse typing: {split_dtypes}"
+
+
+@pytest.mark.parametrize("dt", [dace.float16, dace.int8, dace.uint8, dace.int16, dace.complex64])
+def test_split_infers_intermediate_dtype_rigorously(dt):
+    """Each split intermediate is typed by rigorous per-operand inference, covering
+    every dtype (int8/uint8/int16/float16/complex64/...), not stamped with one coarse
+    ``input_type``. The old heuristic widened any float to ``float64`` (so a float16
+    chain lost precision) and typed anything non-float as ``int64`` (so int8 widened
+    and complex64 was mistyped). ``a * a + a`` over a single dtype must stay that dtype.
+    """
+    name = re.sub(r"\W", "_", dt.ctype)
+    sdfg = dace.SDFG(f"split_dtype_{name}")
+    sdfg.add_array("a_ARR", (1, ), dt, transient=False)
+    sdfg.add_array("o_ARR", (1, ), dt, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"a"}, {"o"}, "o = a * a + a")
+    state.add_edge(state.add_access("a_ARR"), None, t, "a", dace.Memlet("a_ARR[0]"))
+    state.add_edge(t, "o", state.add_access("o_ARR"), None, dace.Memlet("o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    split_dtypes = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert split_dtypes, "expected at least one split intermediate"
+    assert all(d == dt for d in split_dtypes.values()), f"split intermediates not typed {dt}: {split_dtypes}"
+
+
+def test_split_function_call_intermediate_uses_operand_type():
+    """An un-inferable function-call intermediate takes the promotion of its OWN
+    operands, not the coarse whole-tasklet type. ``tanh(a)`` with ``a`` float32 stays
+    float32 even though the tasklet also reads a float64 ``b`` (whose presence would
+    make the whole-tasklet fallback float64). Same float in -> same float out."""
+    sdfg = dace.SDFG("split_fncall_operand")
+    sdfg.add_array("a_ARR", (1, ), dace.float32, transient=False)
+    sdfg.add_array("b_ARR", (1, ), dace.float64, transient=False)
+    sdfg.add_array("o_ARR", (1, ), dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"a", "b"}, {"o"}, "o = tanh(a) + b")
+    state.add_edge(state.add_access("a_ARR"), None, t, "a", dace.Memlet("a_ARR[0]"))
+    state.add_edge(state.add_access("b_ARR"), None, t, "b", dace.Memlet("b_ARR[0]"))
+    state.add_edge(t, "o", state.add_access("o_ARR"), None, dace.Memlet("o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    split_dtypes = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert dace.float32 in split_dtypes.values(), \
+        f"function-call intermediate not typed from its float32 operand: {split_dtypes}"
+
+
 if __name__ == "__main__":
+    test_split_infers_complex_intermediate_with_int_symbol()
+    test_split_function_call_intermediate_uses_operand_type()
+    for _dt in [dace.float16, dace.int8, dace.uint8, dace.int16, dace.complex64]:
+        test_split_infers_intermediate_dtype_rigorously(_dt)
     test_symbol_in_tasklet()
     test_branch_fusion_tasklets()
     test_branch_fusion_tasklets_two()

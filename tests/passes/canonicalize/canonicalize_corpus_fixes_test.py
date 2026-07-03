@@ -57,3 +57,45 @@ def test_bare_name_dtype_cast_parses():
     sdfg = caster.to_sdfg()  # used to raise TypeError during parsing
     a = np.ones(8, dtype=np.float64)
     assert np.allclose(sdfg(a=a, N=8), a)
+
+
+def test_finalize_does_not_persist_reduction_scalar():
+    """``finalize_for_target`` must not leave a scalar / length-1 array in persistent
+    storage. A size-1 WCR accumulator made persistent lands in the state struct
+    (``__state->x``) and breaks the OpenMP ``reduction(op:var)`` clause -- the go_fast
+    ``trace`` failure (``reduction(+:__state->__0_trace)`` did not compile). The
+    accumulator must stay a non-persistent (register) local."""
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    Nsym = dace.symbol("N", dtype=dace.int64)
+
+    @dace.program
+    def reduce_prog(a: dace.float64[Nsym]):
+        s = 0.0
+        for i in range(Nsym):
+            s += a[i]
+        return a + s
+
+    sdfg = reduce_prog.to_sdfg(simplify=False)
+    sdfg = canonicalize(sdfg,
+                        validate=True,
+                        target="cpu",
+                        peel_limit=4,
+                        break_anti_dependence=True,
+                        interchange_carry_with_map=True,
+                        scatter_to_guarded_maps=True)
+    finalize_for_target(sdfg, "cpu")
+
+    persistent_scalars = [
+        f"{sd.label}:{nm}" for sd in sdfg.all_sdfgs_recursive() for nm, desc in sd.arrays.items()
+        if desc.transient and desc.total_size == 1 and desc.lifetime == dace.dtypes.AllocationLifetime.Persistent
+    ]
+    assert not persistent_scalars, f"finalize left size-1 transient(s) persistent: {persistent_scalars}"
+
+    # And it compiles: the reduction accumulator is a local lvalue, not __state->.
+    csdfg = sdfg.compile()
+    n = 256
+    rng = np.random.default_rng(0)
+    a = rng.random(n)
+    assert np.allclose(csdfg(a=a, N=n), a + a.sum())

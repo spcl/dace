@@ -30,9 +30,9 @@ from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileUnop
+from dace.libraries.tileops import TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
 from dace.sdfg import SDFG
-from dace.sdfg.nodes import MapEntry, NestedSDFG, Tasklet
+from dace.sdfg.nodes import CodeBlock, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
@@ -48,7 +48,8 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 #: upstream rewrites integer-constant exponents (``x**2`` -> ``x*x``); only true runtime
 #: exponents reach this dispatch.
 _SUPPORTED_BINOPS = {
-    "+", "-", "*", "/", "%", "py_mod", "**", "min", "max", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"
+    "+", "-", "*", "/", "%", "py_mod", "**", "min", "max", "atan2", "hypot", "fmod", "<", "<=", ">", ">=", "==", "!=",
+    "&&", "||", "&", "|", "^"
 }
 
 #: Binops written in function-call form ``op(a, b)`` rather than infix. ``min`` /
@@ -56,7 +57,7 @@ _SUPPORTED_BINOPS = {
 #: ``RewriteModuloToPyMod`` cleaning step rewrites every ``%`` to this so the
 #: backends pick up divisor-sign semantics). ``**`` keeps its own ``pow(a, b)``
 #: special-case (it is also valid infix).
-_FUNCTION_FORM_BINOPS = ("min", "max", "py_mod")
+_FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "atan2", "hypot", "fmod")
 
 #: Comparison ops whose result dtype is ``bool`` *by language semantics*, distinct
 #: from the operand dtype (``double > double -> bool``). The mixed-dtype guard in
@@ -80,6 +81,12 @@ _SUPPORTED_UNOPS = {
     "sqrt",
     "sin",
     "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "sinh",
+    "cosh",
     "floor",
     "ceil",
     "tanh",
@@ -352,18 +359,42 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if mask_an is None:
             return
+        subset = ", ".join(f"0:{w}" for w in self.widths)
         existing = [e for e in inner_state.in_edges(lib_node) if e.dst_conn == "_mask"]
         if existing:
-            raise NotImplementedError(f"_wire_mask: ``_mask`` already wired on {lib_node.label!r} "
-                                      f"(existing src={existing[0].src!r}). Per the AND-combine "
-                                      f"contract, emit a ``TileBinop(op='&')`` combining "
-                                      f"{existing[0].src!r} with the new ``mask_an``={mask_an.data!r} "
-                                      f"(both bool tiles) and wire its ``_c`` output here. The "
-                                      f"current pipeline doesn't exercise this case -- no "
-                                      f"second-mask wiring happens, so this raise is a defensive "
-                                      f"guard rather than a missing implementation.")
-        subset = ", ".join(f"0:{w}" for w in self.widths)
+            # AND-combine per the contract above: a ``_mask`` edge is already wired
+            # (e.g. a masked-write ``cond`` landing on a store that already carries the
+            # tile iteration mask). Emit a ``TileBinop(op='&')`` over the two bool tiles
+            # and rewire the combined result -- the new condition gates in addition to,
+            # not instead of, the existing one.
+            existing_edge = existing[0]
+            combined = self._and_mask_tiles(inner_state, existing_edge.src, mask_an)
+            inner_state.remove_edge(existing_edge)
+            inner_state.add_edge(combined, None, lib_node, "_mask", dace.Memlet(f"{combined.data}[{subset}]"))
+            return
         inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
+
+    def _and_mask_tiles(self, inner_state: SDFGState, an_a, an_b):
+        """Mint a bool tile ``= an_a && an_b`` via a :class:`TileBinop` and return its
+        output AccessNode. Both operands are ``widths``-shaped bool tiles (mask tiles); the
+        logical ``&&`` binop lowers per-lane to logical AND on every ISA (its ``_OP_TO_CHAR``
+        code) and satisfies the ``logical_binops_are_bool`` invariant (bool in, bool out)."""
+        sdfg = inner_state.sdfg
+        widths = tuple(self.widths)
+        name, _ = sdfg.add_array("_mask_and",
+                                 shape=widths,
+                                 dtype=dace.bool_,
+                                 transient=True,
+                                 storage=dace.dtypes.StorageType.Register,
+                                 find_new_name=True)
+        binop = TileBinop(name="mask_and", widths=widths, op="&&", kind_a="Tile", kind_b="Tile")
+        inner_state.add_node(binop)
+        subset = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(an_a, None, binop, "_a", dace.Memlet(f"{an_a.data}[{subset}]"))
+        inner_state.add_edge(an_b, None, binop, "_b", dace.Memlet(f"{an_b.data}[{subset}]"))
+        combined = inner_state.add_access(name)
+        inner_state.add_edge(binop, "_c", combined, None, dace.Memlet(f"{name}[{subset}]"))
+        return combined
 
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
@@ -606,7 +637,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Widen the output transient to tile shape when widenable; a genuinely
         # scalar (non-widenable) output stays the python scalar assign.
         self._ensure_output_widened(inner_state, out_edge)
-        out_desc = inner_state.sdfg.arrays.get(out_edge.dst.data) if out_edge.data is not None else None
+        # The const-assign output is a tile broadcast ONLY when it writes an
+        # AccessNode transient of tile shape. A const feeding directly into another
+        # tasklet (``__t = 0`` -> the ``0`` operand of an ITE select, the shape a
+        # masked ``if c: tmp += x`` leaves) has a Tasklet -- not an AccessNode -- as
+        # ``out_edge.dst`` (no ``.data``); it stays the single-statement python
+        # scalar tasklet the downstream tile op reads as a Symbol/Scalar broadcast.
+        out_dst = out_edge.dst
+        out_desc = (inner_state.sdfg.arrays.get(out_dst.data)
+                    if out_edge.data is not None and isinstance(out_dst, dace.nodes.AccessNode) else None)
         is_tile_out = (out_desc is not None and isinstance(out_desc, dace.data.Array)
                        and tuple(out_desc.shape) == tuple(self.widths))
         if not is_tile_out:
@@ -1042,6 +1081,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # size_t __l0 = 0; __l0) }``). Skip every non-Python tasklet.
         if tasklet.language != dace.dtypes.Language.Python:
             return False
+        # Masked conditional write ``_o = IT(cond, val)`` -- detect FIRST (the ``IT(``
+        # prefix is unambiguous vs every op shape below AND vs ``ITE(``). It lowers to a
+        # masked ``TileStore`` on the downstream store, then re-dispatches the stripped
+        # ``_o = val`` copy/broadcast through the normal path.
+        cond_write = self._detect_conditional_write(tasklet)
+        if cond_write is not None:
+            return self._convert_conditional_write(inner_state, tasklet, cond_write, iter_vars)
         # 0 in-conn tasklets first (purely Symbol-driven). Order: const-assign, then
         # 0-in unary (with a function call shape), then 0-in binop (two operands).
         unop_sym = self._detect_unop_with_symbol(tasklet)
@@ -1201,6 +1247,112 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)
         return True
+
+    def _detect_conditional_write(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, bool]]:
+        """If ``tasklet`` is a masked write ``_o = IT(cond, val)``, return
+        ``(out_conn, cond_conn, val_arg, val_is_sym)``. Otherwise ``None``.
+
+        ``IT(cond, val)`` is the write-only conditional write (``NormalizeMaskedWriteTasklets``
+        rewrites the frontend's ``if cond: _o = val`` boolean-mask assignment to it): write
+        ``val`` where ``cond``, else leave the destination unchanged -- NO old-value read. It
+        lowers to a masked ``TileStore`` (``cond`` gates the store). ``cond`` is always an
+        in-connector (a bool tile / scalar); ``val`` is either an in-connector (the value
+        tile) or an inline Symbol / literal (the masked-const-write ``_o = IT(cond, 2.0)``
+        shape). The ``IT(`` prefix is unambiguous vs ``ITE(`` (``'ITE('`` does not start with
+        ``'IT('``) and vs every infix op body.
+        """
+        if len(tasklet.out_connectors) != 1:
+            return None
+        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        if not body.startswith(f"{out_conn} = "):
+            return None
+        rhs = body[len(f"{out_conn} = "):].strip()
+        if rhs.startswith("(") and rhs.endswith(")"):
+            rhs = rhs[1:-1].strip()
+        prefix = "IT("
+        if not (rhs.startswith(prefix) and rhs.endswith(")")):
+            return None
+        parts = self._split_top_level_commas(rhs[len(prefix):-1], 2)
+        if parts is None or len(parts) != 2:
+            return None
+        cond_arg, val_arg = (p.strip() for p in parts)
+        in_conns = list(tasklet.in_connectors)
+        if cond_arg not in in_conns:
+            return None
+        return out_conn, cond_arg, val_arg, val_arg not in in_conns
+
+    def _convert_conditional_write(self, inner_state: SDFGState, tasklet: Tasklet, detected,
+                                   iter_vars: Tuple[str, ...]) -> bool:
+        """Lower ``_o = IT(cond, val)`` to a masked ``TileStore`` + a plain value copy.
+
+        Steps: (1) find the downstream ``TileStore`` writing this tasklet's output tile;
+        (2) resolve ``cond`` to a bool tile (broadcasting a scalar cond); (3) gate the
+        store on ``cond`` -- first-wire when the store is unmasked (the divisible main
+        map), else AND-combine with the tile iteration mask already on it (a masked
+        remainder slab); (4) strip the ``IT`` wrapper, leaving ``_o = val``, and drop the
+        now-unused ``cond`` input; (5) re-dispatch that plain assign / const-broadcast
+        through the normal converter path. The value is computed for every lane (the
+        masked store discards inactive lanes), so no compute op needs the mask.
+        """
+        out_conn, cond_conn, val_arg, _val_is_sym = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if cond_conn not in in_edges or not out_edges:
+            return False
+        out_edge = out_edges[0]
+        store = self._find_downstream_store(inner_state, out_edge)
+        if store is None:
+            raise NotImplementedError(
+                f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
+                f"{out_edge.dst!r} does not feed a single downstream ``TileStore._src``. The "
+                f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
+                f"(no store / fan-out to several stores) is not yet handled.")
+        cond_edge = in_edges[cond_conn]
+        cond_an = self._resolve_cond_tile(inner_state, cond_edge)
+        self._apply_cond_mask_to_store(inner_state, store, cond_an)
+        # Strip ``IT``: leave a plain ``_o = val`` copy / const, drop the cond input, and
+        # re-dispatch so ``_convert_assign`` / ``_convert_const_assign`` lowers the value.
+        inner_state.remove_edge(cond_edge)
+        if cond_conn in tasklet.in_connectors:
+            tasklet.remove_in_connector(cond_conn)
+        tasklet.code = CodeBlock(f"{out_conn} = {val_arg}", language=dace.dtypes.Language.Python)
+        return self._convert_one(inner_state, tasklet, iter_vars)
+
+    def _find_downstream_store(self, inner_state: SDFGState, out_edge):
+        """Return the single downstream ``TileStore`` fed (via its ``_src``) by this
+        tasklet's output tile, or ``None`` when there is not exactly one."""
+        from dace.sdfg.nodes import AccessNode
+        dst = out_edge.dst
+        if isinstance(dst, TileStore) and out_edge.dst_conn == "_src":
+            return dst
+        if not isinstance(dst, AccessNode):
+            return None
+        stores = [e.dst for e in inner_state.out_edges(dst) if isinstance(e.dst, TileStore) and e.dst_conn == "_src"]
+        return stores[0] if len(stores) == 1 else None
+
+    def _resolve_cond_tile(self, inner_state: SDFGState, cond_edge):
+        """Resolve the masked-write condition to a ``widths``-shaped bool tile AccessNode.
+
+        A per-element mask (``m_tile`` / an upstream comparison's bool tile) is used as-is;
+        a scalar / length-1 cond is broadcast to a full bool tile (mirrors ``_convert_ite``'s
+        cond handling) so the store's ``_mask`` is always the locked bool[widths] shape.
+        """
+        from dace.sdfg.nodes import AccessNode
+        if self._is_scalar_or_len1_source(inner_state, cond_edge):
+            bname = self._broadcast_scalar_to_tile(inner_state, cond_edge, dtype=dace.bool_)
+            existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == bname), None)
+            return existing if existing is not None else inner_state.add_access(bname)
+        return cond_edge.src
+
+    def _apply_cond_mask_to_store(self, inner_state: SDFGState, store, cond_an) -> None:
+        """Gate ``store`` on ``cond_an``. Flips ``has_mask`` on + adds the ``_mask`` connector
+        when the store was unmasked (divisible main map), then wires ``cond_an`` -- first-wire,
+        or AND-combined with an existing iteration mask (masked remainder) via ``_wire_mask``."""
+        if not store.has_mask:
+            store.has_mask = True
+            store.add_in_connector("_mask")
+        self._wire_mask(inner_state, store, cond_an)
 
     def _is_scalar_or_len1_source(self, inner_state: SDFGState, edge) -> bool:
         """Return True when ``edge.src`` reads a Scalar or length-1 Array (the "scalar"

@@ -185,6 +185,34 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     def expressions(cls) -> Any:
         return [dace.sdfg.utils.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
+    @staticmethod
+    def _second_map_is_seeded_reduction(graph: dace.SDFGState, map_exit: nodes.MapExit) -> bool:
+        """Whether ``map_exit`` has a connector whose IN edge carries a WCR but whose
+        OUT (copy-out) edge does not.
+
+        This is the shape produced by ``LoopToReduce``'s seeded privatized
+        accumulator (``_priv_*``): the per-iteration accumulate is the WCR IN edge,
+        while the OUT edge is a plain ``wcr=None`` copy-out of the completed,
+        seed-initialized result. Vertically fusing a producer INTO such a consumer
+        runs ``propagate_memlets_map_scope`` (in ``apply``), which re-derives the OUT
+        edge's WCR from its IN edge -- silently turning the copy-out into a live
+        accumulate and thereby promoting the per-iteration accumulator into a running
+        one across any enclosing scope (e.g. a reduction nested in a parallel outer
+        map becomes a cross-iteration sum). Fusion into such a map is therefore
+        refused so the copy-out semantics are preserved.
+        """
+        for oedge in graph.out_edges(map_exit):
+            if oedge.data is None or oedge.data.wcr is not None:
+                continue
+            src_conn = oedge.src_conn
+            if not src_conn or not src_conn.startswith('OUT_'):
+                continue
+            in_conn = 'IN_' + src_conn[4:]
+            for iedge in graph.in_edges_by_connector(map_exit, in_conn):
+                if iedge.data is not None and iedge.data.wcr is not None:
+                    return True
+        return False
+
     def can_be_applied(
         self,
         graph: dace.SDFGState,
@@ -208,6 +236,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert isinstance(first_map_exit, nodes.MapExit)
         assert isinstance(second_map_entry, nodes.MapEntry)
         assert isinstance(self.array, nodes.AccessNode)
+
+        # Refuse fusing a producer INTO a seeded-reduction consumer map: memlet
+        # re-propagation in ``apply`` would corrupt the reduction's ``wcr=None``
+        # copy-out (see ``_second_map_is_seeded_reduction``).
+        if self._second_map_is_seeded_reduction(graph, second_map_exit):
+            return False
 
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)

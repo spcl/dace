@@ -865,7 +865,46 @@ def test_unwrap_only_integer_casts_not_float():
                                                                integers_only=False), "float cast must still block"
 
 
+def test_promotion_rejects_orphan_condition_scalar():
+    """Postcondition: promotion never introduces an undefined free symbol.
+
+    A transient scalar referenced by a branch condition but with no writer (its
+    defining write was removed while it was referenced only by the condition --
+    the crc16 failure mode before the ``PrivatizeScalars`` fix) cannot be promoted
+    to a *bound* symbol: there is no writer to turn into an interstate assignment.
+    ``ScalarToSymbolPromotion`` must reject this loudly instead of leaking an
+    undefined symbol into codegen.
+    """
+    N = dace.symbol('N')
+
+    @dace.program
+    def cond_scalar(a: dace.int64[N], out: dace.int64[1]):
+        c = 0
+        for i in range(N):
+            t = a[i] & 1
+            if t:
+                c = c + 1
+        out[0] = c
+
+    sdfg = cond_scalar.to_sdfg(simplify=False)
+    # Orphan ``t``: delete its writer subgraph, leaving only the condition reference.
+    for st in list(sdfg.all_states()):
+        for an in list(st.data_nodes()):
+            if an.data == 't' and st.in_degree(an) > 0:
+                srcs = [e.src for e in st.in_edges(an)]
+                st.remove_node(an)
+                for s in srcs:
+                    if isinstance(s, dace.nodes.Tasklet) and s in st.nodes() and st.degree(s) == 0:
+                        st.remove_node(s)
+    assert 't' in sdfg.arrays and not any(an.data == 't' and st.in_degree(an) > 0
+                                          for st in sdfg.all_states() for an in st.data_nodes())
+
+    with pytest.raises(ValueError, match='undefined symbol'):
+        scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+
+
 if __name__ == '__main__':
+    test_promotion_rejects_orphan_condition_scalar()
     test_find_promotable()
     test_promote_simple()
     test_promote_simple_c()

@@ -77,7 +77,44 @@ def test_noncommutative_operand_order():
     assert np.allclose(a, ref), f"operand order wrong: got {a[:3]} expected {ref[:3]}"
 
 
+def test_scalar_source_multidim_target_subset():
+    """expr_index-2 (``AccessNode -[wcr]-> AccessNode``): a SCALAR WCR source (the
+    per-iteration transient ``NormalizeWCRSource`` inserts) writing a
+    MULTI-DIMENSIONAL target element (``aa[2, 3]``). Reverting must read the source
+    at its OWN scalar subset, not the target's 2-D slice -- regression for the
+    s2101 / s2275 corpus failure ``Memlet subset does not match node dimension
+    (expected 1, got 2)``. The soundness check is that the reverted SDFG validates
+    and preserves the value (``aa[2, 3] += src``).
+    """
+    sdfg = dace.SDFG('wcr_scalar_src_md')
+    sdfg.add_array('aa', [4, 4], dace.float64)
+    sdfg.add_scalar('src', dace.float64, transient=True)
+    state = sdfg.add_state()
+    producer = state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    src = state.add_access('src')
+    aa = state.add_write('aa')
+    state.add_edge(producer, 'o', src, None, dace.Memlet('src[0]'))
+    # WCR source is the scalar ``src``; target is the 2-D element aa[2, 3]
+    # (``other_subset`` unset -- the shape NormalizeWCRSource + LoopToMap produce).
+    state.add_edge(src, None, aa, None, dace.Memlet(data='aa', subset='2, 3', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1
+    sdfg.validate()  # regression: previously raised the dimension mismatch here
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), "WCR must be gone after revert"
+
+    rng = np.random.default_rng(0)
+    aa0 = rng.random((4, 4))
+    ref = aa0.copy()
+    ref[2, 3] += 1.0
+    got = aa0.copy()
+    sdfg(aa=got)
+    assert np.allclose(got, ref), "reverting a scalar-source multidim-target WCR must preserve the value"
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
     test_noncommutative_operand_order()
+    test_scalar_source_multidim_target_subset()

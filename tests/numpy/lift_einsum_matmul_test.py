@@ -72,8 +72,8 @@ def k2mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[N, L], D:
     def mult_d(i: _[0:M], j: _[0:L]):
         din << D[i, j]
         bb << beta[0]
-        do >> D[i, j]
-        do = din * bb
+        dout >> D[i, j]
+        dout = din * bb
 
     @dace.map
     def comp_d(i: _[0:M], j: _[0:L], k: _[0:N]):
@@ -97,8 +97,12 @@ def gemm_acc(C: dace.float64[M, N], A: dace.float64[M, K], B: dace.float64[K, N]
         c = a * b
 
 
-# C = A@B  -- non-transient output with an identity-0 WCR: must OVERWRITE (beta=0)
-# regardless of C's incoming value.
+# C = A@B  -- OVERWRITE (beta=0): a zero-initialized (``setzero``) accumulator on a
+# non-transient output must ignore C's incoming value. NOTE: the Python frontend
+# DROPS a WCR identity 3rd-arg (the memlet parser reads only accesses + the WCR
+# lambda), so ``C(1, +, 0)`` parses identically to ``C(1, +)``. The case-1 beta=0
+# path is reached via ``setzero`` (which real passes set), so the direct test marks
+# it explicitly; see ``_mark_setzero``.
 @dace.program
 def gemm_ovr(C: dace.float64[M, N], A: dace.float64[M, K], B: dace.float64[K, N]):
 
@@ -108,6 +112,31 @@ def gemm_ovr(C: dace.float64[M, N], A: dace.float64[M, K], B: dace.float64[K, N]
         b << B[k, j]
         c >> C(1, lambda x, y: x + y, 0)[i, j]
         c = a * b
+
+
+# y = A@x  (matvec / GEMV, Level-2 BLAS; setzero -> beta=0 overwrite)
+@dace.program
+def gemv(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
+
+    @dace.map
+    def comp(i: _[0:M], j: _[0:N]):
+        a << A[i, j]
+        xx << x[j]
+        yy >> y(1, lambda p, q: p + q, 0)[i]
+        yy = a * xx
+
+
+# y = y + A@x  (matvec accumulate onto a MEANINGFUL prior y -> beta=1, no setzero).
+# Exercises the GEMV branch's ``beta != 0`` fold (mvt's shape).
+@dace.program
+def gemv_acc(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
+
+    @dace.map
+    def comp(i: _[0:M], j: _[0:N]):
+        a << A[i, j]
+        xx << x[j]
+        yy >> y(1, lambda p, q: p + q)[i]
+        yy = a * xx
 
 
 # G = (A@B)@(C@D)  (no alpha/beta; all fresh accumulators -> beta=0)
@@ -167,11 +196,15 @@ def _k2mm_case():
 def _k3mm_case():
     m, k, n, p, l = 16, 20, 18, 24, 22
     rng = np.random.default_rng(3)
+    # G is a non-transient output written by a WCR-sum. The frontend DROPS the WCR
+    # identity 3rd-arg, so the SDFG accumulates onto G's incoming value (beta=1) --
+    # zero it so accumulate == overwrite, isolating what k3mm tests: the 3-einsum
+    # chain (A@B)@(C@D). (Overwrite-on-prefilled is covered by gemm_ovr's setzero.)
     inp = dict(A=rng.random((m, k)),
                B=rng.random((k, n)),
                C=rng.random((n, p)),
                D=rng.random((p, l)),
-               G=rng.random((m, l)))
+               G=np.zeros((m, l)))
     exp = (inp['A'] @ inp['B']) @ (inp['C'] @ inp['D'])
     return k3mm, inp, dict(M=m, K=k, N=n, P=p, L=l), 'G', exp, 3
 
@@ -192,12 +225,30 @@ def _gemm_ovr_case():
     return gemm_ovr, inp, dict(M=m, K=k, N=n), 'C', exp, 1
 
 
+def _gemv_case():
+    m, n = 16, 20
+    rng = np.random.default_rng(6)
+    inp = dict(A=rng.random((m, n)), x=rng.random(n), y=np.zeros(m))
+    exp = inp['A'] @ inp['x']  # setzero -> beta=0 overwrite
+    return gemv, inp, dict(M=m, N=n), 'y', exp, 1
+
+
+def _gemv_acc_case():
+    m, n = 16, 20
+    rng = np.random.default_rng(7)
+    inp = dict(A=rng.random((m, n)), x=rng.random(n), y=rng.random(m))
+    exp = inp['y'] + inp['A'] @ inp['x']  # beta=1 accumulate onto the meaningful prior y
+    return gemv_acc, inp, dict(M=m, N=n), 'y', exp, 1
+
+
 _CASES = {
     'gemm': _gemm_case,
     'k2mm': _k2mm_case,
     'k3mm': _k3mm_case,
     'gemm_acc': _gemm_acc_case,
-    'gemm_ovr': _gemm_ovr_case
+    'gemm_ovr': _gemm_ovr_case,
+    'gemv': _gemv_case,
+    'gemv_acc': _gemv_acc_case,
 }
 
 
@@ -208,10 +259,24 @@ def _run(sdfg, inp, syms, out_name, expected):
     assert np.allclose(got, expected, rtol=1e-9, atol=1e-12), f"max|diff|={np.max(np.abs(got - expected)):.3e}"
 
 
+def _mark_setzero(sdfg, data):
+    """Mark every written ``data`` accumulator as zero-initialized.
+
+    Models what a real pass does (the frontend drops the WCR identity arg), so the
+    ``gemm_ovr`` accumulator hits the case-1 beta=0 (overwrite) path in LiftEinsum.
+    """
+    for st in sdfg.states():
+        for nd in st.nodes():
+            if isinstance(nd, dace.nodes.AccessNode) and nd.data == data and st.in_degree(nd) > 0:
+                nd.setzero = True
+
+
 @pytest.mark.parametrize("name", list(_CASES))
 def test_lift_direct(name):
     prog, inp, syms, out_name, expected, n_contractions = _CASES[name]()
     sdfg = prog.to_sdfg(simplify=True)
+    if name in ('gemm_ovr', 'gemv'):  # model the zero-init accumulator (setzero -> beta=0)
+        _mark_setzero(sdfg, out_name)
     sdfg.apply_transformations_repeated(LiftEinsum)
     n_einsum = sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum))
     assert n_einsum == n_contractions, f"expected {n_contractions} Einsum nodes, got {n_einsum}"
@@ -221,7 +286,59 @@ def test_lift_direct(name):
 
 
 @pytest.mark.parametrize("name", list(_CASES))
+def test_lift_idempotent(name):
+    """Lifting is idempotent: a SECOND ``LiftEinsum`` on an already-lifted SDFG is a
+    clean no-op (the contraction is now an ``Einsum`` node, no longer a matchable
+    map), and the twice-lifted SDFG still expands + runs correctly.
+
+    Vectorization may run standalone on an SDFG a prior pass (canonicalize, or an
+    earlier vectorize) already lifted, so re-running the lift MUST NOT re-lift or
+    corrupt the graph."""
+    prog, inp, syms, out_name, expected, n_contractions = _CASES[name]()
+    sdfg = prog.to_sdfg(simplify=True)
+    if name == 'gemm_ovr':
+        _mark_setzero(sdfg, out_name)
+    first = sdfg.apply_transformations_repeated(LiftEinsum)
+    n_after_first = sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum))
+    assert n_after_first == n_contractions, f"first lift: expected {n_contractions} Einsum, got {n_after_first}"
+    # Re-run to fixpoint: no contraction maps remain, so nothing is lifted and the
+    # Einsum node count is unchanged.
+    second = sdfg.apply_transformations_repeated(LiftEinsum)
+    assert second == 0, f"second LiftEinsum re-lifted {second} time(s); must be a no-op"
+    n_after_second = sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum))
+    assert n_after_second == n_contractions, f"second lift changed Einsum count {n_after_first}->{n_after_second}"
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    _run(sdfg, inp, syms, out_name, expected)
+
+
+@pytest.mark.parametrize("name", list(_CASES))
+def test_vectorize_on_prelifted(name):
+    """The multi-dim vectorizer accepts an SDFG whose contractions a PRIOR pass
+    already lifted to ``Einsum`` nodes: its own internal ``LiftEinsum`` is a no-op on
+    the existing nodes, and the finalize/expand tail still lowers them correctly.
+
+    Models the standalone-after-canonicalize path -- the vectorizer must not assume
+    it is the one that lifts, nor break on an already-lifted graph."""
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+    prog, inp, syms, out_name, expected, n_contractions = _CASES[name]()
+    if name == 'gemm_ovr':
+        pytest.skip('gemm_ovr setzero injection is a direct-lift mechanism test')
+    sdfg = prog.to_sdfg(simplify=True)
+    # Pre-lift: the contractions are Einsum nodes BEFORE the vectorizer runs.
+    sdfg.apply_transformations_repeated(LiftEinsum)
+    assert sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum)) == n_contractions
+    VectorizeCPUMultiDim(widths=(8, ), target_isa='SCALAR', remainder_strategy='scalar_postamble').apply_pass(sdfg, {})
+    sdfg.validate()
+    _run(sdfg, inp, syms, out_name, expected)
+
+
+@pytest.mark.parametrize("name", list(_CASES))
 def test_lift_via_canon(name):
+    if name in ('gemm_ovr', 'gemv'):
+        # The ``setzero`` beta=0 trigger is a direct-lift mechanism test; the canon-path
+        # beta=0 (overwrite) case is covered by k3mm (fresh transient) / gemv_acc.
+        pytest.skip('setzero injection is a direct-lift test')
     prog, inp, syms, out_name, expected, _ = _CASES[name]()
     sdfg = prog.to_sdfg(simplify=True)
     sdfg = finalize_for_target(canonicalize(sdfg, validate=True, target='cpu'), 'cpu')

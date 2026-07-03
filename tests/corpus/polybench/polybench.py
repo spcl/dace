@@ -129,18 +129,39 @@ def run(sdfg: dace.SDFG, call_arrays: Dict[str, np.ndarray], psize: Dict[str, in
     return out
 
 
+def _tol_for(dtype) -> Tuple[float, float]:
+    """``(rtol, atol)`` appropriate to an array's numeric precision. Integers / bools
+    compare exactly (``0, 0`` -> ``array_equal``); ``float32`` (e.g. ``deriche``) uses an
+    fp32-appropriate tolerance so vectorization reassociation is not flagged as a bug;
+    ``float64`` (the polybench majority) uses a tight fp64 tolerance. A single global
+    tolerance is wrong when the corpus mixes precisions."""
+    dt = np.dtype(dtype)
+    if dt.kind in "iub":
+        return 0.0, 0.0
+    single = (dt.kind == "f" and dt.itemsize <= 4) or (dt.kind == "c" and dt.itemsize <= 8)
+    return (1e-5, 1e-6) if single else (1e-9, 1e-11)
+
+
 def outputs_match(ref: Dict[str, np.ndarray],
                   got: Dict[str, np.ndarray],
                   *,
-                  rtol: float = 1e-9,
-                  atol: float = 1e-9) -> bool:
-    """Compare two result dicts over every floating array (integer arrays exact)."""
+                  rtol: float = None,
+                  atol: float = None) -> bool:
+    """Compare two result dicts with a DTYPE-AWARE tolerance (:func:`_tol_for`): fp64
+    tight, fp32 fp32-appropriate, integers exact. Pass explicit ``rtol`` / ``atol`` to
+    override the per-array default."""
     for name, r in ref.items():
         g = got[name]
-        if np.issubdtype(r.dtype, np.floating):
-            if not np.allclose(r, g, rtol=rtol, atol=atol, equal_nan=True):
+        ra, ga = np.asarray(r), np.asarray(g)
+        rt, at = _tol_for(ra.dtype)
+        if rtol is not None:
+            rt = rtol
+        if atol is not None:
+            at = atol
+        if rt == 0.0 and at == 0.0:
+            if not np.array_equal(ra, ga):
                 return False
-        elif not np.array_equal(r, g):
+        elif not np.allclose(ra, ga, rtol=rt, atol=at, equal_nan=True):
             return False
     return True
 

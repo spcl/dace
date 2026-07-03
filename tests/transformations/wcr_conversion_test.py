@@ -381,3 +381,52 @@ def test_aug_assign_copy_wrapped_rmw_subtract_left_only():
 
     refused = _build_copy_wrapped_rmw('__in2 - __in1', 'rsub')  # acc on right -> refuse
     assert refused.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_refuses_cross_element_operand():
+    """A map whose tasklet is ``A[i,j] = A[i,k] * A[k,j]`` must NOT be rewritten to a
+    WCR: the operand ``A[i,k]`` shares the array NAME with the output ``A[i,j]`` but
+    reads a DIFFERENT element, so it is not the accumulator of a read-modify-write.
+    Treating it as one would rewrite the reduction with the delta's operator (``*``)
+    instead of the real accumulation, corrupting the result (polybench ``lu``). The
+    Python branch must apply the same element/subset check the CPP branch already has.
+    """
+    sdfg = dace.SDFG('aug_cross_element')
+    sdfg.add_array('A', [8, 8], dace.float64)
+    st = sdfg.add_state()
+    a_in = st.add_access('A')
+    me, mx = st.add_map('m', dict(i='0:8', j='0:8', k='0:8'))
+    tlet = st.add_tasklet('prod', {'aik', 'akj'}, {'out'}, 'out = aik * akj')
+    st.add_memlet_path(a_in, me, tlet, dst_conn='aik', memlet=dace.Memlet('A[i, k]'))
+    st.add_memlet_path(a_in, me, tlet, dst_conn='akj', memlet=dace.Memlet('A[k, j]'))
+    a_out = st.add_access('A')
+    st.add_memlet_path(tlet, mx, a_out, src_conn='out', memlet=dace.Memlet('A[i, j]'))
+    sdfg.validate()
+    # Cross-element operand -> not a read-modify-write -> refused.
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_cross_element_operand_trisolv_shape():
+    """Same cross-element guard, in the shape that regressed polybench ``trisolv``:
+    tasklet ``x[i] = L[i,j] * x[j]`` -- the operand ``x[j]`` shares the array NAME with
+    the output ``x[i]`` but reads a different element, so it is not the accumulator of a
+    read-modify-write. It must not be rewritten to a WCR (which previously misread the
+    reduction operator and then tried to fission a scope it cannot legally split). The
+    value-preserving corpus test (``poly:trisolv``) is the end-to-end check; this pins
+    the transform-level refusal.
+    """
+    sdfg = dace.SDFG('aug_cross_element_trisolv')
+    sdfg.add_array('x', [8], dace.float64)
+    sdfg.add_array('L', [8, 8], dace.float64)
+    st = sdfg.add_state()
+    x_in = st.add_access('x')
+    ell = st.add_access('L')
+    me, mx = st.add_map('m', dict(i='0:8', j='0:8'))
+    tlet = st.add_tasklet('prod', {'lij', 'xj'}, {'out'}, 'out = lij * xj')
+    st.add_memlet_path(ell, me, tlet, dst_conn='lij', memlet=dace.Memlet('L[i, j]'))
+    st.add_memlet_path(x_in, me, tlet, dst_conn='xj', memlet=dace.Memlet('x[j]'))
+    x_out = st.add_access('x')
+    st.add_memlet_path(tlet, mx, x_out, src_conn='out', memlet=dace.Memlet('x[i]'))
+    sdfg.validate()
+    # ``x[j]`` operand vs ``x[i]`` output: cross-element, not an accumulator -> refused.
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0

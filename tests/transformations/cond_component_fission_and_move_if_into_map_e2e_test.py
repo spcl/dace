@@ -3,7 +3,7 @@
 Python-frontend kernels with ICON/cloudsc-style neighbour-gather indirection
 in a subset of dimensions.
 
-* :class:`ConditionalComponentFission` (a ``ppl.Pass``) replicates a
+* :class:`SplitStatements` (a ``ppl.Pass``) replicates a
   MapFission-blocking guarding conditional once per independent output so the
   surrounding map can subsequently fission.
 * :class:`MoveIfIntoMap` (a ``PatternTransformation``) pushes a map-invariant
@@ -23,7 +23,7 @@ import dace
 from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
-from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
 N = dace.symbol('N')
 L = dace.symbol('L')
@@ -162,7 +162,7 @@ def _oracle_index_dependent(w, cidx, n, l):
 
 
 # --------------------------------------------------------------------------
-# A) ConditionalComponentFission
+# A) SplitStatements
 # --------------------------------------------------------------------------
 
 
@@ -180,8 +180,8 @@ def test_conditional_component_fission_two_outputs():
     cb_before = _count_conditional_blocks(sdfg)
     assert cb_before >= 1, "kernel should start with at least one ConditionalBlock"
 
-    applied = ConditionalComponentFission().apply_pass(sdfg, {})
-    assert applied, "ConditionalComponentFission must replicate the guarded NestedSDFG"
+    applied = SplitStatements().apply_pass(sdfg, {})
+    assert applied, "SplitStatements must replicate the guarded NestedSDFG"
     sdfg.validate()
 
     cb_after = _count_conditional_blocks(sdfg)
@@ -223,8 +223,8 @@ def test_conditional_component_fission_three_outputs():
     cb_before = _count_conditional_blocks(sdfg)
     assert cb_before >= 1
 
-    applied = ConditionalComponentFission().apply_pass(sdfg, {})
-    assert applied, "ConditionalComponentFission must replicate the guarded NestedSDFG"
+    applied = SplitStatements().apply_pass(sdfg, {})
+    assert applied, "SplitStatements must replicate the guarded NestedSDFG"
     sdfg.validate()
 
     cb_after = _count_conditional_blocks(sdfg)

@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+import copy
 from typing import Dict
 
 import sympy
@@ -27,6 +28,15 @@ class LiftEinsum(xf.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry, cls.tasklet)]
 
+    def _partial_range(self) -> bool:
+        """True iff the map iterates a strict sub-range of its operands -- any
+        dimension whose lower bound is not 0 or whose step is not 1. Such a range
+        does not span the full operand extent the einsum contraction assumes."""
+        for rng in self.map_entry.map.range:
+            if str(rng[0]) != '0' or str(rng[2]) != '1':
+                return True
+        return False
+
     def can_be_applied(self, state: SDFGState, _, sdfg: SDFG, permissive=False):
         contents = state.scope_subgraph(self.map_entry, False, False)
         # Ensure map body contains only the tasklet
@@ -43,11 +53,28 @@ class LiftEinsum(xf.SingleStateTransformation):
                 if set(map(str, pystr_to_symbolic(bound).free_symbols)) & params:
                     return False
 
+        # A PARTIAL iteration range (lower bound != 0 or non-unit step) touches only a
+        # sub-range of its operands, but the einsum expansion runs over the full
+        # [0, extent) implied by the operand shapes -- so a fissioned ``b[i]=y[i]*z[i]``
+        # over ``2:LEN`` lifted as-is writes a whole-array einsum that clobbers
+        # ``b[0], b[1]``. A 1-D partial range over purely 1-D operands is corrected in
+        # apply() by restricting the operand memlets to the map range; a >1-D partial
+        # range (offsets interacting across contracted axes) or multi-dimensional
+        # operands under a 1-D partial map are refused (left as a correct map).
+        if self._partial_range():
+            if len(self.map_entry.map.params) > 1:
+                return False
+            for e in state.all_edges(self.tasklet):
+                if not e.data.is_empty() and e.data.subset is not None and len(e.data.subset) != 1:
+                    return False
+
         # Check that indices match map indices
         unique_chars = set()
         input_chars = set()
         output_chars = set()
         num_coeffs = 0  # scalar (map-parameter-free) inputs, e.g. a runtime alpha
+        num_tensor_inputs = 0  # indexed (non-scalar) tensor operands, e.g. gemm's a, b
+        tensor_input_chars = []  # per-tensor-input index set (for the elementwise guard)
         for e in state.all_edges(self.tasklet):
             memlet = e.data
             if memlet.is_empty():
@@ -66,10 +93,41 @@ class LiftEinsum(xf.SingleStateTransformation):
                 input_chars |= ind
                 if not (ind - {'0'}):
                     num_coeffs += 1
+                else:
+                    num_tensor_inputs += 1
+                    tensor_input_chars.append(ind - {'0'})
             else:
                 output_chars |= ind
 
         if len(input_chars) == 0:
+            return False
+
+        # Require a genuine multi-operand contraction (matmul: a chain of >=2 tensor
+        # operands). A single tensor operand is a unary copy / transpose / reduction
+        # (einsum 'i->i', 'ij->ji', 'ij->i'), NOT a matmul -- lifting it to an Einsum
+        # node is pointless and miscompiles (durbin's ``y[i] = z[i]`` copy -> 'i->i'
+        # silently corrupts the solver). Those belong to the copy / reduction passes.
+        if num_tensor_inputs < 2:
+            return False
+
+        # Refuse a scalar / full-reduction output (no free output index). This pass
+        # lifts ARRAY-producing contractions (matmul chains gemm/2mm/3mm) to a BLAS
+        # GEMM; a scalar dot-product / full reduction is the reduction pass's domain,
+        # and lifting it here mishandles affine operand indices -- e.g. durbin's
+        # reversed dot product ``sum += r[k-i-1] * y[i]`` lowers to the wrong result.
+        if not (output_chars - {'0'}):
+            return False
+
+        # Reject an ELEMENTWISE op: NO contracted index (every input index also appears in
+        # the output) AND some tensor input accesses the SAME unit subset as the output --
+        # e.g. ``Z[i]*Z[i]`` -> ``i,i->i`` (whose same-array unit operands mis-lower to a
+        # dangling einsum connector). That belongs to the elementwise tile ops, not a GEMM.
+        # A dot product / full reduction (scalar output) is already refused above, and a
+        # matvec/matmul HAS a contracted index (``input_chars - output_chars`` non-empty,
+        # so this guard is skipped) -- neither is caught. A genuine outer product
+        # (``a[i]*b[j]`` -> ``i,j->ij``, no input matching the FULL output index) is preserved.
+        out_idx = output_chars - {'0'}
+        if not (input_chars - output_chars) and any(ci == out_idx for ci in tensor_input_chars):
             return False
 
         # At most one runtime scalar coefficient is supported (wired as the
@@ -175,10 +233,14 @@ class LiftEinsum(xf.SingleStateTransformation):
             einsum.add_in_connector('_alpha', self.tasklet.in_connectors[e.dst_conn])
         einsum.alpha = alpha
 
-        # Collect einsum string from sorted memlets
+        # Collect the einsum string. CRITICAL: the expansion feeds operands in
+        # SORTED connector-name order (``*sorted(inputs)`` in SpecializeEinsum), so
+        # the input TERMS must be emitted in that SAME order -- otherwise the
+        # operand<->term pairing (and hence the contracted dimensions) is wrong
+        # whenever the tasklet's edge order differs from alphabetical (e.g. 2mm/3mm,
+        # where it manifested as a dimension mismatch / silently wrong result).
         param_mapping: Dict[str, str] = {}
-        # letter_to_range: Dict[str, subsets.Range] = {}
-        einsum_inputs = []
+        input_terms: Dict[str, str] = {}  # einsum in-connector -> index string
         einsum_output = ''
         for e in (in_edges + [out_edge]):
             # Create parameter mapping
@@ -187,15 +249,14 @@ class LiftEinsum(xf.SingleStateTransformation):
             for i in ind:
                 if i != '0' and i not in param_mapping:
                     param_mapping[i] = self.EINSUM_CHARS[len(param_mapping)]
-                    # pind = self.map_entry.map.params.index(i)
-                    # letter_to_range[i] = subsets.Range(self.map_entry.map.range[pind])
                 expr += '' if i == '0' else param_mapping[i]
             if e is out_edge:
                 einsum_output = expr
             else:
-                einsum_inputs.append(expr)
+                input_terms[e.dst_conn] = expr
 
-        # Make einsum string
+        # Make einsum string (input terms in the same sorted order the expansion uses)
+        einsum_inputs = [input_terms[c] for c in sorted(input_terms)]
         einsum.einsum_str = f"{','.join(einsum_inputs)}->{einsum_output}"
 
         # Set beta (the output coefficient): the einsum computes
@@ -229,16 +290,31 @@ class LiftEinsum(xf.SingleStateTransformation):
             else:
                 einsum.beta = 0.0
 
+        # A 1-D partial range (can_be_applied guarantees 1-D map + 1-D operands here)
+        # propagated its operand memlets to the whole array, but the map touches only
+        # its range; restrict each tensor operand + the output to the map range so the
+        # einsum extent matches (else the elements outside the range are clobbered).
+        restrict = self._partial_range()
+        maprange = self.map_entry.map.range
+
         # Add new subgraph
         state.add_node(einsum)
         for e in state.in_edges(self.map_entry):
             if e.dst_conn in connectors:  # einsum tensor operand
-                state.add_edge(e.src, e.src_conn, einsum, connectors[e.dst_conn], e.data)
-            elif e.dst_conn in coeff_map_conns:  # runtime scalar coefficient
+                data = e.data
+                if restrict:
+                    data = copy.deepcopy(e.data)
+                    data.subset = copy.deepcopy(maprange)
+                state.add_edge(e.src, e.src_conn, einsum, connectors[e.dst_conn], data)
+            elif e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
                 state.add_edge(e.src, e.src_conn, einsum, coeff_map_conns[e.dst_conn], e.data)
         for e in state.out_edges(map_exit):
             e.data.wcr = None  # Cancel WCR now that it is nested in the einsum
-            state.add_edge(einsum, connectors[e.src_conn], e.dst, e.dst_conn, e.data)
+            data = e.data
+            if restrict:
+                data = copy.deepcopy(e.data)
+                data.subset = copy.deepcopy(maprange)
+            state.add_edge(einsum, connectors[e.src_conn], e.dst, e.dst_conn, data)
 
         # Remove old scope
         state.remove_nodes_from(scope.nodes())

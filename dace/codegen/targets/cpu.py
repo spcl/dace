@@ -1898,6 +1898,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # to rewrite into a transient ``Scalar`` first.
             if not isinstance(desc, data.Scalar):
                 continue
+            # A persistent / external accumulator is emitted as a state-struct member
+            # (``__state->x``), which is not a valid ``reduction(op:var)`` lvalue. Only
+            # a non-persistent (locally-declared) scalar can be privatized by the OMP
+            # runtime; persistent targets fall through to the atomic path (old style).
+            if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+                continue
             # Loop-invariant subset (independent of the map's iter variables).
             if iedge.data.subset is not None:
                 map_param_set = set(map_entry.map.params)

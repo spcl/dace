@@ -304,6 +304,22 @@ value3=5000000000"""
         inf_symbols = type_inference.infer_types(stmt, prev_symbols)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
 
+    def testResultTypeOfBoolPromotion(self):
+        # ``bool`` is NumPy's lowest-rank numeric operand: an arithmetic op mixing bool
+        # with a numeric promotes to the numeric (``np.bool_(True) * np.int32(3) ==
+        # int32(3)``). Regression: ``result_type_of`` used to return ``bool`` for
+        # ``bool * int`` (bool is not ``issubdtype(_, integer)``, so it fell through the
+        # float-precedence branch), truncating the integer to 0/1 -- the nussinov
+        # fp_factor ``c*t + (1-c)*e`` miscompile. Cross-checked against numpy.result_type.
+        b = dtypes.typeclass(np.bool_)
+        for other in (np.int8, np.int32, np.int64, np.uint8, np.float32, np.float64):
+            o = dtypes.typeclass(other)
+            self.assertEqual(dtypes.result_type_of(b, o), o, f"bool * {other.__name__}")
+            self.assertEqual(dtypes.result_type_of(o, b), o, f"{other.__name__} * bool")
+            self.assertEqual(dtypes.result_type_of(b, o).type, np.result_type(np.bool_, other).type)
+        # bool * bool stays bool.
+        self.assertEqual(dtypes.result_type_of(b, b), b)
+
 
 if __name__ == "__main__":
     unittest.main()

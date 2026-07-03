@@ -207,7 +207,17 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             inconns = tuple(edge.dst_conn for edge in inedges)
             for n in (rhs.left, rhs.right):
                 if isinstance(n, ast.Name) and n.id in inconns:
-                    return True
+                    # The matched operand is the accumulator ONLY if it reads the SAME
+                    # element the tasklet writes. An operand that shares the array NAME
+                    # but reads a DIFFERENT element (polybench ``lu``:
+                    # ``A[i,j] = A[i,k] * A[k,j]`` -- operand A[i,k] vs output A[i,j]) is a
+                    # cross-element read, not a read-modify-write; treating it as the
+                    # accumulator would rewrite the reduction with the DELTA's operator
+                    # (here ``*``) instead of the real accumulation (``+``), corrupting
+                    # the result. The CPP branch below already enforces this subset match.
+                    acc_edge = inedges[inconns.index(n.id)]
+                    if acc_edge.data.subset == outedge.data.subset:
+                        return True
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
@@ -699,26 +709,32 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # read-back of ``output`` is the existing (accumulator) operand.
             edge = state.edges_between(self.inp, self.output)[0]
             code = _wcr_augassign_body(edge.data.wcr)
-            # Resolve which side of the (possibly AN->AN) memlet addresses the
-            # destination vs the source.
             m = edge.data
-            if m.data == self.output.data:
-                out_subset = m.subset
-                in_subset = m.other_subset if m.other_subset is not None else m.subset
+            # ``__in1``/``__out`` address the DESTINATION (output); ``__in2`` reads
+            # the SOURCE (inp). Resolve each side from the edge itself via
+            # ``get_src/dst_subset`` so a SCALAR WCR source -- the per-iteration
+            # transient ``NormalizeWCRSource`` inserts, whose ``other_subset`` is
+            # None -- reads its OWN element instead of inheriting the destination's
+            # (possibly multi-dim) slice. Inheriting it produced the "expected 1,
+            # got 2" mismatch on 2-D-indexed writes (``aa[i, i]``). A ``None`` side
+            # subset means "the whole array on that side".
+            out_subset = m.get_dst_subset(edge, state)
+            in_subset = m.get_src_subset(edge, state)
+
+            def _dst_memlet() -> Memlet:  # a fresh copy per use (no shared subset refs)
+                if out_subset is not None:
+                    return Memlet(data=self.output.data, subset=copy.deepcopy(out_subset))
+                return Memlet.from_array(self.output.data, sdfg.arrays[self.output.data])
+
+            if in_subset is not None:
+                in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))
             else:
-                in_subset = m.subset
-                out_subset = m.other_subset if m.other_subset is not None else m.subset
+                in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
             read_back = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            # Each memlet must own its subset object (DaCe rejects shared subset
-            # references); ``in_subset`` / ``out_subset`` may alias ``m.subset``
-            # when ``other_subset`` is None, and ``out_subset`` is used twice.
-            state.add_edge(read_back, None, new_tasklet, '__in1',
-                           Memlet(data=self.output.data, subset=copy.deepcopy(out_subset)))
-            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2',
-                           Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset)))
-            state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn,
-                           Memlet(data=self.output.data, subset=copy.deepcopy(out_subset)))
+            state.add_edge(read_back, None, new_tasklet, '__in1', _dst_memlet())
+            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2', in_memlet)
+            state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, _dst_memlet())
             state.remove_edge(edge)
         else:
             # AccessNode(inp) -[wcr]-> MapExit -> AccessNode(output): the privatized
@@ -738,23 +754,3 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                            Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]))
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
-
-
-class WCRToAugAssignInjectiveMap(WCRToAugAssign):
-    """:class:`WCRToAugAssign` restricted to a WCR write that is injective over an
-    ENCLOSING PARALLEL MAP -- the spurious-WCR cleanup run after ``LoopToMap``.
-
-    The base transform also normalizes sequential / no-map WCRs (so every
-    reduction reaches ``loop_to_reduce`` in one shape); this subclass additionally
-    requires an enclosing map, so it never touches a reduction writeback
-    (``_priv_sum[0] += ...`` -- kept for the reduction codegen) or a scatter. Only
-    an in-place ``a[c*i + d]`` update with a nonzero constant stride is converted,
-    which is exactly the spurious WCR that blocks vectorization of the map.
-    """
-
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
-            return False
-        edge = self._matched_wcr_edge(graph, expr_index)
-        params = _enclosing_map_params(graph, edge.src)
-        return bool(params) and _wcr_write_is_injective(edge.data.subset, params)

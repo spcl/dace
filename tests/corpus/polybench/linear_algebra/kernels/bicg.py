@@ -45,6 +45,14 @@ def bicg(A: datatype[N, M], s: datatype[M], q: datatype[N], p: datatype[M], r: d
         out >> s[i]
         out = 0.0
 
+    # ``q`` is WCR-accumulated below just like ``s``; the frontend drops the
+    # ``,0`` WCR identity, so it must be explicitly zeroed or it accumulates
+    # onto uninitialised memory (mirrors ``reset_s``).
+    @dace.map
+    def reset_q(i: _[0:N]):
+        out >> q[i]
+        out = 0.0
+
     @dace.map
     def compute(i: _[0:N], j: _[0:M]):
         inA << A[i, j]

@@ -216,12 +216,17 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                                         subset=subsets.Range(new_range_list),
                                         other_subset=subsets.Range([(0, 0, 1)]))
                     new_memlet.wcr = memlet.wcr
+                    # Preserve the dynamic flag: a masked / conditional write (``A[mask] =
+                    # v`` -> a dynamic memlet) may or may not write per element, so dropping
+                    # it here would make codegen write every element unconditionally.
+                    new_memlet.dynamic = memlet.dynamic
                     edge.data = new_memlet
                 else:
                     raise NotImplementedError("Unsupported other subset case for memlet with data == outer array")
             else:
                 new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list))
                 new_memlet.wcr = memlet.wcr
+                new_memlet.dynamic = memlet.dynamic  # preserve conditional-write flag (see above)
                 edge.data = new_memlet
 
 
@@ -571,6 +576,19 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
                                               direction='out',
                                               apply_offset=apply_offset)
+
+        # Safety net: a nested-SDFG connector's inner array MUST be non-transient --
+        # it is the boundary interface, not internal storage. When a connector's name
+        # collides with a same-named inner transient (a reduction accumulator ``tmp``
+        # that is BOTH an inout connector and an internal transient of the body -- the
+        # shape ``if mask[j]: tmp += data[j]`` leaves after branch lowering), the
+        # rename above can leave the inner descriptor still marked transient, which
+        # validation rejects ("``tmp`` is a connector but its corresponding array is
+        # transient"). Clear the flag on every connector's inner array.
+        for conn in (*nsdfg_node.in_connectors, *nsdfg_node.out_connectors):
+            inner_desc = inner_sdfg.arrays.get(conn)
+            if inner_desc is not None and inner_desc.transient:
+                inner_desc.transient = False
 
         defined_syms = set(sdfg.arrays.keys()) | set(inner_sdfg.symbols.keys()) | set(nsdfg_node.symbol_mapping.keys())
         for conn, (outer_arr_name, outer_subset, collapsed_dims) in read_subsets.items():

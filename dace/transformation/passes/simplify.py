@@ -22,6 +22,7 @@ from dace.transformation.passes.simplification.prune_empty_conditional_branches 
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.simplify_induction_variables import SimplifyInductionVariables
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -42,6 +43,7 @@ SIMPLIFY_PASSES = [
     ContinueToCondition,
     EmptyLoopElimination,
     SimplifyInductionVariables,
+    RelaxIntegerPowers,
 ]
 
 _nonrecursive_passes = [

@@ -51,6 +51,17 @@ class MapToForLoop(transformation.SingleStateTransformation):
         if len(self.map_entry.map.params) > 1:
             return False
 
+        # Refuse a map that still has a WCR (reduction) output. By this point
+        # WCRToAugAssign has rewritten every conflict-free (injective) WCR into an
+        # explicit RMW, so a surviving WCR output is a genuine parallel reduction.
+        # Lowering it to a sequential loop serializes the reduction AND severs an
+        # in-state-consumed accumulator; keep it a parallel map so it codegens to an
+        # OpenMP reduction and the producer->consumer edge is preserved.
+        map_exit = graph.exit_node(self.map_entry)
+        for e in graph.out_edges(map_exit):
+            if e.data is not None and e.data.wcr is not None:
+                return False
+
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:

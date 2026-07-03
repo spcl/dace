@@ -133,14 +133,45 @@ def run_outputs(c: dict, sdfg: dace.SDFG, arrays: Dict[str, np.ndarray], params:
     return _collect_outputs(c, ret, work)
 
 
+def _tol_for(dtype) -> Tuple[float, float]:
+    """``(rtol, atol)`` appropriate to an array's numeric precision.
+
+    A single global tolerance is wrong for this corpus: it mixes single-precision
+    kernels (16 of 24 npbench kernels initialize ``float32`` / ``complex64``) with
+    double-precision ones (``float64`` / ``complex128``). Integers / bools compare
+    exactly (``0, 0`` -> ``array_equal``); ``float32`` / ``complex64`` use an
+    fp32-appropriate tolerance (~1e-5, near single-precision epsilon accumulated over
+    a few steps); ``float64`` / ``complex128`` use a tight fp64 tolerance so a real
+    lowering divergence is not masked.
+    """
+    dt = np.dtype(dtype)
+    if dt.kind in "iub":
+        return 0.0, 0.0
+    single = (dt.kind == "f" and dt.itemsize <= 4) or (dt.kind == "c" and dt.itemsize <= 8)
+    return (1e-5, 1e-6) if single else (1e-9, 1e-11)
+
+
 def outputs_match(ref: Dict[str, np.ndarray],
                   got: Dict[str, np.ndarray],
                   *,
-                  rtol: float = 1e-3,
-                  atol: float = 1e-4) -> bool:
-    """Compare reference vs candidate ``output_args`` (relaxed tol -- npbench S is fp32)."""
+                  rtol: float = None,
+                  atol: float = None) -> bool:
+    """Compare reference vs candidate ``output_args`` with a DTYPE-AWARE tolerance
+    (:func:`_tol_for`): fp64 tight, fp32 fp32-appropriate, integers exact. Pass explicit
+    ``rtol`` / ``atol`` to override the per-array default."""
     for name, r in ref.items():
         g = got.get(name)
-        if g is None or not np.allclose(np.asarray(r), np.asarray(g), rtol=rtol, atol=atol, equal_nan=True):
+        if g is None:
+            return False
+        ra, ga = np.asarray(r), np.asarray(g)
+        rt, at = _tol_for(ra.dtype)
+        if rtol is not None:
+            rt = rtol
+        if atol is not None:
+            at = atol
+        if rt == 0.0 and at == 0.0:
+            if not np.array_equal(ra, ga):
+                return False
+        elif not np.allclose(ra, ga, rtol=rt, atol=at, equal_nan=True):
             return False
     return True

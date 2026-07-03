@@ -299,6 +299,29 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if isinstance(node, nodes.AccessNode) and node not in second_input
             }
 
+            # WCR is a read-modify-write: an accumulate ``a(+)= ...`` implicitly READS
+            # the prior (seed) value of ``a``. If the FIRST state WRITES an array the
+            # SECOND state then WCR-accumulates (overlapping subset), fusing the two
+            # states into one drops the seed->accumulate ordering -- the implicit seed
+            # read is not an edge, so a later MapFusion / topological reorder can run the
+            # accumulate before the seed init, zeroing the result (covariance /
+            # correlation ``mean[:] = 0.0; mean(+)= data[...]``). The states must stay
+            # ordered, so refuse the fusion (the seed read is a genuine RAW dependency).
+            first_written: Dict[str, List] = {}
+            for n in first_output:
+                for e in first_state.in_edges(n):
+                    if e.data is not None and not e.data.is_empty():
+                        ss = e.data.get_dst_subset(e, first_state) or e.data.subset
+                        if ss is not None:
+                            first_written.setdefault(n.data, []).append(ss)
+            for e in second_state.edges():
+                if e.data is None or e.data.wcr is None or e.data.data not in first_written:
+                    continue
+                wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
+                if wsub is None or any(
+                        subsets.intersects(wsub, fs) is not False for fs in first_written[e.data.data]):
+                    return False
+
             # Write-after-read into a sink: a second-state write to an element the
             # first state reads, landing on a pure sink (no outgoing edges), cannot be
             # ordered after that read by a dependency edge (the edge would have to

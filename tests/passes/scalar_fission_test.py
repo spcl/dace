@@ -457,3 +457,53 @@ if __name__ == '__main__':
     test_branch_subscopes_nofission(True)
     test_branch_subscopes_fission(True)
     test_scalar_fission_propagates_rename_into_nsdfg()
+
+
+def test_privatize_loop_local_undominated_through_map_scope():
+    """A loop-local scalar accumulated through a MAP scope (WCR write via ``map_exit``),
+    written in both branches of a conditional (undominated / ``None`` write-scope) and
+    read after the merge, must be privatized WITHOUT leaving an ``IN_x``/``OUT_x`` name
+    mismatch across the map's exit. The undominated privatization path must rename the
+    FULL memlet path (inner ``tasklet->exit`` edge AND outer ``exit->access-node`` edge),
+    not just the immediate edge -- otherwise the scope node's pass-through data keeps the
+    old name and the SDFG fails validation. Regression: polybench ``durbin`` (loop-local
+    reduction accumulator ``sum``).
+    """
+    from dace.sdfg.state import LoopRegion
+
+    sdfg = dace.SDFG('durbin_undominated_through_map')
+    sdfg.add_array('data', [8, 8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    sdfg.add_symbol('i', dace.int64)
+    loop = LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    guard = loop.add_state('guard', is_start_block=True)
+    brA = loop.add_state('brA')
+    brB = loop.add_state('brB')
+    after = loop.add_state('after')
+    loop.add_edge(guard, brA, dace.InterstateEdge(condition='i > 0'))
+    loop.add_edge(guard, brB, dace.InterstateEdge(condition='i <= 0'))
+    loop.add_edge(brA, after, dace.InterstateEdge())
+    loop.add_edge(brB, after, dace.InterstateEdge())
+    for state in (brA, brB):
+        d = state.add_access('data')
+        me, mx = state.add_map('m', dict(k='0:8'))
+        t = state.add_tasklet('acc', {'d'}, {'a'}, 'a = d')
+        a = state.add_access('acc')
+        state.add_memlet_path(d, me, t, dst_conn='d', memlet=dace.Memlet('data[i, k]'))
+        state.add_memlet_path(t, mx, a, src_conn='a', memlet=dace.Memlet('acc[0]', wcr='lambda x, y: x + y'))
+    ra = after.add_access('acc')
+    tr = after.add_tasklet('rd', {'a'}, {'o'}, 'o = a')
+    ro = after.add_access('out')
+    after.add_edge(ra, None, tr, 'a', dace.Memlet('acc[0]'))
+    after.add_edge(tr, 'o', ro, None, dace.Memlet('out[i]'))
+    sdfg.validate()
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+
+    # The loop-local scalar was privatized (undominated path) ...
+    assert any(a != 'acc' and a.startswith('acc') for a in sdfg.arrays)
+    # ... and the FULL memlet path was renamed, so the SDFG still validates (no
+    # IN_x(old)/OUT_x(new) mismatch across the map exit).
+    sdfg.validate()

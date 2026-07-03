@@ -8,9 +8,11 @@ dc_complex_float = dc.complex64
 
 # C_before_fc1 = 16 * (H_pool2 * W_pool2). The dace kernel uses it as a free symbol
 # in ``np.reshape(x, (N, C_before_fc1))`` that cannot be inferred from a transient,
-# so it must be bound explicitly. With the harness size-cap clamping H=W=28 -> 16,
-# the conv/pool chain gives H_pool2 = W_pool2 = 1, hence C_before_fc1 = 16.
-SIZES = {'N': 4, 'H': 28, 'W': 28, 'C_before_fc1': 16}
+# so it must be bound explicitly and must equal what the conv/pool chain derives from
+# H/W (it also sets fc1w's leading dim). H=W=16 -> H_conv1=12, H_pool1=6, H_conv2=2,
+# H_pool2=1, hence C_before_fc1 = 16*1*1 = 16. H/W stay <= the harness size cap so they
+# are not clamped out of sync with C_before_fc1.
+SIZES = {'N': 4, 'H': 16, 'W': 16, 'C_before_fc1': 16}
 INPUT_ARGS = ('N', 'H', 'W')
 ARRAY_ARGS = ('input', 'conv1', 'conv1bias', 'conv2', 'conv2bias', 'fc1w', 'fc1b', 'fc2w', 'fc2b', 'fc3w', 'fc3b',
               'out')

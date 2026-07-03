@@ -329,7 +329,140 @@ def test_length_one_array_target_falls_back_to_atomic():
                                             "\n".join(pragma_lines))
 
 
+def test_persistent_scalar_target_falls_back_to_atomic():
+    """A WCR scalar accumulator that is PERSISTENT is emitted as a state-struct
+    member (``__state->acc``), which is not a valid ``reduction(op:var)`` lvalue.
+    Detection must refuse it (no reduction clause) and the atomic path is the
+    correct fallback. Regression: canonicalize's finalize made the go_fast
+    ``trace`` accumulator persistent, so codegen emitted
+    ``reduction(+:__state->__0_trace)`` and the kernel failed to compile."""
+    sdfg = _build_wcr_scalar_sum()
+    sdfg.arrays["acc"].lifetime = dace.dtypes.AllocationLifetime.Persistent
+    sdfg.arrays["acc"].storage = dace.dtypes.StorageType.CPU_Heap
+    sdfg.validate()
+
+    csdfg, src = _compile_and_read_src(sdfg)
+    pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert not any("reduction(" in l for l in pragma_lines), \
+        ("expected NO reduction clause for a persistent (state-resident) target; got:\n" + "\n".join(pragma_lines))
+    # The illegal ``reduction(+:__state->...)`` lvalue must never be emitted.
+    assert "reduction(+:__state->" not in src, "emitted an illegal OMP reduction on a state-struct member"
+    # The atomic path is the fallback that keeps the persistent reduction correct.
+    assert any("reduce_atomic" in l for l in src.splitlines()), \
+        "expected reduce_atomic fallback for the persistent target"
+
+    # End-to-end: the atomic fallback still computes the sum correctly.
+    n = 1024
+    rng = np.random.default_rng(0)
+    src_arr = rng.random(n)
+    out = np.array([0.0])
+    csdfg(src=src_arr, out=out, N=n)
+    assert np.isclose(float(out[0]), float(src_arr.sum()))
+
+
+def test_mixed_copy_and_reduce_map():
+    """A single parallel map that BOTH copies element-wise (``a[i] = b[i]``) AND
+    reduces (``d += c[i]``, a scalar WCR) must codegen correctly: the OMP pragma gets
+    a ``reduction(+:d)`` clause for the scalar accumulator while the parallel-for still
+    writes ``a[i]`` element-wise. This is the azimint-shaped "copy + reduce in one map"
+    that the canon round-trip mishandles -- here we pin that the *codegen* of the
+    well-formed (WCR) shape is correct."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("mixed_copy_reduce")
+    for arr in ("b", "c", "a"):
+        sdfg.add_array(arr, [N], dace.float64)
+    sdfg.add_scalar("d", dace.float64, transient=True)
+    sdfg.add_array("out", [1], dace.float64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    t0 = init.add_tasklet("seed", {}, {"o"}, "o = 0.0")
+    init.add_edge(t0, "o", init.add_write("d"), None, dace.Memlet("d[0]"))
+
+    ms = sdfg.add_state("ms")
+    sdfg.add_edge(init, ms, dace.InterstateEdge())
+    me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
+    # element-wise copy a[i] = b[i]
+    tcopy = ms.add_tasklet("copy", {"bi"}, {"ai"}, "ai = bi")
+    ms.add_memlet_path(ms.add_read("b"), me, tcopy, dst_conn="bi", memlet=dace.Memlet("b[i]"))
+    ms.add_memlet_path(tcopy, mx, ms.add_write("a"), src_conn="ai", memlet=dace.Memlet("a[i]"))
+    # scalar reduction d += c[i]
+    tred = ms.add_tasklet("red", {"ci"}, {"r"}, "r = ci")
+    ms.add_memlet_path(ms.add_read("c"), me, tred, dst_conn="ci", memlet=dace.Memlet("c[i]"))
+    ms.add_memlet_path(tred, mx, ms.add_write("d"), src_conn="r", memlet=dace.Memlet("d[0]", wcr="lambda a, b: a + b"))
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(ms, post, dace.InterstateEdge())
+    twb = post.add_tasklet("wb", {"i"}, {"o"}, "o = i")
+    post.add_edge(post.add_read("d"), None, twb, "i", dace.Memlet("d[0]"))
+    post.add_edge(twb, "o", post.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    csdfg, src = _compile_and_read_src(sdfg)
+    pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any("reduction(+:" in l for l in pragma_lines), \
+        ("expected reduction(+:d) on the copy+reduce map; got:\n" + "\n".join(pragma_lines))
+
+    n = 256
+    rng = np.random.default_rng(0)
+    b, c = rng.random(n), rng.random(n)
+    a, out = np.zeros(n), np.zeros(1)
+    csdfg(b=b, c=c, a=a, out=out, N=n)
+    assert np.allclose(a, b), "element-wise copy a[i]=b[i] wrong"
+    assert np.isclose(float(out[0]), float(c.sum())), "scalar reduction d=sum(c) wrong"
+
+
+def test_mixed_copy_and_product_reduce_detects_star_op():
+    """Op detection from the WCR edge: a map that copies (``a[i] = b[i]``) AND multiplies
+    (``p *= c[i]``) must emit ``reduction(*:p)`` -- the operator is read from the WCR
+    lambda (``a * b``), NOT hardcoded to ``+``. The element-wise copy coexists."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("mixed_copy_prod")
+    for arr in ("b", "c", "a"):
+        sdfg.add_array(arr, [N], dace.float64)
+    sdfg.add_scalar("p", dace.float64, transient=True)
+    sdfg.add_array("out", [1], dace.float64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    t0 = init.add_tasklet("seed", {}, {"o"}, "o = 1.0")  # product identity
+    init.add_edge(t0, "o", init.add_write("p"), None, dace.Memlet("p[0]"))
+
+    ms = sdfg.add_state("ms")
+    sdfg.add_edge(init, ms, dace.InterstateEdge())
+    me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
+    tcopy = ms.add_tasklet("copy", {"bi"}, {"ai"}, "ai = bi")
+    ms.add_memlet_path(ms.add_read("b"), me, tcopy, dst_conn="bi", memlet=dace.Memlet("b[i]"))
+    ms.add_memlet_path(tcopy, mx, ms.add_write("a"), src_conn="ai", memlet=dace.Memlet("a[i]"))
+    tred = ms.add_tasklet("red", {"ci"}, {"r"}, "r = ci")
+    ms.add_memlet_path(ms.add_read("c"), me, tred, dst_conn="ci", memlet=dace.Memlet("c[i]"))
+    ms.add_memlet_path(tred, mx, ms.add_write("p"), src_conn="r", memlet=dace.Memlet("p[0]", wcr="lambda a, b: a * b"))
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(ms, post, dace.InterstateEdge())
+    twb = post.add_tasklet("wb", {"i"}, {"o"}, "o = i")
+    post.add_edge(post.add_read("p"), None, twb, "i", dace.Memlet("p[0]"))
+    post.add_edge(twb, "o", post.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    csdfg, src = _compile_and_read_src(sdfg)
+    pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any("reduction(*:" in l for l in pragma_lines), \
+        ("expected reduction(*:p) (op detected from WCR lambda ``a*b``); got:\n" + "\n".join(pragma_lines))
+    assert not any("reduction(+:" in l for l in pragma_lines), "must not emit '+'; the WCR op is '*'"
+
+    n = 64
+    rng = np.random.default_rng(1)
+    b = rng.random(n)
+    c = rng.random(n) * 0.5 + 0.75  # keep the product well-conditioned
+    a, out = np.zeros(n), np.zeros(1)
+    csdfg(b=b, c=c, a=a, out=out, N=n)
+    assert np.allclose(a, b), "element-wise copy a[i]=b[i] wrong"
+    assert np.isclose(float(out[0]), float(np.prod(c))), "product reduction p=prod(c) wrong"
+
+
 if __name__ == "__main__":
+    test_mixed_copy_and_reduce_map()
+    test_mixed_copy_and_product_reduce_detects_star_op()
+    test_persistent_scalar_target_falls_back_to_atomic()
     test_scalar_wcr_emits_omp_reduction_clause()
     test_scalar_wcr_does_not_emit_atomic_for_covered_target()
     test_scalar_wcr_numerically_correct()

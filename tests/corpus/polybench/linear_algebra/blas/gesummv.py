@@ -30,6 +30,19 @@ def init_array(A, B, tmp, x, y, alpha, beta, n):
 def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[N], y: datatype[N], alpha: datatype[1],
             beta: datatype[1]):
 
+    # ``tmp`` and ``y`` are WCR-accumulated below; the frontend drops the ``,0``
+    # WCR identity, so they must be explicitly zeroed or they accumulate onto
+    # uninitialised memory.
+    @dace.map
+    def reset_tmp(i: _[0:N]):
+        out >> tmp[i]
+        out = 0.0
+
+    @dace.map
+    def reset_y(i: _[0:N]):
+        out >> y[i]
+        out = 0.0
+
     @dace.map
     def compute_ty(i: _[0:N], j: _[0:N]):
         ia << A[i, j]

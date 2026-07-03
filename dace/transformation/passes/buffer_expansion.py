@@ -219,6 +219,24 @@ class BufferExpansion(ppl.Pass):
         for name, desc in sdfg.arrays.items():
             if not isinstance(desc, data.Array) or not desc.transient:
                 continue
+            # A View is a reshape/alias of another array (a ``data.View`` IS a
+            # ``data.Array`` subclass, so the check above does not exclude it), often a
+            # GEMM/MatMul operand slice. Expanding it with a loop dimension corrupts the
+            # shape it presents to its consumer -- scattering_self_energies' 2D
+            # ``Norb x Norb`` matmul-operand view widened to 6D, which the GEMM expansion
+            # then rejects. Never expand a view; expand only real buffers.
+            if isinstance(desc, data.View):
+                continue
+            # Do not expand a buffer that feeds (or is produced by) a library node. It
+            # is a fixed-shape operand (e.g. a GEMM's 2D ``Norb x Norb`` slice), so
+            # expanding it widens the operand shape the library node's expansion
+            # requires (scattering_self_energies' GEMM -> "matrix-matrix product only
+            # supported on matrices"). It is also pointless: parallelizing a loop whose
+            # body is a library-node call gives no speedup -- a loop of (tiny) BLAS/
+            # cuBLAS GEMMs serializes on one stream / oversubscribes BLAS threads -- so
+            # the loop should stay sequential rather than become a Map of library calls.
+            if self._is_library_node_operand(loop_states, name):
+                continue
             if desc.lifetime not in _REINDEXABLE_LIFETIMES:
                 continue
             if len(desc.shape) < 1:
@@ -226,6 +244,23 @@ class BufferExpansion(ppl.Pass):
             if self._is_loop_local(sdfg, loop_states, name) and self._defined_before_read(loop, name):
                 candidates.append(name)
         return candidates
+
+    @staticmethod
+    def _is_library_node_operand(loop_states: Set[SDFGState], name: str) -> bool:
+        """True if ``name`` is a direct input/output of a library node in ``loop_states``.
+
+        Such a buffer is a shape-constrained operand (e.g. a GEMM's 2D slice); expanding
+        it both breaks the library node's expansion and yields no parallelism (the
+        library calls serialize), so it must not be expanded.
+        """
+        for state in loop_states:
+            for n in state.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == name:
+                    if any(isinstance(e.src, nodes.LibraryNode) for e in state.in_edges(n)):
+                        return True
+                    if any(isinstance(e.dst, nodes.LibraryNode) for e in state.out_edges(n)):
+                        return True
+        return False
 
     @staticmethod
     def _is_loop_local(sdfg: SDFG, loop_states: Set[SDFGState], name: str) -> bool:

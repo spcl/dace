@@ -43,7 +43,7 @@ class ExpandGemmPure(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(node, parent_state, parent_sdfg):
+    def make_sdfg(node, parent_state, parent_sdfg, rowwise=False):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
         ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
@@ -132,18 +132,41 @@ class ExpandGemmPure(ExpandTransformation):
                                           add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
                                           external_edges=True)
 
-        # Multiplication map
-        state.add_mapped_tasklet("gemm", {
-            "__i%d" % i: "0:%s" % s
-            for i, s in enumerate([M, N, K])
-        }, {
-            "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-            "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
-        },
-                                 mul_program,
-                                 {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
-                                 external_edges=True,
-                                 output_nodes=output_nodes)
+        # Multiplication map. The default (``rowwise=False``) form is a single 3D
+        # ``(M, N, K)`` map whose K axis is the per-element WCR contraction. The row-wise
+        # (ikj) form instead puts K as the MIDDLE param ``(M, K, N)`` and then peels the map
+        # apart with MapExpansion, making the inner (k, j) maps Sequential: this yields
+        # ``for i (parallel): for k (seq): for j (vector)`` -- i.e. ``C[i,:] += A[i,k]*B[k,:]``,
+        # a vectorizable row update with a sequential K accumulation -- instead of a per-element
+        # inner-K reduction. Used by canonicalize for known-small GEMMs, where a loop of tiny
+        # BLAS calls is pure overhead and a fusible/vectorizable nest is faster.
+        if rowwise:
+            _, mult_entry, _ = state.add_mapped_tasklet(
+                "gemm", {"__i%d" % i: "0:%s" % s
+                         for i, s in enumerate([M, K, N])}, {
+                             "__a": dace.Memlet.simple("_a", "__i1, __i0" if node.transA else "__i0, __i1"),
+                             "__b": dace.Memlet.simple("_b", "__i2, __i1" if node.transB else "__i1, __i2"),
+                         },
+                mul_program,
+                {"__out": dace.Memlet.simple(mul_out, "__i0, __i2", wcr_str="lambda x, y: x + y")},
+                external_edges=True,
+                output_nodes=output_nodes)
+            # Peel into i / k / j maps; inner (k, j) become Sequential (the MapExpansion
+            # default), leaving the outer i-map parallel.
+            from dace.transformation.dataflow.map_expansion import MapExpansion
+            MapExpansion.apply_to(sdfg, verify=False, map_entry=mult_entry)
+        else:
+            state.add_mapped_tasklet("gemm", {
+                "__i%d" % i: "0:%s" % s
+                for i, s in enumerate([M, N, K])
+            }, {
+                "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+                "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
+            },
+                                     mul_program,
+                                     {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
+                                     external_edges=True,
+                                     output_nodes=output_nodes)
 
         return sdfg
 
@@ -151,6 +174,26 @@ class ExpandGemmPure(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
+
+
+@dace.library.expansion
+class ExpandGemmPureRowWise(ExpandTransformation):
+    """Row-wise (ikj) pure expansion: ``for i (parallel): for k (seq): for j (vector)``.
+
+    A semantically-identical alternative to :class:`ExpandGemmPure` that lowers to a
+    vectorizable row update (``C[i,:] += A[i,k]*B[k,:]``) with a sequential K accumulation,
+    rather than a 3D map with a per-element inner-K WCR. Selected by canonicalization for
+    known-small GEMMs, where a loop of tiny BLAS calls is overhead and an inner-K WCR
+    serializes on the reduction; here j (unit-stride) vectorizes and k stays a clean
+    sequential accumulation.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        return ExpandGemmPure.make_sdfg(node, state, sdfg, rowwise=True)
 
 
 @dace.library.expansion
@@ -502,6 +545,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandGemmPure,
+        "rowwise": ExpandGemmPureRowWise,
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS,

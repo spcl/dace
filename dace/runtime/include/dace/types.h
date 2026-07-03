@@ -109,55 +109,59 @@ typedef half float16;
 #else
 typedef std::complex<float> complex64;
 typedef std::complex<double> complex128;
+// Compile-time bit reinterpretation for the ``constexpr`` half<->float conversions
+// below, so ``dace::float16(<constant>)`` folds at compile time exactly like a
+// ``static_cast`` (equivalent to ``dace::float64(x)`` == ``double(x)`` for the
+// primitive typedefs). ``std::bit_cast`` (C++20, the default standard) is a
+// constant expression; pre-C++20 falls back to a runtime ``union`` pun -- identical
+// bit pattern either way (little/big-endian agnostic: it copies object bytes).
+#if defined(__cpp_lib_bit_cast)
+#include <bit>
+#define DACE_HALF_CE constexpr
+static constexpr uint32_t _dace_half_f2u(float f) { return std::bit_cast<uint32_t>(f); }
+static constexpr float _dace_half_u2f(uint32_t u) { return std::bit_cast<float>(u); }
+#else
+#define DACE_HALF_CE inline
+static inline uint32_t _dace_half_f2u(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
+static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } c; c.u = u; return c.f; }
+#endif
 struct half {
-  half() {}
+  constexpr half() : h(0) {}
 
   // IEEE-754 binary32 -> binary16, round-to-nearest-even.
   // Based on (https://gist.github.com/rygorous/2156668)
-  half(float f) {
-    union {
-      float f;
-      uint32_t u;
-    } in;
-    in.f = f;
-    uint32_t sign = in.u & 0x80000000u;
-    in.u ^= sign;  // work on the magnitude
+  DACE_HALF_CE half(float f) : h(0) {
+    uint32_t u = _dace_half_f2u(f);
+    uint32_t sign = u & 0x80000000u;
+    u ^= sign;  // work on the magnitude
 
-    if (in.u >= 0x47800000u) {
+    if (u >= 0x47800000u) {
       // Inf or NaN (exponent overflows half range): NaN -> qNaN, else Inf.
-      h = (in.u > 0x7f800000u) ? 0x7e00 : 0x7c00;
-    } else if (in.u < 0x38800000u) {
+      h = (u > 0x7f800000u) ? 0x7e00 : 0x7c00;
+    } else if (u < 0x38800000u) {
       // Subnormal half or zero. Adding this magic constant and relying on
       // round-to-nearest-even FP addition aligns the mantissa correctly.
-      union {
-        uint32_t u;
-        float f;
-      } magic;
-      magic.u = 0x3f000000u;  // 126 << 23
-      in.f += magic.f;
-      h = (uint16_t)(in.u - magic.u);
+      float mf = _dace_half_u2f(u) + _dace_half_u2f(0x3f000000u);  // 126 << 23
+      h = (uint16_t)(_dace_half_f2u(mf) - 0x3f000000u);
     } else {
       // Normal half: rebias exponent (127 -> 15) and round mantissa to even.
-      uint32_t mant_odd = (in.u >> 13) & 1;
-      in.u += 0xc8000000u + 0xfffu;  // ((15 - 127) << 23) + rounding bias
-      in.u += mant_odd;
-      h = (uint16_t)(in.u >> 13);
+      uint32_t mant_odd = (u >> 13) & 1;
+      u += 0xc8000000u + 0xfffu;  // ((15 - 127) << 23) + rounding bias
+      u += mant_odd;
+      h = (uint16_t)(u >> 13);
     }
     h |= (uint16_t)(sign >> 16);
   }
 
   // IEEE-754 binary16 -> binary32 (exact; every binary16 fits in binary32).
-  operator float() const {
+  DACE_HALF_CE operator float() const {
     uint32_t sign = (uint32_t)(h & 0x8000) << 16;
     uint32_t exp = (h >> 10) & 0x1f;
     uint32_t mant = h & 0x3ff;
-    union {
-      uint32_t u;
-      float f;
-    } out;
+    uint32_t out;
     if (exp == 0) {
       if (mant == 0) {
-        out.u = sign;  // signed zero
+        out = sign;  // signed zero
       } else {
         // Subnormal half: normalize into a float normal.
         exp = 1;
@@ -166,14 +170,14 @@ struct half {
           mant <<= 1;
         } while ((mant & 0x400) == 0);
         mant &= 0x3ff;
-        out.u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+        out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
       }
     } else if (exp == 0x1f) {
-      out.u = sign | 0x7f800000u | (mant << 13);  // Inf or NaN
+      out = sign | 0x7f800000u | (mant << 13);  // Inf or NaN
     } else {
-      out.u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);  // normal
+      out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);  // normal
     }
-    return out.f;
+    return _dace_half_u2f(out);
   }
 
   uint16_t h;

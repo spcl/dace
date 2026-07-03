@@ -23,6 +23,14 @@ def init_array(data, corr, mean, stddev, n, m):
 @dace.program
 def correlation(data: datatype[N, M], corr: datatype[M, M], mean: datatype[M], stddev: datatype[M]):
 
+    # Zero the WCR accumulators. ``mean``/``stddev``/off-diagonal ``corr`` are summed
+    # via a WCR whose identity third argument (``mean(1, ..., 0)``) is dropped by the
+    # Python frontend, so they otherwise accumulate onto uninitialised memory -- a
+    # latent read masked only by zeroed pages (cf. covariance, which already does this).
+    mean[:] = 0.0
+    stddev[:] = 0.0
+    corr[:] = 0.0
+
     @dace.map
     def comp_mean(j: _[0:M], i: _[0:N]):
         inp << data[i, j]

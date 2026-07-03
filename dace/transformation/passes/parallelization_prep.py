@@ -226,7 +226,15 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if name in sdfg.arrays and name not in mini.arrays:
                     mini.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
             # Copy the loop region via a JSON round-trip (reparents to `mini`).
-            mini_loop = serialize.from_json(serialize.to_json(loop), context={'sdfg': mini})
+            # ``context['version']`` is required for symbolic deserialization (the
+            # symbolic-property deserializer refuses without it); a loop with a
+            # symbolic subset such as ``a[N // 2]`` (``int_floor``) would otherwise
+            # fail the round-trip and the nest be wrongly treated as un-isolable.
+            mini_loop = serialize.from_json(serialize.to_json(loop),
+                                            context={
+                                                'sdfg': mini,
+                                                'version': dace.__version__
+                                            })
             mini.add_node(mini_loop, is_start_block=True)
             mini.reset_cfg_list()
             mini.validate()
@@ -316,6 +324,85 @@ class BestEffortLoopPeeling(ppl.Pass):
                     values.append(x)
         return values
 
+    def _broadcast_conflict_split_points(self, loop: LoopRegion):
+        """Iteration values ``x`` where a loop-invariant *broadcast read* collides
+        with a per-iteration *write* to the same array.
+
+        The body reads ``A[c]`` at a loop-invariant (constant) index ``c`` and also
+        writes ``A[f(i)]`` at a loop-variable-dependent index; the single iteration
+        ``x`` solving ``f(x) == c`` is the sole producer of the element every other
+        iteration reads. It is NOT an ``if i == x`` guard, so
+        :meth:`_equality_guard_values` misses it -- but the same index-set split
+        unblocks it: ``[start, x-1]`` reads the original ``A[c]``, ``{x}`` writes it,
+        ``[x+1, end]`` reads the new value, which is exactly the sequential order, and
+        the two range segments become conflict-free parallel maps (TSVC s1113
+        ``a[i] = a[N//2] + b[i]``).
+
+        Returns loop-invariant split values (``!=`` the loop variable). Liberal by
+        design: :meth:`_best_split_for` probes each candidate on an isolated copy and
+        keeps only one that raises the mappable-loop count, so a non-helping candidate
+        is harmless.
+        """
+        from dace.sdfg.state import SDFGState
+        ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
+        reads: Dict[Any, list] = {}   # array -> loop-invariant single-point read subsets
+        writes: Dict[Any, list] = {}  # array -> loop-var-dependent single-point write subsets
+        for state in loop.all_states():
+            if not isinstance(state, SDFGState):
+                continue
+            for node in state.data_nodes():
+                for e in state.in_edges(node):
+                    m = e.data
+                    if m is not None and m.data is not None and m.subset is not None:
+                        writes.setdefault(m.data, []).append(m.subset)
+                for e in state.out_edges(node):
+                    m = e.data
+                    if m is not None and m.data is not None and m.subset is not None:
+                        reads.setdefault(m.data, []).append(m.subset)
+        values = []
+        for data in set(reads) & set(writes):
+            for rsub in reads[data]:
+                # A broadcast read touches no dimension that varies with the loop var.
+                if any(ivar in symbolic.pystr_to_symbolic(str(b)).free_symbols for (b, _e, _s) in rsub.ndrange()):
+                    continue
+                for wsub in writes[data]:
+                    if len(wsub) != len(rsub):
+                        continue
+                    x = self._solve_write_eq_read(wsub, rsub, ivar)
+                    if x is not None and ivar not in x.free_symbols and x not in values:
+                        values.append(x)
+        return values
+
+    def _solve_write_eq_read(self, wsub, rsub, ivar):
+        """Solve ``write_index(i) == read_const`` for the single ``i`` at which the
+        per-iteration write hits the broadcast-read element, or ``None`` if there is
+        no clean affine solution. Every non-loop-var dimension must already match
+        (else the write never touches the read element); the one loop-var dimension
+        must be affine ``a*i + b`` with ``|a| == 1`` (so the solution is an exact
+        integer). Single-point accesses only."""
+        sol = None
+        for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
+            w = symbolic.pystr_to_symbolic(str(wb))
+            r = symbolic.pystr_to_symbolic(str(rb))
+            if symbolic.simplify(symbolic.pystr_to_symbolic(str(we)) - w) != 0:
+                return None  # multi-element write range in this dim -> not a clean point
+            if symbolic.simplify(symbolic.pystr_to_symbolic(str(re_)) - r) != 0:
+                return None  # multi-element read range in this dim
+            if ivar in w.free_symbols:
+                a = w.coeff(ivar, 1)
+                b = symbolic.simplify(w - a * ivar)
+                if ivar in a.free_symbols or ivar in b.free_symbols:
+                    return None  # non-affine in the loop variable
+                if not (a.is_number and symbolic.simplify(a * a - 1) == 0):
+                    return None  # |a| != 1 -> solution may be non-integer
+                xi = symbolic.simplify((r - b) / a)
+                if sol is not None and symbolic.simplify(xi - sol) != 0:
+                    return None  # inconsistent solution across dimensions
+                sol = xi
+            elif symbolic.simplify(w - r) != 0:
+                return None  # non-loop-var dimension does not match -> no collision
+        return sol
+
     def _split_loop_at(self, sdfg: SDFG, loop: LoopRegion, x) -> bool:
         """Index-set-split ``loop`` at iteration ``x`` into the range segments
         [start, x-1], the single iteration {x}, and [x+1, end] -- each a clone of the
@@ -394,8 +481,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return None
         except Exception:
             pass
-        guards = self._equality_guard_values(loop)
-        if not guards:
+        candidates = self._equality_guard_values(loop)
+        for x in self._broadcast_conflict_split_points(loop):
+            if x not in candidates:
+                candidates.append(x)
+        if not candidates:
             return None
         mini, _ = self._isolate_loop(loop, sdfg)
         if mini is None:
@@ -405,7 +495,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         except Exception:
             return None
         best_count, best = baseline, None
-        for x in guards:
+        for x in candidates:
             cand = copy.deepcopy(mini)
             cloops = _loops(cand)
             if not cloops or not self._split_loop_at(cand, cloops[0], x):

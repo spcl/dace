@@ -40,6 +40,20 @@ class ScalarFission(ppl.Pass):
 
         shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.cfg_id]
 
+        # A control-flow condition (branch condition, loop bound/condition) is a
+        # code block that READS every data container it names -- its value must
+        # outlive the condition. Such a scalar is not a privatizable per-iteration
+        # temporary but a pending ``ScalarToSymbolPromotion`` target. Fission would
+        # rename its writer without rewriting the condition (region meta-code is not
+        # a dataflow edge, so it is invisible to the write-shadow analysis and to
+        # the rename below), orphaning the reference into an undefined symbol. Treat
+        # condition-referenced scalars as used and leave them untouched.
+        cond_referenced: Set[str] = set()
+        for region in sdfg.all_control_flow_regions():
+            for cb in region.get_meta_codeblocks():
+                cond_referenced |= cb.get_free_symbols()
+        cond_referenced &= set(sdfg.arrays.keys())
+
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
@@ -49,6 +63,11 @@ class ScalarFission(ppl.Pass):
 
             # Don't rename anything that's not transient, as it may be used externally.
             if not desc.transient:
+                continue
+
+            # A scalar read by a control-flow condition is used, not a privatizable
+            # temporary -- leave it for symbol promotion (see ``cond_referenced``).
+            if name in cond_referenced:
                 continue
 
             # Privatize the undominated (``None``) scope -- accesses whose reads are
@@ -73,10 +92,10 @@ class ScalarFission(ppl.Pass):
                     write_node.data = newname
                     for iedge in write[0].in_edges(write_node):
                         if iedge.data.data == name:
-                            iedge.data.data = newname
+                            self._rename_memlet_path(write[0], iedge, name, newname)
                     for oeade in write[0].out_edges(write_node):
                         if oeade.data.data == name:
-                            oeade.data.data = newname
+                            self._rename_memlet_path(write[0], oeade, name, newname)
 
                     # Replace all dominated reads and connected memlets.
                     affected_states: Set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
@@ -86,10 +105,10 @@ class ScalarFission(ppl.Pass):
                             read_node.data = newname
                             for iedge in read[0].in_edges(read_node):
                                 if iedge.data.data == name:
-                                    iedge.data.data = newname
+                                    self._rename_memlet_path(read[0], iedge, name, newname)
                             for oeade in read[0].out_edges(read_node):
                                 if oeade.data.data == name:
-                                    oeade.data.data = newname
+                                    self._rename_memlet_path(read[0], oeade, name, newname)
                             if isinstance(read[0], SDFGState):
                                 affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
@@ -104,6 +123,23 @@ class ScalarFission(ppl.Pass):
 
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+
+    @staticmethod
+    def _rename_memlet_path(state: SDFGState, edge, old: str, new: str) -> None:
+        """Rename ``old`` -> ``new`` on every memlet along ``edge``'s FULL path.
+
+        An access-node write/read that flows THROUGH a scope boundary (MapExit /
+        MapEntry) has more than one edge carrying the same data: the inner edge
+        to/from the tasklet and the outer edge to/from the AccessNode, joined at the
+        scope's connector. Renaming only the outermost edge -- the historical
+        behavior -- left the inner edge, and therefore the scope node's pass-through
+        data, as ``old``, yielding an ``IN_x(old) -> OUT_x(new)`` mismatch across the
+        MapExit that fails validation. Walking the whole memlet path renames both
+        sides of every scope boundary consistently.
+        """
+        for pe in state.memlet_path(edge):
+            if pe.data is not None and pe.data.data == old:
+                pe.data.data = new
 
     # ------------------------------------------------------------------ #
     #  Privatization of undominated (None-scope) loop-local scalars
@@ -147,12 +183,19 @@ class ScalarFission(ppl.Pass):
             for block, node in loop_accesses:
                 if isinstance(node, nd.AccessNode):
                     node.data = newname
+                    # Rename along the FULL memlet path, not just the immediate edge:
+                    # an access that flows through a MapEntry/MapExit has an inner and
+                    # an outer edge carrying the same data, and renaming only one leaves
+                    # the scope node's pass-through as ``name`` (IN_x(old)->OUT_x(new)
+                    # mismatch / dangling reference once ``name`` is later removed). Same
+                    # fix as the dominated-write path above. (polybench ``durbin``: the
+                    # loop-local reduction accumulator ``sum``.)
                     for e in block.in_edges(node):
                         if e.data.data == name:
-                            e.data.data = newname
+                            self._rename_memlet_path(block, e, name, newname)
                     for e in block.out_edges(node):
                         if e.data.data == name:
-                            e.data.data = newname
+                            self._rename_memlet_path(block, e, name, newname)
                     if isinstance(block, SDFGState):
                         affected_states.add(block)
                 elif isinstance(node, InterstateEdge):
@@ -197,8 +240,19 @@ class ScalarFission(ppl.Pass):
             for n in state.nodes():
                 if not isinstance(n, nd.NestedSDFG):
                     continue
-                in_match = old_name in n.in_connectors
-                out_match = old_name in n.out_connectors
+                # Rename a connector only when the OUTER AccessNode wired to it was renamed
+                # to ``new_name`` by THIS scope. Under per-scope fission the same NSDFG read
+                # is visited once per scope; an unconditional ``old_name -> new_name`` binds
+                # the connector to whichever scope runs first (e.g. ``X_0``) even when the
+                # feeding AccessNode belongs to another scope (``X_1``), leaving a
+                # connector/AccessNode name mismatch that fails validation. Tie each
+                # connector rename to its edge's renamed endpoint.
+                in_match = old_name in n.in_connectors and any(
+                    e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name
+                    for e in state.in_edges(n))
+                out_match = old_name in n.out_connectors and any(
+                    e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name
+                    for e in state.out_edges(n))
                 if not (in_match or out_match or old_name in n.symbol_mapping):
                     continue
                 # 1. Rename the connector.
@@ -206,18 +260,20 @@ class ScalarFission(ppl.Pass):
                     n.in_connectors[new_name] = n.in_connectors.pop(old_name)
                 if out_match:
                     n.out_connectors[new_name] = n.out_connectors.pop(old_name)
-                # 2. Update the outer-side memlet on edges that connect to
-                #    the renamed connector.
-                for e in state.in_edges(n):
-                    if e.dst_conn == old_name:
-                        e.dst_conn = new_name
-                    if e.data is not None and e.data.data == old_name:
-                        e.data.data = new_name
-                for e in state.out_edges(n):
-                    if e.src_conn == old_name:
-                        e.src_conn = new_name
-                    if e.data is not None and e.data.data == old_name:
-                        e.data.data = new_name
+                # 2. Update the outer-side edge (connector name + memlet) for the edges whose
+                #    renamed endpoint drove the connector rename.
+                if in_match:
+                    for e in state.in_edges(n):
+                        if e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name:
+                            e.dst_conn = new_name
+                            if e.data is not None and e.data.data == old_name:
+                                e.data.data = new_name
+                if out_match:
+                    for e in state.out_edges(n):
+                        if e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name:
+                            e.src_conn = new_name
+                            if e.data is not None and e.data.data == old_name:
+                                e.data.data = new_name
                 # 3. Propagate INSIDE the NestedSDFG. We do this manually
                 #    (no ``SDFG.replace_dict``) to avoid its symbolic-
                 #    replacement pathway tripping on the scalar's free-

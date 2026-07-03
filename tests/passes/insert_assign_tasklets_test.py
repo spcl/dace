@@ -311,5 +311,84 @@ def test_wcr_stage_out_executes_correctly_after_split():
                                          f'expected sum(A)={A.sum()}')
 
 
+# --- View handling: a View's defining edge must never be split ---------------
+
+
+def test_map_boundary_stage_out_view_defining_edge_not_split():
+    """A View whose defining edge crosses a MapExit (``View -[views]-> MapExit
+    -> A``) must NOT be split. Inserting an ``_out=_in`` tasklet on it destroys
+    the ``views`` connector and leaves the View with code nodes on both sides, so
+    ``get_view_edge`` can no longer identify the defining edge and validation
+    raises "Ambiguous or invalid edge to/from a View access node".
+
+    Regression: the reduction/conv output-slice views (npbench lenet, resnet)
+    reach this pass as ``View -[views]-> MapExit`` and crashed canonicalize.
+    """
+    from dace.sdfg.utils import get_view_edge
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('view_stage_out')
+    sdfg.add_array('A', [N, 4], dace.float64)
+    sdfg.add_array('src', [N, 4], dace.float64)
+    sdfg.add_view('V', [4], dace.float64)
+    state = sdfg.add_state()
+    s = state.add_read('src')
+    v = state.add_access('V')
+    a = state.add_write('A')
+    me, mx = state.add_map('m', dict(i='0:N'))
+    t = state.add_tasklet('cp', {'_in'}, {'_out'}, '_out = _in')
+    state.add_memlet_path(s, me, t, dst_conn='_in', memlet=dace.Memlet('src[i, 0:4]'))
+    state.add_edge(t, '_out', v, None, dace.Memlet('V[0:4]'))
+    # V's DEFINING edge (``views`` connector) crosses the MapExit into A[i, :].
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(v, 'views', mx, 'IN_A', dace.Memlet(data='A', subset='i, 0:4', other_subset='0:4'))
+    state.add_edge(mx, 'OUT_A', a, None, dace.Memlet(data='A', subset='0:N, 0:4'))
+    sdfg.validate()
+    assert get_view_edge(state, v) is not None  # valid view before
+
+    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    sdfg.validate()  # would raise "Ambiguous or invalid edge to/from a View" if split
+    # The defining edge survives intact: still resolvable, still a direct
+    # View->MapExit edge with no ``_assign`` tasklet spliced onto it.
+    ve = get_view_edge(state, v)
+    assert ve is not None
+    assert not isinstance(ve.src, nodes.Tasklet) and not isinstance(ve.dst, nodes.Tasklet)
+
+
+def test_map_boundary_stage_in_view_defining_edge_not_split():
+    """The symmetric stage-in case: a View whose defining edge is ``A ->
+    MapEntry -[views]-> V`` (the view is fed from the backing array across the
+    map entry) must not be split either -- same ``views``-connector destruction
+    otherwise.
+    """
+    from dace.sdfg.utils import get_view_edge
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('view_stage_in')
+    sdfg.add_array('A', [N, 4], dace.float64)
+    sdfg.add_array('out', [N, 4], dace.float64)
+    sdfg.add_view('V', [4], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    v = state.add_access('V')
+    o = state.add_write('out')
+    me, mx = state.add_map('m', dict(i='0:N'))
+    t = state.add_tasklet('cp', {'_in'}, {'_out'}, '_out = _in')
+    # A[i, :] -> MapEntry -[views]-> V  (the view's defining edge across MapEntry).
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    state.add_edge(a, None, me, 'IN_A', dace.Memlet(data='A', subset='0:N, 0:4'))
+    state.add_edge(me, 'OUT_A', v, 'views', dace.Memlet(data='A', subset='i, 0:4', other_subset='0:4'))
+    state.add_edge(v, None, t, '_in', dace.Memlet('V[0:4]'))
+    state.add_memlet_path(t, mx, o, src_conn='_out', memlet=dace.Memlet('out[i, 0:4]'))
+    sdfg.validate()
+    assert get_view_edge(state, v) is not None
+
+    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    sdfg.validate()
+    ve = get_view_edge(state, v)
+    assert ve is not None
+    assert not isinstance(ve.src, nodes.Tasklet) and not isinstance(ve.dst, nodes.Tasklet)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -515,7 +515,27 @@ def test_dead_iedge_with_array_shape_substituted_into_descriptor():
     assert 'k_plus_1' not in sdfg.symbols, 'declaration of k_plus_1 should be removed with its binding'
 
 
+def test_resolve_renders_operator_functions():
+    """A propagated value must be rendered with the DaCe printer, not sympy ``str``.
+
+    The operator-backed functions (``a & b`` parses to ``__bitwise_and(a, b)`` etc.)
+    print as their sympy class name under ``str`` -- ``__right_shift(__bitwise_and(
+    255, b), 1)`` -- which is neither valid Python (the codeblock language) nor valid
+    C++, and crashes codegen when such a value is substituted into a branch condition
+    (the crc16 canon failure). ``_resolve`` must emit the operator spelling instead.
+    """
+    from dace.transformation.passes.symbol_propagation import _resolve
+
+    out = _resolve('y >> 1', {'y': '255 & b'})
+    assert '__right_shift' not in out and '__bitwise_and' not in out, \
+        f'operator functions leaked their sympy class names: {out}'
+    assert '>>' in out and '&' in out, f'expected operator spelling, got {out}'
+    # Round-trips back through the symbolic parser (valid Python/C++ expression).
+    assert {str(s) for s in dace.symbolic.pystr_to_symbolic(out).free_symbols} == {'b'}
+
+
 if __name__ == "__main__":
+    test_resolve_renders_operator_functions()
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
     test_nested_symbol()

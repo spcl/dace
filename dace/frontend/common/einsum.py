@@ -367,6 +367,51 @@ def _create_einsum_internal(sdfg: SDFG,
         b = input_nodes[arrays[1]]
         c = state.add_write(output)
 
+        # Level-2 BLAS: a matrix-vector contraction -- one 2-D operand, one 1-D
+        # operand, 1-D output (``ij,j->i`` / ``ji,j->i``) -- lowers to a GEMV, NOT the
+        # degenerate GEMM the batch-gemm path builds. That path treats the 1-D operand
+        # as a 1-column matrix and mis-computes its leading dimension, emitting
+        # ``cblas_dgemm(..., CblasTrans, ..., _a, 1, ...)`` where ``CblasTrans`` requires
+        # ``LDA >= K`` -- an illegal ``LDA`` (BLAS aborts, wrong result). ``Gemv`` lowers
+        # matrix*vector correctly. Matmul (2-D output) is untouched -- it keeps the GEMM.
+        if len(c_shape) == 1 and sorted((len(a_shape), len(b_shape))) == [1, 2]:
+            from dace.libraries.blas.nodes.gemv import Gemv
+            mat_node, vec_node, mat_sum = ((a, b, einsum.a_sum) if len(a_shape) == 2 else (b, a, einsum.b_sum))
+            mat_desc = sdfg.arrays[mat_node.data]
+            # GEMV's non-transposed form contracts the matrix's LAST index (``A[i, k]``
+            # * ``x[k]``); ``transA`` when the contracted index is the FIRST instead.
+            trans_a = bool(mat_sum) and mat_sum[0] != len(mat_desc.shape) - 1
+            # ``y = alpha*A*x + beta*y``. ``LiftEinsum`` sets ``beta`` from the
+            # accumulator's init: ``0`` for an identity-seeded (``setzero``) reduction
+            # (gesummv) -> GEMV overwrites ``y``; a non-zero ``beta`` folds onto the prior
+            # ``y`` (mvt's ``x1 += A*y1``). We do NOT use GEMV's inout ``_y`` for the
+            # accumulate: its BLAS expansion lowers that to an invalid inout tasklet.
+            # Instead GEMV overwrites a temp (``beta=0``) and a following elementwise map
+            # computes ``y = beta*y + tmp`` (a plain, tileable read-modify-write).
+            beta_nz = not symbolic.equal_valued(0, beta)
+            gemv_dst, gemv_desc = (c, sdfg.arrays[output])
+            if beta_nz:
+                buf_name, buf_desc = sdfg.add_transient('%s_gemv' % output, output_shape,
+                                                        sdfg.arrays[output].dtype, find_new_name=True)
+                state.remove_node(c)  # output is produced by the fold map below, not GEMV
+                gemv_dst, gemv_desc = (state.add_access(buf_name), buf_desc)
+            gemv = Gemv('einsum_gemv', transA=trans_a, alpha=alpha, beta=0)
+            state.add_node(gemv)
+            state.add_edge(mat_node, None, gemv, '_A', Memlet.from_array(mat_node.data, mat_desc))
+            state.add_edge(vec_node, None, gemv, '_x', Memlet.from_array(vec_node.data, sdfg.arrays[vec_node.data]))
+            state.add_edge(gemv, '_y', gemv_dst, None, Memlet.from_array(gemv_dst.data, gemv_desc))
+            if beta_nz:
+                c = state.add_write(output)
+                state.add_mapped_tasklet('gemv_beta_fold', {'_gi': '0:%s' % output_shape[0]}, {
+                    '_yin': Memlet.simple(output, '_gi'),
+                    '_b': Memlet.simple(gemv_dst.data, '_gi')
+                },
+                                         '_yout = (%s) * _yin + _b' % beta, {'_yout': Memlet.simple(output, '_gi')},
+                                         input_nodes={gemv_dst.data: gemv_dst},
+                                         output_nodes={output: c},
+                                         external_edges=True)
+            return output, c
+
         # Compute GEMM dimensions and strides
         strides = dict(BATCH=prod([c_shape[dim] for dim in einsum.c_batch]),
                        M=prod([a_shape[dim] for dim in einsum.a_only]),
@@ -406,14 +451,30 @@ def _create_einsum_internal(sdfg: SDFG,
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
 
-        # ``strides`` is an explicit symbol mapping, so it bypasses auto-detection.
-        # When alpha/beta carry runtime-scalar coefficient symbols (e.g. gemm's
-        # ``alpha``, promoted to a symbol by LiftEinsum), the inner GEMM library
-        # node reports them as free symbols; identity-map any such symbol so it is
-        # plumbed through the nested SDFG (and propagates up to the parent).
+        # ``strides`` is an explicit symbol mapping that already binds the inner
+        # GEMM's dimension/stride symbols (``M``/``K``/``N``/``sAM``/...) BY NAME.
+        # Only plumb EXTRA free symbols it does not already cover -- e.g. a runtime
+        # scalar alpha/beta promoted to a symbol by LiftEinsum. Comparing by NAME is
+        # essential: ``strides`` has string keys while ``free_symbols`` yields symbol
+        # OBJECTS, so a blanket ``setdefault(s, s)`` re-adds (and thus leaks) the
+        # already-bound dimension symbols as parent free symbols -- which breaks
+        # call-time symbol inference (the SDFG gains unsolvable free symbols).
         sym_mapping = dict(strides)
         for s in nsdfg.free_symbols:
-            sym_mapping.setdefault(s, s)
+            if str(s) not in sym_mapping:
+                sym_mapping[str(s)] = s
+        # A runtime scalar alpha/beta (LiftEinsum's ``_alpha``/``_beta`` connector,
+        # promoted to the ``__einsum_alpha``/``__einsum_beta`` symbol above) lives in
+        # the still-unexpanded GEMM libnode's ``alpha``/``beta`` PROPERTY, so it is not
+        # yet in ``nsdfg.free_symbols`` -- it only surfaces once that libnode expands to
+        # a tasklet, by which point this ``symbol_mapping`` is fixed. Plumb the
+        # coefficients' symbols through now (identity map into the enclosing expansion
+        # SDFG, which binds them from the scalar connector) so the later expansion does
+        # not leave the inner SDFG missing them.
+        for coeff in (alpha, beta):
+            for s in symbolic.symlist(coeff).values():
+                if str(s) not in sym_mapping:
+                    sym_mapping[str(s)] = s
         nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, sym_mapping)
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))

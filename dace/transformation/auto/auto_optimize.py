@@ -561,7 +561,8 @@ def auto_optimize(sdfg: SDFG,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
                   use_gpu_storage: bool = False,
-                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> SDFG:
+                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+                  expand: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -585,6 +586,9 @@ def auto_optimize(sdfg: SDFG,
     :param find_fast_library_fn: Optional function that returns the prioritized list of
                                  implementations for the given device, which will take priority over
                                  the existing set of fast libraries found using auto-optimize.
+    :param expand: If True (default), select fast library implementations and expand all library
+                   nodes. If False, leave library nodes un-expanded (``implementation`` unset) so the
+                   optimized-but-high-level SDFG can be inspected before expansion.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -641,12 +645,13 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
+    if expand:
+        set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
 
-    # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
-    infer_types.infer_connector_types(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    sdfg.expand_library_nodes()
+        # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization
 

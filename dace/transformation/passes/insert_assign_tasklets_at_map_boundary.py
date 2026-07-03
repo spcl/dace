@@ -1,13 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Insert plain assignment tasklets at map-boundary staging edges.
+"""Insert plain assignment tasklets at unit map-boundary / copy edges.
 
-A vectorization-focused variant of ``InsertExplicitCopies``: it detects
-the stage-in (``AccessNode -> MapEntry* -> AccessNode``) and stage-out
-(``AccessNode -> MapExit* -> AccessNode``) staging patterns and replaces
-the boundary edge with a 3-node chain whose middle is an ``_out = _in``
-tasklet. This splits memlets carrying ``other_subset`` into two simple
-subsets so downstream vectorization emitters see uniform shapes. GPU
-storage/device-scope handling is intentionally omitted.
+A canonicalization cleanup: it detects the stage-in
+(``AccessNode -> MapEntry* -> AccessNode``) and stage-out
+(``AccessNode -> MapExit* -> AccessNode``) staging patterns, plus bare
+``other_subset`` ``AccessNode -> AccessNode`` copies, and replaces the boundary
+edge with a 3-node chain whose middle is an ``_out = _in`` tasklet. This removes
+``other_subset`` from the edge (splitting it into two simple src/dst subsets) so
+downstream subset-substituting passes never have to reason about copy memlets.
+
+Only **unit** (single-element) copies are rewritten: an ``_out = _in`` tasklet is
+a value-preserving copy solely for one element -- for a multi-element slice the
+connectors are pointers and ``_out = _in`` is a no-op that silently drops the
+copy, so those are left as real (``CopyNDDynamic``) copies. A View's defining
+edge is never split. GPU storage/device-scope handling is intentionally omitted.
 """
 import copy
 from typing import Any, Dict, Optional
@@ -18,6 +24,7 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.insert_unit_copy_assign_tasklets import _is_unit_subset
 
 
 @transformation.explicit_cf_compatible
@@ -73,6 +80,15 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                     or isinstance(sdfg.arrays[e.dst.data], dace.data.View)):
                 continue
             if e.data.other_subset is None:
+                continue
+            # An ``_out = _in`` tasklet is a value-preserving copy ONLY for a
+            # single element. For a multi-element slice the connectors are typed
+            # as pointers, so ``_out = _in`` is a no-op pointer reassignment that
+            # silently drops the copy (e.g. vadv's loop-carried
+            # ``data_col[:] = dcol[:,:,k]`` became dead, killing the k-recurrence).
+            # This pass only handles unit copies; leave multi-element AN->AN
+            # copies as real (CopyNDDynamic) copies. Reuse the companion predicate.
+            if not (_is_unit_subset(e.data.subset) and _is_unit_subset(e.data.other_subset)):
                 continue
             edges_to_process.append(e)
 
@@ -132,6 +148,23 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             elif isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.MapExit):
                 direction = 'out'
             else:
+                continue
+            # A View AccessNode's boundary edge (``MapEntry -> View`` stage-in or
+            # ``View -[views]-> MapExit`` stage-out) is the View's DEFINING edge,
+            # not a copy to stage. Splitting it with an ``_out=_in`` tasklet
+            # destroys the ``views`` connector and leaves the View with code nodes
+            # on both sides, so ``get_view_edge`` can no longer identify the
+            # defining edge ("Ambiguous or invalid edge to/from a View access
+            # node"). Mirrors the guard in ``_replace_other_subset_an_edges``.
+            scope_an = e.dst if direction == 'in' else e.src
+            if isinstance(sdfg.arrays[scope_an.data], dace.data.View):
+                continue
+            # The staging split copies the FULL local array via an ``_out = _in``
+            # tasklet, which is value-preserving only for a single element -- a
+            # multi-element local is typed as a pointer, so ``_out = _in`` is a
+            # no-op. Only split unit staging edges (the pass handles unit copies);
+            # leave larger ones as real copies.
+            if not _is_unit_subset(dace.subsets.Range.from_array(sdfg.arrays[scope_an.data])):
                 continue
             # WCR is reduction semantics on the WRITE side and is only valid on
             # stage-out edges (``... -> MapExit``). A WCR-carrying stage-in

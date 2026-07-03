@@ -46,6 +46,12 @@ _UNOP_CPP = {
     "sqrt": ("std::sqrt(", ")"),
     "sin": ("std::sin(", ")"),
     "cos": ("std::cos(", ")"),
+    "tan": ("std::tan(", ")"),
+    "asin": ("std::asin(", ")"),
+    "acos": ("std::acos(", ")"),
+    "atan": ("std::atan(", ")"),
+    "sinh": ("std::sinh(", ")"),
+    "cosh": ("std::cosh(", ")"),
     "floor": ("std::floor(", ")"),
     "ceil": ("std::ceil(", ")"),
     "tanh": ("std::tanh(", ")"),
@@ -61,6 +67,12 @@ _CUTE_UNOP_EXPR = {
     "sqrt": "ct.sqrt({a})",
     "sin": "ct.sin({a})",
     "cos": "ct.cos({a})",
+    "tan": "ct.tan({a})",
+    "asin": "ct.asin({a})",
+    "acos": "ct.acos({a})",
+    "atan": "ct.atan({a})",
+    "sinh": "ct.sinh({a})",
+    "cosh": "ct.cosh({a})",
     "floor": "ct.floor({a})",
     "ceil": "ct.ceil({a})",
     "tanh": "ct.tanh({a})",
@@ -343,7 +355,10 @@ class TileUnop(nodes.LibraryNode):
         # operand dtype, so a narrowing to the output dtype there is a real bug.
         if self.kind_a == _TILE and self.op not in _CAST_OP_TO_CPP:
             src = sdfg.arrays[in_e["_a"].data.data].dtype
-            if not _promotion_ok(src, c_arr.dtype):
+            # ``abs`` of a complex operand is the (real) magnitude -- ``std::abs(std::complex<T>)``
+            # returns ``T`` -- so a complex -> real result is correct, not a lossy narrowing.
+            is_complex_abs = self.op == "abs" and src in (dace.dtypes.complex64, dace.dtypes.complex128)
+            if not is_complex_abs and not _promotion_ok(src, c_arr.dtype):
                 raise NotImplementedError(
                     f"{self.label}: Tile operand '_a' dtype {src} cannot be promoted to output dtype "
                     f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")

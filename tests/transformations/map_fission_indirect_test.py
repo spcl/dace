@@ -5,7 +5,7 @@
     map whose body is one ``NestedSDFG`` whose ``idx[i]`` indirection is an
     interstate-edge symbol assignment depending on the map iterator.
     ``MapFission`` refuses to split that in place (it cannot hoist the
-    assignment out of the fissioned maps). ``ConditionalComponentFission``
+    assignment out of the fissioned maps). ``SplitStatements``
     replicates the NestedSDFG per independent output group first -- the
     deep-copy carries every interstate-edge indirection-symbol assignment
     and the index inputs into each clone -- after which ordinary
@@ -22,7 +22,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.dataflow.map_fission import MapFission
 
 N = dace.symbol('N')
@@ -75,7 +75,7 @@ def gather_coupled(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], e
 def _fission(sdfg):
     """The fuse-stage recipe for indirect maps: replicate the blocking
     NestedSDFG per independent output, then MapFission."""
-    ccf = ConditionalComponentFission().apply_pass(sdfg, {})
+    ccf = SplitStatements().apply_pass(sdfg, {})
     mf = sdfg.apply_transformations_repeated(MapFission)
     return ccf, mf
 
@@ -94,7 +94,7 @@ def test_mapfission_splits_two_independent_gathers():
 
     sdfg = gather_two.to_sdfg(simplify=True)
     ccf, mf = _fission(sdfg)
-    assert ccf is not None, "ConditionalComponentFission must replicate the indirect NestedSDFG"
+    assert ccf is not None, "SplitStatements must replicate the indirect NestedSDFG"
     assert mf is not None and _nmaps(sdfg) == 2, "MapFission must split into two maps"
     sdfg.validate()
 
@@ -164,7 +164,7 @@ def test_mapfission_single_output_indirect_is_noop():
     copy.deepcopy(base)(a=a.copy(), idx=idx.copy(), b=ref, N=n)
 
     sdfg = gather_single.to_sdfg(simplify=True)
-    assert ConditionalComponentFission().apply_pass(sdfg, {}) is None, "single group -> no-op"
+    assert SplitStatements().apply_pass(sdfg, {}) is None, "single group -> no-op"
     sdfg.validate()
     out = np.zeros(n)
     sdfg(a=a.copy(), idx=idx.copy(), b=out, N=n)
@@ -183,7 +183,7 @@ def test_mapfission_coupled_outputs_not_split_but_correct():
 
     sdfg = gather_coupled.to_sdfg(simplify=True)
     # Coupled outputs -> a single independent group -> no replication.
-    assert ConditionalComponentFission().apply_pass(sdfg, {}) is None
+    assert SplitStatements().apply_pass(sdfg, {}) is None
     sdfg.validate()
     out_b, out_e = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), idx=idx.copy(), b=out_b, e=out_e, N=n)

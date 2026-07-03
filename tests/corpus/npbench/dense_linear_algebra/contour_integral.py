@@ -21,7 +21,7 @@ ARRAY_ARGS = ('Ham', 'int_pts', 'Y', 'P0', 'P1')
 SCALARS = {}
 OUTPUT_ARGS = ('P0', 'P1')
 
-NR, NM, slab_per_bc = (dc.symbol(s, dtype=dc.int64) for s in ('NR', 'NM', 'slab_per_bc'))
+NR, NM, slab_per_bc, num_int_pts = (dc.symbol(s, dtype=dc.int64) for s in ('NR', 'NM', 'slab_per_bc', 'num_int_pts'))
 
 
 def initialize(NR, NM, slab_per_bc, num_int_pts, datatype=np.float64):
@@ -52,10 +52,11 @@ def reference(NR, NM, slab_per_bc, Ham, int_pts, Y, P0, P1):
 
 
 @dc.program
-def kernel(Ham: dc_complex_float[slab_per_bc + 1, NR, NR], int_pts: dc_complex_float[32], Y: dc_complex_float[NR, NM]):
+def kernel(Ham: dc_complex_float[slab_per_bc + 1, NR, NR], int_pts: dc_complex_float[num_int_pts],
+           Y: dc_complex_float[NR, NM]):
     P0 = np.zeros((NR, NM), dtype=dc_complex_float)
     P1 = np.zeros((NR, NM), dtype=dc_complex_float)
-    for idx in range(32):
+    for idx in range(num_int_pts):
         z = int_pts[idx]
         Tz = np.zeros((NR, NR), dtype=dc_complex_float)
         for n in range(slab_per_bc + 1):

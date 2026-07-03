@@ -557,6 +557,16 @@ def result_type_of(lhs, *rhs):
     # Extract data sizes (seems the type itself doesn't expose this)
     size_lhs = lhs_(0).itemsize
     size_rhs = rhs_(0).itemsize
+    # ``bool`` is NumPy's lowest-rank numeric operand: ``result_type(bool, X) == X`` for
+    # any numeric X, int OR float (e.g. ``np.bool_(True) * np.int32(3)`` is ``int32(3)``).
+    # ``bool`` is NOT ``issubdtype(_, integer)``, so without this the float-precedence
+    # fallthrough below treats it as the winning "float-like" side and returns ``bool`` --
+    # truncating ``bool * int`` to 0/1 (the nussinov fp_factor ``c*t + (1-c)*e`` miscompile).
+    # The both-bool case already returned above (``lhs == rhs``).
+    if numpy.issubdtype(lhs_, numpy.bool_):
+        return rhs
+    if numpy.issubdtype(rhs_, numpy.bool_):
+        return lhs
     # Both are integers
     if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(rhs_, numpy.integer):
         # If one byte width is larger, use it

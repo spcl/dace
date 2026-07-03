@@ -44,6 +44,7 @@ tracing back to the carried-accumulator read AN. Other (delta-computation)
 tasklets are allowed in the body and are left untouched by the rewrite.
 """
 import ast
+import copy
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from dace import SDFG, data, dtypes, memlet as mm, properties, subsets, symbolic
@@ -587,7 +588,7 @@ def _splice_reduce_state(parent: ControlFlowRegion, loop: LoopRegion, match: _Ma
     acc_an = red_state.add_write(match.accum)
     red = red_state.add_reduce(match.wcr, axes=list(range(len(buf_desc.shape))), identity=None)
     red_state.add_edge(buf_an, None, red, None, mm.Memlet(data=buf_name, subset=subsets.Range.from_array(buf_desc)))
-    red_state.add_edge(red, None, acc_an, None, mm.Memlet(data=match.accum, subset=match.accum_subset))
+    red_state.add_edge(red, None, acc_an, None, mm.Memlet(data=match.accum, subset=copy.deepcopy(match.accum_subset)))
 
 
 # ----------------------------------------------------------------------------
@@ -873,11 +874,16 @@ def _emit_reduce_into(graph, sdfg: SDFG, buf_src: nodes.AccessNode, buf_full, wc
     ``_reduced`` transient, and a ``combine`` tasklet folds the EXPLICIT seed
     (``seed_src``, a real read edge) with that reduction into ``accum_target`` --
     so every read the reduction depends on is represented in the dataflow.
+
+    Each accumulator edge gets its OWN ``Range`` copy: dace validation rejects two
+    memlets that share the same subset object (``Duplicate subset detected``), and
+    an in-place accumulator (``A[i,j] = A[i,j] OP ...``) routes ``accum_subset``
+    onto both the seed-read and the result-write edge here.
     """
     if not seeded:
         red = graph.add_reduce(wcr, axes=list(range(n_axes)), identity=op_identity)
         graph.add_edge(buf_src, None, red, None, buf_full)
-        graph.add_edge(red, None, accum_target, None, mm.Memlet(data=accum, subset=accum_subset))
+        graph.add_edge(red, None, accum_target, None, mm.Memlet(data=accum, subset=copy.deepcopy(accum_subset)))
         return
     reduced_name, _ = sdfg.add_transient('_reduced_' + accum, [1], sdfg.arrays[accum].dtype, find_new_name=True)
     reduced_an = graph.add_access(reduced_name)
@@ -885,9 +891,9 @@ def _emit_reduce_into(graph, sdfg: SDFG, buf_src: nodes.AccessNode, buf_full, wc
     graph.add_edge(buf_src, None, red, None, buf_full)
     graph.add_edge(red, None, reduced_an, None, mm.Memlet(data=reduced_name, subset='0'))
     combine = graph.add_tasklet('combine_' + accum, {'__seed', '__red'}, {'__out'}, combine_code)
-    graph.add_edge(seed_src, None, combine, '__seed', mm.Memlet(data=accum, subset=accum_subset))
+    graph.add_edge(seed_src, None, combine, '__seed', mm.Memlet(data=accum, subset=copy.deepcopy(accum_subset)))
     graph.add_edge(reduced_an, None, combine, '__red', mm.Memlet(data=reduced_name, subset='0'))
-    graph.add_edge(combine, '__out', accum_target, None, mm.Memlet(data=accum, subset=accum_subset))
+    graph.add_edge(combine, '__out', accum_target, None, mm.Memlet(data=accum, subset=copy.deepcopy(accum_subset)))
 
 
 def _rewrite_map_wcr(state: SDFGState, match: _MapWCRMatch):

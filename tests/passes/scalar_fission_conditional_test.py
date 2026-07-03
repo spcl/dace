@@ -136,5 +136,88 @@ def test_carried_scalar_no_else_not_miscompiled():
     assert np.array_equal(ra[2], ca[2]) and np.array_equal(ra[3], ca[3])
 
 
+def _condition_referenced_scalars(sdfg):
+    """Map of ``name -> #writers`` for size-1 data referenced by a control-flow
+    condition (branch / loop code block), the reads that are invisible to the
+    dataflow graph."""
+    names = set()
+    for reg in sdfg.all_control_flow_regions():
+        for cb in reg.get_meta_codeblocks():
+            names |= cb.get_free_symbols()
+    names &= set(sdfg.arrays.keys())
+    return {nm: sum(1 for st in sdfg.states() for an in st.data_nodes() if an.data == nm and st.in_degree(an) > 0)
+            for nm in names}
+
+
+def test_privatize_keeps_branch_condition_scalar():
+    """A size-1 transient read ONLY by a branch condition must not be privatized.
+
+    Fission renames the scalar's writer but does not rewrite the condition (region
+    meta-code is not a dataflow edge), which orphans the reference into an undefined
+    symbol at ``ScalarToSymbolPromotion`` (the crc16 canon failure). Such a scalar
+    is condition-read -- not a dead per-iteration temporary -- so its writer must
+    survive ``PrivatizeScalars``.
+    """
+
+    @dace.program
+    def branch_cond(a: dace.int64[N], out: dace.int64[1]):
+        c = 0
+        for i in range(N):
+            t = a[i] & 1
+            if t:
+                c = c + 1
+        out[0] = c
+
+    sdfg = branch_cond.to_sdfg(simplify=False)
+    pre = _condition_referenced_scalars(sdfg)
+    assert any(w > 0 for w in pre.values()), "setup: expected a written, condition-referenced scalar"
+
+    PrivatizeScalars().apply_pass(sdfg, {})
+
+    post = _condition_referenced_scalars(sdfg)
+    for nm, w0 in pre.items():
+        if w0 > 0:
+            assert post.get(nm, 0) == w0, (f"condition-referenced scalar {nm!r} lost its writer to privatization "
+                                           f"({w0} -> {post.get(nm, 0)}); the condition reference is now orphaned")
+
+
+def test_privatize_keeps_loop_condition_scalar():
+    """As above, but the scalar is referenced by a *loop* condition (the user's
+    "check the code blocks of for loops as well"): ``LoopRegion.get_meta_codeblocks``
+    covers the loop condition/init/update, so a loop-condition scalar is likewise
+    preserved rather than privatized into an orphan.
+    """
+
+    @dace.program
+    def while_cond(a: dace.int64[N], out: dace.int64[1]):
+        i = 0
+        cont = a[0] & 1
+        while cont:
+            i = i + 1
+            if i >= N - 1:
+                cont = 0
+            else:
+                cont = a[i] & 1
+        out[0] = i
+
+    sdfg = while_cond.to_sdfg(simplify=False)
+    # the loop condition references a transient scalar (``cont``)
+    loop_cond_names = set()
+    for reg in sdfg.all_control_flow_regions():
+        if isinstance(reg, LoopRegion):
+            for cb in reg.get_meta_codeblocks():
+                loop_cond_names |= cb.get_free_symbols()
+    loop_cond_names &= set(sdfg.arrays.keys())
+    assert loop_cond_names, "setup: expected a loop-condition-referenced scalar"
+
+    pre = _condition_referenced_scalars(sdfg)
+    PrivatizeScalars().apply_pass(sdfg, {})
+    post = _condition_referenced_scalars(sdfg)
+    for nm in loop_cond_names:
+        if pre.get(nm, 0) > 0:
+            assert post.get(nm, 0) == pre[nm], (f"loop-condition scalar {nm!r} lost its writer to privatization "
+                                                f"({pre[nm]} -> {post.get(nm, 0)})")
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

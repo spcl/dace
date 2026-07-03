@@ -1,15 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import functools
 import re
 
 import dace
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
 
 import ast
 from dace.sdfg.nodes import CodeBlock
+from dace.sdfg.type_inference import infer_types
 
 
 class ASTSplitter:
@@ -274,6 +276,45 @@ def _ssa_lhs_is_bool(ssa_line: str) -> bool:
     return False
 
 
+def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[str, Any], fallback) -> Dict[str, Any]:
+    """Infer the dtype of every SSA intermediate, threading resolved types forward.
+
+    The primary inference is DaCe's ``infer_types`` (operand promotion via
+    ``result_type_of``, comparisons -> ``bool``, integer-power special cases). When it
+    cannot type a statement -- an unknown function-call return such as ``tanh(a)``
+    yields ``None`` -- the result is the promotion of that statement's OWN known operand
+    types: a single float operand keeps its float, several operands promote by
+    ``result_type_of`` (the same rule the primary path applies). Only a statement with
+    no known operand type at all falls back to the coarse whole-tasklet ``fallback``.
+
+    Resolved types are threaded forward, so a later statement that reads an earlier
+    (fallback-typed) intermediate sees its resolved type rather than ``None``.
+
+    :param ssa_statements: The single-op ``lhs = rhs`` SSA statements, in order.
+    :param leaf_types: Known dtypes of the leaf operands (input connectors + symbols).
+    :param fallback: Dtype to use for an intermediate with no known operand type.
+    :returns: ``{intermediate name -> dtype}`` for every typed SSA assignment.
+    """
+    known: Dict[str, Any] = dict(leaf_types)
+    inferred: Dict[str, Any] = {}
+    for stmt in ssa_statements:
+        try:
+            stmt_types = infer_types([stmt], known)
+        except Exception:
+            stmt_types = {}
+        for lhs, t in stmt_types.items():
+            if t is None:
+                # infer_types could not type this statement (e.g. ``tanh(a)``): promote
+                # the operand types it DOES know -- same float in => same float out;
+                # multiple operands => result_type_of -- and only then the coarse fallback.
+                _, rhs_vars = _get_vars(stmt)
+                operand_types = [known[v] for v in rhs_vars if known.get(v) is not None]
+                t = functools.reduce(dace.dtypes.result_type_of, operand_types) if operand_types else fallback
+            known[lhs] = t
+            inferred[lhs] = t
+    return inferred
+
+
 @transformation.explicit_cf_compatible
 class SplitTasklets(ppl.Pass):
     """
@@ -417,6 +458,18 @@ class SplitTasklets(ppl.Pass):
                 if len(n.out_connectors) > 1:
                     continue
 
+                # Leave a conditional-write tasklet (``if cond: out = e`` -- the frontend's
+                # ``A[mask] = value`` form, newast.py:2868) intact. It is not straight-line,
+                # so the SSA split below mangles it into a dangling map connector; instead
+                # ``ConvertTaskletsToTileOps`` lowers it to a masked ``TileStore`` (the mask
+                # ``cond`` gates the store, no old-value read).
+                try:
+                    _body = ast.parse(c.as_string).body
+                    if len(_body) == 1 and isinstance(_body[0], ast.If) and not _body[0].orelse:
+                        continue
+                except (SyntaxError, ValueError):
+                    pass
+
                 # Leave intact a producer whose scalar output is symbol-lifted on an
                 # interstate edge (the value is reconstructed symbolically downstream
                 # from this one tasklet; splitting it would expose an intermediate
@@ -463,21 +516,16 @@ class SplitTasklets(ppl.Pass):
                     if str(free_sym) not in g.sdfg.symbols:
                         input_types.add(dace.int64)
 
-                # It is complicated to split a tasklet with mixed precision input
-                # Need to bookkeep the mapping of intermediate results to precision
-                if len(input_types) > 1:
-                    # It might be zero due to symbols
-                    has_float_type = any({
-                        itype
-                        for itype in input_types
-                        if itype in {dace.dtypes.float64, dace.dtypes.float32, dace.dtypes.float16}
-                    })
-                    if has_float_type:
-                        input_type = dace.float64
-                    else:
-                        input_type = dace.int64
-                elif len(input_types) == 1:
-                    input_type = next(iter(input_types))
+                # Best-effort *fallback* dtype, used only for an intermediate that the
+                # rigorous per-statement inference below cannot type (e.g. an
+                # unparseable nested compare). Promote ALL input operand types together
+                # via the DaCe promotion lattice (``result_type_of``) rather than a
+                # hard-coded float/int bucket -- this covers every dtype uniformly
+                # (bool, int8..int64, float16/32/64, complex64/128) with the standard
+                # widening rules (same-kind widening; int promotes to float; real
+                # promotes to complex).
+                if input_types:
+                    input_type = functools.reduce(dace.dtypes.result_type_of, input_types)
                 else:
                     # Default to float when the tasklet consists purely of constants.
                     input_type = dace.float64
@@ -485,7 +533,23 @@ class SplitTasklets(ppl.Pass):
                 if c.language == dace.dtypes.Language.Python:
                     ssa_statements = to_ssa(c.as_string)
                     if len(ssa_statements) != 1:
-                        tasklets_to_split.append((n, g, ssa_statements, input_type))
+                        # Rigorously infer EACH split intermediate's type from its
+                        # operands (DaCe promotion: same-kind widening, fp32->fp64,
+                        # int32->int64, complex64->complex128, ...) instead of stamping
+                        # the whole chain with one coarse ``input_type``. The leaf types
+                        # are the input connectors' array dtypes and the body symbols
+                        # (unregistered ones -- e.g. loop iterators -- are int64 index
+                        # vars). ``input_type`` stays as the best-effort fallback for any
+                        # intermediate the inference cannot type.
+                        leaf_types = {}
+                        for ie in g.in_edges(n):
+                            if ie.data is not None and ie.data.data is not None and ie.dst_conn is not None:
+                                leaf_types[ie.dst_conn] = g.sdfg.arrays[ie.data.data].dtype
+                        for free_sym in n.free_symbols:
+                            nm = str(free_sym)
+                            leaf_types[nm] = g.sdfg.symbols[nm] if nm in g.sdfg.symbols else dace.int64
+                        inferred = _infer_ssa_intermediate_types(ssa_statements, leaf_types, input_type)
+                        tasklets_to_split.append((n, g, ssa_statements, input_type, inferred))
 
         # Previous tasklet:
         # i1 -> |         |
@@ -499,7 +563,7 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
-        for tasklet, state, ssa_statements, input_type in tasklets_to_split:
+        for tasklet, state, ssa_statements, input_type, inferred in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)
             assert tasklet in state.nodes()
@@ -594,7 +658,7 @@ class SplitTasklets(ppl.Pass):
                             if array_name not in state.sdfg.arrays:
                                 state.sdfg.add_scalar(
                                     name=array_name,
-                                    dtype=dace.bool_ if in_conn in bool_vars else input_type,
+                                    dtype=dace.bool_ if in_conn in bool_vars else inferred.get(in_conn, input_type),
                                     storage=dace.dtypes.StorageType.Register,
                                     transient=True,
                                 )
@@ -627,7 +691,7 @@ class SplitTasklets(ppl.Pass):
                     if array_name not in state.sdfg.arrays:
                         state.sdfg.add_scalar(
                             name=array_name,
-                            dtype=dace.bool_ if out_conn in bool_vars else input_type,
+                            dtype=dace.bool_ if out_conn in bool_vars else inferred.get(out_conn, input_type),
                             storage=dace.dtypes.StorageType.Register,
                             transient=True,
                         )

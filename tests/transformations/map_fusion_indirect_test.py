@@ -2,7 +2,7 @@
 """ Map fusion across indirect (gather/scatter) accesses.
 
     The canonicalization pipeline fissions an indirect map into independent
-    indirect maps (ConditionalComponentFission -> MapFission, carrying the
+    indirect maps (SplitStatements -> MapFission, carrying the
     idx[i] indirection symbols into each split) and must then be able to
     recombine them: horizontal fusion of independent gathers/scatters and
     vertical fusion of an indirect producer into its consumer. Every test
@@ -16,7 +16,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.dataflow.map_fission import MapFission
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
@@ -71,7 +71,7 @@ def indirect_producer_consumer(a: dace.float64[N], idx: dace.int32[N], b: dace.f
 def _fission_then_fuse(sdfg):
     """Pipeline fuse-stage recipe: replicate the indirect NestedSDFG,
     MapFission, structural-clean, then vertical+horizontal fusion."""
-    ConditionalComponentFission().apply_pass(sdfg, {})
+    SplitStatements().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(MapFission)
     _structural_clean(sdfg)
     return sdfg.apply_transformations_repeated([MapFusionVertical, MapFusionHorizontal])
@@ -100,7 +100,7 @@ def test_horizontal_fusion_recombines_indirect_maps(prog, kind, interior):
     sdfg = prog.to_sdfg(simplify=True)
     assert _nmaps(sdfg) == 1
     # Fission so there are two independent indirect maps to recombine.
-    ConditionalComponentFission().apply_pass(sdfg, {})
+    SplitStatements().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(MapFission)
     assert _nmaps(sdfg) == 2, "indirect map must fission into two"
     _structural_clean(sdfg)

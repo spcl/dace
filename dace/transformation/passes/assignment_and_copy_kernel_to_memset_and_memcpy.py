@@ -492,6 +492,21 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     "in state.", UserWarning)
                 continue
 
+            # The lifted node is an INDEPENDENT library node with no map ordering. If
+            # the destination array has another writer in this state -- e.g. a WCR
+            # accumulate that must run AFTER this zero-init (bicg: ``s`` is memset to
+            # 0, then ``s[j] += ...``) -- the two become unordered same-array writers
+            # and codegen may emit the memset after the accumulate, zeroing the
+            # result. The original map kept the order via node tiebreak; the libnode
+            # does not. Leave such a path as a map (still correct, just not lifted).
+            if any(other.data == dst_access_node.data and other is not dst_access_node and state.in_degree(other) > 0
+                   for other in state.data_nodes()):
+                if verbose:
+                    warnings.warn(
+                        f"Skipping {kind} removal: destination array {dst_access_node.data!r} has another "
+                        "writer in the state; lifting would lose write ordering.", UserWarning)
+                continue
+
             # A memcpy lowers to a byte copy, so source and destination must agree on dtype and storage.
             if not is_memset:
                 src_desc = state.sdfg.arrays[src_access_node.data]
@@ -590,7 +605,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     state.remove_node(n)
 
         for n in state.nodes():
-            if (state.degree(n) == 0):
+            if state.degree(n) == 0:
+                # A connector-less side-effect tasklet (e.g. BreakAntiDependence's
+                # positive-offset trap guard) is degree-0 BY DESIGN and marks itself
+                # side-effecting precisely so it is not dead-code-eliminated -- the
+                # snapshot rename it guards is only sound when that check runs. Honour
+                # that contract; only genuinely-orphaned nodes are removed here.
+                if isinstance(n, dace.nodes.Tasklet) and n.side_effects:
+                    continue
                 state.remove_node(n)
 
     @staticmethod

@@ -51,7 +51,7 @@ def pressure_poisson_np(nit, p, dx, dy, b):
 def reference(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
     un = np.empty_like(u)
     vn = np.empty_like(v)
-    b = np.zeros((ny, nx))
+    b = np.zeros((ny, nx), dtype=np.float32)
     for n in range(nt):
         un = u.copy()
         vn = v.copy()
@@ -105,7 +105,7 @@ def kernel(nt: dc.int64, u: dc_float[ny, nx], v: dc_float[ny, nx], dt: dc_float,
            p: dc_float[ny, nx], rho: dc_float, nu: dc_float):
     un = np.empty_like(u)
     vn = np.empty_like(v)
-    b = np.zeros((ny, nx))
+    b = np.zeros((ny, nx), dtype=np.float32)
     for n in range(nt):
         un[:] = u.copy()
         vn[:] = v.copy()

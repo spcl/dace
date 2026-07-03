@@ -565,6 +565,23 @@ class RemoveViews(ppl.Pass):
     def report(self, pass_retval: Set[str]) -> str:
         return f'Removed {len(pass_retval)} views: {pass_retval}.'
 
+    @staticmethod
+    def _is_library_node_operand(state: SDFGState, vnode: nd.AccessNode) -> bool:
+        """True if ``vnode`` is a direct input or output of a library node.
+
+        Such a View provides the operand's expected (squeezed) shape, so it must
+        survive until the library node is expanded -- removing it widens the operand
+        back to the backing array's dimensionality, which a shape-sensitive expansion
+        (notably GEMM / MatMul, which needs exactly 2D operands) cannot handle.
+        """
+        for e in state.in_edges(vnode):
+            if isinstance(e.src, nd.LibraryNode):
+                return True
+        for e in state.out_edges(vnode):
+            if isinstance(e.dst, nd.LibraryNode):
+                return True
+        return False
+
     def _process_state(self, sdfg, state, removed):
         changed = False
 
@@ -586,6 +603,18 @@ class RemoveViews(ppl.Pass):
                           f' -- skipping')
                 continue
             viewed_node, view_edge, viewed_subset, is_viewed_src = info
+
+            # Do not remove a View that is a direct input/output of a library node
+            # (e.g. a GEMM / MatMul operand). The View supplies the operand's expected
+            # squeezed shape -- a 2D ``[M, N]`` slice of an N-D array. Rewriting it to
+            # the backing array re-introduces the size-1 leading dims (``[1, 1, .., M, N]``),
+            # and the library node's expansion -- which requires exactly 2D operands --
+            # then rejects it (scattering_self_energies: ``G[k, E-w, neigh] @ dH[a, b, i]``).
+            # The View is a no-op reshape that must survive until the node is expanded.
+            if self._is_library_node_operand(state, vnode):
+                if _DEBUGPRINT:
+                    print(f'[{_PASS}]   "{vnode.data}": library-node operand -- skipping')
+                continue
 
             if _DEBUGPRINT:
                 vdesc = sdfg.arrays[vnode.data]

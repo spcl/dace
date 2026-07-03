@@ -998,7 +998,7 @@ def _toplevel_map_count(sdfg):
 
 
 def _run_branch_fission(prog, args, n, expect_maps):
-    """Apply ConditionalComponentFission + MapFission and check e2e.
+    """Apply SplitStatements + MapFission and check e2e.
 
     :param prog: The dace program.
     :param args: Keyword arrays for the reference/post runs (no ``N``).
@@ -1006,14 +1006,14 @@ def _run_branch_fission(prog, args, n, expect_maps):
     :param expect_maps: Minimum number of top-level maps expected after.
     :returns: The post-transformation SDFG.
     """
-    from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+    from dace.transformation.passes.canonicalize.split_statements import SplitStatements
     from dace.transformation.passes.simplify import SimplifyPass
     sdfg = prog.to_sdfg(simplify=True)
 
     ref = {k: v.copy() for k, v in args.items()}
     copy.deepcopy(sdfg)(**ref, N=n)
 
-    ConditionalComponentFission().apply_pass(sdfg, {})
+    SplitStatements().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(MapFission)
     SimplifyPass().apply_pass(sdfg, {})
     sdfg.validate()
@@ -1034,8 +1034,8 @@ def test_conditional_component_fission_two():
     _run_branch_fission(_if_two_components, dict(a=a, A=np.zeros(n), B=np.zeros(n), c=np.array([1], np.int32)), n, 2)
     # condition false: outputs stay zero (replicated condition still guards).
     s = _if_two_components.to_sdfg(simplify=True)
-    from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
-    ConditionalComponentFission().apply_pass(s, {})
+    from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+    SplitStatements().apply_pass(s, {})
     s.apply_transformations_repeated(MapFission)
     s.validate()
     A, B = np.full(n, 9.0), np.full(n, 9.0)
@@ -1053,10 +1053,10 @@ def test_conditional_component_fission_three():
 
 def test_conditional_component_fission_single_is_noop():
     """A lone single-output conditional has nothing to fission: no-op, valid."""
-    from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+    from dace.transformation.passes.canonicalize.split_statements import SplitStatements
     n = 8
     sdfg = _if_single_component.to_sdfg(simplify=True)
-    assert ConditionalComponentFission().apply_pass(sdfg, {}) is None
+    assert SplitStatements().apply_pass(sdfg, {}) is None
     sdfg.validate()
     x = np.zeros(n)
     sdfg(x=x, c=np.array([1], np.int32), N=n)

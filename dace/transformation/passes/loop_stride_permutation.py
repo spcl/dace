@@ -38,9 +38,14 @@ The interchange itself is a swap of the two regions' loop control metadata
 name, so swapping which region iterates which variable *is* the interchange,
 with no node movement and no memlet rewrite.
 
-Scope (v1): perfect two-level nests where the outer loop's body is exactly the
-inner loop. Deeper nests and multi-statement bodies (which need
-:class:`LoopFission` to run first) are left as a TODO.
+Scope: perfect N-level nests (each level's body is exactly the next loop). The
+unit-stride DOALL axis is bubbled inward one adjacent swap at a time; every swap
+must keep a rectangular iteration space and the final innermost loop must be
+DOALL (verified via the ``LoopToMap`` oracle), otherwise the whole bubble
+reverts. A DOALL loop is freely interchangeable, so proving the moved loop is
+DOALL once innermost certifies every adjacent swap along the way. Multi-statement
+bodies (which need :class:`LoopFission` to run first) are still out of scope --
+the innermost body must be a single statement for the oracle.
 """
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -79,77 +84,110 @@ class LoopStridePermutation(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, object]) -> Optional[int]:
-        """Interchange every eligible perfect two-level loop nest in ``sdfg``.
+        """Interchange every eligible perfect loop nest in ``sdfg`` so a
+        unit-stride DOALL axis becomes innermost.
 
         :param sdfg: The SDFG to canonicalize.
-        :returns: The number of interchanges applied, or ``None`` if none.
+        :returns: The number of nests interchanged, or ``None`` if none.
         """
         applied = 0
-        for outer, inner in self._perfect_two_nests(sdfg):
-            applied += self._maybe_interchange(sdfg, outer, inner)
+        for chain in self._perfect_nests(sdfg):
+            applied += self._maybe_interchange_nest(sdfg, chain)
         return applied or None
 
-    def _perfect_two_nests(self, sdfg: SDFG) -> List[Tuple[LoopRegion, LoopRegion]]:
-        """Collect ``(outer, inner)`` LoopRegion pairs forming a perfect nest.
+    def _perfect_nests(self, sdfg: SDFG) -> List[List[LoopRegion]]:
+        """Collect maximal perfect loop-nest chains ``[L0, .., L_{n-1}]`` (outer
+        to inner), ``n >= 2``.
 
-        A pair qualifies when ``outer``'s body is exactly one block, that block
-        is the ``inner`` LoopRegion, and ``inner`` is itself innermost (its body
-        contains no further LoopRegion). Both loops must be plain forward
-        for-loops (a resolvable loop variable, not inverted).
+        A chain descends while each level's body is exactly one block that is the
+        next ``LoopRegion``, ending at the innermost loop (whose body is not a
+        single LoopRegion). Only chain TOPS are seeded -- a loop that is itself
+        the sole body of a parent loop belongs to that parent's chain, not its
+        own -- so each maximal nest is returned exactly once. Every loop must be
+        a plain forward for-loop (resolvable loop variable, not inverted).
         """
-        pairs: List[Tuple[LoopRegion, LoopRegion]] = []
+        # A region is the "inner" of a perfect pair iff it is the single block of
+        # a parent LoopRegion; chain tops are the loops that are NOT such inners.
+        inners: Set[int] = set()
         for region in sdfg.all_control_flow_regions():
-            if not isinstance(region, LoopRegion):
-                continue
-            blocks = list(region.nodes())
-            if len(blocks) != 1 or not isinstance(blocks[0], LoopRegion):
-                continue
-            inner = blocks[0]
-            # inner must be innermost: no nested LoopRegion in its body.
-            if any(isinstance(b, LoopRegion) for b in inner.nodes()):
-                continue
-            if not region.loop_variable or not inner.loop_variable or region.inverted or inner.inverted:
-                continue
-            pairs.append((region, inner))
-        return pairs
+            if isinstance(region, LoopRegion):
+                blocks = list(region.nodes())
+                if len(blocks) == 1 and isinstance(blocks[0], LoopRegion):
+                    inners.add(id(blocks[0]))
 
-    def _maybe_interchange(self, sdfg: SDFG, outer: LoopRegion, inner: LoopRegion) -> int:
-        """Interchange ``outer``/``inner`` if it moves a unit-stride loop inward
-        and the moved loop is DOALL once innermost.
+        chains: List[List[LoopRegion]] = []
+        for region in sdfg.all_control_flow_regions():
+            if not isinstance(region, LoopRegion) or id(region) in inners:
+                continue
+            chain = [region]
+            cur = region
+            while True:
+                blocks = list(cur.nodes())
+                if len(blocks) == 1 and isinstance(blocks[0], LoopRegion):
+                    cur = blocks[0]
+                    chain.append(cur)
+                else:
+                    break
+            if len(chain) < 2:
+                continue
+            if any((not lr.loop_variable) or lr.inverted for lr in chain):
+                continue
+            chains.append(chain)
+        return chains
 
+    def _maybe_interchange_nest(self, sdfg: SDFG, chain: List[LoopRegion]) -> int:
+        """Bubble a unit-stride DOALL loop in ``chain`` to the innermost slot.
+
+        :param chain: A perfect nest ``[L0, .., L_{n-1}]`` (outer to inner).
         :returns: 1 if an interchange was committed, else 0.
         """
-        outer_var, inner_var = outer.loop_variable, inner.loop_variable
-        # Rectangular iteration space: a metadata swap only realizes the
-        # interchange when neither loop's bounds reference the other's loop
-        # variable. A triangular nest (``for j: for i in 1:j+1``) changes its
-        # iteration SET under interchange and needs a bound transformation, not
-        # a swap -- reject it here.
-        if not self._bounds_independent(outer, inner):
+        loop_vars = [lr.loop_variable for lr in chain]
+        innermost = chain[-1]
+        unit_vars = self._unit_stride_loop_vars(sdfg, innermost, set(loop_vars))
+        # Nothing unambiguous to gain when the innermost axis is already
+        # unit-stride (or no axis is): interchange only helps by moving an OUTER
+        # unit-stride axis inward.
+        if not unit_vars or loop_vars[-1] in unit_vars:
             return 0
-        unit_vars = self._unit_stride_loop_vars(sdfg, inner, {outer_var, inner_var})
-        # Only act when the unit-stride loop is the OUTER one and the inner is
-        # not unit-stride -- that is the case interchange improves. (When both
-        # or neither are unit-stride there is nothing unambiguous to gain.)
-        if not (outer_var in unit_vars and inner_var not in unit_vars):
-            return 0
-
-        # Speculatively interchange (swap loop-control metadata) so the
-        # unit-stride loop becomes the inner region, then verify with the
-        # LoopToMap DOALL oracle that the now-inner loop is data-parallel. A
-        # DOALL loop is freely interchangeable, so DOALL-after proves the swap
-        # was legal; it also guarantees the moved loop becomes a map (the
-        # parallelizable-map count does not drop).
-        self._swap_loop_metadata(outer, inner)
-        if self._is_doall(sdfg, inner):
-            return 1
-        # Not provably safe/beneficial -- revert and leave a TODO.
-        self._swap_loop_metadata(outer, inner)
-        # TODO(loop-stride-permutation): unit-stride loop ``outer_var`` is not
-        # DOALL once innermost (carries a dependence, or its body is not a
-        # single state pre-fission). Handle via dependence analysis / running
-        # after LoopFission for multi-statement nests.
+        # Bubble a non-innermost unit-stride axis to innermost. Prefer the axis
+        # closest to the inner slot (fewest swaps); fall back to outer ones.
+        for pos in range(len(chain) - 2, -1, -1):
+            if loop_vars[pos] in unit_vars and self._try_bubble_to_inner(sdfg, chain, pos):
+                return 1
         return 0
+
+    def _try_bubble_to_inner(self, sdfg: SDFG, chain: List[LoopRegion], pos: int) -> bool:
+        """Bubble ``chain[pos]``'s loop variable to the innermost slot via adjacent
+        metadata swaps, verify, and revert the whole bubble on failure.
+
+        Each adjacent interchange must keep a rectangular iteration space
+        (``_bounds_independent``). A DOALL loop is freely interchangeable, so it
+        suffices to prove the moved loop is DOALL *once innermost* (via the
+        ``LoopToMap`` oracle) -- that certifies every adjacent swap along the way.
+        """
+        done: List[Tuple[LoopRegion, LoopRegion]] = []
+
+        def revert() -> None:
+            for a, b in reversed(done):
+                self._swap_loop_metadata(a, b)
+
+        for k in range(pos, len(chain) - 1):
+            # After prior swaps the target var sits at chain[k]; the pair being
+            # interchanged is (target=chain[k], chain[k + 1]). A metadata swap only
+            # realizes the interchange when the iteration space stays rectangular;
+            # a triangular pair changes the iteration SET and is rejected here.
+            if not self._bounds_independent(chain[k], chain[k + 1]):
+                revert()
+                return False
+            self._swap_loop_metadata(chain[k], chain[k + 1])
+            done.append((chain[k], chain[k + 1]))
+        if self._is_doall(sdfg, chain[-1]):
+            return True
+        # Not provably safe/beneficial -- revert and leave a TODO.
+        revert()
+        # TODO(loop-stride-permutation): the unit-stride loop is not DOALL once
+        # innermost (carries a dependence, or a multi-statement body pre-fission).
+        return False
 
     @staticmethod
     def _bounds_independent(outer: LoopRegion, inner: LoopRegion) -> bool:

@@ -148,6 +148,13 @@ _OP_CPP = {
     # multi-dim pipeline and rewrites integer-constant exponents (``x**2`` -> ``x*x``);
     # only true runtime / non-constant exponents reach this lowering.
     "**": ("std::pow(", ", ", ")"),
+    # Binary elemental math functions (``np.arctan2`` -> the frontend's bare
+    # ``atan2(a, b)``; likewise ``hypot`` / ``fmod``). Emitted as a per-lane
+    # ``std::atan2(a[i], b[i])`` inside the tile for-loop; the ``_dace_tile_vectorize``
+    # pragma lets the compiler's vector-math library (libmvec) capture the call.
+    "atan2": ("std::atan2(", ", ", ")"),
+    "hypot": ("std::hypot(", ", ", ")"),
+    "fmod": ("std::fmod(", ", ", ")"),
 }
 
 
