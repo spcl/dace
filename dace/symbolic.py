@@ -1852,6 +1852,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'Le': sympy.Le,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
+        'ipow': ipow,
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
         'Attr': Attr,
