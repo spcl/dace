@@ -70,7 +70,7 @@ def test_parse_backward_simple(device):
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{device}"
+    sdfg.name = f"{sdfg.name}_parse_backward_simple_{device}"
     sdfg.expand_library_nodes()
     sdfg.validate()
 
@@ -92,7 +92,7 @@ def test_parse_backward_scalar(device):
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{device}"
+    sdfg.name = f"{sdfg.name}_parse_backward_scalar_{device}"
     sdfg.expand_library_nodes()
     sdfg.validate()
 
@@ -127,7 +127,7 @@ def test_parse_backward_with_forwarding(device):
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{device}"
+    sdfg.name = f"{sdfg.name}_parse_backward_with_forwarding_{device}"
     sdfg.expand_library_nodes()
     sdfg.validate()
 
@@ -171,7 +171,7 @@ def test_two_backward_passes(device):
         return x1.grad, x2.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{device}"
+    sdfg.name = f"{sdfg.name}_two_backward_passes_{device}"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -219,7 +219,7 @@ def test_two_backward_passes_accumulate(device):
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{device}"
+    sdfg.name = f"{sdfg.name}_two_backward_passes_accumulate_{device}"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
