@@ -237,8 +237,11 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         for block in sdfg.all_control_flow_blocks(recursive=True):
             if isinstance(block, ConditionalBlock):
                 for i in range(len(block._branches)):
-                    if block._branches[i][0] is not None:
-                        block._branches[i][0] = self._rewrite_codeblock(pattern, block._branches[i][0])
+                    cond, branch_body = block._branches[i]
+                    if cond is not None:
+                        # ``_branches`` entries are (condition, body) tuples -- rebuild the tuple
+                        # rather than assigning into it.
+                        block._branches[i] = (self._rewrite_codeblock(pattern, cond), branch_body)
             elif isinstance(block, LoopRegion):
                 # ``init_statement`` / ``update_statement`` are optional --
                 # a bare ``while`` LoopRegion has only the condition.
