@@ -46,6 +46,10 @@ def test_conv_simple(num_in_channels, kernel_size, num_filters, bias, device):
             donnx.ONNXConv(X=X_, W=W_, Y=Z_)
 
     sdfg = conv.to_sdfg()
+    # Unique name per parametrization + device: every config builds a program named ``conv``,
+    # so a shared ``.dacecache/conv`` build folder lets a later config load an earlier config's
+    # compiled binary with mismatched shapes (out-of-bounds -> crash).
+    sdfg.name = f"conv_{num_in_channels}_{'x'.join(map(str, kernel_size))}_{num_filters}_{int(bias)}_{device}"
     sdfg.expand_library_nodes()
 
     if bias:
