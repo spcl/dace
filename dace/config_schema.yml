@@ -348,7 +348,7 @@ required:
                             Additional CUDA architectures (separated by commas) to compile GPU
                             code for, excluding the current architecture on the compiling machine.
                             See also 'no_gpu_arch_detection'.
-                        default: '60'
+                        default: ''
 
                     hip_arch:
                         type: str
@@ -357,7 +357,7 @@ required:
                             Additional HIP architectures (separated by commas) to compile GPU
                             code for, excluding the current architecture on the compiling machine.
                             See also 'no_gpu_arch_detection'.
-                        default: 'gfx906'
+                        default: ''
 
                     no_gpu_arch_detection:
                         type: bool
