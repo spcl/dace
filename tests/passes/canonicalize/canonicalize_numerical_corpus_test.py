@@ -72,6 +72,14 @@ _NP_CANON_XFAIL = {
     # diverges (real canon bug, not a port). Root cause not yet isolated (stencil +
     # boundary-assignment + inner pressure-poisson nit-loop). Tracked.
     'cavity_flow': 'canon: structured-grid stencil/boundary miscompile (baseline bit-exact)',
+    # channel_flow: two root causes FIXED this session -- (1) SymbolPropagation folded the
+    # loop-carried ``while udiff > 0.001`` condition to ``1.0 > 0.001`` (non-terminating);
+    # the loop now terminates. (2) LICM hoisted a split-tasklet chain piecemeal, leaving an
+    # uninitialized ``__t0_split_N`` read in the preheader; now the chain stays connected.
+    # Residual numerical divergence: an uninitialized ``b`` transient (build_up_b's
+    # ``b = zeros_like`` seed dropped while only ``b[1:-1, ...]`` is rewritten) -- the
+    # zero-seed-vs-partial-write DCE/state-ordering class, same as ``correlation``. Tracked.
+    'channel_flow': 'canon: uninitialized `b` seed (partial-write vs zeros_like DCE); symbol-prop + LICM fixed',
     # Broken corpus PORTS -- the @dc.program is already wrong (or fails to compile) even
     # UNTRANSFORMED, so this is not a canonicalization gap. Verified: baseline (no canon)
     # does not match the numpy reference. Out of scope for canon; tracked as port bugs.
@@ -87,7 +95,10 @@ _FAST_CANON_XFAIL = {
     ('poly', 'durbin'): 'fast-canon flaky KeyError',
 }
 _NP_FAST_XFAIL = {
-    # filled in below
+    # channel_flow additionally raises ``KeyError: SDFG (loop_body)`` under fast canon -- a
+    # fast-mode-only crash in the residual channel_flow lowering, on top of the shared canon
+    # ``b`` divergence above. Tracked with the canon entry.
+    'channel_flow': 'fast-canon: KeyError SDFG(loop_body) in residual lowering (see canon xfail)',
 }
 _FAST_CANON_XFAIL.update({('np', n): r for n, r in _NP_FAST_XFAIL.items()})
 

@@ -504,6 +504,19 @@ def _has_integer_div_mod_by_possibly_zero(tasklet: nodes.Tasklet) -> bool:
     return False
 
 
+def _written_access_in_state(state: SDFGState, data: str) -> Optional[nodes.AccessNode]:
+    """An AccessNode for ``data`` in ``state`` that is written (has an in-edge).
+
+    Used to find an already-hoisted producer's output node so a subsequently
+    hoisted consumer can connect to it, rather than reading a fresh, unwritten
+    node for the same data.
+    """
+    for n in state.nodes():
+        if isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0:
+            return n
+    return None
+
+
 def _hoist_tasklet_to_preheader(
     body: SDFGState,
     tasklet: nodes.Tasklet,
@@ -524,12 +537,21 @@ def _hoist_tasklet_to_preheader(
     if not isinstance(out_access, nodes.AccessNode):
         return False
 
-    # Clone source reads in preheader (one per unique data name).
+    # Clone source reads in preheader (one per unique data name). Reuse an
+    # already-hoisted producer's output node for the same data if one exists,
+    # so a hoisted consumer connects to that producer (W -> D -> T) instead of
+    # reading a fresh, unwritten D node. A disconnected read node would leave D
+    # writerless in the preheader once dead-code elimination drops the
+    # producer's now-orphaned write -- an uninitialized read (npbench
+    # channel_flow hoists a split-tasklet chain ``__t0_split_N`` piecemeal, the
+    # producer landing in the preheader on an earlier LICM pass than the
+    # consumer).
     new_reads: Dict[str, nodes.AccessNode] = {}
     for ie in in_edges:
-        src_access = ie.src
-        if src_access.data not in new_reads:
-            new_reads[src_access.data] = preheader.add_access(src_access.data)
+        d = ie.src.data
+        if d not in new_reads:
+            existing = _written_access_in_state(preheader, d)
+            new_reads[d] = existing if existing is not None else preheader.add_access(d)
 
     # Clone the tasklet in preheader.
     new_tasklet = preheader.add_tasklet(

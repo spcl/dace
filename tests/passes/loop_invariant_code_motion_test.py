@@ -242,6 +242,72 @@ def test_transitive_chain_is_hoisted():
     _run_and_check(sdfg, py_ref, a=np.array([2.0]), b=np.array([3.0]), c=np.array([4.0]), outp=np.zeros(6), N=6)
 
 
+def test_hoisted_chain_producer_and_consumer_stay_connected():
+    """A hoisted producer/consumer chain must share ONE transient node in the
+    preheader, not a disconnected write node and read node.
+
+    The chain ``u = a + b; v = u * c`` is hoisted across two fixpoint passes:
+    the producer ``add_u`` lands in the preheader first, then the consumer
+    ``mul_v`` follows. If the consumer reads a *fresh* ``u`` node instead of the
+    producer's output node, the two are disconnected -- and a subsequent
+    ``SimplifyPass`` deletes the producer's now-consumerless write as dead code,
+    leaving the consumer reading an uninitialized ``u`` (npbench channel_flow's
+    ``__t0_split_N`` preheader corruption). Running SimplifyPass here is what
+    exposes the break.
+    """
+    from dace.transformation.passes.simplify import SimplifyPass
+
+    sdfg = dace.SDFG("licm_chain_connected")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("u", [1], dace.float64)
+    sdfg.add_transient("v", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "i", "N")
+    body = loop.add_state("body", is_start_block=True)
+    ar, br, cr = body.add_read("a"), body.add_read("b"), body.add_read("c")
+    t1 = body.add_tasklet("add_u", {"x", "y"}, {"r"}, "r = x + y")
+    u = body.add_access("u")
+    body.add_edge(ar, None, t1, "x", mm.Memlet("a[0]"))
+    body.add_edge(br, None, t1, "y", mm.Memlet("b[0]"))
+    body.add_edge(t1, "r", u, None, mm.Memlet("u[0]"))
+    t2 = body.add_tasklet("mul_v", {"x", "y"}, {"r"}, "r = x * y")
+    v = body.add_access("v")
+    body.add_edge(u, None, t2, "x", mm.Memlet("u[0]"))
+    body.add_edge(cr, None, t2, "y", mm.Memlet("c[0]"))
+    body.add_edge(t2, "r", v, None, mm.Memlet("v[0]"))
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(v, None, cpy, "ti", mm.Memlet("v[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[i]"))
+
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+
+    # After the hoist, ``u`` must appear as a single connected node in the
+    # preheader (written by the producer, read by the consumer), never as two
+    # disconnected nodes.
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    u_nodes = [n for n in pre[0].nodes() if isinstance(n, nodes.AccessNode) and n.data == "u"]
+    assert len(u_nodes) == 1, f"transient u split into {len(u_nodes)} disconnected preheader nodes"
+    assert pre[0].in_degree(u_nodes[0]) == 1 and pre[0].out_degree(u_nodes[0]) >= 1, \
+        "preheader u must be both written (producer) and read (consumer)"
+
+    # DCE must not be able to strand the read: the value is correct after simplify.
+    SimplifyPass().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    def py_ref(a, b, c, outp, N):
+        u = a[0] + b[0]
+        v = u * c[0]
+        for i in range(N):
+            outp[i] = v
+
+    _run_and_check(sdfg, py_ref, a=np.array([2.0]), b=np.array([3.0]), c=np.array([4.0]), outp=np.zeros(6), N=6)
+
+
 # ---------------------------------------------------------------------------
 # 5. Map scope: pure tasklet on outer data is hoisted through MapEntry.
 # ---------------------------------------------------------------------------
