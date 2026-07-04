@@ -43,43 +43,40 @@ _CPU = dict(target='cpu',
 # corpus port is wrong even untransformed (frontend/uninit); ``flaky`` =
 # process-dependent uninitialized read.
 _CANON_XFAIL = {
-    # WCR seed dependency lost: StateFusionExtended merges the ``mean[:]=0`` seed state
-    # and the ``mean[j]+=...`` WCR-accumulate state, leaving them unordered (the WCR's
-    # read of its seed is implicit, not an edge); MapFusion then reorders -> mean=0.
-    # correlation: mean/stddev reductions FIXED (StateFusion no longer fuses a seed state
-    # with its WCR-accumulate). Remaining gap: ``center_data`` (in-place ``data``) is fused
-    # into the same state as the ``corr`` WCR-accumulate and reads a pre-normalized stddev
-    # -- a deeper normalize->center->reduce ordering scramble across StateFusion + MapFusion.
-    ('poly', 'correlation'):
-    'canon: center_data/corr ordering scramble (mean/stddev now OK)',
-    # covariance FIXED: StateFusionExtended now treats a WCR edge as a read-modify-write and
+    # correlation FIXED (two independent canon bugs, both root-caused + verified bit-exact):
+    #   (data) SplitTasklets typed the ``double(N)`` cast as int -> ``sqrt(int)`` truncated
+    #     sqrt(32)=5, centering ``data`` by /(5*sd). Fixed by recognizing dtype-cast calls in
+    #     ``_infer_ssa_intermediate_types``.
+    #   (corr) TrivialTaskletElimination folded the ``symmetrize`` self-copy ``corr[i,j] ->
+    #     corr[j,i]``; the same-array merged memlet defaulted ``_is_data_src=True`` and read
+    #     the destination subset -> copy direction flipped, zeroing the off-diagonal. Fixed by
+    #     building the merged edge from the read side for a self-copy.
+    # covariance FIXED earlier: StateFusionExtended treats a WCR edge as a read-modify-write and
     # refuses to fuse the ``mean[:]=0`` seed state into the ``mean(+)=`` accumulate state.
-    # cholesky / ludcmp / gramschmidt (in-place-A matrix reductions ``A[i,j] OP= A[i,k]*A[k,j]``)
-    # now PASS on CPU -- the reduction stays a WCR and lowers via the OMP-reduction path
-    # (verified bit-exact). Xfails removed.
     # --- npbench gaps appended below from _NP_CANON_XFAIL ---
 }
 # npbench-suite canon gaps (established by the subprocess-isolated corpus sweep).
 _NP_CANON_XFAIL = {
-    # azimint_naive FIXED by NormalizeNestedReduction (the first canon stage): its masked
-    # ``if mask: tmp += data[j]`` reduction, emitted as an in-nsdfg WCR into a write-only
-    # output connector, is rewritten to the seeded-local + map-exit-WCR shape before the
-    # reduction-aware stages, so it lowers to a clean OpenMP reduction. nbody has NO such
-    # in-nsdfg reduction (untouched by the pass); it fails on an independent canon-introduced
-    # GEMM ``ldc`` corruption from a layout transform.
-    'nbody': 'canon: GEMM ldc corruption from a layout transform (independent of the reduction path)',
-    # cavity_flow: structured-grid CFD solver -- baseline SDFG is bit-exact vs numpy, canon
-    # diverges (real canon bug, not a port). Root cause not yet isolated (stencil +
-    # boundary-assignment + inner pressure-poisson nit-loop). Tracked.
-    'cavity_flow': 'canon: structured-grid stencil/boundary miscompile (baseline bit-exact)',
-    # channel_flow: two root causes FIXED this session -- (1) SymbolPropagation folded the
-    # loop-carried ``while udiff > 0.001`` condition to ``1.0 > 0.001`` (non-terminating);
-    # the loop now terminates. (2) LICM hoisted a split-tasklet chain piecemeal, leaving an
-    # uninitialized ``__t0_split_N`` read in the preheader; now the chain stays connected.
-    # Residual numerical divergence: an uninitialized ``b`` transient (build_up_b's
-    # ``b = zeros_like`` seed dropped while only ``b[1:-1, ...]`` is rewritten) -- the
-    # zero-seed-vs-partial-write DCE/state-ordering class, same as ``correlation``. Tracked.
-    'channel_flow': 'canon: uninitialized `b` seed (partial-write vs zeros_like DCE); symbol-prop + LICM fixed',
+    # azimint_naive FIXED by NormalizeNestedReduction. nbody + cavity_flow xfails REMOVED:
+    #   nbody: the "GEMM ldc corruption" was a misdiagnosis -- the only BLAS op is a
+    #     ``cblas_sgemv`` (no ldc) with correct lda/incy; the stage bisect shows canon error
+    #     flat/decreasing (fusion improves the fp32 sum). Canon PASSES at preset S; it is a
+    #     chaotic-fp32 kernel where the untransformed baseline sat on the tolerance edge.
+    #   cavity_flow: PASSES at preset S in both modes (verified) -- fixed as a side effect of
+    #     this session's channel_flow SymbolPropagation/LICM fixes (shared build_up_b/
+    #     pressure_poisson structure). The prior "stencil/boundary miscompile" was never
+    #     asserted (imperative xfail). Only diverges at full 61x61 by fp32 reassociation at 2
+    #     interior cells where canon is *more* accurate than baseline.
+    # channel_flow: NOT a canon bug. Canon (and fast) are a FAITHFUL lowering -- bit-identical
+    # to the untransformed baseline -- but the baseline ITSELF diverges from numpy: the fp32
+    # ``while udiff > 0.001`` convergence test (udiff = (sum(u)-sum(un))/sum(u), a catastrophic
+    # cancellation of two ~96-magnitude sums) trips ~5 iterations early because numpy's pairwise
+    # ``np.sum`` and the SDFG's reduction order round the near-cancelling sum differently. SDFG-u
+    # matches numpy-u bit-exactly at the SDFG's own stopping iteration. This session fixed the two
+    # real channel_flow canon bugs (SymbolPropagation loop-condition fold + LICM preheader uninit)
+    # and the fast-mode ScalarWriteShadowScopes KeyError; the residual is a port/oracle fp32
+    # determinism issue, not canon -- so it is classified ``port:`` like mandelbrot below.
+    'channel_flow': 'port: fp32 convergence-count divergence (baseline diverges; canon+fast faithful, bit-identical)',
     # Broken corpus PORTS -- the @dc.program is already wrong (or fails to compile) even
     # UNTRANSFORMED, so this is not a canonicalization gap. Verified: baseline (no canon)
     # does not match the numpy reference. Out of scope for canon; tracked as port bugs.
@@ -95,10 +92,9 @@ _FAST_CANON_XFAIL = {
     ('poly', 'durbin'): 'fast-canon flaky KeyError',
 }
 _NP_FAST_XFAIL = {
-    # channel_flow additionally raises ``KeyError: SDFG (loop_body)`` under fast canon -- a
-    # fast-mode-only crash in the residual channel_flow lowering, on top of the shared canon
-    # ``b`` divergence above. Tracked with the canon entry.
-    'channel_flow': 'fast-canon: KeyError SDFG(loop_body) in residual lowering (see canon xfail)',
+    # channel_flow's fast-mode ``KeyError: SDFG (loop_body)`` (ScalarWriteShadowScopes walking
+    # a foreign clone's blocks after loop fission) is FIXED; it now inherits the shared canon
+    # ``port:`` xfail above (fast lowering is faithful, same fp32-convergence divergence).
 }
 _FAST_CANON_XFAIL.update({('np', n): r for n, r in _NP_FAST_XFAIL.items()})
 

@@ -73,13 +73,20 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         out_edge = graph.edges_between(tasklet, write)[0]
         graph.remove_edge(in_edge)
         graph.remove_edge(out_edge)
-        if self.expr_index == 1:
-            # Source is a MapEntry: the surviving edge leaves the map's
-            # ``OUT_<read>`` connector, so its memlet must keep the read-side
-            # data and subset (e.g. an offset access ``a[i + k]``) and carry
-            # the write subset in ``other_subset``. Reusing the write memlet
-            # here would strand the read offset in ``other_subset`` and drop
-            # it when the map is later re-lowered to a loop.
+        if self.expr_index == 1 or (self.expr_index == 0 and self.read.data == self.write.data):
+            # expr_index == 1 -- source is a MapEntry: the surviving edge leaves the
+            # map's ``OUT_<read>`` connector, so its memlet must keep the read-side
+            # data and subset (e.g. an offset access ``a[i + k]``) and carry the write
+            # subset in ``other_subset``. Reusing the write memlet here would strand the
+            # read offset in ``other_subset`` and drop it when the map is re-lowered.
+            #
+            # expr_index == 0 self-copy (``read.data == write.data``, e.g. the transpose
+            # ``corr[i, j] -> corr[j, i]`` in correlation's symmetrize): the merged edge's
+            # data name matches BOTH endpoints, so ``Memlet.try_initialize`` defaults
+            # ``_is_data_src = True`` and treats ``subset`` as the SOURCE. Reusing the
+            # WRITE memlet (whose ``subset`` is the destination) would read the destination
+            # subset -- flipping the copy direction and clobbering the source data. Build
+            # from the READ-side edge so ``subset`` is the source, ``other_subset`` the dst.
             in_edge.data.other_subset = out_edge.data.subset
             graph.add_edge(read, in_edge.src_conn, write, out_edge.dst_conn, in_edge.data)
         else:
