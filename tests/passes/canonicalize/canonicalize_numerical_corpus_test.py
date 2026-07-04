@@ -86,10 +86,13 @@ _NP_CANON_XFAIL = {
 }
 _CANON_XFAIL.update({('np', n): r for n, r in _NP_CANON_XFAIL.items()})
 
-# fast-canon shares canon's gaps plus fast-mode-only failures.
+# fast-canon shares canon's gaps.
 _FAST_CANON_XFAIL = {
     **_CANON_XFAIL,
-    ('poly', 'durbin'): 'fast-canon flaky KeyError',
+    # durbin's "fast-canon flaky KeyError" un-xfailed: the crash was a stale Dict[SDFG]
+    # (FindSingelUseData) lookup of a LoopToMap-created SDFG('loop_body') NestedSDFG in
+    # MapFusionVertical.is_shared_data -- fixed by falling back to a scan on a cache miss
+    # instead of asserting. The flake did not reproduce in 1200+ fast-canon runs.
 }
 _NP_FAST_XFAIL = {
     # channel_flow's fast-mode ``KeyError: SDFG (loop_body)`` (ScalarWriteShadowScopes walking
