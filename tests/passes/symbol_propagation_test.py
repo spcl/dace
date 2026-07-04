@@ -106,6 +106,50 @@ def test_nested_loop_carried_symbol():
     assert np.allclose(A[0], 64 * 64)
 
 
+def test_loop_condition_symbol_reassigned_in_body_not_folded():
+    """A symbol read by a ``LoopRegion`` condition and REASSIGNED inside the loop
+    body must not have its pre-loop value folded into the condition.
+
+    Mirrors npbench ``channel_flow``'s ``while udiff > 0.001`` convergence loop:
+    ``udiff = 1.0`` is set on the edge entering the loop and recomputed every
+    iteration inside the body. The condition is re-evaluated each iteration, so
+    substituting the incoming ``1.0`` (correct only for the first check) collapses
+    it to ``1.0 > 0.001`` -- always true -- and the loop never terminates.
+    """
+    sdfg = dace.SDFG("conv")
+    sdfg.add_array("cnt", [1], dace.int64)
+    sdfg.add_symbol("udiff", dace.float64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("conv_loop", "udiff > 0.001")  # while-loop: no init / update
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"udiff": "1.0"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    tail = loop.add_state("tail")
+    r = body.add_access("cnt")
+    t = body.add_tasklet("inc", {"i"}, {"o"}, "o = i + 1")
+    w = body.add_access("cnt")
+    body.add_edge(r, None, t, "i", dace.Memlet("cnt[0]"))
+    body.add_edge(t, "o", w, None, dace.Memlet("cnt[0]"))
+    # udiff is loop-carried: reassigned on a body edge (1.0 -> <=0.001 after 10 halvings).
+    loop.add_edge(body, tail, dace.InterstateEdge(assignments={"udiff": "udiff * 0.5"}))
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    cond = loop.loop_condition.as_string
+    assert "udiff" in cond, f"loop-carried udiff was folded out of the condition: {cond!r}"
+    assert "1.0>0.001" not in cond.replace(" ", ""), f"condition folded to a constant: {cond!r}"
+
+    # A folded constant condition spins forever; the correct loop runs a
+    # data-dependent number of iterations and terminates.
+    cnt = np.zeros([1], dtype=np.int64)
+    sdfg(cnt=cnt)
+    assert cnt[0] == 10, f"expected 10 iterations (0.5**10 <= 0.001 < 0.5**9), got {cnt[0]}"
+
+
 def test_nested_symbol():
     """
     Tests that SymbolPropagation does not overwrite nested symbols.
@@ -538,6 +582,7 @@ if __name__ == "__main__":
     test_resolve_renders_operator_functions()
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
+    test_loop_condition_symbol_reassigned_in_body_not_folded()
     test_nested_symbol()
     test_multiple_sources()
     test_multiple_edge_assignments()

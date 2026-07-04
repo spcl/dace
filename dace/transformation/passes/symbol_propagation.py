@@ -485,6 +485,18 @@ class SymbolPropagation(ppl.Pass):
         # cyclic symbols un-substituted, which is conservative and correct).
         max_iters = len(new_in_syms) + len(new_out_syms) + 2
 
+        # Symbols reassigned inside a loop body are loop-carried: the loop's
+        # condition and update statement observe their body-updated value on
+        # every iteration past the first, not the value flowing in from before
+        # the loop. Substituting the incoming value into these meta-accesses
+        # would fold a stale first-iteration value into the condition -- e.g.
+        # ``while udiff > 0.001`` with ``udiff = 1.0`` ahead of the loop and
+        # ``udiff = <reduction>`` inside collapses to ``1.0 > 0.001``, an
+        # infinite loop -- so a read by the condition keeps the symbol live.
+        loop_carried: Set[str] = set()
+        if isinstance(cfg_blk, LoopRegion):
+            loop_carried = {s for e in cfg_blk.all_interstate_edges() for s in e.data.assignments.keys()}
+
         changed = True
         iters = 0
         while changed and iters < max_iters:
@@ -495,7 +507,8 @@ class SymbolPropagation(ppl.Pass):
 
             # Replace all symbols in the cfg_blk with their values
             if isinstance(cfg_blk, LoopRegion):
-                cfg_blk.replace_meta_accesses(new_in_syms)
+                meta_syms = {s: v for s, v in new_in_syms.items() if s not in loop_carried}
+                cfg_blk.replace_meta_accesses(meta_syms)
             elif isinstance(cfg_blk, ConditionalBlock):
                 cfg_blk.replace_meta_accesses(new_in_syms)
             elif isinstance(cfg_blk, SDFGState):
