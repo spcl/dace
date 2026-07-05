@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'ny': 61, 'nx': 61, 'nt': 25, 'nit': 5, 'rho': 1.0, 'nu': 0.1}
 INPUT_ARGS = ('ny', 'nx')
@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('u', 'v', 'p')
 nx, ny, nit = (dc.symbol(s, dc.int64) for s in ('nx', 'ny', 'nit'))
 
 
-def initialize(ny, nx, datatype=np.float32):
+def initialize(ny, nx, datatype=np.float64):
     u = np.zeros((ny, nx), dtype=datatype)
     v = np.zeros((ny, nx), dtype=datatype)
     p = np.zeros((ny, nx), dtype=datatype)
@@ -51,7 +51,7 @@ def pressure_poisson_np(nit, p, dx, dy, b):
 def reference(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
     un = np.empty_like(u)
     vn = np.empty_like(v)
-    b = np.zeros((ny, nx), dtype=np.float32)
+    b = np.zeros((ny, nx), dtype=np.float64)
     for n in range(nt):
         un = u.copy()
         vn = v.copy()
@@ -105,7 +105,7 @@ def kernel(nt: dc.int64, u: dc_float[ny, nx], v: dc_float[ny, nx], dt: dc_float,
            p: dc_float[ny, nx], rho: dc_float, nu: dc_float):
     un = np.empty_like(u)
     vn = np.empty_like(v)
-    b = np.zeros((ny, nx), dtype=np.float32)
+    b = np.zeros((ny, nx), dtype=np.float64)
     for n in range(nt):
         un[:] = u.copy()
         vn[:] = v.copy()

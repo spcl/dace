@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'M': 2000, 'N': 2000}
 INPUT_ARGS = ('M', 'N')

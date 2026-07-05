@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'M': 4096, 'N': 4096, 'nnz': 8192}
 INPUT_ARGS = ('M', 'N', 'nnz')
@@ -18,7 +18,7 @@ OUTPUT_ARGS = ('y', )
 M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'nnz'))
 
 
-def initialize(M, N, nnz, datatype=np.float32):
+def initialize(M, N, nnz, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     x = rng.random((N, ), dtype=datatype)

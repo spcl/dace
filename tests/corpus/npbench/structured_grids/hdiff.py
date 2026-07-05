@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'I': 64, 'J': 64, 'K': 60}
 INPUT_ARGS = ('I', 'J', 'K')
@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('out_field', )
 I, J, K = (dc.symbol(s, dtype=dc.int64) for s in ('I', 'J', 'K'))
 
 
-def initialize(I, J, K, datatype=np.float32):
+def initialize(I, J, K, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     in_field = rng.random((I + 4, J + 4, K), dtype=datatype)

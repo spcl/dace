@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'I': 64, 'J': 64, 'K': 60}
 INPUT_ARGS = ('I', 'J', 'K')
@@ -17,7 +17,7 @@ BET_P = 0.5
 I, J, K = (dc.symbol(s, dtype=dc.int64) for s in ('I', 'J', 'K'))
 
 
-def initialize(I, J, K, datatype=np.float32):
+def initialize(I, J, K, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     dtr_stage = 3.0 / 20.0

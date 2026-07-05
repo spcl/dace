@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'N': 400000, 'npt': 1000}
 INPUT_ARGS = ('N', 'npt')
@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('out', )
 N, bins, npt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'bins', 'npt'))
 
 
-def initialize(N, npt, datatype=np.float32):
+def initialize(N, npt, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     data, radius = (rng.random((N, ), dtype=datatype), rng.random((N, ), dtype=datatype))

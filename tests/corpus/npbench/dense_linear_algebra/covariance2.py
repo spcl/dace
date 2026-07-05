@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'M': 500, 'N': 600}
 INPUT_ARGS = ('M', 'N')
@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('out', )
 M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 
 
-def initialize(M, N, datatype=np.float32):
+def initialize(M, N, datatype=np.float64):
     float_n = datatype(N)
     data = np.fromfunction(lambda i, j: i * j / M, (N, M), dtype=datatype)
     out = np.zeros((M, M), dtype=datatype)

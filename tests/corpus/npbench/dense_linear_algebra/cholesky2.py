@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'N': 1000}
 INPUT_ARGS = ('N', )
@@ -16,7 +16,7 @@ N = dc.symbol('N', dtype=dc.int64)
 k = dc.symbol('k', dtype=dc.int64)
 
 
-def initialize(N, datatype=np.float32):
+def initialize(N, datatype=np.float64):
     A = np.empty((N, N), dtype=datatype)
     for i in range(N):
         A[i, :i + 1] = np.fromfunction(lambda j: -j % N / N + 1, (i + 1, ), dtype=datatype)

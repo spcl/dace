@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 
 def rng_complex(shape, rng, datatype):
@@ -23,7 +23,7 @@ R, K, M1, M2 = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True) for s 
 N = R**K
 
 
-def initialize(R, K, datatype=np.float32):
+def initialize(R, K, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     N = R**K

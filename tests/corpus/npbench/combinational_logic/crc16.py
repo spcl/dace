@@ -4,8 +4,8 @@ import numpy as np
 import dace
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'N': 1600}
 INPUT_ARGS = ('N', )

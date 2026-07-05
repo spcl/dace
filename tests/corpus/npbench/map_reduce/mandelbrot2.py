@@ -4,8 +4,8 @@ import numpy as np
 import dace
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'xmin': -2.0, 'xmax': 0.5, 'XN': 200, 'ymin': -1.25, 'ymax': 1.25, 'YN': 200, 'maxiter': 40, 'horizon': 2.0}
 INPUT_ARGS = ('XN', 'YN')
@@ -17,7 +17,7 @@ XN, YN, M, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'M', 'N'])
 
 
 def initialize(XN, YN, datatype=np.float64):
-    cdtype = np.complex64 if np.dtype(datatype) == np.float32 else np.complex128
+    cdtype = np.complex128 if np.dtype(datatype) == np.float64 else np.complex128
     Z_out = np.zeros((YN, XN), dtype=cdtype)
     N_out = np.zeros((YN, XN), dtype=np.int64)
     return (Z_out, N_out)

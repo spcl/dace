@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 
 def rng_complex(shape, rng, datatype):
@@ -21,7 +21,7 @@ NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (dc.symbol(s, dc.int64)
                                        for s in ('NA', 'NB', 'Nkz', 'NE', 'Nqz', 'Nw', 'Norb', 'N3D'))
 
 
-def initialize(Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb, datatype=np.float32):
+def initialize(Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     neigh_idx = np.ndarray([NA, NB], dtype=np.int32)

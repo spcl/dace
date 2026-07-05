@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'N': 100000}
 INPUT_ARGS = ('N', )
@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('distance_matrix', )
 N = dc.symbol('N', dtype=dc.int64)
 
 
-def initialize(N, datatype=np.float32):
+def initialize(N, datatype=np.float64):
     rng = np.random.default_rng(42)
     t0, p0, t1, p1 = (rng.random((N, )), rng.random((N, )), rng.random((N, )), rng.random((N, )))
     distance_matrix = np.zeros((N, ), dtype=datatype)

@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'ny': 61, 'nx': 61, 'nit': 5, 'rho': 1.0, 'nu': 0.1, 'F': 1.0}
 INPUT_ARGS = ('ny', 'nx')
@@ -15,7 +15,7 @@ OUTPUT_ARGS = ('u', 'v', 'p')
 nx, ny, nit = (dc.symbol(s, dc.int64) for s in ('nx', 'ny', 'nit'))
 
 
-def initialize(ny, nx, datatype=np.float32):
+def initialize(ny, nx, datatype=np.float64):
     u = np.zeros((ny, nx), dtype=datatype)
     v = np.zeros((ny, nx), dtype=datatype)
     p = np.ones((ny, nx), dtype=datatype)

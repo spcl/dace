@@ -6,7 +6,7 @@ W = dace.symbol('W')
 H = dace.symbol('H')
 
 #datatypes = [dace.float64, dace.int32, dace.float32]
-datatype = dace.float32
+datatype = dace.float64
 
 # Dataset sizes
 sizes = [{

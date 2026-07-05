@@ -3,13 +3,13 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
-# numpy realizations matching the kernel precision (fp32 -> complex64); the npbench
+# numpy realizations matching the kernel precision (fp64 -> complex128); the npbench
 # numpy reference reads these from the framework's precision module.
-np_float = np.float32
-np_complex = np.complex64
+np_float = np.float64
+np_complex = np.complex128
 
 # The numpy reference reads lowercase ``xn``/``yn``; the dace kernel is parametrized
 # over the uppercase symbols ``XN``/``YN``. Provide both (equal) so name-resolution
@@ -34,8 +34,8 @@ OUTPUT_ARGS = ('Z_out', 'N_out')
 XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'N'])
 
 
-def initialize(XN, YN, datatype=np.float32):
-    cdtype = np.complex64 if np.dtype(datatype) == np.float32 else np.complex128
+def initialize(XN, YN, datatype=np.float64):
+    cdtype = np.complex128 if np.dtype(datatype) == np.float64 else np.complex128
     Z_out = np.zeros((YN, XN), dtype=cdtype)
     N_out = np.zeros((YN, XN), dtype=np.int64)
     return (Z_out, N_out)

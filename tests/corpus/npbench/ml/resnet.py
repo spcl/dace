@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 SIZES = {'N': 8, 'W': 14, 'H': 14, 'C1': 32, 'C2': 8}
 INPUT_ARGS = ('N', 'W', 'H', 'C1', 'C2')
@@ -16,7 +16,7 @@ N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
                                            for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5'))
 
 
-def initialize(N, W, H, C1, C2, datatype=np.float32):
+def initialize(N, W, H, C1, C2, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     input = rng.random((N, H, W, C1), dtype=datatype)

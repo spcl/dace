@@ -3,8 +3,8 @@
 import numpy as np
 import dace as dc
 
-dc_float = dc.float32
-dc_complex_float = dc.complex64
+dc_float = dc.float64
+dc_complex_float = dc.complex128
 
 # Nt = ceil(tEnd/dt) is a derived integer the dace kernel uses as a free symbol
 # (``np.ndarray(Nt + 1)`` / ``range(Nt)``), so it must be bound explicitly rather
@@ -21,7 +21,7 @@ OUTPUT_ARGS = ('pos', 'vel')
 N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'Nt'))
 
 
-def initialize(N, tEnd, dt, datatype=np.float32):
+def initialize(N, tEnd, dt, datatype=np.float64):
     from numpy.random import default_rng
     rng = default_rng(42)
     mass = 20.0 * np.ones((N, 1), dtype=datatype) / N
