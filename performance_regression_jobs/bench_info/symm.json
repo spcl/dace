@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Symmetric matrix-multiply",
+        "short_name": "symm",
+        "relative_path": "polybench/symm",
+        "module_name": "symm",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "LinAlg",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "M": 40, "N": 50 },
+            "M": { "M": 120, "N": 150 },
+            "L": { "M": 350, "N": 550 },
+            "paper": { "M": 1000, "N": 1200 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["M", "N"],
+            "output_args": ["alpha", "beta", "C", "A", "B"]
+        },
+        "input_args": ["alpha", "beta", "C", "A", "B"],
+        "array_args": ["C", "A", "B"],
+        "output_args": ["C"]
+    }
+}

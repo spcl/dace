@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Sparse Matrix-Vector Multiplication",
+        "short_name": "spmv",
+        "relative_path": "spmv",
+        "module_name": "spmv",
+        "func_name": "spmv",
+        "kind": "microapp",
+        "domain": "Other",
+        "dwarf": "sparse_linear_algebra",
+        "parameters": {
+            "S": { "M":  4096, "N": 4096, "nnz": 8192 },
+            "M": { "M":  32768, "N": 32768, "nnz": 65536 },
+            "L": { "M":  262144, "N": 262144, "nnz": 262144 },
+            "paper": { "M":  131072, "N": 131072, "nnz": 262144 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["M", "N", "nnz"],
+            "output_args": ["A_row", "A_col", "A_val", "x"]
+        },
+        "input_args": ["A_row", "A_col", "A_val", "x"],
+        "array_args": ["A_row", "A_col", "A_val", "x"],
+        "output_args": []
+    }
+}

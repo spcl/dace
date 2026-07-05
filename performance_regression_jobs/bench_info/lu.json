@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "LU Decomposition",
+        "short_name": "lu",
+        "relative_path": "polybench/lu",
+        "module_name": "lu",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Solver",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 60 },
+            "M": { "N": 220 },
+            "L": { "N": 700 },
+            "paper": { "N": 2000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["A"]
+        },
+        "input_args": ["A"],
+        "array_args": ["A"],
+        "output_args": ["A"]
+    }
+}

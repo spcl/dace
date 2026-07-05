@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "2-D Finite Different Time Domain Kernel",
+        "short_name": "fdtd_2d",
+        "relative_path": "polybench/fdtd_2d",
+        "module_name": "fdtd_2d",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Physics",
+        "dwarf": "structured_grids",
+        "parameters": {
+            "S": { "TMAX": 20, "NX": 200, "NY": 220 },
+            "M": { "TMAX": 60, "NX": 400, "NY": 450 },
+            "L": { "TMAX": 150, "NX": 800, "NY": 900 },
+            "paper": { "TMAX": 500, "NX": 1000, "NY": 1200 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["TMAX", "NX", "NY"],
+            "output_args": ["ex", "ey", "hz", "_fict_"]
+        },
+        "input_args": ["TMAX", "ex", "ey", "hz", "_fict_"],
+        "array_args": ["ex", "ey", "hz", "_fict_"],
+        "output_args": ["ex", "ey", "hz"]
+    }
+}

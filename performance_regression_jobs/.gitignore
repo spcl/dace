@@ -1,0 +1,11 @@
+# Generated output only -- everything under performance_regression_jobs/ that
+# isn't a script or a vendored corpus/preset/reference is regenerable.
+results/
+*.csv
+*.png
+*.sdfg
+*.sdfgz
+.dacecache/
+native_build/
+__pycache__/
+_dacegraphs/

@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Alternating Direction Implicit Method",
+        "short_name": "adi",
+        "relative_path": "polybench/adi",
+        "module_name": "adi",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Solver",
+        "dwarf": "structured_grids",
+        "parameters": {
+            "S": { "TSTEPS": 5, "N": 100 },
+            "M": { "TSTEPS": 20, "N": 200 },
+            "L": { "TSTEPS": 50, "N": 500 },
+            "paper": { "TSTEPS": 100, "N": 200 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["u"]
+        },
+        "input_args": ["TSTEPS", "N", "u"],
+        "array_args": ["u"],
+        "output_args": ["u"]
+    }
+}

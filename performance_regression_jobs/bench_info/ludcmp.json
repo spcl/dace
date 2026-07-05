@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "LU Decomposition",
+        "short_name": "ludcmp",
+        "relative_path": "polybench/ludcmp",
+        "module_name": "ludcmp",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Solver",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 60 },
+            "M": { "N": 220 },
+            "L": { "N": 650 },
+            "paper": { "N": 2000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["A", "b"]
+        },
+        "input_args": ["A", "b"],
+        "array_args": ["A", "b"],
+        "output_args": ["A"]
+    }
+}

@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Azimuthal Integration - Histogram",
+        "short_name": "azimhist",
+        "relative_path": "azimint_hist",
+        "module_name": "azimint_hist",
+        "func_name": "azimint_hist",
+        "kind": "microapp",
+        "domain": "Physics",
+        "dwarf": "spectral_methods",
+        "parameters": {
+            "S": { "N": 400000, "npt": 1000 },
+            "M": { "N": 4000000, "npt": 1000 },
+            "L": { "N": 40000000, "npt": 1000 },
+            "paper": { "N": 1000000, "npt": 1000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["data", "radius"]
+        },
+        "input_args": ["data", "radius", "npt"],
+        "array_args": ["data", "radius"],
+        "output_args": []
+    }
+}

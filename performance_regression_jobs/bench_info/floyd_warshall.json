@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Floyd-Warshall",
+        "short_name": "floydwar",
+        "relative_path": "polybench/floyd_warshall",
+        "module_name": "floyd_warshall",
+        "func_name": "kernel",
+        "kind": "microapp",
+        "domain": "Graphs",
+        "dwarf": "dynamic_programming",
+        "parameters": {
+            "S": { "N": 200 },
+            "M": { "N": 400 },
+            "L": { "N": 850 },
+            "paper": { "N": 2800 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["path"]
+        },
+        "input_args": ["path"],
+        "array_args": ["path"],
+        "output_args": ["path"]
+    }
+}

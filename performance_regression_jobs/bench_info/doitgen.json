@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Multiresolution analysis kernel",
+        "short_name": "doitgen",
+        "relative_path": "polybench/doitgen",
+        "module_name": "doitgen",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Chemistry",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "NR": 60, "NQ": 60, "NP": 128 },
+            "M": { "NR": 110, "NQ": 125, "NP": 256 },
+            "L": { "NR": 220, "NQ": 250, "NP": 512 },
+            "paper": { "NR": 220, "NQ": 250, "NP": 270}
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["NR", "NQ", "NP"],
+            "output_args": ["A", "C4"]
+        },
+        "input_args": ["NR", "NQ", "NP", "A", "C4"],
+        "array_args": ["A", "C4"],
+        "output_args": []
+    }
+}

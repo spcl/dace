@@ -1,0 +1,27 @@
+{
+    "benchmark": {
+        "name": "Vertical Advection",
+        "short_name": "vadv",
+        "relative_path": "weather_stencils/vadv",
+        "module_name": "vadv",
+        "func_name": "vadv",
+        "kind": "microapp",
+        "domain": "Weather",
+        "dwarf": "structured_grids",
+        "parameters": {
+            "S": { "I": 60, "J": 60, "K": 40 },
+            "M": { "I": 112, "J": 112, "K": 80 },
+            "L": { "I": 180, "J": 180, "K": 160 },
+            "paper": { "I": 256, "J": 256, "K": 160 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["I", "J", "K"],
+            "output_args": ["dtr_stage", "utens_stage", "u_stage", "wcon",
+                            "u_pos", "utens"]
+        },
+        "input_args": ["utens_stage", "u_stage", "wcon", "u_pos", "utens", "dtr_stage"],
+        "array_args": ["utens_stage", "u_stage", "wcon", "u_pos", "utens"],
+        "output_args": ["utens_stage"]
+    }
+}

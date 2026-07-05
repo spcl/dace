@@ -1,0 +1,30 @@
+{
+    "benchmark": {
+        "name": "Mandelbrot1",
+        "short_name": "mandel1",
+        "relative_path": "mandelbrot1",
+        "module_name": "mandelbrot1",
+        "func_name": "mandelbrot",
+        "kind": "microbench",
+        "domain": "Other",
+        "dwarf": "unstructured_grids",
+        "parameters": {
+            "S": { "xmin": -1.75, "xmax": 0.25, "XN": 125,
+                   "ymin": -1.00, "ymax": 1.00, "YN": 125,
+                   "maxiter": 60, "horizon": 2.0 },
+            "M": { "xmin": -1.75, "xmax": 0.25, "XN": 250,
+                   "ymin": -1.00, "ymax": 1.00, "YN": 250,
+                   "maxiter": 150, "horizon": 2.0 },
+            "L": { "xmin": -2.00, "xmax": 0.50, "XN": 833,
+                   "ymin": -1.25, "ymax": 1.25, "YN": 833,
+                   "maxiter": 200, "horizon": 2.0 },
+            "paper": { "xmin": -2.25, "xmax": 0.75, "XN": 1000,
+                    "ymin": -1.25, "ymax": 1.25, "YN": 1000,
+                    "maxiter": 200, "horizon": 2.0 }
+        },
+        "input_args": ["xmin", "xmax", "ymin", "ymax", "XN", "YN", "maxiter", "horizon"],
+        "array_args": [],
+        "output_args": [],
+        "norm_error": 1e-3
+    }
+}

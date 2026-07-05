@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Arc Distance",
+        "short_name": "adist",
+        "relative_path": "pythran/arc_distance",
+        "module_name": "arc_distance",
+        "func_name": "arc_distance",
+        "kind": "microbench",
+        "domain": "kernels",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 100000 },
+            "M": { "N": 1000000 },
+            "L": { "N": 10000000 },
+            "paper": { "N": 10000000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["theta_1", "phi_1", "theta_2", "phi_2"]
+        },
+        "input_args": ["theta_1", "phi_1", "theta_2", "phi_2"],
+        "array_args": ["theta_1", "phi_1", "theta_2", "phi_2"],
+        "output_args": []
+    }
+}
