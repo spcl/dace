@@ -546,14 +546,23 @@ namespace dace
             return result;
         }
 
-        template<typename T>
+        // Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``.
+        template<typename T,
+                 typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
         DACE_HDFI T ipow(const T a, const unsigned int b) {
-            // ``a ** 0 == 1`` -- seed the accumulator at 1 and multiply ``b`` times, so
-            // the ``b == 0`` base case is correct (seeding at ``a`` and looping ``b - 1``
-            // times returns ``a`` for ``b == 0``, corrupting every zero-exponent size /
-            // bound, e.g. ``ipow(R, 0)`` -> ``R``).
             T result = T(1);
             for (unsigned int i = 0; i < b; ++i)
+                result *= a;
+            return result;
+        }
+
+        // Vector types have no scalar constructor, so seed at ``a``. Only ever reached with a
+        // compile-time exponent >= 1 (the constant-power path emits a literal 1 for exponent 0).
+        template<typename T,
+                 typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
+        DACE_HDFI T ipow(const T a, const unsigned int b) {
+            T result = a;
+            for (unsigned int i = 1; i < b; ++i)
                 result *= a;
             return result;
         }
