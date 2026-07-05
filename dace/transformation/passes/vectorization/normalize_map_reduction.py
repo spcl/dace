@@ -34,12 +34,12 @@ identity). Multiple accumulators sharing the condition (``if cond: s += x; n +=
 """
 import ast
 import copy
-import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy
 
 from dace import SDFG, SDFGState, data, dtypes
+from dace.frontend.python.astutils import ASTFindReplace, unparse
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
@@ -185,10 +185,14 @@ class NormalizeMapReduction(ppl.Pass):
         if len(ins) == 1:
             return ("array", ins[0].data.data)
         if len(ins) == 0:
-            # Constant addend: parse the ``__out = <rhs>`` tasklet body.
-            m = re.match(r"\s*\w+\s*=\s*(.+)", wcr_src.code.as_string.strip())
-            if m:
-                return ("const", m.group(1).strip())
+            # Constant addend: the RHS of the ``__out = <rhs>`` assignment tasklet.
+            try:
+                tree = ast.parse(wcr_src.code.as_string.strip())
+            except SyntaxError:
+                return None
+            for stmt in tree.body:
+                if isinstance(stmt, ast.Assign):
+                    return ("const", unparse(stmt.value))
         return None
 
     def _rebuild_body(self, body: SDFG, red: _MaskedReduction) -> None:
@@ -200,11 +204,10 @@ class NormalizeMapReduction(ppl.Pass):
         cond_inputs = sorted(set(_referenced_arrays(red.cond_expr, body.arrays)))
         reads: Dict[str, nodes.AccessNode] = {a: new.add_read(a) for a in cond_inputs}
         # A tasklet connector may not share a name with an array; alias each condition
-        # input to a distinct connector and substitute it into the expression.
+        # input to a distinct connector and substitute it into the expression (an
+        # AST-aware name rewrite, not a regex, so subscripts/attributes are safe).
         alias = {a: f"_ci{k}" for k, a in enumerate(cond_inputs)}
-        cond_body_expr = red.cond_expr
-        for a, cn in alias.items():
-            cond_body_expr = re.sub(rf"\b{re.escape(a)}\b", cn, cond_body_expr)
+        cond_body_expr = unparse(ASTFindReplace(dict(alias)).visit(ast.parse(red.cond_expr, mode="eval")))
         ct = new.add_tasklet("_nmr_cond", set(alias.values()), {"_c"}, f"_c = {cond_body_expr}")
         for a, cn in alias.items():
             new.add_edge(reads[a], None, ct, cn, Memlet(data=a, subset="0"))
