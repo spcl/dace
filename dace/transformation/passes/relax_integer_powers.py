@@ -22,6 +22,9 @@ from dace.symbolic import equalize_symbol, ipow
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
+#: A live iteration range ``symbol name -> (low, high)`` (inclusive).
+_Ranges = Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
+
 
 def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
     """The inclusive ``(low, high)`` range of a loop's iteration variable."""
@@ -129,6 +132,53 @@ class RelaxIntegerPowers(ppl.Pass):
         desc.offset = tuple(self._relax(item, ranges) for item in desc.offset)
         desc.total_size = self._relax(desc.total_size, ranges)
 
+    def _relax_text(self, text: str, ranges: _Ranges) -> Optional[str]:
+        """Relax provable ``Pow`` in a Python-expression string; return the rewritten
+        text, or ``None`` if unparseable or unchanged. Powers carry Python ``**``, so a
+        string without ``**`` needs no work."""
+        if not text or '**' not in text:
+            return None
+        try:
+            expr = symbolic.pystr_to_symbolic(text)
+        except Exception:  # noqa: BLE001 -- a non-symbolic statement (e.g. a call) is left as-is
+            return None
+        if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Pow):
+            return None
+        relaxed = self._relax(expr, ranges)
+        if relaxed is expr:
+            return None
+        out = str(relaxed)
+        return out if out != text else None
+
+    def _relax_code(self, code, ranges: _Ranges) -> None:
+        """Relax a :class:`~dace.properties.CodeBlock` (a loop bound / condition or a
+        branch predicate) in place. These codegen through the interstate-edge unparser,
+        NOT the descriptor path -- an un-relaxed ``R**e`` there becomes a ``dace::math::pow``
+        (``double``) loop bound that can round to an extra iteration."""
+        if code is None:
+            return
+        relaxed = self._relax_text(code.as_string, ranges)
+        if relaxed is not None:
+            code.as_string = relaxed
+
+    def _relax_assignments(self, assignments: Dict[str, str], ranges: _Ranges) -> None:
+        """Relax the RHS of each interstate-edge assignment in place."""
+        for var, value in list(assignments.items()):
+            if isinstance(value, str):
+                relaxed = self._relax_text(value, ranges)
+                if relaxed is not None:
+                    assignments[var] = relaxed
+
+    def _relax_symbol_mapping(self, nsdfg: nodes.NestedSDFG, ranges: _Ranges) -> None:
+        """Relax each nested-SDFG symbol-mapping value (an outer-scope expression) in place."""
+        for name, value in list(nsdfg.symbol_mapping.items()):
+            core = value.expr if isinstance(value, symbolic.SymExpr) else value
+            if not isinstance(core, sympy.Basic) or not core.has(sympy.Pow):
+                continue
+            relaxed = self._relax(core, ranges)
+            if relaxed is not core:
+                nsdfg.symbol_mapping[name] = relaxed
+
     def _nested_ranges(
         self, nsdfg: nodes.NestedSDFG, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
     ) -> Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
@@ -156,6 +206,13 @@ class RelaxIntegerPowers(ppl.Pass):
 
     def _visit_region(self, region, ranges: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
                       relaxed_arrays: set) -> None:
+        # Interstate edges carry symbol assignments + branch conditions that codegen
+        # through the interstate-edge unparser (``x = R**k`` -> ``dace::math::pow``).
+        for iedge in region.edges():
+            if iedge.data is None:
+                continue
+            self._relax_assignments(iedge.data.assignments, ranges)
+            self._relax_code(iedge.data.condition, ranges)
         for block in region.nodes():
             if isinstance(block, LoopRegion):
                 inner = dict(ranges)
@@ -166,11 +223,18 @@ class RelaxIntegerPowers(ppl.Pass):
                         inner[str(var)] = rng
                     else:
                         inner.pop(str(var), None)  # rebound to an unknown range
+                # The loop's bound / condition / init / update are code blocks, not
+                # descriptors -- relax the powers in them under the ranges live inside the
+                # loop (its own iterator + the enclosing ones).
+                self._relax_code(block.loop_condition, inner)
+                self._relax_code(block.init_statement, inner)
+                self._relax_code(block.update_statement, inner)
                 self._visit_region(block, inner, relaxed_arrays)
             elif isinstance(block, SDFGState):
                 self._visit_state(block, ranges, relaxed_arrays)
             elif isinstance(block, ConditionalBlock):
-                for _condition, branch in block.branches:
+                for condition, branch in block.branches:
+                    self._relax_code(condition, ranges)
                     self._visit_region(branch, ranges, relaxed_arrays)
             elif isinstance(block, ControlFlowRegion):
                 self._visit_region(block, ranges, relaxed_arrays)
@@ -194,6 +258,7 @@ class RelaxIntegerPowers(ppl.Pass):
                         inner[str(param)] = (rng[0], rng[1])
                     descend(node, inner)
                 elif isinstance(node, nodes.NestedSDFG):
+                    self._relax_symbol_mapping(node, live)
                     self._visit_sdfg(node.sdfg, self._nested_ranges(node, live))
                 elif isinstance(node, nodes.AccessNode) and node.data not in relaxed_arrays:
                     relaxed_arrays.add(node.data)
