@@ -476,14 +476,23 @@ def ndcopy_to_strided_copy(
         if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
-            srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
+            # A broadcast source (all-ones shape -- e.g. a Scalar splat into a
+            # width-W tile) has no single strided dimension this 1D fast path can
+            # name. Decline (return None) so the caller falls back to the general
+            # ND-copy emitter, which handles the degenerate/zero source stride.
+            # (Guards the bare ``next``, which otherwise raises StopIteration.)
+            srcdim = next((i for i, c in enumerate(src_copy_shape) if c != 1), None)
+            if srcdim is None:
+                return None
 
         # In destination strides
         dst_copy_shape = dst_subset.size_exact()
         if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
-            dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
+            dstdim = next((i for i, c in enumerate(dst_copy_shape) if c != 1), None)
+            if dstdim is None:
+                return None
 
         # Return new copy
         return [copy_shape[copydim]], [src_strides[srcdim]], [dst_strides[dstdim]]

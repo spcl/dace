@@ -135,7 +135,18 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
         elif symbolic.issymbolic(arg):
             datatypes.append(sym_type(arg))
             dtypes_for_result.append(representative_num(sym_type(arg)))
-            dtypes_for_result_np2.append(sym_type(arg).type)
+            # NEP 50: an INTEGER symbol is a *weak* operand -- a scalar index / size,
+            # like a Python ``int`` -- so combined with a float it must take the
+            # FLOAT's type (``float32 * i -> float32``), NOT width-promote it (a
+            # strong ``np.int64`` forces ``np.result_type(float32, int64) == float64``).
+            # Appending the strong type here injected a float64 intermediate into an
+            # otherwise-float32 kernel (azimint's ``r1 = rmax * i / npt``), which then
+            # produced a mixed-dtype ``r1 <= radius`` comparison the K-dim tiler can't
+            # lower. A Python ``int`` makes ``np.result_type`` apply weak (kind-based)
+            # promotion, matching the NumPy reference (where ``i`` is a Python int).
+            # Non-integer symbols keep their strong type.
+            sym_dtype = sym_type(arg)
+            dtypes_for_result_np2.append(1 if np.issubdtype(sym_dtype.type, np.integer) else sym_dtype.type)
         elif isinstance(arg, dtypes.typeclass):
             datatypes.append(arg)
             dtypes_for_result.append(representative_num(arg))

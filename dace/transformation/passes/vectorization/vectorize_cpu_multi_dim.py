@@ -69,7 +69,10 @@ from dace.transformation.passes.vectorization.remove_empty_states import RemoveE
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.normalize_nested_reduction import NormalizeNestedReduction
+from dace.transformation.passes.vectorization.normalize_map_reduction import NormalizeMapReduction
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
+from dace.transformation.passes.vectorization.splice_reduction_tile_fold import SpliceReductionTileFold
 # Walker-primary pipeline -- no legacy descent / emit_tile_ops imports. The walker
 # (InsertTileLoadStore + PreparePerLaneIndices) replaces both PromoteNSDFGBodyToTiles and the legacy
 # EmitTileOps boundary emission. Tasklet-to-TileBinop / TileITE / TileReduce conversion is
@@ -79,6 +82,7 @@ from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
@@ -124,6 +128,7 @@ class _MultiOutputReductionMapFission(MapFission):
         }
         return len(wcr_arrays) >= 2
 
+
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
 _VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA")
@@ -164,6 +169,62 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         applied = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
         return applied or None
+
+
+class _FlattenTileBodyNesting(ppl.Pass):
+    """Flatten any NSDFG nested INSIDE a tile-body NSDFG into that body, so the body
+    the walker processes is a single flat NSDFG whose states directly hold the
+    per-tile ``A[i]`` accesses.
+
+    ``NestInnermostMapBodyIntoNSDFG`` wraps every innermost map's body in ONE body
+    NSDFG for the walker to descend. When that body is ALREADY nested -- a reduction
+    whose per-iteration body is itself an NSDFG (azimint's masked ``if mask: acc +=
+    data[j]``, the ``reduce_at_output`` path) -- it double-wraps: the outer body
+    NSDFG reads the full ``data[0:N]`` and passes it to the INNER NSDFG that reads
+    ``data[j]``, hiding the per-tile index one level below the walker's per-dim
+    classifier. Striding then steps the map by W while the body still reads scalar
+    ``data[j]`` -- summing every W-th element (silently wrong numerics).
+
+    Inlining the inner NSDFG(s) *into* ``body.sdfg`` (NOT into the map scope: the
+    single body-NSDFG wrapper the walker requires is preserved) exposes ``data[j]``
+    at the body level so the standard tile widening + load/store apply. Gated to
+    ``reduce_at_output``-tagged maps (the only bodies that are legitimately
+    pre-nested); a no-op on the already-flat elementwise / stencil bodies. Runs
+    AFTER ``NestInnermostMapBodyIntoNSDFG`` and BEFORE ``ExpandNestedSDFGInputs`` /
+    the widening so the whole tiling sequence sees the flat body.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        from dace.transformation.passes.vectorization.mark_reduce_at_output import REDUCE_AT_OUTPUT_MARKER
+        total = 0
+        for node, parent in list(sdfg.all_nodes_recursive()):
+            if not isinstance(node, dace.nodes.MapEntry) or not isinstance(parent, dace.SDFGState):
+                continue
+            if REDUCE_AT_OUTPUT_MARKER not in node.map.label:
+                continue
+            scope = parent.scope_subgraph(node, include_entry=False, include_exit=False)
+            bodies = [n for n in scope.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+            if len(bodies) != 1:
+                continue
+            # Inline inner NSDFGs WITHIN the body's own SDFG (its wrapper is preserved,
+            # since we recurse on ``body.sdfg``, not the parent state). InlineSDFG's own
+            # guards leave a genuinely-opaque inner NSDFG (indirect gather) untouched.
+            applied = bodies[0].sdfg.apply_transformations_repeated([InlineMultistateSDFG, InlineSDFG],
+                                                                    permissive=False,
+                                                                    validate=False)
+            total += applied or 0
+        return total or None
 
 
 class _RunWCRToAugAssign(ppl.Pass):
@@ -327,7 +388,8 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  nest_map_bodies: bool = False,
                  scalar_remainder_emit: Literal["scalar", "tile_k1"] = "scalar",
                  expand_tile_nodes: bool = True,
-                 validate_all: bool = False):
+                 validate_all: bool = False,
+                 reduce_at_output: bool = False):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -545,6 +607,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # we always nest. The ``nest_map_bodies`` knob is kept on the constructor for harness
         # parity with the legacy 1D path but is otherwise unused.
         passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
+        # Flatten a double-nested reduction body (``reduce_at_output``) into a single
+        # body NSDFG so the walker sees the per-tile index ``A[i]`` at the body level.
+        # No-op on the already-flat elementwise / stencil bodies. MUST run before the
+        # widening sequence so the whole tiling path sees the flat body.
+        passes.append(_FlattenTileBodyNesting())
         # Vectorizer-entry precondition: the just-nested region must carry no loose WCR
         # (self-contained / in-place RMW must already be an explicit aug-assign; genuine
         # reductions are lifted to TileReduce / the scalar-reduction-out boundary). Asserts
@@ -564,15 +631,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # boundary source or sink. Downstream tile widening + lib-node
         # insertion see a clean, uniform graph.
         passes.append(StageGlobalArrayThroughScalars())
-        # NOTE: TileCarriedScalarReduction (loop-carried scalar reduction -> partial-sum
-        # tile + TileReduce fold) is WIP and NOT yet wired in: recognition is validated
-        # (tight, no false positives) and the single-tile case is correct, but the
-        # cross-tile carry needs a mechanism DaCe codegen actually accumulates -- a
-        # map-exit WCR fed by an NSDFG body OVERWRITES (one tile survives), so the
-        # carry must instead be a sequential LoopRegion (or per-tile scalar fold +
-        # scalar-WCR, the known-working reduction idiom). Wiring it in now would
-        # silently miscompile any recognised reduction with trip > W, so it stays off.
-        #     passes.append(TileCarriedScalarReduction(widths=widths_t))
         # Index-subset propagation (per user direction): the frontend promotes a
         # computed index ``i + offset`` to a scalar then a symbol ``__sym`` used in
         # the memlet subset (``A[__sym]``), hiding the iter-var from the tile-access
@@ -629,6 +687,12 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # has_mask=True + wires _mask onto Tile{Binop, Unop, ITE, Reduce} lib nodes.
             ConvertTaskletsToTileOps(widths=widths_t),
         ]
+        if reduce_at_output:
+            # Fold each widened reduction-accumulator tile into its scalar output via a
+            # spliced TileReduce (the reduce_at_output boundary fold). Runs right after the
+            # tile conversion -- ``_nnr_priv`` is now a full tile and its ``tile → scalar``
+            # copyback is transiently invalid until folded -- and before the final validate.
+            passes.append(SpliceReductionTileFold(widths=widths_t, target_isa=target_isa))
         super().__init__(passes)
         self._widths = widths_t
         self._target_isa = target_isa
@@ -638,6 +702,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._loop_to_map_permissive = loop_to_map_permissive
         self._expand_tile_nodes = expand_tile_nodes
         self._validate_all = validate_all
+        self._reduce_at_output = reduce_at_output
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -666,6 +731,33 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # (FunctionCallRegions inlined, dead dataflow swept) regardless of how the
         # SDFG was built — already-simplified inputs are a near no-op.
         sdfg.simplify(validate_all=self._validate_all)
+        # Normalize masked in-nsdfg write-only WCR reductions FIRST, on the frontend shape,
+        # before any WCR-consuming lift below. The frontend emits a masked scalar reduction
+        # (``if mask: acc += x`` in a ``dc.map``) as a WCR edge INSIDE a body NestedSDFG writing
+        # a write-only output connector, with a plain NestedSDFG->MapExit edge. Left as-is,
+        # ``WCRToAugAssign`` (front block, below) severs it (reads the write-only seed) and
+        # ``MapFusionVertical`` double-counts it. ``NormalizeNestedReduction`` rewrites it into the
+        # seeded-body-local + map-exit-WCR shape the frontend already emits natively for the
+        # equivalent polybench reduction (symm) -- which the downstream lifts and WCRToAugAssign
+        # then handle correctly. Idempotent + a no-op on kernels with no in-nsdfg reduction, so the
+        # elementwise / stencil / native-reduction corpus is unaffected. Mirrors the FIRST slot the
+        # canonicalize pipeline gives it.
+        # Normalize a MASKED reduction (``if cond: acc <op>= x``) to a SINGLE-STATE
+        # elementwise-select body (``oc = ITE(cond, x, identity(op))``) + an unconditional
+        # map-exit WCR, BEFORE NNR. NNR would instead leave the body multi-state (seed/
+        # copyback around the conditional) + insert a map-level ``_nnr_out`` node, which
+        # double-nests the body so the walker never widens it (the strided tile map then
+        # sums every W-th element). A single-state select body inlines like the masked-ITE
+        # store, so the map body collapses to one NestedSDFG and the walker widens it -- the
+        # reduction tiles for every op via the op identity. Runs first; NNR then no-ops on
+        # the normalized shape (no in-body WCR left) and still covers any shape this misses.
+        # Gated to the ``reduce_at_output`` path: it emits an AccessNode-sourced map-exit
+        # WCR that only the reduce_at_output tagging (MarkReduceAtOutput, below) whitelists
+        # against the pre-tiling ``no_wcr_inside_nested_sdfgs`` invariant; on the default
+        # path the masked reduction keeps NNR's shape (lifted to a Reduce libnode).
+        if self._reduce_at_output:
+            NormalizeMapReduction().apply_pass(sdfg, {})
+        NormalizeNestedReduction().apply_pass(sdfg, {})
         # Lift pure-WCR boundary reductions (``acc = sum(A)`` -- a MapExit
         # ``CR:op`` WCR with no carry-in read) to a product buffer + vectorized
         # ``Reduce`` BEFORE ``WCRToAugAssign`` rewrites the WCR into an in-place
@@ -696,6 +788,14 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # expansion. No-op on non-contraction kernels (``LiftEinsum`` requires >= 2
         # tensor operands), so the elementwise / stencil corpus is unaffected.
         PatternMatchAndApplyRepeated([LiftEinsum()]).apply_pass(sdfg, {})
+        if self._reduce_at_output:
+            # Tag reduction maps whose accumulation lands INSIDE the body (a nested ``Reduce``
+            # from the pure lift, or a scalar WCR-exit) so the WCR invariants allow them and a
+            # boundary ``TileReduce`` is spliced post-widening (the ``reduce_at_output`` path).
+            # AFTER ``LiftEinsum`` so a clean contraction (gemm) stays on the Einsum path and is
+            # NOT tagged here.
+            from dace.transformation.passes.vectorization.mark_reduce_at_output import MarkReduceAtOutput
+            MarkReduceAtOutput().apply_pass(sdfg, {})
         # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction shape into an
         # in-place RMW tasklet. The recognised tile-path reductions (post-NormalizeWCRSource in the
         # constructor pipeline) land as `tile -> scalar -[wcr]-> sink` and are left alone -- they're

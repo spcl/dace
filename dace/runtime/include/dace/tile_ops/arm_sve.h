@@ -488,6 +488,16 @@ inline svint32_t sve_load_idx32(svbool_t pg, const IdxT* idx, int i) {
   if constexpr (std::is_same<IdxT, std::int32_t>::value) {
     return svld1_s32(pg, idx + i);
   } else {  // int64_t index for 32-bit data: load s64 then narrow to s32 lanes
+    // BUG (tracked, ARM-only, mixed IdxT=int64 + 32-bit data gather/scatter only):
+    // ``pg`` here is a b32 predicate (the 32-bit-data loop uses svwhilelt_b32 /
+    // svcntw), but ``svld1_s64`` reads at 64-bit granularity -> wrong lane subset +
+    // only svcntd (half) of the needed svcntw indices. ``svreinterpret_s32_s64`` is a
+    // BITCAST, not a lane-wise narrow, so the resulting s32 indices are garbage ->
+    // wrong (possibly OOB) addresses on ACTIVE lanes (mask prevention is fine; this is
+    // an index-value defect). FIX: load two svcntd int64 chunks and pack with
+    // svuzp1_s32(svreinterpret_s32_s64(lo), svreinterpret_s32_s64(hi)), or route this
+    // mixed-width case to a scalar index loop. Unverifiable here (no ARM host); the
+    // corpus uses SCALAR/AVX512, so this path is never exercised on x86.
     svint64_t wide = svld1_s64(pg, idx + i);
     return svreinterpret_s32_s64(wide);  // low 32 bits of each lane (indices fit)
   }

@@ -204,17 +204,19 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                 dst = edge.dst
                 # The memlet names the array being offset (``inner_name`` -> outer) on
                 # ONE side of an AccessNode<->AccessNode copy, with the OTHER side a
-                # single element (``other_subset == [0]``). This covers both the
-                # self-copy shape (``memlet.data == src.data``) AND a View<->array copy
-                # (e.g. a strided write ``a[2*i]`` whose View ``a_slice`` survives
-                # RemoveViews -- here ``memlet.data == dst.data`` while ``src`` is the
-                # View). In every such case the offset applies to the named-array
-                # subset and the single-element ``other_subset`` is unchanged.
+                # SINGLE ELEMENT. This covers both the self-copy shape (``memlet.data ==
+                # src.data``) AND a View<->array copy (e.g. a strided write ``a[2*i]`` whose
+                # View ``a_slice`` survives RemoveViews -- here ``memlet.data == dst.data``
+                # while ``src`` is the View). The single element may be encoded at ANY rank:
+                # ``[0]`` (1-D) OR ``[0, 0]`` (a K>=2 collapsed element, e.g. vadv's
+                # ``__map_fusion_cs[0, 0] -> cs[0, 0]``). Accept any single-element
+                # ``other_subset`` (``num_elements() == 1``) and preserve it verbatim; only
+                # the named-array subset is offset.
                 if (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)
-                        and memlet.other_subset == subsets.Range([(0, 0, 1)]) and memlet.data in (src.data, dst.data)):
+                        and memlet.other_subset.num_elements() == 1 and memlet.data in (src.data, dst.data)):
                     new_memlet = Memlet(data=memlet.data,
                                         subset=subsets.Range(new_range_list),
-                                        other_subset=subsets.Range([(0, 0, 1)]))
+                                        other_subset=copy.deepcopy(memlet.other_subset))
                     new_memlet.wcr = memlet.wcr
                     # Preserve the dynamic flag: a masked / conditional write (``A[mask] =
                     # v`` -> a dynamic memlet) may or may not write per element, so dropping
@@ -352,6 +354,21 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # omitted, and assignment-style statements aren't parseable by
     # :func:`pystr_to_symbolic`; rewrite when parseable, leave alone
     # otherwise (those statements don't reference connector arrays).
+    def _rewrite_connector_refs(sym):
+        """Rewrite references to ``inner_name`` in a codeblock / branch-condition. A
+        SUBSCRIPTED ref (``__tmp[x]``) uncollapses via :func:`_uncollapse_subscript`; a
+        BARE scalar ref (``if __tmp`` -- a single-element mask tested as a condition) must
+        be indexed ``__tmp[offset_dims]`` once the connector is widened to the full array,
+        else the bare name tests the WHOLE array (always truthy) -- the collapsed-mask bug
+        (azimint_naive: an unmasked mean-reduction). Mirrors the interstate-edge handling
+        above; a true ``Scalar`` source stays a bare symbol."""
+        if inner_name in symbolic.arrays(sym):
+            return sym.replace(symbolic.Subscript, _uncollapse_subscript)
+        if (not outer_is_scalar) and inner_name in {str(s) for s in sym.free_symbols}:
+            for s in [x for x in sym.free_symbols if str(x) == inner_name]:
+                sym = sym.subs(s, _uncollapse_scalar(s))
+        return sym
+
     def _rewrite_codeblock(cb):
         if cb is None:
             return cb
@@ -359,7 +376,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             sym = symbolic.pystr_to_symbolic(cb.as_string)
         except Exception:
             return cb
-        return CodeBlock(symbolic.symstr(sym.replace(symbolic.Subscript, _uncollapse_subscript)))
+        return CodeBlock(symbolic.symstr(_rewrite_connector_refs(sym)))
 
     for cfg in inner_sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion):
@@ -371,9 +388,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         if isinstance(cfg, ConditionalBlock):
             for i, (cond, body) in enumerate(cfg.branches):
                 cfg.branches[i] = (CodeBlock(
-                    symbolic.symstr(
-                        symbolic.pystr_to_symbolic(cond.as_string).replace(symbolic.Subscript,
-                                                                           _uncollapse_subscript))), body)
+                    symbolic.symstr(_rewrite_connector_refs(symbolic.pystr_to_symbolic(cond.as_string)))), body)
 
     inner_sdfg.replace_dict({inner_name: outer_name})
 
@@ -391,9 +406,15 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         for iedge in list(state.in_edges(nsdfg_node)):
             if iedge.dst_conn == inner_name:
                 if existing_target:
-                    # Drop this edge -- the existing ``outer_name`` edge
-                    # already covers the full-array subset.
-                    state.remove_edge(iedge)
+                    # Drop this edge -- the existing ``outer_name`` edge already
+                    # covers the full-array subset. Remove the whole memlet PATH
+                    # (not just this edge): the source is typically a ``MapEntry``
+                    # pass-through (``ME.OUT_x -> NSDFG``), so dropping only the
+                    # NSDFG-incident edge would leave ``ME``'s ``IN_x``/``OUT_x``
+                    # connectors + the feeding edge dangling (an invalid SDFG). A
+                    # symmetric kernel reading the SAME outer array through two inner
+                    # connectors (symm's ``A[i,k]`` and ``A[k,i]``) hits exactly this.
+                    state.remove_memlet_path(iedge, remove_orphans=True)
                 else:
                     iedge.dst_conn = outer_name
                     iedge.data.subset = _full_subset(state.sdfg, outer_name)
@@ -405,7 +426,10 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
                     # -- and is stale after widening. Clear it so the edge is a
                     # clean full-array passthrough (design 2.4).
                     iedge.data.other_subset = None
-        nsdfg_node.remove_in_connector(inner_name)
+        # ``remove_memlet_path`` already dropped the NSDFG connector on the dedup
+        # branch; guard so the (idempotent) explicit removal doesn't error.
+        if inner_name in nsdfg_node.in_connectors:
+            nsdfg_node.remove_in_connector(inner_name)
         if outer_name not in nsdfg_node.in_connectors:
             nsdfg_node.add_in_connector(outer_name, force=True)
     else:
@@ -414,12 +438,16 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         for oedge in list(state.out_edges(nsdfg_node)):
             if oedge.src_conn == inner_name:
                 if existing_target:
-                    state.remove_edge(oedge)
+                    # Drop the whole path (mirrors the in-edge dedup): the sink is
+                    # typically a ``MapExit`` pass-through, so removing only the
+                    # NSDFG-incident edge would dangle its ``IN_x``/``OUT_x``.
+                    state.remove_memlet_path(oedge, remove_orphans=True)
                 else:
                     oedge.src_conn = outer_name
                     oedge.data.subset = _full_subset(state.sdfg, outer_name)
                     oedge.data.other_subset = None  # stale after widening (see in-edge note)
-        nsdfg_node.remove_out_connector(inner_name)
+        if inner_name in nsdfg_node.out_connectors:
+            nsdfg_node.remove_out_connector(inner_name)
         if outer_name not in nsdfg_node.out_connectors:
             nsdfg_node.add_out_connector(outer_name, force=True)
 
@@ -464,6 +492,13 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # forever.
         for edge in (*state.in_edges(nsdfg_node), *state.out_edges(nsdfg_node)):
             if edge.data is None or edge.data.data is None:
+                continue
+            # A WCR (reduction) boundary edge is NOT widened by ``apply`` -- its subset
+            # is the reduction target slot, kept as-is (see the ``wcr is not None``
+            # skip in the write-subset collection). Flagging it here (its subset is a
+            # per-iteration slice, never the full array) would re-match forever after
+            # every other edge is already full -- the reduce-at-output reduction hang.
+            if edge.data.wcr is not None:
                 continue
             outer_arr = sdfg.arrays.get(edge.data.data)
             if outer_arr is None:

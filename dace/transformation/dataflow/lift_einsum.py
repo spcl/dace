@@ -110,13 +110,19 @@ class LiftEinsum(xf.SingleStateTransformation):
         if num_tensor_inputs < 2:
             return False
 
-        # Refuse a scalar / full-reduction output (no free output index). This pass
-        # lifts ARRAY-producing contractions (matmul chains gemm/2mm/3mm) to a BLAS
-        # GEMM; a scalar dot-product / full reduction is the reduction pass's domain,
-        # and lifting it here mishandles affine operand indices -- e.g. durbin's
-        # reversed dot product ``sum += r[k-i-1] * y[i]`` lowers to the wrong result.
+        # A scalar / full-reduction output (no free output index) is the reduction
+        # pass's domain in general -- a MULTI-dimensional scalar contraction mis-lowers
+        # whenever the operand index ORDER differs (``ij,ji->`` folds to the wrong 1x1
+        # GEMM), and an AFFINE reversed access (durbin's ``sum += r[k-i-1]*y[i]``) is
+        # already refused by the map-parameter index check above. The ONE exception is
+        # a genuine 1-D dot product ``acc = sum_i a[i]*b[i]`` (``i,i->``) over the FULL
+        # operand extent: a single map parameter forces every tensor operand to index
+        # ``i``, so the einsum can only be ``i,...,i->`` -- which lowers correctly (2
+        # operands -> degenerate 1x1 GEMM; more -> pure contraction). Lift only that
+        # (its WCR is a Sum, checked below); refuse every wider scalar output.
         if not (output_chars - {'0'}):
-            return False
+            if len(self.map_entry.map.params) != 1 or self._partial_range():
+                return False
 
         # Reject an ELEMENTWISE op: NO contracted index (every input index also appears in
         # the output) AND some tensor input accesses the SAME unit subset as the output --

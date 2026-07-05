@@ -214,6 +214,15 @@ def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     ``Broadcast=true``, casting to the output type); ``has_mask`` -> ``Masked``.
     """
     node.validate(parent_sdfg, parent_state)
+    # A scalar-shaped output (a volume-1 Scalar / length-1 Array, emitted by value as
+    # ``T _c;``) cannot bind to ``tile_binop``'s ``T* out`` pointer argument. Delegate
+    # to the pure expansion's ``out_is_scalar`` branch (mirrors ``make_unop_tasklet``
+    # and the differing-dtype deferral below). Gated on both operands non-Tile, matching
+    # the pure path's own ``out_is_scalar`` predicate.
+    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, _is_scalar_shape
+    out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
+    if node.kind_a != _TILE and node.kind_b != _TILE and _is_scalar_shape(out_desc):
+        return ExpandTileBinopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_c")
@@ -293,6 +302,17 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     # here too rather than KeyError on _UNOP_TO_CHAR).
     from dace.libraries.tileops.nodes.tile_unop import _CAST_OP_TO_CPP, ExpandTileUnopPure
     if node.op in _CAST_OP_TO_CPP:
+        return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
+    # A scalar-shaped output (``_c`` a volume-1 Scalar / length-1 Array, which codegen
+    # emits by value as ``T _c;``) cannot bind to ``tile_unop``'s ``T* out`` pointer
+    # argument -- e.g. ``!`` of a scalar bool condition (s274). The pure expansion's
+    # ``out_is_scalar`` branch emits the bare ``_c = <op>(...)`` assignment instead;
+    # delegate to it (the same escape hatch the cast-op case above and the
+    # differing-dtype case below use). Gated on a non-Tile operand to mirror the pure
+    # path's own ``out_is_scalar`` predicate (a Tile operand always yields a tile output).
+    from dace.libraries.tileops.nodes.tile_binop import _is_scalar_shape
+    out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
+    if node.kind_a != _TILE and _is_scalar_shape(out_desc):
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}

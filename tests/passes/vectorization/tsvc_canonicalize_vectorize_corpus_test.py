@@ -107,7 +107,10 @@ _MULTIDIM_XFAIL: dict = {
     's2275_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
     's232_d_single': 'numerical: vectorized output diverges from numpy reference',
     's272_d_single': 'codegen gap: missing symbol on nested SDFG',
-    's274_d_single': 'codegen gap: predicated if/else cond not fully tiled (scalar cond + tile_unop ! output)',
+    # scalar-cond ``tile_unop<bool,'!'>`` scalar-output codegen now fixed (compiles);
+    # residual is a numerical divergence on ``a`` (uninitialized ``a_index`` gather /
+    # masked predicated-write), a separate gap.
+    's274_d_single': 'numerical: vectorized output diverges from numpy reference (masked predicated write / gather)',
     's3111_d_single': 'numerical: vectorized output diverges from numpy reference',
     's331_d_single': 'numerical: vectorized output diverges from numpy reference',
     's332_d_single': 'Group B (loop2map): race condition on interstate edge (recurrence over-parallelized)',

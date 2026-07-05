@@ -284,6 +284,41 @@ def logical_binops_are_bool(scope) -> Optional[str]:
     return None
 
 
+def _is_reduce_at_output_map(map_entry) -> bool:
+    """True iff ``map_entry`` is tagged for the ``reduce_at_output`` tile-reduce lowering
+    (its body reduction is relocated to a boundary ``TileReduce`` after widening, so the
+    WCR invariants intentionally allow the transient in-body WCR)."""
+    from dace.transformation.passes.vectorization.mark_reduce_at_output import REDUCE_AT_OUTPUT_MARKER
+    # Substring, not ``endswith``: the reduce-at-output tag is applied early (after
+    # LiftEinsum), then ``SplitMapForTileRemainder`` appends its own ``__tile_main`` /
+    # ``__scalar_tail`` suffix, so the marker ends up in the MIDDLE of the label
+    # (``comp_mean__reduce_out__tile_main``).
+    return REDUCE_AT_OUTPUT_MARKER in map_entry.map.label
+
+
+def _is_reduce_at_output_map_node(node) -> bool:
+    """True iff ``node`` -- a :class:`MapEntry` OR :class:`MapExit` -- belongs to a
+    ``reduce_at_output``-tagged map (both expose ``.map.label``)."""
+    from dace.transformation.passes.vectorization.mark_reduce_at_output import REDUCE_AT_OUTPUT_MARKER
+    return REDUCE_AT_OUTPUT_MARKER in node.map.label
+
+
+def _nsdfg_in_reduce_at_output_scope(sd) -> bool:
+    """True iff nested SDFG ``sd``'s enclosing map (via ``parent_nsdfg_node``) is a tagged
+    ``reduce_at_output`` map."""
+    node = sd.parent_nsdfg_node
+    st = getattr(sd, "parent", None)
+    if node is None or st is None:
+        return False
+    scope = st.scope_dict()
+    entry = scope.get(node)
+    while entry is not None:
+        if isinstance(entry, MapEntry) and _is_reduce_at_output_map(entry):
+            return True
+        entry = scope.get(entry)
+    return False
+
+
 def no_wcr_in_map_body(scope) -> Optional[str]:
     """No edge inside a map scope may carry a write-conflict resolution.
 
@@ -308,6 +343,10 @@ def no_wcr_in_map_body(scope) -> Optional[str]:
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, MapEntry):
+                continue
+            # A tagged ``reduce_at_output`` map keeps its reduction WCR in the body until a
+            # boundary ``TileReduce`` is spliced (post-widening); do not flag it here.
+            if _is_reduce_at_output_map(node):
                 continue
             body = state.all_nodes_between(node, state.exit_node(node))
             if not body:
@@ -342,8 +381,21 @@ def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
     for sd, state in _iter_states(scope):
         if sd.parent_nsdfg_node is None:
             continue
+        # Skip a body NSDFG whose enclosing map is a tagged ``reduce_at_output`` map: its
+        # inner reduction WCR is intentionally kept until the boundary ``TileReduce`` splice.
+        if _nsdfg_in_reduce_at_output_scope(sd):
+            continue
         for edge in state.edges():
             if edge.data is None or edge.data.wcr is None:
+                continue
+            # A WCR on the reduction-out chain of a tagged ``reduce_at_output`` map --
+            # ``AN ─[wcr]→ MapExit`` / ``MapExit ─[wcr]→ acc`` -- is the intended scalar-out
+            # form kept until the boundary ``TileReduce`` splice. The tagged reduction map
+            # can itself be nested inside another (untagged) map's body NSDFG (azimint's
+            # ``j`` reduction inside the ``i`` map's ``loop_body``), so the ``sd``-level scope
+            # skip above misses it; recognise it per-edge by the incident tagged map exit/entry.
+            if any(isinstance(n, (MapEntry, MapExit)) and _is_reduce_at_output_map_node(n)
+                   for n in (edge.src, edge.dst)):
                 continue
             return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                     f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
