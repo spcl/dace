@@ -56,33 +56,23 @@ _CANON_XFAIL = {
     # --- npbench gaps appended below from _NP_CANON_XFAIL ---
 }
 # npbench-suite canon gaps (established by the subprocess-isolated corpus sweep).
+# channel_flow un-xfailed: the whole corpus now computes in fp64/complex128, so the
+# fp32 ``while udiff > 0.001`` convergence-count divergence is gone -- baseline, canon,
+# and fast-canon all PASS at preset S.
 _NP_CANON_XFAIL = {
-    # azimint_naive FIXED by NormalizeNestedReduction. nbody + cavity_flow xfails REMOVED:
-    #   nbody: the "GEMM ldc corruption" was a misdiagnosis -- the only BLAS op is a
-    #     ``cblas_sgemv`` (no ldc) with correct lda/incy; the stage bisect shows canon error
-    #     flat/decreasing (fusion improves the fp32 sum). Canon PASSES at preset S; it is a
-    #     chaotic-fp32 kernel where the untransformed baseline sat on the tolerance edge.
-    #   cavity_flow: PASSES at preset S in both modes (verified) -- fixed as a side effect of
-    #     this session's channel_flow SymbolPropagation/LICM fixes (shared build_up_b/
-    #     pressure_poisson structure). The prior "stencil/boundary miscompile" was never
-    #     asserted (imperative xfail). Only diverges at full 61x61 by fp32 reassociation at 2
-    #     interior cells where canon is *more* accurate than baseline.
-    # channel_flow: NOT a canon bug. Canon (and fast) are a FAITHFUL lowering -- bit-identical
-    # to the untransformed baseline -- but the baseline ITSELF diverges from numpy: the fp32
-    # ``while udiff > 0.001`` convergence test (udiff = (sum(u)-sum(un))/sum(u), a catastrophic
-    # cancellation of two ~96-magnitude sums) trips ~5 iterations early because numpy's pairwise
-    # ``np.sum`` and the SDFG's reduction order round the near-cancelling sum differently. SDFG-u
-    # matches numpy-u bit-exactly at the SDFG's own stopping iteration. This session fixed the two
-    # real channel_flow canon bugs (SymbolPropagation loop-condition fold + LICM preheader uninit)
-    # and the fast-mode ScalarWriteShadowScopes KeyError; the residual is a port/oracle fp32
-    # determinism issue, not canon -- so it is classified ``port:`` like mandelbrot below.
-    'channel_flow': 'port: fp32 convergence-count divergence (baseline diverges; canon+fast faithful, bit-identical)',
-    # Broken corpus PORTS -- the @dc.program is already wrong (or fails to compile) even
-    # UNTRANSFORMED, so this is not a canonicalization gap. Verified: baseline (no canon)
-    # does not match the numpy reference. Out of scope for canon; tracked as port bugs.
-    'mandelbrot1': 'port: baseline SDFG mismatches numpy reference even untransformed',
-    'mandelbrot2': 'port: baseline SDFG mismatches numpy reference even untransformed',
-    'stockham_fft': 'port: baseline SDFG mismatches numpy reference even untransformed',
+    # mandelbrot1/2: no longer a port gap -- at fp64 the untransformed baseline matches
+    # numpy. Canon now trips on a malformed View it creates for the ``linspace`` grid: a
+    # canon pass builds ``C_slice`` (a View of the complex grid ``C``) whose edge into the
+    # kernel map carries the *viewed* data ``C`` instead of ``C_slice``. StateFusionExtended's
+    # post-apply check (and the SDFG validator: get_view_edge -> None, "ambiguous View edge")
+    # reject it. Real canon-lowering bug; tracked.
+    'mandelbrot1': 'canon: malformed View (C_slice of C) -> invalid map edge (baseline passes at fp64)',
+    'mandelbrot2': 'canon: malformed View (C_slice of C) -> invalid map edge (baseline passes at fp64)',
+    # stockham_fft: baseline/codegen gap, not canon numerics. The ``transpose_yv`` transient
+    # size ``R*R**(K-i-1)*R**i`` is allocated at SDFG scope where ``i``'s range is not visible,
+    # so RelaxIntegerPowers proves ``R**i`` (-> ipow) but not ``R**(K-i-1)`` -> a residual
+    # ``dace::math::pow`` (double) in a ``new[]`` size -> non-integral new-declarator compile error.
+    'stockham_fft': 'codegen: pow(R, K-i-1) in a transient new[] size not relaxed to ipow (non-integral)',
 }
 _CANON_XFAIL.update({('np', n): r for n, r in _NP_CANON_XFAIL.items()})
 
@@ -95,9 +85,8 @@ _FAST_CANON_XFAIL = {
     # instead of asserting. The flake did not reproduce in 1200+ fast-canon runs.
 }
 _NP_FAST_XFAIL = {
-    # channel_flow's fast-mode ``KeyError: SDFG (loop_body)`` (ScalarWriteShadowScopes walking
-    # a foreign clone's blocks after loop fission) is FIXED; it now inherits the shared canon
-    # ``port:`` xfail above (fast lowering is faithful, same fp32-convergence divergence).
+    # channel_flow (incl. the old fast-mode ScalarWriteShadowScopes KeyError) fully passes at
+    # fp64; mandelbrot/stockham inherit the shared canon xfails above.
 }
 _FAST_CANON_XFAIL.update({('np', n): r for n, r in _NP_FAST_XFAIL.items()})
 
