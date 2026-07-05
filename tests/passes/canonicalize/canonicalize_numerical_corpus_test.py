@@ -60,19 +60,17 @@ _CANON_XFAIL = {
 # fp32 ``while udiff > 0.001`` convergence-count divergence is gone -- baseline, canon,
 # and fast-canon all PASS at preset S.
 _NP_CANON_XFAIL = {
-    # mandelbrot1/2: no longer a port gap -- at fp64 the untransformed baseline matches
-    # numpy. Canon now trips on a malformed View it creates for the ``linspace`` grid: a
-    # canon pass builds ``C_slice`` (a View of the complex grid ``C``) whose edge into the
-    # kernel map carries the *viewed* data ``C`` instead of ``C_slice``. StateFusionExtended's
-    # post-apply check (and the SDFG validator: get_view_edge -> None, "ambiguous View edge")
-    # reject it. Real canon-lowering bug; tracked.
-    'mandelbrot1': 'canon: malformed View (C_slice of C) -> invalid map edge (baseline passes at fp64)',
-    'mandelbrot2': 'canon: malformed View (C_slice of C) -> invalid map edge (baseline passes at fp64)',
-    # stockham_fft: baseline/codegen gap, not canon numerics. The ``transpose_yv`` transient
-    # size ``R*R**(K-i-1)*R**i`` is allocated at SDFG scope where ``i``'s range is not visible,
-    # so RelaxIntegerPowers proves ``R**i`` (-> ipow) but not ``R**(K-i-1)`` -> a residual
-    # ``dace::math::pow`` (double) in a ``new[]`` size -> non-integral new-declarator compile error.
-    'stockham_fft': 'codegen: pow(R, K-i-1) in a transient new[] size not relaxed to ipow (non-integral)',
+    # mandelbrot1 un-xfailed: the canon-created ``C_slice`` (a scalar, not a View) fed a
+    # MapExit with the outer array's memlet after TrivialTaskletElimination spliced out the
+    # boundary copy tasklet. Fixed by keeping that trivial copy tasklet at the map boundary.
+    # stockham_fft un-xfailed: UniqueLoopIterators now renames the loop variable in the owning
+    # SDFG's descriptor shapes, so the ``transpose_yv`` transient size loses its stale ``i`` and
+    # RelaxIntegerPowers can prove ``R**(K - _loop_it_0 - 1) >= 0``.
+    # mandelbrot2 remains: with those fixed, canon now reaches MapToForLoop, which drops the
+    # view-defining edge of a boundary View (``C_0``, a reshape of the grid ``C``) when it nests
+    # the map -> a dangling View. Tracked; fix in progress in MapToForLoop (copy the view + its
+    # viewed node into the nested SDFG).
+    'mandelbrot2': 'canon: MapToForLoop drops the view edge of a boundary View (C_0 reshape of C) -> dangling view',
 }
 _CANON_XFAIL.update({('np', n): r for n, r in _NP_CANON_XFAIL.items()})
 

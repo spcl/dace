@@ -62,6 +62,16 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         if expr_index != 0 and read_desc.dtype != write_desc.dtype:
             return False
 
+        # expr_index == 2 (AccessNode -> tasklet -> MapExit): removing the tasklet splices
+        # the read AccessNode directly onto the MapExit connector. Such an edge is valid
+        # only if its memlet names that AccessNode, but the surviving stage-out memlet names
+        # the outer mapped array -- so the merge would yield an invalid ``<scalar> -> MapExit``
+        # edge whose ``memlet.data`` is the outer array (rejected by the SDFG validator and
+        # StateFusionExtended's post-apply check). Keep the trivial copy tasklet at the map
+        # boundary; it is exactly the shape InsertAssignTaskletsAtMapBoundary re-creates.
+        if expr_index == 2 and write_memlet.data != read.data:
+            return False
+
         return True
 
     def apply(self, graph, sdfg):

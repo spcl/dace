@@ -18,6 +18,7 @@ Python/SDFG API inputs.
 from typing import Optional, Union
 
 import dace
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
@@ -82,6 +83,26 @@ class UniqueLoopIterators(ppl.Pass):
         repl = {old_name: new_name}
         cfg.replace_meta_accesses(repl)
         cfg.replace_dict(repl)
+
+        # ``ControlFlowRegion.replace_dict`` cascades through the region's states and
+        # edges but NOT the owning SDFG's array descriptors, which live on the SDFG. A
+        # per-iteration transient whose *shape* depends on the loop variable (stockham's
+        # ``transpose_yv`` of shape ``R**(K - i - 1)``) would keep the stale name while the
+        # loop and its memlets move to ``new_name`` -- leaving a size/subscript that names a
+        # symbol the loop no longer binds (a non-integral ``dace::math::pow`` in a ``new[]``
+        # after the scoped range is lost). Rename the iterator in the descriptors accessed
+        # inside this region. (When ``cfg`` is itself an SDFG -- the nested-SDFG recursion
+        # below -- ``SDFG.replace_dict`` already renamed its descriptors.)
+        if not isinstance(cfg, dace.SDFG):
+            owner = cfg.sdfg
+            for aname in {
+                    n.data
+                    for st in cfg.all_states()
+                    for n in st.nodes() if isinstance(n, dace.nodes.AccessNode)
+            }:
+                desc = owner.arrays.get(aname)
+                if desc is not None and old_name in {str(s) for s in desc.free_symbols}:
+                    replace_properties_dict(desc, repl)
 
         for state in cfg.all_states():
             for node in state.nodes():
