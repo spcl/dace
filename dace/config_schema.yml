@@ -343,30 +343,18 @@ required:
 
                     cuda_arch:
                         type: str
-                        title: Additional CUDA architectures
+                        title: CUDA architectures to compile for
                         description: >
-                            Additional CUDA architectures (separated by commas) to compile GPU
-                            code for, excluding the current architecture on the compiling machine.
-                            See also 'no_gpu_arch_detection'.
+                            If empty the cuda archtecture is autodetected by the compiler and has
+                            the same effect as passing 'native' to it.
                         default: ''
 
                     hip_arch:
                         type: str
-                        title: Additional HIP architectures
+                        title: HIP architectures to compile for
                         description: >
-                            Additional HIP architectures (separated by commas) to compile GPU
-                            code for, excluding the current architecture on the compiling machine.
-                            See also 'no_gpu_arch_detection'.
+                            If empty then an autodetection step is performed.
                         default: ''
-
-                    no_gpu_arch_detection:
-                        type: bool
-                        title: Disable GPU architecture detection
-                        description: >
-                          If set to 'true' then there will be no GPU detection set before compilation,
-                          which prevents the creation of a CUDA/HIP context. Instead the value
-                          specified in 'hip_arc' and 'cuda_arch' will be used, respectvely.
-                        default: false
 
                     default_block_size:
                         type: str

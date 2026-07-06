@@ -9,7 +9,6 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
-set(DACE_NO_GPU_ARCH_DETECTION FALSE CACHE BOOL "Prevent detection of the cuda architecture.")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
@@ -81,21 +80,12 @@ if(DACE_ENABLE_CUDA)
   if (DEFINED LOCAL_CUDA_ARCHITECTURES)
     message(STATUS "Use cached CUDA architectures: '${DACE_CUDA_ARCHITECTURES_DEFAULT}'")
 
-  elseif (${DACE_NO_GPU_ARCH_DETECTION})
-    message(STATUS "Use explicitly passed CUDA architectures '${DACE_CUDA_ARCHITECTURES_DEFAULT}'")
-    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Specified GPUs architecture for compilation")
-
+  elseif(DACE_CUDA_ARCHITECTURES_DEFAULT)
+    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
+    message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
   else()
-      execute_process(COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" "--run"
-                      "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
-                      OUTPUT_VARIABLE _local_arch RESULT_VARIABLE _arch_res)
-    if(_arch_res EQUAL 0)
-      set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
-      message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
-    else()
-      set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
-      message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
-    endif()
+    set(LOCAL_CUDA_ARCHITECTURES "native" CACHE STRING "Detected local GPUs for compilation")
+    message(STATUS "No CUDA architecture provided, using native.")
   endif()
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
@@ -224,7 +214,7 @@ if(DACE_ENABLE_HIP)
   if (DEFINED LOCAL_HIP_ARCHITECTURES)
     message(STATUS "Use cached HIP architectures: '${DACE_HIP_ARCHITECTURES_DEFAULT}'")
 
-  elseif(${DACE_NO_GPU_ARCH_DETECTION})
+  elseif(DACE_HIP_ARCHITECTURES_DEFAULT)
     message(STATUS "Use explicitly passed HIP architectures '${DACE_HIP_ARCHITECTURES_DEFAULT}'")
     set(LOCAL_HIP_ARCHITECTURES "${DACE_HIP_ARCHITECTURES_DEFAULT}" CACHE STRING "Specified HIP architecture for compilation")
 
