@@ -12,7 +12,6 @@ is simply skipped (compile_lane returns an error for that lane) -- not every
 machine has all 4 toolchains.
 """
 import ctypes
-import functools
 import os
 import re
 import shutil
@@ -44,7 +43,6 @@ def find_best_cpp_compiler():
     return find_compiler('clang++') or find_compiler('g++')
 
 
-@functools.lru_cache(maxsize=1)
 def find_gcc_install_dir():
     """Clang needs an explicit --gcc-install-dir to find libstdc++ headers.
 
@@ -52,10 +50,7 @@ def find_gcc_install_dir():
     since the two can be different versions with only one of them having a
     matching libstdc++-dev headers package installed (observed concretely:
     a gcc present as a C-only compiler with no matching libstdc++-dev, while
-    a different g++ on the same PATH was the actual complete C++ toolchain).
-    Cached: this spawns a subprocess, and both engine.configure_dace_process()
-    and every clang/icpx lane's compile call it -- the answer can't change
-    within one process's lifetime."""
+    a different g++ on the same PATH was the actual complete C++ toolchain)."""
     gxx = find_compiler('g++')
     if not gxx:
         return None

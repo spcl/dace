@@ -460,7 +460,7 @@ def write_tables(results_root, corpus, lanes, baseline_label):
 # --------------------------------------------------------------------------
 # CLI flags shared by every entry-point script.
 # --------------------------------------------------------------------------
-def add_common_args(ap):
+def add_common_args(ap, default_timeout=300.0):
     ap.add_argument('--results-dir', default='results', help='results root (default: results)')
     ap.add_argument('--reps', type=int, default=100, help='target repetitions per pipeline (default: 100)')
     ap.add_argument('--only', default=None, help='substring filter on kernel name')
@@ -471,7 +471,7 @@ def add_common_args(ap):
     ap.add_argument('--save-sdfg-only', action='store_true', help='save canon/fast-canon SDFGs, skip all timing')
     ap.add_argument('--list-kernels', action='store_true', help='print this corpus\'s kernel identifiers and exit')
     ap.add_argument('--tables-only', action='store_true', help='skip measurement, just rebuild the markdown tables')
-    ap.add_argument('--timeout', type=float, default=3600.0, help='per-measurement subprocess timeout, seconds')
+    ap.add_argument('--timeout', type=float, default=default_timeout, help='per-measurement subprocess timeout, seconds')
     ap.add_argument('--cxx', default=None,
                      help='C++ compiler for DaCe\'s own codegen only -- native lanes each find their own '
                           'vendor compiler independently (default: clang++ on PATH, else g++)')

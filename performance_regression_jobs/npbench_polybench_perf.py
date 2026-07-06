@@ -52,8 +52,19 @@ def load_bench_info(name):
         return json.load(f)['benchmark']
 
 
-def _is_polybench(info):
-    return info['relative_path'].startswith('polybench/')
+def _is_polybench(name, info):
+    """Whether `name` should be built via the polybench or npbench-native
+    local corpus. Prefers actual local corpus membership over the upstream
+    bench_info's declared relative_path: a couple of entries (cholesky2,
+    covariance2) are declared 'polybench/...' upstream but this repo's own
+    port of them only exists in npbench_corpus -- trusting the declared
+    path for those raises a StopIteration deep inside _poly_kernel/_np_kernel
+    when it searches the wrong local corpus."""
+    in_poly = any(k.name == name for k in pb.collect())
+    in_np = any(c['name'] == name for c in npb.collect())
+    if in_poly != in_np:
+        return in_poly
+    return info['relative_path'].startswith('polybench/')  # ambiguous or absent from both; kernel_exists() already filters the latter
 
 
 def _numpy_ref(info):
@@ -100,7 +111,7 @@ def _np_data(c, params):
 
 
 def build_program_and_data(name, info, params):
-    if _is_polybench(info):
+    if _is_polybench(name, info):
         return _poly_data(_poly_kernel(name), params)
     return _np_data(_np_kernel(name), params)
 
@@ -114,23 +125,41 @@ def _collect_outputs(output_args, ret, kwargs):
 
 
 def _resolve_args(names, arrays, params):
-    """Each name in `names` (info['input_args']) is either an actual array
-    (present in `arrays`, copied so repeated calls never mutate the shared
-    input) or a scalar/symbol value that only lives in `params` (e.g. a grid
-    size like 'nx' or a loop bound like 'TMAX') -- input_args mixes both
-    kinds, so `arrays` alone can't resolve every name."""
+    """Each name in `names` (info['input_args']) is an actual array (present
+    in `arrays`, copied so repeated calls never mutate the shared input), a
+    scalar/symbol value that only lives in `params` (e.g. a grid size like
+    'nx' or a loop bound like 'TMAX'), or -- a handful of PolyBench kernels'
+    upstream convention -- a float-cast dimension like 'float_n' that's
+    never itself in bench_info, only its integer counterpart 'N' is. Any
+    other name not covered by these three (e.g. a real algorithm coefficient
+    like deriche's 'alpha') is intentionally left to raise KeyError rather
+    than guess a numeric value with no authoritative source."""
     out = {}
     for n in names:
         if n in arrays:
             v = arrays[n]
             out[n] = v.copy() if isinstance(v, np.ndarray) else v
+        elif n in params:
+            out[n] = params[n]
+        elif n.startswith('float_') and n[len('float_'):].upper() in params:
+            out[n] = float(params[n[len('float_'):].upper()])
         else:
             out[n] = params[n]
     return out
 
 
 def _dace_call_kwargs(info, arrays, params):
-    kwargs = _resolve_args(info['input_args'], arrays, params)
+    # The compiled SDFG's call signature needs every array `arrays` actually
+    # holds -- _poly_data/_np_data key `arrays` by the program's real
+    # argnames, so its keys ARE the ground truth -- plus whatever
+    # scalar/symbol names info['input_args'] lists that aren't arrays.
+    # info['output_args'] isn't a reliable source for the array names: some
+    # kernels (e.g. correlation) declare it empty even though the DaCe
+    # program needs pre-allocated workspace arrays ('corr', 'mean',
+    # 'stddev') that the numpy reference allocates/returns internally
+    # instead of taking as parameters.
+    names = set(info['input_args']) | set(arrays)
+    kwargs = _resolve_args(names, arrays, params)
     symbols = {k: v for k, v in params.items() if k not in kwargs}
     return {**kwargs, **symbols}
 
@@ -285,7 +314,7 @@ def kernel_list(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    engine.add_common_args(ap)
+    engine.add_common_args(ap, default_timeout=3600.0)  # paper-preset kernels can be genuinely slow to compile/run
     args = ap.parse_args()
 
     if args.list_kernels:

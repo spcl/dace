@@ -106,7 +106,12 @@ def _build_sdfg(kernel_name, pipeline, seq):
 
 def _inputs(kernel_name, l1, l2):
     kernel = tsvc.collect(name=kernel_name)[0]
-    rng = np.random.default_rng(tsvc.stable_seed((kernel_name, l1, l2)))
+    # The trailing '' preserves the exact seed a prior --results-dir was
+    # populated under (it used to be a seed_extra='' parameter never called
+    # with anything else) -- stable_seed hashes repr(key), so dropping it
+    # from the tuple would reseed every kernel's inputs and silently mix
+    # differently-seeded reps into the same resumed results.csv.
+    rng = np.random.default_rng(tsvc.stable_seed((kernel_name, l1, l2, '')))
     arrays = tsvc.allocate(kernel, l1, l2, rng)
     sym = tsvc.symbols(kernel, l1, l2)
     sparams = tsvc.scalar_params(kernel, l1)
