@@ -66,6 +66,16 @@ def configure_dace_process():
 
     - cache='unique' keys each SDFG's build folder on {name}_{md5(pid)}, so
       distinct ranks/pipelines never share one.
+    - default_build_folder is redirected to /dev/shm when available: DaCe's
+      own default ('.dacecache', a relative path under the current working
+      directory) lands every CMake configure + compile on whatever
+      filesystem the job runs from. On an HPC cluster that's typically a
+      shared, possibly network-backed scratch filesystem -- with many ranks
+      per node all compiling concurrently, that contention alone can make a
+      normally sub-second compile take minutes (observed: kernels that
+      compile in under a second standalone timed out at 300s under a real
+      multi-rank sweep). /dev/shm (RAM-backed, node-local) is the same fix
+      dace/optimization/utils.py already uses for exactly this reason.
     - compiler.cpu.executable comes from DACE_PERF_CXX (exported by the
       parent from --cxx) or pick_cxx_compiler()'s own autodetection.
     - If that compiler needs it (native_harness.needs_gcc_install_dir:
@@ -77,6 +87,9 @@ def configure_dace_process():
       both a reference and a candidate SDFG)."""
     import dace
     dace.Config.set('cache', value='unique')
+    shm_root = '/dev/shm'
+    if os.path.isdir(shm_root) and os.access(shm_root, os.W_OK):
+        dace.Config.set('default_build_folder', value=os.path.join(shm_root, f'dace_perf_jobs_{os.getuid()}'))
     cxx = pick_cxx_compiler(os.environ.get('DACE_PERF_CXX'))
     if cxx:
         dace.Config.set('compiler', 'cpu', 'executable', value=cxx)
