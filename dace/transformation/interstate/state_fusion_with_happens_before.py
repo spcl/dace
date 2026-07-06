@@ -759,8 +759,20 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             if e.data is None or e.data.is_empty() or e.data.data is None:
                 continue
             name = e.data.data
-            src_an = e.src if isinstance(e.src, nodes.AccessNode) else None
-            dst_an = e.dst if isinstance(e.dst, nodes.AccessNode) else None
+            # Resolve the memlet-PATH endpoints, exactly as the authoritative
+            # validator does (validation.py:715-718): a write-through edge
+            # ``inner_producer -> MapExit`` has ``memlet.data`` naming the OUTER
+            # array at the end of the path, not the immediate scratch source.
+            # Checking the immediate ``e.src``/``e.dst`` here false-flagged those
+            # valid edges (MapFusionVertical's shared-intermediate write-through
+            # on nbody / vadv).
+            try:
+                path = fused_state.memlet_path(e)
+                path_src, path_dst = path[0].src, path[-1].dst
+            except Exception:
+                path_src, path_dst = e.src, e.dst
+            src_an = path_src if isinstance(path_src, nodes.AccessNode) else None
+            dst_an = path_dst if isinstance(path_dst, nodes.AccessNode) else None
             # Structures: memlet.data is the structure's root, member access
             # via connector. The full SDFG validator special-cases this; we
             # skip rather than risk a false positive.
