@@ -163,6 +163,23 @@ def test_nanobind_interface_state_pointer():
             handle.state_pointer  # finalized
 
 
+def test_nanobind_interface_pyobject_rejected():
+    """pyobject arguments/returns are rejected with a clear error at codegen time.
+
+    pyobject support (including the PR#2206 bug-compatible decay of pyobject
+    arrays) is deferred to part 2 of the port; until then the generator must
+    refuse instead of emitting C++ that does not compile.
+    """
+    import pytest
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('pyobject_reject_probe')
+    sdfg.add_array('__return', [1], dtypes.pyobject())
+    with pytest.raises(NotImplementedError, match='pyobject'):
+        generate_bindings_code(sdfg)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -170,3 +187,5 @@ if __name__ == '__main__':
     test_nanobind_interface_return_value()
     test_nanobind_interface_positional_and_extra_kwargs()
     test_nanobind_interface_has_gpu_code()
+    test_nanobind_interface_state_pointer()
+    test_nanobind_interface_pyobject_rejected()

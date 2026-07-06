@@ -78,7 +78,15 @@ class NanobindCompiledSDFG:
         return tuple(return_arrays)
 
     def _allocate_return_arrays(self, kwargs):
-        """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``."""
+        """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
+
+        Unlike ``CompiledSDFG._initialize_return_values()`` there is no
+        pyobject handling here (including the PR#2206 bug-compatible decay of
+        pyobject arrays to a single value): pyobject is deferred to part 2 of
+        the nanobind port, and the bindings generator already rejects such
+        SDFGs at codegen time. Whether part 2 replicates the PR#2206 behavior
+        or fixes it is an open decision recorded there.
+        """
         import numpy as np
         from dace import data as dt, symbolic
 

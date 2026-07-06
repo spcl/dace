@@ -39,6 +39,13 @@ def _argument_binding(arglist, binding_order=None):
     """
     per_name = {}
     for name, desc in arglist.items():
+        # pyobject (arguments and returns, incl. the PR#2206 bug-compatible
+        # decay of pyobject arrays) is deferred to part 2 of the port; its
+        # ctype is not a C++ type, so refuse here instead of emitting code
+        # that fails to compile.
+        if isinstance(desc.dtype, dtypes.pyobject):
+            raise NotImplementedError(f'Nanobind interface: pyobject argument/return value "{name}" is not '
+                                      f'supported yet; use the ctypes interface (compiler.interface=ctypes).')
         ctype = desc.dtype.ctype
         if isinstance(desc, dt.Array):
             per_name[name] = (f'nb::ndarray<{ctype}, nb::device::cpu> {name}',
