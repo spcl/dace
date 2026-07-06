@@ -143,8 +143,11 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                 if not leaf.data.is_empty():
                                     predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
 
-                            # Pruning connectors on tasklets sometimes needs to change their code
-                            elif isinstance(leaf.src, nodes.Tasklet):
+                            # Pruning connectors on tasklets sometimes needs to change their code.
+                            # A ``None`` src_conn is a dependency/empty edge with no connector to
+                            # prune, so skip the type-inference hint (which cannot infer a type for a
+                            # missing connector and would raise) and just drop the memlet path below.
+                            elif isinstance(leaf.src, nodes.Tasklet) and leaf.src_conn is not None:
                                 ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
                                 # Add definition
                                 if leaf.src.code.language == dtypes.Language.CPP:
