@@ -54,9 +54,10 @@ def pick_cxx_compiler(explicit=None):
     immediately rather than silently substituting a different compiler than
     what was asked for.
 
-    Absent an override, picks the latest-versioned LLVM/clang++ found on
-    PATH, falling back to the latest-versioned GCC/g++. Returns None if
-    neither is found (compiler config is then left at DaCe's own default)."""
+    Absent an override, picks clang++ if it's on PATH, else g++ (plain PATH
+    lookup -- trusts whatever module/spack/venv setup already put the
+    intended version on PATH under its bare name). Returns None if neither is
+    found (compiler config is then left at DaCe's own default)."""
     if explicit:
         resolved = shutil.which(explicit)
         if not resolved:
@@ -205,7 +206,21 @@ def pipeline_fast_canon(sdfg):
     return canonicalize(sdfg, validate=True, fast=True)
 
 
-PIPELINES = {'baseline': pipeline_baseline, 'canon': pipeline_canon, 'fast-canon': pipeline_fast_canon}
+def pipeline_auto_opt(sdfg):
+    import dace
+    from dace.transformation.auto.auto_optimize import auto_optimize
+    return auto_optimize(sdfg, dace.DeviceType.CPU)
+
+
+#: The 4 DaCe-side comparison points: two baselines (plain simplify+
+#: loop2map+mapfusion, and DaCe's own auto_optimize) vs. canonicalize and
+#: canonicalize(fast=True).
+PIPELINES = {
+    'baseline': pipeline_baseline,
+    'auto-opt': pipeline_auto_opt,
+    'canon': pipeline_canon,
+    'fast-canon': pipeline_fast_canon,
+}
 
 
 def make_sequential(sdfg):
@@ -473,7 +488,7 @@ def add_common_args(ap):
     ap.add_argument('--timeout', type=float, default=120.0, help='per-measurement subprocess timeout, seconds')
     ap.add_argument('--cxx', default=None,
                      help='C++ compiler for DaCe\'s own codegen only -- native lanes each find their own '
-                          'vendor compiler independently (default: latest LLVM/clang++ on PATH, else latest GCC/g++)')
+                          'vendor compiler independently (default: clang++ on PATH, else g++)')
     return ap
 
 

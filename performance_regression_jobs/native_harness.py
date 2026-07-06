@@ -14,9 +14,9 @@ one lane; see callers' "compiler not found" handling) -- not every machine
 has all 4 toolchains.
 """
 import ctypes
-import glob
 import os
 import re
+import shutil
 import subprocess
 
 #: One (serial, autopar) pair per vendor. LLVM/clang first -- same
@@ -32,72 +32,30 @@ LANES = ('native-clang', 'native-clang-polly-autopar', 'native-gcc', 'native-gcc
 _CTYPE = {'double': ctypes.c_double, 'float': ctypes.c_float, 'int': ctypes.c_int, 'int64': ctypes.c_int64}
 
 
-_VERSIONED_RE_CACHE = {}
-
-
-def _path_dirs():
-    dirs = os.environ.get('PATH', '').split(os.pathsep)
-    # Some distros/toolchains aren't on PATH by default unless their own
-    # environment script is sourced (Intel's setvars.sh, an HPC SDK module) --
-    # fall back to each vendor's standard install location too, newest first.
-    dirs += sorted(glob.glob('/usr/lib/llvm-*/bin'), reverse=True)
-    dirs += sorted(glob.glob('/opt/intel/oneapi/compiler/*/bin') + glob.glob('/opt/intel/oneapi/compiler/*/linux/bin'),
-                   reverse=True)
-    dirs += sorted(glob.glob('/opt/nvidia/hpc_sdk/*/*/compilers/bin'), reverse=True)
-    return dirs
-
-
 def find_compiler(name):
-    """Highest-versioned `name` (bare, or `name-N` e.g. `g++-13`/`clang++-18`)
-    found on PATH -- picks the newest release when several are installed
-    side by side, rather than whatever a bare unversioned symlink happens to
-    point at. Falls back to a bare `name` match if no versioned one exists."""
-    pat = _VERSIONED_RE_CACHE.setdefault(name, re.compile(re.escape(name) + r'-(\d+)$'))
-    best_version, best_path = -1, None
-    seen_dirs = set()
-    for d in _path_dirs():
-        if not d or d in seen_dirs or not os.path.isdir(d):
-            continue
-        seen_dirs.add(d)
-        try:
-            entries = os.listdir(d)
-        except OSError:
-            continue
-        for entry in entries:
-            if entry == name:
-                version = 0
-            else:
-                m = pat.fullmatch(entry)
-                if not m:
-                    continue
-                version = int(m.group(1))
-            path = os.path.join(d, entry)
-            if version > best_version and os.access(path, os.X_OK):
-                best_version, best_path = version, path
-    return best_path
+    """Plain PATH lookup for `name` (e.g. 'g++', 'clang++'). Trusts whatever
+    environment/module setup (spack load, an HPC module, a venv) already put
+    the intended version on PATH under its bare name -- no guessing across
+    versioned suffixes or vendor install directories."""
+    return shutil.which(name)
 
 
 def find_best_cpp_compiler():
     """The compiler used for DaCe's own C++ codegen (--cxx / DACE_PERF_CXX):
     it needs no *specific* vendor (unlike every native lane below, which each
     test one vendor's compiler/auto-parallelizer by construction and always
-    use that vendor), so this picks whichever is best available -- latest
-    LLVM/clang++ if any is on PATH, else latest GCC/g++."""
+    use that vendor), so this picks clang++ if it's on PATH, else g++."""
     return find_compiler('clang++') or find_compiler('g++')
 
 
 def find_gcc_install_dir():
-    """Clang needs an explicit --gcc-install-dir on this machine to find libstdc++ headers.
+    """Clang needs an explicit --gcc-install-dir to find libstdc++ headers.
 
     Uses find_compiler('g++') -- the C++ compiler, not 'gcc' the C compiler --
     since the two can be different versions with only one of them having a
     matching libstdc++-dev headers package installed (observed concretely:
-    gcc-16 present as a C-only compiler with no libstdc++-16-dev, while
-    g++-15/libstdc++-15-dev is the actual complete C++ toolchain). Also
-    avoids a hardcoded bare 'gcc'/'g++' -- a node with only a versioned
-    GCC (e.g. g++-13, no bare 'g++' symlink on PATH, common under cluster
-    module systems) would otherwise silently fail this lookup and clang
-    would then fail to find libstdc++ headers."""
+    a gcc present as a C-only compiler with no matching libstdc++-dev, while
+    a different g++ on the same PATH was the actual complete C++ toolchain)."""
     gxx = find_compiler('g++')
     if not gxx:
         return None
