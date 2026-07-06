@@ -87,6 +87,28 @@ class TestTypeInference(unittest.TestCase):
         else:
             self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
 
+        # C / numpy dtype aliases used as cast constructors (``double``, ``single``,
+        # ``short``) name a concrete type but are not attributes of ``dtypes``; a bare
+        # cast ``double(N)`` must type as its target, not fall through to ``None`` and
+        # get mistyped by its argument (e.g. ``sqrt(double(N))`` truncating on an int N).
+        code_str = "value = double(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
+
+        code_str = "value = single(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.float32)
+
+        code_str = "value = short(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.int16)
+
+        # A non-dtype call (a math function) must NOT be mistaken for a cast: it stays
+        # unresolved (``None``) so operand promotion, not a bogus dtype, types the result.
+        code_str = "value = sqrt(x)"
+        inf_symbols = type_inference.infer_types(code_str, {"x": dtypes.float64})
+        self.assertIsNone(inf_symbols["value"])
+
     def testInferExpr(self):
 
         code_str = "5 + 3.5"

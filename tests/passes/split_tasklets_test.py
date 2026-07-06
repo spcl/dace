@@ -514,6 +514,30 @@ def test_split_comparison_intermediate_is_bool():
     }))
 
 
+def test_split_cast_intermediate_is_double():
+    """``sqrt(double(N))`` must split into ``tmp = double(N)`` (a float64 intermediate)
+    then ``sqrt(tmp)`` -- the cast intermediate takes the CAST target type, not the
+    promotion of its int argument N. Regression: ``infer_types`` returned ``None`` for
+    the ``double`` C-alias cast, the fallback typed the intermediate by its int argument,
+    and the following ``sqrt(int)`` truncated (polybench correlation centered ``data`` by
+    ``sqrt(int(N))=5`` instead of ``sqrt(double(N))=5.65``). Now typed by ``_infer_dtype``."""
+    sdfg = dace.SDFG("split_cast_double")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("_b_ARR", shape=(1, ), dtype=dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", set(), {"_b"}, "_b = sqrt(double(N))")
+    state.add_edge(t, "_b", state.add_access("_b_ARR"), None, dace.Memlet("_b_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    # The whole ``sqrt(double(N))`` chain is float; every split intermediate must be
+    # float64 -- an integer-typed cast intermediate would truncate the sqrt.
+    split_transients = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert split_transients, "no split intermediate was produced (the cast was not split out)"
+    assert all(dt == dace.float64 for dt in split_transients.values()), \
+        f"a cast intermediate was mistyped (an int type truncates the sqrt): {split_transients}"
+
+
 def test_to_ssa_preserves_int_floor_call():
     """A two-arg ``int_floor(a, b)`` must be split as a function call, not
     mangled into an infix ``a int_floor b`` or have its divisor dropped.
