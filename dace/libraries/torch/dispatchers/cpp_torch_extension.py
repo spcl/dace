@@ -106,14 +106,23 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
         # Format the values as a C++ initializer list
         values_str = ', '.join(format_value(v, desc.dtype) for v in values)
 
+        # ``from_blob`` wraps the given HOST pointer without copying; passing
+        # ``.device(kCUDA)`` here does NOT move the data to the GPU, it just
+        # mislabels a host buffer as CUDA (torch then raises "pointer resides on
+        # host memory ..." on the first device op). Always build on kCPU from the
+        # host initializer list, then ``.to(kCUDA)`` to actually copy device-side
+        # (mirrors ``constant_initializer_code``). For a host descriptor, a plain
+        # ``.clone()`` takes ownership of the leaked buffer as before.
+        to_device = ('.to(torch::kCUDA)'
+                     if desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES else '.clone()')
         return f"""\
             Tensor {name} = torch::from_blob(
                 new float[{len(values)}]{{{values_str}}},
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES else 'kCPU'})
-                    .layout(torch::kStrided)).clone();
+                    .device(torch::kCPU)
+                    .layout(torch::kStrided)){to_device};
             """
     else:
         # Initialize with zeros or empty
