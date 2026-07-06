@@ -1,17 +1,15 @@
 """Native C++ reference harness: compile tsvc{2,2_5}_core.cpp with each of
 4 vendor toolchains (GCC, Clang/LLVM, Intel oneAPI, NVIDIA HPC SDK), each in
 both a plain-serial and that vendor's own auto-parallelized form, and call
-each kernel's ``<name>_run_timed`` function via ctypes. Each such function
-times itself (std::chrono) and writes the elapsed nanoseconds to its trailing
-``time_ns`` output pointer -- built for exactly this kind of external driving.
+each kernel's ``<name>_run_timed`` function via ctypes -- it times itself
+(std::chrono) and writes the elapsed nanoseconds to its trailing ``time_ns``
+output pointer.
 
-Every lane finds its own compiler independently (no cross-lane override): a
-lane like 'native-gcc-autopar' exists specifically to measure THAT vendor's
-auto-parallelizer, so a lane silently building with a different vendor's
-compiler would invalidate what it claims to measure. A vendor whose compiler
-isn't installed is simply skipped (compile_lane returns an error for that
-one lane; see callers' "compiler not found" handling) -- not every machine
-has all 4 toolchains.
+Every lane finds its own compiler independently: a lane like
+'native-gcc-autopar' exists to measure THAT vendor's auto-parallelizer, so it
+never falls back to a different vendor. A vendor with no compiler installed
+is simply skipped (compile_lane returns an error for that lane) -- not every
+machine has all 4 toolchains.
 """
 import ctypes
 import os
@@ -19,13 +17,10 @@ import re
 import shutil
 import subprocess
 
-#: One (serial, autopar) pair per vendor. LLVM/clang first -- same
-#: LLVM-first preference as find_best_cpp_compiler() below, which resolves
-#: DaCe's own codegen compiler -- so a time-limited sweep collects the LLVM
-#: seq + autopar lanes (and the LLVM-compiled DaCe baseline/canon/fast-canon
-#: lanes, all under one shared --cxx choice) before the other vendors. A
-#: vendor with no compiler installed is skipped lane-by-lane (see
-#: compile_lane), not corpus-wide.
+#: One (serial, autopar) pair per vendor. LLVM/clang first, matching
+#: find_best_cpp_compiler()'s preference for DaCe's own codegen -- so a
+#: time-limited sweep collects the LLVM lanes before the other vendors. A
+#: vendor with no compiler installed is skipped lane-by-lane, not corpus-wide.
 LANES = ('native-clang', 'native-clang-polly-autopar', 'native-gcc', 'native-gcc-autopar', 'native-icpx',
          'native-icpx-autopar', 'native-nvc', 'native-nvc-autopar')
 
@@ -72,12 +67,10 @@ def find_gcc_install_dir():
 
 
 def needs_gcc_install_dir(cc):
-    """clang++ and Intel's LLVM-based icpx both need an explicit
-    --gcc-install-dir on a machine with several GCC versions installed side
-    by side, to find a *matching* libstdc++ headers package (see
-    find_gcc_install_dir) -- plain g++/nvc++ never need this. Public: also
-    used by engine.configure_dace_process() for DaCe's own codegen compiler,
-    not just the native lanes below."""
+    """clang++/icpx (both LLVM-based) need an explicit --gcc-install-dir on a
+    machine with several GCC versions, to find a *matching* libstdc++
+    (find_gcc_install_dir) -- plain g++/nvc++ never need this. Public: also
+    used by engine.configure_dace_process() for DaCe's codegen compiler."""
     base = os.path.basename(cc)
     return 'clang' in base or 'icpx' in base or 'icpc' in base
 
@@ -87,50 +80,55 @@ def _gcc_install_dir_flag(cc):
     return [f'--gcc-install-dir={gcc_dir}'] if gcc_dir else []
 
 
-#: lane -> (finder() -> compiler path or None, (cc, nthreads) -> extra flags
-#: beyond '-O3 ... -shared -fPIC <src> -o <so>'). Each finder is independent
-#: -- no lane ever takes an override -- so a lane always measures its own
-#: named vendor's compiler, never a substitute.
+def _omp_threads():
+    """GCC's -ftree-parallelize-loops thread count: read from OMP_NUM_THREADS
+    (the same env var every SLURM script here already exports for OpenMP)
+    instead of a separate CLI flag, so there's one source of truth for
+    thread count rather than two that can silently disagree."""
+    try:
+        return max(1, int(os.environ.get('OMP_NUM_THREADS', 4)))
+    except ValueError:
+        return 4
+
+
+#: lane -> (finder() -> compiler path or None, cc -> extra flags beyond
+#: '-O3 ... -shared -fPIC <src> -o <so>'). Each finder is independent -- no
+#: lane ever takes an override -- so a lane always measures its own named
+#: vendor's compiler, never a substitute.
 _LANE_SPEC = {
-    'native-gcc': (lambda: find_compiler('g++'), lambda cc, nthreads: []),
+    'native-gcc': (lambda: find_compiler('g++'), lambda cc: []),
     'native-gcc-autopar':
-    (lambda: find_compiler('g++'), lambda cc, nthreads: [f'-ftree-parallelize-loops={nthreads}', '-lgomp']),
-    'native-clang': (lambda: find_compiler('clang++'), lambda cc, nthreads: _gcc_install_dir_flag(cc)),
+    (lambda: find_compiler('g++'), lambda cc: [f'-ftree-parallelize-loops={_omp_threads()}', '-lgomp']),
+    'native-clang': (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc)),
     'native-clang-polly-autopar':
-    (lambda: find_compiler('clang++'), lambda cc, nthreads: _gcc_install_dir_flag(cc) + [
+    (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc) + [
         '-mllvm', '-polly', '-mllvm', '-polly-parallel', '-mllvm', '-polly-parallel-force', '-mllvm',
         '-polly-process-unprofitable', '-lgomp'
     ]),
     # oneAPI icpx only -- no fallback to the older classic icpc: silently
     # substituting a different Intel compiler product under the same
     # "native-icpx" label would mislabel whichever one actually built it.
-    'native-icpx': (lambda: find_compiler('icpx'), lambda cc, nthreads: _gcc_install_dir_flag(cc)),
+    'native-icpx': (lambda: find_compiler('icpx'), lambda cc: _gcc_install_dir_flag(cc)),
     'native-icpx-autopar': (lambda: find_compiler('icpx'),
-                            lambda cc, nthreads: _gcc_install_dir_flag(cc) + ['-parallel', '-qopenmp']),
-    'native-nvc': (lambda: find_compiler('nvc++'), lambda cc, nthreads: []),
-    'native-nvc-autopar': (lambda: find_compiler('nvc++'), lambda cc, nthreads: ['-Mconcur']),
+                            lambda cc: _gcc_install_dir_flag(cc) + ['-parallel', '-qopenmp']),
+    'native-nvc': (lambda: find_compiler('nvc++'), lambda cc: []),
+    'native-nvc-autopar': (lambda: find_compiler('nvc++'), lambda cc: ['-Mconcur']),
 }
 
 
-#: A compiler that doesn't recognize a flag we asked for often warns and
-#: keeps going (exit 0) rather than erroring -- e.g. a newer icpx silently
-#: dropping the classic-icc '-parallel' autopar flag would otherwise produce
-#: a "successfully compiled" serial binary that native-icpx-autopar reports
-#: as an auto-parallelizer measurement. Catching this by scanning stderr
-#: applies uniformly to every lane/vendor, not just the one flag combination
-#: we've been able to test locally.
+#: A compiler that doesn't recognize a flag often warns and exits 0 rather
+#: than erroring -- e.g. a newer icpx silently dropping '-parallel' would
+#: otherwise report a serial binary as an auto-parallelizer measurement.
+#: Scanning stderr for this applies to every lane/vendor uniformly.
 _IGNORED_FLAG_RE = re.compile(
     r'unknown argument|argument unused during compilation|unrecognized command[- ]line option|'
     r'unrecognized option|ignoring unknown option|unsupported option', re.IGNORECASE)
 
 
-def compile_lane(cpp_path, so_path, lane, nthreads=4, timeout=180):
+def compile_lane(cpp_path, so_path, lane, timeout=180):
     """Compile one lane's shared library. Returns (ok, error_message).
-
-    Every lane finds its own vendor's compiler (see _LANE_SPEC) -- there is
-    no cross-lane override, since e.g. 'native-clang-polly-autopar' exists
-    specifically to measure clang+Polly's auto-parallelizer and silently
-    building it with a different compiler would invalidate the measurement."""
+    Every lane finds its own vendor's compiler (see _LANE_SPEC) -- no
+    cross-lane override, so a lane always measures its named vendor."""
     if lane not in _LANE_SPEC:
         raise ValueError(lane)
     os.makedirs(os.path.dirname(so_path), exist_ok=True)
@@ -139,7 +137,7 @@ def compile_lane(cpp_path, so_path, lane, nthreads=4, timeout=180):
     if not cc:
         return False, f'{lane}: compiler not found'
 
-    cmd = [cc, '-O3'] + extra_flags(cc, nthreads) + ['-shared', '-fPIC', cpp_path, '-o', so_path]
+    cmd = [cc, '-O3'] + extra_flags(cc) + ['-shared', '-fPIC', cpp_path, '-o', so_path]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

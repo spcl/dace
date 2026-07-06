@@ -43,21 +43,13 @@ def my_slice(items, rank, world):
 
 
 def pick_cxx_compiler(explicit=None):
-    """Resolve the C++ compiler used for DaCe's own codegen (every native
-    lane picks its own vendor's compiler independently -- see
-    native_harness.compile_lane -- and never consults this).
+    """C++ compiler for DaCe's own codegen (native lanes pick their own
+    vendor's compiler independently -- see native_harness.compile_lane).
 
-    `explicit` (--cxx, or DACE_PERF_CXX inherited from it) may be an absolute
-    path or a bare executable name -- shutil.which resolves either (a path
-    containing a separator is checked directly for executability, a bare
-    name is searched on PATH). An explicit value that doesn't resolve raises
-    immediately rather than silently substituting a different compiler than
-    what was asked for.
-
-    Absent an override, picks clang++ if it's on PATH, else g++ (plain PATH
-    lookup -- trusts whatever module/spack/venv setup already put the
-    intended version on PATH under its bare name). Returns None if neither is
-    found (compiler config is then left at DaCe's own default)."""
+    `explicit` (--cxx / DACE_PERF_CXX) may be a path or bare name; an
+    unresolvable value raises immediately rather than silently falling back.
+    Absent an override: clang++ if on PATH, else g++, else None (DaCe's own
+    default compiler config is left alone)."""
     if explicit:
         resolved = shutil.which(explicit)
         if not resolved:
@@ -68,32 +60,21 @@ def pick_cxx_compiler(explicit=None):
 
 
 def configure_dace_process():
-    """Per-process DaCe setup: must run inside every measurement subprocess
-    (Config state doesn't survive across a spawn boundary), not just once at
-    the parent script's startup.
+    """Per-process DaCe setup: Config state doesn't survive a spawn boundary,
+    so this must run inside every measurement subprocess, not just once at
+    the parent's startup.
 
-    - cache='unique' keys every SDFG's build folder on
-      `{sdfg.name}_{md5(pid)}` (dace/sdfg/sdfg.py's `build_folder` property)
-      -- distinct ranks are distinct OS processes, so distinct PIDs, so no
-      two ranks (or two pipelines within one rank, since sdfg.name also
-      differs per pipeline) ever share a build folder.
-    - compiler.cpu.executable is set to DACE_PERF_CXX (exported into the
-      environment by the parent from --cxx, and inherited by every spawned
-      child process) or, absent that, pick_cxx_compiler()'s own LLVM-first
-      autodetection.
-    - If that resolved compiler needs it (native_harness.needs_gcc_install_dir:
-      clang++ or Intel's LLVM-based icpx/icpc), --gcc-install-dir is appended
-      to compiler.cpu.args: DaCe's own CMake-driven build never adds this by
-      itself, so on a machine with several GCC versions installed side by
-      side (the same situation native_harness.compile_lane's clang/icpx lanes
-      handle) it can otherwise pick a GCC install with no matching libstdc++
-      headers and fail with 'cannot find -lstdc++' -- observed concretely
-      when clang++ auto-wins over a GCC whose newest version is C-only (no
-      libstdc++-dev installed for it). Idempotent (checks the flag isn't
-      already present) since this runs once per pipeline build and can be
-      called more than once in the same process (e.g. _check_dace_job builds
-      both a reference and a candidate SDFG).
-    """
+    - cache='unique' keys each SDFG's build folder on {name}_{md5(pid)}, so
+      distinct ranks/pipelines never share one.
+    - compiler.cpu.executable comes from DACE_PERF_CXX (exported by the
+      parent from --cxx) or pick_cxx_compiler()'s own autodetection.
+    - If that compiler needs it (native_harness.needs_gcc_install_dir:
+      clang++/icpx/icpc), --gcc-install-dir is appended to compiler.cpu.args
+      -- DaCe's CMake build never adds this itself, so on a machine with
+      several GCC versions it can pick one with mismatched libstdc++ headers
+      and fail to link. Idempotent (checks the flag isn't already present):
+      this can run more than once per process (e.g. _check_dace_job builds
+      both a reference and a candidate SDFG)."""
     import dace
     dace.Config.set('cache', value='unique')
     cxx = pick_cxx_compiler(os.environ.get('DACE_PERF_CXX'))
@@ -248,21 +229,14 @@ def _slug(s):
 
 
 def compiler_host_tag():
-    """`<compiler>_<hostname>` -- namespace for anything that depends on
-    DaCe's own C++ codegen compiler (--cxx / DACE_PERF_CXX): different
-    compilers (a different --cxx, a different node's autodetected
-    latest-clang/gcc) produce DaCe-lane timings that are not comparable, and
-    must never share (and silently corrupt) the same results.csv/status.csv.
-    Keying on compiler+hostname means a multi-node sweep where nodes differ
-    in their default toolchain, or separate --cxx runs against the same
-    --results-dir, land in distinct result folders instead of conflicting.
-
-    Only the DaCe-lane (baseline/canon/fast-canon) results use this tag --
-    see native_result_tag() for the native lanes, which each pick their own
-    vendor's compiler independently of --cxx and so must not be needlessly
-    invalidated every time --cxx changes. Computed once per process and
-    cached -- it's stable for the process's lifetime and
-    pick_cxx_compiler()'s autodetection does a PATH scan."""
+    """`<compiler>_<hostname>` -- namespace for DaCe-lane results (baseline/
+    auto-opt/canon/fast-canon): a different --cxx (or a different node's
+    autodetected default) produces timings that aren't comparable, so this
+    keeps them in separate result folders instead of corrupting one shared
+    results.csv/status.csv. Native lanes use host_tag() instead -- they pick
+    their own compiler regardless of --cxx, so they shouldn't be invalidated
+    every time it changes. Cached per process (autodetection does a PATH
+    scan, and this is stable for the process's lifetime)."""
     global _COMPILER_HOST_TAG_CACHE
     if _COMPILER_HOST_TAG_CACHE is None:
         cxx = pick_cxx_compiler(os.environ.get('DACE_PERF_CXX'))
@@ -272,33 +246,24 @@ def compiler_host_tag():
 
 
 def host_tag():
-    """`<hostname>` -- namespace for native lanes (native-gcc, native-clang,
-    native-icpx, native-nvc and their autopar variants): each finds its own
-    vendor's compiler independently (native_harness.compile_lane), never
-    depending on --cxx, so unlike compiler_host_tag() this must NOT include
-    the DaCe codegen compiler -- doing so would force every native lane's
-    100-rep measurement to be redone from scratch every time --cxx changes,
-    even though nothing about those lanes' own compilers changed. Hostname
-    alone is still needed: two different hosts (possibly with different
-    installed toolchain versions) sharing one --results-dir must not race on
-    or clobber the same compiled .so (see native_build_dir)."""
+    """`<hostname>` -- namespace for native lanes: each picks its own vendor
+    compiler independently of --cxx (native_harness.compile_lane), so unlike
+    compiler_host_tag() this excludes the DaCe compiler -- otherwise every
+    native lane's measurement would be redone every time --cxx changes.
+    Hostname alone still prevents two hosts sharing one --results-dir from
+    racing on the same compiled .so (see native_build_dir)."""
     return _slug(socket.gethostname())
 
 
 def result_tag(preset):
     """`<compiler>_<hostname>_<preset>` -- folder DaCe-lane results land in.
-
-    `preset` is slugged like every other component: write_tables() tells a
-    DaCe-tag folder (2 underscores) apart from a native-tag folder (1
-    underscore) by counting underscores, which only works if every component
-    -- preset included -- is guaranteed underscore-free."""
+    `preset` is slugged so it can never contain the `_` write_tables() counts
+    on to tell a DaCe-tag folder (2 underscores) from a native-tag one (1)."""
     return f'{compiler_host_tag()}_{_slug(str(preset))}'
 
 
 def native_result_tag(preset):
-    """`<hostname>_<preset>` -- folder native-lane results land in (see
-    host_tag() for why this excludes the DaCe compiler, and result_tag() for
-    why preset is slugged)."""
+    """`<hostname>_<preset>` -- folder native-lane results land in."""
     return f'{host_tag()}_{_slug(str(preset))}'
 
 
@@ -409,14 +374,12 @@ def _read_kernel(kdir):
 def write_tables(results_root, corpus, lanes, baseline_label):
     """Scan <results_root>/<corpus>/**/ and write correctness.md + speedup.md.
 
-    Each kernel folder can hold two kinds of tag subfolder: result_tag()'s
-    '<compiler>_<hostname>_<preset>' (DaCe lanes, 2 underscores) and
-    native_result_tag()'s '<hostname>_<preset>' (native lanes, 1 underscore --
-    _slug() never emits a literal underscore, so this count is unambiguous).
-    A DaCe-tag row is merged with its matching native-tag folder (same host
-    + preset) so one row shows every lane measured for that host/preset,
-    regardless of how many different --cxx values were used to produce the
-    DaCe-tag folders (native results are shared across all of them)."""
+    Each kernel folder holds result_tag() folders ('<compiler>_<host>_<preset>',
+    2 underscores) and/or native_result_tag() folders ('<host>_<preset>', 1
+    underscore -- see result_tag()'s docstring for why the count is reliable).
+    A DaCe-tag row is merged with its matching native-tag folder (same host +
+    preset), since native results are shared across every --cxx that produced
+    a DaCe-tag folder for that host."""
     corpus_dir = os.path.join(results_root, corpus)
     rows = []  # (kernel_label, {pipeline: {'correct':, 'median_ms':}})
     if os.path.isdir(corpus_dir):
@@ -493,10 +456,9 @@ def add_common_args(ap):
 
 
 def export_cxx_override(args):
-    """Call once in main(), right after parsing args: an explicit --cxx must
-    reach every spawned measurement subprocess, and Config state (which is
-    where configure_dace_process() would otherwise set it) doesn't survive
-    a spawn boundary -- the process environment does, so that's the channel."""
+    """Call once in main() after parsing args: Config state doesn't survive a
+    spawn boundary, so an explicit --cxx is relayed to every subprocess via
+    the environment instead (see configure_dace_process)."""
     if args.cxx:
         os.environ['DACE_PERF_CXX'] = args.cxx
 

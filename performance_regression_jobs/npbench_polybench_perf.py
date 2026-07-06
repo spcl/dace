@@ -35,7 +35,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH_INFO_DIR = os.path.join(_HERE, 'bench_info')
 PRESET = 'paper'
 
-DACE_LANES = ('baseline', 'auto-opt', 'canon', 'fast-canon')
+DACE_LANES = tuple(engine.PIPELINES)
 ALL_LANES = DACE_LANES + ('numpy', )
 BASELINE_LANE = 'baseline'
 #: The 3 comparisons the grid plot shows, canon against each.
@@ -43,16 +43,7 @@ SPEEDUP_VS = ('baseline', 'auto-opt', 'numpy')
 
 
 def _dace_pipeline(label, sdfg):
-    if label == 'baseline':
-        return engine.pipeline_baseline(sdfg)
-    if label == 'auto-opt':
-        from dace.transformation.auto.auto_optimize import auto_optimize
-        return auto_optimize(sdfg, dace.DeviceType.CPU)
-    if label == 'canon':
-        return engine.pipeline_canon(sdfg)
-    if label == 'fast-canon':
-        return engine.pipeline_fast_canon(sdfg)
-    raise ValueError(label)
+    return engine.PIPELINES[label](sdfg)
 
 
 # --------------------------------------------------------------------------

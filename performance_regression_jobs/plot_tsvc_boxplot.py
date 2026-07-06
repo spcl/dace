@@ -26,12 +26,8 @@ _COLOR = '#2a78d6'  # single-series -> sequential/categorical slot 1
 
 def collect_speedups(results_dir, corpus):
     """[canon-par speedup vs baseline-par, one value per correctly-measured kernel].
-
-    engine.kernel_dir() names each kernel's result folder
-    '<compiler>_<hostname>_default' (see engine.result_tag) so results from
-    different compilers/hosts sharing one --results-dir never collide --
-    every matching variant folder is included here rather than assuming
-    exactly one 'default' folder per kernel."""
+    Globs every '*_default' folder (engine.result_tag namespaces each by
+    compiler+hostname) rather than assuming exactly one per kernel."""
     corpus_dir = os.path.join(results_dir, corpus)
     speedups = []
     if not os.path.isdir(corpus_dir):

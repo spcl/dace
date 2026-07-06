@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Performance regression: DaCe canonicalize/fast-canonicalize vs. a DaCe
-loop2map+mapfusion baseline vs. native C++ built with 4 vendor toolchains
-(GCC, Clang/LLVM, Intel oneAPI, NVIDIA HPC SDK), each in a plain-serial and
-that vendor's own auto-parallelized form (see native_harness.LANES), over
-the 151-kernel TSVC2 corpus. Standalone (only needs dace+numpy importable);
-multi-rank via OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
+"""Performance regression: DaCe canonicalize/fast-canonicalize vs. two DaCe
+baselines (plain simplify+loop2map+mapfusion, and DaCe's own auto_optimize)
+vs. native C++ built with 4 vendor toolchains (GCC, Clang/LLVM, Intel oneAPI,
+NVIDIA HPC SDK), each in a plain-serial and that vendor's own
+auto-parallelized form (see native_harness.LANES), over the 151-kernel TSVC2
+corpus. Standalone (only needs dace+numpy importable); multi-rank via
+OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
 
     python3 tsvc2_perf.py                       # this rank's slice, 100 reps
     python3 tsvc2_perf.py --only s000 --reps 3  # quick smoke test
@@ -205,20 +206,15 @@ def _save_sdfg_job(kernel_name, pipeline, seq):
 
 
 def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
-    # DaCe lanes (depend on --cxx) and native lanes (each pick their own vendor
-    # compiler, independent of --cxx) are namespaced separately -- see
-    # engine.host_tag()'s docstring for why -- so results.csv/status.csv for
-    # the two kinds of lane live in two different folders.
+    # DaCe lanes and native lanes are namespaced separately (engine.host_tag's
+    # docstring) since native lanes shouldn't be invalidated by a --cxx change.
     kdir_dace = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     kdir_native = engine.native_kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     kdir = lambda lane: kdir_native if _lane_kind(lane) == 'native' else kdir_dace
 
-    # Every lane must have a status entry already (not just "some folder has
-    # some results") before considering the kernel done -- a fresh dace-tag
-    # folder (new --cxx against a --results-dir whose native-tag folder is
-    # already fully measured) must NOT be mistaken for "fully populated": its
-    # own lanes have no status yet, so `all(...)` on an empty/no-status
-    # generator would otherwise be vacuously true and skip real work.
+    # Every lane must already have a status entry, not just "some folder has
+    # some results" -- else a fresh dace-tag folder (new --cxx against an
+    # already-fully-measured native-tag folder) would vacuously look "done".
     if not args.force and all(engine.read_status(kdir(lane), lane) is not None for lane in ALL_LANES) and all(
             engine.existing_reps(kdir(lane), lane) >= args.reps for lane in ALL_LANES
             if (engine.read_status(kdir(lane), lane) or {}).get('correct') == 'True'):
@@ -299,7 +295,7 @@ def kernel_list(args):
     return names
 
 
-def prepare_native_libs(results_dir, rank, nthreads=4):
+def prepare_native_libs(results_dir, rank):
     """Compile every native lane once (per rank); returns lane -> (so_path, prefix, sigs).
 
     Each lane finds its own vendor's compiler independently (see
@@ -310,7 +306,7 @@ def prepare_native_libs(results_dir, rank, nthreads=4):
     out = {}
     for lane in nh.LANES:
         so_path = os.path.join(build_dir, f'lib_{lane}.so')
-        ok, err = nh.compile_lane(CPP_FILE, so_path, lane, nthreads=nthreads)
+        ok, err = nh.compile_lane(CPP_FILE, so_path, lane)
         if ok:
             out[lane] = (so_path, sigs)
             print(f'compiled {lane}: {so_path}')
@@ -324,7 +320,6 @@ def main():
     engine.add_common_args(ap)
     ap.add_argument('--len1d', type=int, default=None, help='override LEN_1D (skips the sizing search)')
     ap.add_argument('--len2d', type=int, default=None, help='override LEN_2D (skips the sizing search)')
-    ap.add_argument('--native-threads', type=int, default=4, help='GCC -ftree-parallelize-loops thread count')
     args = ap.parse_args()
 
     if args.list_kernels:
@@ -344,12 +339,8 @@ def main():
     mine = explicit if explicit is not None else engine.my_slice(all_kernels, rank, world)
     print(f'rank {rank}/{world}: {len(mine)}/{len(all_kernels)} kernels')
 
-    native_libs = {}
     if not args.save_sdfg_only:
-        sigs, compiled = prepare_native_libs(args.results_dir, rank, nthreads=args.native_threads)
-        for lane, (so_path, _) in compiled.items():
-            native_libs[lane] = None  # filled per-kernel below with the kernel's own signature
-        _sigs, _compiled = sigs, compiled
+        sigs, compiled = prepare_native_libs(args.results_dir, rank)
 
     for name in mine:
         kernel = tsvc.collect(name=name)[0]
@@ -359,10 +350,7 @@ def main():
             continue
         base = cpp_base_name(name)
         c_name = base + '_run_timed'
-        per_kernel_libs = {
-            lane: (so_path, c_name, _sigs.get(base, []))
-            for lane, (so_path, _) in _compiled.items()
-        }
+        per_kernel_libs = {lane: (so_path, c_name, sigs.get(base, [])) for lane, (so_path, _) in compiled.items()}
         process_kernel(name, l1, l2, args, rank, per_kernel_libs)
 
     if not args.save_sdfg_only:

@@ -98,9 +98,8 @@ def _lane_kind(lane):
 
 
 def process_kernel(kernel_name, l1, l2, args, native_libs):
-    # DaCe lanes (depend on --cxx) and native lanes (each pick their own vendor
-    # compiler, independent of --cxx) are namespaced separately -- see
-    # engine.host_tag()'s docstring for why.
+    # DaCe lanes and native lanes are namespaced separately (engine.host_tag's
+    # docstring) since native lanes shouldn't be invalidated by a --cxx change.
     kdir_dace = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     kdir_native = engine.native_kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     kdir = lambda lane: kdir_native if _lane_kind(lane) == 'native' else kdir_dace
@@ -150,7 +149,6 @@ def main():
     engine.add_common_args(ap)
     ap.add_argument('--len1d', type=int, default=None)
     ap.add_argument('--len2d', type=int, default=None)
-    ap.add_argument('--native-threads', type=int, default=4, help='GCC -ftree-parallelize-loops thread count')
     args = ap.parse_args()
 
     if args.list_kernels:
@@ -170,7 +168,7 @@ def main():
     mine = explicit if explicit is not None else engine.my_slice(all_kernels, rank, world)
     print(f'rank {rank}/{world}: {len(mine)}/{len(all_kernels)} kernels')
 
-    sigs, compiled = base.prepare_native_libs(args.results_dir, rank, nthreads=args.native_threads)
+    sigs, compiled = base.prepare_native_libs(args.results_dir, rank)
 
     for name in mine:
         kernel = base.tsvc.collect(name=name)[0]

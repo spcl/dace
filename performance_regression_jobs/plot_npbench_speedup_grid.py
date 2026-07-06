@@ -26,13 +26,8 @@ _COLORS = {'baseline': '#2a78d6', 'auto-opt': '#1baf7a', 'numpy': '#eda100'}
 
 def collect_speedups(results_dir):
     """kernel -> {baseline_label: speedup or None} for canon vs. each of SPEEDUP_VS.
-
-    engine.kernel_dir() names each kernel's result folder
-    '<compiler>_<hostname>_<preset>' (see engine.result_tag) so results from
-    different compilers/hosts sharing one --results-dir never collide --
-    every matching preset variant folder is included (and its speedups
-    merged into the same kernel cell) rather than assuming exactly one
-    folder per kernel/preset."""
+    Globs every '*_<preset>' folder (engine.result_tag namespaces each by
+    compiler+hostname), merging speedups into the same kernel cell."""
     corpus_dir = os.path.join(results_dir, CORPUS)
     out = {}
     if not os.path.isdir(corpus_dir):
