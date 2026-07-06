@@ -25,6 +25,7 @@ from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.loop_fission import LoopFission
@@ -334,9 +335,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # severed nor double-counted. Idempotent, so the vectorizer can also run it standalone.
     s += [('normalize_reduction', NormalizeNestedReduction())]
 
+    # A loop with a ``break`` / ``continue`` is not splittable and its induction variable
+    # is not closed-form (the trip count is data-dependent), so SplitStatements / IVS below
+    # cannot handle it. Lift the early exit to a find-first index + clipped range HERE --
+    # before those stages -- so they only ever see the resulting break-free, clipped loop.
     s += [('clean', RemoveViews()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
           ('clean', _uniq), ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()),
-          ('clean', ContinueToCondition()), ('clean', SimplifyPass()),
+          ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()), ('clean', SimplifyPass()),
           ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
 
     # prep (still maps): push guarding conditionals into maps, then split
@@ -743,6 +748,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('fuse', LiftTrivialIf())]
     s += _structural_cleanup('fuse')
     s += [('fuse', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+
+    # normalize_map_body (post-fuse): MapFusion co-locates independent guarded
+    # computations under one map but leaves each as its own NestedSDFG
+    # (``map: { nsdfg1, nsdfg2 }``), which traps two same-condition guards in
+    # separate control-flow graphs where ConditionFusion cannot reach them.
+    # NormalizeMapBody sequences the sibling NestedSDFGs into ONE, so the guards
+    # become consecutive ConditionalBlocks; the follow-up ConditionFusion folds
+    # them (``if c: {s1}; if c: {s2}`` -> ``if c: {s1; s2}``), and the single
+    # merged guard can then hoist out of the map at the terminal hoist_guards
+    # stage. Structural cleanup tidies the spliced states.
+    s += [('fuse', NormalizeMapBody())]
+    s += [('fuse', PatternMatchAndApplyRepeated([ConditionFusion()]))]
+    s += _structural_cleanup('fuse')
 
     # lift: recognize a tensor-contraction map (``map[i, k, j]: c(+)[i, j] =
     # alpha * a[i, k] * b[k, j]``) as an ``Einsum`` library node so a chain of

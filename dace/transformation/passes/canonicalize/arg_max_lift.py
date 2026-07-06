@@ -236,19 +236,34 @@ class ArgMaxLift(ppl.Pass):
         #      upstream iedge ``tmp := (g OP c)``; or
         #  (b) inlined -- the comparison sits directly in the condition
         #      ``(g OP c)`` (current canonicalize output for TSVC s314/s316).
+        inline_gather = None
         if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
             op_ast, gather_sym_name, carrier_name, transform = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
         else:
             op_ast, gather_sym_name, carrier_name, transform = self._parse_comparison(cond_expr_str)
+            if op_ast is None:
+                # The gather may be an INLINE array subscript in the condition
+                # (``array[b + c*i] OP carrier``) rather than a bound name -- the
+                # shape canonicalize leaves for the value+index argmax (TSVC s315).
+                parsed = self._parse_inline_subscript_comparison(cond_expr_str, loop.loop_variable, loop)
+                if parsed is not None:
+                    op_ast, inline_gather, carrier_name, transform = parsed
+                    gather_sym_name = None
         if op_ast is None:
             return None
         op = _CMP_AST_TO_RTYPE[op_ast]
 
-        # Walk one more iedge back to find the gather ``gather_sym = arr[b + c*i]``.
-        gather = self._resolve_gather_iedge(loop, cond_block, gather_sym_name, loop.loop_variable, sdfg)
-        if gather is None:
-            return None
-        input_array, gather_base, gather_coeff = gather
+        # Resolve the gather ``arr[b + c*i]``: either the inline subscript parsed
+        # above, or (the tmp-symbol / bound-name case) an iedge one level back.
+        if inline_gather is not None:
+            input_array, gather_base, gather_coeff = inline_gather
+            if input_array not in sdfg.arrays:
+                return None
+        else:
+            gather = self._resolve_gather_iedge(loop, cond_block, gather_sym_name, loop.loop_variable, sdfg)
+            if gather is None:
+                return None
+            input_array, gather_base, gather_coeff = gather
         # A non-unit / non-zero-base gather (``arr[inc*i]``, TSVC s318) is only
         # supported on the symbol-carrier transform+index path below; every
         # other shape assumes the plain unit ``arr[i]`` gather.
@@ -512,9 +527,13 @@ class ArgMaxLift(ppl.Pass):
         index carriers (``xindex = m // ncols``, ``yindex = m % ncols``)."""
         from dace.libraries.standard.nodes import ArgReduce
         desc = sdfg.arrays[m.input_array]
-        val_buf, _ = sdfg.add_scalar(f'_argmax2d_val_{m.outer_loop.label}', desc.dtype, transient=True,
+        val_buf, _ = sdfg.add_scalar(f'_argmax2d_val_{m.outer_loop.label}',
+                                     desc.dtype,
+                                     transient=True,
                                      find_new_name=True)
-        idx_buf, _ = sdfg.add_scalar(f'_argmax2d_idx_{m.outer_loop.label}', dtypes.int64, transient=True,
+        idx_buf, _ = sdfg.add_scalar(f'_argmax2d_idx_{m.outer_loop.label}',
+                                     dtypes.int64,
+                                     transient=True,
                                      find_new_name=True)
 
         argmax_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d')
@@ -531,11 +550,12 @@ class ArgMaxLift(ppl.Pass):
         bind_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d_bind')
         m.parent.add_edge(
             argmax_state, bind_state,
-            dace.InterstateEdge(assignments={
-                m.carrier_name: val_buf,
-                m.x_idx_name: f'({idx_buf} // ({ncols}))',
-                m.y_idx_name: f'({idx_buf} % ({ncols}))',
-            }))
+            dace.InterstateEdge(
+                assignments={
+                    m.carrier_name: val_buf,
+                    m.x_idx_name: f'({idx_buf} // ({ncols}))',
+                    m.y_idx_name: f'({idx_buf} % ({ncols}))',
+                }))
         for oe in list(m.parent.out_edges(m.outer_loop)):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
@@ -580,6 +600,49 @@ class ArgMaxLift(ppl.Pass):
         if lhs_name is None or rhs_name is None:
             return None, None, None, None
         return op_cls, lhs_name, rhs_name, transform
+
+    def _parse_inline_subscript_comparison(self, expr_str: str, loop_var: str, loop: LoopRegion):
+        """Parse a comparison whose gather is an INLINE array subscript:
+        ``[f](array[b + c*i]) OP carrier``.
+
+        Unlike :meth:`_parse_compare_node` (which needs the gather bound to a bare
+        name), this handles the shape canonicalize leaves for TSVC ``s315`` -- the
+        array access sits directly in the condition. Returns
+        ``(op_cls, (array, base, coeff), carrier_name, transform)`` or ``None``.
+        """
+        try:
+            tree = ast.parse(expr_str, mode='eval').body
+        except SyntaxError:
+            return None
+        if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
+            return None
+        op_cls = type(tree.ops[0])
+        if op_cls not in _CMP_AST_TO_RTYPE:
+            return None
+        carrier = self._extract_name(tree.comparators[0])
+        if carrier is None:
+            return None
+        left, transform = tree.left, None
+        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Name)
+                and left.func.id in self._SUPPORTED_TRANSFORMS and len(left.args) == 1 and not left.keywords):
+            transform, left = left.func.id, left.args[0]
+        if not (isinstance(left, ast.Subscript) and isinstance(left.value, ast.Name)):
+            return None
+        array = left.value.id
+        idx = left.slice
+        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+            idx = idx.value
+        if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
+            return None
+        try:
+            idx_str = ast.unparse(idx)
+        except Exception:  # pragma: no cover -- defensive
+            return None
+        aff = self._affine_index_in_loop_var(idx_str, loop_var, loop)
+        if aff is None:
+            return None
+        base, coeff = aff
+        return op_cls, (array, base, coeff), carrier, transform
 
     def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, tmp_sym: str):
         """Walk in-edges of ``cond_block`` looking for one whose assignment binds

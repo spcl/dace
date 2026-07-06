@@ -46,7 +46,7 @@ from typing import Optional, Tuple
 from dace import SDFG, dtypes, nodes, properties, symbolic
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -103,6 +103,14 @@ class InductionVariableSubstitution(ppl.Pass):
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue
+                # An early-exit loop (``break`` / ``continue`` targeting THIS loop) has a
+                # data-dependent trip count: the IV's value at exit is NOT the counted final
+                # value, and body reads of the IV must stay per-iteration. Closed-form /
+                # exit-value substitution would corrupt them (e.g. rewriting a break guard's
+                # ``d_idx = d[i]`` to ``d[N-1]``). Skip -- the split passes can't handle these
+                # loops either; the early-exit lift runs before this stage instead.
+                if _loop_has_break_or_continue(node):
+                    continue
                 # (1) whole-loop collapse ``acc = acc OP const`` -> closed form
                 #     (eliminates the loop; the exponentiation collapse s317);
                 # (2) an interstate-edge recurrence ``sym := sym + step`` -> closed
@@ -120,6 +128,28 @@ class InductionVariableSubstitution(ppl.Pass):
             if not progressed:
                 break
         return count or None
+
+
+def _loop_has_break_or_continue(loop: LoopRegion) -> bool:
+    """True if ``loop`` has a ``break`` / ``continue`` targeting it.
+
+    A ``BreakBlock`` / ``ContinueBlock`` targets the innermost enclosing loop, so a break
+    inside a nested ``LoopRegion`` belongs to that inner loop -- descend through conditional
+    branches and non-loop regions, but not into nested loops.
+    """
+    stack = list(loop.nodes())
+    while stack:
+        blk = stack.pop()
+        if isinstance(blk, (BreakBlock, ContinueBlock)):
+            return True
+        if isinstance(blk, LoopRegion):
+            continue  # a break inside a nested loop targets that loop, not this one
+        if isinstance(blk, ConditionalBlock):
+            for _, branch in blk.branches:
+                stack.extend(branch.nodes())
+        elif isinstance(blk, ControlFlowRegion):
+            stack.extend(blk.nodes())
+    return False
 
 
 def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:

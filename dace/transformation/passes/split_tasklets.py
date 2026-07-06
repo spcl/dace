@@ -276,31 +276,6 @@ def _ssa_lhs_is_bool(ssa_line: str) -> bool:
     return False
 
 
-def _cast_dtype(stmt: str):
-    """Return the target typeclass if ``stmt``'s RHS is a bare dtype-cast call.
-
-    A dtype-constructor call such as ``__t = double(N)`` produces the CAST target
-    type (``float64``), independent of the argument's type. ``infer_types`` does not
-    recognize this shape and returns ``None`` for it, so without this the fallback
-    would promote only the argument -- typing ``double(N)`` with an ``int`` N as
-    ``int`` and truncating a subsequent ``sqrt`` (correlation's ``sqrt(double(N))``).
-
-    :param stmt: A single ``lhs = rhs`` SSA statement.
-    :returns: The cast target's typeclass, or ``None`` if the RHS is not a dtype call.
-    """
-    try:
-        rhs = stmt.split('=', 1)[1].strip()
-        node = ast.parse(rhs, mode='eval').body
-    except (IndexError, SyntaxError):
-        return None
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        try:
-            return dace.dtypes.typeclass(node.func.id)
-        except (ValueError, KeyError, TypeError):
-            return None
-    return None
-
-
 def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[str, Any], fallback) -> Dict[str, Any]:
     """Infer the dtype of every SSA intermediate, threading resolved types forward.
 
@@ -329,17 +304,14 @@ def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[st
             stmt_types = {}
         for lhs, t in stmt_types.items():
             if t is None:
-                # infer_types could not type this statement. A bare dtype-cast call
-                # (``__t = double(N)``) takes the cast target type, NOT the promotion of
-                # its argument -- otherwise ``double(N)`` with an int N types as int and a
-                # following ``sqrt`` truncates (correlation). Failing that, promote the
-                # operand types it DOES know -- same float in => same float out; multiple
-                # operands => result_type_of -- and only then the coarse fallback.
-                t = _cast_dtype(stmt)
-                if t is None:
-                    _, rhs_vars = _get_vars(stmt)
-                    operand_types = [known[v] for v in rhs_vars if known.get(v) is not None]
-                    t = functools.reduce(dace.dtypes.result_type_of, operand_types) if operand_types else fallback
+                # infer_types could not type this statement (an unknown function-call
+                # return such as ``tanh(a)``). Promote the operand types it DOES know --
+                # same float in => same float out; multiple operands => result_type_of --
+                # and only then the coarse fallback. (A dtype-cast call ``double(N)`` is
+                # typed by ``infer_types`` itself now, via ``_infer_dtype``.)
+                _, rhs_vars = _get_vars(stmt)
+                operand_types = [known[v] for v in rhs_vars if known.get(v) is not None]
+                t = functools.reduce(dace.dtypes.result_type_of, operand_types) if operand_types else fallback
             known[lhs] = t
             inferred[lhs] = t
     return inferred
