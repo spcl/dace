@@ -113,8 +113,12 @@ class NanobindCompiledSDFG:
         return return_arrays
 
     def initialize(self, *args, **kwargs):
-        # Positional arguments map to names as in __call__ (the C++ side
-        # absorbs anything beyond the init symbols).
+        # The name mapping is needed here too, but for a different reason
+        # than in __call__: the C++ initialize's positional parameters are
+        # the *init symbols* only (e.g. ``initialize(int N, **kwargs)``),
+        # while callers pass positionals in user-facing arg_names order
+        # (e.g. ``initialize(a, N=20)``). A plain pass-through would match
+        # ``a`` positionally against ``N``.
         if args:
             for name, value in zip(self._arg_names, args):
                 kwargs.setdefault(name, value)

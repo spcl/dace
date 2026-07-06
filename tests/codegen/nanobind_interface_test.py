@@ -224,7 +224,9 @@ def test_nanobind_interface_workspace():
 
         n = 20
         a = np.random.rand(n)
-        csdfg.initialize(a=a, N=np.int32(n))
+        # Positional: `a` must map to the SDFG argument `a` (user-facing
+        # order), NOT to the C++ initialize's first parameter `N`.
+        csdfg.initialize(a, N=np.int32(n))
         sizes = csdfg.get_workspace_sizes()
         assert sizes == {dace.StorageType.CPU_Heap: n * 8}
 
