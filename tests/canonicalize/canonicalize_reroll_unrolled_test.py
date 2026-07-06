@@ -357,13 +357,18 @@ def test_unroll_prime_17_uniform_value_and_map():
     assert _nmaps(sdfg) >= 1, 'the re-rolled unrolled body must parallelize into a map'
 
 
-@pytest.mark.xfail(reason="pre-existing canon bug (not NormalizeMapBody): a manually-unrolled sum reduction with "
-                   "multiple independent partial accumulators (s0..s10) canonicalizes to roughly HALF the sum -- "
-                   "the multi-accumulator combine reads under-accumulated scalars (validation warns 'Use of "
-                   "uninitialized transient s0'). The per-accumulator recurrences are mis-lifted / mis-seeded. "
-                   "Reproduces identically on the commit before NormalizeMapBody.",
-                   strict=True)
+def _nreduces(sdfg):
+    return sum(1 for n, _ in sdfg.all_nodes_recursive()
+               if isinstance(n, nodes.LibraryNode) and 'Reduce' in type(n).__name__)
+
+
 def test_unroll_reduction_11_accs_value_and_reduce():
+    """A sum reduction hand-unrolled into 11 partial accumulators (over a
+    strided main body) plus a step-1 remainder is a *tiled reduction*: re-roll
+    collapses the 11-lane main body to a single-accumulator unit-stride loop,
+    and ``FuseConsecutiveLoops`` re-joins that loop with its adjacent remainder
+    so the whole thing lifts to ONE ``Reduce`` over ``a[0:N]`` -- exact, not the
+    former half-sum (two un-chained reduces writing the same accumulator)."""
     n = 25  # remainder 3
     rng = np.random.default_rng(23)
     a = rng.standard_normal(n)
@@ -373,7 +378,7 @@ def test_unroll_reduction_11_accs_value_and_reduce():
     out = np.zeros(1)
     sdfg(a=a.copy(), out=out, N=n)
     assert np.isclose(out[0], np.sum(a)), f'got {out[0]} expected {np.sum(a)}'
-    assert _nmaps(sdfg) >= 1, 'the multi-accumulator unrolled reduction must lift to a map/reduce'
+    assert (_nmaps(sdfg) + _nreduces(sdfg)) >= 1, 'the multi-accumulator unrolled reduction must lift to a map/reduce'
 
 
 if __name__ == '__main__':

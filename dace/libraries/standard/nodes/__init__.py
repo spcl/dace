@@ -6,3 +6,4 @@ from .gearbox import Gearbox
 from .reduce import Reduce
 from .arg_reduce import ArgReduce
 from .scan import Scan, ScanOp
+from .symmetrize import Symmetrize

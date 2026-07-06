@@ -61,6 +61,7 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.normalize_nested_reduction import NormalizeNestedReduction
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
@@ -72,6 +73,7 @@ from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
+from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -481,6 +483,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # refuse-check sees the cleaned-up shape.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
+    # loop_to_symmetrize (BEFORE break_antidep): lift a triangular in-place
+    # matrix-symmetrization nest (``for i: for j in i+1:M: X[j,i] = X[i,j]``) to a
+    # ``Symmetrize`` library node whose expansion is the parallel triangular copy.
+    # It runs here, before break_antidep / fission, so the in-place symmetric
+    # read/write is recognised as one semantic op rather than snapshot-renamed by
+    # BreakAntiDependence into a whole-matrix copy + plain map. Canonicalize does
+    # NOT expand the node -- it stays a library node for codegen to lower.
+    s += [('loop_to_symmetrize', LoopToSymmetrize())]
+
     # peel / break_antidep (optional knobs, off by default): last-resort attempts to
     # unblock loops LoopToMap would refuse, run BEFORE move_if / fission so the
     # transform sees the whole guarded loop. Peeling splits a boundary iteration off
@@ -562,15 +573,32 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # loop is freely interchangeable); see the pass docstring.
     s += [('loop_stride_permutation', LoopStridePermutation())]
 
+    # fuse_consecutive_loops (right before the LoopTo* lifts): re-join a
+    # hand-tiled main-body loop and its step-1 remainder -- two directly
+    # consecutive, identical-bodied, unit-stride loops over adjacent index
+    # ranges ``[A, B)`` then ``[B, C)`` -- into one loop over ``[A, C)``. Left
+    # split, a reduction tiled this way lifts to two ``Reduce`` nodes writing
+    # the same accumulator whose seed does not chain (the remainder drops the
+    # main partial sum); fused, a single ``Reduce`` over the whole range lifts
+    # correctly. Runs after re-roll has already collapsed the tiled main body to
+    # a unit-stride single-accumulator loop, and before ``loop_to_x`` lifts it.
+    s += [('fuse_consecutive_loops', FuseConsecutiveLoops())]
+
     # loop_to_x (moved here from the 'reduce' stage so the order is
     # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap): lift the
     # accumulator / scan / argmax / find-index / conditional-reduce shapes that
     # LoopStridePermutation did NOT turn into a sequential-loop + parallel-map.
     # The reduce PREP (LICM / SimplifyPass / IV substitution / ...) already ran
     # above; these are the lifting passes only.
+    # EarlyExitToFindIndex is NOT re-run here: it runs once in the early 'clean'
+    # prep (before SplitStatements / IVS), which is the only place it is needed
+    # -- the break -> find-first-index + clipped-range lift must precede those
+    # stages, and re-running it in loop_to_x lifted nothing the early pass had
+    # not already handled. LoopToSymmetrize likewise runs earlier (its own stage,
+    # before break_antidep).
     s += [('loop_to_x', LoopToReduce()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
-          ('loop_to_x', EarlyExitToFindIndex()), ('loop_to_x', LoopToConditionalReduce())]
+          ('loop_to_x', LoopToConditionalReduce())]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
     # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
@@ -626,8 +654,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('loop_stride_permutation', LoopStridePermutation())]
         s += [('loop_to_x', LoopToReduce()),
               ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
-              ('loop_to_x', ArgMaxLift()), ('loop_to_x', EarlyExitToFindIndex()),
-              ('loop_to_x', LoopToConditionalReduce())]
+              ('loop_to_x', ArgMaxLift()), ('loop_to_x', LoopToConditionalReduce())]
         s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', _uniq_fast_ssa)]
         s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 

@@ -110,16 +110,28 @@ class RerollUnrolledLoops(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         """Re-roll every matching unrolled loop in ``sdfg`` and its nested SDFGs.
 
+        Runs to a fixpoint: re-rolling one loop can expose a sibling or an
+        enclosing loop that only became a clean lane chain after the inner
+        collapse (a manually multi-level / nested-tiled unroll). Bounded by the
+        loop count so it always terminates.
+
         :param sdfg: SDFG to mutate in place.
         :returns: The number of loops re-rolled, or ``None`` if none.
         """
-        rerolled = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            for cfg in list(sd.all_control_flow_regions(recursive=True)):
-                if isinstance(cfg, LoopRegion) and (self._try_reroll(cfg)
-                                                    or self._try_reroll_accumulator_reduction(cfg)):
-                    rerolled += 1
-        return rerolled or None
+        total = 0
+        max_iters = 1 + sum(1 for sd in sdfg.all_sdfgs_recursive()
+                            for r in sd.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+        for _ in range(max_iters):
+            rerolled = 0
+            for sd in sdfg.all_sdfgs_recursive():
+                for cfg in list(sd.all_control_flow_regions(recursive=True)):
+                    if isinstance(cfg, LoopRegion) and (self._try_reroll(cfg)
+                                                        or self._try_reroll_accumulator_reduction(cfg)):
+                        rerolled += 1
+            if rerolled == 0:
+                break
+            total += rerolled
+        return total or None
 
     def _body_states(self, loop: LoopRegion) -> Optional[List[SDFGState]]:
         """The loop's body states when the body is made only of states.

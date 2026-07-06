@@ -278,9 +278,11 @@ def test_refuses_when_body_uses_bare_inner_iterator():
     assert res is None
 
 
-def test_refuses_when_outer_start_is_not_zero():
-    """``for i in range(P, N, 4)`` with ``P != 0`` -- the collapsed iterator
-    needs a shifted range that's harder to verify safely; v1 sticks to start=0."""
+def test_untiles_when_outer_start_is_not_zero():
+    """``for i in range(P, N, 4): for ii in range(4): a[i+ii]`` with ``P != 0``
+    (a tiled stencil walking the interior ``[P, N)``) collapses to a single
+    ``for k in range(P, N)`` loop -- the fused iterator starts at ``P``."""
+    import numpy as np
 
     @dace.program
     def tiled(a: dace.float64[N + 8]):
@@ -290,7 +292,18 @@ def test_refuses_when_outer_start_is_not_zero():
 
     sdfg = tiled.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
-    assert res is None
+    assert res is not None, 'start!=0 tile nest must untile'
+    # Exactly one collapsed unit-stride loop over [8, N) remains.
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(loops) == 1
+    sdfg.validate()
+
+    n = 24  # N-8 == 16 is a multiple of the tile 4 (exact)
+    got = np.zeros(n + 8)
+    sdfg(a=got, N=n)
+    exp = np.zeros(n + 8)
+    exp[8:n] = 1.0
+    assert np.allclose(got, exp), f'got {got} expected {exp}'
 
 
 def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():

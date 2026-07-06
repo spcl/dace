@@ -478,6 +478,11 @@ class UntileLoops(ppl.Pass):
 
         if self.map_roundtrip:
             self._loops_back_to_maps(sdfg)
+        if total:
+            # Propagate once, at the end of the pass -- the in-place iterator
+            # rewrites above intentionally do not self-propagate per rewrite.
+            from dace.sdfg.propagation import propagate_memlets_sdfg
+            propagate_memlets_sdfg(sdfg)
         return total or None
 
     def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
@@ -490,8 +495,11 @@ class UntileLoops(ppl.Pass):
         K = _is_constant_positive_int(outer_stride)
         if K is None or K == 1:
             return False  # K must be > 1 (K == 1 is already untiled)
-        if not _is_zero(outer_start):
-            return False
+        # ``outer_start`` need not be 0: a tiled stencil walks tile origins over
+        # the interior ``[S, N)`` (e.g. ``for ii in range(1, N-1-K, K)``). The
+        # collapsed loop simply starts at the same ``S`` (set below). Only reject
+        # a start we cannot render symbolically.
+        outer_start_sym = symbolic.simplify(outer_start)
 
         # Walk down through perfect 1-child intermediate chains and pick
         # the first descendant LoopRegion whose shape + audit match the
@@ -587,9 +595,12 @@ class UntileLoops(ppl.Pass):
                 pass
 
         # Rewrite the outer's iteration descriptors to drive ``k`` over
-        # ``[0, N)`` in steps of ``inner_stride``.
+        # ``[outer_start, N)`` in steps of ``inner_stride``. Case A collapses
+        # ``i + ii`` (which starts at ``outer_start + 0``); Case B collapses
+        # ``ii`` (which starts at the outer origin ``outer_start``). Either way
+        # the fused iterator begins at ``outer_start``.
         outer.loop_variable = k_var
-        outer.init_statement = dace.properties.CodeBlock(f"{k_var} = 0")
+        outer.init_statement = dace.properties.CodeBlock(f"{k_var} = {symbolic.symstr(outer_start_sym)}")
         outer.loop_condition = dace.properties.CodeBlock(f"{k_var} < ({symbolic.symstr(N_excl)})")
         outer.update_statement = dace.properties.CodeBlock(f"{k_var} = {k_var} + {inner_stride}")
         return True

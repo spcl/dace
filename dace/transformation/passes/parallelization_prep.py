@@ -112,12 +112,24 @@ class ShortLoopUnroll(ppl.Pass):
                 if trip is None or trip > self.unroll_limit:
                     continue
                 try:
-                    LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop)
+                    # ``annotate=False``: skip the per-apply full-SDFG memlet/state
+                    # propagation. The transformation framework otherwise re-runs it
+                    # after EVERY unroll -- O(unrolls x sdfg_size) redundant work
+                    # (the dominant ~83% cost of unrolling a d-deep trip-t tile
+                    # nest, whose SDFG grows to ~t^d blocks). The trip-count / loop
+                    # re-collection below reads only loop bounds, not memlets, so
+                    # the interim annotations are never observed; one propagation
+                    # after the whole fixpoint (below) refreshes them.
+                    LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False)
                 except Exception:
                     continue  # not unrollable in this context; leave it for LoopToMap
                 unrolled += 1
                 changed = True
                 break
+        if unrolled:
+            # Propagate once, at the end of the pass (not per-apply).
+            from dace.sdfg.propagation import propagate_memlets_sdfg
+            propagate_memlets_sdfg(sdfg)
         return unrolled or None
 
 
