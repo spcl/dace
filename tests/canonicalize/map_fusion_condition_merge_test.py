@@ -12,19 +12,16 @@ become two parallel maps whose bodies each carry an ``if cond`` guard. This
 file pins two behaviors:
 
 1. ``MapFusion`` fuses the two if-bodied maps into ONE map (it is not blocked by
-   the guards in the map bodies) -- ``test_mapfusion_fuses_two_if_bodied_maps``.
+   the guards in the map bodies).
 
-2. The two same-condition guards, now co-located inside that one map, SHOULD
-   merge into a single ``if cond: {b; c}`` -- the map analogue of
-   ``ConditionFusion``'s CFG-level ``if c: s1; if c: s2 -> if c: {s1; s2}``.
-   This does NOT happen today: after fusion the guards live in two separate
-   nested SDFGs under the map, so ConditionFusion's pattern (two consecutive
-   ``ConditionalBlock``s in one CFG) never matches. ``test_*_merge_within_map``
-   is marked ``xfail(strict=True)`` to track the gap; it flips to a hard pass
-   the moment an in-map condition merge is wired in.
-
-Numerical correctness holds in every case (the un-merged double-guard form is
-still correct, just not maximally canonicalized).
+2. The two same-condition guards, now co-located inside that one map, merge into
+   a single ``if cond: {b; c}`` -- the map analogue of ``ConditionFusion``'s
+   CFG-level ``if c: s1; if c: s2 -> if c: {s1; s2}``. After fusion the guards
+   live in two separate nested SDFGs under the map, so ``NormalizeMapBody``
+   first sequences those siblings into one nested SDFG (making the two
+   ``ConditionalBlock``s consecutive), and ``ConditionFusion`` then folds them.
+   A map-invariant merged guard hoists out (``if cond: { map: {b; c} }``); an
+   index-dependent one stays merged inside the map (``map[i]: { if c: {b; c} }``).
 """
 
 import numpy as np
@@ -78,16 +75,41 @@ def _num_condblocks(sdfg: dace.SDFG) -> int:
     return sum(1 for cb in sdfg.all_control_flow_regions(recursive=True) if isinstance(cb, ConditionalBlock))
 
 
+def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
+    """A ConditionalBlock whose branch body contains a top-level map (guard hoisted out)."""
+    for cb in sdfg.all_control_flow_regions(recursive=True):
+        if not isinstance(cb, ConditionalBlock):
+            continue
+        for _, branch in cb.branches:
+            for st in branch.all_states():
+                if any(isinstance(n, nodes.MapEntry) and st.entry_node(n) is None for n in st.nodes()):
+                    return True
+    return False
+
+
+def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
+    """A ConditionalBlock inside a NestedSDFG that sits under a map scope (guard in-map)."""
+    for st in sdfg.all_states():
+        for n in st.nodes():
+            if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None:
+                if any(isinstance(b, ConditionalBlock) for b in n.sdfg.all_control_flow_regions(recursive=True)):
+                    return True
+    return False
+
+
 # --------------------------------------------------------------------------
-# (1) MapFusion fuses two if-bodied maps -- WORKS
+# (1) MapFusion fuses two if-bodied maps; NormalizeMapBody merges the guards
 # --------------------------------------------------------------------------
-def test_mapfusion_fuses_two_if_bodied_maps():
+def test_mapfusion_fuses_then_merges_invariant_guard():
+    """Map-invariant guard: MapFusion fuses the two if-bodied maps, then
+    NormalizeMapBody + ConditionFusion merge the two same-condition guards into
+    one, which (being map-invariant) hoists OUT: ``if cond: { map: {b; c} }``."""
     n = 16
     sdfg = two_guarded_loops.to_sdfg(simplify=False)
     canonicalize(sdfg, validate=True)
 
-    assert len(_top_maps(sdfg)) == 1, ("MapFusion must fuse two same-shape maps into one even though their "
-                                       "bodies carry an if-guard")
+    assert _num_condblocks(sdfg) == 1, "the two same-condition guards must merge into one"
+    assert _guard_over_a_map(sdfg), "the merged map-invariant guard must hoist out of the map"
 
     rng = np.random.default_rng(0)
     a = rng.random(n)
@@ -98,12 +120,16 @@ def test_mapfusion_fuses_two_if_bodied_maps():
         assert np.allclose(c, np.where(cond > 0, a * 2.0, 0.0)), f"c mismatch cond={cond}"
 
 
-def test_mapfusion_fuses_two_if_bodied_maps_index_dependent():
+def test_mapfusion_fuses_then_merges_index_dependent_guard():
+    """Index-dependent guard: cannot hoist, so the two same-condition guards
+    merge INSIDE the single fused map: ``map[i]: { if i%2==0: {b; c} }``."""
     n = 16
     sdfg = two_guarded_loops_idx.to_sdfg(simplify=False)
     canonicalize(sdfg, validate=True)
 
-    assert len(_top_maps(sdfg)) == 1, "MapFusion must fuse the two index-guarded maps into one"
+    assert len(_top_maps(sdfg)) == 1, "the two index-guarded maps must fuse into one"
+    assert _num_condblocks(sdfg) == 1, "the two same-condition in-map guards must merge into one"
+    assert _guard_inside_a_map(sdfg), "the merged index-dependent guard must stay inside the map"
 
     rng = np.random.default_rng(1)
     a = rng.random(n)
@@ -112,23 +138,6 @@ def test_mapfusion_fuses_two_if_bodied_maps_index_dependent():
     even = np.arange(n) % 2 == 0
     assert np.allclose(b, np.where(even, a + 1.0, 0.0)), "b mismatch"
     assert np.allclose(c, np.where(even, a * 2.0, 0.0)), "c mismatch"
-
-
-# --------------------------------------------------------------------------
-# (2) Merge same-condition guards WITHIN the fused map -- KNOWN GAP
-# --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="in-map condition merge not implemented: after MapFusion co-locates two same-condition "
-                   "guards inside one map, they sit in two separate nested SDFGs, so ConditionFusion's "
-                   "two-consecutive-ConditionalBlocks pattern never matches and the guards are not merged "
-                   "into a single `if cond: {b; c}`.",
-                   strict=True)
-def test_two_guards_merge_within_map():
-    sdfg = two_guarded_loops_idx.to_sdfg(simplify=False)
-    canonicalize(sdfg, validate=True)
-    # Desired canonical form: one fused map carrying ONE merged guard.
-    assert len(_top_maps(sdfg)) == 1
-    assert _num_condblocks(sdfg) == 1, ("the two same-condition guards inside the fused map should merge into one "
-                                        "(map[i]: { if cond: {b; c} })")
 
 
 if __name__ == "__main__":
