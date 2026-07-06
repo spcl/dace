@@ -334,9 +334,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # severed nor double-counted. Idempotent, so the vectorizer can also run it standalone.
     s += [('normalize_reduction', NormalizeNestedReduction())]
 
+    # A loop with a ``break`` / ``continue`` is not splittable and its induction variable
+    # is not closed-form (the trip count is data-dependent), so SplitStatements / IVS below
+    # cannot handle it. Lift the early exit to a find-first index + clipped range HERE --
+    # before those stages -- so they only ever see the resulting break-free, clipped loop.
     s += [('clean', RemoveViews()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
           ('clean', _uniq), ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()),
-          ('clean', ContinueToCondition()), ('clean', SimplifyPass()),
+          ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()), ('clean', SimplifyPass()),
           ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
 
     # prep (still maps): push guarding conditionals into maps, then split
