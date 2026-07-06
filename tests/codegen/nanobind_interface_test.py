@@ -129,6 +129,34 @@ def test_nanobind_interface_has_gpu_code():
         assert csdfg.has_gpu_code is False
 
 
+def test_nanobind_interface_state_pointer():
+    """state_pointer raises while the state is uninitialized or after finalize."""
+    import pytest
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_stateptr(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = axpy_nanobind_stateptr.to_sdfg().compile()
+        handle = csdfg._handle
+
+        with pytest.raises(RuntimeError):
+            handle.state_pointer  # not initialized yet
+
+        n = 8
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
+        assert handle.state_pointer != 0
+
+        csdfg.finalize()
+        with pytest.raises(RuntimeError):
+            handle.state_pointer  # finalized
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()

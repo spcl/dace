@@ -164,6 +164,9 @@ NB_MODULE({name}, m) {{
         .def("__call__", &DaceHandle_{name}::call{call_def_args})
         .def_prop_ro("has_gpu_code", [](DaceHandle_{name} &) {{ return {has_gpu}; }})
         .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{
+            if (!h.m_state)
+                throw std::runtime_error(
+                    "SDFG '{name}': the state is not initialized (or has been finalized).");
             return reinterpret_cast<std::uintptr_t>(h.m_state);
         }});
     m.def("make_compiled_sdfg", []() {{ return new DaceHandle_{name}(); }});
