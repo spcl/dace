@@ -712,4 +712,11 @@ DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a) {
 
 }  // namespace dace
 
+// Global-scope wrapper (like ``min`` / ``max`` / ``int_ceil``) so codegen can emit the
+// bare ``ipow`` in loop bounds / interstate edges; forwards to ``dace::math::ipow``.
+template <typename T, typename U>
+static DACE_HDFI T ipow(const T& a, const U& b) {
+  return dace::math::ipow(a, b);
+}
+
 #endif  // __DACE_MATH_H
