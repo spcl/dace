@@ -11,6 +11,7 @@ import re
 import shutil
 import shlex
 import subprocess
+import sys
 from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 
@@ -115,6 +116,26 @@ def generate_program_folder(
             if code_object.language == 'cpp' and code_object.title == 'Frame':
                 code_object.create_source_map(sdfg)
 
+    # Nanobind interface: emit the bindings source next to the frame code, so
+    # it is compiled into the program library (the module *is* the library).
+    interface = Config.get('compiler', 'interface')
+    if interface == 'nanobind' and sdfg is not None:
+        from dace.codegen import nanobind_bindings
+        bindings_folder = os.path.join(src_path, 'cpu')
+        os.makedirs(bindings_folder, exist_ok=True)
+        bindings_name = f'{sdfg.name}_nanobind.cpp'
+        bindings_code = nanobind_bindings.generate_bindings_code(sdfg)
+        bindings_path = os.path.join(bindings_folder, bindings_name)
+        if not identical_file_exists(bindings_path, bindings_code):
+            with open(bindings_path, 'w') as bindings_file:
+                bindings_file.write(bindings_code)
+        filelist.append('cpu,,{}'.format(bindings_name))
+
+    # Record which interface produced this folder (see `load_precompiled_sdfg`),
+    # analogous to the `FOLDER_MODE` file.
+    with open(os.path.join(out_path, "INTERFACE"), "w") as interface_file:
+        interface_file.write(interface)
+
     # Write list of files
     #  Needed to communicate with `configure_and_compile()`, deleted in production mode.
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -160,6 +181,19 @@ def generate_program_folder(
         version_file.write(folder_mode)
 
     return out_path
+
+
+def get_program_interface(program_folder) -> str:
+    """Returns which Python interface ('ctypes' or 'nanobind') produced ``program_folder``.
+
+    Consults the ``INTERFACE`` marker file written by ``generate_program_folder()``;
+    folders that predate the marker are ctypes folders.
+    """
+    marker = os.path.join(program_folder, 'INTERFACE')
+    if os.path.isfile(marker):
+        with open(marker, 'r') as f:
+            return f.read().strip()
+    return 'ctypes'
 
 
 def configure_and_compile(
@@ -236,6 +270,20 @@ def configure_and_compile(
         "-DDACE_PROGRAM_NAME={}".format(program_name),
         "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
     ]
+
+    # Nanobind interface: build the program as a nanobind extension module.
+    if get_program_interface(program_folder) == 'nanobind':
+        try:
+            import nanobind
+        except ImportError:
+            raise cgx.CompilerConfigurationError(
+                'The "nanobind" compiler interface is selected (compiler.interface), '
+                'but the nanobind package is not installed.')
+        cmake_command += [
+            "-DDACE_ENABLE_NANOBIND=ON",
+            '-DDACE_NANOBIND_CMAKE_DIR="{}"'.format(nanobind.cmake_dir()),
+            '-DPython_EXECUTABLE="{}"'.format(sys.executable),
+        ]
 
     # Get required environments are retrieve the CMake information
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
@@ -329,7 +377,8 @@ def configure_and_compile(
     # In production mode, we are now deleting what we need and relocating it.
     if folder_mode == "production":
         lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
-        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+        if libstub_path.is_file():  # No stub is built on the nanobind path.
+            libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
         program_folder = pathlib.Path(program_folder)
         # TODO: Find out where `sample/` are generated and suppress their generation.
         for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
@@ -513,8 +562,14 @@ def load_precompiled_sdfg(
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
 
-    return get_program_handle(library_path=get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode),
-                              sdfg=sdfg)
+    library_path = get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode)
+
+    # Dispatch on the interface that produced the folder (INTERFACE marker).
+    if get_program_interface(folder) == 'nanobind':
+        from dace.codegen import nanobind_support
+        return nanobind_support.load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg)
+
+    return get_program_handle(library_path=library_path, sdfg=sdfg)
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:

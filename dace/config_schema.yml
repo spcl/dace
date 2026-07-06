@@ -115,6 +115,17 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            interface:
+                type: str
+                default: ctypes
+                title: Python interface for compiled SDFGs
+                description: >
+                    Selects how a compiled SDFG is loaded and called from Python.
+                    "ctypes" (default) uses the stub-library/ctypes path.
+                    "nanobind" builds the program as a nanobind extension module,
+                    loads it through the import machinery, and marshals arguments
+                    in C++. Requires the ``nanobind`` package.
+
             build_folder_mode:
                 type: str
                 default: development
