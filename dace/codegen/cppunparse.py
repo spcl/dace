@@ -1000,18 +1000,6 @@ class CPPUnparser:
                 op = self.callbools[t.func.id]()
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
-            # ``ipow`` (integer power, RelaxIntegerPowers) has no bare C++ symbol -- it
-            # lives in ``dace::math``. The symbolic printer qualifies it for descriptor
-            # expressions; qualify it here too so it is correct in loop bounds / interstate
-            # edges, which unparse through this AST path rather than the symbolic one.
-            elif t.func.id == 'ipow':
-                self.write('dace::math::ipow')
-                self.write('(')
-                for i, e in enumerate(t.args):
-                    self.write(', ' if i else '')
-                    self.dispatch(e)
-                self.write(')')
-                return
 
         self.dispatch(t.func)
         self.write("(")
