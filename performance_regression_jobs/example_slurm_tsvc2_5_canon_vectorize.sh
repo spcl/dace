@@ -1,12 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=dace-tsvc2-5-canon-vectorize-perf
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4      # 4 ranks/node by default -- see note below on sizing this
-#SBATCH --cpus-per-task=8        # cores-per-node / ntasks-per-node -- check your node's core
-                                 # count first (see "checking cpus per node" below) and adjust
-#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=72       # cores-per-node / ntasks-per-node -- run `nproc --all` on a
+                                 # compute node to check its core count first and adjust
+#SBATCH --time=06:00:00
+#SBATCH --partition=normal
+#SBATCH --account=g34
 #SBATCH --output=tsvc2_5_canon_vectorize_%j.out
 #SBATCH --error=tsvc2_5_canon_vectorize_%j.err
+#SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 #
 # Example SLURM job: the 6th job type -- canonicalize -> VectorizeCPU on
 # TSVC2.5, vs. the DaCe simplify+loop2map+mapfusion baseline, distributed over
@@ -18,9 +21,20 @@
 # Adjust --nodes / --ntasks-per-node for however many ranks (X) you want.
 
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export OMP_NUM_THREADS="72"
+export PYTHONUNBUFFERED=1  # otherwise stdout is fully buffered (not a tty), so progress prints
+                           # don't show up in the log until a buffer fills -- looks like a hang
+
+export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
+export PATH=$PYTHONUSERBASE/bin:$PATH
+#python3.11 -m venv /capstor/scratch/cscs/$USER/aarch64/venvs/myenv  # one-time setup; scratch can get purged
+source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
+alias python=python3.11
+
+spack load gcc@16.1.0
+spack load llvm@22.1.5
 
 # --cxx <name-or-abs-path> pins a specific compiler for DaCe's own codegen
 # (default: clang++ on PATH, else g++ -- plain PATH lookup); DaCe-lane
@@ -29,6 +43,9 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 # --cxx -- each finds its own vendor's compiler independently, and a vendor
 # with no compiler installed is just skipped for that lane (see
 # example_slurm_tsvc2.sh for the full rationale).
-srun python3 tsvc2_5_canon_vectorize_perf.py --reps 100
+#
+# --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
+# of letting the OS scheduler migrate/share them across ranks.
+srun --cpu-bind=cores python3 tsvc2_5_canon_vectorize_perf.py --reps 100 --cxx=clang++
 
 python3 tsvc2_5_canon_vectorize_perf.py --tables-only

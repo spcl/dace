@@ -1,12 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=dace-npbench-polybench-perf
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4      # 4 ranks/node by default -- see note below on sizing this
-#SBATCH --cpus-per-task=8        # cores-per-node / ntasks-per-node -- check your node's core
-                                 # count first (see "checking cpus per node" below) and adjust
+#SBATCH --cpus-per-task=72       # cores-per-node / ntasks-per-node -- run `nproc --all` on a
+                                 # compute node to check its core count first and adjust
 #SBATCH --time=08:00:00          # paper-preset kernels (e.g. gemm) run real-world sized problems
+#SBATCH --partition=normal
+#SBATCH --account=g34
 #SBATCH --output=npbench_polybench_%j.out
 #SBATCH --error=npbench_polybench_%j.err
+#SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 #
 # Example SLURM job: NPBench+PolyBench (vendored corpus + paper-preset data +
 # vendored numpy reference) canonicalize performance regression -- 5 lanes
@@ -23,13 +26,27 @@
 # Adjust --nodes / --ntasks-per-node for however many ranks (X) you want.
 
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export OMP_NUM_THREADS="72"
+export PYTHONUNBUFFERED=1  # otherwise stdout is fully buffered (not a tty), so progress prints
+                           # don't show up in the log until a buffer fills -- looks like a hang
+
+export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
+export PATH=$PYTHONUSERBASE/bin:$PATH
+#python3.11 -m venv /capstor/scratch/cscs/$USER/aarch64/venvs/myenv  # one-time setup; scratch can get purged
+source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
+alias python=python3.11
+
+spack load gcc@16.1.0
+spack load llvm@22.1.5
 
 # --cxx <name-or-abs-path> pins a specific compiler for DaCe codegen
 # (default: clang++ on PATH, else g++ -- plain PATH lookup). Results are
 # namespaced by compiler+hostname automatically.
-srun python3 npbench_polybench_perf.py --reps 100
+#
+# --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
+# of letting the OS scheduler migrate/share them across ranks.
+srun --cpu-bind=cores python3 npbench_polybench_perf.py --reps 100 --cxx=clang++
 
 python3 npbench_polybench_perf.py --tables-only
