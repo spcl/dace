@@ -47,6 +47,8 @@ class NanobindCompiledSDFG:
         self._module = module
         self._arg_names = list(arg_names or [])
         self._handle = module.make_compiled_sdfg()
+        # Cached so calls without return values skip the shape logic entirely.
+        self._has_return_values = any(name.startswith('__return') for name in sdfg.arrays.keys())
 
     @property
     def sdfg(self):
@@ -65,7 +67,44 @@ class NanobindCompiledSDFG:
                 if name in kwargs:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
-        return self._handle(**kwargs)
+
+        # Early exit: no return values, no shape logic.
+        if not self._has_return_values:
+            self._handle(**kwargs)
+            return None
+
+        return_arrays = self._allocate_return_arrays(kwargs)
+        self._handle(**kwargs)
+        if len(return_arrays) == 1:
+            return return_arrays[0]
+        return tuple(return_arrays)
+
+    def _allocate_return_arrays(self, kwargs):
+        """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``."""
+        import numpy as np
+        from dace import data as dt, symbolic
+
+        arrays = self._sdfg.arrays
+        syms = {k: v for k, v in kwargs.items() if k not in arrays}
+        syms.update(self._sdfg.constants)
+
+        return_arrays = []
+        for name in sorted(n for n in arrays.keys() if n.startswith('__return')):
+            desc = arrays[name]
+            if name in kwargs:
+                return_arrays.append(kwargs[name])
+                continue
+            if not isinstance(desc, dt.Array):
+                raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
+                                          f'{type(desc).__name__} is not supported yet.')
+            shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
+            dtype = desc.dtype.as_numpy_dtype()
+            total_size = int(symbolic.evaluate(desc.total_size, syms))
+            strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
+            arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
+            kwargs[name] = arr
+            return_arrays.append(arr)
+        return return_arrays
 
     def initialize(self, **kwargs):
         self._handle.initialize(**kwargs)

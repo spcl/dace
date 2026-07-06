@@ -52,6 +52,54 @@ def test_nanobind_interface_wrong_dtype_raises():
             csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
 
 
+def test_nanobind_interface_same_name_recompile():
+    """Recompiling under an already-imported module name silently renames (sys.modules increment)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_rename(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        sdfg1 = axpy_nanobind_rename.to_sdfg()
+        base_name = sdfg1.name
+        csdfg1 = sdfg1.compile()
+
+        # Fresh SDFG with the same name: the module name is taken, so the
+        # compile path must rename and recompile instead of silently reusing
+        # the already-imported (stale) module.
+        sdfg2 = axpy_nanobind_rename.to_sdfg()
+        assert sdfg2.name == base_name
+        csdfg2 = sdfg2.compile()
+
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 3.0 * a + b
+        csdfg2(A=a, B=b, alpha=np.float64(3.0), N=np.int32(n))
+        assert np.allclose(b, expected)
+        assert f'dace.generated.{base_name}_0' in sys.modules
+
+
+def test_nanobind_interface_return_value():
+    """A program with a return array allocates it in Python and returns it."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def add_one_nanobind(A: dace.float64[N]):
+            return A + 1.0
+
+        csdfg = add_one_nanobind.to_sdfg().compile()
+        n = 24
+        a = np.random.rand(n)
+        result = csdfg(A=a, N=np.int32(n))
+        assert isinstance(result, np.ndarray)
+        assert np.allclose(result, a + 1.0)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
+    test_nanobind_interface_same_name_recompile()
+    test_nanobind_interface_return_value()

@@ -70,13 +70,13 @@ void __program_{name}({program_params});
 
 namespace {{
 
-struct CompiledSDFGHandle {{
+struct DaceHandle_{name} {{
     {state_t} *m_state = nullptr;
 
-    CompiledSDFGHandle() = default;
-    CompiledSDFGHandle(const CompiledSDFGHandle &) = delete;
-    CompiledSDFGHandle &operator=(const CompiledSDFGHandle &) = delete;
-    ~CompiledSDFGHandle() {{ finalize(); }}
+    DaceHandle_{name}() = default;
+    DaceHandle_{name}(const DaceHandle_{name} &) = delete;
+    DaceHandle_{name} &operator=(const DaceHandle_{name} &) = delete;
+    ~DaceHandle_{name}() {{ finalize(); }}
 
     void initialize(nb::kwargs kwargs) {{
         if (m_state) return;
@@ -105,13 +105,13 @@ struct CompiledSDFGHandle {{
 }} // namespace
 
 NB_MODULE({name}, m) {{
-    nb::class_<CompiledSDFGHandle>(m, "CompiledSDFGHandle")
-        .def("initialize", &CompiledSDFGHandle::initialize)
-        .def("finalize", &CompiledSDFGHandle::finalize)
-        .def("__call__", &CompiledSDFGHandle::call)
-        .def_prop_ro("state_pointer", [](CompiledSDFGHandle &h) {{
+    nb::class_<DaceHandle_{name}>(m, "CompiledSDFGHandle")
+        .def("initialize", &DaceHandle_{name}::initialize)
+        .def("finalize", &DaceHandle_{name}::finalize)
+        .def("__call__", &DaceHandle_{name}::call)
+        .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{
             return reinterpret_cast<std::uintptr_t>(h.m_state);
         }});
-    m.def("make_compiled_sdfg", []() {{ return new CompiledSDFGHandle(); }});
+    m.def("make_compiled_sdfg", []() {{ return new DaceHandle_{name}(); }});
 }}
 '''
