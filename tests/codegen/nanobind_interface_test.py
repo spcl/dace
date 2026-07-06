@@ -19,6 +19,7 @@ def test_axpy_nanobind_interface():
 
         sdfg = axpy_nanobind.to_sdfg()
         csdfg = sdfg.compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_support.NanobindCompiledSDFG)
 
         n = 32
         a = np.random.rand(n)
@@ -45,6 +46,7 @@ def test_nanobind_interface_wrong_dtype_raises():
             B[:] = alpha * A + B
 
         csdfg = axpy_nanobind_dtype.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_support.NanobindCompiledSDFG)
         n = 8
         a = np.random.rand(n).astype(np.float32)  # wrong dtype
         b = np.random.rand(n)
@@ -64,6 +66,7 @@ def test_nanobind_interface_same_name_recompile():
         sdfg1 = axpy_nanobind_rename.to_sdfg()
         base_name = sdfg1.name
         csdfg1 = sdfg1.compile()
+        assert isinstance(csdfg1, dace.codegen.nanobind_support.NanobindCompiledSDFG)
 
         # Fresh SDFG with the same name: the module name is taken, so the
         # compile path must rename and recompile instead of silently reusing
@@ -71,6 +74,7 @@ def test_nanobind_interface_same_name_recompile():
         sdfg2 = axpy_nanobind_rename.to_sdfg()
         assert sdfg2.name == base_name
         csdfg2 = sdfg2.compile()
+        assert isinstance(csdfg2, dace.codegen.nanobind_support.NanobindCompiledSDFG)
 
         n = 16
         a = np.random.rand(n)
@@ -91,6 +95,7 @@ def test_nanobind_interface_return_value():
             return A + 1.0
 
         csdfg = add_one_nanobind.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_support.NanobindCompiledSDFG)
         n = 24
         a = np.random.rand(n)
         result = csdfg(A=a, N=np.int32(n))
@@ -150,6 +155,7 @@ def test_nanobind_interface_state_pointer():
         a = np.random.rand(n)
         b = np.random.rand(n)
         csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
+        assert isinstance(csdfg, dace.codegen.nanobind_support.NanobindCompiledSDFG)
         assert handle.state_pointer != 0
 
         csdfg.finalize()
