@@ -23,7 +23,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 # --cxx <name-or-abs-path> pins a specific compiler for DaCe's own codegen
-# (default: latest LLVM/clang++ on PATH, else latest GCC/g++); DaCe-lane
+# (default: clang++ on PATH, else g++ -- plain PATH lookup); DaCe-lane
 # results are namespaced by compiler+hostname automatically. Native lanes
 # (native-gcc/-clang/-icpx/-nvc and their autopar variants) are unaffected by
 # --cxx -- each finds its own vendor's compiler independently, and a vendor

@@ -42,10 +42,6 @@ BASELINE_LANE = 'baseline'
 SPEEDUP_VS = ('baseline', 'auto-opt', 'numpy')
 
 
-def _dace_pipeline(label, sdfg):
-    return engine.PIPELINES[label](sdfg)
-
-
 # --------------------------------------------------------------------------
 # bench_info: which suite (poly vs np) an entry belongs to, and its paper-preset
 # parameters. module_name is the join key against npbench_corpus/polybench_corpus
@@ -117,14 +113,30 @@ def _collect_outputs(output_args, ret, kwargs):
     return out
 
 
+def _resolve_args(names, arrays, params):
+    """Each name in `names` (info['input_args']) is either an actual array
+    (present in `arrays`, copied so repeated calls never mutate the shared
+    input) or a scalar/symbol value that only lives in `params` (e.g. a grid
+    size like 'nx' or a loop bound like 'TMAX') -- input_args mixes both
+    kinds, so `arrays` alone can't resolve every name."""
+    out = {}
+    for n in names:
+        if n in arrays:
+            v = arrays[n]
+            out[n] = v.copy() if isinstance(v, np.ndarray) else v
+        else:
+            out[n] = params[n]
+    return out
+
+
 def _dace_call_kwargs(info, arrays, params):
-    kwargs = {n: (arrays[n].copy() if isinstance(arrays[n], np.ndarray) else arrays[n]) for n in info['input_args']}
+    kwargs = _resolve_args(info['input_args'], arrays, params)
     symbols = {k: v for k, v in params.items() if k not in kwargs}
     return {**kwargs, **symbols}
 
 
-def _numpy_call_kwargs(info, arrays):
-    return {n: (arrays[n].copy() if isinstance(arrays[n], np.ndarray) else arrays[n]) for n in info['input_args']}
+def _numpy_call_kwargs(info, arrays, params):
+    return _resolve_args(info['input_args'], arrays, params)
 
 
 def _compare(ref, got, rtol=1e-3, atol=1e-4):
@@ -140,9 +152,9 @@ def _compare(ref, got, rtol=1e-3, atol=1e-4):
 # a segfault or exception in canonicalize/auto_optimize/compile/run only
 # takes down this one job, never the rank's remaining sweep.
 # --------------------------------------------------------------------------
-def _run_numpy(info, arrays):
+def _run_numpy(info, arrays, params):
     fn = _numpy_ref(info)
-    kwargs = _numpy_call_kwargs(info, arrays)
+    kwargs = _numpy_call_kwargs(info, arrays, params)
     ret = fn(**kwargs)
     return _collect_outputs(info['output_args'], ret, kwargs)
 
@@ -158,10 +170,10 @@ def _check_job(name, pipeline):
     info = load_bench_info(name)
     params = info['parameters'][PRESET]
     program, arrays = build_program_and_data(name, info, params)
-    ref = _run_numpy(info, arrays)
+    ref = _run_numpy(info, arrays, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"
-    sdfg = _dace_pipeline(pipeline, sdfg)
+    sdfg = engine.PIPELINES[pipeline](sdfg)
     try:
         got = _run_dace(sdfg, info, arrays, params)
     finally:
@@ -176,7 +188,7 @@ def _time_dace_job(name, pipeline, reps):
     program, arrays = build_program_and_data(name, info, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"
-    sdfg = _dace_pipeline(pipeline, sdfg)
+    sdfg = engine.PIPELINES[pipeline](sdfg)
     try:
         call_kwargs = _dace_call_kwargs(info, arrays, params)
         return engine.time_sdfg(sdfg, call_kwargs, reps)
@@ -191,7 +203,7 @@ def _time_numpy_job(name, reps, warmup=1):
     fn = _numpy_ref(info)
     times = []
     for i in range(warmup + reps):
-        kwargs = _numpy_call_kwargs(info, arrays)
+        kwargs = _numpy_call_kwargs(info, arrays, params)
         t0 = time.perf_counter()
         fn(**kwargs)
         dt = (time.perf_counter() - t0) * 1000.0
@@ -207,7 +219,7 @@ def _save_sdfg_job(name, pipeline):
     program, _ = build_program_and_data(name, info, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"
-    sdfg = _dace_pipeline(pipeline, sdfg)
+    sdfg = engine.PIPELINES[pipeline](sdfg)
     sdfg.validate()
     return sdfg.to_json()
 

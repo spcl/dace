@@ -35,7 +35,7 @@ def _build_sdfg(kernel_name, pipeline):
     program = base._program(kernel_name)
     sdfg = program.to_sdfg(simplify=False)
     sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"  # SDFG names must be valid identifiers, no hyphens
-    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_baseline(sdfg)
+    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.PIPELINES['baseline'](sdfg)
 
 
 def _check_dace_job(kernel_name, sizes, pipeline):
@@ -98,11 +98,10 @@ def _time_native_job(kernel_name, sizes, so_path, c_name, sig, reps, warmup=1):
     return times
 
 
-def _lane_kind(lane):
-    return 'native' if lane in nh.LANES else 'dace'
+_lane_kind = engine.lane_kind
 
 
-def process_kernel(kernel_name, sizes, args, native_libs):
+def process_kernel(kernel_name, sizes, args, rank, native_libs):
     # DaCe lanes and native lanes are namespaced separately (engine.host_tag's
     # docstring) since native lanes shouldn't be invalidated by a --cxx change.
     kdir_dace = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
@@ -145,8 +144,8 @@ def process_kernel(kernel_name, sizes, args, native_libs):
             engine.append_results(ldir, lane, payload, have)
         else:
             engine.write_status(ldir, lane, False, str(payload))
-    engine.write_run_meta(kdir_dace, reps_target=args.reps, sizes=sizes)
-    engine.write_run_meta(kdir_native, reps_target=args.reps, sizes=sizes)
+    engine.write_run_meta(kdir_dace, rank=rank, reps_target=args.reps, sizes=sizes)
+    engine.write_run_meta(kdir_native, rank=rank, reps_target=args.reps, sizes=sizes)
 
 
 def main():
@@ -187,7 +186,7 @@ def main():
             sizes = base.size_scale_for_kernel(program, target_bytes=args.target_bytes)
         c_name = name + '_run_timed'
         native_libs = {lane: (so_path, c_name, sigs.get(name, [])) for lane, so_path in compiled.items()}
-        process_kernel(name, sizes, args, native_libs)
+        process_kernel(name, sizes, args, rank, native_libs)
 
     engine.write_tables(args.results_dir, CORPUS, list(LANES), BASELINE_LANE)
 

@@ -96,7 +96,6 @@ def cleanup_build_folder(sdfg):
     permanent directory per compiled SDFG unless the caller removes it
     itself once done with it. Call at the end of each job, after any timing
     the caller needed the compiled binary for."""
-    import shutil
     shutil.rmtree(sdfg.build_folder, ignore_errors=True)
 
 
@@ -161,6 +160,22 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
             csdfg(**call_kwargs)
         csdfg.finalize()
     return _flatten_durations(sdfg.get_latest_report().durations)[warmup:]
+
+
+def arrays_close(ref, got, tol=1e-9):
+    """True if every floating-point array/scalar in `ref` matches its `got`
+    counterpart within `tol` -- non-floating entries (ints, symbol values)
+    are skipped, since only numerical drift indicates a real correctness bug
+    for these kernels. Shared by the TSVC2/TSVC2.5 scripts (both DaCe and
+    native lanes); NPBench+PolyBench uses its own looser default tolerance."""
+    import numpy as np
+    for name, r in ref.items():
+        g = got.get(name)
+        if g is None or not np.issubdtype(np.asarray(r).dtype, np.floating):
+            continue
+        if not np.allclose(r, g, rtol=tol, atol=tol, equal_nan=True):
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -265,6 +280,14 @@ def result_tag(preset):
 def native_result_tag(preset):
     """`<hostname>_<preset>` -- folder native-lane results land in."""
     return f'{host_tag()}_{_slug(str(preset))}'
+
+
+def lane_kind(lane):
+    """'native' if `lane` is one of native_harness.LANES, else 'dace' -- every
+    entry-point script uses this to route a lane to kernel_dir() vs.
+    native_kernel_dir()."""
+    import native_harness as nh
+    return 'native' if lane in nh.LANES else 'dace'
 
 
 def kernel_dir(results_root, corpus, kernel, preset):
@@ -448,7 +471,7 @@ def add_common_args(ap):
     ap.add_argument('--save-sdfg-only', action='store_true', help='save canon/fast-canon SDFGs, skip all timing')
     ap.add_argument('--list-kernels', action='store_true', help='print this corpus\'s kernel identifiers and exit')
     ap.add_argument('--tables-only', action='store_true', help='skip measurement, just rebuild the markdown tables')
-    ap.add_argument('--timeout', type=float, default=120.0, help='per-measurement subprocess timeout, seconds')
+    ap.add_argument('--timeout', type=float, default=3600.0, help='per-measurement subprocess timeout, seconds')
     ap.add_argument('--cxx', default=None,
                      help='C++ compiler for DaCe\'s own codegen only -- native lanes each find their own '
                           'vendor compiler independently (default: clang++ on PATH, else g++)')

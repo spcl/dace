@@ -188,21 +188,12 @@ def _time_native_job(kernel_name, sizes, so_path, c_name, sig, reps, warmup=1):
     return times
 
 
-def _compare(ref, got, tol=1e-9):
-    for name, r in ref.items():
-        g = got.get(name)
-        if g is None or not np.issubdtype(np.asarray(r).dtype, np.floating):
-            continue
-        if not np.allclose(r, g, rtol=tol, atol=tol, equal_nan=True):
-            return False
-    return True
-
+_compare = engine.arrays_close
 
 # --------------------------------------------------------------------------
 # Per-kernel driver (same shape as tsvc2_perf.py).
 # --------------------------------------------------------------------------
-def _lane_kind(lane):
-    return 'native' if lane in nh.LANES else 'dace'
+_lane_kind = engine.lane_kind
 
 
 def _save_sdfg_job(kernel_name, pipeline, seq):
@@ -270,7 +261,7 @@ def process_kernel(kernel_name, sizes, args, rank, native_libs):
     engine.write_run_meta(kdir_native, rank=rank, reps_target=args.reps, sizes=sizes)
 
 
-def save_sdfg_only(kernel_name, sizes, args, rank):
+def save_sdfg_only(kernel_name, args):
     kdir = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     if not args.force and all(os.path.exists(os.path.join(kdir, f'{p}-par.sdfg')) for p in ('canon', 'fast-canon')):
         print(f'[{kernel_name}] SDFGs already saved, skip')
@@ -339,14 +330,14 @@ def main():
     overrides = {k: v for k, v in (('LEN_1D', args.len1d), ('LEN_2D', args.len2d), ('LEN_3D', args.len3d))
                 if v is not None}
     for name in mine:
+        if args.save_sdfg_only:
+            save_sdfg_only(name, args)
+            continue
         program = _program(name)
         if overrides:
             sizes = {**tsvc25.SIZES, **overrides}  # global override: skip the search, keep other stock defaults
         else:
             sizes = size_scale_for_kernel(program, target_bytes=args.target_bytes)
-        if args.save_sdfg_only:
-            save_sdfg_only(name, sizes, args, rank)
-            continue
         c_name = name + '_run_timed'
         per_kernel_libs = {lane: (so_path, c_name, sigs.get(name, [])) for lane, so_path in compiled.items()}
         process_kernel(name, sizes, args, rank, per_kernel_libs)

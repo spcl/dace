@@ -34,7 +34,7 @@ def _build_sdfg(kernel_name, pipeline):
     engine.configure_dace_process()
     kernel = base.tsvc.collect(name=kernel_name)[0]
     sdfg = base.tsvc.to_sdfg(kernel, f'{kernel_name}_{pipeline}', simplify=False)
-    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_baseline(sdfg)
+    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.PIPELINES['baseline'](sdfg)
 
 
 def _check_dace_job(kernel_name, l1, l2, pipeline):
@@ -93,11 +93,10 @@ def _time_native_job(kernel_name, l1, l2, so_path, c_name, sig, reps, warmup=1):
     return times
 
 
-def _lane_kind(lane):
-    return 'native' if lane in nh.LANES else 'dace'
+_lane_kind = engine.lane_kind
 
 
-def process_kernel(kernel_name, l1, l2, args, native_libs):
+def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
     # DaCe lanes and native lanes are namespaced separately (engine.host_tag's
     # docstring) since native lanes shouldn't be invalidated by a --cxx change.
     kdir_dace = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
@@ -140,8 +139,8 @@ def process_kernel(kernel_name, l1, l2, args, native_libs):
             engine.append_results(ldir, lane, payload, have)
         else:
             engine.write_status(ldir, lane, False, str(payload))
-    engine.write_run_meta(kdir_dace, reps_target=args.reps, len_1d=l1, len_2d=l2)
-    engine.write_run_meta(kdir_native, reps_target=args.reps, len_1d=l1, len_2d=l2)
+    engine.write_run_meta(kdir_dace, rank=rank, reps_target=args.reps, len_1d=l1, len_2d=l2)
+    engine.write_run_meta(kdir_native, rank=rank, reps_target=args.reps, len_1d=l1, len_2d=l2)
 
 
 def main():
@@ -173,12 +172,10 @@ def main():
     for name in mine:
         kernel = base.tsvc.collect(name=name)[0]
         l1, l2 = (args.len1d, args.len2d) if args.len1d and args.len2d else base.size_for_kernel(kernel)
-        cname = base.cpp_base_name(name) + '_run_timed'
-        native_libs = {
-            lane: (so_path, cname, sigs.get(base.cpp_base_name(name), []))
-            for lane, (so_path, _) in compiled.items()
-        }
-        process_kernel(name, l1, l2, args, native_libs)
+        base_name = base.cpp_base_name(name)
+        cname = base_name + '_run_timed'
+        native_libs = {lane: (so_path, cname, sigs.get(base_name, [])) for lane, so_path in compiled.items()}
+        process_kernel(name, l1, l2, args, rank, native_libs)
 
     engine.write_tables(args.results_dir, CORPUS, list(LANES), BASELINE_LANE)
 

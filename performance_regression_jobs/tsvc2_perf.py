@@ -104,9 +104,9 @@ def _build_sdfg(kernel_name, pipeline, seq):
     return sdfg
 
 
-def _inputs(kernel_name, l1, l2, seed_extra=''):
+def _inputs(kernel_name, l1, l2):
     kernel = tsvc.collect(name=kernel_name)[0]
-    rng = np.random.default_rng(tsvc.stable_seed((kernel_name, l1, l2, seed_extra)))
+    rng = np.random.default_rng(tsvc.stable_seed((kernel_name, l1, l2)))
     arrays = tsvc.allocate(kernel, l1, l2, rng)
     sym = tsvc.symbols(kernel, l1, l2)
     sparams = tsvc.scalar_params(kernel, l1)
@@ -179,21 +179,12 @@ def _time_native_job(kernel_name, l1, l2, so_path, c_name, sig, reps, warmup=1):
     return times
 
 
-def _compare(ref, got, tol=1e-9):
-    for name, r in ref.items():
-        g = got.get(name)
-        if g is None or not np.issubdtype(np.asarray(r).dtype, np.floating):
-            continue
-        if not np.allclose(r, g, rtol=tol, atol=tol, equal_nan=True):
-            return False
-    return True
-
+_compare = engine.arrays_close
 
 # --------------------------------------------------------------------------
 # Per-kernel driver.
 # --------------------------------------------------------------------------
-def _lane_kind(lane):
-    return 'native' if lane in nh.LANES else 'dace'
+_lane_kind = engine.lane_kind
 
 
 def _save_sdfg_job(kernel_name, pipeline, seq):
@@ -270,7 +261,7 @@ def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
     engine.write_run_meta(kdir_native, rank=rank, reps_target=args.reps, len_1d=l1, len_2d=l2)
 
 
-def save_sdfg_only(kernel_name, l1, l2, args, rank):
+def save_sdfg_only(kernel_name, args):
     kdir = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     if not args.force and all(os.path.exists(os.path.join(kdir, f'{p}-par.sdfg')) for p in ('canon', 'fast-canon')):
         print(f'[{kernel_name}] SDFGs already saved, skip')
@@ -296,7 +287,7 @@ def kernel_list(args):
 
 
 def prepare_native_libs(results_dir, rank):
-    """Compile every native lane once (per rank); returns lane -> (so_path, prefix, sigs).
+    """Compile every native lane once (per rank); returns (sigs, lane -> so_path).
 
     Each lane finds its own vendor's compiler independently (see
     native_harness.compile_lane) -- a vendor with no compiler installed is
@@ -308,7 +299,7 @@ def prepare_native_libs(results_dir, rank):
         so_path = os.path.join(build_dir, f'lib_{lane}.so')
         ok, err = nh.compile_lane(CPP_FILE, so_path, lane)
         if ok:
-            out[lane] = (so_path, sigs)
+            out[lane] = so_path
             print(f'compiled {lane}: {so_path}')
         else:
             print(f'{lane}: {err}')
@@ -343,14 +334,14 @@ def main():
         sigs, compiled = prepare_native_libs(args.results_dir, rank)
 
     for name in mine:
+        if args.save_sdfg_only:
+            save_sdfg_only(name, args)
+            continue
         kernel = tsvc.collect(name=name)[0]
         l1, l2 = (args.len1d, args.len2d) if args.len1d and args.len2d else size_for_kernel(kernel)
-        if args.save_sdfg_only:
-            save_sdfg_only(name, l1, l2, args, rank)
-            continue
         base = cpp_base_name(name)
         c_name = base + '_run_timed'
-        per_kernel_libs = {lane: (so_path, c_name, sigs.get(base, [])) for lane, (so_path, _) in compiled.items()}
+        per_kernel_libs = {lane: (so_path, c_name, sigs.get(base, [])) for lane, so_path in compiled.items()}
         process_kernel(name, l1, l2, args, rank, per_kernel_libs)
 
     if not args.save_sdfg_only:

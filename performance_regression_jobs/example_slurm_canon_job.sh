@@ -2,7 +2,8 @@
 #SBATCH --job-name=dace-canon-perf
 #SBATCH --nodes=1
 #SBATCH --ntasks=8              # X ranks -- one kernel-slice per task
-#SBATCH --cpus-per-task=4       # matches --native-threads / OMP_NUM_THREADS below
+#SBATCH --cpus-per-task=4       # matches OMP_NUM_THREADS below (also sizes the
+                                 # native GCC autopar lane's -ftree-parallelize-loops)
 #SBATCH --time=04:00:00
 #SBATCH --output=canon_%j.out
 #SBATCH --error=canon_%j.err

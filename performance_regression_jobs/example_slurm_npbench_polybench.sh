@@ -28,7 +28,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 # --cxx <name-or-abs-path> pins a specific compiler for DaCe codegen
-# (default: latest LLVM/clang++ on PATH, else latest GCC/g++). Results are
+# (default: clang++ on PATH, else g++ -- plain PATH lookup). Results are
 # namespaced by compiler+hostname automatically.
 srun python3 npbench_polybench_perf.py --reps 100
 
