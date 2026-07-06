@@ -2586,13 +2586,31 @@ class SDFG(ControlFlowRegion):
                 pass
 
             # Rename SDFG to avoid runtime issues with clashing names
+            nanobind_interface = Config.get('compiler', 'interface') == 'nanobind'
+            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
+                collision_mode = Config.get('compiler', 'nanobind_name_collision')
+                if collision_mode not in ('rename', 'error'):
+                    raise ValueError(f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision '
+                                     f'(expected "rename" or "error").')
+                if collision_mode == 'error':
+                    raise ValueError(f"SDFG name '{sdfg.name}' is already loaded in this process and "
+                                     "compiler.nanobind_name_collision is set to 'error'.")
             index = 0
             while sdfg.is_loaded(folder_mode=folder_mode):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
-            if self.name != sdfg.name and Config.get_bool('debugprint'):
-                print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
-                      f"name '{sdfg.name}'.")
+            if self.name != sdfg.name:
+                if Config.get_bool('debugprint'):
+                    print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                          f"name '{sdfg.name}'.")
+                if nanobind_interface:
+                    # The renamed program gets its own build folder, derived
+                    # from the new name - never an in-place recompile next to
+                    # the original artifact (which would leave the folder with
+                    # artifacts that no longer match its program.sdfgz).
+                    del sdfg._build_folder
+                    build_folder = sdfg.build_folder
+                    sdfg.build_folder = build_folder
 
             try:
                 # Fill in scope entry/exit connectors

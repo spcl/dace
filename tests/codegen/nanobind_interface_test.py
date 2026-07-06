@@ -163,6 +163,51 @@ def test_nanobind_interface_state_pointer():
             handle.state_pointer  # finalized
 
 
+def test_nanobind_interface_rename_own_build_folder():
+    """A collision-renamed program is compiled into its own build folder, not in-place."""
+    import os
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_ownfolder(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        sdfg1 = axpy_nanobind_ownfolder.to_sdfg()
+        base_name = sdfg1.name
+        original_folder = sdfg1.build_folder
+        sdfg1.compile()
+
+        csdfg2 = axpy_nanobind_ownfolder.to_sdfg().compile()
+        renamed = csdfg2.sdfg.name
+        assert renamed == f'{base_name}_0'
+
+        # Own folder, derived from the new name - no artifacts of the renamed
+        # program inside the original build folder.
+        renamed_folder = csdfg2.sdfg.build_folder
+        assert os.path.basename(renamed_folder) == renamed
+        assert os.path.isfile(os.path.join(renamed_folder, 'INTERFACE'))
+        assert not os.path.isfile(os.path.join(original_folder, 'build', f'lib{renamed}.so'))
+
+
+def test_nanobind_interface_name_collision_error():
+    """With compiler.nanobind_name_collision=error, a taken name refuses to compile."""
+    import pytest
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        with set_temporary('compiler', 'nanobind_name_collision', value='error'):
+            N = dace.symbol('N')
+
+            @dace.program
+            def axpy_nanobind_collerr(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+                B[:] = alpha * A + B
+
+            axpy_nanobind_collerr.to_sdfg().compile()
+            with pytest.raises(Exception, match='already loaded'):
+                axpy_nanobind_collerr.to_sdfg().compile()
+
+
 def test_nanobind_interface_pyobject_rejected():
     """pyobject arguments/returns are rejected with a clear error at codegen time.
 
