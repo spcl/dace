@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.18)
 project(dace_program)
 
 # General options
