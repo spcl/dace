@@ -126,7 +126,8 @@ def generate_program_folder(
         bindings_folder = os.path.join(src_path, 'cpu')
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f'{sdfg.name}_nanobind.cpp'
-        bindings_code = nanobind_bindings.generate_bindings_code(sdfg)
+        statestruct = next((getattr(obj, 'statestruct', None) for obj in code_objects if obj.title == 'Frame'), None)
+        bindings_code = nanobind_bindings.generate_bindings_code(sdfg, statestruct=statestruct)
         bindings_path = os.path.join(bindings_folder, bindings_name)
         if not identical_file_exists(bindings_path, bindings_code):
             with open(bindings_path, 'w') as bindings_file:

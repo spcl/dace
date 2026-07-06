@@ -112,8 +112,66 @@ class NanobindCompiledSDFG:
             return_arrays.append(arr)
         return return_arrays
 
-    def initialize(self, **kwargs):
+    def initialize(self, *args, **kwargs):
+        # Positional arguments map to names as in __call__ (the C++ side
+        # absorbs anything beyond the init symbols).
+        if args:
+            for name, value in zip(self._arg_names, args):
+                kwargs.setdefault(name, value)
         self._handle.initialize(**kwargs)
 
     def finalize(self):
         self._handle.finalize()
+
+    def get_workspace_sizes(self):
+        """Returns the external-memory sizes per storage type (see ``CompiledSDFG``).
+
+        The handle speaks raw storage-type values; the conversion to the
+        ``StorageType`` enum happens here, since the Python enum is not
+        exposed to C++.
+        """
+        from dace import dtypes
+        return {dtypes.StorageType(k): v for k, v in self._handle.get_workspace_sizes().items()}
+
+    def set_workspace(self, storage, workspace):
+        """Sets the workspace for the given storage type to the given buffer (see ``CompiledSDFG``)."""
+        from dace import dtypes
+        value = storage.value if isinstance(storage, dtypes.StorageType) else int(storage)
+        self._handle.set_workspace(value, workspace)
+
+    def state_fields(self):
+        """Names of the pointer fields in the state struct.
+
+        Baked into the module at code-generation time - no parsing of the
+        generated sources, unlike the ctypes path.
+        """
+        return list(self._handle.state_fields())
+
+    def get_state_struct(self) -> int:
+        """Returns the *raw pointer* to the state struct as an integer.
+
+        Unlike ``CompiledSDFG.get_state_struct()`` this does not reconstruct a
+        ``ctypes.Structure`` view; combine it with ``state_fields()`` if
+        needed. Callers must know exactly what they are doing - and whatever
+        they are doing with this pointer is most likely wrong.
+        """
+        return self._handle.state_pointer
+
+    def get_exported_function(self, name: str, restype=None):
+        """Returns an arbitrary exported symbol as a callable, or None if absent.
+
+        Resolved with ``ctypes.CDLL`` on the already-imported module file
+        (which returns the same library handle); the wrapper is attached to
+        the returned function as ``__compiled_sdfg__`` to keep the module
+        alive.
+        """
+        import ctypes
+        lib = ctypes.CDLL(self._module.__file__)
+        try:
+            func = getattr(lib, name)
+        except AttributeError:
+            return None
+        if restype is not None:
+            func.restype = restype
+        func.__compiled_sdfg__ = self
+        return func

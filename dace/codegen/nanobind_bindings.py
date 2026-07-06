@@ -62,8 +62,34 @@ def _argument_binding(arglist, binding_order=None):
     return params, call_args, nb_args
 
 
-def generate_bindings_code(sdfg) -> str:
-    """Returns the C++ source of the nanobind module for ``sdfg``."""
+def _pointer_field_names(statestruct):
+    """Names of the pointer fields in the state-struct declarations (codegen source of truth)."""
+    names = []
+    for decl in statestruct or []:
+        decl = decl.strip().rstrip(';').strip()
+        if '*' not in decl:
+            continue
+        token = decl.split()[-1].lstrip('*')
+        if token.isidentifier():
+            names.append(token)
+    return names
+
+
+def _external_memory_storages(sdfg):
+    """Storage types with ``AllocationLifetime.External`` arrays (same scan as framecode)."""
+    storages = set()
+    for _, _, desc in sdfg.arrays_recursive():
+        if desc.lifetime == dtypes.AllocationLifetime.External:
+            storages.add(desc.storage)
+    return sorted(storages, key=lambda s: s.name)
+
+
+def generate_bindings_code(sdfg, statestruct=None) -> str:
+    """Returns the C++ source of the nanobind module for ``sdfg``.
+
+    :param statestruct: The frame generator's state-struct field declarations;
+                        used to bake the pointer-field names into the module.
+    """
     from dace.codegen.targets.cpp import mangle_dace_state_struct_name
 
     name = sdfg.name
@@ -95,6 +121,31 @@ def generate_bindings_code(sdfg) -> str:
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
     has_gpu = 'true' if _has_gpu_code(sdfg) else 'false'
 
+    # Init symbols are stored on the handle: the external-memory entry points
+    # take them as arguments (framecode.py, generate_external_memory_management),
+    # mirroring the ctypes wrapper's use of the last call's arguments.
+    init_symbol_names = list(init_arglist.keys())
+    sym_members = '\n'.join(f'    {init_arglist[s].dtype.ctype} m_sym_{s} = {{}};' for s in init_symbol_names)
+    sym_stores = '\n        '.join(f'm_sym_{s} = {s};' for s in init_symbol_names)
+    sym_args = ''.join(f', m_sym_{s}' for s in init_symbol_names)
+    init_comma_decl = f', {init_decl}' if init_decl else ''
+
+    ext_storages = _external_memory_storages(sdfg)
+    ext_decls = '\n'.join(f'size_t __dace_get_external_memory_size_{s.name}({state_t} *__state{init_comma_decl});\n'
+                          f'void __dace_set_external_memory_{s.name}({state_t} *__state, char *ptr{init_comma_decl});'
+                          for s in ext_storages)
+    ws_size_entries = '\n        '.join(
+        f'sizes[nb::int_({s.value})] = nb::int_(__dace_get_external_memory_size_{s.name}(m_state{sym_args}));'
+        for s in ext_storages)
+    ws_set_entries = '\n        '.join(
+        f'if (storage == {s.value}) {{\n'
+        f'            __dace_set_external_memory_{s.name}(m_state, reinterpret_cast<char *>(buffer.data()){sym_args});\n'
+        f'            return;\n'
+        f'        }}' for s in ext_storages)
+
+    state_field_appends = '\n            '.join(f'fields.append("{f}");'
+                                                for f in _pointer_field_names(statestruct))
+
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
 #include <cstdint>
 #include <stdexcept>
@@ -110,12 +161,20 @@ struct {state_t};
 {state_t} *__dace_init_{name}({init_decl});
 int __dace_exit_{name}({state_t} *__state);
 void __program_{name}({program_params});
+{ext_decls}
 }}
 
 namespace {{
 
 struct DaceHandle_{name} {{
     {state_t} *m_state = nullptr;
+{sym_members}
+
+    void require_state() const {{
+        if (!m_state)
+            throw std::runtime_error(
+                "SDFG '{name}': the state is not initialized (or has been finalized).");
+    }}
 
     DaceHandle_{name}() = default;
     DaceHandle_{name}(const DaceHandle_{name} &) = delete;
@@ -127,8 +186,23 @@ struct DaceHandle_{name} {{
 
     void init_impl({init_decl}) {{
         if (m_state) return;
+        {sym_stores}
         m_state = __dace_init_{name}({init_call});
         if (!m_state) throw std::runtime_error("SDFG '{name}': __dace_init failed.");
+    }}
+
+    nb::dict get_workspace_sizes() {{
+        require_state();
+        nb::dict sizes;
+        {ws_size_entries}
+        return sizes;
+    }}
+
+    void set_workspace(int storage, nb::ndarray<> buffer) {{
+        require_state();
+        {ws_set_entries}
+        throw std::invalid_argument("SDFG '{name}': no external memory of storage-type value " +
+                                    std::to_string(storage));
     }}
 
     // The state counts as deallocated even on failure (old-interface behavior).
@@ -169,11 +243,18 @@ NB_MODULE({name}, m) {{
         .def("initialize", &DaceHandle_{name}::initialize{init_def_args})
         .def("finalize", &DaceHandle_{name}::finalize)
         .def("__call__", &DaceHandle_{name}::call{call_def_args})
+        .def("get_workspace_sizes", &DaceHandle_{name}::get_workspace_sizes)
+        .def("set_workspace", &DaceHandle_{name}::set_workspace,
+             nb::arg("storage"), nb::arg("buffer"))
+        .def("state_fields", [](DaceHandle_{name} &) {{
+            // Baked in at code generation time; only pointer fields.
+            nb::list fields;
+            {state_field_appends}
+            return fields;
+        }})
         .def_prop_ro("has_gpu_code", [](DaceHandle_{name} &) {{ return {has_gpu}; }})
         .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{
-            if (!h.m_state)
-                throw std::runtime_error(
-                    "SDFG '{name}': the state is not initialized (or has been finalized).");
+            h.require_state();
             return reinterpret_cast<std::uintptr_t>(h.m_state);
         }});
     m.def("make_compiled_sdfg", []() {{ return new DaceHandle_{name}(); }});

@@ -208,6 +208,60 @@ def test_nanobind_interface_name_collision_error():
                 axpy_nanobind_collerr.to_sdfg().compile()
 
 
+def test_nanobind_interface_workspace():
+    """External-memory workspace functions work on the nanobind interface."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def extmem_nanobind(a: dace.float64[N]):
+            workspace = dace.ndarray([N], dace.float64, lifetime=dace.AllocationLifetime.External)
+            workspace[:] = a
+            workspace += 1
+            a[:] = workspace
+
+        csdfg = extmem_nanobind.to_sdfg().compile()
+
+        n = 20
+        a = np.random.rand(n)
+        csdfg.initialize(a=a, N=np.int32(n))
+        sizes = csdfg.get_workspace_sizes()
+        assert sizes == {dace.StorageType.CPU_Heap: n * 8}
+
+        wsp = np.random.rand(n)
+        csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp)
+
+        ref = a + 1
+        csdfg(a=a, N=np.int32(n))
+        assert np.allclose(a, ref)
+        assert np.allclose(wsp, ref)
+
+        # The state-struct field names are baked in at codegen time; the
+        # external workspace pointer is one of them.
+        fields = csdfg.state_fields()
+        assert isinstance(fields, list) and len(fields) > 0
+        assert any('workspace' in f for f in fields)
+
+        # get_state_struct returns the raw state pointer on this interface.
+        assert csdfg.get_state_struct() == csdfg._handle.state_pointer
+
+
+def test_nanobind_interface_get_exported_function():
+    """Arbitrary exported symbols stay reachable, with the wrapper as keep-alive."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_expfun(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = axpy_nanobind_expfun.to_sdfg().compile()
+        func = csdfg.get_exported_function(f'__dace_exit_{csdfg.sdfg.name}')
+        assert func is not None
+        assert func.__compiled_sdfg__ is csdfg
+        assert csdfg.get_exported_function('definitely_not_a_symbol') is None
+
+
 def test_nanobind_interface_pyobject_rejected():
     """pyobject arguments/returns are rejected with a clear error at codegen time.
 
