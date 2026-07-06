@@ -4,6 +4,7 @@
     returns the corresponding CompiledSDFG object. """
 
 import collections
+import importlib.util
 import io
 import os
 import pathlib
@@ -22,6 +23,7 @@ from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
 from dace.codegen import nanobind_bindings
+from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
@@ -183,17 +185,57 @@ def generate_program_folder(
     return out_path
 
 
+#: Namespace under which generated nanobind modules are registered in ``sys.modules``.
+GENERATED_NAMESPACE = 'dace.generated'
+
+
 def get_program_interface(program_folder) -> str:
     """Returns which Python interface ('ctypes' or 'nanobind') produced ``program_folder``.
 
     Consults the ``INTERFACE`` marker file written by ``generate_program_folder()``;
-    folders that predate the marker are ctypes folders.
+    folders that predate the marker are old-style ctypes folders.
+
+    The rule is: ``Config`` is consulted only when *generating* a folder;
+    when *loading*, only this marker decides, so the two interfaces can be
+    used transparently side by side.
     """
     marker = os.path.join(program_folder, 'INTERFACE')
     if os.path.isfile(marker):
         with open(marker, 'r') as f:
             return f.read().strip()
     return 'ctypes'
+
+
+def load_nanobind_module(library_path, module_name: str):
+    """Imports the nanobind module at ``library_path``.
+
+    The spec is created under the unprefixed ``module_name`` (so the loader
+    resolves the matching ``PyInit_<name>``; the file name itself is
+    irrelevant), then the module is registered in ``sys.modules`` under
+    ``dace.generated.<name>``. An already-loaded module is reused, since one
+    module can serve many handles.
+    """
+    qualified = f'{GENERATED_NAMESPACE}.{module_name}'
+    if qualified in sys.modules:
+        return sys.modules[qualified]
+
+    library_path = os.fspath(library_path)
+    spec = importlib.util.spec_from_file_location(module_name, library_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f'Cannot create an import spec for the compiled SDFG module at {library_path}.')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[qualified] = module
+    return module
+
+
+def load_nanobind_compiled_sdfg(library_path, sdfg) -> NanobindCompiledSDFG:
+    """Loads the compiled nanobind module for ``sdfg`` and mints a fresh handle.
+
+    The nanobind counterpart of ``get_program_handle()``.
+    """
+    module = load_nanobind_module(library_path, sdfg.name)
+    return NanobindCompiledSDFG(sdfg, module, sdfg.arg_names)
 
 
 def configure_and_compile(
@@ -566,8 +608,7 @@ def load_precompiled_sdfg(
 
     # Dispatch on the interface that produced the folder (INTERFACE marker).
     if get_program_interface(folder) == 'nanobind':
-        from dace.codegen import nanobind_support
-        return nanobind_support.load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg)
+        return load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg)
 
     return get_program_handle(library_path=library_path, sdfg=sdfg)
 

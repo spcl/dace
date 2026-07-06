@@ -1,45 +1,36 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Loading and calling compiled SDFGs built as nanobind modules.
+"""The user-facing wrapper for compiled SDFGs built as nanobind modules.
 
-The compiled artifact is imported through ``importlib`` (never a top-level
-``import``) and registered under the ``dace.generated.*`` namespace. The
-user-facing wrapper is a thin Python shell around the generated handle.
+Loading (importlib under the ``dace.generated.*`` namespace) lives in
+``dace.codegen.compiler``; this module only contains the wrapper class.
 """
-import importlib.util
-import os
-import sys
-
-GENERATED_NAMESPACE = 'dace.generated'
-
-
-def load_nanobind_module(library_path, module_name: str):
-    """Imports the nanobind module at ``library_path``.
-
-    The spec is created under the unprefixed ``module_name`` (so the loader
-    resolves the matching ``PyInit_<name>``; the file name itself is
-    irrelevant), then the module is registered in ``sys.modules`` under
-    ``dace.generated.<name>``. An already-loaded module is reused, since one
-    module can serve many handles.
-    """
-    qualified = f'{GENERATED_NAMESPACE}.{module_name}'
-    if qualified in sys.modules:
-        return sys.modules[qualified]
-
-    library_path = os.fspath(library_path)
-    spec = importlib.util.spec_from_file_location(module_name, library_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f'Cannot create an import spec for the compiled SDFG module at {library_path}.')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sys.modules[qualified] = module
-    return module
 
 
 class NanobindCompiledSDFG:
-    """Thin Python shell over a generated nanobind module (one handle per instance).
+    """A compiled SDFG object that can be called; the nanobind counterpart of ``CompiledSDFG``.
 
-    Argument marshalling, lazy initialization, and the GIL-released call into
-    ``__program_<name>`` all happen inside the generated C++ handle.
+    Do not construct this class directly; it is created by utilities such as
+    ``SDFG.compile()`` when ``compiler.interface`` is set to ``nanobind``.
+
+    The class performs the same tasks as ``CompiledSDFG``, but delegates them
+    to the generated nanobind module:
+
+    - It ensures that the SDFG object is properly initialized, either by a
+        direct call to ``initialize()`` or the first time it is called.
+        Furthermore, it will also take care of the finalization if the handle
+        goes out of scope.
+    - Marshalling Python arguments into C arguments happens in the generated
+        C++ code (nanobind's dispatcher), with the GIL released around the
+        C calls.
+
+    Unlike ``CompiledSDFG`` there is only ``__call__()``; the advanced
+    three-step interface (``construct_arguments()`` / ``fast_call()`` /
+    ``convert_return_values()``) is not provided, because the argument
+    processing already happens in compiled code — there is one fast path.
+
+    :note: The arrays used as return values are allocated fresh on every call.
+    :note: It is not possible to return Python scalars, exactly as with
+           ``CompiledSDFG``.
     """
 
     def __init__(self, sdfg, module, arg_names):
@@ -118,9 +109,3 @@ class NanobindCompiledSDFG:
 
     def finalize(self):
         self._handle.finalize()
-
-
-def load_nanobind_compiled_sdfg(library_path, sdfg) -> NanobindCompiledSDFG:
-    """Loads the compiled module for ``sdfg`` and mints a fresh handle."""
-    module = load_nanobind_module(library_path, sdfg.name)
-    return NanobindCompiledSDFG(sdfg, module, sdfg.arg_names)

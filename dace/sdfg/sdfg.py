@@ -2519,8 +2519,7 @@ class SDFG(ControlFlowRegion):
         # this is the collision check that drives the rename-and-recompile loop.
         if Config.get('compiler', 'interface') == 'nanobind':
             import sys
-            from dace.codegen import nanobind_support
-            return f'{nanobind_support.GENERATED_NAMESPACE}.{self.name}' in sys.modules
+            return f'{compiler.GENERATED_NAMESPACE}.{self.name}' in sys.modules
 
         build_folder = self.build_folder
         if folder_mode is None:
