@@ -98,8 +98,41 @@ def test_nanobind_interface_return_value():
         assert np.allclose(result, a + 1.0)
 
 
+def test_nanobind_interface_positional_and_extra_kwargs():
+    """Positional calls work, and extra keyword arguments are absorbed (old-interface behavior)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_pos(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = axpy_nanobind_pos.to_sdfg().compile()
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 2.0 * a + b
+        csdfg(a, b, np.float64(2.0), N=np.int32(n), unused_extra_argument=42)
+        assert np.allclose(b, expected)
+
+
+def test_nanobind_interface_has_gpu_code():
+    """The handle and the shell expose has_gpu_code (False for a CPU-only SDFG)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_gpuq(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = axpy_nanobind_gpuq.to_sdfg().compile()
+        assert csdfg.has_gpu_code is False
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
     test_nanobind_interface_same_name_recompile()
     test_nanobind_interface_return_value()
+    test_nanobind_interface_positional_and_extra_kwargs()
+    test_nanobind_interface_has_gpu_code()

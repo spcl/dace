@@ -58,7 +58,19 @@ class NanobindCompiledSDFG:
     def module(self):
         return self._module
 
+    @property
+    def has_gpu_code(self) -> bool:
+        return self._handle.has_gpu_code
+
     def __call__(self, *args, **kwargs):
+        # Early exit: no return values, no shape logic - nanobind's dispatcher
+        # does the positional/keyword matching and casting itself.
+        if not self._has_return_values:
+            self._handle(*args, **kwargs)
+            return None
+
+        # With return values, positional arguments must be mapped to names in
+        # Python, since the return-shape evaluation needs the symbol values.
         if args:
             if len(args) > len(self._arg_names):
                 raise TypeError(f'Too many positional arguments (got {len(args)}, '
@@ -67,11 +79,6 @@ class NanobindCompiledSDFG:
                 if name in kwargs:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
-
-        # Early exit: no return values, no shape logic.
-        if not self._has_return_values:
-            self._handle(**kwargs)
-            return None
 
         return_arrays = self._allocate_return_arrays(kwargs)
         self._handle(**kwargs)

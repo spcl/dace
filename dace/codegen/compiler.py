@@ -21,6 +21,7 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
+from dace.codegen import nanobind_bindings
 from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
@@ -120,7 +121,6 @@ def generate_program_folder(
     # it is compiled into the program library (the module *is* the library).
     interface = Config.get('compiler', 'interface')
     if interface == 'nanobind' and sdfg is not None:
-        from dace.codegen import nanobind_bindings
         bindings_folder = os.path.join(src_path, 'cpu')
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f'{sdfg.name}_nanobind.cpp'
