@@ -64,8 +64,26 @@ def configure_dace_process():
     so this must run inside every measurement subprocess, not just once at
     the parent's startup.
 
-    - cache='unique' keys each SDFG's build folder on {name}_{md5(pid)}, so
-      distinct ranks/pipelines never share one.
+    - cache='name' keys each SDFG's build folder purely on sdfg.name (no
+      content hash, no PID) -- so as long as every caller gives each distinct
+      (corpus, kernel, pipeline, par/seq) variant its own stable, unique name
+      (see each script's _build_sdfg), the exact same variant always maps to
+      the exact same build folder. Combined with compiler.use_cache below,
+      that means a variant is only ever actually compiled once: every other
+      lane-check that needs the same 'baseline' reference, and the timing
+      run that follows a candidate's own correctness check, both just load
+      the already-compiled binary instead of recompiling.
+      ('hash' mode looks like the obvious choice for this but doesn't work:
+      DaCe stamps a fresh random guid onto every SDFG node/state on every
+      construction, and that guid is part of what gets hashed, so two
+      separate builds of the "same" SDFG never hash equal. 'name' mode has no
+      such problem since it never inspects SDFG content at all.)
+      Safe here because each kernel is owned by exactly one rank (my_slice()
+      partitions disjointly) and one rank's lane-checks run strictly
+      sequentially (run_isolated blocks until each subprocess exits) -- so
+      the same name is never being compiled by two processes at once. This
+      is also why job functions don't call a build-folder cleanup: deleting
+      the artifact right after use would defeat the point of reusing it.
     - default_build_folder is redirected to /dev/shm when available: DaCe's
       own default ('.dacecache', a relative path under the current working
       directory) lands every CMake configure + compile on whatever
@@ -76,6 +94,10 @@ def configure_dace_process():
       compile in under a second standalone timed out at 300s under a real
       multi-rank sweep). /dev/shm (RAM-backed, node-local) is the same fix
       dace/optimization/utils.py already uses for exactly this reason.
+    - compiler.cpu.args is guaranteed to contain native_harness.OPT_FLAGS
+      (-O3 -march=native -ffast-math) -- see that constant's docstring for
+      why a DaCe lane and a native lane must be compiled at the same
+      optimization level.
     - compiler.cpu.executable comes from DACE_PERF_CXX (exported by the
       parent from --cxx) or pick_cxx_compiler()'s own autodetection.
     - If that compiler needs it (native_harness.needs_gcc_install_dir:
@@ -86,14 +108,28 @@ def configure_dace_process():
       this can run more than once per process (e.g. _check_dace_job builds
       both a reference and a candidate SDFG)."""
     import dace
-    dace.Config.set('cache', value='unique')
+    import native_harness as nh
+    dace.Config.set('cache', value='name')
+    dace.Config.set('compiler', 'use_cache', value=True)
     shm_root = '/dev/shm'
     if os.path.isdir(shm_root) and os.access(shm_root, os.W_OK):
         dace.Config.set('default_build_folder', value=os.path.join(shm_root, f'dace_perf_jobs_{os.getuid()}'))
+
+    # Set explicitly rather than trusting DaCe's own schema default (which
+    # already happens to match): a stray ~/.dace.conf on some machine could
+    # override compiler.cpu.args to something that drops these, and then a
+    # "canon is faster than native" (or the reverse) result would just be
+    # reflecting a flags mismatch, not a real difference. Appended rather
+    # than replaced so nothing else already in args (e.g. -Wall -fPIC) is lost.
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    for flag in nh.OPT_FLAGS:
+        if flag not in args:
+            args = f'{args} {flag}'
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
+
     cxx = pick_cxx_compiler(os.environ.get('DACE_PERF_CXX'))
     if cxx:
         dace.Config.set('compiler', 'cpu', 'executable', value=cxx)
-        import native_harness as nh
         if nh.needs_gcc_install_dir(cxx):
             gcc_dir = nh.find_gcc_install_dir()
             if gcc_dir:
@@ -101,15 +137,6 @@ def configure_dace_process():
                 args = dace.Config.get('compiler', 'cpu', 'args')
                 if flag not in args:
                     dace.Config.set('compiler', 'cpu', 'args', value=f'{args} {flag}')
-
-
-def cleanup_build_folder(sdfg):
-    """'unique' mode never reuses or reclaims a build folder (by design --
-    that's what makes it collision-free), so a long sweep leaves one
-    permanent directory per compiled SDFG unless the caller removes it
-    itself once done with it. Call at the end of each job, after any timing
-    the caller needed the compiled binary for."""
-    shutil.rmtree(sdfg.build_folder, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------
@@ -167,6 +194,11 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
     before returning, so they never reach the CSV."""
     import dace
     sdfg.instrument = dace.InstrumentationType.Timer
+    # Instrumented codegen is different C++ than the plain correctness-check
+    # build of the exact same variant -- needs its own cache-key (name) or
+    # cache='name' mode would find and silently reuse the uninstrumented
+    # binary, leaving get_latest_report() with nothing recorded.
+    sdfg.name = f'{sdfg.name}_timed'
     with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
         csdfg = sdfg.compile()
         for _ in range(warmup + reps):
@@ -473,7 +505,7 @@ def write_tables(results_root, corpus, lanes, baseline_label):
 # --------------------------------------------------------------------------
 # CLI flags shared by every entry-point script.
 # --------------------------------------------------------------------------
-def add_common_args(ap, default_timeout=300.0):
+def add_common_args(ap, default_timeout=1800.0):
     ap.add_argument('--results-dir', default='results', help='results root (default: results)')
     ap.add_argument('--reps', type=int, default=100, help='target repetitions per pipeline (default: 100)')
     ap.add_argument('--only', default=None, help='substring filter on kernel name')

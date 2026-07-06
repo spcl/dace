@@ -1,15 +1,11 @@
-"""Native C++ reference harness: compile tsvc{2,2_5}_core.cpp with each of
-4 vendor toolchains (GCC, Clang/LLVM, Intel oneAPI, NVIDIA HPC SDK), each in
-both a plain-serial and that vendor's own auto-parallelized form, and call
-each kernel's ``<name>_run_timed`` function via ctypes -- it times itself
-(std::chrono) and writes the elapsed nanoseconds to its trailing ``time_ns``
-output pointer.
+"""Native C++ reference harness: compile tsvc{2,2_5}_core.cpp with LLVM/clang
+(the default vendor, matching DaCe's own preferred compiler), in both a
+plain-serial and Polly-autopar form, and call each kernel's
+``<name>_run_timed`` function via ctypes -- it times itself (std::chrono) and
+writes the elapsed nanoseconds to its trailing ``time_ns`` output pointer.
 
-Every lane finds its own compiler independently: a lane like
-'native-gcc-autopar' exists to measure THAT vendor's auto-parallelizer, so it
-never falls back to a different vendor. A vendor with no compiler installed
-is simply skipped (compile_lane returns an error for that lane) -- not every
-machine has all 4 toolchains.
+If clang++ isn't on PATH, both lanes are skipped (compile_lane returns an
+error for that lane) rather than falling back to a different vendor.
 """
 import ctypes
 import os
@@ -17,12 +13,18 @@ import re
 import shutil
 import subprocess
 
-#: One (serial, autopar) pair per vendor. LLVM/clang first, matching
-#: find_best_cpp_compiler()'s preference for DaCe's own codegen -- so a
-#: time-limited sweep collects the LLVM lanes before the other vendors. A
-#: vendor with no compiler installed is skipped lane-by-lane, not corpus-wide.
-LANES = ('native-clang', 'native-clang-polly-autopar', 'native-gcc', 'native-gcc-autopar', 'native-icpx',
-         'native-icpx-autopar', 'native-nvc', 'native-nvc-autopar')
+#: The one default vendor is LLVM/clang -- also DaCe's own preferred
+#: compiler (find_best_cpp_compiler()), so the native and DaCe-compiled
+#: sides of a comparison use the same toolchain. Serial and Polly-autopar
+#: forms of that vendor; skipped entirely if clang++ isn't on PATH.
+LANES = ('native-clang', 'native-clang-polly-autopar')
+
+#: Optimization flags shared with DaCe's own compiler.cpu.args (see
+#: engine.configure_dace_process, which ensures these are present there too)
+#: so a native lane and a DaCe lane are compiled at the same optimization
+#: level -- otherwise a "canon is faster than native" or vice versa result
+#: could just be reflecting a flags mismatch, not a real difference.
+OPT_FLAGS = ('-O3', '-march=native', '-ffast-math')
 
 _CTYPE = {'double': ctypes.c_double, 'float': ctypes.c_float, 'int': ctypes.c_int, 'int64': ctypes.c_int64}
 
@@ -80,43 +82,15 @@ def _gcc_install_dir_flag(cc):
     return [f'--gcc-install-dir={gcc_dir}'] if gcc_dir else []
 
 
-def _omp_threads():
-    """GCC's -ftree-parallelize-loops thread count: read from OMP_NUM_THREADS
-    (the same env var every SLURM script here already exports for OpenMP)
-    instead of a separate CLI flag, so there's one source of truth for
-    thread count rather than two that can silently disagree."""
-    raw = os.environ.get('OMP_NUM_THREADS')
-    if raw is None:
-        return 4
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        print(f"native_harness: OMP_NUM_THREADS={raw!r} isn't a valid integer, defaulting to 4")
-        return 4
-
-
 #: lane -> (finder() -> compiler path or None, cc -> extra flags beyond
-#: '-O3 ... -shared -fPIC <src> -o <so>'). Each finder is independent -- no
-#: lane ever takes an override -- so a lane always measures its own named
-#: vendor's compiler, never a substitute.
+#: '-O3 ... -shared -fPIC <src> -o <so>').
 _LANE_SPEC = {
-    'native-gcc': (lambda: find_compiler('g++'), lambda cc: []),
-    'native-gcc-autopar':
-    (lambda: find_compiler('g++'), lambda cc: [f'-ftree-parallelize-loops={_omp_threads()}', '-lgomp']),
     'native-clang': (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc)),
     'native-clang-polly-autopar':
     (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc) + [
         '-mllvm', '-polly', '-mllvm', '-polly-parallel', '-mllvm', '-polly-parallel-force', '-mllvm',
         '-polly-process-unprofitable', '-lgomp'
     ]),
-    # oneAPI icpx only -- no fallback to the older classic icpc: silently
-    # substituting a different Intel compiler product under the same
-    # "native-icpx" label would mislabel whichever one actually built it.
-    'native-icpx': (lambda: find_compiler('icpx'), lambda cc: _gcc_install_dir_flag(cc)),
-    'native-icpx-autopar': (lambda: find_compiler('icpx'),
-                            lambda cc: _gcc_install_dir_flag(cc) + ['-parallel', '-qopenmp']),
-    'native-nvc': (lambda: find_compiler('nvc++'), lambda cc: []),
-    'native-nvc-autopar': (lambda: find_compiler('nvc++'), lambda cc: ['-Mconcur']),
 }
 
 
@@ -141,7 +115,7 @@ def compile_lane(cpp_path, so_path, lane, timeout=180):
     if not cc:
         return False, f'{lane}: compiler not found'
 
-    cmd = [cc, '-O3'] + extra_flags(cc) + ['-shared', '-fPIC', cpp_path, '-o', so_path]
+    cmd = [cc, *OPT_FLAGS] + extra_flags(cc) + ['-shared', '-fPIC', cpp_path, '-o', so_path]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

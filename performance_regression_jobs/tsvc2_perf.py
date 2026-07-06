@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Performance regression: DaCe canonicalize/fast-canonicalize vs. two DaCe
 baselines (plain simplify+loop2map+mapfusion, and DaCe's own auto_optimize)
-vs. native C++ built with 4 vendor toolchains (GCC, Clang/LLVM, Intel oneAPI,
-NVIDIA HPC SDK), each in a plain-serial and that vendor's own
-auto-parallelized form (see native_harness.LANES), over the 151-kernel TSVC2
-corpus. Standalone (only needs dace+numpy importable); multi-rank via
-OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
+vs. native C++ built with LLVM/clang (the default vendor -- see
+native_harness.LANES), in a plain-serial and Polly-autopar form, over the
+151-kernel TSVC2 corpus. Standalone (only needs dace+numpy importable);
+multi-rank via OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
 
     python3 tsvc2_perf.py                       # this rank's slice, 100 reps
     python3 tsvc2_perf.py --only s000 --reps 3  # quick smoke test
@@ -89,14 +88,18 @@ def size_for_kernel(kernel):
 
 
 # --------------------------------------------------------------------------
-# Build one pipeline's SDFG (par or seq variant). Cache isolation is
-# per-process (dace cache=unique, keyed on PID + sdfg.name) rather than a
-# manually constructed path -- see engine.configure_dace_process.
+# Build one pipeline's SDFG (par or seq variant). The tag -- unique per
+# (corpus, pipeline, par/seq); tsvc.to_sdfg prepends kernel_name for us --
+# becomes the SDFG's name, which is also its cache key (dace cache='name'
+# in engine.configure_dace_process): the exact same variant, however many
+# times it's independently rebuilt (another lane's reference check, a timing
+# run right after its own correctness check, a resumed invocation), always
+# lands on the same compiled binary instead of recompiling.
 # --------------------------------------------------------------------------
 def _build_sdfg(kernel_name, pipeline, seq):
     engine.configure_dace_process()
     kernel = tsvc.collect(name=kernel_name)[0]
-    tag = f'{kernel_name}_{pipeline}'
+    tag = f"{CORPUS}_{pipeline}_{'seq' if seq else 'par'}"
     sdfg = tsvc.to_sdfg(kernel, tag, simplify=False)
     sdfg = engine.PIPELINES[pipeline](sdfg)
     if seq:
@@ -129,19 +132,13 @@ def _inputs(kernel_name, l1, l2):
 def _check_dace_job(kernel_name, l1, l2, pipeline, seq):
     _, ref_arrays, ref_sym, ref_sparams = _inputs(kernel_name, l1, l2)
     ref_sdfg = _build_sdfg(kernel_name, 'baseline', False)
-    try:
-        ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
-        ref_sdfg.compile()(**ref_call)
-    finally:
-        engine.cleanup_build_folder(ref_sdfg)
+    ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
+    ref_sdfg.compile()(**ref_call)
 
     _, cand_arrays, cand_sym, cand_sparams = _inputs(kernel_name, l1, l2)
     cand_sdfg = _build_sdfg(kernel_name, pipeline, seq)
-    try:
-        cand_call = {**{n: a.copy() for n, a in cand_arrays.items()}, **cand_sparams, **cand_sym}
-        cand_sdfg.compile()(**cand_call)
-    finally:
-        engine.cleanup_build_folder(cand_sdfg)
+    cand_call = {**{n: a.copy() for n, a in cand_arrays.items()}, **cand_sparams, **cand_sym}
+    cand_sdfg.compile()(**cand_call)
 
     return _compare(ref_call, cand_call)
 
@@ -149,21 +146,15 @@ def _check_dace_job(kernel_name, l1, l2, pipeline, seq):
 def _time_dace_job(kernel_name, l1, l2, pipeline, seq, reps):
     _, arrays, sym, sparams = _inputs(kernel_name, l1, l2)
     sdfg = _build_sdfg(kernel_name, pipeline, seq)
-    try:
-        call_kwargs = {**{n: a.copy() for n, a in arrays.items()}, **sparams, **sym}
-        return engine.time_sdfg(sdfg, call_kwargs, reps)
-    finally:
-        engine.cleanup_build_folder(sdfg)
+    call_kwargs = {**{n: a.copy() for n, a in arrays.items()}, **sparams, **sym}
+    return engine.time_sdfg(sdfg, call_kwargs, reps)
 
 
 def _check_native_job(kernel_name, l1, l2, so_path, c_name, sig):
     _, ref_arrays, ref_sym, ref_sparams = _inputs(kernel_name, l1, l2)
     ref_sdfg = _build_sdfg(kernel_name, 'baseline', False)
-    try:
-        ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
-        ref_sdfg.compile()(**ref_call)
-    finally:
-        engine.cleanup_build_folder(ref_sdfg)
+    ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
+    ref_sdfg.compile()(**ref_call)
 
     _, cand_arrays, cand_sym, cand_sparams = _inputs(kernel_name, l1, l2)
     lib = nh.load_library(so_path)

@@ -37,11 +37,10 @@ spack load llvm@22.1.5
 
 # --cxx <name-or-abs-path> pins a specific compiler for DaCe's own codegen
 # (default: clang++ on PATH, else g++ -- plain PATH lookup); DaCe-lane
-# results are namespaced by compiler+hostname automatically. Native lanes
-# (native-gcc/-clang/-icpx/-nvc and their autopar variants) are unaffected by
-# --cxx -- each finds its own vendor's compiler independently, and a vendor
-# with no compiler installed is just skipped for that lane (see
-# example_slurm_tsvc2.sh for the full rationale).
+# results are namespaced by compiler+hostname automatically. The native
+# lanes (native-clang(-polly-autopar)) are unaffected by --cxx -- they find
+# their own clang++ independently, and are just skipped if it isn't on PATH
+# (see example_slurm_tsvc2.sh for the full rationale).
 #
 # --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
 # of letting the OS scheduler migrate/share them across ranks -- with many

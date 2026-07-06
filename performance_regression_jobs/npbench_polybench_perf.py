@@ -201,12 +201,14 @@ def _check_job(name, pipeline):
     program, arrays = build_program_and_data(name, info, params)
     ref = _run_numpy(info, arrays, params)
     sdfg = program.to_sdfg(simplify=True)
-    sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"
+    # name (unique per corpus+kernel+pipeline) is also its cache key (dace
+    # cache='name' in engine.configure_dace_process): the exact same variant,
+    # however many times it's independently rebuilt (this check, the timing
+    # run right after, a resumed invocation), always lands on the same
+    # compiled binary instead of recompiling.
+    sdfg.name = f"{CORPUS}_{sdfg.name}_{pipeline.replace('-', '_')}"
     sdfg = engine.PIPELINES[pipeline](sdfg)
-    try:
-        got = _run_dace(sdfg, info, arrays, params)
-    finally:
-        engine.cleanup_build_folder(sdfg)
+    got = _run_dace(sdfg, info, arrays, params)
     return _compare(ref, got)
 
 
@@ -216,13 +218,10 @@ def _time_dace_job(name, pipeline, reps):
     params = info['parameters'][PRESET]
     program, arrays = build_program_and_data(name, info, params)
     sdfg = program.to_sdfg(simplify=True)
-    sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"
+    sdfg.name = f"{CORPUS}_{sdfg.name}_{pipeline.replace('-', '_')}"  # cache key -- see _check_job
     sdfg = engine.PIPELINES[pipeline](sdfg)
-    try:
-        call_kwargs = _dace_call_kwargs(info, arrays, params)
-        return engine.time_sdfg(sdfg, call_kwargs, reps)
-    finally:
-        engine.cleanup_build_folder(sdfg)
+    call_kwargs = _dace_call_kwargs(info, arrays, params)
+    return engine.time_sdfg(sdfg, call_kwargs, reps)
 
 
 def _time_numpy_job(name, reps, warmup=1):
@@ -247,7 +246,7 @@ def _save_sdfg_job(name, pipeline):
     params = info['parameters'][PRESET]
     program, _ = build_program_and_data(name, info, params)
     sdfg = program.to_sdfg(simplify=True)
-    sdfg.name = f"{sdfg.name}_{pipeline.replace('-', '_')}"
+    sdfg.name = f"{CORPUS}_{sdfg.name}_{pipeline.replace('-', '_')}"  # cache key -- see _check_job
     sdfg = engine.PIPELINES[pipeline](sdfg)
     sdfg.validate()
     return sdfg.to_json()
@@ -314,7 +313,7 @@ def kernel_list(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    engine.add_common_args(ap, default_timeout=3600.0)  # paper-preset kernels can be genuinely slow to compile/run
+    engine.add_common_args(ap, default_timeout=7200.0)  # paper-preset kernels can be genuinely slow to compile/run
     args = ap.parse_args()
 
     if args.list_kernels:

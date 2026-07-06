@@ -31,49 +31,41 @@ def _canon_vectorize(sdfg):
 
 
 def _build_sdfg(kernel_name, pipeline):
+    # tag (unique per corpus+pipeline; tsvc.to_sdfg prepends kernel_name for
+    # us) becomes the SDFG's name, which is also its cache key (dace
+    # cache='name' in engine.configure_dace_process) -- see tsvc2_perf.py's
+    # _build_sdfg for why that means a variant is only ever compiled once.
     engine.configure_dace_process()
     kernel = base.tsvc.collect(name=kernel_name)[0]
-    sdfg = base.tsvc.to_sdfg(kernel, f'{kernel_name}_{pipeline}', simplify=False)
+    sdfg = base.tsvc.to_sdfg(kernel, f'{CORPUS}_{pipeline}', simplify=False)
     return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.PIPELINES['baseline'](sdfg)
 
 
 def _check_dace_job(kernel_name, l1, l2, pipeline):
     _, ref_arrays, ref_sym, ref_sparams = base._inputs(kernel_name, l1, l2)
     ref_sdfg = _build_sdfg(kernel_name, 'baseline-par')
-    try:
-        ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
-        ref_sdfg.compile()(**ref_call)
-    finally:
-        engine.cleanup_build_folder(ref_sdfg)
+    ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
+    ref_sdfg.compile()(**ref_call)
 
     _, cand_arrays, cand_sym, cand_sparams = base._inputs(kernel_name, l1, l2)
     cand_sdfg = _build_sdfg(kernel_name, pipeline)
-    try:
-        cand_call = {**{n: a.copy() for n, a in cand_arrays.items()}, **cand_sparams, **cand_sym}
-        cand_sdfg.compile()(**cand_call)
-    finally:
-        engine.cleanup_build_folder(cand_sdfg)
+    cand_call = {**{n: a.copy() for n, a in cand_arrays.items()}, **cand_sparams, **cand_sym}
+    cand_sdfg.compile()(**cand_call)
     return base._compare(ref_call, cand_call)
 
 
 def _time_dace_job(kernel_name, l1, l2, pipeline, reps):
     _, arrays, sym, sparams = base._inputs(kernel_name, l1, l2)
     sdfg = _build_sdfg(kernel_name, pipeline)
-    try:
-        call_kwargs = {**{n: a.copy() for n, a in arrays.items()}, **sparams, **sym}
-        return engine.time_sdfg(sdfg, call_kwargs, reps)
-    finally:
-        engine.cleanup_build_folder(sdfg)
+    call_kwargs = {**{n: a.copy() for n, a in arrays.items()}, **sparams, **sym}
+    return engine.time_sdfg(sdfg, call_kwargs, reps)
 
 
 def _check_native_job(kernel_name, l1, l2, so_path, c_name, sig):
     _, ref_arrays, ref_sym, ref_sparams = base._inputs(kernel_name, l1, l2)
     ref_sdfg = _build_sdfg(kernel_name, 'baseline-par')
-    try:
-        ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
-        ref_sdfg.compile()(**ref_call)
-    finally:
-        engine.cleanup_build_folder(ref_sdfg)
+    ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
+    ref_sdfg.compile()(**ref_call)
     _, cand_arrays, cand_sym, cand_sparams = base._inputs(kernel_name, l1, l2)
     lib = nh.load_library(so_path)
     nh.call_kernel(lib, c_name, sig, arrays=cand_arrays, len_1d=l1, len_2d=l2, scalar_params=cand_sparams,
