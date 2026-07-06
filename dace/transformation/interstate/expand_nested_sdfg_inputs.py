@@ -212,8 +212,17 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                 # ``__map_fusion_cs[0, 0] -> cs[0, 0]``). Accept any single-element
                 # ``other_subset`` (``num_elements() == 1``) and preserve it verbatim; only
                 # the named-array subset is offset.
+                # A View<->array edge (a reshape / slice view edge) carries the array on
+                # ``memlet.data`` and the VIEW's own indexing in ``other_subset`` -- generally
+                # multi-element (e.g. a reshape ``C[0:XN, 0:YN] -> C_0[0:XN*YN]``) and
+                # independent of the array boundary, so preserve it verbatim while only the
+                # named-array subset is offset. The single-element case covers the self-copy /
+                # collapsed-element shapes.
+                src_is_view = isinstance(src, nodes.AccessNode) and isinstance(inner_sdfg.arrays[src.data], data.View)
+                dst_is_view = isinstance(dst, nodes.AccessNode) and isinstance(inner_sdfg.arrays[dst.data], data.View)
                 if (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)
-                        and memlet.other_subset.num_elements() == 1 and memlet.data in (src.data, dst.data)):
+                        and memlet.data in (src.data, dst.data)
+                        and (memlet.other_subset.num_elements() == 1 or src_is_view or dst_is_view)):
                     new_memlet = Memlet(data=memlet.data,
                                         subset=subsets.Range(new_range_list),
                                         other_subset=copy.deepcopy(memlet.other_subset))

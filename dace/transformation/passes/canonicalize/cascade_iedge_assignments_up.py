@@ -91,6 +91,27 @@ def _region_writes(region: ControlFlowRegion) -> Tuple[Set[str], Set[str]]:
     return asyms, wdata
 
 
+def _key_has_other_writer(region: ControlFlowRegion, key: str, rhs: str) -> bool:
+    """True iff ``key`` is written inside ``region`` by anything other than a
+    ``key = rhs`` interstate assignment.
+
+    A different-``rhs`` interstate assignment (e.g. ``count = count + 1``) or a
+    data write to a scalar named ``key`` makes ``key`` loop-carried: it is
+    modified within the region, so a ``key = rhs`` reset is a *per-iteration*
+    reset that must not be hoisted out of the region -- hoisting it would run the
+    reset once and let the value diverge across iterations.
+    """
+    for e in region.all_interstate_edges():
+        other = e.data.assignments.get(key)
+        if other is not None and str(other) != str(rhs):
+            return True
+    for st in region.all_states():
+        for n in st.nodes():
+            if isinstance(n, nodes.AccessNode) and n.data == key and st.in_degree(n) > 0:
+                return True
+    return False
+
+
 def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: SDFG) -> bool:
     """The all-or-nothing upward rule: ``dest`` must be outside every
     ``LoopRegion`` enclosing ``cfg``. Equivalently: ``dest`` is not a
@@ -220,6 +241,12 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     # it would both change semantics and (once it leaves) unblock hoisting the
     # assignments that read ``key``, landing them on a shared edge -> a race.
     if isinstance(child, LoopRegion) and key in rhs_syms:
+        return False
+    # ``key`` modified elsewhere inside a loop is loop-carried: the assignment is a
+    # per-iteration reset (e.g. the ``count = 0`` seeding a stream-compaction loop whose
+    # body does ``count = count + 1``). Hoisting it past the loop would run the reset once
+    # and let ``count`` grow unbounded across iterations -> an out-of-bounds compaction.
+    if isinstance(child, LoopRegion) and _key_has_other_writer(child, key, rhs):
         return False
     inner_asyms, inner_wdata = _region_writes(child)
     inner_asyms.discard(key)  # discount the assignment we're moving

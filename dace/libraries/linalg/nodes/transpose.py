@@ -166,7 +166,10 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
             cast = '(double*)'
         else:
-            raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
+            # OpenBLAS omatcopy only covers the four BLAS floating types; any other
+            # element type (e.g. an int64 index/count grid) falls back to the native
+            # element-wise transpose, matching the differing-type fallback above.
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
         # TODO: Add stride support
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API

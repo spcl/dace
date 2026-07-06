@@ -2,8 +2,12 @@
 """ This module contains classes that implement a map->for loop transformation.
 """
 
+import copy
+
 import dace
 from dace import properties, symbolic
+from dace.data import View
+from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -64,6 +68,66 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
         return True
 
+    def _copy_boundary_views(self, graph: SDFGState, nsdfg_node: nodes.NestedSDFG, nsdfg: SDFG,
+                             nstate: SDFGState) -> None:
+        """Repair boundary Views left dangling by ``nest_state_subgraph``.
+
+        ``nest_state_subgraph`` copies a boundary AccessNode's descriptor verbatim. For a
+        View feeding (or fed by) the map that becomes a View descriptor inside the nested
+        SDFG with no view edge -- an invalid, dangling view. Restore it: import the viewed
+        array as the real boundary connector and rebuild ``viewed -> view`` inside, so the
+        node keeps its View semantics (the ``an -> view`` pair is copied, not flattened).
+        """
+        views = [
+            n for n in nstate.nodes() if isinstance(n, nodes.AccessNode) and isinstance(nsdfg.arrays.get(n.data), View)
+            and sdutil.get_view_edge(nstate, n) is None
+        ]
+        for vnode in views:
+            vname = vnode.data
+            is_input = nstate.in_degree(vnode) == 0  # a read view with no inner producer
+            if is_input:
+                bedges = [e for e in graph.in_edges(nsdfg_node) if e.dst_conn == vname]
+            else:
+                bedges = [e for e in graph.out_edges(nsdfg_node) if e.src_conn == vname]
+            if len(bedges) != 1:
+                continue
+            bedge = bedges[0]
+            outer_view = bedge.src if is_input else bedge.dst
+            if not (isinstance(outer_view, nodes.AccessNode) and isinstance(outer_view.desc(graph.sdfg), View)):
+                continue
+            oedge = sdutil.get_view_edge(graph, outer_view)
+            viewed = sdutil.get_view_node(graph, outer_view)
+            if oedge is None or viewed is None:
+                continue
+
+            # Import the viewed array as the real (non-transient) boundary data; the crossing
+            # view becomes an internal view of it.
+            vdesc = copy.deepcopy(graph.sdfg.arrays[viewed.data])
+            vdesc.transient = False
+            newname = nsdfg.add_datadesc(viewed.data, vdesc, find_new_name=True)
+            nsdfg.arrays[vname].transient = True
+
+            # Rebuild the view edge inside, mirroring the outer edge's direction/connectors.
+            inner_viewed = nstate.add_access(newname)
+            vmem = copy.deepcopy(oedge.data)
+            vmem.data = newname
+            if oedge.dst is outer_view:  # viewed -> view
+                nstate.add_edge(inner_viewed, oedge.src_conn, vnode, oedge.dst_conn, vmem)
+            else:  # view -> viewed
+                nstate.add_edge(vnode, oedge.src_conn, inner_viewed, oedge.dst_conn, vmem)
+
+            # Re-route the boundary to the viewed node and drop the view connector.
+            bmem = Memlet.from_array(viewed.data, graph.sdfg.arrays[viewed.data])
+            graph.remove_edge(bedge)
+            if is_input:
+                nsdfg_node.add_in_connector(newname)
+                graph.add_edge(viewed, None, nsdfg_node, newname, bmem)
+                nsdfg_node.remove_in_connector(vname)
+            else:
+                nsdfg_node.add_out_connector(newname)
+                graph.add_edge(nsdfg_node, newname, viewed, None, bmem)
+                nsdfg_node.remove_out_connector(vname)
+
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
         """ Applies the transformation and returns a tuple with the new nested
             SDFG node and the main state in the for-loop. """
@@ -83,6 +147,11 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
+
+        # A View that crossed the nesting boundary was copied in as a View descriptor with
+        # no view edge -> a dangling view. Import its viewed node as the real boundary
+        # connector and rebuild ``viewed -> view`` inside, so it stays a proper view.
+        self._copy_boundary_views(graph, node, nsdfg, nstate)
 
         # If map range is dynamic, replace loop expressions with memlets
         param_to_edge = {}

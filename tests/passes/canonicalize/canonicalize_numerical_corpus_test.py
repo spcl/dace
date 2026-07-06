@@ -55,23 +55,11 @@ _CANON_XFAIL = {
     # refuses to fuse the ``mean[:]=0`` seed state into the ``mean(+)=`` accumulate state.
     # --- npbench gaps appended below from _NP_CANON_XFAIL ---
 }
-# npbench-suite canon gaps (established by the subprocess-isolated corpus sweep).
-# channel_flow un-xfailed: the whole corpus now computes in fp64/complex128, so the
-# fp32 ``while udiff > 0.001`` convergence-count divergence is gone -- baseline, canon,
-# and fast-canon all PASS at preset S.
-_NP_CANON_XFAIL = {
-    # mandelbrot1 un-xfailed: the canon-created ``C_slice`` (a scalar, not a View) fed a
-    # MapExit with the outer array's memlet after TrivialTaskletElimination spliced out the
-    # boundary copy tasklet. Fixed by keeping that trivial copy tasklet at the map boundary.
-    # stockham_fft un-xfailed: UniqueLoopIterators now renames the loop variable in the owning
-    # SDFG's descriptor shapes, so the ``transpose_yv`` transient size loses its stale ``i`` and
-    # RelaxIntegerPowers can prove ``R**(K - _loop_it_0 - 1) >= 0``.
-    # mandelbrot2 remains: with those fixed, canon now reaches MapToForLoop, which drops the
-    # view-defining edge of a boundary View (``C_0``, a reshape of the grid ``C``) when it nests
-    # the map -> a dangling View. Tracked; fix in progress in MapToForLoop (copy the view + its
-    # viewed node into the nested SDFG).
-    'mandelbrot2': 'canon: MapToForLoop drops the view edge of a boundary View (C_0 reshape of C) -> dangling view',
-}
+# npbench-suite canon gaps (established by the subprocess-isolated corpus sweep). EMPTY:
+# the whole corpus computes in fp64/complex128 (channel_flow's fp32 convergence divergence
+# is gone) and the mandelbrot1/2 + stockham_fft canon-lowering bugs are fixed -- every
+# npbench kernel now passes canon and fast-canon at preset S.
+_NP_CANON_XFAIL = {}
 _CANON_XFAIL.update({('np', n): r for n, r in _NP_CANON_XFAIL.items()})
 
 # fast-canon shares canon's gaps.
