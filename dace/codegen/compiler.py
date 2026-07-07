@@ -208,22 +208,30 @@ def get_program_interface(program_folder) -> str:
 
 
 def load_nanobind_module(library_path, module_name: str):
-    """Imports the nanobind module at ``library_path``.
+    """Loads the compiled nanobind module for one SDFG and returns it.
 
-    The spec is created under the unprefixed ``module_name`` (so the loader
-    resolves the matching ``PyInit_<name>``; the file name itself is
-    irrelevant), then the module is registered in ``sys.modules`` under
-    ``dace.generated.<name>``. An already-loaded module *from the same
-    ``library_path``* is reused, since one module can serve many handles.
+    The module is imported once per process and registered under
+    ``dace.generated.<module_name>``; loading the same artifact again returns
+    that one module, which may back any number of handles. A process cannot
+    hold two modules under the same generated name, so requesting a different
+    artifact under a name that is already taken raises instead of quietly
+    handing back the one already loaded.
 
-    Loading a *different* artifact under an already-taken name raises
-    ``ValueError``: extension modules cannot be re-imported and
-    ``PyInit_<name>`` is unique per process, so returning the stale module
-    would silently hand back the wrong artifact.
+    :param library_path: Path to the compiled shared library (the nanobind
+                         extension module) to import.
+    :param module_name: The SDFG name; the module is registered under
+                        ``dace.generated.<module_name>``.
+    :return: The imported module.
+    :raises ValueError: If a different artifact is already loaded under the
+                        same generated name.
     """
     qualified = f'{GENERATED_NAMESPACE}.{module_name}'
     library_path = os.fspath(library_path)
 
+    # Extension modules cannot be re-imported or unloaded, so at most one
+    # artifact can live under a given generated name per process. Reuse the
+    # module only when it came from the same file (compared by real path); a
+    # different file would otherwise be silently shadowed by the stale module.
     existing = sys.modules.get(qualified)
     if existing is not None:
         existing_file = getattr(existing, '__file__', None)
@@ -231,9 +239,10 @@ def load_nanobind_module(library_path, module_name: str):
             return existing
         raise ValueError(f"Generated module '{qualified}' is already loaded in this process from a different "
                          f"artifact ('{existing_file}'); a distinct artifact ('{library_path}') cannot be loaded "
-                         f"under the same name. Extension modules cannot be re-imported, so each generated module "
-                         f"name maps to exactly one artifact per process.")
+                         f"under the same name.")
 
+    # The unprefixed module_name makes the loader resolve the matching init
+    # hook in the library; the shared library's file name itself is irrelevant.
     spec = importlib.util.spec_from_file_location(module_name, library_path)
     if spec is None or spec.loader is None:
         raise ImportError(f'Cannot create an import spec for the compiled SDFG module at {library_path}.')
