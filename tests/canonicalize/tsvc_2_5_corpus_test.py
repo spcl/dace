@@ -61,9 +61,11 @@ def _allclose(a, b) -> bool:
     return np.allclose(np.asarray(a), np.asarray(b), rtol=_TOL, atol=_TOL, equal_nan=True)
 
 
+@pytest.mark.parametrize("fast", [False, True], ids=["canon", "fastcanon"])
 @pytest.mark.parametrize("program", _CORPUS, ids=[p.name for p in _CORPUS])
-def test_canonicalize_tsvc_2_5_value_preserving(program):
-    """Canonicalized output matches the numpy oracle (one test per kernel)."""
+def test_canonicalize_tsvc_2_5_value_preserving(program, fast):
+    """Full ``canonicalize`` and its ``fast=True`` variant are both value-preserving
+    vs the numpy oracle (one test per kernel x mode)."""
     arrays, scalars = tsvc_2_5.make_inputs(program)
 
     # Reference run: the oracle takes args by name -- arrays, scalars, and the
@@ -88,6 +90,7 @@ def test_canonicalize_tsvc_2_5_value_preserving(program):
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(cand,
                      validate=True,
+                     fast=fast,
                      peel_limit=_PEEL_LIMIT,
                      break_anti_dependence=_BREAK_ANTI_DEP,
                      unroll_limit=_UNROLL_LIMIT)
