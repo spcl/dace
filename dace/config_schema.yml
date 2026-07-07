@@ -352,7 +352,7 @@ required:
                         type: str
                         title: HIP architectures to compile for
                         description: >
-                            If empty then an autodetection step is performed.
+                            If empty, the SDFG build will detect the local HIP architecture.
                         default: ''
 
                     default_block_size:
