@@ -15,7 +15,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.utils import *
 from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
@@ -170,7 +170,7 @@ class Vectorize(ppl.Pass):
 
     def depends_on(self):
         return {
-            PowerOperatorExpansion, SplitTasklets, RemoveFPTypeCasts, RemoveIntTypeCasts,
+            PowerOperatorExpansion, SplitTasklets,
             CleanAccessNodeToScalarSliceToTaskletPattern
         }
 

@@ -480,24 +480,6 @@ class RewriteModuloToPyMod(_BodyRewritePass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class RemoveFPTypeCasts(_BodyRewritePass):
-    """Pass that removes ``dace.floatNN(...)`` casts from every Python tasklet body."""
-
-    def _rewrite(self, src: str) -> str:
-        return _remove_dace_float_casts(src)
-
-
-@properties.make_properties
-@transformation.explicit_cf_compatible
-class RemoveIntTypeCasts(_BodyRewritePass):
-    """Pass that removes ``dace.intNN(...)`` casts from every Python tasklet body."""
-
-    def _rewrite(self, src: str) -> str:
-        return _remove_dace_int_casts(src)
-
-
-@properties.make_properties
-@transformation.explicit_cf_compatible
 class RemoveMathCall(ppl.Pass):
     """Pass that strips the ``math.`` prefix from the RHS of assignment tasklets."""
 
