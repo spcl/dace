@@ -282,6 +282,91 @@ def test_nanobind_interface_pyobject_rejected():
         generate_bindings_code(sdfg)
 
 
+def test_nanobind_interface_string_argument():
+    """A ``dtypes.string`` scalar argument marshals a Python ``str`` (and ``None``) into the kernel.
+
+    The kernel reads the first byte of the string, or writes -1 when the pointer
+    is null - so passing a ``str`` observes the bytes, and passing ``None``
+    observes the null-pointer path (matching the ctypes marshaller).
+    """
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def string_arg_nanobind(s: str, out: dace.int8[1]):
+
+            @dace.tasklet('CPP')
+            def read():
+                sin << s
+                o >> out[0]
+                """
+                o = (sin == nullptr) ? -1 : sin[0];
+                """
+
+        csdfg = string_arg_nanobind.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        out = np.zeros(1, dtype=np.int8)
+        csdfg(s='A', out=out)
+        assert out[0] == ord('A')  # 65 - the first byte reached the kernel
+        csdfg(s='Zoo', out=out)
+        assert out[0] == ord('Z')  # first byte only
+        csdfg(s=None, out=out)
+        assert out[0] == -1  # None arrived as a null pointer
+
+
+def test_nanobind_interface_optional_array():
+    """An optional (nullable) array accepts both a real array and ``None`` (a null pointer)."""
+    from typing import Optional
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def optional_arg_nanobind(a: Optional[dace.float64[1]], out: dace.float64[1]):
+            if a is None:
+                out[0] = -1.0
+            else:
+                out[0] = a[0]
+
+        sdfg = optional_arg_nanobind.to_sdfg()
+        assert sdfg.arrays['a'].optional is True
+        csdfg = sdfg.compile()
+
+        out = np.zeros(1)
+        csdfg(a=np.array([3.5]), out=out)
+        assert out[0] == 3.5  # a real array is passed by reference
+
+        out = np.zeros(1)
+        csdfg(a=None, out=out)
+        assert out[0] == -1.0  # None arrived as a null pointer
+
+
+def test_nanobind_interface_nullable_args_enable_none():
+    """Nullable arguments emit ``nb::arg(...).none()`` in the generated bindings.
+
+    nanobind rejects None-valued arguments unless ``.none()`` is set;
+    ``std::optional`` accepts None implicitly only on some nanobind versions, so
+    the generator must opt in explicitly. This is a version-independent guard
+    (the end-to-end None tests pass regardless of .none() on lenient nanobinds).
+    """
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('nullable_probe')
+    sdfg.add_scalar('s', dtypes.string)
+    sdfg.add_array('opt', [1], dtypes.float64)
+    sdfg.arrays['opt'].optional = True
+    sdfg.add_array('req', [1], dtypes.float64)
+    sdfg.arrays['req'].optional = False
+
+    code = generate_bindings_code(sdfg)
+    # String scalar and optional array must accept None.
+    assert 'nb::arg("s").none()' in code
+    assert 'nb::arg("opt").noconvert().none()' in code
+    # A non-optional array must NOT accept None.
+    assert 'nb::arg("req").noconvert()' in code
+    assert 'nb::arg("req").noconvert().none()' not in code
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -291,3 +376,6 @@ if __name__ == '__main__':
     test_nanobind_interface_has_gpu_code()
     test_nanobind_interface_state_pointer()
     test_nanobind_interface_pyobject_rejected()
+    test_nanobind_interface_string_argument()
+    test_nanobind_interface_optional_array()
+    test_nanobind_interface_nullable_args_enable_none()

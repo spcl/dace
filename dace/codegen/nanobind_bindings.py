@@ -47,9 +47,29 @@ def _argument_binding(arglist, binding_order=None):
             raise NotImplementedError(f'Nanobind interface: pyobject argument/return value "{name}" is not '
                                       f'supported yet; use the ctypes interface (compiler.interface=ctypes).')
         ctype = desc.dtype.ctype
-        if isinstance(desc, dt.Array):
-            per_name[name] = (f'nb::ndarray<{ctype}, nb::device::cpu> {name}',
-                              f'reinterpret_cast<{ctype} *>({name}.data())', f'nb::arg("{name}").noconvert()')
+        if isinstance(desc, dt.Scalar) and desc.dtype == dtypes.string:
+            # A string scalar is a C string (int8_t*). Marshal a Python str -
+            # or None, which the ctypes path also accepts - through
+            # std::optional<std::string>: None becomes a null pointer, and the
+            # owned std::string keeps its buffer valid across the GIL release.
+            per_name[name] = (
+                f'std::optional<std::string> {name}',
+                f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr',
+                # .none() is required: nanobind rejects None by default, and
+                # std::optional only accepts it implicitly on some versions.
+                f'nb::arg("{name}").none()')
+        elif isinstance(desc, dt.Array):
+            if desc.optional is False:
+                per_name[name] = (f'nb::ndarray<{ctype}, nb::device::cpu> {name}',
+                                  f'reinterpret_cast<{ctype} *>({name}.data())', f'nb::arg("{name}").noconvert()')
+            else:
+                # Nullable array: None (allowed unless optional is explicitly
+                # False) becomes a null pointer, matching the ctypes marshaller.
+                # .none() is required: nanobind rejects None by default, and
+                # std::optional only accepts it implicitly on some versions.
+                per_name[name] = (f'std::optional<nb::ndarray<{ctype}, nb::device::cpu>> {name}',
+                                  f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr',
+                                  f'nb::arg("{name}").noconvert().none()')
         elif isinstance(desc, dt.Scalar):
             per_name[name] = (f'{ctype} {name}', name, f'nb::arg("{name}")')
         else:
@@ -151,11 +171,13 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
 namespace nb = nanobind;
