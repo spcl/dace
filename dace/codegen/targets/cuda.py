@@ -550,7 +550,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
                 # HIP architecture was given.
                 hip_arch = hip_arch.split(',')
-                hip_arch = [ha for ha in map(str.split, hip_arch) if len(ha) > 0]
+                hip_arch = [ha for ha in map(str.strip, hip_arch) if len(ha) > 0]
                 options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
 
             flags = Config.get("compiler", "cuda", "hip_args")
