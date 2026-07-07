@@ -244,7 +244,8 @@ def test_nanobind_interface_workspace():
         assert isinstance(fields, list) and len(fields) > 0
         assert any('workspace' in f for f in fields)
 
-        # get_state_struct returns the raw state pointer on this interface.
+        # get_state_struct returns the raw state pointer on this interface,
+        # unlike the ctypes path which returns a ctypes.Structure view.
         assert csdfg.get_state_struct() == csdfg._handle.state_pointer
 
 

@@ -134,17 +134,20 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     ext_decls = '\n'.join(f'size_t __dace_get_external_memory_size_{s.name}({state_t} *__state{init_comma_decl});\n'
                           f'void __dace_set_external_memory_{s.name}({state_t} *__state, char *ptr{init_comma_decl});'
                           for s in ext_storages)
+    # Storage types are keyed by their *name* (e.g. "CPU_Heap"), not their enum
+    # value: the value depends on the declaration order of the StorageType enum,
+    # so a module compiled against one DaCe version could be misread by another.
+    # The Python side restores the enum via getattr(dtypes.StorageType, name).
     ws_size_entries = '\n        '.join(
-        f'sizes[nb::int_({s.value})] = nb::int_(__dace_get_external_memory_size_{s.name}(m_state{sym_args}));'
+        f'sizes["{s.name}"] = nb::int_(__dace_get_external_memory_size_{s.name}(m_state{sym_args}));'
         for s in ext_storages)
     ws_set_entries = '\n        '.join(
-        f'if (storage == {s.value}) {{\n'
+        f'if (storage == "{s.name}") {{\n'
         f'            __dace_set_external_memory_{s.name}(m_state, reinterpret_cast<char *>(buffer.data()){sym_args});\n'
         f'            return;\n'
         f'        }}' for s in ext_storages)
 
-    state_field_appends = '\n            '.join(f'fields.append("{f}");'
-                                                for f in _pointer_field_names(statestruct))
+    state_field_appends = '\n            '.join(f'fields.append("{f}");' for f in _pointer_field_names(statestruct))
 
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
 #include <cstdint>
@@ -153,9 +156,13 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/string.h>
 
 namespace nb = nanobind;
 
+// The generated types live in dace::generated::<name>, mirroring the Python-side
+// dace.generated.<name> module. The per-SDFG namespace also keeps the identically
+// structured handle types from different modules from colliding in-process.
 extern "C" {{
 struct {state_t};
 {state_t} *__dace_init_{name}({init_decl});
@@ -164,7 +171,7 @@ void __program_{name}({program_params});
 {ext_decls}
 }}
 
-namespace {{
+namespace dace {{ namespace generated {{ namespace {name} {{
 
 struct DaceHandle_{name} {{
     {state_t} *m_state = nullptr;
@@ -198,11 +205,10 @@ struct DaceHandle_{name} {{
         return sizes;
     }}
 
-    void set_workspace(int storage, nb::ndarray<> buffer) {{
+    void set_workspace(const std::string &storage, nb::ndarray<> buffer) {{
         require_state();
         {ws_set_entries}
-        throw std::invalid_argument("SDFG '{name}': no external memory of storage-type value " +
-                                    std::to_string(storage));
+        throw std::invalid_argument("SDFG '{name}': no external memory of storage type " + storage);
     }}
 
     // The state counts as deallocated even on failure (old-interface behavior).
@@ -236,9 +242,10 @@ struct DaceHandle_{name} {{
     }}
 }};
 
-}} // namespace
+}} }} }} // namespace dace::generated::{name}
 
 NB_MODULE({name}, m) {{
+    using namespace dace::generated::{name};
     nb::class_<DaceHandle_{name}>(m, "CompiledSDFGHandle")
         .def("initialize", &DaceHandle_{name}::initialize{init_def_args})
         .def("finalize", &DaceHandle_{name}::finalize)

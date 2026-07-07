@@ -28,6 +28,13 @@ class NanobindCompiledSDFG:
     ``convert_return_values()``) is not provided, because the argument
     processing already happens in compiled code — there is one fast path.
 
+    :param sdfg: The ``SDFG`` this wrapper was compiled from; used to evaluate
+                 return-array shapes and exposed via the ``sdfg`` property.
+    :param module: The imported nanobind extension module (the generated shared
+                   library) providing ``make_compiled_sdfg()``.
+    :param arg_names: The user-facing positional argument order
+                      (``sdfg.arg_names``), used to map positional call
+                      arguments to their names.
     :note: The arrays used as return values are allocated fresh on every call.
     :note: It is not possible to return Python scalars, exactly as with
            ``CompiledSDFG``.
@@ -54,6 +61,13 @@ class NanobindCompiledSDFG:
         return self._handle.has_gpu_code
 
     def __call__(self, *args, **kwargs):
+        """Runs the SDFG, initializing the state on demand on the first call.
+
+        Arguments are passed positionally (in ``arg_names`` order) and/or by
+        keyword. Return-value arrays are freshly allocated and returned - a
+        single array, or a tuple when there are several; with no return values
+        the result is ``None``.
+        """
         # Early exit: no return values, no shape logic - nanobind's dispatcher
         # does the positional/keyword matching and casting itself.
         if not self._has_return_values:
@@ -80,12 +94,11 @@ class NanobindCompiledSDFG:
     def _allocate_return_arrays(self, kwargs):
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
 
-        Unlike ``CompiledSDFG._initialize_return_values()`` there is no
-        pyobject handling here (including the PR#2206 bug-compatible decay of
-        pyobject arrays to a single value): pyobject is deferred to part 2 of
-        the nanobind port, and the bindings generator already rejects such
-        SDFGs at codegen time. Whether part 2 replicates the PR#2206 behavior
-        or fixes it is an open decision recorded there.
+        There is no pyobject handling here (including the PR#2206 bug-compatible
+        decay of pyobject arrays to a single value): pyobject is deferred to
+        part 2 of the nanobind port, and the bindings generator already rejects
+        such SDFGs at codegen time. Whether part 2 replicates the PR#2206
+        behavior or fixes it is an open decision recorded there.
         """
         import numpy as np
         from dace import data as dt, symbolic
@@ -113,52 +126,62 @@ class NanobindCompiledSDFG:
         return return_arrays
 
     def initialize(self, *args, **kwargs):
-        # The name mapping is needed here too, but for a different reason
-        # than in __call__: the C++ initialize's positional parameters are
-        # the *init symbols* only (e.g. ``initialize(int N, **kwargs)``),
-        # while callers pass positionals in user-facing arg_names order
-        # (e.g. ``initialize(a, N=20)``). A plain pass-through would match
-        # ``a`` positionally against ``N``.
+        """Initializes the SDFG state eagerly, without running it.
+
+        Accepts the same arguments as :meth:`__call__` (positional arguments in
+        ``arg_names`` order and/or keywords); only the values needed to
+        initialize the state (the init symbols) are actually consumed. Calling
+        this is optional - :meth:`__call__` initializes on demand - but it is
+        required before querying external-memory workspace sizes.
+        """
         if args:
-            for name, value in zip(self._arg_names, args):
-                kwargs.setdefault(name, value)
+            assert not (multiple_names :=
+                        kwargs.keys() & self._arg_names[:len(args)]), f"Specified '{multiple_names}' multiple times."
+            kwargs.update(zip(self._arg_names, args, strict=False))
         self._handle.initialize(**kwargs)
 
     def finalize(self):
         self._handle.finalize()
 
     def get_workspace_sizes(self):
-        """Returns the external-memory sizes per storage type (see ``CompiledSDFG``).
+        """Returns the external-memory sizes per storage type.
 
-        The handle speaks raw storage-type values; the conversion to the
-        ``StorageType`` enum happens here, since the Python enum is not
-        exposed to C++.
+        The handle keys the sizes by storage-type *name* (stable across changes
+        to the enum values); the conversion back to the ``StorageType`` enum
+        happens here, since the Python enum is not exposed to C++.
         """
         from dace import dtypes
-        return {dtypes.StorageType(k): v for k, v in self._handle.get_workspace_sizes().items()}
+        return {getattr(dtypes.StorageType, k): v for k, v in self._handle.get_workspace_sizes().items()}
 
     def set_workspace(self, storage, workspace):
-        """Sets the workspace for the given storage type to the given buffer (see ``CompiledSDFG``)."""
+        """Sets the workspace for the given storage type to the given buffer."""
         from dace import dtypes
-        value = storage.value if isinstance(storage, dtypes.StorageType) else int(storage)
-        self._handle.set_workspace(value, workspace)
+        name = storage.name if isinstance(storage, dtypes.StorageType) else dtypes.StorageType(storage).name
+        self._handle.set_workspace(name, workspace)
 
     def state_fields(self):
         """Names of the pointer fields in the state struct.
 
         Baked into the module at code-generation time - no parsing of the
-        generated sources, unlike the ctypes path.
+        generated sources.
         """
         return list(self._handle.state_fields())
 
     def get_state_struct(self) -> int:
         """Returns the *raw pointer* to the state struct as an integer.
 
-        Unlike ``CompiledSDFG.get_state_struct()`` this does not reconstruct a
-        ``ctypes.Structure`` view; combine it with ``state_fields()`` if
-        needed. Callers must know exactly what they are doing - and whatever
-        they are doing with this pointer is most likely wrong.
+        The state must be initialized; querying it beforehand raises. Combine
+        it with :meth:`state_fields` if you need to interpret the memory.
+        Callers must know exactly what they are doing - and whatever they are
+        doing with this pointer is most likely wrong.
+
+        :note: The return value differs from the ctypes
+               ``CompiledSDFG.get_state_struct()``, which returns a
+               ``ctypes.Structure`` dynamically assembled from the parsed source
+               (its ``_try_parse_state_struct()``); here only the integer
+               pointer value is returned.
         """
+        # ``state_pointer`` raises if the state is uninitialized or finalized.
         return self._handle.state_pointer
 
     def get_exported_function(self, name: str, restype=None):
@@ -168,6 +191,10 @@ class NanobindCompiledSDFG:
         (which returns the same library handle); the wrapper is attached to
         the returned function as ``__compiled_sdfg__`` to keep the module
         alive.
+
+        :note: Reaching for this function should be considered a bug - it is a
+               low-level escape hatch that bypasses the typed interface, and
+               anything it is used for is most likely better done another way.
         """
         import ctypes
         lib = ctypes.CDLL(self._module.__file__)
