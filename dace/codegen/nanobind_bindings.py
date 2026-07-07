@@ -63,6 +63,25 @@ def _argument_binding(arglist, binding_order=None):
             call_args.append(
                 f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr')
             nb_args_by_name[name] = f'nb::arg("{name}").none()'
+        elif isinstance(desc, dt.ContainerArray):
+            # ContainerArray (an array of structures/containers) is deferred to
+            # a later slice; refuse explicitly, since it subclasses Array and
+            # would otherwise be mis-handled by the Array branch below.
+            raise NotImplementedError(f'Nanobind interface: ContainerArray argument "{name}" is not '
+                                      f'supported yet; use the ctypes interface (compiler.interface=ctypes).')
+        elif isinstance(desc, dt.Structure):
+            # Thin pointer passthrough, mirroring the ctypes path: the caller
+            # builds the C struct (as a ``ctypes.Structure`` filled with the raw
+            # pointers of its members) and we forward a pointer to it. The struct
+            # type is forward-declared in the module (see generate_bindings_code).
+            #
+            # A richer alternative would marshal a Python dict/object field by
+            # field into the struct inside C++ - but that needs the full struct
+            # definition and per-member handling (including array pointers and
+            # nested structs), so it is deferred as a future improvement.
+            params_by_name[name] = f'std::uintptr_t {name}'
+            call_args.append(f'reinterpret_cast<{ctype}>({name})')
+            nb_args_by_name[name] = f'nb::arg("{name}")'
         elif isinstance(desc, dt.Array):
             if desc.optional is False:
                 params_by_name[name] = f'nb::ndarray<{ctype}, nb::device::cpu> {name}'
@@ -86,6 +105,24 @@ def _argument_binding(arglist, binding_order=None):
     params = [params_by_name[n] for n in binding_order]
     nb_args = [nb_args_by_name[n] for n in binding_order]
     return params, call_args, nb_args
+
+
+def _structure_forward_decls(arglist):
+    """Forward declarations for the C structs referenced by Structure arguments.
+
+    The bindings only pass pointers to these structs (thin passthrough), so a
+    forward declaration is enough - the full definition lives in the frame code.
+    """
+    decls = []
+    seen = set()
+    for desc in arglist.values():
+        if not isinstance(desc, dt.Structure):
+            continue
+        struct_name = desc.dtype.ctype.rstrip(' *')  # e.g. "CSRMatrix*" -> "CSRMatrix"
+        if struct_name not in seen:
+            seen.add(struct_name)
+            decls.append(f'struct {struct_name};')
+    return '\n'.join(decls)
 
 
 def _pointer_field_names(statestruct):
@@ -175,6 +212,10 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
     state_field_appends = '\n            '.join(f'fields.append("{f}");' for f in _pointer_field_names(statestruct))
 
+    # Forward declarations for structs passed by pointer (Structure arguments).
+    struct_decls = _structure_forward_decls(arglist)
+    struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
+
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
 #include <cstdint>
 #include <optional>
@@ -192,7 +233,7 @@ namespace nb = nanobind;
 // dace.generated.<name> module. The per-SDFG namespace also keeps the identically
 // structured handle types from different modules from colliding in-process.
 extern "C" {{
-struct {state_t};
+struct {state_t};{struct_fwd_block}
 {state_t} *__dace_init_{name}({init_decl});
 int __dace_exit_{name}({state_t} *__state);
 void __program_{name}({program_params});

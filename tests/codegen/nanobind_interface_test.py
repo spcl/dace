@@ -484,6 +484,107 @@ def test_nanobind_interface_safe_call_return_rejected():
             csdfg.safe_call(np.zeros(5))
 
 
+def _build_csr_to_dense(name, nested):
+    """Builds a CSR-to-dense SDFG whose input ``A`` is a (optionally nested) Structure.
+
+    Returns ``(sdfg, csr_obj, wrapper_obj_or_None)``.
+    """
+    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  name='CSRMatrix')
+    wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper') if nested else None
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_datadesc('A', wrapper_obj if nested else csr_obj)
+    sdfg.add_array('B', [M, N], dace.float32)
+
+    spmat = wrapper_obj.members['csr'] if nested else csr_obj
+    prefix = 'A.csr' if nested else 'A'
+    sdfg.add_view('vindptr', spmat.members['indptr'].shape, spmat.members['indptr'].dtype)
+    sdfg.add_view('vindices', spmat.members['indices'].shape, spmat.members['indices'].dtype)
+    sdfg.add_view('vdata', spmat.members['data'].shape, spmat.members['data'].dtype)
+
+    state = sdfg.add_state()
+    A = state.add_access('A')
+    B = state.add_access('B')
+    indptr = state.add_access('vindptr')
+    indices = state.add_access('vindices')
+    data = state.add_access('vdata')
+
+    state.add_edge(A, None, indptr, 'views', dace.Memlet.from_array(f'{prefix}.indptr', spmat.members['indptr']))
+    state.add_edge(A, None, indices, 'views', dace.Memlet.from_array(f'{prefix}.indices', spmat.members['indices']))
+    state.add_edge(A, None, data, 'views', dace.Memlet.from_array(f'{prefix}.data', spmat.members['data']))
+
+    ime, imx = state.add_map('i', dict(i='0:M'))
+    jme, jmx = state.add_map('idx', dict(idx='start:stop'))
+    jme.add_in_connector('start')
+    jme.add_in_connector('stop')
+    t = state.add_tasklet('indirection', {'j', '__val'}, {'__out'}, '__out[i, j] = __val')
+
+    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i'), dst_conn='start')
+    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i+1'), dst_conn='stop')
+    state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='vindices', subset='idx'), dst_conn='j')
+    state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
+    state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
+    return sdfg, csr_obj, wrapper_obj
+
+
+def _csr_example():
+    """A small CSR matrix (M=2, N=3, nnz=3) and its dense form, as contiguous numpy arrays."""
+    indptr = np.array([0, 2, 3], dtype=np.int32)
+    indices = np.array([0, 2, 1], dtype=np.int32)
+    data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    expected = np.array([[1, 0, 2], [0, 3, 0]], dtype=np.float32)
+    return indptr, indices, data, expected
+
+
+def test_nanobind_interface_structure_argument():
+    """A flat Structure argument is passed as a pointer to a user-built ctypes.Structure."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg, csr_obj, _ = _build_csr_to_dense('csr_struct_nanobind', nested=False)
+        csdfg = sdfg.compile()
+
+        indptr, indices, data, expected = _csr_example()
+        B = np.zeros((2, 3), dtype=np.float32)
+        inpA = csr_obj.dtype._typeclass.as_ctypes()(indptr=indptr.__array_interface__['data'][0],
+                                                    indices=indices.__array_interface__['data'][0],
+                                                    data=data.__array_interface__['data'][0])
+        csdfg(A=inpA, B=B, M=2, N=3, nnz=3)
+        assert np.allclose(B, expected)
+
+
+def test_nanobind_interface_nested_structure_argument():
+    """A nested Structure argument (Wrapper(csr=...)) works via the same pointer passthrough."""
+    import ctypes
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg, csr_obj, wrapper_obj = _build_csr_to_dense('nested_csr_struct_nanobind', nested=True)
+        csdfg = sdfg.compile()
+
+        indptr, indices, data, expected = _csr_example()
+        B = np.zeros((2, 3), dtype=np.float32)
+        inpCSR = csr_obj.dtype._typeclass.as_ctypes()(indptr=indptr.__array_interface__['data'][0],
+                                                      indices=indices.__array_interface__['data'][0],
+                                                      data=data.__array_interface__['data'][0])
+        inpW = wrapper_obj.dtype._typeclass.as_ctypes()(csr=ctypes.pointer(inpCSR))
+        csdfg(A=inpW, B=B, M=2, N=3, nnz=3)
+        assert np.allclose(B, expected)
+
+
+def test_nanobind_interface_container_array_rejected():
+    """ContainerArray arguments are rejected at codegen time (deferred to a later slice)."""
+    import pytest
+    from dace import data as dt
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    M = dace.symbol('M')
+    inner = dt.Structure(dict(data=dace.float32[M]), name='Inner')
+    sdfg = dace.SDFG('container_array_reject_probe')
+    sdfg.add_datadesc('arr', dt.ContainerArray(inner, [M]))
+    with pytest.raises(NotImplementedError, match='ContainerArray'):
+        generate_bindings_code(sdfg)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -501,3 +602,6 @@ if __name__ == '__main__':
     test_nanobind_interface_safe_call()
     test_nanobind_interface_safe_call_kwargs()
     test_nanobind_interface_safe_call_return_rejected()
+    test_nanobind_interface_structure_argument()
+    test_nanobind_interface_nested_structure_argument()
+    test_nanobind_interface_container_array_rejected()

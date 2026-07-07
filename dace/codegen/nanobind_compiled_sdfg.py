@@ -41,12 +41,16 @@ class NanobindCompiledSDFG:
     """
 
     def __init__(self, sdfg, module, arg_names):
+        from dace import data as dt
         self._sdfg = sdfg
         self._module = module
         self._arg_names = list(arg_names or [])
         self._handle = module.make_compiled_sdfg()
         # Cached so calls without return values skip the shape logic entirely.
         self._has_return_values = any(name.startswith('__return') for name in sdfg.arrays.keys())
+        # Structure arguments are forwarded as the address of a user-built
+        # ctypes.Structure; the handle expects an integer pointer for them.
+        self._struct_args = frozenset(name for name, desc in sdfg.arrays.items() if isinstance(desc, dt.Structure))
 
     @property
     def sdfg(self):
@@ -67,7 +71,14 @@ class NanobindCompiledSDFG:
         keyword. Return-value arrays are freshly allocated and returned - a
         single array, or a tuple when there are several; with no return values
         the result is ``None``.
+
+        Structure arguments may be passed as the ``ctypes.Structure`` the ctypes
+        path uses; they are forwarded as a pointer to it.
         """
+        keepalive = None
+        if self._struct_args:
+            args, kwargs, keepalive = self._marshal_structures(args, kwargs)
+
         # Early exit: no return values, no shape logic - nanobind's dispatcher
         # does the positional/keyword matching and casting itself.
         if not self._has_return_values:
@@ -90,6 +101,33 @@ class NanobindCompiledSDFG:
         if len(return_arrays) == 1:
             return return_arrays[0]
         return tuple(return_arrays)
+
+    def _marshal_structures(self, args, kwargs):
+        """Replaces each ``Structure`` argument value with the address of the ctypes object.
+
+        Returns ``(args, kwargs, keepalive)`` with structure values converted to
+        integer addresses; ``keepalive`` holds the original ctypes objects so
+        they outlive the call (the handle only keeps the raw pointer). A value
+        that is already an ``int`` address is passed through untouched.
+        """
+        import ctypes
+
+        keepalive = []
+
+        def to_address(value):
+            if isinstance(value, int):
+                return value
+            keepalive.append(value)
+            return ctypes.addressof(value)
+
+        args = list(args)
+        for i, name in enumerate(self._arg_names[:len(args)]):
+            if name in self._struct_args:
+                args[i] = to_address(args[i])
+        for name, value in list(kwargs.items()):
+            if name in self._struct_args:
+                kwargs[name] = to_address(value)
+        return tuple(args), kwargs, keepalive
 
     def _allocate_return_arrays(self, kwargs):
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
