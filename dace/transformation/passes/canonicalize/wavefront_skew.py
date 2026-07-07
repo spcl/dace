@@ -503,13 +503,17 @@ class WavefrontSkew(ppl.Pass):
         tag = abs(hash(parts)) & 0xfffffff
         code = f'if ({parts}) {{ __builtin_trap(); }}'
         pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
-        pre.add_tasklet(
+        guard = pre.add_tasklet(
             name=f'_skew_guard_{tag:x}',
             inputs={},
             outputs={},
             code=code,
             language=dace.dtypes.Language.CPP,
         )
+        # A connector-less __builtin_trap tasklet has no data output, so mark it
+        # side-effecting -- otherwise DeadDataflowElimination (terminal SimplifyPass)
+        # prunes it and silently drops the runtime skew-positivity guard.
+        guard.side_effects = True
 
 
 __all__ = ['WavefrontSkew']

@@ -60,6 +60,72 @@ def no_scatter_just_elementwise(a: dace.float64[N], b: dace.float64[N]):
         a[i] = b[i] * 2.0
 
 
+SSYM = dace.symbol('SSYM')
+
+
+@dace.program
+def vas_ssym(a: dace.float64[N], b: dace.float64[N], ip: dace.int64[N]):
+    """Symbolic-stride scatter ``a[ip[i*SSYM]] = b[i]`` (TSVC-2.5 ``vas_ssym``).
+    The index array is inline-subscripted inside the write memlet subset
+    (``a[ip[SSYM*i]]``) rather than bound on an interstate edge."""
+    for i in range(N // SSYM):
+        a[ip[i * SSYM]] = b[i]
+
+
+@dace.program
+def s4113_ssym(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], ip: dace.int64[N]):
+    """Symbolic-stride gather+scatter ``a[ip[i*SSYM]] = b[ip[i*SSYM]] + c[i]``
+    (TSVC-2.5 ``s4113_ssym``). The strided index ``ip[SSYM*i]`` is bound on the
+    loop's interstate edge (``sym := ip[SSYM*i]``) and used in the write subset."""
+    for i in range(N // SSYM):
+        a[ip[i * SSYM]] = b[ip[i * SSYM]] + c[i]
+
+
+def _build_nested_map_scatter_sdfg():
+    """Hand-build the shape a ``dace.map`` scatter (``dst[idx[i]] = src[i]``) is
+    lowered to inside the canonicalize pipeline: a ``LoopRegion`` whose body has a
+    ``NestedSDFG`` writing ``dst`` with a data-dependent (whole-array, unit-volume)
+    memlet, the write index living inside the nested SDFG and fed by ``idx[i]``.
+
+    This is the intermediate form of TSVC-2.5 ``ext_scatter_store`` after the map
+    is serialized; a fresh ``to_sdfg`` keeps it a Map instead, so we construct the
+    shape directly to unit-test the nested-SDFG detection path.
+    """
+    from dace import Memlet
+
+    sdfg = dace.SDFG('nested_map_scatter')
+    sdfg.add_array('src', [N], dace.float64)
+    sdfg.add_array('idx', [N], dace.int64)
+    sdfg.add_array('dst', [N], dace.float64)
+
+    loop = LoopRegion('scatter_loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+
+    nsdfg = dace.SDFG('scatter_body')
+    nsdfg.add_scalar('src_in', dace.float64)
+    nsdfg.add_scalar('idx_in', dace.int64)
+    nsdfg.add_array('dst_out', [N], dace.float64)
+    nstate = nsdfg.add_state('s', is_start_block=True)
+    read = nstate.add_read('src_in')
+    write = nstate.add_write('dst_out')
+    tasklet = nstate.add_tasklet('cp', {'inp'}, {'outp'}, 'outp = inp')
+    nstate.add_edge(read, None, tasklet, 'inp', Memlet('src_in[0]'))
+    # The write index ``idx_in`` (an input connector) drives the data-dependent write.
+    nstate.add_edge(tasklet, 'outp', write, None, Memlet(data='dst_out', subset='idx_in'))
+
+    nnode = body.add_nested_sdfg(nsdfg, {'src_in', 'idx_in'}, {'dst_out'}, symbol_mapping={'N': N})
+    a_src = body.add_read('src')
+    a_idx = body.add_read('idx')
+    a_dst = body.add_write('dst')
+    body.add_edge(a_src, None, nnode, 'src_in', Memlet('src[i]'))
+    body.add_edge(a_idx, None, nnode, 'idx_in', Memlet('idx[i]'))
+    # Data-dependent write: a single element (volume 1) scattered into 0:N.
+    body.add_edge(nnode, 'dst_out', a_dst, None, Memlet(data='dst', subset='0:N', volume=1))
+    sdfg.validate()
+    return sdfg
+
+
 # -- Helpers ------------------------------------------------------------------
 
 
@@ -176,6 +242,99 @@ def test_two_distinct_scatters_get_individual_guards():
     sdfg(a=a, b=b, c=c, d=d, ip=ip, jp=jp, N=n)
     assert np.allclose(a, a_ref)
     assert np.allclose(c, c_ref)
+
+
+# -- Symbolic-stride scatter forms (TSVC-2.5) ---------------------------------
+
+
+def test_detect_inline_subscript_symbolic_stride_scatter():
+    """``vas_ssym`` writes ``a[ip[SSYM*i]]`` -- the index array is embedded inline
+    in the write-memlet subset (no interstate binding). The detector must still
+    resolve ``ip``."""
+    sdfg = vas_ssym.to_sdfg(simplify=True)
+    assert detect_scatter_idx_arrays(sdfg) == {'ip'}
+
+
+def test_detect_strided_interstate_binding_scatter():
+    """``s4113_ssym`` binds ``sym := ip[SSYM*i]`` (a *strided* index, not the bare
+    loop var) on the loop's interstate edge. The detector must accept the affine
+    index and resolve ``ip``."""
+    sdfg = s4113_ssym.to_sdfg(simplify=True)
+    assert detect_scatter_idx_arrays(sdfg) == {'ip'}
+
+
+def _ref_vas_ssym(a, ip, ssym, kw):
+    for i in range(a.shape[0] // ssym):
+        a[ip[i * ssym]] = kw['b'][i]
+
+
+def _ref_s4113_ssym(a, ip, ssym, kw):
+    for i in range(a.shape[0] // ssym):
+        a[ip[i * ssym]] = kw['b'][ip[i * ssym]] + kw['c'][i]
+
+
+@pytest.mark.parametrize('kernel,inputs_fn,ref', [
+    (vas_ssym, lambda n: {
+        'b': np.random.default_rng(40).random(n)
+    }, _ref_vas_ssym),
+    (s4113_ssym, lambda n: {
+        'b': np.random.default_rng(41).random(n),
+        'c': np.random.default_rng(42).random(n),
+    }, _ref_s4113_ssym),
+])
+def test_symbolic_stride_scatter_guarded_and_parallelized(kernel, inputs_fn, ref):
+    """Each symbolic-stride scatter is guarded (1 IntegerSort) and lifted (>=1
+    Map), and reproduces the sequential result bit-for-bit under a permutation
+    ``ip``."""
+    sdfg = kernel.to_sdfg(simplify=True)
+    loops_before = _count_loop_regions(sdfg)
+    maps_before = _count_map_entries(sdfg)
+
+    rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert rewritten == 1, f"Expected exactly 1 guarded idx for {kernel.name}; got {rewritten}."
+    assert _count_integer_sort_nodes(sdfg) == 1, "IntegerSort guard not emitted."
+    assert _count_map_entries(sdfg) > maps_before, "Scatter loop was not parallelized to a Map."
+    assert _count_loop_regions(sdfg) < loops_before, "Original LoopRegion was not lifted."
+
+    n, ssym = 30, 3
+    ip = _make_permutation(n, seed=int(kernel.name.encode().hex(), 16) & 0xFFFFFF).astype(np.int64)
+    kw = inputs_fn(n)
+    a = np.zeros(n)
+    a_ref = np.zeros(n)
+    ref(a_ref, ip, ssym, kw)
+    sdfg(a=a, ip=ip, N=n, SSYM=ssym, **kw)
+    assert np.allclose(a, a_ref), f"Numerical mismatch on {kernel.name}; max diff {np.max(np.abs(a - a_ref))}"
+
+
+def test_detect_and_lift_nested_map_scatter():
+    """A ``dace.map`` scatter lowers to a nested-SDFG data-dependent write inside a
+    loop (TSVC-2.5 ``ext_scatter_store``). The detector traces the write index
+    through the nested SDFG back to ``idx``; the pass guards it and lifts the loop,
+    preserving values bit-for-bit under a permutation ``idx``."""
+    sdfg = _build_nested_map_scatter_sdfg()
+    assert detect_scatter_idx_arrays(sdfg) == {'idx'}
+
+    loops_before = _count_loop_regions(sdfg)
+    rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert rewritten == 1, f"Expected exactly one guarded idx (``idx``); got {rewritten}."
+    assert _count_integer_sort_nodes(sdfg) == 1, "IntegerSort guard not emitted for the nested-SDFG scatter."
+    assert _count_map_entries(sdfg) >= 1, "Nested-SDFG scatter loop was not parallelized to a Map."
+    assert _count_loop_regions(sdfg) < loops_before, "Original LoopRegion was not lifted."
+
+    n = 16
+    idx = _make_permutation(n, seed=55).astype(np.int64)
+    src = np.random.default_rng(56).standard_normal(n)
+    dst = np.zeros(n)
+    dst_ref = np.zeros(n)
+    for i in range(n):
+        dst_ref[idx[i]] = src[i]
+    sdfg(src=src, idx=idx, dst=dst, N=n)
+    assert np.allclose(dst,
+                       dst_ref), f"Numerical mismatch on nested-map scatter; max diff {np.max(np.abs(dst - dst_ref))}"
 
 
 def test_no_scatter_elementwise_no_op_modified_skips_global_permissive_lift():
@@ -349,6 +508,30 @@ def test_else_branch_dispatcher_emits_both_branches():
     par_maps = sum(1 for n, _ in par_body.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     assert not par_loops and par_maps >= 1, (f'parallel branch must have been lifted to a Map; '
                                              f'got loops={len(par_loops)}, maps={par_maps}')
+
+
+@pytest.mark.parametrize('kernel', [tsvc_s4113, tsvc_s491, tsvc_vas])
+def test_no_conflict_guard_survives_full_canonicalize(kernel):
+    """The runtime no-conflict guard (IntegerSort + __builtin_trap) must survive
+    the WHOLE canonicalize pipeline -- including the terminal SimplifyPass. The
+    trap tasklet has no data output, so unless it is marked side-effecting,
+    DeadDataflowElimination prunes it and the sort/count chain feeding it looks
+    dead too, silently dropping the guard and leaving the scatter Map unguarded.
+    """
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    sdfg = kernel.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+
+    has_sort = any(isinstance(n, IntegerSort) for n, _ in sdfg.all_nodes_recursive())
+    has_trap = any(
+        isinstance(n, nodes.Tasklet) and '__builtin_trap' in n.code.as_string for st in sdfg.all_states()
+        for n in st.nodes())
+    maps = sum(1 for st in sdfg.all_states() for n in st.nodes()
+               if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
+    assert maps >= 1, 'the scatter must parallelize into a Map'
+    assert has_sort and has_trap, ('the no-conflict guard (IntegerSort + trap) must survive full '
+                                   f'canonicalize; got sort={has_sort} trap={has_trap}')
 
 
 if __name__ == '__main__':

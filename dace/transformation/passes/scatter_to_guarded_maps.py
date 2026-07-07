@@ -2,8 +2,8 @@
 """End-to-end pass: detect scatter loops, guard their index arrays, parallelize.
 
 A *scatter loop* is a ``LoopRegion`` whose body writes to a non-transient array at
-an index of the form ``arr[idx[i]]`` -- i.e. the write subset uses a symbol that
-the loop's interstate edges bind to a read of another array indexed by the loop
+an index of the form ``arr[idx[f(i)]]`` -- the write slot is data-dependent
+through an index array ``idx`` read at a (possibly strided) function of the loop
 variable. ``LoopToMap`` refuses such loops by default because two iterations may
 write the same slot; the user's contract is that ``idx`` is a permutation (no
 duplicates → no write-write race), and ``LoopToMap``'s ``permissive`` mode lifts
@@ -11,10 +11,16 @@ the loop under that assumption.
 
 This pass operationalises that contract end-to-end:
 
-1. **Detect** every scatter loop in the SDFG by scanning each ``LoopRegion``'s
-   interstate-edge assignments for ``sym := idx[loop_var]`` bindings and matching
-   them to symbol references in write-memlet subsets to non-transient arrays.
-   The union of source-array names is the set of ``idx`` arrays.
+1. **Detect** every scatter loop in the SDFG (see
+   :func:`_scatter_idx_arrays_for_loop`), recognising the three lowered forms a
+   ``out[idx[f(i)]] = ...`` scatter takes: an interstate-bound index
+   (``sym := idx[f(i)]`` used in a write subset), an inline-subscript index
+   (``idx[f(i)]`` written literally inside a write-memlet subset), and a
+   nested-SDFG data-dependent write whose index traces back to an integer array
+   read at ``[f(i)]``. ``f(i)`` is any expression referencing the loop variable,
+   so both unit-stride (``idx[i]``) and symbolic-stride (``idx[SSYM*i]``)
+   scatters are covered. The union of source-array names is the set of ``idx``
+   arrays.
 2. **Guard** each detected ``idx`` array via
    :func:`~dace.transformation.passes.scatter_conflict_guard.insert_scatter_guard`,
    which inserts an ``IntegerSort`` + adjacent-equal-pair check + ``__builtin_trap()``
@@ -29,7 +35,8 @@ collision the abort fires before any consumer reads the corrupted output.
 import ast
 from typing import Optional, Set
 
-from dace import SDFG, properties
+from dace import SDFG, data, properties
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -119,7 +126,8 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # of them to be conflict-free for the parallel branch to be
                 # safe; we OR the counts together so any positive count routes
                 # to the sequential branch.
-                loop_idx_syms = [dup_count_syms[i] for i in _loop_idx_arrays(loop) if i in dup_count_syms]
+                loop_idx = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
+                loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
                 if loop_idx_syms:
                     cond = ' + '.join(loop_idx_syms) + ' > 0'
                     _wrap_loop_in_dispatcher(parent, loop, cond, LoopToMap)
@@ -163,39 +171,71 @@ def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
         for region in sd.all_control_flow_regions():
             if not (isinstance(region, LoopRegion) and region.loop_variable):
                 continue
-            bindings = _collect_indirect_bindings(region, sd)
-            if not bindings:
-                continue
-            loop_arrays: Set[str] = set()
-            for state in region.all_states():
-                for node in state.data_nodes():
-                    if state.in_degree(node) == 0:
-                        continue
-                    desc = sd.arrays.get(node.data)
-                    if desc is None or getattr(desc, 'transient', False):
-                        continue
-                    for e in state.in_edges(node):
-                        if e.data is None or e.data.subset is None:
-                            continue
-                        for sym in e.data.subset.free_symbols:
-                            arr = bindings.get(str(sym))
-                            if arr is not None:
-                                loop_arrays.add(arr)
+            loop_arrays = _scatter_idx_arrays_for_loop(region, sd)
             if loop_arrays:
                 scatter_loops.append(region)
                 idx_arrays |= loop_arrays
     return scatter_loops, idx_arrays
 
 
+def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
+    """Return the scatter index-array names driving an indirect WRITE in ``region``.
+
+    Recognises the three lowered forms an ``out[idx[f(i)]] = ...`` scatter takes,
+    where ``f(i)`` is any expression referencing the loop variable (a bare
+    ``idx[i]`` or a strided ``idx[c*i + d]``):
+
+    1. **Interstate-bound index** -- ``sym := idx[f(i)]`` on a loop interstate
+       edge, with ``sym`` referenced in a write-memlet subset to a non-transient
+       array (TSVC ``s4113``/``s491``/``vas`` and the symbolic-stride
+       ``s4113_ssym``).
+    2. **Inline-subscript index** -- the index array appears literally inside a
+       write-memlet subset, ``out[idx[f(i)]]`` (the symbolic-stride ``vas_ssym``).
+    3. **Nested-SDFG data-dependent write** -- a ``NestedSDFG`` writes a
+       non-transient array with a data-dependent (fewer accesses than the subset
+       spans) memlet whose write index traces back to an integer array read at
+       ``[f(i)]`` (``ext_scatter_store``, lowered from a ``dace.map`` scatter).
+
+    :param region: The candidate loop region.
+    :param sdfg: The SDFG owning ``region``'s arrays.
+    :returns: The set of ``idx`` array names (empty if ``region`` is not a scatter).
+    """
+    loop_var = region.loop_variable
+    bindings = _collect_indirect_bindings(region, sdfg)
+    loop_arrays: Set[str] = set()
+    for state in region.all_states():
+        for node in state.data_nodes():
+            if state.in_degree(node) == 0:
+                continue
+            desc = sdfg.arrays.get(node.data)
+            if desc is None or desc.transient:
+                continue
+            for e in state.in_edges(node):
+                if e.data is None or e.data.subset is None:
+                    continue
+                # Form 1: interstate-bound index symbol referenced in the write subset.
+                for sym in e.data.subset.free_symbols:
+                    arr = bindings.get(str(sym))
+                    if arr is not None:
+                        loop_arrays.add(arr)
+                # Form 2: index array inline-subscripted inside the write subset.
+                loop_arrays |= _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg)
+        # Form 3: nested-SDFG data-dependent write.
+        loop_arrays |= _nested_dynamic_scatter_idx_arrays(state, sdfg, loop_var)
+    return loop_arrays
+
+
 def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, str]:
     """Map each symbol bound by ``region``'s interstate edges to its source data
-    array, when the binding is of the form ``sym := arr[loop_var]``.
+    array, when the binding is of the form ``sym := arr[f(loop_var)]``.
 
-    Conservative: only the simplest form -- bare ``arr[<loop_var>]`` -- is
-    recognised. Compound expressions like ``arr[loop_var] + 1`` are skipped;
-    they do not arise from the DaCe Python frontend's scatter lowering, and
-    extending the recognition surface risks misclassifying non-scatter
-    interstate computations.
+    Conservative: only a bare index-array subscript ``arr[<expr>]`` whose index
+    ``<expr>`` references the loop variable is recognised (see
+    :func:`_resolve_indirect_source`) -- the bare ``arr[loop_var]`` and the
+    strided ``arr[c*loop_var + d]``. Non-subscript compound expressions like
+    ``arr[loop_var] + 1`` are skipped; they do not arise from the DaCe Python
+    frontend's scatter lowering, and extending the recognition surface risks
+    misclassifying non-scatter interstate computations.
     """
     bindings: dict[str, str] = {}
     loop_var = region.loop_variable
@@ -219,8 +259,15 @@ def _owning_sdfg(root: SDFG, loop: LoopRegion) -> SDFG:
 
 
 def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
-    """Return ``arr`` if ``rhs_str`` is ``arr[loop_var]`` and ``arr`` is a data
-    descriptor in ``sdfg``; ``None`` otherwise.
+    """Return ``arr`` if ``rhs_str`` is ``arr[f(loop_var)]`` (``arr`` a data
+    descriptor in ``sdfg`` and the index a function of ``loop_var``); ``None``
+    otherwise.
+
+    The index ``f(loop_var)`` may be the bare loop variable (``arr[loop_var]``,
+    unit-stride scatters) or any expression referencing it (``arr[c*loop_var +
+    d]``, symbolic-stride scatters such as ``ip[SSYM*i]``). Requiring the loop
+    variable to appear keeps loop-invariant indices (not per-iteration scatters)
+    out.
     """
     try:
         tree = ast.parse(str(rhs_str), mode='eval').body
@@ -237,36 +284,102 @@ def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optiona
     # Python <3.9 wraps the slice in ast.Index; unwrap.
     if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
         idx = idx.value
-    if not (isinstance(idx, ast.Name) and idx.id == loop_var):
+    if loop_var not in {n.id for n in ast.walk(idx) if isinstance(n, ast.Name)}:
         return None
     return arr
 
 
-def _loop_idx_arrays(loop: LoopRegion) -> Set[str]:
-    """Return the idx-array names referenced by ``loop``'s scatter pattern.
+def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Set[str]:
+    """Data-array names inline-subscripted inside a memlet ``subset`` with an
+    index referencing ``loop_var`` -- the ``out[idx[f(i)]]`` form where the index
+    array ``idx`` is embedded directly in the write subset rather than bound on an
+    interstate edge.
 
-    Re-scans this single ``LoopRegion``'s interstate edges for
-    ``sym := arr[loop_var]`` bindings (the per-loop subset of the global
-    detector). The else-branch dispatcher needs to know WHICH idx arrays
-    govern THIS loop so it can build the right conditional guard.
+    :param subset: A memlet subset (its ``str`` is parsed for ``idx[...]`` nodes).
+    :param loop_var: The loop variable that a genuine scatter index must reference.
+    :param sdfg: The SDFG whose ``arrays`` table qualifies the subscript bases.
+    :returns: The set of index-array names found (empty if none).
     """
-    if not loop.loop_variable:
-        return set()
     arrays: Set[str] = set()
-    for ie in loop.all_interstate_edges():
-        if ie.data is None or not ie.data.assignments:
+    try:
+        tree = ast.parse(str(subset), mode='eval').body
+    except (SyntaxError, ValueError, TypeError):
+        return arrays
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
             continue
-        for rhs in ie.data.assignments.values():
-            if not rhs:
-                continue
-            try:
-                tree = ast.parse(rhs, mode='eval').body
-            except SyntaxError:
-                continue
-            if (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name)
-                    and isinstance(tree.slice, ast.Name) and tree.slice.id == loop.loop_variable):
-                arrays.add(tree.value.id)
+        arr = node.value.id
+        if arr not in sdfg.arrays:
+            continue
+        idx = node.slice
+        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+            idx = idx.value
+        if loop_var in {n.id for n in ast.walk(idx) if isinstance(n, ast.Name)}:
+            arrays.add(arr)
     return arrays
+
+
+def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> Set[str]:
+    """Integer index-array names driving a nested-SDFG data-dependent write in ``state``.
+
+    Matches the shape a ``dace.map`` scatter (``dst[idx[i]] = ...``) lowers to: a
+    ``NestedSDFG`` writes a non-transient array with a memlet whose accessed
+    volume is smaller than the subset it spans (a single element scattered into a
+    whole-array range). The write index lives inside the nested SDFG; this traces
+    it back through the nested SDFG's input connectors to the outer integer array
+    read at ``[f(loop_var)]`` and returns that array (the one whose distinctness
+    the guard must check).
+
+    :param state: The loop-body state to scan.
+    :param sdfg: The SDFG owning ``state``'s arrays.
+    :param loop_var: The loop variable the index read must reference.
+    :returns: The set of integer index-array names found (empty if none).
+    """
+    from dace.libraries.sort.nodes._helpers import is_integer_dtype
+
+    arrays: Set[str] = set()
+    for node in state.data_nodes():
+        desc = sdfg.arrays.get(node.data)
+        if desc is None or desc.transient:
+            continue
+        for e in state.in_edges(node):
+            m = e.data
+            if m is None or m.subset is None or not isinstance(e.src, nodes.NestedSDFG):
+                continue
+            # Data-dependent write: fewer accesses (volume) than the subset spans.
+            if m.volume == m.subset.num_elements():
+                continue
+            idx_conns = _write_index_input_connectors(e.src, e.src_conn)
+            for ie in state.in_edges(e.src):
+                if ie.dst_conn not in idx_conns or not isinstance(ie.src, nodes.AccessNode):
+                    continue
+                src_desc = sdfg.arrays.get(ie.src.data)
+                if (src_desc is None or src_desc.transient or not isinstance(src_desc, data.Array)
+                        or not is_integer_dtype(src_desc.dtype)):
+                    continue
+                if ie.data is None or ie.data.subset is None:
+                    continue
+                if loop_var in {str(sym) for sym in ie.data.subset.free_symbols}:
+                    arrays.add(ie.src.data)
+    return arrays
+
+
+def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -> Set[str]:
+    """Input-connector names of ``nsdfg_node`` that appear in the subset writing
+    the output array ``out_conn`` inside the nested SDFG -- i.e. the connectors
+    that carry the data-dependent write index.
+    """
+    in_conns = set(nsdfg_node.in_connectors.keys())
+    idx_conns: Set[str] = set()
+    for st in nsdfg_node.sdfg.all_states():
+        for dn in st.data_nodes():
+            if dn.data != out_conn:
+                continue
+            for e in st.in_edges(dn):
+                if e.data is None or e.data.subset is None:
+                    continue
+                idx_conns |= {str(sym) for sym in e.data.subset.free_symbols if str(sym) in in_conns}
+    return idx_conns
 
 
 def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop_to_map_cls) -> None:

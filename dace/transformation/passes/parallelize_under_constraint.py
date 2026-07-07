@@ -20,11 +20,20 @@ predicate over loop symbols.
 
 Guard types:
 
-* **``coeff != 0``** -- an in-place update whose write index has a *symbolic*
-  coefficient on the loop variable (``a[i * inc] = a[i * inc] + b[i]``; TSVC
-  ``s171``). The write is injective -- and the loop therefore data-parallel --
+* **``coeff != 0``** -- a write whose index has a *symbolic* coefficient on the
+  loop variable. Two sub-shapes qualify:
+
+  * an in-place read-modify-write (``a[i * inc] = a[i * inc] + b[i]``; TSVC
+    ``s171``), and
+  * a plain injective store (``dst[i * SSYM] = src[i] * scale``; the TSVC-2.5
+    ``ext_strided_store_ssym`` symbolic-stride scatter *store*).
+
+  In both cases the write is injective -- and the loop therefore data-parallel --
   exactly when that coefficient is nonzero; permissive :class:`LoopToMap` then
-  lifts it to a plain (WCR-free, vectorizable) Map. The trap fires on ``inc == 0``.
+  lifts it to a plain (WCR-free, vectorizable) Map. The trap fires on ``inc ==
+  0`` / ``SSYM == 0``. A loop-carried recurrence (``aa[c*i] = aa[c*i - 1]``, the
+  array read at a subset *other* than the one written) is deliberately excluded:
+  a ``coeff != 0`` guard does not make that data-parallel.
 
 Each guarded map gets its own trap state, spliced to immediately dominate it, so
 the (constraint, map) association is unambiguous when several guards coexist.
@@ -99,18 +108,23 @@ class ParallelizeUnderConstraint(ppl.Pass):
         return guarded or None
 
     def _symbolic_stride_violation(self, loop: LoopRegion, sdfg: SDFG) -> Optional[str]:
-        """Runtime trap condition for a symbolic-stride **in-place** update.
+        """Runtime trap condition for a symbolic-stride **injective write**.
 
-        Targets the ``a[c * i + d] = a[c * i + d] <op> ...`` shape (TSVC ``s171``):
-        a non-transient array that is BOTH read and written at the *same* subset,
-        where that subset has a *symbolic* (non-numeric) coefficient ``c`` on the
-        loop variable. The in-place write is injective over the loop iff ``c !=
-        0``, so the assumption is ``c != 0`` and the trap fires on its negation,
-        ``c == 0``. Requiring the read-at-same-subset deliberately excludes pure
-        scatter *stores* (``dst[i*s] = f(i)``, no read-back) and non-aliasing
-        recurrences (``aa[j, i] = aa[j, i-1] ...``, different subsets), which are
-        not this pattern. Returns ``"(c) == 0"`` when exactly one such coefficient
-        governs the body, else ``None``.
+        Targets a non-transient array written at a subset with a *symbolic*
+        (non-numeric) coefficient ``c`` on the loop variable, where that write is
+        injective iff ``c != 0`` -- so the assumption is ``c != 0`` and the trap
+        fires on its negation, ``c == 0``. Two write shapes qualify:
+
+        * the in-place read-modify-write ``a[c * i + d] = a[c * i + d] <op> ...``
+          (TSVC ``s171``): the array is read and written at the *same* subset, and
+        * the plain store ``dst[c * i + d] = f(i)`` (TSVC-2.5
+          ``ext_strided_store_ssym``): the array is written but not read at these
+          positions.
+
+        Non-aliasing recurrences (``aa[c*i] = aa[c*i - 1] ...`` -- the array read
+        at a subset *other* than the one written) are excluded: a ``c != 0`` guard
+        does not make a loop-carried recurrence data-parallel. Returns ``"(c) ==
+        0"`` when exactly one such coefficient governs the body, else ``None``.
 
         :param loop: The candidate loop region.
         :param sdfg: The SDFG owning ``loop``'s arrays.
@@ -133,9 +147,18 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 dst_desc = arrays.get(e.dst.data) if isinstance(e.dst, nodes.AccessNode) else None
                 if dst_desc is not None and not dst_desc.transient:
                     writes[(e.dst.data, str(e.data.subset))] = e.data.subset
+        reads_by_arr: dict = {}
+        for rarr, rkey in reads:
+            reads_by_arr.setdefault(rarr, set()).add(rkey)
         coeffs: Set = set()
         for (arr, key), subset in writes.items():
-            if (arr, key) not in reads:  # require an in-place read-modify-write at this subset
+            # Admit an injective write: either a same-subset read-modify-write
+            # (``key`` is among the array's read subsets) or a plain store (the
+            # array is not read at all here). Refuse when the array is read at a
+            # subset OTHER than the one written -- that is a loop-carried
+            # recurrence (``aa[c*i] = aa[c*i - 1]``) which a ``c != 0`` guard
+            # cannot parallelize.
+            if reads_by_arr.get(arr, set()) - {key}:
                 continue
             for rb, re_, _ in subset.ndrange():
                 if rb != re_:

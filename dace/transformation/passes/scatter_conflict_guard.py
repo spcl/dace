@@ -242,9 +242,16 @@ def _build_guard_states(
     trap_state: Optional[SDFGState] = None
     if emit_trap:
         trap_state = sdfg.add_state(f"_scatter_guard_trap_{idx_name}")
-        trap_state.add_tasklet(f"trap_{idx_name}", {}, {},
-                               f"if ({trap_sym} > 0) {{ __builtin_trap(); }}",
-                               language=dtypes.Language.CPP)
+        trap_tasklet = trap_state.add_tasklet(f"trap_{idx_name}", {}, {},
+                                              f"if ({trap_sym} > 0) {{ __builtin_trap(); }}",
+                                              language=dtypes.Language.CPP)
+        # ``__builtin_trap()`` is a genuine side effect with no data output, so
+        # DeadDataflowElimination (in the terminal SimplifyPass) would otherwise
+        # prune the trap tasklet as dead -- and then the sort + duplicate-count
+        # chain feeding ``trap_sym`` looks dead too, silently dropping the entire
+        # no-conflict guard and leaving the scatter Map unguarded. Mark it
+        # side-effecting so simplify preserves the guard.
+        trap_tasklet.side_effects = True
 
     return init_state, sort_state, compare_state, trap_state, count_name, trap_sym
 
