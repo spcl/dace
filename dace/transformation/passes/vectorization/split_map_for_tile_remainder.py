@@ -95,7 +95,16 @@ class SplitMapForTileRemainder(ppl.Pass):
         "tile-op variant of the scalar_postamble strategy).",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8, ), tail_mode: str = "masked"):
+    assume_even = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Assume every tiled map extent is an exact multiple of its width, so there is "
+        "NO remainder: mark every eligible map ``__tile_main`` (mask-free) WITHOUT peeling a "
+        "boundary slab. The single strided ``0:N:W`` map covers the whole range. Used by the "
+        "GPU path, which emits no remainder loop; the caller guarantees the even extent.",
+    )
+
+    def __init__(self, widths: Tuple[int, ...] = (8, ), tail_mode: str = "masked", assume_even: bool = False):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -104,6 +113,8 @@ class SplitMapForTileRemainder(ppl.Pass):
             ``"tile_k1"`` (step-1 tile-op slabs at ``widths=(1,)`` marked
             :data:`TILE_K1_TAIL_MARKER` — the K=0 single-lane tile-op variant
             of the ``scalar_postamble`` strategy).
+        :param assume_even: When ``True``, mark every eligible map ``__tile_main``
+            without splitting (no remainder) — the whole extent is assumed divisible.
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}`` or
             ``tail_mode`` is not one of the supported values.
         """
@@ -115,6 +126,7 @@ class SplitMapForTileRemainder(ppl.Pass):
                              f"{{'masked', 'scalar', 'tile_k1'}}")
         self.widths = list(widths)
         self.tail_mode = tail_mode
+        self.assume_even = assume_even
 
     def modifies(self) -> ppl.Modifies:
         """Pass replicates scopes and retightens ranges.
@@ -184,6 +196,13 @@ class SplitMapForTileRemainder(ppl.Pass):
         if len(ranges) < K:
             return False
         tiled_dims = list(range(len(ranges) - K, len(ranges)))
+        # ``assume_even``: the caller guarantees every tiled extent is a multiple of its
+        # width, so there is no boundary -- skip the peel and just mark the whole map
+        # ``__tile_main`` (mask-free). GenerateTileIterationMask then emits no mask.
+        if self.assume_even:
+            if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
+                map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
+            return True
         for d, W in zip(tiled_dims, self.widths):
             lb, ub, step = map_entry.map.range[d]
             if self._provably_divisible(lb, ub, W):

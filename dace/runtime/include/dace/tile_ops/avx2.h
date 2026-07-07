@@ -31,13 +31,12 @@
 //     (scatter, strided store -- no AVX2 instruction).
 #pragma once
 
+#include <immintrin.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <immintrin.h>
 #include <type_traits>
-
-
 
 #if !defined(__AVX2__)
 #error Included the AVX2 tile-op header without AVX2 support
@@ -52,21 +51,36 @@ namespace tileops {
 // ===================================================================
 template <typename T, char Op>
 inline T tile_apply(T a, T b) {
-  if constexpr (Op == '+') return a + b;
-  else if constexpr (Op == '-') return a - b;
-  else if constexpr (Op == '*') return a * b;
-  else if constexpr (Op == '/') return a / b;
-  else if constexpr (Op == '%') return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
-  else if constexpr (Op == 'm') return std::min(a, b);
-  else if constexpr (Op == 'M') return std::max(a, b);
-  else if constexpr (Op == '<') return (a < b) ? T(1) : T(0);
-  else if constexpr (Op == 'l') return (a <= b) ? T(1) : T(0);
-  else if constexpr (Op == '>') return (a > b) ? T(1) : T(0);
-  else if constexpr (Op == 'g') return (a >= b) ? T(1) : T(0);
-  else if constexpr (Op == '=') return (a == b) ? T(1) : T(0);
-  else if constexpr (Op == '!') return (a != b) ? T(1) : T(0);
-  else if constexpr (Op == '&') return (a && b) ? T(1) : T(0);
-  else /* Or */ return (a || b) ? T(1) : T(0);
+  if constexpr (Op == '+')
+    return a + b;
+  else if constexpr (Op == '-')
+    return a - b;
+  else if constexpr (Op == '*')
+    return a * b;
+  else if constexpr (Op == '/')
+    return a / b;
+  else if constexpr (Op == '%')
+    return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
+  else if constexpr (Op == 'm')
+    return std::min(a, b);
+  else if constexpr (Op == 'M')
+    return std::max(a, b);
+  else if constexpr (Op == '<')
+    return (a < b) ? T(1) : T(0);
+  else if constexpr (Op == 'l')
+    return (a <= b) ? T(1) : T(0);
+  else if constexpr (Op == '>')
+    return (a > b) ? T(1) : T(0);
+  else if constexpr (Op == 'g')
+    return (a >= b) ? T(1) : T(0);
+  else if constexpr (Op == '=')
+    return (a == b) ? T(1) : T(0);
+  else if constexpr (Op == '!')
+    return (a != b) ? T(1) : T(0);
+  else if constexpr (Op == '&')
+    return (a && b) ? T(1) : T(0);
+  else /* Or */
+    return (a || b) ? T(1) : T(0);
 }
 
 namespace detail {
@@ -92,20 +106,32 @@ inline __m256i mask64_from_bools(const bool* mask, int base, int n) {
 // tile (all-ones compare mask AND-ed with a splat of 1).
 template <char Op>
 inline __m256 binop_ps(__m256 a, __m256 b) {
-  if constexpr (Op == '+') return _mm256_add_ps(a, b);
-  else if constexpr (Op == '-') return _mm256_sub_ps(a, b);
-  else if constexpr (Op == '*') return _mm256_mul_ps(a, b);
-  else if constexpr (Op == '/') return _mm256_div_ps(a, b);
-  else if constexpr (Op == 'm') return _mm256_min_ps(a, b);
-  else if constexpr (Op == 'M') return _mm256_max_ps(a, b);
+  if constexpr (Op == '+')
+    return _mm256_add_ps(a, b);
+  else if constexpr (Op == '-')
+    return _mm256_sub_ps(a, b);
+  else if constexpr (Op == '*')
+    return _mm256_mul_ps(a, b);
+  else if constexpr (Op == '/')
+    return _mm256_div_ps(a, b);
+  else if constexpr (Op == 'm')
+    return _mm256_min_ps(a, b);
+  else if constexpr (Op == 'M')
+    return _mm256_max_ps(a, b);
   else {
     const __m256 one = _mm256_set1_ps(1.0f);
-    if constexpr (Op == '<') return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_LT_OQ), one);
-    else if constexpr (Op == 'l') return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_LE_OQ), one);
-    else if constexpr (Op == '>') return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_GT_OQ), one);
-    else if constexpr (Op == 'g') return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_GE_OQ), one);
-    else if constexpr (Op == '=') return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_EQ_OQ), one);
-    else if constexpr (Op == '!') return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_NEQ_UQ), one);
+    if constexpr (Op == '<')
+      return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_LT_OQ), one);
+    else if constexpr (Op == 'l')
+      return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_LE_OQ), one);
+    else if constexpr (Op == '>')
+      return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_GT_OQ), one);
+    else if constexpr (Op == 'g')
+      return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_GE_OQ), one);
+    else if constexpr (Op == '=')
+      return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_EQ_OQ), one);
+    else if constexpr (Op == '!')
+      return _mm256_and_ps(_mm256_cmp_ps(a, b, _CMP_NEQ_UQ), one);
     else if constexpr (Op == '&') {
       const __m256 z = _mm256_setzero_ps();
       __m256 na = _mm256_cmp_ps(a, z, _CMP_NEQ_UQ);
@@ -122,20 +148,32 @@ inline __m256 binop_ps(__m256 a, __m256 b) {
 
 template <char Op>
 inline __m256d binop_pd(__m256d a, __m256d b) {
-  if constexpr (Op == '+') return _mm256_add_pd(a, b);
-  else if constexpr (Op == '-') return _mm256_sub_pd(a, b);
-  else if constexpr (Op == '*') return _mm256_mul_pd(a, b);
-  else if constexpr (Op == '/') return _mm256_div_pd(a, b);
-  else if constexpr (Op == 'm') return _mm256_min_pd(a, b);
-  else if constexpr (Op == 'M') return _mm256_max_pd(a, b);
+  if constexpr (Op == '+')
+    return _mm256_add_pd(a, b);
+  else if constexpr (Op == '-')
+    return _mm256_sub_pd(a, b);
+  else if constexpr (Op == '*')
+    return _mm256_mul_pd(a, b);
+  else if constexpr (Op == '/')
+    return _mm256_div_pd(a, b);
+  else if constexpr (Op == 'm')
+    return _mm256_min_pd(a, b);
+  else if constexpr (Op == 'M')
+    return _mm256_max_pd(a, b);
   else {
     const __m256d one = _mm256_set1_pd(1.0);
-    if constexpr (Op == '<') return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_LT_OQ), one);
-    else if constexpr (Op == 'l') return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_LE_OQ), one);
-    else if constexpr (Op == '>') return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_GT_OQ), one);
-    else if constexpr (Op == 'g') return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_GE_OQ), one);
-    else if constexpr (Op == '=') return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_EQ_OQ), one);
-    else if constexpr (Op == '!') return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_NEQ_UQ), one);
+    if constexpr (Op == '<')
+      return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_LT_OQ), one);
+    else if constexpr (Op == 'l')
+      return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_LE_OQ), one);
+    else if constexpr (Op == '>')
+      return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_GT_OQ), one);
+    else if constexpr (Op == 'g')
+      return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_GE_OQ), one);
+    else if constexpr (Op == '=')
+      return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_EQ_OQ), one);
+    else if constexpr (Op == '!')
+      return _mm256_and_pd(_mm256_cmp_pd(a, b, _CMP_NEQ_UQ), one);
     else if constexpr (Op == '&') {
       const __m256d z = _mm256_setzero_pd();
       __m256d na = _mm256_cmp_pd(a, z, _CMP_NEQ_UQ);
@@ -161,14 +199,22 @@ template <char Op>
 inline __m256i binop_epi32(__m256i a, __m256i b) {
   const __m256i one = _mm256_set1_epi32(1);
   const __m256i ones = _mm256_set1_epi32(-1);
-  if constexpr (Op == '+') return _mm256_add_epi32(a, b);
-  else if constexpr (Op == '-') return _mm256_sub_epi32(a, b);
-  else if constexpr (Op == '*') return _mm256_mullo_epi32(a, b);
-  else if constexpr (Op == 'm') return _mm256_min_epi32(a, b);
-  else if constexpr (Op == 'M') return _mm256_max_epi32(a, b);
-  else if constexpr (Op == '=') return _mm256_and_si256(_mm256_cmpeq_epi32(a, b), one);
-  else if constexpr (Op == '>') return _mm256_and_si256(_mm256_cmpgt_epi32(a, b), one);
-  else if constexpr (Op == '<') return _mm256_and_si256(_mm256_cmpgt_epi32(b, a), one);
+  if constexpr (Op == '+')
+    return _mm256_add_epi32(a, b);
+  else if constexpr (Op == '-')
+    return _mm256_sub_epi32(a, b);
+  else if constexpr (Op == '*')
+    return _mm256_mullo_epi32(a, b);
+  else if constexpr (Op == 'm')
+    return _mm256_min_epi32(a, b);
+  else if constexpr (Op == 'M')
+    return _mm256_max_epi32(a, b);
+  else if constexpr (Op == '=')
+    return _mm256_and_si256(_mm256_cmpeq_epi32(a, b), one);
+  else if constexpr (Op == '>')
+    return _mm256_and_si256(_mm256_cmpgt_epi32(a, b), one);
+  else if constexpr (Op == '<')
+    return _mm256_and_si256(_mm256_cmpgt_epi32(b, a), one);
   else if constexpr (Op == 'g')  // ~(a<b) = ~cmpgt(b,a)
     return _mm256_and_si256(_mm256_andnot_si256(_mm256_cmpgt_epi32(b, a), ones), one);
   else if constexpr (Op == 'l')  // ~(a>b) = ~cmpgt(a,b)
@@ -199,8 +245,10 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   auto scalar_tail = [&](int i) {
     const T av = (!BroadcastA) ? a[i] : a[0];
     const T bv = (!BroadcastB) ? b[i] : b[0];
-    if constexpr (Masked) out[i] = mask[i] ? tile_apply<T, Op>(av, bv) : T(0);
-    else out[i] = tile_apply<T, Op>(av, bv);
+    if constexpr (Masked)
+      out[i] = mask[i] ? tile_apply<T, Op>(av, bv) : T(0);
+    else
+      out[i] = tile_apply<T, Op>(av, bv);
   };
 
   // Modulo has no AVX2 vector intrinsic, and Python ``py_mod`` semantics differ
@@ -284,12 +332,14 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 // ===================================================================
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
-                       const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
+                     const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
   auto scalar_tail = [&](int i) {
     const T tv = (!BroadcastThen) ? t[i] : t[0];
     const T ev = (!BroadcastElse) ? e[i] : e[0];
-    if constexpr (Masked) out[i] = mask[i] ? (cond[i] ? tv : ev) : T(0);
-    else out[i] = cond[i] ? tv : ev;
+    if constexpr (Masked)
+      out[i] = mask[i] ? (cond[i] ? tv : ev) : T(0);
+    else
+      out[i] = cond[i] ? tv : ev;
   };
 
   if constexpr (std::is_same<T, float>::value) {
@@ -376,17 +426,28 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
 // SIMD intrinsic, so this shares scalar.h's lane-loop form in every backend.
 template <typename T, char Op>
 inline T tile_unop_apply(T a) {
-  if constexpr (Op == 'n') return -a;
-  else if constexpr (Op == '!') return T(!a);
-  else if constexpr (Op == 'a') return std::abs(a);
-  else if constexpr (Op == 'e') return std::exp(a);
-  else if constexpr (Op == 'l') return std::log(a);
-  else if constexpr (Op == 's') return std::sqrt(a);
-  else if constexpr (Op == 'S') return std::sin(a);
-  else if constexpr (Op == 'C') return std::cos(a);
-  else if constexpr (Op == 'f') return std::floor(a);
-  else if constexpr (Op == 'c') return std::ceil(a);
-  else /* 't' */ return std::tanh(a);
+  if constexpr (Op == 'n')
+    return -a;
+  else if constexpr (Op == '!')
+    return T(!a);
+  else if constexpr (Op == 'a')
+    return std::abs(a);
+  else if constexpr (Op == 'e')
+    return std::exp(a);
+  else if constexpr (Op == 'l')
+    return std::log(a);
+  else if constexpr (Op == 's')
+    return std::sqrt(a);
+  else if constexpr (Op == 'S')
+    return std::sin(a);
+  else if constexpr (Op == 'C')
+    return std::cos(a);
+  else if constexpr (Op == 'f')
+    return std::floor(a);
+  else if constexpr (Op == 'c')
+    return std::ceil(a);
+  else /* 't' */
+    return std::tanh(a);
 }
 
 // out[i] = <op> a-operand ; ZERO-FILL inactive (operand read is in-tile).
@@ -394,14 +455,16 @@ template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
 inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
   for (int i = 0; i < VLEN; ++i) {
     const T av = Broadcast ? a[0] : a[i];
-    if constexpr (Masked) out[i] = mask[i] ? tile_unop_apply<T, Op>(av) : T(0);
-    else out[i] = tile_unop_apply<T, Op>(av);
+    if constexpr (Masked)
+      out[i] = mask[i] ? tile_unop_apply<T, Op>(av) : T(0);
+    else
+      out[i] = tile_unop_apply<T, Op>(av);
   }
 }
 
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
-                       const T* __restrict__ e, const bool* __restrict__ mask) {
+                     const T* __restrict__ e, const bool* __restrict__ mask) {
   tile_ite<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
 }
 
@@ -411,11 +474,13 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
 // inactive lanes are NOT read -> OOB tail safe). Strided: scalar guarded loop.
 // ===================================================================
 template <typename T, bool Masked>
-inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
-                      int vlen, std::int64_t stride = 1) {
+inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
+                      std::int64_t stride = 1) {
   auto scalar_tail = [&](int i) {
-    if constexpr (Masked) dst[i] = mask[i] ? src[i * stride] : T(0);
-    else dst[i] = src[i * stride];
+    if constexpr (Masked)
+      dst[i] = mask[i] ? src[i * stride] : T(0);
+    else
+      dst[i] = src[i * stride];
   };
 
   if (stride != 1) {  // no native strided load -> scalar guarded loop
@@ -495,11 +560,13 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
 // (no native strided/scatter store in AVX2).
 // ===================================================================
 template <typename T, bool Masked>
-inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
-                       int vlen, std::int64_t stride = 1) {
+inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
+                       std::int64_t stride = 1) {
   auto scalar_tail = [&](int i) {
-    if constexpr (Masked) { if (mask[i]) dst[i * stride] = src[i]; }
-    else dst[i * stride] = src[i];
+    if constexpr (Masked) {
+      if (mask[i]) dst[i * stride] = src[i];
+    } else
+      dst[i * stride] = src[i];
   };
 
   if (stride != 1) {  // no native strided/scatter store -> scalar guarded loop
@@ -580,8 +647,10 @@ template <typename T, typename IdxT, bool Masked>
 inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                         const bool* __restrict__ mask, int vlen) {
   auto scalar_tail = [&](int i) {
-    if constexpr (Masked) dst[i] = mask[i] ? src[idx[i]] : T(0);
-    else dst[i] = src[idx[i]];
+    if constexpr (Masked)
+      dst[i] = mask[i] ? src[idx[i]] : T(0);
+    else
+      dst[i] = src[idx[i]];
   };
 
   if constexpr (std::is_same<T, float>::value) {
@@ -678,8 +747,10 @@ template <typename T, typename IdxT, bool Masked>
 inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                          const bool* __restrict__ mask, int vlen) {
   for (int i = 0; i < vlen; ++i) {
-    if constexpr (Masked) { if (mask[i]) dst[idx[i]] = src[i]; }
-    else dst[idx[i]] = src[i];
+    if constexpr (Masked) {
+      if (mask[i]) dst[idx[i]] = src[i];
+    } else
+      dst[idx[i]] = src[i];
   }
 }
 
@@ -706,6 +777,33 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
     for (int j = 0; j < W; ++j) out[i + j] = tmp[j] != 0;
   }
   for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
+}
+
+// ----------------------------- tile_reduce ----------------------------
+// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
+// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
+// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
+// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
+// ``pure`` per-lane expansion (the selector never routes those here).
+//
+// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
+// trailing lane forwards unchanged). Over a compile-time-constant ``VLEN`` the
+// loops unroll, so the compiler re-vectorises the partials; it reduces in the
+// same order as the vectorized ``Reduce`` node's ``_dace_horizontal_tree`` so
+// both paths agree. The per-lane combine reuses this header's own ``tile_apply``
+// (self-contained; no cross-ISA dispatch header).
+template <typename T, int VLEN, char Op>
+inline T tile_reduce(const T* __restrict__ src) {
+  T buf[VLEN];
+  for (int i = 0; i < VLEN; ++i) buf[i] = src[i];
+  int n = VLEN;
+  while (n > 1) {
+    int half = n / 2;
+    for (int i = 0; i < half; ++i) buf[i] = tile_apply<T, Op>(buf[2 * i], buf[2 * i + 1]);
+    if (n & 1) buf[half] = buf[n - 1];
+    n = half + (n & 1);
+  }
+  return buf[0];
 }
 
 }  // namespace tileops

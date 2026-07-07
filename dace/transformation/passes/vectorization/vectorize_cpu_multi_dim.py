@@ -60,8 +60,6 @@ from dace.transformation.passes.vectorization.insert_tile_load_store import Inse
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
-    RemoveFPTypeCasts,
-    RemoveIntTypeCasts,
     RemoveMathCall,
     RewriteModuloToPyMod,
 )
@@ -332,7 +330,8 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
                  scalar_remainder_emit: Literal["scalar", "tile_k1"] = "scalar",
                  expand_tile_nodes: bool = True,
                  validate_all: bool = False,
-                 reduce_at_output: bool = False):
+                 reduce_at_output: bool = False,
+                 assume_even: bool = False):
         """Build the orchestrator.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -481,8 +480,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # Full prep, run BEFORE tiling exactly as the legacy 1D pipeline
         # (vectorize_cpu.py) does, so the tile path handles the same kernels:
         #   * RemoveEmptyStates — tidy the CFG after branch lowering.
-        #   * RemoveFP/IntTypeCasts — strip ``dace.floatNN``/``intNN`` casts (the
-        #     tile binop re-promotes operands to the output dtype).
         #   * PowerOperatorExpansion — ``x**2`` -> ``x*x``; ``x**c`` ->
         #     ``exp(c*log(x))`` (reusing TileUnop exp/log + TileBinop mul).
         #   * SplitTasklets — one op per tasklet (also splits the expanded power
@@ -514,7 +511,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             # covers both the branch-front and the AST-rewrite output.)
             RemoveEmptyStates(),
         ]
-        if remainder_strategy in ("masked_tail", "scalar_postamble"):
+        # ``assume_even`` (GPU half2 path): the caller guarantees every tiled map extent
+        # is an exact multiple of its width, so there is NO remainder. Mark every eligible
+        # map ``__tile_main`` (no peel) -- the single strided ``0:N:W`` map covers the whole
+        # range, and the existing ``__tile_main`` marker makes GenerateTileIterationMask skip
+        # its mask (so no mismatched thread-block sizes on GPU). Reuses the same marker the
+        # masked_tail interior carries; no change to the mask pass itself.
+        if assume_even:
+            passes.append(SplitMapForTileRemainder(widths=widths_t, assume_even=True))
+        elif remainder_strategy in ("masked_tail", "scalar_postamble"):
             # Split each K-dim tile map into a provably-divisible interior
             # (marked ``__tile_main`` -> GenerateTileIterationMask skips its
             # mask -> the descent / emit lower it with has_mask=False, the perf
@@ -635,6 +640,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         self._expand_tile_nodes = expand_tile_nodes
         self._validate_all = validate_all
         self._reduce_at_output = reduce_at_output
+        self._assume_even = assume_even
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
@@ -698,8 +704,15 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # neither reduction recogniser matches, leaving a loop-carried scalar the
         # tiler cannot safely widen). The loop-carried RMW shape is lifted later,
         # after ``LoopToMap`` produces its map.
+        # ``vectorized`` selects the CPU horizontal-SIMD fold (ExpandReduceVectorized).
+        # That expansion is CPU-only; on the GPU path lift the reduction UN-vectorized so
+        # the ``Reduce`` node keeps a device-selectable implementation and
+        # ``_finalize_lifted_library_nodes`` picks the GPU expansion (cub / GPUAuto) for a
+        # top-level reduction. (An in-map reduction on GPU+fp16 will instead lower to a
+        # half2 ``TileReduce``; the CPU fold is never right for a GPU-scheduled map.)
+        reduce_vectorized = self._target_isa != "CUDA"
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
-        LiftMapReductionToReduce(vectorized=True, pure_wcr_only=True).apply_pass(sdfg, {})
+        LiftMapReductionToReduce(vectorized=reduce_vectorized, pure_wcr_only=True).apply_pass(sdfg, {})
         # Prep for the einsum / reduction lifts: fission fused compute so each
         # contraction / reduction is a single-output map the lifts can match. A fused
         # multi-output tasklet (gesummv's ``ot = A[i,j]*x[j]; oy = B[i,j]*x[j]`` -- two
@@ -742,7 +755,7 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # is needed in the SDFG. Mirrors where the legacy 1-D path runs the lift
         # (after LoopToMap). No-op on non-reductions.
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
-        LiftMapReductionToReduce(vectorized=True).apply_pass(sdfg, {})
+        LiftMapReductionToReduce(vectorized=reduce_vectorized).apply_pass(sdfg, {})
         # ExpandNestedSDFGInputs runs as a Pass embedded in the pipeline (see
         # ``_RunExpandNestedSDFGInputs`` constructed at __init__) -- it has to fire AFTER
         # ``NestInnermostMapBodyIntoNSDFG`` (which mints the body NSDFG) and BEFORE
@@ -750,6 +763,20 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``ppl.Pipeline.apply_pass`` machinery run the whole list in order without the
         # caller needing to split-and-rerun.
         result = super().apply_pass(sdfg, pipeline_results)
+        # Stamp ``target_isa`` + the concrete implementation on every tile lib node
+        # UNCONDITIONALLY -- even when expansion is deferred. A deferred SDFG
+        # (``expand_tile_nodes=False``) returns with the tile lib nodes present, and
+        # the caller expands later (or ``sdfg.compile()`` does); those nodes must
+        # already carry the chosen ISA (e.g. ``cuda`` for the GPU half2 path) so the
+        # deferred expansion lowers to the right backend rather than the ``pure``
+        # default. Cheap + idempotent, so it is safe to always run.
+        self._select_tile_implementations(sdfg)
+        # Finalize the lifted NON-tile lib nodes (Einsum contraction, Reduce reduction)
+        # UNCONDITIONALLY -- even when tile-node expansion is deferred. A deferred GPU
+        # SDFG must return with its ``Reduce`` GPU-placed + ``GPUAuto``/cub-stamped so
+        # the caller's later ``expand_library_nodes()`` lowers it to a real GPU reduction
+        # (not the host pure fallback). No-op when the SDFG carries no non-tile lib node.
+        self._finalize_lifted_library_nodes(sdfg)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()``
         # to the caller — the SDFG returns with tile lib nodes still
         # present (for inspection / saving / further transformations).
@@ -758,13 +785,6 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
         # ``_laneid_<i>``-style leak would be visible. Skip it on the
         # deferred path.
         if self._expand_tile_nodes:
-            # Contraction/reduction library nodes lifted up front (Einsum, and any
-            # Reduce the reduction lift produced) get a fast implementation selected
-            # the same way canonicalize's finalize tail does -- BLAS when a dimension
-            # is large/symbolic, the inlined ``pure`` loop nest at small known sizes --
-            # so they lower correctly alongside the tile nodes below.
-            self._finalize_lifted_library_nodes(sdfg)
-            self._select_tile_implementations(sdfg)
             sdfg.expand_library_nodes()
             # Sweep any per-lane SDFG symbols that the indirect-access (gather)
             # lowering emitted as named intermediates but that have no remaining
@@ -905,9 +925,45 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             for node, _ in sdfg.all_nodes_recursive())
         if not has_nontile_libnode:
             return
-        set_fast_implementations(sdfg, dace.dtypes.DeviceType.CPU)
+        # Finalize the lifted non-tile lib nodes for the TARGET device, not always CPU:
+        # a top-level reduction on the GPU path must pick the GPU ``Reduce`` expansion
+        # (cub / GPUAuto), not the CPU horizontal fold -- otherwise its expansion emits
+        # host code touching GPU_Global buffers. CPU multi-dim stays CPU.
+        device = dace.dtypes.DeviceType.GPU if self._target_isa == "CUDA" else dace.dtypes.DeviceType.CPU
+        if device == dace.dtypes.DeviceType.GPU:
+            self._gpu_place_reductions(sdfg)
+        set_fast_implementations(sdfg, device)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    def _gpu_place_reductions(self, sdfg: dace.SDFG) -> None:
+        """GPU-place every lifted top-level ``Reduce`` so ``GPUAuto`` / cub applies.
+
+        The reduction lift emits a product-fill map into a transient buffer + a ``Reduce``
+        over it. On the CPU path the buffer is host storage and the ``Reduce`` is
+        host-scheduled -- but the ``GPUAuto`` expansion requires its input to be
+        ``GPU_Global`` and the node to be ``GPU_Device``-scheduled, else it silently falls
+        back to the ``pure`` (host) expansion, whose ``reduce_init`` map then touches a
+        ``GPU_Global`` output from host code. So: schedule each ``Reduce`` (not already
+        inside a GPU kernel) ``GPU_Device`` and move its transient input buffer(s) to
+        ``GPU_Global``. The fill map is already GPU-scheduled (it is the strided tile map).
+
+        :param sdfg: SDFG to place in (GPU path only).
+        """
+        from dace.libraries.standard.nodes.reduce import Reduce
+        gpu = dace.dtypes.StorageType.GPU_Global
+        host = (dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.Default, dace.dtypes.StorageType.Register)
+        for state in sdfg.states():
+            for node in state.nodes():
+                if not isinstance(node, Reduce):
+                    continue
+                node.schedule = dace.dtypes.ScheduleType.GPU_Device
+                for e in state.in_edges(node):
+                    if e.data is None or e.data.data is None:
+                        continue
+                    desc = sdfg.arrays[e.data.data]
+                    if desc.transient and desc.storage in host:
+                        desc.storage = gpu
 
     def _select_tile_implementations(self, sdfg: dace.SDFG) -> None:
         """Stamp ``target_isa`` on every emitted tile lib node and resolve its

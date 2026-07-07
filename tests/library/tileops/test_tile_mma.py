@@ -29,7 +29,12 @@ def _build_tile_mma_sdfg(M, K_inner, N, alpha=1, beta=1, dtype=dace.float64):
     the row-major flat index ``i * N + j``); the tile shapes (M, K_inner),
     (K_inner, N), (M, N) match the lib-node validation.
     """
-    sdfg = dace.SDFG("tile_mma_fixture")
+    # Unique name per (shape, alpha, beta, dtype): parametrized cases running in
+    # parallel (xdist ``-n``) must not share a ``.dacecache/<name>/`` build dir --
+    # a shared name races the compile and flakes. ``-`` (a negative prefactor) is
+    # not a valid SDFG-name char, so sanitise it.
+    tag = f"{M}x{K_inner}x{N}_a{alpha}_b{beta}_{dtype.to_string()}".replace("-", "n").replace(".", "_")
+    sdfg = dace.SDFG(f"tile_mma_{tag}")
     sdfg.add_array("A", (M, K_inner), dtype, transient=False)
     sdfg.add_array("B", (K_inner, N), dtype, transient=False)
     sdfg.add_array("C", (M, N), dtype, transient=False)

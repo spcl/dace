@@ -59,8 +59,6 @@
 #include <cstdint>
 #include <type_traits>
 
-
-
 #if !defined(__ARM_FEATURE_SVE)
 #error Included the SVE tile-op header without SVE support
 #endif
@@ -169,13 +167,17 @@ inline svint64_t sve_sel(svbool_t c, svint64_t a, svint64_t b) { return svsel_s6
 // svwhilelt_b64.
 template <typename T>
 inline int sve_cnt() {
-  if constexpr (sizeof(T) == 4) return (int)svcntw();
-  else return (int)svcntd();
+  if constexpr (sizeof(T) == 4)
+    return (int)svcntw();
+  else
+    return (int)svcntd();
 }
 template <typename T>
 inline svbool_t sve_whilelt(int i, int n) {
-  if constexpr (sizeof(T) == 4) return svwhilelt_b32(i, n);
-  else return svwhilelt_b64(i, n);
+  if constexpr (sizeof(T) == 4)
+    return svwhilelt_b32(i, n);
+  else
+    return svwhilelt_b64(i, n);
 }
 
 // Build the active-lane predicate ``m = pg AND (mask[i + lane] != 0)`` from the
@@ -198,21 +200,33 @@ inline svbool_t sve_mask(svbool_t pg, const bool* mask, int i) {
 // combine), NOT bitwise.
 template <typename T, char Op, typename VecT>
 inline VecT sve_tile_apply(svbool_t pg, VecT a, VecT b) {
-  if constexpr (Op == '+') return sve_add(pg, a, b);
-  else if constexpr (Op == '-') return sve_sub(pg, a, b);
-  else if constexpr (Op == '*') return sve_mul(pg, a, b);
-  else if constexpr (Op == '/') return sve_div(pg, a, b);
-  else if constexpr (Op == 'm') return sve_min(pg, a, b);
-  else if constexpr (Op == 'M') return sve_max(pg, a, b);
+  if constexpr (Op == '+')
+    return sve_add(pg, a, b);
+  else if constexpr (Op == '-')
+    return sve_sub(pg, a, b);
+  else if constexpr (Op == '*')
+    return sve_mul(pg, a, b);
+  else if constexpr (Op == '/')
+    return sve_div(pg, a, b);
+  else if constexpr (Op == 'm')
+    return sve_min(pg, a, b);
+  else if constexpr (Op == 'M')
+    return sve_max(pg, a, b);
   else {
     const VecT one = sve_dup(T(1));
     const VecT zero = sve_dup(T(0));
-    if constexpr (Op == '<') return sve_sel(sve_cmplt(pg, a, b), one, zero);
-    else if constexpr (Op == 'l') return sve_sel(sve_cmple(pg, a, b), one, zero);
-    else if constexpr (Op == '>') return sve_sel(sve_cmpgt(pg, a, b), one, zero);
-    else if constexpr (Op == 'g') return sve_sel(sve_cmpge(pg, a, b), one, zero);
-    else if constexpr (Op == '=') return sve_sel(sve_cmpeq(pg, a, b), one, zero);
-    else if constexpr (Op == '!') return sve_sel(sve_cmpne(pg, a, b), one, zero);
+    if constexpr (Op == '<')
+      return sve_sel(sve_cmplt(pg, a, b), one, zero);
+    else if constexpr (Op == 'l')
+      return sve_sel(sve_cmple(pg, a, b), one, zero);
+    else if constexpr (Op == '>')
+      return sve_sel(sve_cmpgt(pg, a, b), one, zero);
+    else if constexpr (Op == 'g')
+      return sve_sel(sve_cmpge(pg, a, b), one, zero);
+    else if constexpr (Op == '=')
+      return sve_sel(sve_cmpeq(pg, a, b), one, zero);
+    else if constexpr (Op == '!')
+      return sve_sel(sve_cmpne(pg, a, b), one, zero);
     else if constexpr (Op == '&') {
       svbool_t r = svand_b_z(pg, sve_cmpne0(pg, a), sve_cmpne0(pg, b));
       return sve_sel(r, one, zero);
@@ -236,8 +250,10 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
     for (int i = 0; i < vlen; ++i) {
       const T av = BroadcastA ? a[0] : a[i];
       const T bv = BroadcastB ? b[0] : b[i];
-      if constexpr (Masked) out[i] = mask[i] ? py_mod(av, bv) : T(0);
-      else out[i] = py_mod(av, bv);
+      if constexpr (Masked)
+        out[i] = mask[i] ? py_mod(av, bv) : T(0);
+      else
+        out[i] = py_mod(av, bv);
     }
     return;
   }
@@ -264,8 +280,10 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
     for (int i = 0; i < VLEN; ++i) {
       const T av = BroadcastA ? a[0] : a[i];
       const T bv = BroadcastB ? b[0] : b[i];
-      if constexpr (Masked) out[i] = mask[i] ? py_mod(av, bv) : T(0);
-      else out[i] = py_mod(av, bv);
+      if constexpr (Masked)
+        out[i] = mask[i] ? py_mod(av, bv) : T(0);
+      else
+        out[i] = py_mod(av, bv);
     }
     return;
   }
@@ -291,7 +309,7 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 // ===========================================================================
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
-                       const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
+                     const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
   using VecT = decltype(sve_dup(T(0)));  // vec type for T, from the sve_dup overload set
   const VecT zero = sve_dup(T(0));
   for (int i = 0; i < vlen; i += sve_cnt<T>()) {
@@ -314,17 +332,28 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
 // SIMD intrinsic, so this shares scalar.h's lane-loop form in every backend.
 template <typename T, char Op>
 inline T tile_unop_apply(T a) {
-  if constexpr (Op == 'n') return -a;
-  else if constexpr (Op == '!') return T(!a);
-  else if constexpr (Op == 'a') return std::abs(a);
-  else if constexpr (Op == 'e') return std::exp(a);
-  else if constexpr (Op == 'l') return std::log(a);
-  else if constexpr (Op == 's') return std::sqrt(a);
-  else if constexpr (Op == 'S') return std::sin(a);
-  else if constexpr (Op == 'C') return std::cos(a);
-  else if constexpr (Op == 'f') return std::floor(a);
-  else if constexpr (Op == 'c') return std::ceil(a);
-  else /* 't' */ return std::tanh(a);
+  if constexpr (Op == 'n')
+    return -a;
+  else if constexpr (Op == '!')
+    return T(!a);
+  else if constexpr (Op == 'a')
+    return std::abs(a);
+  else if constexpr (Op == 'e')
+    return std::exp(a);
+  else if constexpr (Op == 'l')
+    return std::log(a);
+  else if constexpr (Op == 's')
+    return std::sqrt(a);
+  else if constexpr (Op == 'S')
+    return std::sin(a);
+  else if constexpr (Op == 'C')
+    return std::cos(a);
+  else if constexpr (Op == 'f')
+    return std::floor(a);
+  else if constexpr (Op == 'c')
+    return std::ceil(a);
+  else /* 't' */
+    return std::tanh(a);
 }
 
 // out[i] = <op> a-operand ; ZERO-FILL inactive (operand read is in-tile).
@@ -332,14 +361,16 @@ template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
 inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
   for (int i = 0; i < VLEN; ++i) {
     const T av = Broadcast ? a[0] : a[i];
-    if constexpr (Masked) out[i] = mask[i] ? tile_unop_apply<T, Op>(av) : T(0);
-    else out[i] = tile_unop_apply<T, Op>(av);
+    if constexpr (Masked)
+      out[i] = mask[i] ? tile_unop_apply<T, Op>(av) : T(0);
+    else
+      out[i] = tile_unop_apply<T, Op>(av);
   }
 }
 
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
-                       const T* __restrict__ e, const bool* __restrict__ mask) {
+                     const T* __restrict__ e, const bool* __restrict__ mask) {
   using VecT = decltype(sve_dup(T(0)));  // vec type for T, from the sve_dup overload set
   const VecT zero = sve_dup(T(0));
   for (int i = 0; i < VLEN; i += sve_cnt<T>()) {
@@ -363,8 +394,8 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
 // becomes an index gather over the ``i + lane`` ramp scaled by ``stride``.
 // ===========================================================================
 template <typename T, bool Masked>
-inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
-                      int vlen, std::int64_t stride = 1) {
+inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
+                      std::int64_t stride = 1) {
   using VecT = decltype(sve_dup(T(0)));  // vec type for T, from the sve_dup overload set
   const VecT zero = sve_dup(T(0));
   for (int i = 0; i < vlen; i += sve_cnt<T>()) {
@@ -378,13 +409,17 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
       if constexpr (sizeof(T) == 4) {
         svint32_t ramp = svindex_s32((std::int32_t)i, 1);
         svint32_t vidx = svmul_n_s32_x(rp, ramp, (std::int32_t)stride);
-        if constexpr (std::is_same<T, float>::value) v = svld1_gather_s32index_f32(rp, src, vidx);
-        else v = svld1_gather_s32index_s32(rp, src, vidx);
+        if constexpr (std::is_same<T, float>::value)
+          v = svld1_gather_s32index_f32(rp, src, vidx);
+        else
+          v = svld1_gather_s32index_s32(rp, src, vidx);
       } else {
         svint64_t ramp = svindex_s64((std::int64_t)i, 1);
         svint64_t vidx = svmul_n_s64_x(rp, ramp, stride);
-        if constexpr (std::is_same<T, double>::value) v = svld1_gather_s64index_f64(rp, src, vidx);
-        else v = svld1_gather_s64index_s64(rp, src, vidx);
+        if constexpr (std::is_same<T, double>::value)
+          v = svld1_gather_s64index_f64(rp, src, vidx);
+        else
+          v = svld1_gather_s64index_s64(rp, src, vidx);
       }
     }
     if constexpr (Masked) v = sve_sel(rp, v, zero);  // zero-fill masked-off lanes
@@ -407,13 +442,17 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
       if constexpr (sizeof(T) == 4) {
         svint32_t ramp = svindex_s32((std::int32_t)i, 1);
         svint32_t vidx = svmul_n_s32_x(rp, ramp, (std::int32_t)stride);
-        if constexpr (std::is_same<T, float>::value) v = svld1_gather_s32index_f32(rp, src, vidx);
-        else v = svld1_gather_s32index_s32(rp, src, vidx);
+        if constexpr (std::is_same<T, float>::value)
+          v = svld1_gather_s32index_f32(rp, src, vidx);
+        else
+          v = svld1_gather_s32index_s32(rp, src, vidx);
       } else {
         svint64_t ramp = svindex_s64((std::int64_t)i, 1);
         svint64_t vidx = svmul_n_s64_x(rp, ramp, stride);
-        if constexpr (std::is_same<T, double>::value) v = svld1_gather_s64index_f64(rp, src, vidx);
-        else v = svld1_gather_s64index_s64(rp, src, vidx);
+        if constexpr (std::is_same<T, double>::value)
+          v = svld1_gather_s64index_f64(rp, src, vidx);
+        else
+          v = svld1_gather_s64index_s64(rp, src, vidx);
       }
     }
     if constexpr (Masked) v = sve_sel(rp, v, zero);
@@ -428,8 +467,8 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
 // index scatter over the ``i + lane`` ramp scaled by ``stride``.
 // ===========================================================================
 template <typename T, bool Masked>
-inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
-                       int vlen, std::int64_t stride = 1) {
+inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
+                       std::int64_t stride = 1) {
   for (int i = 0; i < vlen; i += sve_cnt<T>()) {
     svbool_t pg = sve_whilelt<T>(i, vlen);
     svbool_t wp = pg;  // write predicate (skip-inactive)
@@ -441,13 +480,17 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
       if constexpr (sizeof(T) == 4) {
         svint32_t ramp = svindex_s32((std::int32_t)i, 1);
         svint32_t vidx = svmul_n_s32_x(wp, ramp, (std::int32_t)stride);
-        if constexpr (std::is_same<T, float>::value) svst1_scatter_s32index_f32(wp, dst, vidx, v);
-        else svst1_scatter_s32index_s32(wp, dst, vidx, v);
+        if constexpr (std::is_same<T, float>::value)
+          svst1_scatter_s32index_f32(wp, dst, vidx, v);
+        else
+          svst1_scatter_s32index_s32(wp, dst, vidx, v);
       } else {
         svint64_t ramp = svindex_s64((std::int64_t)i, 1);
         svint64_t vidx = svmul_n_s64_x(wp, ramp, stride);
-        if constexpr (std::is_same<T, double>::value) svst1_scatter_s64index_f64(wp, dst, vidx, v);
-        else svst1_scatter_s64index_s64(wp, dst, vidx, v);
+        if constexpr (std::is_same<T, double>::value)
+          svst1_scatter_s64index_f64(wp, dst, vidx, v);
+        else
+          svst1_scatter_s64index_s64(wp, dst, vidx, v);
       }
     }
   }
@@ -466,13 +509,17 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
       if constexpr (sizeof(T) == 4) {
         svint32_t ramp = svindex_s32((std::int32_t)i, 1);
         svint32_t vidx = svmul_n_s32_x(wp, ramp, (std::int32_t)stride);
-        if constexpr (std::is_same<T, float>::value) svst1_scatter_s32index_f32(wp, dst, vidx, v);
-        else svst1_scatter_s32index_s32(wp, dst, vidx, v);
+        if constexpr (std::is_same<T, float>::value)
+          svst1_scatter_s32index_f32(wp, dst, vidx, v);
+        else
+          svst1_scatter_s32index_s32(wp, dst, vidx, v);
       } else {
         svint64_t ramp = svindex_s64((std::int64_t)i, 1);
         svint64_t vidx = svmul_n_s64_x(wp, ramp, stride);
-        if constexpr (std::is_same<T, double>::value) svst1_scatter_s64index_f64(wp, dst, vidx, v);
-        else svst1_scatter_s64index_s64(wp, dst, vidx, v);
+        if constexpr (std::is_same<T, double>::value)
+          svst1_scatter_s64index_f64(wp, dst, vidx, v);
+        else
+          svst1_scatter_s64index_s64(wp, dst, vidx, v);
       }
     }
   }
@@ -528,12 +575,16 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
     VecT v;
     if constexpr (sizeof(T) == 4) {
       svint32_t vidx = sve_load_idx32<IdxT>(rp, idx, i);
-      if constexpr (std::is_same<T, float>::value) v = svld1_gather_s32index_f32(rp, src, vidx);
-      else v = svld1_gather_s32index_s32(rp, src, vidx);
+      if constexpr (std::is_same<T, float>::value)
+        v = svld1_gather_s32index_f32(rp, src, vidx);
+      else
+        v = svld1_gather_s32index_s32(rp, src, vidx);
     } else {
       svint64_t vidx = sve_load_idx64<IdxT>(rp, idx, i);
-      if constexpr (std::is_same<T, double>::value) v = svld1_gather_s64index_f64(rp, src, vidx);
-      else v = svld1_gather_s64index_s64(rp, src, vidx);
+      if constexpr (std::is_same<T, double>::value)
+        v = svld1_gather_s64index_f64(rp, src, vidx);
+      else
+        v = svld1_gather_s64index_s64(rp, src, vidx);
     }
     if constexpr (Masked) v = sve_sel(rp, v, zero);
     sve_st1(pg, dst + i, v);
@@ -551,12 +602,16 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
     VecT v;
     if constexpr (sizeof(T) == 4) {
       svint32_t vidx = sve_load_idx32<IdxT>(rp, idx, i);
-      if constexpr (std::is_same<T, float>::value) v = svld1_gather_s32index_f32(rp, src, vidx);
-      else v = svld1_gather_s32index_s32(rp, src, vidx);
+      if constexpr (std::is_same<T, float>::value)
+        v = svld1_gather_s32index_f32(rp, src, vidx);
+      else
+        v = svld1_gather_s32index_s32(rp, src, vidx);
     } else {
       svint64_t vidx = sve_load_idx64<IdxT>(rp, idx, i);
-      if constexpr (std::is_same<T, double>::value) v = svld1_gather_s64index_f64(rp, src, vidx);
-      else v = svld1_gather_s64index_s64(rp, src, vidx);
+      if constexpr (std::is_same<T, double>::value)
+        v = svld1_gather_s64index_f64(rp, src, vidx);
+      else
+        v = svld1_gather_s64index_s64(rp, src, vidx);
     }
     if constexpr (Masked) v = sve_sel(rp, v, zero);
     sve_st1(pg, dst + i, v);
@@ -578,12 +633,16 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
     auto v = sve_ld1(wp, src + i);
     if constexpr (sizeof(T) == 4) {
       svint32_t vidx = sve_load_idx32<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, float>::value) svst1_scatter_s32index_f32(wp, dst, vidx, v);
-      else svst1_scatter_s32index_s32(wp, dst, vidx, v);
+      if constexpr (std::is_same<T, float>::value)
+        svst1_scatter_s32index_f32(wp, dst, vidx, v);
+      else
+        svst1_scatter_s32index_s32(wp, dst, vidx, v);
     } else {
       svint64_t vidx = sve_load_idx64<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, double>::value) svst1_scatter_s64index_f64(wp, dst, vidx, v);
-      else svst1_scatter_s64index_s64(wp, dst, vidx, v);
+      if constexpr (std::is_same<T, double>::value)
+        svst1_scatter_s64index_f64(wp, dst, vidx, v);
+      else
+        svst1_scatter_s64index_s64(wp, dst, vidx, v);
     }
   }
 }
@@ -597,12 +656,16 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
     auto v = sve_ld1(wp, src + i);
     if constexpr (sizeof(T) == 4) {
       svint32_t vidx = sve_load_idx32<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, float>::value) svst1_scatter_s32index_f32(wp, dst, vidx, v);
-      else svst1_scatter_s32index_s32(wp, dst, vidx, v);
+      if constexpr (std::is_same<T, float>::value)
+        svst1_scatter_s32index_f32(wp, dst, vidx, v);
+      else
+        svst1_scatter_s32index_s32(wp, dst, vidx, v);
     } else {
       svint64_t vidx = sve_load_idx64<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, double>::value) svst1_scatter_s64index_f64(wp, dst, vidx, v);
-      else svst1_scatter_s64index_s64(wp, dst, vidx, v);
+      if constexpr (std::is_same<T, double>::value)
+        svst1_scatter_s64index_f64(wp, dst, vidx, v);
+      else
+        svst1_scatter_s64index_s64(wp, dst, vidx, v);
     }
   }
 }
@@ -622,6 +685,33 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
     svint64_t ones = svdup_n_s64_z(active, 1);                 // 1 active / 0 else
     svst1b_s64(wp, reinterpret_cast<signed char*>(out) + i, ones);
   }
+}
+
+// ----------------------------- tile_reduce ----------------------------
+// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
+// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
+// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
+// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
+// ``pure`` per-lane expansion (the selector never routes those here).
+//
+// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
+// trailing lane forwards unchanged). Over a compile-time-constant ``VLEN`` the
+// loops unroll, so the compiler re-vectorises the partials; it reduces in the
+// same order as the vectorized ``Reduce`` node's ``_dace_horizontal_tree`` so
+// both paths agree. The per-lane combine reuses this header's own ``tile_apply``
+// (self-contained; no cross-ISA dispatch header).
+template <typename T, int VLEN, char Op>
+inline T tile_reduce(const T* __restrict__ src) {
+  T buf[VLEN];
+  for (int i = 0; i < VLEN; ++i) buf[i] = src[i];
+  int n = VLEN;
+  while (n > 1) {
+    int half = n / 2;
+    for (int i = 0; i < half; ++i) buf[i] = tile_apply<T, Op>(buf[2 * i], buf[2 * i + 1]);
+    if (n & 1) buf[half] = buf[n - 1];
+    n = half + (n & 1);
+  }
+  return buf[0];
 }
 
 }  // namespace tileops

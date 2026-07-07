@@ -148,7 +148,12 @@ class TileOpsCUDA:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["dace/tile_ops/cuda.h"]}
+    # The tile-op calls are emitted INSIDE the GPU kernel (device code), so the
+    # header must land in the CUDA (``.cu``) TU -- the ``'cuda'`` key. It is also
+    # kept in the ``'frame'`` (host ``.cpp``) TU: the K=1 VLEN=1 overloads are
+    # ``inline`` (not ``__device__``) so a host-side tile op still resolves, and
+    # the ``__CUDACC__`` guard makes the device bodies inert in the host frame.
+    headers = {'frame': ["dace/tile_ops/cuda.h"], 'cuda': ["dace/tile_ops/cuda.h"]}
     state_fields = []
     init_code = ""
     finalize_code = ""

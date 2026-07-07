@@ -584,6 +584,44 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     )
 
 
+def make_reduce_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
+    """CPP/CUDA tasklet calling ``dace::tileops::tile_reduce`` (full K=1 horizontal reduce).
+
+    The ``tile_reduce`` intrinsic collapses a VLEN-lane tile to ONE scalar (an
+    in-map / per-tile reduction ``acc = sum/prod/min/max over the tile``). Every
+    backend header ships its own self-contained lowering (no shared dispatch
+    header): AVX-512 accumulates the lane groups then collapses with the one-shot
+    ``_mm512_reduce_<op>_p{s,d}``; scalar / avx2 / neon / sve use a portable
+    balanced log-depth tree over the header's own ``tile_apply``; and the CUDA
+    fp16 path folds pairwise via ``__hadd2`` / ... then combines the 2 surviving
+    lanes into one ``__half`` (there is no native "reduce half2 -> half"
+    intrinsic), with the generic CUDA template keeping the per-lane fold for every
+    other element type. Only a shape the intrinsic cannot express -- a single-axis
+    reduce (``axis is not None``), a mask, or K>=2 -- delegates to
+    :class:`ExpandTileReducePure`.
+    """
+    from dace.libraries.tileops.nodes.tile_reduce import ExpandTileReducePure
+    if node.axis is not None or node.has_mask or len(node.widths) != 1:
+        return ExpandTileReducePure.expansion(node, parent_state, parent_sdfg)
+    vlen = _require_k1(node)
+    src_dtype = _in_ctype(node, parent_state, parent_sdfg, "_src")
+    op_char = _OP_TO_CHAR[node.op]
+    # Full reduction -> length-1 output. DaCe emits a volume-1 output by value
+    # (``T _dst;``) so it is referenced bare; a genuine multi-element pointer
+    # target is dereferenced ``_dst[0]`` (mirrors ExpandTileReducePure.writeback).
+    out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
+    scalar_dst = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
+    dst_ref = "_dst" if scalar_dst else "_dst[0]"
+    call = f"{dst_ref} = dace::tileops::tile_reduce<{src_dtype}, {vlen}, '{op_char}'>(_src);"
+    return nodes.Tasklet(
+        label=f"{node.label}_{suffix}",
+        inputs={"_src": None},
+        outputs={"_dst": None},
+        code=call,
+        language=dace.dtypes.Language.CPP,
+    )
+
+
 def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_store`` (RMW skip-inactive).
 

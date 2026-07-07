@@ -17,6 +17,7 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops
+from .._isa_codegen import make_isa_expansions, make_reduce_tasklet
 
 
 def _identity_literal(op: str, ctype: str) -> str:
@@ -218,7 +219,16 @@ class TileReduce(nodes.LibraryNode):
       shape.
     """
 
-    implementations = {"pure": ExpandTileReducePure, "cutile": ExpandTileReduceCutile}
+    implementations = {
+        "pure": ExpandTileReducePure,
+        "cutile": ExpandTileReduceCutile,
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve / cuda): a call into
+        # dace/tile_ops/<backend>.h::tile_reduce -- each header is self-contained (AVX-512
+        # one-shot ``_mm512_reduce_*``, a portable balanced tree on the other CPU ISAs, a
+        # half2 pairwise fold on CUDA). Built by the shared factory; the selector routes a
+        # masked / single-axis / K>=2 reduce (which the intrinsic cannot express) to ``pure``.
+        **make_isa_expansions("Reduce", make_reduce_tasklet, globals()),
+    }
     default_implementation = "pure"
 
     target_isa = properties.Property(
