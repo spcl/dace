@@ -218,8 +218,17 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                 # independent of the array boundary, so preserve it verbatim while only the
                 # named-array subset is offset. The single-element case covers the self-copy /
                 # collapsed-element shapes.
-                src_is_view = isinstance(src, nodes.AccessNode) and isinstance(inner_sdfg.arrays[src.data], data.View)
-                dst_is_view = isinstance(dst, nodes.AccessNode) and isinstance(inner_sdfg.arrays[dst.data], data.View)
+                # ``inner_name`` was already removed from ``inner_sdfg.arrays`` at the top
+                # of ``_replace_desc_and_uncollapse_dims`` (replaced by ``outer_name``), so a
+                # self-copy / slice-copy edge whose src or dst access node still carries the
+                # OLD ``inner_name`` (rename happens later via ``replace_dict``) is absent
+                # from the table -- ``inner_sdfg.arrays[src.data]`` would ``KeyError``. Look
+                # up defensively: the connector array was always an Array / Scalar (never a
+                # View), so a missing descriptor is unambiguously "not a View".
+                src_desc = inner_sdfg.arrays.get(src.data) if isinstance(src, nodes.AccessNode) else None
+                dst_desc = inner_sdfg.arrays.get(dst.data) if isinstance(dst, nodes.AccessNode) else None
+                src_is_view = isinstance(src_desc, data.View)
+                dst_is_view = isinstance(dst_desc, data.View)
                 if (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)
                         and memlet.data in (src.data, dst.data)
                         and (memlet.other_subset.num_elements() == 1 or src_is_view or dst_is_view)):
