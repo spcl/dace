@@ -75,8 +75,8 @@ class NanobindCompiledSDFG:
         Structure arguments may be passed as the ``ctypes.Structure`` the ctypes
         path uses; they are forwarded as a pointer to it.
         """
-        keepalive = None
         if self._struct_args:
+            # keepalive keeps the ctypes objects alive until the handle returns.
             args, kwargs, keepalive = self._marshal_structures(args, kwargs)
 
         # Early exit: no return values, no shape logic - nanobind's dispatcher
@@ -115,19 +115,13 @@ class NanobindCompiledSDFG:
         keepalive = []
 
         def to_address(value):
-            if isinstance(value, int):
-                return value
             keepalive.append(value)
             return ctypes.addressof(value)
 
-        args = list(args)
-        for i, name in enumerate(self._arg_names[:len(args)]):
-            if name in self._struct_args:
-                args[i] = to_address(args[i])
-        for name, value in list(kwargs.items()):
-            if name in self._struct_args:
-                kwargs[name] = to_address(value)
-        return tuple(args), kwargs, keepalive
+        struct_args, names = self._struct_args, self._arg_names
+        args = tuple(to_address(v) if (i < len(names) and names[i] in struct_args) else v for i, v in enumerate(args))
+        kwargs = {k: (to_address(v) if k in struct_args else v) for k, v in kwargs.items()}
+        return args, kwargs, keepalive
 
     def _allocate_return_arrays(self, kwargs):
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
