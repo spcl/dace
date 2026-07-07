@@ -74,6 +74,7 @@ from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolsNonnegative
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -881,6 +882,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # disposition is to skip the pass at end-of-canonicalize. Other Simplify
     # sub-passes still run.
     s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
+
+    # assume_nonneg (LAST): make the "all free symbols are nonnegative" contract
+    # that the offset-sign reasoning relied on explicit and runtime-checked, by
+    # prepending a side-effecting ``__builtin_trap`` start state that aborts on a
+    # negative signed-integer free symbol. Runs AFTER every structural pass +
+    # the terminal simplify: a guard prepended earlier is orphaned by any pass
+    # that builds its own entry state (LoopToScan's scan-init block, reduction
+    # init, ...), which resets the top-level start block and leaves the guard a
+    # disconnected source that dominator analyses then KeyError on. Emitting it
+    # last -- nothing runs after -- avoids that entirely while still yielding a
+    # first-state guard at codegen. The external free-symbol set is unchanged by
+    # canonicalization (only loop iterators are renamed, and those are bound).
+    s += [('end', AssumeSymbolsNonnegative())]
     return s
 
 
