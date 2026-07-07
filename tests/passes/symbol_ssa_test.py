@@ -222,7 +222,7 @@ def test_loop_iter_symbol_reused_fused():
     assert set(loop_1_init_edge.assignments.keys()) == {'i_0'}
     assert loop_1_in_condition_edge.free_symbols == {'i_0', 'N'}
     assert 'i_0' in loop_1_inc_edge.assignments
-    assert 'i_0' in loop_1_inc_edge.assignments['i_0']
+    assert 'i_0' in map(str, loop_1_inc_edge.assignments['i_0'].free_symbols)
     assert set(loop_1_inc_edge.assignments.keys()) == {'i_0'}
     assert 'i_0' in shared_cond_init_edge.free_symbols
 
@@ -230,7 +230,7 @@ def test_loop_iter_symbol_reused_fused():
     assert loop_2_in_condition_edge.free_symbols == {'i_1', 'N'}
     assert loop_2_out_condition_edge.free_symbols == {'i_1', 'N'}
     assert 'i_1' in loop_2_inc_edge.assignments
-    assert 'i_1' in loop_2_inc_edge.assignments['i_1']
+    assert 'i_1' in map(str, loop_2_inc_edge.assignments['i_1'].free_symbols)
     assert set(loop_2_inc_edge.assignments.keys()) == {'i_1'}
 
     assert loop_1_1.free_symbols == {'i_0', 'N'}

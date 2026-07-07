@@ -647,10 +647,12 @@ def test_fusion_with_nested_sdfg_0():
 
         state_head = sdfg.add_state("head_state", is_start_block=True)
         state_if_guard = sdfg.add_state("state_if_guard")
-        sdfg.add_edge(state_head, state_if_guard, dace.InterstateEdge(
-            condition="1",
-            assignments={"__tmp2": "c < 0.0"},
-        ))
+        sdfg.add_edge(
+            state_head, state_if_guard,
+            dace.InterstateEdge(
+                condition="1",
+                assignments={"__tmp2": dace.symbolic.pystr_to_symbolic("c < 0.0")},
+            ))
 
         def _make_branch_tasklet(
             state: dace.SDFGState,

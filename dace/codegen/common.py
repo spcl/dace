@@ -92,6 +92,8 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     from dace.codegen.targets.cpp import InterstateEdgeUnparser  # Avoid import loop
 
     # Convert from code to AST as necessary
+    if isinstance(code_ast, symbolic.SymbolicType):
+        code_ast = ast.parse(symbolic.symstr(code_ast)).body[0]
     if isinstance(code_ast, str):
         code_ast = ast.parse(code_ast).body[0]
 

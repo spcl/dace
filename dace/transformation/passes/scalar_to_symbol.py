@@ -603,7 +603,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                             for aname, aval in ise.data.assignments.items():
                                 vast = ast.parse(aval)
                                 vast = astutils.RemoveSubscripts({tmp_symname}).visit(vast)
-                                ise.data.assignments[aname] = astutils.unparse(vast)
+                                ise.data.assignments[aname] = symbolic.pystr_to_symbolic(astutils.unparse(vast))
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
                         promo = TaskletPromoterDict({e.dst_conn: tmp_symname})
                         for reg in dst.sdfg.all_control_flow_regions():
@@ -731,13 +731,14 @@ class ScalarToSymbolPromotion(passes.Pass):
                             memlet_str += '[%s]' % e.data.subset
                         newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
                     # Add interstate edge assignment
-                    new_isedge.data.assignments[node.data] = newcode
+                    new_isedge.data.assignments[node.data] = symbolic.pystr_to_symbolic(newcode)
                 elif isinstance(input, nodes.AccessNode):
                     memlet: mm.Memlet = in_edge.data
                     if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
-                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
+                        new_isedge.data.assignments[node.data] = symbolic.pystr_to_symbolic(
+                            '%s[%s]' % (input.data, memlet.src_subset))
                     else:
-                        new_isedge.data.assignments[node.data] = input.data
+                        new_isedge.data.assignments[node.data] = symbolic.pystr_to_symbolic(input.data)
 
                 # Clean up all nodes after assignment was transferred
                 new_state.remove_nodes_from(new_state.nodes())
@@ -773,15 +774,6 @@ class ScalarToSymbolPromotion(passes.Pass):
                     for scalar in to_promote:
                         ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
 
-            # Assignments
-            for aname, assignment in ise.assignments.items():
-                for scalar in to_promote:
-                    if scalar in assignment:
-                        # NOTE: At least in Python 3.7, the string `assignment` is a copy of `ise.assignments[aname]`.
-                        # Performing all substitutions in `assignment` and finally setting `ise.assignments[aname]`
-                        # should work for all Python versions.
-                        assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
-                ise.assignments[aname] = assignment
         for reg in sdfg.all_control_flow_regions():
             meta_codes = reg.get_meta_codeblocks()
             for cd in meta_codes:

@@ -118,7 +118,7 @@ class StartStateElimination(transformation.MultiStateTransformation):
 def _assignments_to_consider(sdfg, edge, is_constant=False):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
-        as_symbolic = symbolic.pystr_to_symbolic(assign)
+        as_symbolic = assign
         if isinstance(as_symbolic, bool):
             as_symbolic = symbolic.pystr_to_symbolic(as_symbolic)
         if is_constant and as_symbolic.free_symbols:

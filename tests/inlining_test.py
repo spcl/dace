@@ -1025,7 +1025,7 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
     assert len(assigning_edge.data.assignments) == 1
     assert "inner_symbol" in assigning_edge.data.assignments
-    assert assigning_edge.data.assignments["inner_symbol"] == "outer_scalar"
+    assert assigning_edge.data.assignments["inner_symbol"] == dace.symbol("outer_scalar")
 
     # Test if the compilation itself works.
     outer_sdfg.regenerate_code = True
@@ -1059,7 +1059,7 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     inner_assigning_edge = next(iter(inner_sdfg.in_edges(map_state)))
     assert len(inner_assigning_edge.data.assignments) == 1
     assert "inner_symbol" in inner_assigning_edge.data.assignments
-    assert inner_assigning_edge.data.assignments[inner_symbol_name] == "inner_scalar"
+    assert inner_assigning_edge.data.assignments[inner_symbol_name] == dace.symbol("inner_scalar")
 
     # The symbol `inner_symbol` of the outer SDFG is a free symbol, for that reason it has to
     #  be provided as argument. Contrary to that, the inner SDFG needs the scalar.
@@ -1118,7 +1118,7 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
     assert len(assigning_edge.data.assignments) == 1
     assert renamed_inner_symbol_name in assigning_edge.data.assignments
-    assert assigning_edge.data.assignments[renamed_inner_symbol_name] == "outer_scalar"
+    assert assigning_edge.data.assignments[renamed_inner_symbol_name] == dace.symbol("outer_scalar")
 
     # Test if the compilation itself works.
     outer_sdfg.regenerate_code = True

@@ -3384,7 +3384,7 @@ class LoopRegion(ControlFlowRegion):
             init_edge.assignments = {}
             for stmt in self.init_statement.code:
                 assign: astutils.ast.Assign = stmt
-                init_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
+                init_edge.assignments[assign.targets[0].id] = symbolic.pystr_to_symbolic(astutils.unparse(assign.value))
         if self.inverted:
             parent.add_edge(init_state, self.start_block, init_edge)
         else:
@@ -3396,7 +3396,8 @@ class LoopRegion(ControlFlowRegion):
             update_edge.assignments = {}
             for stmt in self.update_statement.code:
                 assign: astutils.ast.Assign = stmt
-                update_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
+                update_edge.assignments[assign.targets[0].id] = symbolic.pystr_to_symbolic(
+                    astutils.unparse(assign.value))
         parent.add_edge(loop_latch_state, guard_state, update_edge)
 
         # Add condition checking edges and connect the guard state.
