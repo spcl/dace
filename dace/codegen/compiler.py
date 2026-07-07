@@ -635,6 +635,83 @@ def load_precompiled_sdfg(
     return get_program_handle(library_path=library_path, sdfg=sdfg)
 
 
+def safe_call_precompiled(sdfg, args, kwargs) -> None:
+    """Runs an already-compiled SDFG in a separate process, surviving crashes.
+
+    A crash in the SDFG (e.g. a segfault) takes down only the child process and
+    is reported here as ``RuntimeError``, instead of killing the caller. Output
+    travels through the in/out arguments: the mutated arrays are copied back
+    into the caller's ``args``/``kwargs`` after the child finishes.
+
+    The child reloads the artifact with :func:`load_precompiled_sdfg`, which
+    dispatches on the folder's ``INTERFACE`` marker, so this works for any
+    interface without knowing which one produced ``sdfg``.
+
+    :param sdfg: The compiled SDFG to run; its ``build_folder`` must hold the
+                 artifact.
+    :param args: Positional call arguments.
+    :param kwargs: Keyword call arguments.
+    :raises NotImplementedError: If the SDFG has return values (they cannot be
+                                 transmitted through the argument channel).
+    :raises RuntimeError: If the child process exits with a non-zero code.
+    """
+    import pickle
+    import tempfile
+
+    if any(name == '__return' or name.startswith('__return_') for name in sdfg.arrays.keys()):
+        raise NotImplementedError('safe_call() does not support return values.')
+
+    # Absolute, so the child resolves it regardless of its working directory.
+    folder = os.path.abspath(str(sdfg.build_folder))
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
+        pickle.dump({'folder': folder, 'sdfg': sdfg, 'args': args, 'kwargs': kwargs}, f)
+        temp_path = f.name
+
+    try:
+        # Run from a neutral directory: the child works with absolute paths, and
+        # a cwd that contains a ``dace`` directory would shadow the installed
+        # package as a namespace package and break ``import dace`` in the child.
+        result = subprocess.run([
+            sys.executable, '-c', 'from dace.codegen.compiler import _safe_call_subprocess_main; '
+            f'_safe_call_subprocess_main(r"{temp_path}")'
+        ],
+                                cwd=os.path.dirname(temp_path))
+
+        # On a crash the child never wrote back, so the temp file still holds
+        # the original arguments and the copy-back below is a no-op.
+        with open(temp_path, 'rb') as f:
+            data = pickle.load(f)
+        for i in range(len(args)):
+            if hasattr(args[i], '__setitem__'):
+                args[i].__setitem__(slice(None), data['args'][i])
+        for k in kwargs:
+            if hasattr(kwargs[k], '__setitem__'):
+                kwargs[k].__setitem__(slice(None), data['kwargs'][k])
+    finally:
+        os.remove(temp_path)
+
+    if result.returncode != 0:
+        raise RuntimeError(f'SDFG execution failed with return code {result.returncode}.')
+
+
+def _safe_call_subprocess_main(pickle_path: str) -> None:
+    """Child entry point for :func:`safe_call_precompiled`.
+
+    Loads the precompiled artifact, runs it (mutating the in/out arrays), and
+    writes the mutated arguments back to ``pickle_path`` for the parent.
+    """
+    import pickle
+
+    with open(pickle_path, 'rb') as f:
+        data = pickle.load(f)
+
+    csdfg = load_precompiled_sdfg(data['folder'], data['sdfg'])
+    csdfg(*data['args'], **data['kwargs'])
+
+    with open(pickle_path, 'wb') as f:
+        pickle.dump({'args': data['args'], 'kwargs': data['kwargs']}, f)
+
+
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
     """
     Returns a stored value or lazily evaluates it. Used in environments

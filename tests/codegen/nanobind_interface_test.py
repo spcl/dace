@@ -413,6 +413,77 @@ def test_nanobind_interface_load_distinct_artifact_raises():
             load_nanobind_module(copied, csdfg.sdfg.name)
 
 
+def test_nanobind_interface_safe_call():
+    """safe_call runs the SDFG in a subprocess: it forwards in/out output, and a
+    crash (writing to a null pointer) surfaces as an exception instead of killing
+    the calling process."""
+    import pytest
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def safe_call_nanobind(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
+            for i in range(5):
+                with dace.tasklet('CPP'):
+                    b << B[i]
+                    u << ub
+                    a >> A[i]
+                    """
+                    if (u == 0) { *((double*)nullptr) = 42.0; }
+                    a = b + 1;
+                    """
+
+        csdfg = safe_call_nanobind.to_sdfg().compile()
+
+        A = np.zeros(5)
+        B = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        csdfg.safe_call(A, B, 5)
+        assert np.allclose(A, B + 1)  # in/out array forwarded back from the subprocess
+
+        # The null write in the subprocess must raise here, not crash the test.
+        A = np.zeros(5)
+        B = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        with pytest.raises(RuntimeError):
+            csdfg.safe_call(A, B, 0)
+
+
+def test_nanobind_interface_safe_call_kwargs():
+    """safe_call accepts the keyword-argument call form."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def safe_call_kwargs_nanobind(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
+            for i in range(5):
+                with dace.tasklet('CPP'):
+                    b << B[i]
+                    u << ub
+                    a >> A[i]
+                    """
+                    a = b + 1;
+                    """
+
+        csdfg = safe_call_kwargs_nanobind.to_sdfg().compile()
+        A = np.zeros(5)
+        B = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        csdfg.safe_call(A=A, B=B, ub=5)
+        assert np.allclose(A, B + 1)
+
+
+def test_nanobind_interface_safe_call_return_rejected():
+    """safe_call does not support return values (parity with the ctypes path)."""
+    import pytest
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def safe_call_return_nanobind(A: dace.float64[5]):
+            return A + 1
+
+        csdfg = safe_call_return_nanobind.to_sdfg().compile()
+        with pytest.raises(NotImplementedError):
+            csdfg.safe_call(np.zeros(5))
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -427,3 +498,6 @@ if __name__ == '__main__':
     test_nanobind_interface_nullable_args_enable_none()
     test_nanobind_interface_load_reuses_same_artifact()
     test_nanobind_interface_load_distinct_artifact_raises()
+    test_nanobind_interface_safe_call()
+    test_nanobind_interface_safe_call_kwargs()
+    test_nanobind_interface_safe_call_return_rejected()

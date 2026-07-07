@@ -143,6 +143,15 @@ class NanobindCompiledSDFG:
     def finalize(self):
         self._handle.finalize()
 
+    def safe_call(self, *args, **kwargs):
+        """Runs the SDFG in a separate process, so a crash raises here instead of killing the caller.
+
+        Output travels through the in/out arguments (return values are not
+        supported); delegates to the interface-agnostic ``safe_call_precompiled``.
+        """
+        from dace.codegen import compiler
+        return compiler.safe_call_precompiled(self._sdfg, args, kwargs)
+
     def get_workspace_sizes(self):
         """Returns the external-memory sizes per storage type.
 
