@@ -734,6 +734,25 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('interchange', MoveLoopIntoMapGated(target=target))]
     s += _structural_cleanup('interchange')
 
+    # TODO(perfect-nesting sift-down; GPU-oriented): a pass that turns an
+    # *imperfect* nest into a perfect one so it can then be interchanged /
+    # collapsed for more parallelism. Given
+    #     for i: pre_body(i); for j: map_body(i, j); post_body(i)
+    # sift the pre/post statements INTO the inner loop guarded by the boundary
+    # iteration (the loop-region analog of the condition sift MoveIfIntoLoop
+    # already does):
+    #     for i: for j: { if j==0: pre_body(i); map_body(i, j); if j==M-1: post_body(i) }
+    # yielding a perfect nest that MinimizeStridePermutation / MapCollapse /
+    # MoveLoopIntoMapGated can then interchange. Mechanics: if the outer body is
+    # not already a NestedSDFG, wrap it as one (nest_state_subgraph); then
+    # collect the pre/post blocks, deep-copy them into guarded ConditionalBlocks
+    # as the nested CFG's first/last blocks. Works for both Maps and LoopRegions
+    # (map -> for-loop first). NOT an automatic transform for loops with real
+    # cross-iteration dependencies (interchange is unsound there) -- it is a
+    # parallelism-enabling rewrite, most valuable on GPU (perfect nest -> one
+    # kernel), less so on CPU. Needs unit tests. See PerfectLoopNesting (the
+    # data-independent statement-fission analog) for the group-analysis prior art.
+
     # TODO: privatize_reduction -- PrivatizeReductionAccumulator rewrites
     # WCR-on-array-element reductions to WCR-on-scalar + init + writeback so
     # the eventual WCR codegen can emit a clean ``#pragma omp parallel for
