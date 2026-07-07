@@ -3,6 +3,8 @@ import copy
 import functools
 import re
 
+import networkx as nx
+
 import dace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -439,6 +441,235 @@ class SplitTasklets(ppl.Pass):
                 names.update(str(s) for s in dace.symbolic.arrays(symexpr))
         return names
 
+    def _plan_multi_output_split(self, tasklet: dace.nodes.Tasklet, state) -> Optional[List[Dict[str, Any]]]:
+        """
+        Validate and plan splitting a tasklet with more than one output connector into one
+        single-output tasklet per output connector.
+
+        The body must be a list of top-level ``target = expr`` assignments, one per output
+        connector, in producer-before-consumer order. A statement may read an earlier
+        statement's output connector (a RAW that is routed through the produced array by
+        :meth:`_apply_multi_output_split`). The split is refused -- ``None`` is returned,
+        leaving the tasklet intact -- when a precondition does not hold or when it cannot be
+        proven sound (a WAR/WAW that the split would reorder).
+
+        :param tasklet: The candidate multi-output tasklet.
+        :param state: The state the tasklet lives in.
+        :returns: An ordered list of per-output plan dicts, or ``None`` to refuse the split.
+        """
+        if tasklet.code.language != dace.dtypes.Language.Python:
+            return None
+        try:
+            body = ast.parse(tasklet.code.as_string).body
+        except (SyntaxError, ValueError):
+            return None
+        if len(body) < 2:
+            return None
+        # Every top-level statement must be a plain ``name = expr`` assignment: no
+        # AugAssign, no ``if``, no subscripted / tuple / starred / multiple targets.
+        for stmt in body:
+            if not isinstance(stmt, ast.Assign):
+                return None
+            if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+                return None
+
+        targets = [stmt.targets[0].id for stmt in body]
+        out_conns = set(tasklet.out_connectors.keys())
+        # One statement per output connector, and no statement targets a shared local temp
+        # (a target that is not an output connector cannot be materialised per output).
+        if len(targets) != len(set(targets)) or set(targets) != out_conns:
+            return None
+
+        in_conns = set(tasklet.in_connectors.keys())
+        out_edge_by_conn: Dict[str, Any] = {}
+        for oe in state.out_edges(tasklet):
+            if oe.src_conn in out_edge_by_conn or oe.data is None or oe.data.data is None:
+                return None  # fan-out of one output connector, or a dataless output: refuse
+            out_edge_by_conn[oe.src_conn] = oe
+        if set(out_edge_by_conn.keys()) != out_conns:
+            return None
+        in_edge_by_conn: Dict[str, Any] = {}
+        for ie in state.in_edges(tasklet):
+            if ie.dst_conn is not None:
+                in_edge_by_conn[ie.dst_conn] = ie
+
+        # In-place read-modify-write: an input connector reads an array that an output
+        # connector also writes (polybench covariance's finalize -- ``cov_ij_in << cov[i,j]``
+        # AND ``cov_ij_out >> cov[i,j]``, where ``cov[i,j]`` is produced by an upstream WCR
+        # sum-reduction over ``k``). Splitting would route the output through an intermediate
+        # access node of that same array while the input still reads the original (WCR-reduced)
+        # source; the read / in-place-normalize / mirror ordering is NOT reliably preserved
+        # through the downstream nested-SDFG / reduction lowering (the finalize reads
+        # ``cov[i,j]`` before it is written and the kernel produces NaN). Leave the tasklet
+        # intact -- exactly the pre-existing behaviour that keeps covariance correct.
+        read_arrays = {
+            ie.data.data
+            for ie in in_edge_by_conn.values() if ie.data is not None and ie.data.data is not None
+        }
+        write_arrays = {oe.data.data for oe in out_edge_by_conn.values()}
+        if read_arrays & write_arrays:
+            return None
+
+        target_index = {t: k for k, t in enumerate(targets)}
+
+        # Classify every right-hand-side name of each statement.
+        ordered: List[Dict[str, Any]] = []
+        for k, stmt in enumerate(body):
+            rhs_names = {node.id for node in ast.walk(stmt.value) if isinstance(node, ast.Name)}
+            input_reads: Set[str] = set()
+            cross_reads: Set[str] = set()
+            for name in rhs_names:
+                if name in target_index and target_index[name] < k:
+                    # Reads an output connector produced by an earlier statement (RAW).
+                    # A reassigned name shadows any same-named input connector (Python
+                    # last-write-wins), so this branch takes priority.
+                    cross_reads.add(name)
+                elif name in in_conns:
+                    if name not in in_edge_by_conn:
+                        return None  # an input connector with no in-edge: cannot route
+                    input_reads.add(name)  # entry-value read of the input array
+                elif name in out_conns:
+                    # An output connector referenced at or before its own definition without
+                    # also being an input connector: reading an undefined value. Refuse.
+                    return None
+                # Otherwise a symbol / function / constant: inlined into the body verbatim.
+            ordered.append({
+                'out_conn': targets[k],
+                'code': ast.unparse(stmt),
+                'input_reads': input_reads,
+                'cross_reads': cross_reads,
+            })
+
+        # ``reaches[j][k]`` == statement ``k`` is forced (transitively, through RAW reads)
+        # to run strictly after statement ``j``.
+        n = len(body)
+        reaches = [[False] * n for _ in range(n)]
+        for k, plan in enumerate(ordered):
+            for name in plan['cross_reads']:
+                reaches[target_index[name]][k] = True
+        for mid in range(n):
+            for a in range(n):
+                if reaches[a][mid]:
+                    for b in range(n):
+                        if reaches[mid][b]:
+                            reaches[a][b] = True
+
+        # WAW: two outputs writing the same array at possibly-overlapping subsets must be
+        # ordered by a RAW chain; otherwise the surviving value is order dependent. Distinct
+        # arrays are assumed non-aliasing (DaCe's standard model); the same array is
+        # conservatively treated as possibly overlapping. (Input/output aliasing -- an
+        # in-place read-modify-write -- was already refused above.)
+        for a in range(n):
+            a_arr = out_edge_by_conn[ordered[a]['out_conn']].data.data
+            for b in range(a + 1, n):
+                b_arr = out_edge_by_conn[ordered[b]['out_conn']].data.data
+                if a_arr == b_arr and not (reaches[a][b] or reaches[b][a]):
+                    return None
+        return ordered
+
+    def _route_read_output_to_destination(self, state, base_name: str, k: int, mid: dace.nodes.AccessNode,
+                                          out_edge) -> None:
+        """
+        Forward a read-later output's intermediate access node ``mid`` (holding the produced
+        subset of its array) on to the original output destination.
+
+        The intermediate and the destination name the same array, so the copy reads and
+        writes the same subset. How that is expressed depends on the destination:
+
+        - **Access node** (top-level / loop-body state): a direct ``mid -> destination``
+          self-copy carrying ``subset`` and a matching ``other_subset``. A same-array
+          access-node-to-access-node single-element copy is handled by the downstream
+          nested-SDFG passes; without ``other_subset`` the backend would copy from offset 0.
+        - **Map exit** (or any non-access-node): the same-array-with-``other_subset`` form is
+          rejected on a ``-> MapExit`` edge, so the value is copied out through a scalar
+          store tasklet, which also keeps the map scope's write set complete.
+
+        :param state: The state being rewritten.
+        :param base_name: The original tasklet name, used to name a store tasklet.
+        :param k: The output index, used to name a store tasklet.
+        :param mid: The intermediate access node holding the produced value.
+        :param out_edge: The original output edge (its ``dst``/``dst_conn``/memlet are reused).
+        """
+        if isinstance(out_edge.dst, dace.nodes.AccessNode):
+            forward = copy.deepcopy(out_edge.data)
+            forward.other_subset = copy.deepcopy(forward.subset)
+            state.add_edge(mid, None, out_edge.dst, out_edge.dst_conn, forward)
+        else:
+            store = state.add_tasklet(name=f"{base_name}_out_{k}_store",
+                                      inputs={'_store_in'},
+                                      outputs={'_store_out'},
+                                      code='_store_out = _store_in')
+            state.add_edge(mid, None, store, '_store_in', copy.deepcopy(out_edge.data))
+            state.add_edge(store, '_store_out', out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
+
+    def _apply_multi_output_split(self, tasklet: dace.nodes.Tasklet, state, ordered: List[Dict[str, Any]]) -> None:
+        """
+        Rewrite a validated multi-output tasklet into one single-output tasklet per output
+        connector (plan produced by :meth:`_plan_multi_output_split`).
+
+        A cross-statement read of an earlier output connector is materialised through that
+        output's array via an intermediate access node, so the producer-before-consumer
+        order survives as a real data dependence in the same state.
+
+        :param tasklet: The multi-output tasklet to replace.
+        :param state: The state the tasklet lives in.
+        :param ordered: The ordered per-output plan from :meth:`_plan_multi_output_split`.
+        """
+        out_edge_by_conn = {oe.src_conn: oe for oe in state.out_edges(tasklet)}
+        in_edge_by_conn = {ie.dst_conn: ie for ie in state.in_edges(tasklet) if ie.dst_conn is not None}
+        scope_entry = state.entry_node(tasklet)
+
+        # Output connectors that a later statement reads need an intermediate access node
+        # (through which the consumer reads the produced array).
+        read_outputs: Set[str] = set()
+        for plan in ordered:
+            read_outputs.update(plan['cross_reads'])
+
+        state.remove_node(tasklet)
+
+        emitted: List[dace.nodes.Tasklet] = []
+        mid_access: Dict[str, dace.nodes.AccessNode] = {}
+        for k, plan in enumerate(ordered):
+            out_conn = plan['out_conn']
+            out_edge = out_edge_by_conn[out_conn]
+            input_conns = set(plan['input_reads']) | set(plan['cross_reads'])
+            t = state.add_tasklet(name=f"{tasklet.name}_out_{k}",
+                                  inputs=set(input_conns),
+                                  outputs={out_conn},
+                                  code=plan['code'])
+            emitted.append(t)
+            # Inputs read from the original input edges (entry values). A fresh memlet per
+            # edge -- DaCe rejects a reused subset object.
+            for in_conn in plan['input_reads']:
+                ie = in_edge_by_conn[in_conn]
+                state.add_edge(ie.src, ie.src_conn, t, in_conn, copy.deepcopy(ie.data))
+            # Cross-statement RAW reads route through the earlier output's array node.
+            for name in plan['cross_reads']:
+                state.add_edge(mid_access[name], None, t, name, copy.deepcopy(out_edge_by_conn[name].data))
+            # Output: a value read by a later statement is materialised on its own access
+            # node of the produced array (the consumer reads it back from there); otherwise
+            # the value goes straight to the original destination.
+            if out_conn in read_outputs:
+                mid = state.add_access(out_edge.data.data)
+                state.add_edge(t, out_conn, mid, None, copy.deepcopy(out_edge.data))
+                mid_access[out_conn] = mid
+                self._route_read_output_to_destination(state, tasklet.name, k, mid, out_edge)
+            else:
+                state.add_edge(t, out_conn, out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
+            # A data-less sub-tasklet (constant / symbol-only output) inside a scope must be
+            # anchored to the scope entry so it does not float outside the map.
+            if state.in_degree(t) == 0 and scope_entry is not None:
+                state.add_edge(scope_entry, None, t, None, dace.memlet.Memlet(None))
+
+        # Independent outputs (distinct arrays, no cross-statement read, no shared scope /
+        # input) leave their sub-tasklets in separate weakly-connected components -- floating
+        # disconnected islands. Chain any such consecutive pair with an empty-Memlet ordering
+        # edge in body order. A real RAW (routed through the array) or a shared scope /
+        # access node already connects the pair, so no extra edge is added there.
+        for k in range(len(emitted) - 1):
+            if not nx.has_path(state.nx.to_undirected(as_view=True), emitted[k], emitted[k + 1]):
+                state.add_edge(emitted[k], None, emitted[k + 1], None, dace.memlet.Memlet(None))
+
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         """
         Split every multi-operation Python tasklet in the SDFG into single-op tasklets.
@@ -453,11 +684,22 @@ class SplitTasklets(ppl.Pass):
         symbol_lifted_data = self._symbol_lifted_data(sdfg)
 
         tasklets_to_split = list()  # tasklet, parent_graph, ssa_statements
+        multi_output_to_split = list()  # tasklet, parent_graph, ordered per-output plan
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, dace.nodes.Tasklet):
                 c: CodeBlock = n.code
-                # Can't split a tasklet that has >1 outputs
+                # A tasklet with >1 output connector cannot take the single-output SSA path.
+                # Split it into one tasklet per output connector instead (materialising each
+                # write independently for downstream loop-fission / lift). Respect the same
+                # "leave a symbol-lifted producer intact" guard as the single-output path;
+                # ``_plan_multi_output_split`` leaves the tasklet intact (returns ``None``)
+                # when its preconditions or WAR/WAW soundness do not hold.
                 if len(n.out_connectors) > 1:
+                    if any(oe.data is not None and oe.data.data in symbol_lifted_data for oe in g.out_edges(n)):
+                        continue
+                    plan = self._plan_multi_output_split(n, g)
+                    if plan is not None:
+                        multi_output_to_split.append((n, g, plan))
                     continue
 
                 # Leave a conditional-write tasklet (``if cond: out = e`` -- the frontend's
@@ -716,6 +958,16 @@ class SplitTasklets(ppl.Pass):
                         state.add_edge(scope_entry, None, t, None, dace.memlet.Memlet(None))
 
             split_access_counter += 1
+
+        # Split every multi-output tasklet into one single-output tasklet per output
+        # connector. These tasklets are disjoint from ``tasklets_to_split`` (the
+        # single-output SSA path never collected them), so the two rewrites are
+        # independent; each plan re-reads the tasklet's edges at apply time.
+        for tasklet, state, ordered in multi_output_to_split:
+            assert isinstance(state, dace.SDFGState)
+            assert isinstance(tasklet, dace.nodes.Tasklet)
+            assert tasklet in state.nodes()
+            self._apply_multi_output_split(tasklet, state, ordered)
 
         sdfg.validate()
         return None
