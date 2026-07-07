@@ -37,7 +37,12 @@ def _argument_binding(arglist, binding_order=None):
     silently pass a converted *copy*, breaking DaCe's by-reference argument
     semantics. Scalars keep nanobind's overflow-checked conversion.
     """
-    per_name = {}
+    # params and nb::args are keyed by name so they can be reordered to
+    # binding_order at the end; call_args are collected directly in arglist
+    # order, which is the C signature order the program call needs.
+    params_by_name = {}
+    nb_args_by_name = {}
+    call_args = []
     for name, desc in arglist.items():
         # pyobject (arguments and returns, incl. the PR#2206 bug-compatible
         # decay of pyobject arrays) is deferred to part 2 of the port; its
@@ -52,33 +57,34 @@ def _argument_binding(arglist, binding_order=None):
             # or None, which the ctypes path also accepts - through
             # std::optional<std::string>: None becomes a null pointer, and the
             # owned std::string keeps its buffer valid across the GIL release.
-            per_name[name] = (
-                f'std::optional<std::string> {name}',
-                f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr',
-                # .none() is required: nanobind rejects None by default, and
-                # std::optional only accepts it implicitly on some versions.
-                f'nb::arg("{name}").none()')
+            # .none() is required: nanobind rejects None by default, and
+            # std::optional only accepts it implicitly on some versions.
+            params_by_name[name] = f'std::optional<std::string> {name}'
+            call_args.append(
+                f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr')
+            nb_args_by_name[name] = f'nb::arg("{name}").none()'
         elif isinstance(desc, dt.Array):
             if desc.optional is False:
-                per_name[name] = (f'nb::ndarray<{ctype}, nb::device::cpu> {name}',
-                                  f'reinterpret_cast<{ctype} *>({name}.data())', f'nb::arg("{name}").noconvert()')
+                params_by_name[name] = f'nb::ndarray<{ctype}, nb::device::cpu> {name}'
+                call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
+                nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
             else:
                 # Nullable array: None (allowed unless optional is explicitly
                 # False) becomes a null pointer, matching the ctypes marshaller.
-                # .none() is required: nanobind rejects None by default, and
-                # std::optional only accepts it implicitly on some versions.
-                per_name[name] = (f'std::optional<nb::ndarray<{ctype}, nb::device::cpu>> {name}',
-                                  f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr',
-                                  f'nb::arg("{name}").noconvert().none()')
+                # .none() is required (see the string case above).
+                params_by_name[name] = f'std::optional<nb::ndarray<{ctype}, nb::device::cpu>> {name}'
+                call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
+                nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
         elif isinstance(desc, dt.Scalar):
-            per_name[name] = (f'{ctype} {name}', name, f'nb::arg("{name}")')
+            params_by_name[name] = f'{ctype} {name}'
+            call_args.append(name)
+            nb_args_by_name[name] = f'nb::arg("{name}")'
         else:
             raise NotImplementedError(f'Nanobind interface: argument type {type(desc).__name__} '
                                       f'(argument "{name}") is not supported yet.')
     binding_order = list(arglist.keys()) if binding_order is None else binding_order
-    params = [per_name[n][0] for n in binding_order]
-    call_args = [per_name[n][1] for n in arglist.keys()]
-    nb_args = [per_name[n][2] for n in binding_order]
+    params = [params_by_name[n] for n in binding_order]
+    nb_args = [nb_args_by_name[n] for n in binding_order]
     return params, call_args, nb_args
 
 
