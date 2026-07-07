@@ -64,11 +64,17 @@ def _argument_binding(arglist, binding_order=None):
                 f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr')
             nb_args_by_name[name] = f'nb::arg("{name}").none()'
         elif isinstance(desc, dt.ContainerArray):
-            # ContainerArray (an array of structures/containers) is deferred to
-            # a later slice; refuse explicitly, since it subclasses Array and
-            # would otherwise be mis-handled by the Array branch below.
-            raise NotImplementedError(f'Nanobind interface: ContainerArray argument "{name}" is not '
-                                      f'supported yet; use the ctypes interface (compiler.interface=ctypes).')
+            # ContainerArray (an array of structures/containers): the caller
+            # passes a numpy array of pointers - one per element, e.g.
+            # ``ctypes.addressof`` of a per-element ctypes.Structure - exactly as
+            # on the ctypes path. Forward that array's data pointer, cast to the
+            # element-pointer type (``ctype`` is the element's pointer, so the
+            # buffer is ``ctype *``). Structs referenced this way are
+            # forward-declared (see generate_bindings_code). Checked before the
+            # Array branch, since ContainerArray subclasses Array.
+            params_by_name[name] = f'nb::ndarray<uint64_t, nb::device::cpu> {name}'
+            call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
+            nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
         elif isinstance(desc, dt.Structure):
             # Thin pointer passthrough, mirroring the ctypes path: the caller
             # builds the C struct (as a ``ctypes.Structure`` filled with the raw
@@ -107,8 +113,25 @@ def _argument_binding(arglist, binding_order=None):
     return params, call_args, nb_args
 
 
+def _referenced_struct_name(desc):
+    """The C struct type name a ``Structure`` / ``ContainerArray``-of-Structure references, else ``None``.
+
+    For a ContainerArray the innermost element type decides (nested containers
+    of arrays reference builtins like ``double`` and need no declaration).
+    """
+    if isinstance(desc, dt.Structure):
+        return desc.dtype.ctype.rstrip(' *')  # e.g. "CSRMatrix*" -> "CSRMatrix"
+    if isinstance(desc, dt.ContainerArray):
+        stype = desc.stype
+        while isinstance(stype, dt.ContainerArray):
+            stype = stype.stype
+        if isinstance(stype, dt.Structure):
+            return stype.dtype.ctype.rstrip(' *')
+    return None
+
+
 def _structure_forward_decls(arglist):
-    """Forward declarations for the C structs referenced by Structure arguments.
+    """Forward declarations for the C structs referenced by Structure / ContainerArray arguments.
 
     The bindings only pass pointers to these structs (thin passthrough), so a
     forward declaration is enough - the full definition lives in the frame code.
@@ -116,10 +139,8 @@ def _structure_forward_decls(arglist):
     decls = []
     seen = set()
     for desc in arglist.values():
-        if not isinstance(desc, dt.Structure):
-            continue
-        struct_name = desc.dtype.ctype.rstrip(' *')  # e.g. "CSRMatrix*" -> "CSRMatrix"
-        if struct_name not in seen:
+        struct_name = _referenced_struct_name(desc)
+        if struct_name and struct_name not in seen:
             seen.add(struct_name)
             decls.append(f'struct {struct_name};')
     return '\n'.join(decls)

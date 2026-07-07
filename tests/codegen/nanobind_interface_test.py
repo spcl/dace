@@ -571,18 +571,101 @@ def test_nanobind_interface_nested_structure_argument():
         assert np.allclose(B, expected)
 
 
-def test_nanobind_interface_container_array_rejected():
-    """ContainerArray arguments are rejected at codegen time (deferred to a later slice)."""
-    import pytest
-    from dace import data as dt
-    from dace.codegen.nanobind_bindings import generate_bindings_code
+def test_nanobind_interface_container_array_read():
+    """ContainerArray argument (array of structures) on the nanobind interface.
 
-    M = dace.symbol('M')
-    inner = dt.Structure(dict(data=dace.float32[M]), name='Inner')
-    sdfg = dace.SDFG('container_array_reject_probe')
-    sdfg.add_datadesc('arr', dt.ContainerArray(inner, [M]))
-    with pytest.raises(NotImplementedError, match='ContainerArray'):
-        generate_bindings_code(sdfg)
+    NOTE: verbatim copy of
+    ``tests/sdfg/data/container_array_test.py::test_read_struct_array``, run
+    under ``compiler.interface=nanobind`` - kept so the ContainerArray behaviour
+    is validated against a known-good ctypes test with no doubt. Remove it once
+    the ContainerArray tests are parametrized over both interfaces.
+    """
+    import ctypes
+
+    import pytest
+    sparse = pytest.importorskip('scipy.sparse')
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
+        csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                      name='CSRMatrix')
+
+        sdfg = dace.SDFG('array_of_csr_to_dense')
+
+        sdfg.add_datadesc('A', csr_obj[L])
+        sdfg.add_array('B', [L, M, N], dace.float32)
+
+        sdfg.add_datadesc_view('vcsr', csr_obj)
+        sdfg.add_view('vindptr', csr_obj.members['indptr'].shape, csr_obj.members['indptr'].dtype)
+        sdfg.add_view('vindices', csr_obj.members['indices'].shape, csr_obj.members['indices'].dtype)
+        sdfg.add_view('vdata', csr_obj.members['data'].shape, csr_obj.members['data'].dtype)
+
+        state = sdfg.add_state()
+
+        A = state.add_access('A')
+        B = state.add_access('B')
+
+        bme, bmx = state.add_map('b', dict(b='0:L'))
+        bme.map.schedule = dace.ScheduleType.Sequential
+
+        vcsr = state.add_access('vcsr')
+        indptr = state.add_access('vindptr')
+        indices = state.add_access('vindices')
+        data = state.add_access('vdata')
+
+        state.add_memlet_path(A, bme, vcsr, dst_conn='views', memlet=dace.Memlet(data='A', subset='b'))
+        state.add_edge(vcsr,
+                       None,
+                       indptr,
+                       'views',
+                       memlet=dace.Memlet.from_array('vcsr.indptr', csr_obj.members['indptr']))
+        state.add_edge(vcsr,
+                       None,
+                       indices,
+                       'views',
+                       memlet=dace.Memlet.from_array('vcsr.indices', csr_obj.members['indices']))
+        state.add_edge(vcsr, None, data, 'views', memlet=dace.Memlet.from_array('vcsr.data', csr_obj.members['data']))
+
+        ime, imx = state.add_map('i', dict(i='0:M'))
+        jme, jmx = state.add_map('idx', dict(idx='start:stop'))
+        jme.add_in_connector('start')
+        jme.add_in_connector('stop')
+        t = state.add_tasklet('indirection', {'j', '__val'}, {'__out'}, '__out[i, j] = __val')
+
+        state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i'), dst_conn='start')
+        state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i+1'), dst_conn='stop')
+        state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='vindices', subset='idx'), dst_conn='j')
+        state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
+        state.add_memlet_path(t,
+                              jmx,
+                              imx,
+                              bmx,
+                              B,
+                              memlet=dace.Memlet(data='B', subset='b, 0:M, 0:N', volume=1),
+                              src_conn='__out')
+
+        func = sdfg.compile()
+
+        rng = np.random.default_rng(42)
+        A = np.ndarray((10, ), dtype=sparse.csr_matrix)
+        dace_A = np.ndarray((10, ), dtype=ctypes.c_void_p)
+        B = np.zeros((10, 20, 20), dtype=np.float32)
+
+        ctypes_A = []
+        for b in range(10):
+            A[b] = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+            ctypes_obj = csr_obj.dtype._typeclass.as_ctypes()(indptr=A[b].indptr.__array_interface__['data'][0],
+                                                              indices=A[b].indices.__array_interface__['data'][0],
+                                                              data=A[b].data.__array_interface__['data'][0])
+            ctypes_A.append(ctypes_obj)  # This is needed to keep the object alive ...
+            dace_A[b] = ctypes.addressof(ctypes_obj)
+
+        func(A=dace_A, B=B, L=A.shape[0], M=A[0].shape[0], N=A[0].shape[1], nnz=A[0].nnz)
+        ref = np.ndarray((10, 20, 20), dtype=np.float32)
+        for b in range(10):
+            ref[b] = A[b].toarray()
+
+        assert np.allclose(B, ref)
 
 
 if __name__ == '__main__':
@@ -604,4 +687,4 @@ if __name__ == '__main__':
     test_nanobind_interface_safe_call_return_rejected()
     test_nanobind_interface_structure_argument()
     test_nanobind_interface_nested_structure_argument()
-    test_nanobind_interface_container_array_rejected()
+    test_nanobind_interface_container_array_read()

@@ -107,8 +107,7 @@ class NanobindCompiledSDFG:
 
         Returns ``(args, kwargs, keepalive)`` with structure values converted to
         integer addresses; ``keepalive`` holds the original ctypes objects so
-        they outlive the call (the handle only keeps the raw pointer). A value
-        that is already an ``int`` address is passed through untouched.
+        they outlive the call (the handle only keeps the raw pointer).
         """
         import ctypes
 
