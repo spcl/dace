@@ -345,8 +345,7 @@ required:
                         type: str
                         title: CUDA architectures to compile for
                         description: >
-                            If empty the cuda archtecture is autodetected by the compiler and has
-                            the same effect as passing 'native' to it.
+                            If empty, the SDFG is compiled for the 'native' CUDA architecture.
                         default: ''
 
                     hip_arch:
