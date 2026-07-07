@@ -213,14 +213,27 @@ def load_nanobind_module(library_path, module_name: str):
     The spec is created under the unprefixed ``module_name`` (so the loader
     resolves the matching ``PyInit_<name>``; the file name itself is
     irrelevant), then the module is registered in ``sys.modules`` under
-    ``dace.generated.<name>``. An already-loaded module is reused, since one
-    module can serve many handles.
+    ``dace.generated.<name>``. An already-loaded module *from the same
+    ``library_path``* is reused, since one module can serve many handles.
+
+    Loading a *different* artifact under an already-taken name raises
+    ``ValueError``: extension modules cannot be re-imported and
+    ``PyInit_<name>`` is unique per process, so returning the stale module
+    would silently hand back the wrong artifact.
     """
     qualified = f'{GENERATED_NAMESPACE}.{module_name}'
-    if qualified in sys.modules:
-        return sys.modules[qualified]
-
     library_path = os.fspath(library_path)
+
+    existing = sys.modules.get(qualified)
+    if existing is not None:
+        existing_file = getattr(existing, '__file__', None)
+        if existing_file is None or os.path.realpath(existing_file) == os.path.realpath(library_path):
+            return existing
+        raise ValueError(f"Generated module '{qualified}' is already loaded in this process from a different "
+                         f"artifact ('{existing_file}'); a distinct artifact ('{library_path}') cannot be loaded "
+                         f"under the same name. Extension modules cannot be re-imported, so each generated module "
+                         f"name maps to exactly one artifact per process.")
+
     spec = importlib.util.spec_from_file_location(module_name, library_path)
     if spec is None or spec.loader is None:
         raise ImportError(f'Cannot create an import spec for the compiled SDFG module at {library_path}.')
@@ -319,9 +332,8 @@ def configure_and_compile(
         try:
             import nanobind
         except ImportError:
-            raise cgx.CompilerConfigurationError(
-                'The "nanobind" compiler interface is selected (compiler.interface), '
-                'but the nanobind package is not installed.')
+            raise cgx.CompilerConfigurationError('The "nanobind" compiler interface is selected (compiler.interface), '
+                                                 'but the nanobind package is not installed.')
         cmake_command += [
             "-DDACE_ENABLE_NANOBIND=ON",
             '-DDACE_NANOBIND_CMAKE_DIR="{}"'.format(nanobind.cmake_dir()),

@@ -367,6 +367,52 @@ def test_nanobind_interface_nullable_args_enable_none():
     assert 'nb::arg("req").noconvert().none()' not in code
 
 
+def test_nanobind_interface_load_reuses_same_artifact():
+    """Loading the same artifact path again reuses the module (one module, many handles)."""
+    from dace.codegen.compiler import load_nanobind_module
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def load_reuse_nanobind(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = load_reuse_nanobind.to_sdfg().compile()
+        module = load_nanobind_module(csdfg.module.__file__, csdfg.sdfg.name)
+        assert module is csdfg.module
+
+
+def test_nanobind_interface_load_distinct_artifact_raises():
+    """A distinct artifact under an already-loaded generated name is a hard error.
+
+    ``load_precompiled_sdfg`` loads a fixed prebuilt artifact and bypasses the
+    compile-time rename, so a second, different artifact under a name already
+    taken in ``sys.modules`` must fail loudly (extension modules cannot be
+    re-imported) instead of silently returning the stale module.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    import pytest
+    from dace.codegen.compiler import load_nanobind_module
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def load_distinct_nanobind(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = load_distinct_nanobind.to_sdfg().compile()
+        # A copy of the .so at a different path is a distinct artifact.
+        copied = os.path.join(tempfile.mkdtemp(), os.path.basename(csdfg.module.__file__))
+        shutil.copy(csdfg.module.__file__, copied)
+        with pytest.raises(ValueError, match='already loaded'):
+            load_nanobind_module(copied, csdfg.sdfg.name)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -379,3 +425,5 @@ if __name__ == '__main__':
     test_nanobind_interface_string_argument()
     test_nanobind_interface_optional_array()
     test_nanobind_interface_nullable_args_enable_none()
+    test_nanobind_interface_load_reuses_same_artifact()
+    test_nanobind_interface_load_distinct_artifact_raises()
