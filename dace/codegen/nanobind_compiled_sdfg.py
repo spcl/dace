@@ -61,6 +61,12 @@ class NanobindCompiledSDFG:
         self._struct_args = frozenset(name for name, desc in sdfg.arrays.items()
                                       if (not desc.transient) and isinstance(desc, dt.Structure))
 
+        # Input arguments that are arrays of a `dace.struct` element (bound as
+        # nb::ndarray<uint8_t>); the caller's record array is byte-viewed before
+        # the call. Excludes `__return*` (handled in `_allocate_return_arrays`).
+        self._struct_array_args = frozenset(name for name, desc in sdfg.arrays.items() if (not desc.transient) and (
+            name not in self._return_values) and isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct))
+
     @property
     def sdfg(self):
         return self._sdfg
@@ -90,9 +96,9 @@ class NanobindCompiledSDFG:
         single array, or a tuple when there are several; with no return values
         the result is ``None``.
         """
-        if self._struct_args:
+        if self._struct_args or self._struct_array_args:
             # keepalive keeps the ctypes objects alive until the handle returns.
-            args, kwargs, keepalive = self._marshal_structures(args, kwargs)
+            args, kwargs, keepalive = self._marshal_inputs(args, kwargs)
 
         # Early exit: no return values, no need to do more processing.
         if not self._return_values:
@@ -119,23 +125,27 @@ class NanobindCompiledSDFG:
             return return_arrays[0]
         return tuple(return_arrays)
 
-    def _marshal_structures(self, args, kwargs):
-        """Replaces each ``Structure`` argument value with the address of the ctypes object.
+    def _marshal_inputs(self, args, kwargs):
+        """Marshals the inputs nanobind cannot take directly, in one pass.
 
-        The function returns the modified `args` and `kwargs` entities and as a third
-        value a list of all ``Structure`` that were previously stored in them, but
-        where replaced with their address.
+        A ``Structure`` argument becomes the address of its ctypes object (kept
+        alive via the returned list, since taking the address drops the Python
+        reference); an array of a ``dace.struct`` element becomes a ``uint8``
+        view that shares the buffer (so in/out writes propagate). Returns the
+        modified ``args`` and ``kwargs`` and the keep-alive list.
         """
         keepalive = []
 
-        def to_address(value):
-            keepalive.append(value)
-            return ctypes.addressof(value)
+        def marshal(name, value):
+            if name in self._struct_args:
+                keepalive.append(value)
+                return ctypes.addressof(value)
+            if name in self._struct_array_args:
+                return value.view(np.uint8)
+            return value
 
-        args = tuple(
-            to_address(v) if (i < len(self._arg_names) and self._arg_names[i] in self._struct_args) else v
-            for i, v in enumerate(args))
-        kwargs = {k: (to_address(v) if k in self._struct_args else v) for k, v in kwargs.items()}
+        args = tuple(marshal(self._arg_names[i], v) if i < len(self._arg_names) else v for i, v in enumerate(args))
+        kwargs = {k: marshal(k, v) for k, v in kwargs.items()}
         return args, kwargs, keepalive
 
     def _allocate_return_arrays(self, kwargs):

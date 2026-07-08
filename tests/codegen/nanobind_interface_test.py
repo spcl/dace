@@ -852,6 +852,30 @@ def test_nanobind_interface_struct_element_array_forward_declared():
     assert 'nb::ndarray<pair' not in code  # never the struct as ndarray scalar
 
 
+def test_nanobind_interface_struct_element_input():
+    """A dtypes.struct-element array passed as an input is byte-view marshalled and copies correctly."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+
+        sdfg = dace.SDFG('copy_struct_input_nanobind')
+        sdfg.add_array('A', [4], pair)  # input array of struct
+        sdfg.add_array('B', [4], pair)  # output array of struct
+        state = sdfg.add_state()
+        state.add_edge(state.add_access('A'), None, state.add_access('B'), None, dace.Memlet('A[0:4]'))
+
+        csdfg = sdfg.compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        A = np.zeros(4, dtype=pair.as_numpy_dtype())
+        for i in range(4):
+            A[i]['idx'] = i * 10
+            A[i]['val'] = float(i)
+        B = np.zeros(4, dtype=pair.as_numpy_dtype())
+        csdfg(A=A, B=B)
+        assert np.array_equal(B['idx'], A['idx'])
+        assert np.array_equal(B['val'], A['val'])
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -880,3 +904,4 @@ if __name__ == '__main__':
     test_nanobind_interface_filename()
     test_nanobind_interface_struct_element_return()
     test_nanobind_interface_struct_element_array_forward_declared()
+    test_nanobind_interface_struct_element_input()
