@@ -67,6 +67,11 @@ class NanobindCompiledSDFG:
         self._struct_array_args = frozenset(name for name, desc in sdfg.arrays.items() if (not desc.transient) and (
             name not in self._return_values) and isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct))
 
+        # Whether a single (non-tuple) value is returned: DaCe names it `__return`,
+        # whereas a tuple (including a one-element tuple) uses `__return_<i>`. A
+        # bare count cannot tell a one-element tuple from a single value.
+        self._is_single_value_ret = '__return' in self._return_values
+
     @property
     def sdfg(self):
         return self._sdfg
@@ -98,7 +103,7 @@ class NanobindCompiledSDFG:
         """
         if self._struct_args or self._struct_array_args:
             # keepalive keeps the ctypes objects alive until the handle returns.
-            args, kwargs, keepalive = self._marshal_inputs(args, kwargs)
+            args, kwargs, keepalive = self._process_struct_inputs(args, kwargs)
 
         # Early exit: no return values, no need to do more processing.
         if not self._return_values:
@@ -121,20 +126,26 @@ class NanobindCompiledSDFG:
 
         self._handle(**kwargs)
 
-        if len(return_arrays) == 1:
+        # A single value is returned bare; a tuple return (even one element) stays a tuple.
+        if self._is_single_value_ret:
             return return_arrays[0]
         return tuple(return_arrays)
 
-    def _marshal_inputs(self, args, kwargs):
-        """Marshals the inputs nanobind cannot take directly, in one pass.
+    def _process_struct_inputs(self, args, kwargs):
+        """Processes the struct inputs.
 
-        A ``Structure`` argument becomes the address of its ctypes object (kept
-        alive via the returned list, since taking the address drops the Python
-        reference); an array of a ``dace.struct`` element becomes a ``uint8``
-        view that shares the buffer (so in/out writes propagate). Returns the
-        modified ``args`` and ``kwargs`` and the keep-alive list.
+        These arguments can not be handled by `nanobind` directly, thus we are performing
+        type punning, by replacing them by their address or "cast" them into a byte array.
+
+        Note that this function does not modify its arguments, i.e. `args` and `kwargs`,
+        but returns transformed ones. It also returns a third value which contains
+        the original arguments. This is needed to keep them in scope.
         """
         keepalive = []
+
+        # NOTE: Only the inputs need processing here. A struct-element return array
+        #   is byte-viewed in `_allocate_return_arrays` (where it is allocated), and
+        #   a `dt.Structure` is never a return value.
 
         def marshal(name, value):
             if name in self._struct_args:

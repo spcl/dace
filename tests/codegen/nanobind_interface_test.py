@@ -876,6 +876,29 @@ def test_nanobind_interface_struct_element_input():
         assert np.array_equal(B['val'], A['val'])
 
 
+def test_nanobind_interface_single_element_tuple_return():
+    """A single-element tuple return comes back as a 1-tuple, not a bare array.
+
+    DaCe names a single value ``__return`` but a one-element tuple ``__return_0``,
+    so the wrapper must distinguish them (a bare ``len == 1`` check would collapse
+    the 1-tuple to the array).
+    """
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def one_tuple_nanobind(A: dace.float64[N]):
+            return (A + 1.0, )
+
+        csdfg = one_tuple_nanobind.to_sdfg().compile()
+        n = 8
+        a = np.random.rand(n)
+        result = csdfg(A=a, N=np.int32(n))
+        assert isinstance(result, tuple)
+        assert len(result) == 1
+        assert np.allclose(result[0], a + 1.0)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -905,3 +928,4 @@ if __name__ == '__main__':
     test_nanobind_interface_struct_element_return()
     test_nanobind_interface_struct_element_array_forward_declared()
     test_nanobind_interface_struct_element_input()
+    test_nanobind_interface_single_element_tuple_return()
