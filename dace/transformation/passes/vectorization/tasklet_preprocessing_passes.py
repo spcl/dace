@@ -39,29 +39,8 @@ def _rewrite_python_tasklet_bodies(
             node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
 
-def _pow_call(base: ast.AST, exp: ast.AST, loc: ast.AST) -> ast.AST:
-    """Build a ``pow(base, exp)`` call node located at ``loc``.
-
-    :param base: the base expression node.
-    :param exp: the exponent expression node.
-    :param loc: the original node used for source-location copying.
-    :returns: an :class:`ast.Call` ``pow(base, exp)``.
-    """
-    return ast.copy_location(
-        ast.Call(func=ast.Name(id="pow", ctx=ast.Load()), args=[base, exp], keywords=[]), loc)
-
-
 class PowerOperatorExpander(ast.NodeTransformer):
-    """Expands ``**`` and ``pow``/``math.pow`` calls into multiplications or a ``pow`` call.
-
-    A constant integer exponent ``>= 2`` unrolls to a product (``x**2`` -> ``x*x``,
-    the native-SIMD form). Every other power -- a fractional / non-integer literal, a
-    non-constant (symbolic or connector) exponent, or the ``0`` / ``1`` corner -- is
-    rewritten to a canonical ``pow(base, exp)`` call so no bare ``**`` operator survives
-    into the tile emitter (which classifies ``pow`` as a function-form binop). The
-    downstream :class:`~dace.transformation.passes.relax_integer_powers.RelaxIntegerPowers`
-    then relaxes an integer-exponent ``pow`` to ``ipow`` (exact repeated multiply).
-    """
+    """Expands ``**`` and ``pow``/``math.pow`` calls into multiplications or exp/log."""
 
     @staticmethod
     def _is_pow_call(call_node: ast.Call) -> bool:
@@ -106,19 +85,19 @@ class PowerOperatorExpander(ast.NodeTransformer):
                                              op=ast.Mult(),
                                              right=ast.copy_location(ast.fix_missing_locations(left), left))
                     return ast.copy_location(new_node, loc)
-                # n in {0, 1} → canonical ``pow`` call; RelaxIntegerPowers folds it to ipow.
-                return _pow_call(left, right, loc)
+                # n in {0, 1} → leave the original `left ** right` shape as a BinOp; caller decides
+                return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
-        # Case 2: non-constant / non-integer exponent → canonical ``pow(base, exp)`` call.
+        # Case 2: non-constant / non-integer exponent → leave it as ``left ** right``
+        # for the tile binop to classify (integer exponent → ``ipow``; otherwise ``std::pow``).
         # The former ``exp(right * log(left))`` identity is only valid for a POSITIVE base:
         # ``log(left)`` is NaN for a negative ``left``, so ``sin(x)**2`` -- whose exponent
-        # arrives as a connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1
-        # does not fire -- produced NaN on every lane where ``sin(x) < 0`` (npbench
-        # arc_distance). ``std::pow`` computes a negative base with an integer exponent
-        # correctly and matches numpy's ``**``; ``pow`` carries an ISA-less pure lowering
-        # (``_PURE_ONLY_MATH_OPS`` / ``_OP_CPP["pow"]``) so it vectorizes via libmvec.
-        # ``RelaxIntegerPowers`` later relaxes a provable-integer exponent to ``ipow``.
-        return _pow_call(left, right, loc)
+        # arrives as a connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1 does
+        # not fire -- produced NaN on every lane where ``sin(x) < 0`` (npbench arc_distance).
+        # ``std::pow`` computes a negative base with an integer exponent correctly and matches
+        # numpy's ``**``; ``**`` carries an ISA-less pure lowering (``_PURE_ONLY_MATH_OPS`` /
+        # ``_OP_CPP["**"]``) so it vectorizes via libmvec.
+        return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
     def visit_BinOp(self, node):
         """Expand a ``**`` binary operation, recursing into children first.
@@ -188,8 +167,31 @@ class DaceCastRemover(ast.NodeTransformer):
         return node
 
 
+#: ``math``-module numeric constants (attribute accesses, NOT calls). Emitted as their full
+#: fp64 value: a bare ``math.pi`` is not a call, so the prefix-strip below would leave an
+#: undefined ``pi``. NumPy evaluates ``float32_array * math.pi`` in float64 too (the Python
+#: float promotes), so the fp64 literal is bit-exact; a narrower target downcasts on assignment
+#: (an explicit cast can be added later where a pure-float32 computation is required).
+_MATH_CONSTANTS = {"pi": math.pi, "e": math.e, "tau": math.tau}
+
+
 class RemoveMathPrefix(ast.NodeTransformer):
-    """Rewrites ``math.xxx(...)`` calls to ``xxx(...)``, stripping only the prefix."""
+    """Rewrites ``math.xxx(...)`` calls to ``xxx(...)`` (stripping the prefix) and ``math.pi`` /
+    ``math.e`` / ``math.tau`` numeric constants to their fp64 literals."""
+
+    def visit_Attribute(self, node):
+        """Replace a ``math.<const>`` numeric constant with its fp64 literal.
+
+        A ``math.`` call's function attribute (``math.sqrt``) is left alone here -- ``sqrt`` is
+        not in :data:`_MATH_CONSTANTS`, and :meth:`visit_Call` strips its prefix instead.
+
+        :param node: the attribute node.
+        :returns: an :class:`ast.Constant` for a known math constant, else the node.
+        """
+        self.generic_visit(node)
+        if isinstance(node.value, ast.Name) and node.value.id == "math" and node.attr in _MATH_CONSTANTS:
+            return ast.copy_location(ast.Constant(value=_MATH_CONSTANTS[node.attr]), node)
+        return node
 
     def visit_Call(self, node):
         """Strip the ``math.`` prefix from a call, recursing into children first.

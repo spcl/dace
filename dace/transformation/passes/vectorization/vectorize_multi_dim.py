@@ -483,28 +483,21 @@ class VectorizeMultiDim(ppl.Pipeline):
             # tasklets, split by ``SplitTasklets`` (so the feeding integer arithmetic stays
             # its natural width) and lowered to ``TileUnop(op='cast')`` — an explicit per-lane
             # convert keeping binop/unop operands uniform-dtype.
-            # A size / exponent symbol carries no sign in DaCe, so the ipow relaxation below
-            # cannot prove ``s >= 0``. Set the nonnegativity assumption on signed-integer free
-            # symbols (the offset/size contract) so the proof goes through; it also persists to
-            # the copy's codegen, where the global RelaxIntegerPowers relaxes the SIZE powers
-            # (``2**s`` in stockham-FFT strides) left for it below.
+            # A size / exponent symbol carries no sign in DaCe, so a power's exponent cannot be
+            # proven ``>= 0``. Set the nonnegativity assumption on signed-integer free symbols
+            # (the offset/size contract) so the tile emitter classifies ``x ** N`` (N a
+            # nonnegative int symbol) as ``ipow``, and so the assumption persists to the copy's
+            # codegen where the global RelaxIntegerPowers relaxes the SIZE powers (``2**s`` in
+            # stockham-FFT strides).
             SetSymbolNonnegativeAssumptions(),
             # Strip the frontend's redundant float cast on a power exponent
-            # (``base ** float64(N)`` -> ``base ** N``): value-preserving, and it exposes an
-            # integer exponent so RelaxIntegerPowers below can pick ``ipow``. MUST precede
-            # PowerOperatorExpansion (which consumes the ``**`` form).
+            # (``base ** float64(N)`` -> ``base ** N``): value-preserving, and it exposes the
+            # integer exponent so the tile emitter can classify the power as ``ipow``. ``**`` is
+            # kept as ``**`` (NOT expanded to ``pow`` / a product): the tile emitter decides
+            # ``pow`` vs ``ipow`` per operand at emission time from the exponent.
             StripPowerExponentCast(),
-            PowerOperatorExpansion(),
             SplitTasklets(),
             RemoveMathCall(),
-            # After ``**`` becomes the canonical ``pow(base, exp)`` (PowerOperatorExpansion),
-            # relax an integer-exponent power to the exact ``ipow`` (repeated multiply, bit-exact
-            # with NumPy, correct for a negative base) so the tile emitter sees ``ipow`` rather
-            # than the libm ``std::pow``. ``relax_tasklet_bodies=True`` reaches the split tasklet
-            # bodies; ``relax_symbolic_sites=False`` keeps a size power like ``2**s`` a SymPy
-            # ``Pow`` for the tiler's divisibility analysis (the codegen call relaxes it later,
-            # identically for the vectorized SDFG and its reference).
-            RelaxIntegerPowers(relax_tasklet_bodies=True, relax_symbolic_sites=False),
             # Clean empty states from branch lowering + body rewrites so the tiling passes
             # see a tidy CFG. (``ppl.Pipeline`` forbids duplicate pass types, so this single
             # end-of-prep cleanup covers both the branch-front and AST-rewrite output.)

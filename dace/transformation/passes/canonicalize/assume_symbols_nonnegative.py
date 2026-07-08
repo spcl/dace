@@ -98,6 +98,7 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         return set_symbol_nonnegative_assumptions(sdfg)
 
+
 #: Label of the guard state; also the idempotence marker (re-running is a no-op
 #: once a state with this label exists).
 _GUARD_STATE_LABEL = '_assume_nonneg_syms'

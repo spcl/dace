@@ -967,8 +967,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'ipow', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne',
-    'AND', 'OR', 'pow', 'round', 'ITE'
+    'int_floor', 'int_ceil', 'ipow', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND',
+    'OR', 'pow', 'round', 'ITE'
 }
 
 
@@ -1186,6 +1186,21 @@ class ipow(sympy.Function):
         base, _exp = self.args
         if base.is_positive:
             return True
+
+    def _eval_is_nonnegative(self):
+        # A nonnegative base raised to a nonnegative integer exponent stays nonnegative
+        # (the exponent is nonnegative by ``ipow``'s contract). Lets an offset-sign proof
+        # reason about an ``ipow`` size/index the same way it does a plain ``Pow``.
+        base, _exp = self.args
+        if base.is_nonnegative:
+            return True
+
+    def _eval_rewrite_as_Pow(self, base, exp, **kwargs):
+        # ``ipow(b, e)`` is exactly ``b ** e`` as a value; expose the SymPy ``Pow`` on
+        # request so a caller that needs divisibility / modulo analysis (which a bare
+        # ``Function`` blocks) can ``.rewrite(sympy.Pow)`` -- without changing how ``ipow``
+        # itself lowers (repeated-multiply integer ``dace::math::ipow``) at codegen.
+        return sympy.Pow(base, exp)
 
 
 class OR(sympy.Function):

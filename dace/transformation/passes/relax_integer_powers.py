@@ -19,12 +19,11 @@ a map, or a nested SDFG binds its iterators (a map may also rebind symbols via
 dynamic input connectors); leaving drops those bindings.  So every expression is
 proven against exactly the facts live at its own nesting depth.
 """
-import ast
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import sympy
 
-from dace import SDFG, data, dtypes, subsets, symbolic
+from dace import SDFG, data, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import equalize_symbol, ipow
@@ -33,44 +32,6 @@ from dace.transformation.passes.analysis import loop_analysis
 
 #: A live iteration range ``symbol name -> (low, high)`` (inclusive).
 _Ranges = Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
-
-
-def _is_pow_call(node: ast.Call) -> bool:
-    """True for the two-arg ``pow(x, y)`` / ``math.pow(x, y)`` call forms."""
-    if len(node.args) != 2 or node.keywords:
-        return False
-    func = node.func
-    if isinstance(func, ast.Name) and func.id == "pow":
-        return True
-    return (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "math"
-            and func.attr == "pow")
-
-
-class _TaskletIpowRewriter(ast.NodeTransformer):
-    """Rewrite each ``base ** exp`` binop and ``pow(base, exp)`` call whose exponent
-    ``relaxable(exp)`` accepts (a provable non-negative integer) into ``ipow(base, exp)``.
-    """
-
-    def __init__(self, relaxable: Callable[[ast.AST], bool]):
-        self._relaxable = relaxable
-        self.changed = False
-
-    def _ipow(self, base: ast.AST, exp: ast.AST, loc: ast.AST) -> ast.AST:
-        self.changed = True
-        return ast.copy_location(
-            ast.Call(func=ast.Name(id="ipow", ctx=ast.Load()), args=[base, exp], keywords=[]), loc)
-
-    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
-        self.generic_visit(node)
-        if isinstance(node.op, ast.Pow) and self._relaxable(node.right):
-            return self._ipow(node.left, node.right, node)
-        return node
-
-    def visit_Call(self, node: ast.Call) -> ast.AST:
-        self.generic_visit(node)
-        if _is_pow_call(node) and self._relaxable(node.args[1]):
-            return self._ipow(node.args[0], node.args[1], node)
-        return node
 
 
 def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
@@ -83,6 +44,40 @@ def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbo
     return (end, start) if (step is not None and step.is_negative) else (start, end)
 
 
+def _symbol_assumption_sets(sdfg: SDFG) -> Tuple[frozenset, frozenset, frozenset]:
+    """The ``(positive, nonnegative, integer)`` symbol-name sets for ``sdfg``, read off the
+    sign / integrality assumptions carried by the symbol objects in its array descriptors
+    (recursively -- a size symbol may only appear in a nested SDFG's shapes). ``nonnegative``
+    excludes the strictly-positive names (they are reported separately)."""
+    syms = set()
+    for g in sdfg.all_sdfgs_recursive():
+        for desc in g.arrays.values():
+            if isinstance(desc, data.Array):
+                syms |= desc.free_symbols
+    pos = frozenset(s.name for s in syms if s.is_positive)
+    nonneg = frozenset(s.name for s in syms if s.is_nonnegative and not s.is_positive)
+    integer = frozenset(s.name for s in syms if s.is_integer)
+    return pos, nonneg, integer
+
+
+def exponent_relaxes_to_ipow(exp: symbolic.SymbolicType, sdfg: SDFG, ranges: Optional[_Ranges] = None) -> bool:
+    """Whether ``exp`` is a provable non-negative integer under ``sdfg``'s declared symbol
+    assumptions -- the SAME proof :class:`RelaxIntegerPowers` uses to lower a ``Pow`` to
+    ``ipow``. The tile-op emitter calls this to choose ``ipow`` vs ``pow`` for a ``**`` /
+    ``pow`` operand, so the ``**`` lowering and the pow->ipow relaxation agree on which
+    powers are integer.
+
+    :param exp: the exponent expression.
+    :param sdfg: the SDFG whose symbol sign/integrality assumptions govern the proof.
+    :param ranges: optional live iterator ranges to minimise an affine exponent over.
+    :returns: ``True`` iff ``exp`` provably ``>= 0`` and integer.
+    """
+    relaxer = RelaxIntegerPowers()
+    relaxer._relaxed = 0
+    relaxer._pos, relaxer._nonneg, relaxer._int = _symbol_assumption_sets(sdfg)
+    return relaxer._relaxed_exponent(exp, ranges or {}) is not None
+
+
 @transformation.explicit_cf_compatible
 class RelaxIntegerPowers(ppl.Pass):
     """Lower non-negative-integer ``Pow`` to ``ipow`` across the SDFG's size,
@@ -90,23 +85,8 @@ class RelaxIntegerPowers(ppl.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    def __init__(self, relax_tasklet_bodies: bool = False, relax_symbolic_sites: bool = True):
-        """:param relax_tasklet_bodies: also relax ``pow`` / ``**`` in Python tasklet
-        BODIES (``__out = pow(__in1, k)`` -> ``ipow``). Off by default so the global
-        codegen call keeps touching only symbolic sites (sizes / subscripts / bounds);
-        the vectorizer opts in so an integer-exponent power reaches the tile emitter as
-        ``ipow`` (whose C++ bypasses the ``cppunparse`` path this pass otherwise covers).
-        :param relax_symbolic_sites: relax the symbolic sites -- descriptor shapes,
-        memlet subsets, map ranges, loop bounds, interstate assignments. On by default
-        (the codegen call's purpose). The vectorizer turns it OFF so a size power like
-        ``2**s`` stays a SymPy ``Pow`` for the tiler's divisibility analysis; the
-        codegen-time call relaxes it later (both vec + reference identically)."""
-        super().__init__()
-        self._relax_tasklet_bodies = relax_tasklet_bodies
-        self._relax_symbolic_sites = relax_symbolic_sites
-
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes | ppl.Modifies.Tasklets
+        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes
 
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
@@ -185,16 +165,12 @@ class RelaxIntegerPowers(ppl.Pass):
         return core.replace(sympy.Pow, to_ipow)
 
     def _relax_subset(self, sub, ranges: _Ranges) -> None:
-        if not self._relax_symbolic_sites:
-            return
         if isinstance(sub, subsets.Range):
             sub.ranges = [tuple(self._relax(component, ranges) for component in rng) for rng in sub.ranges]
         elif isinstance(sub, subsets.Indices):
             sub.indices = [self._relax(idx, ranges) for idx in sub.indices]
 
     def _relax_descriptor(self, desc: data.Array, ranges: _Ranges) -> None:
-        if not self._relax_symbolic_sites:
-            return
         desc.shape = tuple(self._relax(item, ranges) for item in desc.shape)
         desc.strides = tuple(self._relax(item, ranges) for item in desc.strides)
         desc.offset = tuple(self._relax(item, ranges) for item in desc.offset)
@@ -223,7 +199,7 @@ class RelaxIntegerPowers(ppl.Pass):
         branch predicate) in place. These codegen through the interstate-edge unparser,
         NOT the descriptor path -- an un-relaxed ``R**e`` there becomes a ``dace::math::pow``
         (``double``) loop bound that can round to an extra iteration."""
-        if code is None or not self._relax_symbolic_sites:
+        if code is None:
             return
         relaxed = self._relax_text(code.as_string, ranges)
         if relaxed is not None:
@@ -231,52 +207,14 @@ class RelaxIntegerPowers(ppl.Pass):
 
     def _relax_assignments(self, assignments: Dict[str, str], ranges: _Ranges) -> None:
         """Relax the RHS of each interstate-edge assignment in place."""
-        if not self._relax_symbolic_sites:
-            return
         for var, value in list(assignments.items()):
             if isinstance(value, str):
                 relaxed = self._relax_text(value, ranges)
                 if relaxed is not None:
                     assignments[var] = relaxed
 
-    def _relax_tasklet_code(self, tasklet: nodes.Tasklet, ranges: _Ranges) -> None:
-        """Relax ``pow`` / ``**`` with a provable non-negative-integer exponent to ``ipow``
-        in a Python tasklet body, in place. ``ipow`` is exact repeated multiply (bit-exact
-        with NumPy integer powers, correct for a negative base). Only the EXPONENT is proven
-        symbolically -- the base keeps its verbatim source (it may name a tasklet connector,
-        not a symbol), so a connector exponent (``a ** b[i]``) stays ``pow`` (unprovable)."""
-        if not self._relax_tasklet_bodies:
-            return
-        if tasklet.code.language != dtypes.Language.Python:
-            return
-        src = tasklet.code.as_string
-        if src is None or ("**" not in src and "pow(" not in src):
-            return
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            return
-
-        def relaxable(exp_node: ast.AST) -> bool:
-            try:
-                exp = symbolic.pystr_to_symbolic(ast.unparse(exp_node))
-            except Exception:  # noqa: BLE001 -- unparseable exponent: leave as pow
-                return False
-            return self._relaxed_exponent(exp, ranges) is not None
-
-        rewriter = _TaskletIpowRewriter(relaxable)
-        new_tree = rewriter.visit(tree)
-        if not rewriter.changed:
-            return
-        ast.fix_missing_locations(new_tree)
-        from dace.properties import CodeBlock
-        tasklet.code = CodeBlock(ast.unparse(new_tree), language=dtypes.Language.Python)
-        self._relaxed += 1
-
     def _relax_symbol_mapping(self, nsdfg: nodes.NestedSDFG, ranges: _Ranges) -> None:
         """Relax each nested-SDFG symbol-mapping value (an outer-scope expression) in place."""
-        if not self._relax_symbolic_sites:
-            return
         for name, value in list(nsdfg.symbol_mapping.items()):
             core = value.expr if isinstance(value, symbolic.SymExpr) else value
             if not isinstance(core, sympy.Basic) or not core.has(sympy.Pow):
@@ -299,13 +237,7 @@ class RelaxIntegerPowers(ppl.Pass):
         # ``sdfg.free_symbols`` yields names; the sign / integrality assumptions
         # live on the symbol objects in the array descriptors, so collect those.
         saved = (self._pos, self._nonneg, self._int)
-        syms = set()
-        for desc in sdfg.arrays.values():
-            if isinstance(desc, data.Array):
-                syms |= desc.free_symbols
-        self._pos = frozenset(s.name for s in syms if s.is_positive)
-        self._nonneg = frozenset(s.name for s in syms if s.is_nonnegative and not s.is_positive)
-        self._int = frozenset(s.name for s in syms if s.is_integer)
+        self._pos, self._nonneg, self._int = _symbol_assumption_sets(sdfg)
         self._visit_region(sdfg, ranges, set())
         self._pos, self._nonneg, self._int = saved
 
@@ -363,8 +295,6 @@ class RelaxIntegerPowers(ppl.Pass):
                 elif isinstance(node, nodes.NestedSDFG):
                     self._relax_symbol_mapping(node, live)
                     self._visit_sdfg(node.sdfg, self._nested_ranges(node, live))
-                elif isinstance(node, nodes.Tasklet):
-                    self._relax_tasklet_code(node, live)
                 elif isinstance(node, nodes.AccessNode) and node.data not in relaxed_arrays:
                     relaxed_arrays.add(node.data)
                     desc = sdfg.arrays.get(node.data)
@@ -383,4 +313,4 @@ class RelaxIntegerPowers(ppl.Pass):
                     self._relax_subset(sub, live)
 
 
-__all__ = ['RelaxIntegerPowers']
+__all__ = ['RelaxIntegerPowers', 'exponent_relaxes_to_ipow']

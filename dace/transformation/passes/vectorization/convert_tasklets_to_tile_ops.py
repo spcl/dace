@@ -10,6 +10,8 @@ masked-write / reduction shapes over Tile / Scalar / Symbol operands.
 import re
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+
 import dace
 from dace import properties
 from dace.libraries.tileops import TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
@@ -783,8 +785,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 return out_conn, other_conn, op
         return None
 
-    def _detect_augassign_reduction(self, inner_state: SDFGState,
-                                    tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
+    def _detect_augassign_reduction(self, inner_state: SDFGState, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
         """Recognize the standard ``WCRToAugAssign`` reduction ``__out = __in1 op __in2``.
 
         Unlike :meth:`_detect_reduction`'s same-connector RMW, ``WCRToAugAssign`` uses
@@ -812,8 +813,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 forms = (f"{out_conn} = {op}({a}, {b})", f"{out_conn} = ({op}({a}, {b}))",
                          f"{out_conn} = {op}({b}, {a})", f"{out_conn} = ({op}({b}, {a}))")
             else:
-                forms = (f"{out_conn} = {a} {op} {b}", f"{out_conn} = ({a} {op} {b})",
-                         f"{out_conn} = {b} {op} {a}", f"{out_conn} = ({b} {op} {a})")
+                forms = (f"{out_conn} = {a} {op} {b}", f"{out_conn} = ({a} {op} {b})", f"{out_conn} = {b} {op} {a}",
+                         f"{out_conn} = ({b} {op} {a})")
             if body in forms:
                 matched_op = op
                 break
@@ -1241,11 +1242,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         store = self._find_downstream_store(inner_state, out_edge)
         if store is None:
-            raise NotImplementedError(
-                f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
-                f"{out_edge.dst!r} does not feed a single downstream ``TileStore._src``. The "
-                f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
-                f"(no store / fan-out to several stores) is not yet handled.")
+            raise NotImplementedError(f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
+                                      f"{out_edge.dst!r} does not feed a single downstream ``TileStore._src``. The "
+                                      f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
+                                      f"(no store / fan-out to several stores) is not yet handled.")
         cond_edge = in_edges[cond_conn]
         cond_an = self._resolve_cond_tile(inner_state, cond_edge)
         self._apply_cond_mask_to_store(inner_state, store, cond_an)
@@ -1430,6 +1430,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         out_conn, a_conn, b_conn, op = detected
+        # A two-tile power ``a ** b`` has a per-lane (runtime) exponent -- not a provable
+        # integer -- so it lowers to ``std::pow``. (``pow(a, b)`` call form likewise.)
+        if op in ("**", "pow"):
+            op = "pow"
         in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
         out_edges = list(inner_state.out_edges(tasklet))
         if a_conn not in in_edges or b_conn not in in_edges or not out_edges:
@@ -1498,6 +1502,53 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
+    def _classify_power_op(self, inner_state: SDFGState, op: str, symbol_side: str, exponent_expr: str,
+                           base_edge) -> str:
+        """Resolve a power operator to its concrete tile op from the base dtype and exponent.
+
+        ``**`` (and the ``pow`` call form) are kept verbatim in the tasklet body; the tile
+        emitter decides ``pow`` vs ``ipow`` HERE. ``ipow`` (exact repeated-multiply
+        ``dace::math::ipow``) is chosen iff BOTH:
+
+        * the base is an integer tile (side ``a``) -- NumPy raises a float base to a power with
+          libm ``pow``, so ``ipow`` there is not bit-exact (it diverges in the low bits, badly
+          for a large exponent); only an integer base uses repeated multiply, which ``ipow`` is;
+        * the exponent (side ``b``) is a provable non-negative integer, via
+          :func:`~dace.transformation.passes.relax_integer_powers.exponent_relaxes_to_ipow` --
+          the SAME proof the pow->ipow relaxation applies to size powers, so both agree.
+
+        Otherwise (float base, runtime/tile exponent, or an unprovable exponent) -> ``pow``
+        (``std::pow``). A non-power ``op`` is returned unchanged.
+
+        :param inner_state: the state holding the tasklet (its SDFG roots the assumption scope).
+        :param op: the detected operator (``"**"`` / ``"pow"`` for a power, else unchanged).
+        :param symbol_side: which operand is the inline Symbol -- ``"b"`` = exponent (the
+            relaxable case), ``"a"`` = base (so the tile operand is the exponent -> ``pow``).
+        :param exponent_expr: the exponent's source text (a Symbol / literal, never a connector).
+        :param base_edge: the in-edge feeding the tile (base) operand, for its dtype.
+        :returns: ``"ipow"`` / ``"pow"`` for a power, else ``op``.
+        """
+        if op not in ("**", "pow"):
+            return op
+        # The tile operand must be the BASE (symbol on side b = exponent); otherwise the
+        # exponent is the runtime tile -> std::pow.
+        if symbol_side != "b":
+            return "pow"
+        base_dtype = (inner_state.sdfg.arrays[base_edge.data.data].dtype
+                      if base_edge.data is not None and base_edge.data.data is not None else None)
+        if base_dtype is None or not np.issubdtype(base_dtype.type, np.integer):
+            return "pow"  # float base -> libm pow (NumPy semantics); ipow would not be bit-exact
+        from dace import symbolic
+        from dace.transformation.passes.relax_integer_powers import exponent_relaxes_to_ipow
+        root = inner_state.sdfg
+        while root.parent_sdfg is not None:
+            root = root.parent_sdfg
+        try:
+            exponent = symbolic.pystr_to_symbolic(exponent_expr)
+        except Exception:  # noqa: BLE001 -- unparseable exponent: fall back to std::pow
+            return "pow"
+        return "ipow" if exponent_relaxes_to_ipow(exponent, root) else "pow"
+
     def _convert_binop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                    iter_vars: Tuple[str, ...]) -> bool:
         """Emit a TileBinop whose second operand is a Symbol expr: loop-invariant →
@@ -1511,6 +1562,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
+        # A power keeps its ``**`` (or ``pow``) form until here; classify it per operand from
+        # the base dtype + exponent -- integer base & integer exponent -> ``ipow`` (exact
+        # repeated multiply), else ``pow`` (``std::pow``).
+        op = self._classify_power_op(inner_state, op, symbol_side, symbol_expr, a_edge)
         kind_tile_side = self._operand_kind(inner_state, a_edge)
         sym_kind, sym_expr, sym_an_name = self._resolve_symbol_operand(inner_state, symbol_expr, iter_vars)
         # Mask-when-partial.
