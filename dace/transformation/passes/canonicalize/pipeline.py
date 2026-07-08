@@ -15,9 +15,7 @@ from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (RewriteModuloToPyMod,
-                                                                                   StripPowerExponentCast,
-                                                                                   PowerOperatorExpansion)
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
@@ -912,6 +910,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # guard is widened to account for sibling carrier transients, the safer
     # disposition is to skip the pass at end-of-canonicalize. Other Simplify
     # sub-passes still run.
+    #
+    # relax_powers (before the terminal simplify): freeze a provable non-negative
+    # integer ``base ** exp`` to the exact integer ``ipow`` on the symbolic sites
+    # (descriptor sizes / subscripts / loop bounds) while the loop-iterator ranges
+    # that prove it are still live -- BEFORE SimplifyPass folds ``R**i * R**(K-i-1)``
+    # (both exponents range-nonnegative) into ``R**(K-1)`` (exponent no longer
+    # provably >= 0), which the codegen-time relax would then leave as a ``pow``
+    # (double) size and miscompile (stockham_fft). Tasklet bodies keep ``**`` (the
+    # ``** -> pow`` lowering is codegen's) -- only the integer-context sites move.
+    s += [('relax_powers', RelaxIntegerPowers())]
     s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on
@@ -928,23 +936,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # The external free-symbol set is unchanged by canonicalization (only loop
     # iterators are renamed, and those are bound).
     s += [('end', AssumeSymbolConstraints())]
-
-    # pow_cleanup (AFTER assume_constraints): normalize every power to one canonical
-    # form. StripPowerExponentCast drops the frontend's redundant ``float64(e)`` cast
-    # so an integer exponent is visible; PowerOperatorExpansion rewrites each ``**``
-    # to an unrolled product (constant integer exponent) or a ``pow`` call (matches
-    # numpy / ``std::pow``, correct for a negative base -- no ``exp(e*log(base))``
-    # identity that NaNs there); RelaxIntegerPowers then lowers a provable
-    # non-negative-integer ``pow`` -- above all the size / subscript / bound powers
-    # (stockham_fft's ``2**k`` array sizes) -- to the exact integer ``ipow``, and also
-    # ``pow`` / ``**`` in tasklet bodies (both lowerings kept: a non-integer or
-    # unprovable exponent stays ``pow``). All three are value-preserving. They run
-    # after assume_constraints so the non-negative symbol assumptions it establishes
-    # are live for the ipow proof, and they rewrite only tasklet bodies + symbolic
-    # sites (descriptors / subsets / bounds) -- never the CFG -- so the guard start
-    # state assume_constraints prepended is left intact.
-    s += [('pow_cleanup', StripPowerExponentCast()), ('pow_cleanup', PowerOperatorExpansion()),
-          ('pow_cleanup', RelaxIntegerPowers(relax_tasklet_bodies=True))]
     return s
 
 
