@@ -668,6 +668,43 @@ def test_nanobind_interface_container_array_read():
         assert np.allclose(B, ref)
 
 
+def test_nanobind_interface_complex_array():
+    """A complex128 array argument compiles and runs (dace::complex128 resolves via the dace type header)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def complex_scale_nanobind(A: dace.complex128[N], B: dace.complex128[N]):
+            B[:] = A + A
+
+        csdfg = complex_scale_nanobind.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        n = 16
+        a = (np.random.rand(n) + 1j * np.random.rand(n)).astype(np.complex128)
+        b = np.zeros(n, dtype=np.complex128)
+        csdfg(A=a, B=b, N=np.int32(n))
+        assert np.allclose(b, a + a)
+
+
+def test_nanobind_interface_includes_dace_type_headers():
+    """The generated TU includes the dace runtime type headers (so dace:: scalar names resolve).
+
+    Version-independent guard for the type-header fix: complex/unsigned ndarray
+    scalar types are dace:: aliases of nanobind-supported scalars, but only once
+    the header is included.
+    """
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('dace_type_header_probe')
+    sdfg.add_array('c', [4], dtypes.complex128)
+    code = generate_bindings_code(sdfg)
+    assert '#include <dace/types.h>' in code
+    assert '#include <dace/vector.h>' in code
+    assert '#include <nanobind/stl/complex.h>' in code
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -688,3 +725,5 @@ if __name__ == '__main__':
     test_nanobind_interface_structure_argument()
     test_nanobind_interface_nested_structure_argument()
     test_nanobind_interface_container_array_read()
+    test_nanobind_interface_complex_array()
+    test_nanobind_interface_includes_dace_type_headers()

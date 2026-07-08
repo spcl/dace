@@ -243,8 +243,15 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 #include <stdexcept>
 #include <string>
 
+// DaCe runtime types used in the extern "C" program signature, the argument
+// casts, and the nb::ndarray scalar types: dace::uint, dace::complex64/128
+// (aliases of unsigned int / std::complex<...>), and dace::vec<T, N>.
+#include <dace/types.h>
+#include <dace/vector.h>
+
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/complex.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
