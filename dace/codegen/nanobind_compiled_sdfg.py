@@ -147,7 +147,7 @@ class NanobindCompiledSDFG:
         #   is byte-viewed in `_allocate_return_arrays` (where it is allocated), and
         #   a `dt.Structure` is never a return value.
 
-        def marshal(name, value):
+        def _process(name, value):
             if name in self._struct_args:
                 keepalive.append(value)
                 return ctypes.addressof(value)
@@ -155,8 +155,8 @@ class NanobindCompiledSDFG:
                 return value.view(np.uint8)
             return value
 
-        args = tuple(marshal(self._arg_names[i], v) if i < len(self._arg_names) else v for i, v in enumerate(args))
-        kwargs = {k: marshal(k, v) for k, v in kwargs.items()}
+        args = tuple(_process(self._arg_names[i], v) if i < len(self._arg_names) else v for i, v in enumerate(args))
+        kwargs = {k: _process(k, v) for k, v in kwargs.items()}
         return args, kwargs, keepalive
 
     def _allocate_return_arrays(self, kwargs):
