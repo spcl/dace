@@ -76,6 +76,7 @@ def test_development_folder_mode():
         "src": pathlib.Path.is_dir,
         "CACHEDIR.TAG": pathlib.Path.is_file,
         "FOLDER_MODE": pathlib.Path.is_file,
+        "INTERFACE": pathlib.Path.is_file,
         "dace.conf": pathlib.Path.is_file,
         "dace_files.csv": pathlib.Path.is_file,
         "dace_environments.csv": pathlib.Path.is_file,
@@ -118,6 +119,7 @@ def test_production_folder_mode():
         "program.sdfgz": pathlib.Path.is_file,
         "CACHEDIR.TAG": pathlib.Path.is_file,
         "FOLDER_MODE": pathlib.Path.is_file,
+        "INTERFACE": pathlib.Path.is_file,
         lib_path.name: pathlib.Path.is_file,
         libstub_path.name: pathlib.Path.is_file,
     }
@@ -189,6 +191,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
         expected_files = {
             "CACHEDIR.TAG": pathlib.Path.is_file,
             "FOLDER_MODE": pathlib.Path.is_file,
+            "INTERFACE": pathlib.Path.is_file,
             "program.sdfgz": pathlib.Path.is_file,
             lib1_path.name: pathlib.Path.is_file,
             libstub1_path.name: pathlib.Path.is_file,
