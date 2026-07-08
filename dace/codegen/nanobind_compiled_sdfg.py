@@ -5,6 +5,13 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 ``dace.codegen.compiler``; this module only contains the wrapper class.
 """
 
+from dace import data as dt, dtypes, symbolic
+from dace.codegen import compiler
+
+import pathlib
+import numpy as np
+import ctypes
+
 
 class NanobindCompiledSDFG:
     """A compiled SDFG object that can be called; the nanobind counterpart of ``CompiledSDFG``.
@@ -41,16 +48,18 @@ class NanobindCompiledSDFG:
     """
 
     def __init__(self, sdfg, module, arg_names):
-        from dace import data as dt
         self._sdfg = sdfg
         self._module = module
         self._arg_names = list(arg_names or [])
         self._handle = module.make_compiled_sdfg()
-        # Cached so calls without return values skip the shape logic entirely.
-        self._has_return_values = any(name.startswith('__return') for name in sdfg.arrays.keys())
-        # Structure arguments are forwarded as the address of a user-built
-        # ctypes.Structure; the handle expects an integer pointer for them.
-        self._struct_args = frozenset(name for name, desc in sdfg.arrays.items() if isinstance(desc, dt.Structure))
+
+        # Name of the return values (special DaCe names).
+        self._return_values = tuple(
+            sorted(name for name, desc in sdfg.arrays.items() if name.startswith('__return') and (not desc.transient)))
+
+        # Arguments that are structures. Needs to be a `set` for fast lookups.
+        self._struct_args = frozenset(name for name, desc in sdfg.arrays.items()
+                                      if (not desc.transient) and isinstance(desc, dt.Structure))
 
     @property
     def sdfg(self):
@@ -67,7 +76,6 @@ class NanobindCompiledSDFG:
         Parity with ``CompiledSDFG.filename``; some callers rely on the path
         being absolute. Backed by the imported module's ``__file__``.
         """
-        import pathlib
         return str(pathlib.Path(self._module.__file__).resolve())
 
     @property
@@ -89,9 +97,8 @@ class NanobindCompiledSDFG:
             # keepalive keeps the ctypes objects alive until the handle returns.
             args, kwargs, keepalive = self._marshal_structures(args, kwargs)
 
-        # Early exit: no return values, no shape logic - nanobind's dispatcher
-        # does the positional/keyword matching and casting itself.
-        if not self._has_return_values:
+        # Early exit: no return values, no need to do more processing.
+        if not self._return_values:
             self._handle(*args, **kwargs)
             return None
 
@@ -106,8 +113,11 @@ class NanobindCompiledSDFG:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
 
+        # Will add the return arrays also to `kwargs`.
         return_arrays = self._allocate_return_arrays(kwargs)
+
         self._handle(**kwargs)
+
         if len(return_arrays) == 1:
             return return_arrays[0]
         return tuple(return_arrays)
@@ -115,21 +125,20 @@ class NanobindCompiledSDFG:
     def _marshal_structures(self, args, kwargs):
         """Replaces each ``Structure`` argument value with the address of the ctypes object.
 
-        Returns ``(args, kwargs, keepalive)`` with structure values converted to
-        integer addresses; ``keepalive`` holds the original ctypes objects so
-        they outlive the call (the handle only keeps the raw pointer).
+        The function returns the modified `args` and `kwargs` entities and as a third
+        value a list of all ``Structure`` that were previously stored in them, but
+        where replaced with their address.
         """
-        import ctypes
-
         keepalive = []
 
         def to_address(value):
             keepalive.append(value)
             return ctypes.addressof(value)
 
-        struct_args, names = self._struct_args, self._arg_names
-        args = tuple(to_address(v) if (i < len(names) and names[i] in struct_args) else v for i, v in enumerate(args))
-        kwargs = {k: (to_address(v) if k in struct_args else v) for k, v in kwargs.items()}
+        args = tuple(
+            to_address(v) if (i < len(self._arg_names) and self._arg_names[i] in self._struct_args) else v
+            for i, v in enumerate(args))
+        kwargs = {k: (to_address(v) if k in self._struct_args else v) for k, v in kwargs.items()}
         return args, kwargs, keepalive
 
     def _allocate_return_arrays(self, kwargs):
@@ -141,20 +150,18 @@ class NanobindCompiledSDFG:
         such SDFGs at codegen time. Whether part 2 replicates the PR#2206
         behavior or fixes it is an open decision recorded there.
         """
-        import numpy as np
-        from dace import data as dt, symbolic
-
         arrays = self._sdfg.arrays
         syms = {k: v for k, v in kwargs.items() if k not in arrays}
         syms.update(self._sdfg.constants)
 
         return_arrays = []
-        for name in sorted(n for n in arrays.keys() if n.startswith('__return')):
+        for name in self._return_values:
             desc = arrays[name]
             if name in kwargs:
-                return_arrays.append(kwargs[name])
-                continue
+                # This constraint also simplifies the implementation of struct handling.
+                raise ValueError(f'The implicit output argument `{name}` can not be passed as explicit input argument.')
             if not isinstance(desc, dt.Array):
+                # This is also a limitation of the current DaCe interface, as scalars are always passed as values.
                 raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                           f'{type(desc).__name__} is not supported yet.')
             shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
@@ -162,7 +169,10 @@ class NanobindCompiledSDFG:
             total_size = int(symbolic.evaluate(desc.total_size, syms))
             strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
             arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
-            kwargs[name] = arr
+            # A dtypes.struct element is bound as nb::ndarray<uint8_t> (nanobind
+            # rejects numpy record arrays), so hand the handle a byte view that
+            # shares the buffer; the caller still gets the structured array back.
+            kwargs[name] = arr.view(np.uint8) if isinstance(desc.dtype, dtypes.struct) else arr
             return_arrays.append(arr)
         return return_arrays
 
@@ -190,7 +200,6 @@ class NanobindCompiledSDFG:
         Output travels through the in/out arguments (return values are not
         supported); delegates to the interface-agnostic ``safe_call_precompiled``.
         """
-        from dace.codegen import compiler
         return compiler.safe_call_precompiled(self._sdfg, args, kwargs)
 
     def get_workspace_sizes(self):
@@ -200,12 +209,10 @@ class NanobindCompiledSDFG:
         to the enum values); the conversion back to the ``StorageType`` enum
         happens here, since the Python enum is not exposed to C++.
         """
-        from dace import dtypes
         return {getattr(dtypes.StorageType, k): v for k, v in self._handle.get_workspace_sizes().items()}
 
     def set_workspace(self, storage, workspace):
         """Sets the workspace for the given storage type to the given buffer."""
-        from dace import dtypes
         name = storage.name if isinstance(storage, dtypes.StorageType) else dtypes.StorageType(storage).name
         self._handle.set_workspace(name, workspace)
 
@@ -246,7 +253,6 @@ class NanobindCompiledSDFG:
                low-level escape hatch that bypasses the typed interface, and
                anything it is used for is most likely better done another way.
         """
-        import ctypes
         lib = ctypes.CDLL(self._module.__file__)
         try:
             func = getattr(lib, name)

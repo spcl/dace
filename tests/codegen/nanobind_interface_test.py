@@ -802,6 +802,48 @@ def test_nanobind_interface_filename():
         assert csdfg.filename.endswith('.so')
 
 
+def test_nanobind_interface_struct_element_return():
+    """A return array of a dace.struct (dtypes.struct element) round-trips (argmax-style)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+
+        @dace.program
+        def argmax_nanobind(x: dace.float64[1024]):
+            result = np.ndarray([1], dtype=pair)
+            with dace.tasklet:
+                init >> result[0]
+                init.idx = -1
+                init.val = -1e38
+
+            for i in dace.map[0:1024]:
+                with dace.tasklet:
+                    inp << x[i]
+                    out >> result(1, lambda x, y: pair(val=max(x.val, y.val), idx=(x.idx if x.val > y.val else y.idx)))
+                    out = pair(idx=i, val=inp)
+
+            return result
+
+        csdfg = argmax_nanobind.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        A = np.random.rand(1024)
+        result = csdfg(x=A)
+        assert result[0][0] == np.argmax(A)
+
+
+def test_nanobind_interface_struct_element_array_forward_declared():
+    """A dtypes.struct-element array forward-declares the struct and binds an untyped ndarray."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+    sdfg = dace.SDFG('struct_elem_probe')
+    sdfg.add_array('p', [4], pair)
+    code = generate_bindings_code(sdfg)
+    assert 'struct pair;' in code  # forward-declared
+    assert 'reinterpret_cast<pair *>' in code  # cast to the struct pointer
+    assert 'nb::ndarray<pair' not in code  # never the struct as ndarray scalar
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -828,3 +870,5 @@ if __name__ == '__main__':
     test_nanobind_interface_vector_uses_base_scalar()
     test_nanobind_interface_float16_rejected()
     test_nanobind_interface_filename()
+    test_nanobind_interface_struct_element_return()
+    test_nanobind_interface_struct_element_array_forward_declared()

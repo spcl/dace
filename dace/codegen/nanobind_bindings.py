@@ -70,6 +70,7 @@ def _argument_binding(arglist, binding_order=None):
             call_args.append(
                 f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr')
             nb_args_by_name[name] = f'nb::arg("{name}").none()'
+
         elif isinstance(desc, dt.ContainerArray):
             # ContainerArray (an array of structures/containers): the caller
             # passes a numpy array of pointers - one per element, e.g.
@@ -82,12 +83,12 @@ def _argument_binding(arglist, binding_order=None):
             params_by_name[name] = f'nb::ndarray<uint64_t, nb::device::cpu> {name}'
             call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
             nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
+
         elif isinstance(desc, dt.Structure):
             # Thin pointer passthrough, mirroring the ctypes path: the caller
             # builds the C struct (as a ``ctypes.Structure`` filled with the raw
             # pointers of its members) and we forward a pointer to it. The struct
             # type is forward-declared in the module (see generate_bindings_code).
-            #
             # A richer alternative would marshal a Python dict/object field by
             # field into the struct inside C++ - but that needs the full struct
             # definition and per-member handling (including array pointers and
@@ -95,6 +96,15 @@ def _argument_binding(arglist, binding_order=None):
             params_by_name[name] = f'std::uintptr_t {name}'
             call_args.append(f'reinterpret_cast<{ctype}>({name})')
             nb_args_by_name[name] = f'nb::arg("{name}")'
+
+        elif isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
+            # Array of a C struct declared with `dace.struct(...)`. Because `nanobind`
+            # rejects such inputs, we pass it as pointer. `NanobindCompiledSDFG`
+            # casts it into a byte array and the binding turns it back.
+            params_by_name[name] = f'nb::ndarray<uint8_t, nb::device::cpu> {name}'
+            call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
+            nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
+
         elif isinstance(desc, dt.Array):
             # The ndarray scalar type may differ from the cast target: a vector
             # dtype binds as its base scalar, but the kernel pointer stays dace::vec*.
@@ -110,10 +120,12 @@ def _argument_binding(arglist, binding_order=None):
                 params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, nb::device::cpu>> {name}'
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
+
         elif isinstance(desc, dt.Scalar):
             params_by_name[name] = f'{ctype} {name}'
             call_args.append(name)
             nb_args_by_name[name] = f'nb::arg("{name}")'
+
         else:
             raise NotImplementedError(f'Nanobind interface: argument type {type(desc).__name__} '
                                       f'(argument "{name}") is not supported yet.')
@@ -137,6 +149,8 @@ def _referenced_struct_name(desc):
             stype = stype.stype
         if isinstance(stype, dt.Structure):
             return stype.dtype.ctype.rstrip(' *')
+    if isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
+        return desc.dtype.ctype
     return None
 
 
