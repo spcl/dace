@@ -51,6 +51,13 @@ def _argument_binding(arglist, binding_order=None):
         if isinstance(desc.dtype, dtypes.pyobject):
             raise NotImplementedError(f'Nanobind interface: pyobject argument/return value "{name}" is not '
                                       f'supported yet; use the ctypes interface (compiler.interface=ctypes).')
+        # float16 maps to dace::half, a custom struct nanobind's ndarray cannot
+        # accept as a scalar dtype; refuse loudly instead of emitting code that
+        # fails to compile. A proper mapping is deferred to a future slice.
+        if desc.dtype.base_type == dtypes.float16:
+            raise NotImplementedError(f'Nanobind interface: float16 argument/return value "{name}" is not '
+                                      f'supported yet (dace::half is not a valid nanobind ndarray dtype); '
+                                      f'use the ctypes interface (compiler.interface=ctypes).')
         ctype = desc.dtype.ctype
         if isinstance(desc, dt.Scalar) and desc.dtype == dtypes.string:
             # A string scalar is a C string (int8_t*). Marshal a Python str -

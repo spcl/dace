@@ -764,6 +764,22 @@ def test_nanobind_interface_vector_uses_base_scalar():
     assert 'reinterpret_cast<dace::vec<float, 2> *>' in code  # true pointer type kept
 
 
+def test_nanobind_interface_float16_rejected():
+    """float16 arrays are refused with a clear error (dace::half is not a valid nanobind dtype).
+
+    Out of scope for now (absent from the CI failures); rejecting explicitly beats
+    an opaque compile error. A future slice can map it.
+    """
+    import pytest
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('float16_reject_probe')
+    sdfg.add_array('h', [4], dtypes.float16)
+    with pytest.raises(NotImplementedError, match='float16'):
+        generate_bindings_code(sdfg)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -788,3 +804,4 @@ if __name__ == '__main__':
     test_nanobind_interface_includes_dace_type_headers()
     test_nanobind_interface_vector_array()
     test_nanobind_interface_vector_uses_base_scalar()
+    test_nanobind_interface_float16_rejected()
