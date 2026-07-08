@@ -89,9 +89,6 @@ class NanobindCompiledSDFG:
         keyword. Return-value arrays are freshly allocated and returned - a
         single array, or a tuple when there are several; with no return values
         the result is ``None``.
-
-        Structure arguments may be passed as the ``ctypes.Structure`` the ctypes
-        path uses; they are forwarded as a pointer to it.
         """
         if self._struct_args:
             # keepalive keeps the ctypes objects alive until the handle returns.
@@ -144,11 +141,9 @@ class NanobindCompiledSDFG:
     def _allocate_return_arrays(self, kwargs):
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
 
-        The nanobind interface returns arrays only: every ``__return*`` must be a
-        ``dt.Array`` (non-array returns raise below). pyobject returns are not
-        supported - the ctypes path's ``.item()`` / PR#2206 pyobject-array decay
-        is intentionally not replicated, and the generator rejects pyobject
-        returns at codegen time.
+        Return values are arrays only: every ``__return*`` must be a ``dt.Array``
+        (non-array returns raise below), and pyobject returns are rejected at
+        codegen time.
         """
         arrays = self._sdfg.arrays
         syms = {k: v for k, v in kwargs.items() if k not in arrays}
