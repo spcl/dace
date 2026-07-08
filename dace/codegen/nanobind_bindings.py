@@ -89,15 +89,18 @@ def _argument_binding(arglist, binding_order=None):
             call_args.append(f'reinterpret_cast<{ctype}>({name})')
             nb_args_by_name[name] = f'nb::arg("{name}")'
         elif isinstance(desc, dt.Array):
+            # The ndarray scalar type may differ from the cast target: a vector
+            # dtype binds as its base scalar, but the kernel pointer stays dace::vec*.
+            nb_scalar = _ndarray_scalar_ctype(desc.dtype)
             if desc.optional is False:
-                params_by_name[name] = f'nb::ndarray<{ctype}, nb::device::cpu> {name}'
+                params_by_name[name] = f'nb::ndarray<{nb_scalar}, nb::device::cpu> {name}'
                 call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
             else:
                 # Nullable array: None (allowed unless optional is explicitly
                 # False) becomes a null pointer, matching the ctypes marshaller.
                 # .none() is required (see the string case above).
-                params_by_name[name] = f'std::optional<nb::ndarray<{ctype}, nb::device::cpu>> {name}'
+                params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, nb::device::cpu>> {name}'
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
         elif isinstance(desc, dt.Scalar):
@@ -128,6 +131,19 @@ def _referenced_struct_name(desc):
         if isinstance(stype, dt.Structure):
             return stype.dtype.ctype.rstrip(' *')
     return None
+
+
+def _ndarray_scalar_ctype(dtype):
+    """The C++ scalar type for an ``nb::ndarray<...>`` parameter.
+
+    nanobind's ndarray needs a real scalar type, so a vector dtype binds as its
+    base scalar (e.g. ``float``); the caller keeps ``dtype.ctype`` (``dace::vec
+    <T, N>``) as the ``reinterpret_cast`` target for the kernel pointer. All
+    other dtypes bind as their own ctype.
+    """
+    if isinstance(dtype, dtypes.vector):
+        return dtype.vtype.ctype
+    return dtype.ctype
 
 
 def _structure_forward_decls(arglist):

@@ -705,6 +705,65 @@ def test_nanobind_interface_includes_dace_type_headers():
     assert '#include <nanobind/stl/complex.h>' in code
 
 
+def test_nanobind_interface_vector_array():
+    """A vector (veclen) array binds as its base scalar and copies correctly.
+
+    Reproduces the BLAS veclen failures: the ndarray scalar must be the base
+    type (float), while the pointer handed to the kernel stays dace::vec<float,2>*.
+
+    Both buffers are wrapped in sentinel padding on either side and only the
+    interior is passed, so any access past the intended N vectors is caught as a
+    corrupted guard region. The aligned vector type is wider than a plain scalar,
+    so this keeps a future size miscalculation from silently over-reading or
+    over-writing.
+    """
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+        vtype = dace.vector(dace.float32, 2)
+
+        sdfg = dace.SDFG('vec_copy_nanobind')
+        sdfg.add_array('x', [N], vtype)
+        sdfg.add_array('y', [N], vtype)
+        state = sdfg.add_state()
+        state.add_edge(state.add_access('x'), None, state.add_access('y'), None, dace.Memlet('x[0:N]'))
+
+        csdfg = sdfg.compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        n = 8
+        floats = 2 * n  # a veclen-2 array of N vectors is 2*N base scalars
+        pad = 8  # guard scalars on each side
+        sentinel = np.float32(-999.0)
+
+        x_buf = np.full(pad + floats + pad, sentinel, dtype=np.float32)
+        x_buf[pad:pad + floats] = np.arange(floats, dtype=np.float32)
+        y_buf = np.full(pad + floats + pad, sentinel, dtype=np.float32)
+
+        x = x_buf[pad:pad + floats].reshape(n, 2)  # contiguous interior view
+        y = y_buf[pad:pad + floats].reshape(n, 2)
+        csdfg(x=x, y=y, N=np.int32(n))
+
+        assert np.allclose(y, x)  # data copied
+        assert np.all(y_buf[:pad] == sentinel)  # no under-write
+        assert np.all(y_buf[pad + floats:] == sentinel)  # no over-write
+
+
+def test_nanobind_interface_vector_uses_base_scalar():
+    """A vector array's nb::ndarray uses the base scalar; the cast target stays dace::vec.
+
+    Version-independent guard: nb::ndarray needs a real scalar type, not the
+    dace::vec struct, but the pointer passed to the kernel must remain dace::vec*.
+    """
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('vec_scalar_probe')
+    sdfg.add_array('v', [4], dace.vector(dace.float32, 2))
+    code = generate_bindings_code(sdfg)
+    assert 'nb::ndarray<float' in code  # base scalar in the ndarray type
+    assert 'nb::ndarray<dace::vec' not in code  # never the struct
+    assert 'reinterpret_cast<dace::vec<float, 2> *>' in code  # true pointer type kept
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -727,3 +786,5 @@ if __name__ == '__main__':
     test_nanobind_interface_container_array_read()
     test_nanobind_interface_complex_array()
     test_nanobind_interface_includes_dace_type_headers()
+    test_nanobind_interface_vector_array()
+    test_nanobind_interface_vector_uses_base_scalar()
