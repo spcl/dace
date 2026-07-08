@@ -176,10 +176,8 @@ class NanobindCompiledSDFG:
             if name in kwargs:
                 # This constraint also simplifies the implementation of struct handling.
                 raise ValueError(f'The implicit output argument `{name}` can not be passed as explicit input argument.')
-            if not isinstance(desc, dt.Array):
-                # This is also a limitation of the current DaCe interface, as scalars are always passed as values.
-                raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
-                                          f'{type(desc).__name__} is not supported yet.')
+            assert isinstance(desc, dt.Array)  # Non-array returns are refused by the bindings generator at codegen
+
             shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
             dtype = desc.dtype.as_numpy_dtype()
             total_size = int(symbolic.evaluate(desc.total_size, syms))

@@ -899,6 +899,18 @@ def test_nanobind_interface_single_element_tuple_return():
         assert np.allclose(result[0], a + 1.0)
 
 
+def test_nanobind_interface_non_array_return_rejected():
+    """A non-array return value is refused at codegen (returns are arrays only)."""
+    import pytest
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('non_array_return_probe')
+    sdfg.add_scalar('__return', dtypes.float64)
+    with pytest.raises(NotImplementedError, match='arrays only'):
+        generate_bindings_code(sdfg)
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -929,3 +941,4 @@ if __name__ == '__main__':
     test_nanobind_interface_struct_element_array_forward_declared()
     test_nanobind_interface_struct_element_input()
     test_nanobind_interface_single_element_tuple_return()
+    test_nanobind_interface_non_array_return_rejected()
