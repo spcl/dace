@@ -254,7 +254,7 @@ def load_nanobind_module(library_path, module_name: str):
     return module
 
 
-def load_nanobind_compiled_sdfg(library_path, sdfg) -> NanobindCompiledSDFG:
+def load_nanobind_compiled_sdfg(library_path: pathlib.Path, sdfg: "dace.SDFG") -> NanobindCompiledSDFG:
     """Loads the compiled nanobind module for ``sdfg`` and mints a fresh handle.
 
     The nanobind counterpart of ``get_program_handle()``.

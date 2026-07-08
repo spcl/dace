@@ -780,6 +780,28 @@ def test_nanobind_interface_float16_rejected():
         generate_bindings_code(sdfg)
 
 
+def test_nanobind_interface_filename():
+    """`filename` returns the resolved absolute path to the built .so (parity with CompiledSDFG)."""
+    import pathlib
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_filename(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        csdfg = axpy_nanobind_filename.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        expected = str(pathlib.Path(csdfg.module.__file__).resolve())
+        assert csdfg.filename == expected
+        p = pathlib.Path(csdfg.filename)
+        assert p.is_absolute()
+        assert p.exists()
+        assert csdfg.filename.endswith('.so')
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -805,3 +827,4 @@ if __name__ == '__main__':
     test_nanobind_interface_vector_array()
     test_nanobind_interface_vector_uses_base_scalar()
     test_nanobind_interface_float16_rejected()
+    test_nanobind_interface_filename()

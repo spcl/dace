@@ -61,6 +61,16 @@ class NanobindCompiledSDFG:
         return self._module
 
     @property
+    def filename(self):
+        """The resolved absolute path to the loaded extension module (the built .so).
+
+        Parity with ``CompiledSDFG.filename``; some callers rely on the path
+        being absolute. Backed by the imported module's ``__file__``.
+        """
+        import pathlib
+        return str(pathlib.Path(self._module.__file__).resolve())
+
+    @property
     def has_gpu_code(self) -> bool:
         return self._handle.has_gpu_code
 
