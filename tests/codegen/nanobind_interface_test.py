@@ -266,20 +266,28 @@ def test_nanobind_interface_get_exported_function():
 
 
 def test_nanobind_interface_pyobject_rejected():
-    """pyobject arguments/returns are rejected with a clear error at codegen time.
+    """pyobject returns are dropped (arrays only); pyobject arguments are deferred to part 2.
 
-    pyobject support (including the PR#2206 bug-compatible decay of pyobject
-    arrays) is deferred to part 2 of the port; until then the generator must
-    refuse instead of emitting C++ that does not compile.
+    Both are rejected at codegen (the generator must refuse instead of emitting
+    C++ that does not compile), but with distinct messages: a pyobject return is
+    permanently unsupported (the nanobind interface returns arrays only), while a
+    pyobject argument (callbacks) is deferred to part 2 of the port.
     """
     import pytest
     from dace import dtypes
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    sdfg = dace.SDFG('pyobject_reject_probe')
-    sdfg.add_array('__return', [1], dtypes.pyobject())
-    with pytest.raises(NotImplementedError, match='pyobject'):
-        generate_bindings_code(sdfg)
+    # pyobject return value: dropped, arrays-only message.
+    ret_sdfg = dace.SDFG('pyobject_return_reject_probe')
+    ret_sdfg.add_array('__return', [1], dtypes.pyobject())
+    with pytest.raises(NotImplementedError, match='arrays only'):
+        generate_bindings_code(ret_sdfg)
+
+    # pyobject argument: deferred to part 2 (callbacks).
+    arg_sdfg = dace.SDFG('pyobject_arg_reject_probe')
+    arg_sdfg.add_scalar('cb', dtypes.pyobject())
+    with pytest.raises(NotImplementedError, match='part 2'):
+        generate_bindings_code(arg_sdfg)
 
 
 def test_nanobind_interface_string_argument():

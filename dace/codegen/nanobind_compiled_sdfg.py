@@ -43,8 +43,8 @@ class NanobindCompiledSDFG:
                       (``sdfg.arg_names``), used to map positional call
                       arguments to their names.
     :note: The arrays used as return values are allocated fresh on every call.
-    :note: It is not possible to return Python scalars, exactly as with
-           ``CompiledSDFG``.
+    :note: Return values are arrays only; unlike the ctypes ``CompiledSDFG`` the
+           nanobind interface returns neither Python scalars nor pyobjects.
     """
 
     def __init__(self, sdfg, module, arg_names):
@@ -144,11 +144,11 @@ class NanobindCompiledSDFG:
     def _allocate_return_arrays(self, kwargs):
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
 
-        There is no pyobject handling here (including the PR#2206 bug-compatible
-        decay of pyobject arrays to a single value): pyobject is deferred to
-        part 2 of the nanobind port, and the bindings generator already rejects
-        such SDFGs at codegen time. Whether part 2 replicates the PR#2206
-        behavior or fixes it is an open decision recorded there.
+        The nanobind interface returns arrays only: every ``__return*`` must be a
+        ``dt.Array`` (non-array returns raise below). pyobject returns are not
+        supported - the ctypes path's ``.item()`` / PR#2206 pyobject-array decay
+        is intentionally not replicated, and the generator rejects pyobject
+        returns at codegen time.
         """
         arrays = self._sdfg.arrays
         syms = {k: v for k, v in kwargs.items() if k not in arrays}

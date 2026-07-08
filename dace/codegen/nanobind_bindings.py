@@ -49,8 +49,14 @@ def _argument_binding(arglist, binding_order=None):
         # ctype is not a C++ type, so refuse here instead of emitting code
         # that fails to compile.
         if isinstance(desc.dtype, dtypes.pyobject):
-            raise NotImplementedError(f'Nanobind interface: pyobject argument/return value "{name}" is not '
-                                      f'supported yet; use the ctypes interface (compiler.interface=ctypes).')
+            # pyobject returns are dropped (the nanobind interface returns arrays
+            # only); pyobject arguments are callbacks, deferred to part 2.
+            if name.startswith('__return'):
+                raise NotImplementedError(f'Nanobind interface: pyobject return value "{name}" is not supported; '
+                                          f'the nanobind interface returns arrays only.')
+            raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is not supported yet '
+                                      f'(callbacks are deferred to part 2 of the port); '
+                                      f'use the ctypes interface (compiler.interface=ctypes).')
         # float16 maps to dace::half, a custom struct nanobind's ndarray cannot
         # accept as a scalar dtype; refuse loudly instead of emitting code that
         # fails to compile. A proper mapping is deferred to a future slice.
