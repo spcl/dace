@@ -275,6 +275,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
 
+        # A single return value is named `__return`; a tuple (including a
+        # one-element tuple) uses `__return_<i>`. The two naming schemes are
+        # mutually exclusive - the CompiledSDFG wrappers rely on this to tell a
+        # single value from a tuple - so an SDFG must not contain both.
+        if sdfg.parent is None and '__return' in sdfg._arrays and any(n.startswith('__return_') for n in sdfg._arrays):
+            raise InvalidSDFGError(
+                'Ambiguous return values: an SDFG cannot have both a `__return` (single value) '
+                'and `__return_<i>` (tuple) data descriptor.', sdfg, None)
+
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
             if id(desc) in references:
@@ -283,13 +292,16 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
 
-            # Because of how the code generator works Scalars can not be return values.
-            #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
-            if (sdfg.parent is None and isinstance(desc, dt.Scalar) and name.startswith("__return")
-                    and not desc.transient):
+            # Only arrays can be returned from a top-level function; scalars and
+            # other descriptors (e.g. structures) are not supported as return
+            # values by the code generator. (A ``return 5`` is stored as a
+            # shape-(1,) array; only an explicit scalar annotation yields a
+            # ``dt.Scalar``.)
+            if (sdfg.parent is None and name.startswith("__return") and not desc.transient
+                    and not isinstance(desc, dt.Array)):
                 raise InvalidSDFGError(
-                    f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
-                    None)
+                    f'Cannot use non-array data descriptor ("{name}") of type "{type(desc).__name__}" as return '
+                    f'value of a top-level function; only arrays can be returned.', sdfg, None)
 
             # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
             if desc.transient:
