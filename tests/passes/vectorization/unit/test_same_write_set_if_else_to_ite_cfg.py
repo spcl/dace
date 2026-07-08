@@ -1,17 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Pass-level tests for ``SameWriteSetIfElseToITECFG``.
+"""Pass-level tests for ``SameWriteSetIfElseToITECFG``.
 
-After running, an SDFG that originally contained a same-write-set ``if/else``
-must:
-- have *no* remaining ``ConditionalBlock``,
-- have three new states ``compute_then`` / ``compute_else`` / ``apply_ITE``
-  wired in sequence,
-- produce numerically the same result as the original SDFG.
-
-The third assertion uses ``sdfg.compile()`` end-to-end. Per the project rule,
-the reference is an unfolded scalar Python evaluation -- not a different
-SDFG variant.
+Same-write-set ``if/else`` -> no ``ConditionalBlock``; three new states
+``compute_then`` / ``compute_else`` / ``apply_ITE`` in sequence; same numeric
+result. Numeric check compiles end-to-end; reference = scalar Python eval, not
+another SDFG variant.
 """
 import os
 
@@ -25,15 +18,15 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
     _symbol_has_external_consumer,
 )
 
-# This pass emits ``ITE(...)`` tasklets which need ``dace/ITE.h``.
+# Pass emits ``ITE(...)`` tasklets -> need ``dace/ITE.h``.
 os.environ.setdefault("DACE_compiler_cpu_args", "")
 
 
 def _build_same_write_if_else_sdfg():
-    """Builds an SDFG that computes
+    """SDFG computing
         if c: A[0] = B[0] + 1.0
         else: A[0] = B[0] - 1.0
-    where ``c`` is a scalar bool symbol.
+    ``c`` = scalar bool symbol.
     """
     sdfg = dace.SDFG("if_else_same_write")
     sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
@@ -99,8 +92,7 @@ def test_pass_creates_then_else_transients_with_matching_dtype_and_shape():
 
 
 def test_pass_does_not_match_disjoint_write_set():
-    """When the two arms write to *different* arrays, the pass leaves the
-    ConditionalBlock alone."""
+    """Two arms write different arrays -> pass leaves ConditionalBlock alone."""
     sdfg = dace.SDFG("if_else_disjoint")
     sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
     sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
@@ -145,8 +137,7 @@ def test_pass_emits_ite_tasklet_with_cond_in_code():
 
 
 def test_pass_numerical_correctness():
-    """End-to-end compile-run. Reference is the scalar branch expressed in
-    plain Python -- not another SDFG."""
+    """End-to-end compile-run; reference = scalar branch in plain Python."""
     sdfg = _build_same_write_if_else_sdfg()
     SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
 
@@ -177,9 +168,8 @@ def test_pass_is_idempotent_after_first_run():
 
 
 def _build_sdfg_with_cb_only(sym_name: str):
-    """Skeleton: entry -> cb (cond=sym_name) -> exit, where sym_name is
-    assigned on the entry->cb interstate edge. The cb cond is the *only*
-    consumer of sym_name."""
+    """entry -> cb(cond=sym_name) -> exit; sym_name assigned on entry->cb edge;
+    cb cond = only consumer of sym_name."""
     sdfg = dace.SDFG(f"only_{sym_name}")
     sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
     sdfg.add_symbol(sym_name, dace.bool_)
@@ -197,16 +187,14 @@ def _build_sdfg_with_cb_only(sym_name: str):
 
 
 def test_symbol_has_external_consumer_when_only_cb_uses_it():
-    """Only consumer is the cb's own branch condition (which the pass is
-    about to rewrite away). With ``skip_cb=cb`` the helper sees no
-    external consumer."""
+    """Only consumer = cb's own branch cond (about to be rewritten away);
+    ``skip_cb=cb`` -> helper sees no external consumer."""
     sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
     assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is False
 
 
 def test_symbol_has_external_consumer_when_downstream_assignment_reads_it():
-    """A second interstate edge after the cb assigns ``out_sym = flag``,
-    that second use counts as external."""
+    """Downstream interstate edge assigns ``out_sym = flag`` -> counts as external."""
     sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
     sdfg.add_symbol("out_sym", dace.bool_)
     after = sdfg.add_state("after_cb")
@@ -246,3 +234,34 @@ def test_symbol_has_external_consumer_when_interstate_condition_reads_it():
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, exit_state, dace.InterstateEdge(condition=CodeBlock("flag")))
     assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+
+
+def test_lift_array_predicate_cond_stages_array_read_as_connector():
+    """Array-subscript guard (``A > K`` / ``A[i] > K``) -> lift to bool transient
+    reading ``A`` via in-connector, never inline (tile-op converter would emit
+    ``(int)(A)`` pointer cast). Regression: tsvc_2_5 ``masked_store_sym`` /
+    ``move_if_data_dep_nest``."""
+    sdfg = dace.SDFG("lift_array_pred")
+    sdfg.add_array("A", (16, ), dace.float64)
+    sdfg.add_symbol("K", dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    res = SameWriteSetIfElseToITECFG()._lift_array_predicate_cond(sdfg, state, "A > K", "i")
+    assert res is not None, "an array-reading guard must be staged, not left as inline free-symbol text"
+    cond_name, _ = res
+    assert sdfg.arrays[cond_name].dtype == dace.bool_, "lifted guard transient must be bool"
+    tasklets = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert len(tasklets) == 1
+    body = tasklets[0].code.as_string
+    assert "A" not in body.replace("_in_A", ""), f"array head A must not be inlined in the tasklet body: {body!r}"
+    a_edges = [e for e in state.in_edges(tasklets[0]) if e.data is not None and e.data.data == "A"]
+    assert len(a_edges) == 1, "A must be wired as exactly one in-connector"
+    assert str(a_edges[0].data.subset) == "i", "the bare array read is staged at the write's per-lane subset"
+
+
+def test_lift_array_predicate_cond_skips_pure_symbol_condition():
+    """Pure-symbol guard (``K > 0``, no array read) -> nothing to stage; helper
+    returns ``None``, caller keeps free-symbol text."""
+    sdfg = dace.SDFG("lift_pure_sym")
+    sdfg.add_symbol("K", dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    assert SameWriteSetIfElseToITECFG()._lift_array_predicate_cond(sdfg, state, "K > 0", "i") is None

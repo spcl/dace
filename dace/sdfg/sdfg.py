@@ -3029,13 +3029,17 @@ class SDFG(ControlFlowRegion):
                                    permissive=permissive,
                                    states=states)
 
-    def expand_library_nodes(self, recursive=True):
+    def expand_library_nodes(self, recursive=True, predicate=None):
         """
         Recursively expand all unexpanded library nodes in the SDFG,
         resulting in a "pure" SDFG that the code generator can handle.
 
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
+        :param predicate: Optional ``node -> bool``. When given, only library nodes for
+                          which it returns True are expanded; the rest are left in place
+                          (e.g. an opaque node whose expansion is deferred to a later
+                          stage). Nested SDFGs are still descended into either way.
         """
 
         states = list(self.states())
@@ -3044,8 +3048,10 @@ class SDFG(ControlFlowRegion):
             expanded_something = False
             for node in list(state.nodes()):  # Make sure we have a copy
                 if isinstance(node, nd.NestedSDFG):
-                    node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
+                    node.sdfg.expand_library_nodes(recursive=recursive, predicate=predicate)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
+                    if predicate is not None and not predicate(node):
+                        continue
                     impl_name = node.expand(state)
                     if Config.get_bool('debugprint'):
                         print('Automatically expanded library node \"{}\" with '

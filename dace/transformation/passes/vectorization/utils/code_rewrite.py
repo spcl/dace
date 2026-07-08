@@ -1,11 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-AST-based code-rewrite helpers used by the vectorization pipeline.
+"""AST-based code-rewrite helpers for the vectorization pipeline.
 
-These helpers manipulate Python expression / statement strings
-(CodeBlock bodies, interstate-edge assignment RHSs, loop and
-conditional-block conditions) and round-trip them through
-``ast.unparse``.
+Manipulate Python expression / statement strings (CodeBlock bodies, interstate-edge assignment
+RHSs, loop and conditional-block conditions), round-tripped through ``ast.unparse``.
 """
 import ast
 import re
@@ -19,16 +16,14 @@ from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdSc
 
 
 def extract_bracket_contents(expr: str, name: str):
-    """
-    Extract the contents inside the brackets following a given name in an expression.
+    """Extract contents inside the brackets following ``name`` in an expression.
 
-    Handles nested brackets and quoted strings so commas inside them are not split on.
+    Handles nested brackets + quoted strings so commas inside them are not split on.
 
     :param expr: The input expression to search within.
     :param name: The variable / function name to match before the brackets.
-    :returns: ``(full_match, parts)`` where ``full_match`` is the matched
-        ``<name>[...]`` substring (empty if no match) and ``parts`` is the
-        list of top-level comma-separated elements inside the brackets.
+    :returns: ``(full_match, parts)``: ``full_match`` = matched ``<name>[...]`` substring (empty
+        if no match), ``parts`` = list of top-level comma-separated elements inside the brackets.
     """
     # Find <name>[...]
     pattern = rf'\b{name}\s*\[(.*)\]'
@@ -75,10 +70,9 @@ def extract_bracket_contents(expr: str, name: str):
 
 
 class _DropDimsTransformer(ast.NodeTransformer):
-    """AST transformer that drops dimensions from every Subscript access of a named array.
+    """Drop dimensions from every Subscript access of a named array.
 
-    Rewrites ``Name(dataname)[indices]`` keeping only indices where
-    ``dim_mask[i] == 1``.
+    Rewrites ``Name(dataname)[indices]`` keeping only indices where ``dim_mask[i] == 1``.
     """
 
     def __init__(self, dataname: str, dim_mask: Tuple[int, ...]):
@@ -120,13 +114,10 @@ class _DropDimsTransformer(ast.NodeTransformer):
 
 
 def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str) -> str:
-    """
-    Remove dimensions from every array access of ``dataname`` in a Python expression string.
+    """Remove dimensions from every access of ``dataname`` in a Python expression string.
 
-    Dimensions where ``dim_mask`` is 0 are dropped; 1 are kept. Rewrites
-    are AST-based, so all occurrences are updated. Returns the input
-    unchanged if no matching access is found or the input does not parse
-    as Python.
+    ``dim_mask`` 0 -> drop dim, 1 -> keep. AST-based -> all occurrences updated. Returns input
+    unchanged if no matching access found or input does not parse as Python.
 
     :param src_str: Source expression / statement(s).
     :param dim_mask: Tuple of 0/1 indicating which dimensions to keep.
@@ -145,16 +136,14 @@ def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str) -> str
 
 
 def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
-    """
-    Remove dimensions from all accesses to an array throughout an SDFG.
+    """Remove dimensions from all accesses to an array throughout an SDFG.
 
-    Updates memlet subsets on edges, loop conditions / init / update
-    statements, conditional branch conditions, and interstate-edge
-    assignments.
+    Updates memlet subsets on edges, loop conditions / init / update statements, conditional
+    branch conditions, and interstate-edge assignments.
 
     :param sdfg: The SDFG to modify.
-    :param dim_mask: Tuple of 0/1 indicating which dimensions to keep
-        (1 = keep, 0 = drop); length must match array dimensionality.
+    :param dim_mask: Tuple of 0/1, which dimensions to keep (1 = keep, 0 = drop); length must
+        match array dimensionality.
     :param dataname: Name of the array whose accesses to update.
     """
 
@@ -189,10 +178,9 @@ def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
 
     from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
     for _state, edge in walk_memlets_of(sdfg, dataname):
-        # An earlier rewrite may have already collapsed this memlet to a
-        # lower dimensionality (common after a previous prepare /
-        # vectorize pass touched the same array); skip such memlets rather
-        # than re-collapsing.
+        # An earlier rewrite may have already collapsed this memlet to lower dimensionality
+        # (common after a previous prepare / vectorize pass touched the same array); skip such
+        # memlets rather than re-collapsing.
         if len(edge.data.subset) != len(dim_mask):
             continue
 
@@ -224,18 +212,15 @@ def offset_symbol_in_expression(expr_str: str,
                                 symbol_to_offset: str,
                                 offset: int,
                                 arrays: Optional[Set[str]] = None) -> str:
-    """
-    Return a new expression string with a symbol incremented by an offset.
+    """Return a new expression string with a symbol incremented by an offset.
 
     :param expr_str: The original expression as a string.
     :param symbol_to_offset: The symbol within the expression to offset.
     :param offset: The integer value to add to the symbol.
-    :param arrays: Array names in scope, passed to ``DaceSympyPrinter`` so
-        array reads round-trip as ``arr[idx]`` instead of ``arr(idx)``.
-        Callers with an SDFG in scope should pass ``set(sdfg.arrays.keys())``.
-        Defaults to the empty set.
-    :returns: The offset expression string, or the original unchanged if
-        the symbol is not present.
+    :param arrays: Array names in scope, passed to ``DaceSympyPrinter`` so array reads round-trip
+        as ``arr[idx]`` not ``arr(idx)``. Callers with an SDFG in scope pass
+        ``set(sdfg.arrays.keys())``. Defaults to empty set.
+    :returns: The offset expression string, or the original unchanged if the symbol is absent.
     :raises Exception: If ``expr_str`` contains an ``Eq(`` equality term.
     """
     if "Eq(" in expr_str:
@@ -258,21 +243,18 @@ def use_laneid_symbol_in_expression(expr_str: str,
                                     offset: int,
                                     vector_map_param: str = None,
                                     arrays: Optional[Set[str]] = None) -> str:
-    """
-    Return a new expression string with a symbol replaced by its lane-id variant.
+    """Return a new expression string with a symbol replaced by its lane-id variant.
 
-    ``sym1`` becomes ``sym1_laneid_<offset>``, except when the symbol is
-    ``vector_map_param``, which becomes ``(sym + offset)``.
+    ``sym1`` -> ``sym1_laneid_<offset>``, except ``vector_map_param`` -> ``(sym + offset)``.
 
     :param expr_str: The original expression as a string.
     :param symbol_to_offset: The symbol within the expression to offset.
     :param offset: The lane index / integer offset to apply.
-    :param vector_map_param: The vector map parameter name; matching
-        symbols are offset rather than lane-suffixed.
-    :param arrays: Array names in scope, passed to ``DaceSympyPrinter`` so
-        array reads print as ``arr[idx]``.
-    :returns: The rewritten expression string, or the original unchanged
-        if the symbol is not present.
+    :param vector_map_param: The vector map parameter name; matching symbols are offset rather
+        than lane-suffixed.
+    :param arrays: Array names in scope, passed to ``DaceSympyPrinter`` so array reads print as
+        ``arr[idx]``.
+    :returns: The rewritten expression string, or the original unchanged if the symbol is absent.
     :raises Exception: If ``expr_str`` contains an ``Eq(`` equality term.
     """
     if "Eq(" in expr_str:
@@ -290,15 +272,12 @@ def use_laneid_symbol_in_expression(expr_str: str,
     else:
         offsetted_expr = f"({LaneIdScheme.make_dim(str(sym_to_change), 0, int(offset))})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
-    # See ``offset_symbol_in_expression`` for the ``arrays`` argument
-    # rationale (callers with an SDFG in scope pass its array names so
-    # array reads print as ``arr[idx]``).
+    # ``arrays`` rationale: see ``offset_symbol_in_expression``.
     return DaceSympyPrinter(arrays if arrays is not None else set()).doprint(offset_expr)
 
 
-# ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``
-# were deleted in S1c-bis. Their sole caller
-# (``expand_interstate_assignments_to_lanes``) now emits the lane-suffixed
-# assignment via ``DaceSympyPrinter(arrays).doprint`` which prints array
-# reads as ``arr[idx]`` natively and emits ``and``/``or``/``not`` for
-# ``sympy.And``/``Or``/``Not`` — the AST round-trip is no longer needed.
+# ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls`` deleted in S1c-bis.
+# Their sole caller (``expand_interstate_assignments_to_lanes``) now emits the lane-suffixed
+# assignment via ``DaceSympyPrinter(arrays).doprint``, which prints array reads as ``arr[idx]``
+# natively and emits ``and``/``or``/``not`` for ``sympy.And``/``Or``/``Not`` -> AST round-trip no
+# longer needed.

@@ -1,21 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Detect scalar accumulator loops and replace them with ``Reduce`` nodes.
+"""Detect scalar-accumulator loops -> ``Reduce`` nodes.
 
-Three loop shapes are recognised (``identity=None`` on the emitted
-``Reduce`` so the pre-loop accumulator seeds the fold):
+Emitted ``Reduce`` uses ``identity=None`` so the pre-loop accumulator seeds the fold.
 
-- **Tasklet**: a single-state containing one two-input tasklet that
-  writes to the accumulator.
-- **Interstate edge**: body = 2 empty states joined by one interstate
-  edge with assignment ``{sym: sym <op> arr[<f(i)>]}``.
-- **Conditional interstate edge**: body = a single ``ConditionalBlock``
-  with one branch guarded by ``sym <cmp> arr[<f(i)>]`` (``cmp`` in
-  ``>``/``>=``/``<``/``<=``) whose body is the 2-empty-states + edge
-  shape above with assignment ``{sym: arr[<f(i)>]}``. ``>``/``>=`` lift
-  to ``max``, ``<``/``<=`` lift to ``min``.
+Three shapes:
 
-Accumulator forms accepted: a ``Scalar``, a length-1 ``Array``, a single
-loop-invariant slice of a multi-element ``Array`` (``C[k]``).
+- **Tasklet**: single state, one two-input tasklet writing the accumulator.
+- **Interstate edge**: 2 empty states + one iedge assigning ``{sym: sym <op> arr[<f(i)>]}``.
+- **Conditional interstate edge**: single ``ConditionalBlock``, one branch guarded by
+  ``sym <cmp> arr[<f(i)>]`` (``cmp`` in ``>``/``>=``/``<``/``<=``); branch = the 2-empty-states
+  shape assigning ``{sym: arr[<f(i)>]}``. ``>``/``>=`` -> ``max``, ``<``/``<=`` -> ``min``.
+
+Accumulator: ``Scalar``, length-1 ``Array``, or one loop-invariant slice of an ``Array`` (``C[k]``).
 """
 import ast
 import copy
@@ -30,9 +26,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
-# Ops in these tables are commutative by construction, so we skip calling
-# ``dace.frontend.operations.is_op_commutative`` (which returns ``None`` for
-# ``max`` / ``min`` because Python's builtins choke on symbolic arguments).
+# Ops here are commutative by construction -> skip is_op_commutative (returns None
+# for max/min: Python builtins choke on symbolic args).
 _BINOP_TO_WCR: Dict[type, str] = {
     ast.Add: "lambda a, b: a + b",
     ast.Mult: "lambda a, b: a * b",
@@ -48,8 +43,7 @@ _CALL_TO_WCR: Dict[str, str] = {
     "max": "lambda a, b: max(a, b)",
     "min": "lambda a, b: min(a, b)",
 }
-# For a guard `lhs <cmp> rhs` where the assignment inside writes `sym = arr[i]`,
-# the reduction is max iff the condition fires when arr is larger than sym.
+# Guard `lhs <cmp> rhs` with body `sym = arr[i]`: reduction = max iff guard fires when arr > sym.
 _CMP_GT = (ast.Gt, ast.GtE)
 _CMP_LT = (ast.Lt, ast.LtE)
 
@@ -100,19 +94,15 @@ class LoopToReduce(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
-        # Normalise reductions written as WCR edges back to in-body augmented
-        # assignment so the body matcher sees a uniform ``acc <op>= arr[f(i)]``
-        # tasklet shape regardless of how the reduction was originally encoded.
-        # No-op on SDFGs whose reductions are already in augassign form.
+        # WCR edges -> in-body augassign so the matcher sees a uniform
+        # ``acc <op>= arr[f(i)]`` tasklet. No-op if already augassign.
         from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
 
-        # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied
-        # here. The body matcher already handles the frontend's scalar-slice
-        # intermediates; the existing WCRToAugAssign preprocess above takes
-        # care of WCR -> augassign normalization. Running the clean folds is
-        # redundant and risks the same ordering pitfalls seen in LoopToScan.
+        # D4 (CleanAccessNode + CleanTasklet) deliberately NOT applied: matcher already
+        # handles scalar-slice intermediates, WCRToAugAssign above covers normalization.
+        # Redundant + risks the ordering pitfalls seen in LoopToScan.
 
         count = 0
         for node, parent in list(sdfg.all_nodes_recursive()):
@@ -128,32 +118,25 @@ class LoopToReduce(ppl.Pass):
             count += 1
 
         # Multi-tasklet ``compute then accumulate`` shapes (TSVC s313/vdotr
-        # ``dot[0] += a[i]*b[i]``, s4115 gather+sum) don't match ``_extract``
-        # -- the single-tasklet matcher refuses bodies with multiple tasklets,
-        # by design (a relaxed matcher would silently lift GEMM contractions to
-        # a ``Reduce`` libnode and bypass ``LiftEinsum`` BLAS lowering). In
-        # ``wcr-scalar`` mode only, run the ``TTE + AugAssignToWCR`` normaliser
-        # the existing ``reduction_to_wcr_map`` stage uses: it collapses the
-        # in-body copy chain to a clean ``WCR-on-accum[c]`` write the
-        # retarget lift can then privatise. The ``Reduce`` libnode form
-        # cannot express the in-body compute chain, so this path stays
-        # gated on ``prefer == 'wcr-scalar'``.
+        # ``dot[0] += a[i]*b[i]``, s4115 gather+sum) don't match ``_extract``: the
+        # single-tasklet matcher refuses multi-tasklet bodies by design (relaxing it
+        # would silently lift GEMM contractions to a ``Reduce`` libnode, bypassing
+        # ``LiftEinsum`` BLAS lowering). wcr-scalar mode only: run ``TTE + AugAssignToWCR``
+        # to collapse the in-body copy chain to a clean ``WCR-on-accum[c]`` write the
+        # retarget lift can privatise. The ``Reduce`` libnode can't express the in-body
+        # compute chain -> gated on ``prefer == 'wcr-scalar'``.
         if self.prefer == 'wcr-scalar':
             from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
             from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-            # ``TTE`` collapses the trivial ``out = in`` passthrough tasklets
-            # the frontend leaves around the accumulator's load/store so
-            # ``AugAssignToWCR`` (a SingleStateTransformation matching the
-            # 5-node ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape)
-            # actually sees a clean pattern.
+            # TTE collapses the frontend's trivial ``out = in`` passthrough tasklets
+            # around the accumulator load/store so ``AugAssignToWCR`` (matches the 5-node
+            # ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape) sees a clean pattern.
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-            # NB: ``permissive=False`` is required. ``AugAssignToWCR``'s
-            # permissive mode matches scan-shape bodies (TSVC recurrence_down:
-            # ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as if they were
-            # reductions, and rewrites them into WCR writes that subsequent
-            # passes parallelise -- the carried dependence is lost and values
-            # come out off-by-one-iteration. Pinned by the descending-recurrence
-            # canonicalize value-preservation test.
+            # ``permissive=False`` required: permissive mode matches scan-shape bodies
+            # (TSVC recurrence_down ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as
+            # reductions and rewrites them to WCR writes later parallelised -> carried
+            # dependence lost, off-by-one. Pinned by the descending-recurrence value-
+            # preservation test.
             sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=False)
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
@@ -164,17 +147,12 @@ class LoopToReduce(ppl.Pass):
                 _lift_wcr_scalar_retarget(parent, node, *wcr_info)
                 count += 1
 
-            # Dedicated multi-state-chain matcher for the gather + sum shape
-            # (TSVC s4115 ``s += a[i] * b[ip[i]]``): the accumulator is a
-            # transient scalar, the body splits into a pre-load state and a
-            # compute state joined by an iedge assigning a gather index symbol,
-            # and the final write goes through an extra transient AccessNode
-            # between the combining tasklet and the accumulator sink -- enough
-            # to take it past every shape ``AugAssignToWCR`` recognises.
-            # Handles the chain in place: drops the tasklet's carry input,
-            # adds WCR to the final write, and wraps the loop with init +
-            # writeback states. Same gating as ``_extract_wcr_body``
-            # (wcr-scalar only).
+            # Dedicated matcher for the gather+sum shape (TSVC s4115
+            # ``s += a[i] * b[ip[i]]``): transient scalar accumulator, body split into
+            # pre-load + compute states joined by a gather-index iedge, final write
+            # through an extra transient AccessNode -> past every ``AugAssignToWCR`` shape.
+            # In place: drop the tasklet's carry input, add WCR to the final write, wrap
+            # with init + writeback. Same gating as ``_extract_wcr_body`` (wcr-scalar only).
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue
@@ -185,11 +163,9 @@ class LoopToReduce(ppl.Pass):
                 count += 1
 
         if count > 0:
-            # Narrow the freshly-emitted state-level memlets on the new
-            # ``Reduce`` libnode and surrounding read/write edges. The lifting
-            # uses array-extent memlets; propagation collapses them to the
-            # reduction axis range so downstream codegen / DCE see the tight
-            # subset.
+            # Narrow memlets on the new ``Reduce`` libnode + read/write edges: lifting
+            # uses array-extent memlets, propagation collapses to the reduction-axis
+            # range so codegen / DCE see the tight subset.
             from dace.sdfg.propagation import propagate_memlets_sdfg
             propagate_memlets_sdfg(sdfg)
         return count or None
@@ -225,26 +201,15 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
 
 
 def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset):
-    """Walk a copy chain forward from ``start_node`` to its eventual non-transient destination.
+    """Walk a copy chain forward from ``start_node`` to its non-transient destination.
 
-    A hop is permitted only across a transient access node with exactly one
-    in-edge and one out-edge whose memlet preserves the single-element write
-    scope. Halts when the next node is non-transient, the chain branches, or
-    the scope no longer holds. Returns ``(name, subset)`` of the final node.
+    Hop only across a transient AccessNode with exactly 1 in-edge + 1 out-edge whose
+    memlet preserves the single-element write scope. Halts at non-transient, branch, or
+    scope break. Returns ``(name, subset)`` of the final node.
 
-    Lets the tasklet pattern in ``_extract`` recognise the frontend's
-    ``compute -> tmp -> assign-copy -> accumulator`` staging shape, where the
-    tasklet writes a transient and a chain of plain copies forwards that value
-    to the real (often array-slot) accumulator. Without this, ``_scalar_equiv``
-    rejects an accumulator like ``sum_out: float64[N]`` written at index 0
-    because the descriptor is not scalar-like even though the access is.
-
-    :param state: The dataflow state hosting ``start_node``.
-    :param sdfg: SDFG owning the array descriptors.
-    :param start_node: The first AccessNode along the chain (usually a tasklet's
-                       immediate write target).
-    :param start_subset: Memlet subset on the edge into ``start_node``.
-    :returns: ``(name, subset)`` of the final AccessNode reached.
+    Lets ``_extract`` see the frontend's ``compute -> tmp -> assign-copy -> accumulator``
+    staging: without it ``_scalar_equiv`` rejects an accumulator like ``sum_out: float64[N]``
+    written at ``[0]`` (descriptor not scalar-like though the access is).
     """
     cur, cur_sub = start_node, start_subset
     visited = set()
@@ -266,24 +231,39 @@ def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset):
         cur, cur_sub = oe.dst, oe.data.subset
 
 
-def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> Optional[subsets.Range]:
-    """Widen the dimensions of ``subset`` that use ``loop_var`` linearly over the
-    iteration range ``[start, end]``. Dimensions that do not involve ``loop_var``
-    -- e.g. the outer index ``jl`` in a per-row inner reduction ``arr[jl, jm]``
-    over ``jm`` -- are kept as-is; only the reduction axis is expanded."""
+def _expand_over_loop(subset: subsets.Subset,
+                      loop_var: sympy.Symbol,
+                      start,
+                      end,
+                      loop_stride=1) -> Optional[subsets.Range]:
+    """Widen ``subset`` dims that use ``loop_var`` linearly over ``[start, end]`` (inclusive)
+    stepped by ``loop_stride``. Dims not involving ``loop_var`` (e.g. outer ``jl`` in a
+    per-row inner reduction ``arr[jl, jm]`` over ``jm``) stay as-is; only the reduction axis widens.
+
+    Read index ``coeff*loop_var + off`` over ``[start, end : loop_stride]`` -> arithmetic
+    sequence first ``coeff*start + off``, last ``coeff*end + off``, step ``coeff*loop_stride``.
+    So a strided read (``a[2*k]``) and a strided loop (``range(0, N, 2)``) both fold into one
+    strided reduce subset. Only ascending integer read coeff; symbolic/zero/negative refused
+    (left to LoopToMap)."""
     if not isinstance(subset, subsets.Range):
         return None
     ranges = []
     for rb, re_, rs in subset.ndrange():
         if rb != re_ or rs != 1:
             return None
-        if loop_var not in symbolic.pystr_to_symbolic(str(rb)).free_symbols:
-            ranges.append((rb, re_, 1))  # dimension independent of the reduction axis
+        rb_sym = symbolic.pystr_to_symbolic(str(rb))
+        if loop_var not in rb_sym.free_symbols:
+            ranges.append((rb, re_, 1))  # axis independent of reduction
             continue
-        offset = symbolic.simplify(rb - loop_var)
-        if offset.has(loop_var):
-            return None
-        ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1))
+        # read index = coeff*loop_var + off (affine)
+        coeff = symbolic.simplify(sympy.diff(rb_sym, loop_var))
+        off = symbolic.simplify(rb_sym - coeff * loop_var)
+        if coeff.has(loop_var) or off.has(loop_var):
+            return None  # non-linear
+        if not (coeff.is_integer and coeff.is_positive):
+            return None  # only ascending integer read stride
+        step = symbolic.simplify(coeff * loop_stride)
+        ranges.append((symbolic.simplify(coeff * start + off), symbolic.simplify(coeff * end + off), step))
     return subsets.Range(ranges)
 
 
@@ -319,17 +299,13 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
 
 def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start,
                          end) -> Optional["_Reduction"]:
-    """Match ``{sym: const}`` conditional-interstate-edge "any"/"all".
+    """Match ``{sym: const}`` conditional-iedge "any"/"all".
 
-    Body = ``ConditionalBlock`` with one branch, guard ``arr[<subs>] <cmp> C``
-    (C integer), branch = 2 empty states + interstate edge with assignment
-    ``{sym: <const_rhs>}`` where ``const_rhs`` is 0 or 1.
+    Body = ``ConditionalBlock``, one branch, guard ``arr[<subs>] <cmp> C`` (C int),
+    branch = 2 empty states + iedge ``{sym: <const_rhs>}``, ``const_rhs`` in {0, 1}.
 
-    The guard array is assumed to be 0/1-valued, so ``any(arr[...] == 1)``
-    over the iteration range is equivalent to the bitwise-OR of ``arr[...]``
-    -- no predicate synthesis needed, a plain ``Reduce(|)`` over the array
-    slice suffices. ``const_rhs == 1`` lifts to OR; ``const_rhs == 0`` lifts
-    to AND.
+    Guard array assumed 0/1-valued -> ``any(arr[...] == 1)`` = bitwise-OR of ``arr[...]``,
+    so plain ``Reduce(|)`` suffices. ``const_rhs == 1`` -> OR; ``const_rhs == 0`` -> AND.
     """
     if const_rhs == 1:
         wcr = "lambda a, b: a | b"
@@ -410,8 +386,16 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None or stride != 1:
+    if start is None or end is None or stride is None:
         return None
+    # A strided loop (``range(0, N, 2)``) folds its stride into the reduce subset
+    # (see ``_expand_over_loop``); only an ascending integer loop stride is handled.
+    if stride != 1:
+        try:
+            if int(stride) <= 0:
+                return None
+        except (TypeError, ValueError):
+            return None
 
     blocks = loop.nodes()
     loop_var = loop.loop_variable
@@ -419,18 +403,13 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
 
     # Tasklet pattern: single state with exactly one tasklet.
     #
-    # NOTE: the single-tasklet + EXACTLY-2-data-inputs constraints below are also
-    # what guarantees this pass does NOT lift tensor contractions / GEMM. A GEMM
-    # inner loop ``for k: c[i,j] += a[i,k] * b[k,j]`` produces either two
-    # tasklets in the body (a separate ``Mul`` for the product, then an ``Add``
-    # for the accumulation) or a single tasklet with THREE data inputs (acc + 2
-    # array gathers). Both shapes are refused, leaving the contraction loop to
-    # ``LoopToMap`` + WCR; the resulting Map+Tasklet+WCR-Sum shape is then the
-    # canonical input for :class:`~dace.transformation.dataflow.lift_einsum.LiftEinsum`
-    # to detect as an einsum (``ik,kj->ij`` for the GEMM example). Keep the
-    # 2-input constraint conservative: relaxing it without paired
-    # contraction-detection would silently turn matmuls into ``Reduce`` libnodes,
-    # bypassing the BLAS lowering path LiftEinsum opens.
+    # The single-tasklet + EXACTLY-2-data-inputs constraints also guarantee this pass
+    # does NOT lift GEMM/tensor contractions: ``for k: c[i,j] += a[i,k] * b[k,j]`` gives
+    # either 2 tasklets (Mul then Add) or 1 tasklet with 3 data inputs (acc + 2 gathers),
+    # both refused -> contraction goes to ``LoopToMap`` + WCR, the canonical input for
+    # :class:`~dace.transformation.dataflow.lift_einsum.LiftEinsum` (``ik,kj->ij``).
+    # Relaxing the 2-input constraint without contraction-detection would silently turn
+    # matmuls into ``Reduce`` libnodes, bypassing that BLAS path.
     if len(blocks) == 1 and isinstance(blocks[0], SDFGState):
         state = blocks[0]
         tasklet = None
@@ -483,23 +462,19 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         write_subset = write_edge.data.subset
         if _one_elem(write_subset) != 1 or _uses(write_subset, loop_var_sym):
             return None
-        # Also refuse when the write subset uses a symbol that is REASSIGNED
-        # on one of the loop's interstate edges (e.g. ``k = k + j + 1`` inside
-        # the body): such a symbol's value changes every iteration, so each
-        # iteration writes a different array element -- this is N independent
-        # writes, not a reduction onto a single accumulator slot. Pinned by
-        # TSVC s141 (``flat_2d_array[k] = flat_2d_array[k] + bb[j, i]`` with
-        # ``k`` incremented per iteration).
+        # Refuse when the write subset uses a symbol REASSIGNED on a loop iedge
+        # (e.g. ``k = k + j + 1``): value changes each iteration -> N independent
+        # writes, not a single-slot reduction. Pinned by TSVC s141
+        # (``flat_2d_array[k] = flat_2d_array[k] + bb[j, i]``, ``k`` incremented per iter).
         loop_iedge_assignees = set()
         for e in loop.edges():
             loop_iedge_assignees.update(e.data.assignments.keys())
         for free_sym in write_subset.free_symbols:
             if str(free_sym) in loop_iedge_assignees:
                 return None
-        # Chase forward through any copy chain (``compute -> tmp -> assign-copy ->
-        # accumulator``) so the carry-input check below can match an accumulator
-        # whose descriptor is not scalar-like (e.g. ``sum_out: float64[N]`` written
-        # at ``[0]``) but whose access is.
+        # Chase forward through the copy chain (``compute -> tmp -> assign-copy -> accumulator``)
+        # so the carry-input check can match an accumulator whose descriptor is not
+        # scalar-like (``sum_out: float64[N]`` written at ``[0]``) but whose access is.
         final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
 
         # Resolve each tasklet input.
@@ -520,14 +495,12 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             else:
                 resolved.append((src.data, e.data.subset))
 
-        # An accumulator input must be loop-carried: the data it resolves to is
-        # written somewhere inside the loop, so its value flows from a previous
-        # iteration. This is what makes ``acc = acc op x`` a reduction and what
-        # distinguishes a genuine carried accumulator (possibly read via a
-        # scalar-equivalent staging copy) from a loop-invariant scalar that merely
-        # happens to be scalar-equivalent to the write target -- e.g. the scaled
-        # scatter ``out_slice = arr[jl, jk] * zq`` with ``zq = 1/ptsphy`` hoisted
-        # out of the loop, which is NOT a reduction.
+        # Accumulator input must be loop-carried: resolved data is written inside the loop,
+        # so its value flows from a prior iteration. This makes ``acc = acc op x`` a reduction
+        # and distinguishes a genuine carried accumulator (maybe via a scalar-equivalent staging
+        # copy) from a loop-invariant scalar that merely happens to be scalar-equivalent to the
+        # write target -- e.g. scaled scatter ``out_slice = arr[jl, jk] * zq`` (``zq = 1/ptsphy``
+        # hoisted out), NOT a reduction.
         carried = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
         accum_ok = False
         array, arr_subset = None, None
@@ -545,35 +518,30 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         if not accum_ok or array is None or array == accum:
             return None
 
-        # The loop's carried accumulator -- the scalar that survives across
-        # iterations and that downstream code reads -- may differ from the tasklet's
-        # write target when the frontend stages the update through a temp (``tmp =
-        # acc + a[i]; acc = tmp``). Reduce into that carried accumulator, not the
-        # loop-local temp: it already holds the pre-loop seed, so the seeded
-        # ``Reduce`` (identity=None) folds into it correctly, and dropping the temp
-        # is safe because it does not outlive the loop body.
+        # The carried accumulator (survives across iterations, read downstream) may differ
+        # from the tasklet's write target when the frontend stages via a temp
+        # (``tmp = acc + a[i]; acc = tmp``). Reduce into the carried accumulator, not the temp:
+        # it holds the pre-loop seed so the seeded ``Reduce`` (identity=None) folds correctly,
+        # and dropping the temp is safe (it doesn't outlive the body).
         if carried_accum is not None and carried_accum != accum:
             accum, write_subset = carried_accum, carried_sub
 
-        # A pure reduction writes ONLY the accumulator (plus its loop-local
-        # staging temps). If the body also writes another, non-transient
-        # container -- e.g. the per-iteration scan output ``b[i] = sum`` in
-        # ``sum = sum + a[i]; b[i] = sum`` -- then the *running* accumulator
-        # value is observed every iteration; collapsing the loop to a single
-        # ``Reduce`` would drop that output and silently corrupt it. Refuse.
+        # A pure reduction writes ONLY the accumulator (+ loop-local staging temps). If the
+        # body also writes a non-transient container -- e.g. per-iteration scan output
+        # ``b[i] = sum`` in ``sum = sum + a[i]; b[i] = sum`` -- the running accumulator is
+        # observed every iteration; collapsing to a single ``Reduce`` drops it. Refuse.
         written = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
         allowed = {accum, array} | ({carried_accum} if carried_accum is not None else set())
         if any(w not in allowed and not sdfg.arrays[w].transient for w in written):
             return None
 
-        expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end)
+        expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, stride)
         if expanded is None:
             return None
         return _Reduction(wcr, accum, write_subset, array, expanded)
 
-    # Interstate-edge pattern: 2 empty states + 1 edge with 1 assignment,
-    # either at loop level or inside a single-branch ConditionalBlock whose
-    # guard is a >/>=/</<= comparison between the accumulator and the array.
+    # Interstate-edge pattern: 2 empty states + 1 edge with 1 assignment, at loop level
+    # or inside a single-branch ConditionalBlock guarded by a >/>=/</<= accumulator-vs-array cmp.
     cond = None
     body: ControlFlowRegion = loop
     if len(blocks) == 1 and isinstance(blocks[0], ConditionalBlock):
@@ -635,12 +603,10 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             if arr_call is None or other != target_sym:
                 return None
         else:
-            # Conditional-interstate-edge path.
-            # "any"/"all" pattern: ``{sym: <const>}`` with an array-predicate
-            # guard; lifts to OR / AND over the (0/1-valued) guard array.
-            # Gated on ``permissive`` -- the lift is only semantically correct
-            # if the guard array happens to hold only 0/1 values, which the
-            # pass cannot verify statically.
+            # Conditional-iedge path.
+            # "any"/"all": ``{sym: <const>}`` with array-predicate guard -> OR/AND over the
+            # (0/1-valued) guard array. Gated on ``permissive``: only sound if the guard
+            # array holds only 0/1, which the pass can't verify statically.
             if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
                 return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
@@ -667,24 +633,15 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1)]),
         )
 
-    # Branched min/max pattern (TSVC s314, s316):
-    #
-    #   for i:
-    #       if a[i] > x: x = a[i]
-    #
-    # The frontend lowers this into a loop body with three blocks:
-    # ``[ConditionalBlock, cond_prep_state, post_state]`` joined by iedges
-    # that thread the comparison through a temp symbol:
-    #
+    # Branched min/max pattern (TSVC s314, s316): ``for i: if a[i] > x: x = a[i]``.
+    # Frontend lowers to 3 blocks ``[ConditionalBlock, cond_prep_state, post_state]``
+    # threading the cmp through a temp symbol:
     #   (block) -> (cond_prep) {arr_sym: arr[i]}
     #   (cond_prep) -> (if_N) {guard_sym: arr_sym <cmp> accum}
     #   if_N TRUE branch body: ``accum = arr[i]`` (passthrough copy)
-    #
-    # ``max`` and ``min`` are idempotent, so the conditional is redundant at
-    # the wcr level: ``acc = max(acc, arr[i])`` is correct whether the guard
-    # fires or not. Both the libnode lift (``Reduce(wcr=max/min, ...)``) and
-    # the wcr-scalar lift (``_priv_X = wcr(_priv_X, arr[i])`` body) consume
-    # the resulting ``_Reduction`` info as-is.
+    # max/min idempotent -> the conditional is redundant at wcr level
+    # (``acc = max(acc, arr[i])`` correct whether or not the guard fires). Both lifts
+    # consume the resulting ``_Reduction`` as-is.
     info = _extract_branched_minmax(loop, sdfg, loop_var_sym, start, end)
     if info is not None:
         return info
@@ -694,21 +651,17 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
 
 def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start,
                              end) -> Optional[_Reduction]:
-    """Match a ``for i: if arr[i] <cmp> accum: accum = arr[i]`` loop where the
-    frontend lowers the masked update into a loop body of:
+    """Match ``for i: if arr[i] <cmp> accum: accum = arr[i]`` where the frontend lowers
+    the masked update into:
 
     - one ``ConditionalBlock`` (single TRUE branch guarded by a temp symbol),
-    - one ``cond_prep`` SDFGState whose only role is to be a hub for the iedge
-      that computes the guard from a previously-loaded array temp,
+    - one ``cond_prep`` SDFGState hubbing the guard-computing iedge,
     - one trailing empty SDFGState,
 
-    threaded together by iedge assignments ``{arr_sym: arr[i]}`` and
-    ``{guard_sym: arr_sym <cmp> accum}``.
+    threaded by iedges ``{arr_sym: arr[i]}`` and ``{guard_sym: arr_sym <cmp> accum}``.
 
-    Returns the standard ``_Reduction`` info (``wcr`` = ``max`` for
-    ``>``/``>=``, ``min`` for ``<``/``<=``) the existing lift functions
-    consume to emit either a ``Reduce`` libnode or a wcr-scalar body.
-    Returns ``None`` if any structural / semantic check fails.
+    Returns ``_Reduction`` (``wcr`` = ``max`` for ``>``/``>=``, ``min`` for ``<``/``<=``),
+    or ``None`` on any structural/semantic failure.
     """
     blocks = loop.nodes()
     cond_blocks = [b for b in blocks if isinstance(b, ConditionalBlock)]
@@ -724,8 +677,7 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
     if not guard_sym.isidentifier():
         return None
 
-    # Walk back from the conditional through iedges to find where guard_sym
-    # is assigned. Look one hop back from the conditional.
+    # Walk one hop back through iedges to where guard_sym is assigned.
     guard_iedge = next(
         (ie for ie in loop.edges() if ie.dst is cb and ie.data is not None and guard_sym in ie.data.assignments),
         None,
@@ -746,8 +698,7 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
         return None
     cmp_lhs_sym, cmp_rhs_sym = guard_tree.left.id, guard_tree.comparators[0].id
 
-    # Walk back one more hop to find where the array temp is loaded:
-    # the iedge into ``guard_iedge.src`` must assign the array-temp symbol.
+    # One more hop back: the iedge into ``guard_iedge.src`` assigns the array-temp symbol.
     prep_state = guard_iedge.src
     arr_iedge = next(
         (ie for ie in loop.edges() if ie.dst is prep_state and ie.data is not None and ie.data.assignments),
@@ -764,8 +715,8 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
         cmp_is_gt = isinstance(cmp_op, _CMP_GT)
     elif cmp_rhs_sym in arr_iedge.data.assignments:
         arr_sym, accum_name = cmp_rhs_sym, cmp_lhs_sym
-        # cmp is ``accum <op> arr_sym`` -- ``<``/``<=`` => max (because the
-        # guard fires when accum is the smaller side, meaning arr_sym is larger)
+        # cmp is ``accum <op> arr_sym`` -- ``<``/``<=`` => max (guard fires when accum
+        # smaller, i.e. arr_sym larger)
         cmp_is_gt = isinstance(cmp_op, _CMP_LT)
     if arr_sym is None:
         return None
@@ -782,12 +733,9 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
     if desc is None:
         return None
 
-    # The TRUE branch body must be a single state whose only effect is
-    # ``accum_name = arr[i]`` (or ``accum_name = arr_sym``). Inspect by
-    # finding an AccessNode write to ``accum_name`` that has a single
-    # in-edge tracing back through a passthrough chain to a read of
-    # ``array_name`` -- delegate the chain walk to ``_chase_forward_to_accum``
-    # in reverse via the simpler shape we expect.
+    # TRUE branch body must be a single state whose only effect is ``accum_name = arr[i]``
+    # (or ``= arr_sym``): find an AccessNode write to ``accum_name`` with one in-edge
+    # tracing back through a passthrough chain to a read of ``array_name``.
     branch_states = [s for s in branch_body.nodes() if isinstance(s, SDFGState)]
     if len(branch_states) != 1:
         return None
@@ -830,9 +778,8 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
 
 
 def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
-    """Replace ``loop`` with a ``Reduce``. If the accumulator is a data
-    descriptor we write to it directly; if it's a symbol we synthesize a
-    transient scalar, seed it from the symbol, and assign back on exit."""
+    """Replace ``loop`` with a ``Reduce``. Data-descriptor accumulator -> write directly;
+    symbol accumulator -> synthesize a transient scalar, seed from the symbol, assign back on exit."""
     import dace
     root = parent
     while not isinstance(root, SDFG):
@@ -882,24 +829,15 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
 def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     """Replace ``loop`` with ``init -> LoopRegion(WCR-on-scalar body) -> writeback``.
 
-    Mirrors the reduce-libnode lift but keeps the iteration explicit so the
-    downstream :class:`~dace.transformation.interstate.loop_to_map.LoopToMap`
-    pass turns the LoopRegion into a Map with a WCR-on-scalar exit memlet --
-    the shape the WCR codegen lowers to ``#pragma omp parallel for
-    reduction(op:scalar)``.
+    Mirrors the reduce-libnode lift but keeps iteration explicit so downstream
+    :class:`~dace.transformation.interstate.loop_to_map.LoopToMap` turns the LoopRegion
+    into a Map with a WCR-on-scalar exit memlet -> WCR codegen lowers it to
+    ``#pragma omp parallel for reduction(op:scalar)``.
 
-    Body shape: ``arr_an --(arr[f(i)], wcr)--> priv_an``. The WCR annotation
-    on the AccessNode-to-AccessNode memlet tells codegen to combine the
-    source value with the destination via ``info.wcr`` instead of plain
-    assignment, so no intermediate tasklet is needed. Init state seeds the
-    scalar from ``info.accum[info.accum_subset]`` (or from a symbol
-    assignment when the accumulator is a DaCe symbol); writeback copies the
-    post-loop scalar back into the accumulator (or assigns the symbol via an
-    iedge on the loop's out-edge).
-
-    :param parent: The control-flow region containing ``loop``.
-    :param loop: The reduction loop to replace.
-    :param info: The reduction shape extracted by ``_extract``.
+    Body: ``arr_an --(arr[f(i)], wcr)--> priv_an``. The AN-to-AN WCR memlet tells codegen
+    to combine via ``info.wcr`` (no intermediate tasklet). Init seeds the scalar from
+    ``info.accum[info.accum_subset]`` (or a symbol assignment); writeback copies the
+    post-loop scalar back (or assigns the symbol via an out-edge iedge).
     """
     import dace
     root = parent
@@ -938,28 +876,32 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     body = new_loop.add_state(loop.label + "_body", is_start_block=True)
     arr_an = body.add_read(info.array)
     priv_an = body.add_write(priv_name)
-    # ``info.array_subset`` is the union-over-iterations extent the ``Reduce``
-    # libnode consumes; project each axis whose range matches the loop
-    # iteration span (``loop_start`` -> ``loop_end``) back onto the loop
-    # variable plus a per-iter offset. Loop-invariant constant slices stay
-    # as-is. Catches both the full-array case (``a[0:N]`` for ``range(N)``)
-    # and the offset case (``a[1:N]`` for ``range(1, N)`` -- TSVC s314).
+    # ``info.array_subset`` is the union-over-iterations extent. Project each axis whose
+    # range spans the loop (``loop_start`` -> ``loop_end``) back onto ``loop_var + per-iter
+    # offset``; loop-invariant constant slices stay as-is. Covers full-array (``a[0:N]`` for
+    # ``range(N)``) and offset (``a[1:N]`` for ``range(1, N)`` -- TSVC s314).
     iter_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     loop_start = loop_analysis.get_init_assignment(loop)
     loop_end = loop_analysis.get_loop_end(loop)
+    loop_stride = loop_analysis.get_loop_stride(loop)
     per_iter_ranges = []
     for axis, (lo, hi, st) in enumerate(info.array_subset.ndrange()):
-        axis_len = symbolic.simplify(hi - lo + 1)
-        # An axis whose extent equals the loop's iteration count is the
-        # reduction axis. Per-iter index is ``iter_sym + (lo - loop_start)``.
+        # Reduction axis = axis whose element count equals the iteration count.
+        # ``_expand_over_loop`` widened ``coeff*i + off`` into
+        # ``(coeff*start+off, coeff*end+off, coeff*loop_stride)``; invert via
+        # ``coeff = st / loop_stride`` to recover the per-iter index. Unit read over
+        # unit loop -> ``coeff == 1``; strided read/loop -> ``coeff >= 1``.
         is_reduction_axis = False
-        if loop_start is not None and loop_end is not None and st == 1:
-            iters = symbolic.simplify(loop_end - loop_start + 1)
-            if not symbolic.inequal_symbols(axis_len, iters):
+        coeff = None
+        if (loop_start is not None and loop_end is not None and loop_stride is not None and loop_stride != 0
+                and st != 0):
+            coeff = symbolic.simplify(st / loop_stride)
+            axis_elems = symbolic.simplify((hi - lo) / st + 1)
+            iters = symbolic.simplify((loop_end - loop_start) / loop_stride + 1)
+            if coeff.is_integer and coeff.is_positive and not symbolic.inequal_symbols(axis_elems, iters):
                 is_reduction_axis = True
         if is_reduction_axis:
-            offset = symbolic.simplify(lo - loop_start)
-            idx = symbolic.simplify(iter_sym + offset)
+            idx = symbolic.simplify(coeff * iter_sym + (lo - coeff * loop_start))
             per_iter_ranges.append((idx, idx, 1))
         else:
             per_iter_ranges.append((lo, hi, st))
@@ -976,9 +918,8 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         wb_w = wb_state.add_write(info.accum)
         wb_state.add_edge(wb_r, None, wb_w, None, mm.Memlet(data=info.accum, subset=copy.deepcopy(info.accum_subset)))
     else:
-        # Symbol accumulator: lift the closed-form value via an interstate-edge
-        # assignment on the OUT-edge of the writeback state, the same shape
-        # the reduce-libnode path uses for symbol accumulators.
+        # Symbol accumulator: lift the value via an iedge assignment on the writeback
+        # state's OUT-edge, same as the reduce-libnode path.
         extra_assignments[info.accum] = priv_name
 
     parent.add_edge(init_state, new_loop, dace.InterstateEdge())
@@ -994,26 +935,21 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
 
 
 def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
-    """Locate a single WCR-bearing write to a constant slot of a non-transient
-    array in the loop's body.
+    """Locate a single WCR-bearing write to a constant slot of a non-transient array.
 
-    After running ``TTE + AugAssignToWCR`` on the loop body, a multi-tasklet
-    ``compute then accumulate`` shape (e.g. ``dot[0] = dot[0] + a[i]*b[i]``)
-    collapses to a clean WCR write to ``accum[c]``. This extractor picks up
-    that shape, returns the carrier info the wcr-scalar retarget needs, and
-    refuses any body that doesn't have exactly one such write (multiple
-    independent reductions in the same loop are an ambiguous shape we don't
-    privatise as a single accumulator).
+    After ``TTE + AugAssignToWCR``, a multi-tasklet ``compute then accumulate`` shape
+    (``dot[0] = dot[0] + a[i]*b[i]``) collapses to a clean WCR write to ``accum[c]``.
+    Refuse any body without exactly one such write (multiple independent reductions =
+    ambiguous, not privatised as one accumulator).
 
     :returns: ``(wcr_state, wcr_edge, accum_name, accum_subset)`` or ``None``.
     """
     if not loop.loop_variable:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    # Same per-iteration-mutated-symbol guard as ``_extract``: the write subset
-    # must not reference a symbol reassigned on the loop's interstate edges
-    # (e.g. TSVC s141's ``k = k + j + 1``), or each iteration writes a
-    # different slot and the loop is not a single-accumulator reduction.
+    # Same per-iter-mutated-symbol guard as ``_extract``: write subset must not reference
+    # a symbol reassigned on a loop iedge (TSVC s141 ``k = k + j + 1``), else each iteration
+    # writes a different slot -> not a single-accumulator reduction.
     loop_iedge_assignees = set()
     for e in loop.edges():
         loop_iedge_assignees.update(e.data.assignments.keys())
@@ -1041,23 +977,13 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
 
 def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_state: SDFGState, wcr_edge,
                               accum_name: str, accum_subset: subsets.Subset):
-    """Wrap ``loop`` with ``init -> loop -> writeback`` states and retarget
-    the in-body WCR write from ``accum[accum_subset]`` to a fresh transient
-    scalar ``_priv_<accum>``.
+    """Wrap ``loop`` with ``init -> loop -> writeback`` and retarget the in-body WCR write
+    from ``accum[accum_subset]`` to a fresh transient scalar ``_priv_<accum>``.
 
-    Preserves the loop's body (including any compute chain feeding the
-    accumulator) and only rewrites the WCR edge's destination. The result is
-    the same Map-able shape ``PrivatizeReductionAccumulator`` produces today
-    when the canonicalize pipeline runs ``AugAssignToWCR + LoopToMap + PRA``
-    -- but the parallelisation step happens later (downstream ``LoopToMap``)
-    rather than as part of this pass.
-
-    :param parent: The control-flow region containing ``loop``.
-    :param loop: The reduction loop to wrap.
-    :param wcr_state: The state containing the WCR-bearing edge.
-    :param wcr_edge: The WCR-bearing edge to retarget.
-    :param accum_name: The accumulator descriptor's name.
-    :param accum_subset: The constant slot ``accum`` is updated at.
+    Preserves the body (incl. any compute chain feeding the accumulator); only the WCR
+    edge's destination changes. Same Map-able shape as ``PrivatizeReductionAccumulator``
+    via ``AugAssignToWCR + LoopToMap + PRA``, but parallelisation happens later (downstream
+    ``LoopToMap``) not here.
     """
     import dace
     root = parent
@@ -1098,22 +1024,18 @@ def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_s
 
 
 def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
-    """Look for a body state containing a ``read-accum -> op-tasklet ->
-    (transient passthrough AccessNodes)* -> write-accum`` chain on the SAME
-    constant slot, where ``AugAssignToWCR`` cannot reach (an extra transient
-    AccessNode between the combining tasklet and the accumulator sink takes
-    the shape past the 5-node ``arr -> copy_in -> tasklet -> copy_out ->
-    arr`` pattern). Walks through transient AccessNodes with in_degree ==
-    out_degree == 1 in either direction.
+    """Find a body state with a ``read-accum -> op-tasklet -> (transient passthrough)* ->
+    write-accum`` chain on the SAME constant slot, beyond ``AugAssignToWCR``'s reach (an
+    extra transient AccessNode between combining tasklet and sink takes it past the 5-node
+    ``arr -> copy_in -> tasklet -> copy_out -> arr`` pattern). Walks transient AccessNodes
+    with in_degree == out_degree == 1 either direction.
 
-    Accepts both transient (the TSVC s4115 ``s`` shape) and non-transient
-    accumulators; either way the privatised scalar takes over and is seeded
-    / written back from / to the original at the boundary.
+    Accepts transient (TSVC s4115 ``s``) and non-transient accumulators; either way the
+    privatised scalar is seeded/written-back at the boundary.
 
-    :returns: ``(state, final_tasklet, carry_in_edge, value_in_edge,
-              first_write_edge, last_write_edge, accum_source_an,
-              accum_sink_an, wcr_lambda, accum_name, accum_subset)`` or
-              ``None``.
+    :returns: ``(state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge,
+              last_write_edge, accum_source_an, accum_sink_an, wcr_lambda, accum_name,
+              accum_subset)`` or ``None``.
     """
     if not loop.loop_variable:
         return None
@@ -1139,9 +1061,8 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
                 continue
             final_tasklet = carry_in_edge.dst
 
-            # Walk backward from the sink through 1-in/1-out transient
-            # passthrough AccessNodes until reaching a Tasklet -- must be
-            # the same ``final_tasklet`` we arrived at from the source.
+            # Walk back from sink through 1-in/1-out transient passthroughs to a Tasklet;
+            # must be the same ``final_tasklet`` reached from the source.
             sink_in = list(state.in_edges(sink_an))
             if len(sink_in) != 1:
                 continue
@@ -1160,8 +1081,8 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
                 continue
             first_write_edge = cur_edge
 
-            # Validate subsets: both the carry-read and the final write must
-            # use the same constant single-element slot, loop-invariant.
+            # Carry-read and final write must use the same constant single-element,
+            # loop-invariant slot.
             carry_subset = carry_in_edge.data.subset if carry_in_edge.data is not None else None
             write_subset = last_write_edge.data.subset if last_write_edge.data is not None else None
             if carry_subset is None or write_subset is None:
@@ -1192,8 +1113,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if wcr is None:
                 continue
 
-            # The tasklet must have exactly 2 data inputs (carry + value) and
-            # 1 data output.
+            # Tasklet: exactly 2 data inputs (carry + value), 1 data output.
             data_in = [e for e in state.in_edges(final_tasklet) if e.data is not None and not e.data.is_empty()]
             data_out = [e for e in state.out_edges(final_tasklet) if e.data is not None and not e.data.is_empty()]
             if len(data_in) != 2 or len(data_out) != 1:
@@ -1208,14 +1128,12 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
 
 
 def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
-    """Surgical rewrite of the chain found by ``_extract_multi_state_chain``:
+    """Rewrite the chain found by ``_extract_multi_state_chain``:
 
-    - Drop the tasklet's carry input by rewriting its RHS to keep only the
-      value-input subexpression and removing the carry in-edge + connector.
-    - Add WCR to the final write edge (the one into the sink AccessNode) and
-      retarget the sink AccessNode's data to ``_priv_<accum>``.
-    - Add ``init`` (copy original accumulator to ``_priv_X``) and ``wb``
-      (copy ``_priv_X`` back to the original) states around the loop.
+    - Drop the tasklet's carry input (RHS keeps only the value subexpr; remove carry
+      in-edge + connector).
+    - Add WCR to the final write edge, retarget the sink AccessNode to ``_priv_<accum>``.
+    - Add ``init`` (accum -> ``_priv_X``) and ``wb`` (``_priv_X`` -> accum) states around the loop.
     """
     import dace
     (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an, sink_an, wcr,

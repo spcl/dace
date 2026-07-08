@@ -1,26 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Centralised synthetic-name schemes for the vectorization pipeline.
 
-A single owner for each class of minted identifier avoids the silent
-mismatch where one site composes a name and another parses it differently:
+One owner per class of minted identifier, avoiding the silent mismatch where one site composes a
+name and another parses it differently:
 
-- ``LaneIdScheme`` — per-tile-lane symbols under one unified scheme. The
-  canonical (Option B) form is a chain of per-dim chunks
-  ``<base>_lane<d>id_<n>`` (one chunk per tile dim, source order); the
-  legacy 1D form ``<base>_laneid_<n>`` (no dim index) is parsed for
-  back-compat as if it were ``<base>_lane0id_<n>``. Covers the 1D
-  ``VectorizeCPU`` path AND the v2 K-dim ``VectorizeCPUMultiDim`` path.
-- ``VecNameScheme`` — vector buffers ``<base>_vec`` / ``<base>_vec_<i>`` /
-  ``<base>_vec_k``.
+- ``LaneIdScheme`` — per-tile-lane symbols. Canonical (Option B) form = chain of per-dim chunks
+  ``<base>_lane<d>id_<n>`` (one chunk per tile dim, source order); legacy 1D form
+  ``<base>_laneid_<n>`` (no dim index) parsed for back-compat as ``<base>_lane0id_<n>``. Covers 1D
+  ``VectorizeCPU`` AND v2 K-dim ``VectorizeCPUMultiDim`` paths.
+- ``VecNameScheme`` — vector buffers ``<base>_vec`` / ``<base>_vec_<i>`` / ``<base>_vec_k``.
 - ``PackedNameScheme`` — scatter / gather buffers ``<base>_packed``.
-- ``TileNameScheme`` — v2 tile-transient names (``<base>_tile``,
-  ``<base>_tile_idx``, ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
+- ``TileNameScheme`` — v2 tile-transient names (``<base>_tile``, ``<base>_tile_idx``,
+  ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
 
-``_packed`` is reserved for scatter/gather; ``_vec`` is used for everything
-else in the 1D path; ``_tile`` is reserved for the v2 multi-dim path so
-both pipelines can coexist in one SDFG without name collisions. Inout
-connectors must use the same suffix on both directions, so callers
-classify by access kind, not by direction.
+Suffix ownership so both pipelines coexist in one SDFG without collisions: ``_packed`` = scatter/
+gather; ``_vec`` = everything else in 1D path; ``_tile`` = v2 multi-dim path. Inout connectors use
+the same suffix on both directions, so callers classify by access kind, not direction.
 """
 import re
 from typing import Iterable, Iterator, List, Optional, Tuple
@@ -32,24 +27,21 @@ from dace.sdfg import SDFG
 class LaneIdScheme:
     """Owner of the unified per-tile-lane symbol scheme.
 
-    Canonical (Option B) form: ``<base>_lane<d>id_<n>`` per tile dimension
-    ``d``, chained for K>=2 (one chunk per dim, source order):
+    Canonical (Option B) form: ``<base>_lane<d>id_<n>`` per tile dimension ``d``, chained for K>=2
+    (one chunk per dim, source order):
 
     - K=1 dim 0 lane 3: ``a_lane0id_3``.
     - K=2 dim 0 lane 3, dim 1 lane 5: ``a_lane0id_3_lane1id_5``.
 
-    The legacy 1D form ``<base>_laneid_<n>`` (without the dim index) is
-    accepted by every parser as if it were ``<base>_lane0id_<n>``, so
-    callers minted under either scheme classify uniformly. New names should
-    be emitted via :meth:`make_dim` / :meth:`make_multi`; :meth:`make`
-    keeps the single-arg legacy emit form for back-compat with existing
-    1D callers (A.1: infra only; emitters switch in A.2).
+    Legacy 1D form ``<base>_laneid_<n>`` parsed as ``<base>_lane0id_<n>``, so callers under either
+    scheme classify uniformly. Emit new names via :meth:`make_dim` / :meth:`make_multi`; :meth:`make`
+    keeps the single-arg legacy emit form for back-compat with 1D callers (A.1: infra only; emitters
+    switch in A.2).
 
-    :cvar LEGACY_SUFFIX: Legacy 1D infix ``_laneid_``. Reserved for substring
-        searches in callers that pre-date Option B; new code should use
-        :meth:`is_lane_fanned` or :meth:`parse` instead.
-    :cvar SUFFIX: Alias of :attr:`LEGACY_SUFFIX` (kept for back-compat with
-        callers that read ``LaneIdScheme.SUFFIX`` directly).
+    :cvar LEGACY_SUFFIX: Legacy 1D infix ``_laneid_``. Reserved for substring searches in callers
+        pre-dating Option B; new code should use :meth:`is_lane_fanned` or :meth:`parse`.
+    :cvar SUFFIX: Alias of :attr:`LEGACY_SUFFIX` (back-compat for callers reading
+        ``LaneIdScheme.SUFFIX`` directly).
     """
 
     LEGACY_SUFFIX = "_laneid_"
@@ -59,21 +51,17 @@ class LaneIdScheme:
     _CHUNK_TAIL_RE = re.compile(r"_lane(\d+)id_(\d+)$")
     # Legacy 1D form, full name.
     _LEGACY_RE = re.compile(r"^(.*)_laneid_(\d+)$")
-    # Substring scanner: matches a lane chunk anywhere in a string. Covers
-    # both the canonical ``_lane<d>id_<n>`` form and the legacy
-    # ``_laneid_<n>`` form. Used by audit passes that scan memlet subset
-    # strings / interstate expressions for accidentally-fanned-out lanes
-    # without parsing the whole symbol.
+    # Substring scanner: matches a lane chunk anywhere in a string (canonical or legacy form). Used
+    # by audit passes scanning memlet subset strings / interstate expressions for accidentally
+    # fanned-out lanes without parsing the whole symbol.
     LANE_INFIX_RE = re.compile(r"_lane(?:\d+id|id)_\d+")
 
     @staticmethod
     def make(base: str, lane: int) -> str:
         """Build the legacy 1D lane-encoded name ``<base>_laneid_<lane>``.
 
-        Single-int back-compat shape used by every 1D emitter today. New
-        callers should use :meth:`make_dim` / :meth:`make_multi` so the
-        emitted name carries the dim index. A.2 switches the legacy
-        emitters over.
+        Single-int back-compat shape used by every 1D emitter today. New callers use :meth:`make_dim`
+        / :meth:`make_multi` so the name carries the dim index. A.2 switches legacy emitters over.
 
         :param base: Un-encoded symbol base.
         :param lane: Lane index in the single (innermost) tile dim.
@@ -86,8 +74,7 @@ class LaneIdScheme:
         """Build a single Option B chunk ``<base>_lane<dim>id_<lane>``.
 
         :param base: Un-encoded symbol base.
-        :param dim: Tile-dim index (0 is outermost, increasing toward
-            the innermost).
+        :param dim: Tile-dim index (0 outermost → innermost).
         :param lane: Lane index in dim ``dim``.
         :returns: ``<base>_lane<dim>id_<lane>``.
         """
@@ -108,15 +95,13 @@ class LaneIdScheme:
     def parse(name: str) -> Optional[Tuple[str, int]]:
         """Peel one trailing lane chunk off ``name`` (legacy 1D shape).
 
-        Accepts both the canonical chunked form ``<base>_lane<d>id_<n>``
-        AND the legacy 1D form ``<base>_laneid_<n>``; in both cases the
-        return is ``(base_without_the_chunk, lane)``. Nested forms peel
-        one level only — callers that want the full base should use
+        Accepts canonical ``<base>_lane<d>id_<n>`` AND legacy ``<base>_laneid_<n>``; both return
+        ``(base_without_the_chunk, lane)``. Peels one level only — for the full base use
         :meth:`base_of`.
 
         :param name: Name to parse.
-        :returns: ``(base_without_last_chunk, lane)`` if ``name`` ends with
-            a recognised chunk; else ``None``.
+        :returns: ``(base_without_last_chunk, lane)`` if ``name`` ends with a recognised chunk; else
+            ``None``.
         """
         m = LaneIdScheme._CHUNK_TAIL_RE.search(name)
         if m is not None and m.end() == len(name):
@@ -130,14 +115,12 @@ class LaneIdScheme:
     def parse_chunks(name: str) -> Optional[Tuple[str, Tuple[Tuple[int, int], ...]]]:
         """Strip every trailing lane chunk off ``name``.
 
-        Walks the trailing-chunk shape repeatedly so a multi-dim chained
-        name ``a_lane0id_3_lane1id_5`` decomposes to ``("a", ((0, 3),
-        (1, 5)))``. The legacy 1D form is treated as one ``(0, n)`` chunk.
+        Walks the trailing-chunk shape repeatedly so ``a_lane0id_3_lane1id_5`` decomposes to
+        ``("a", ((0, 3), (1, 5)))``. Legacy 1D form = one ``(0, n)`` chunk.
 
         :param name: Name to parse.
-        :returns: ``(base, chunks)`` where ``chunks`` is the per-dim
-            ``(dim, lane)`` tuple in source order; ``None`` if ``name``
-            carries no recognised chunk.
+        :returns: ``(base, chunks)`` where ``chunks`` = per-dim ``(dim, lane)`` tuple in source
+            order; ``None`` if ``name`` carries no recognised chunk.
         """
         peeled: List[Tuple[int, int]] = []
         remaining = name
@@ -160,13 +143,11 @@ class LaneIdScheme:
 
     @staticmethod
     def is_laneid(name: str) -> bool:
-        """Check whether ``name`` carries any lane chunk.
-
-        Back-compat alias of :meth:`is_lane_fanned` used by 1D callers.
+        """Whether ``name`` carries any lane chunk. Back-compat alias of :meth:`is_lane_fanned` for
+        1D callers.
 
         :param name: Name to test.
-        :returns: True iff ``name`` matches either the canonical chunked
-            form or the legacy ``_laneid_<digits>`` form.
+        :returns: True iff ``name`` matches the canonical chunked form or legacy ``_laneid_<digits>``.
         """
         return LaneIdScheme.parse(name) is not None
 
@@ -174,13 +155,11 @@ class LaneIdScheme:
     def is_lane_fanned(name: str) -> bool:
         """Whether ``name`` carries any per-tile-lane chunk.
 
-        Audit-pass entrypoint covering both the canonical chunked form
-        and the legacy 1D form. Replaces the deleted
+        Audit-pass entrypoint (canonical + legacy forms). Replaces the deleted
         ``TileLaneScheme.is_tilelane``.
 
         :param name: Name to test.
-        :returns: True iff at least one ``_lane<d>id_<n>`` chunk (or the
-            legacy ``_laneid_<n>`` form) is present.
+        :returns: True iff at least one ``_lane<d>id_<n>`` chunk (or legacy ``_laneid_<n>``) present.
         """
         return LaneIdScheme.parse(name) is not None
 
@@ -199,15 +178,14 @@ class LaneIdScheme:
     def peel_dim(name: str, dim: int) -> Optional[str]:
         """Drop the chunk for tile dim ``dim`` from ``name``.
 
-        Reassembles the remaining chunks in source order under the
-        canonical form. Useful when a downstream pass collapses one tile
-        dim (e.g., partial collapse, mask projection) and the leftover
-        lane chunks must keep agreeing with the survived dim indices.
+        Reassembles remaining chunks in source order (canonical form). Used when a downstream pass
+        collapses one tile dim (partial collapse, mask projection) and leftover lane chunks must keep
+        agreeing with the survived dim indices.
 
         :param name: Lane-encoded name.
         :param dim: Tile-dim index to drop.
-        :returns: The peeled name (canonical form), or ``None`` when
-            ``name`` does not carry a chunk for ``dim``.
+        :returns: Peeled name (canonical form), or ``None`` when ``name`` carries no chunk for
+            ``dim``.
         """
         parsed = LaneIdScheme.parse_chunks(name)
         if parsed is None:
@@ -222,14 +200,11 @@ class LaneIdScheme:
     def contains_lane_chunk(text: str) -> bool:
         """Whether ``text`` contains any lane-chunk substring.
 
-        Substring-only scanner used by audit passes that classify memlet
-        subset strings / interstate expressions without parsing the whole
-        symbol. Matches both the canonical ``_lane<d>id_<n>`` and the
-        legacy ``_laneid_<n>`` forms.
+        Substring-only scanner for audit passes classifying memlet subset strings / interstate
+        expressions without parsing the whole symbol. Matches canonical + legacy forms.
 
         :param text: Free-form text (e.g., ``str(memlet.subset)``).
-        :returns: True iff at least one lane-chunk is present somewhere
-            in ``text``.
+        :returns: True iff at least one lane-chunk present in ``text``.
         """
         return LaneIdScheme.LANE_INFIX_RE.search(text) is not None
 
@@ -254,13 +229,12 @@ class VecNameScheme:
     Three shapes share the ``_vec`` root:
 
     - ``<base>_vec`` — default contiguous vector buffer.
-    - ``<base>_vec_<i>`` — per-subset variant when one base array sees
-      multiple distinct subsets inside a NestedSDFG.
+    - ``<base>_vec_<i>`` — per-subset variant when one base array sees multiple distinct subsets
+      inside a NestedSDFG.
     - ``<base>_vec_k`` — per-NSDFG ``(vector_width,)`` transient minted by
       ``prepare_vectorized_array``.
 
-    Inout connectors route through ``make`` on both directions so the
-    names agree.
+    Inout connectors route through ``make`` on both directions so names agree.
     """
 
     SUFFIX = "_vec"
@@ -311,11 +285,8 @@ class VecNameScheme:
 
 
 class PackedNameScheme:
-    """Owner of the ``<base>_packed`` scheme for scatter / gather paths.
-
-    ``_packed`` is reserved for scatter / gather access patterns; the
-    classifier and producer both route through this scheme so they agree.
-    """
+    """Owner of the ``<base>_packed`` scheme for scatter / gather paths. Classifier and producer both
+    route through it so they agree."""
 
     SUFFIX = "_packed"
 
@@ -341,17 +312,16 @@ class PackedNameScheme:
 class TileNameScheme:
     """Owner of the v2 tile-transient names.
 
-    The K-dim path mints multi-dim arrays (register tiles, mask tiles,
-    gather/scatter index tiles) — not per-lane scalars — and the names
-    are reserved here so the audit pass can distinguish v2 transients
-    from leftover 1D-path ``_iter_mask`` / ``_vec`` / ``_packed`` names.
+    The K-dim path mints multi-dim arrays (register tiles, mask tiles, gather/scatter index tiles),
+    not per-lane scalars; names reserved here so the audit pass distinguishes v2 transients from
+    leftover 1D-path ``_iter_mask`` / ``_vec`` / ``_packed`` names.
 
     :cvar TILE_SUFFIX: Suffix for a register-tile transient.
     :cvar IDX_SUFFIX: Suffix for a gather / scatter index tile.
-    :cvar ITER_MASK: Reserved name for the iteration-mask transient
-        produced by ``TileMaskGen`` inside a masked-remainder body.
-    :cvar COND_MASK_SUFFIX: Suffix for branch-condition mask transients
-        produced by post-MVP ``TileMaskGen`` (paired with merge).
+    :cvar ITER_MASK: Reserved name for the iteration-mask transient produced by ``TileMaskGen``
+        inside a masked-remainder body.
+    :cvar COND_MASK_SUFFIX: Suffix for branch-condition mask transients produced by post-MVP
+        ``TileMaskGen`` (paired with merge).
     """
 
     TILE_SUFFIX = "_tile"
@@ -410,10 +380,8 @@ def _walk_sdfgs(sdfg: SDFG) -> Iterator[SDFG]:
     """Yield ``sdfg`` plus every ``NestedSDFG`` body reachable from it.
 
     :param sdfg: Root SDFG.
-    :yields: ``sdfg`` first, then each inner SDFG body in depth-first
-        order. Covers SDFGs nested inside NestedSDFG nodes
-        (``all_sdfgs_recursive`` only descends control-flow regions,
-        not NSDFG nodes).
+    :yields: ``sdfg`` first, then each inner SDFG body depth-first. Covers SDFGs nested inside
+        NestedSDFG nodes (``all_sdfgs_recursive`` only descends control-flow regions, not NSDFGs).
     """
     yield sdfg
     for state in sdfg.all_states():
@@ -423,10 +391,8 @@ def _walk_sdfgs(sdfg: SDFG) -> Iterator[SDFG]:
 
 
 def _iter_all_symbol_strings(sdfg: SDFG) -> Iterator[str]:
-    """Yield every name the K-dim path might leak a per-lane scalar
-    through: array names, SDFG symbols, tasklet connector names, and
-    every interstate-edge assignment target. Walks recursively through
-    every nested SDFG body.
+    """Yield every name the K-dim path might leak a per-lane scalar through: array names, SDFG
+    symbols, tasklet connector names, interstate-edge assignment targets. Recurses every nested SDFG.
 
     :param sdfg: SDFG to walk.
     :yields: Names that the audit pass should classify.
@@ -446,14 +412,13 @@ def _iter_all_symbol_strings(sdfg: SDFG) -> Iterator[str]:
 def assert_no_laneid_in_tile_path(sdfg: SDFG) -> None:
     """Audit-only: refuse any per-lane encoded name in the K-dim path.
 
-    The v2 multi-dim track relies on lib-node emission carrying lane
-    offsets implicitly; a leaked ``<base>_lane<d>id_<n>`` (canonical Option
-    B) or ``<base>_laneid_<n>`` (legacy 1D) is a sign that some prep pass
-    accidentally fanned out to per-lane scalars. Loud failure here keeps
-    the design invariant honest. Runs at orchestrator exit.
+    The v2 multi-dim track relies on lib-node emission carrying lane offsets implicitly; a leaked
+    ``<base>_lane<d>id_<n>`` (canonical) or ``<base>_laneid_<n>`` (legacy) means some prep pass
+    accidentally fanned out to per-lane scalars. Loud failure keeps the invariant honest. Runs at
+    orchestrator exit.
 
-    :param sdfg: SDFG to audit (walked recursively, including nested
-        SDFGs and interstate-edge assignments).
+    :param sdfg: SDFG to audit (walked recursively, including nested SDFGs and interstate-edge
+        assignments).
     :raises AssertionError: If any classified name is lane-fanned per
         :meth:`LaneIdScheme.is_lane_fanned`.
     """

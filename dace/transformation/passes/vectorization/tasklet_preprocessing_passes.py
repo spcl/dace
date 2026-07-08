@@ -5,6 +5,7 @@ math replacement."""
 import dace
 from typing import Any, Callable, Dict, Optional, Set
 import ast
+import math
 import re
 import sympy
 from dace import SDFG, properties, transformation
@@ -38,8 +39,29 @@ def _rewrite_python_tasklet_bodies(
             node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
 
+def _pow_call(base: ast.AST, exp: ast.AST, loc: ast.AST) -> ast.AST:
+    """Build a ``pow(base, exp)`` call node located at ``loc``.
+
+    :param base: the base expression node.
+    :param exp: the exponent expression node.
+    :param loc: the original node used for source-location copying.
+    :returns: an :class:`ast.Call` ``pow(base, exp)``.
+    """
+    return ast.copy_location(
+        ast.Call(func=ast.Name(id="pow", ctx=ast.Load()), args=[base, exp], keywords=[]), loc)
+
+
 class PowerOperatorExpander(ast.NodeTransformer):
-    """Expands ``**`` and ``pow``/``math.pow`` calls into multiplications or exp/log."""
+    """Expands ``**`` and ``pow``/``math.pow`` calls into multiplications or a ``pow`` call.
+
+    A constant integer exponent ``>= 2`` unrolls to a product (``x**2`` -> ``x*x``,
+    the native-SIMD form). Every other power -- a fractional / non-integer literal, a
+    non-constant (symbolic or connector) exponent, or the ``0`` / ``1`` corner -- is
+    rewritten to a canonical ``pow(base, exp)`` call so no bare ``**`` operator survives
+    into the tile emitter (which classifies ``pow`` as a function-form binop). The
+    downstream :class:`~dace.transformation.passes.relax_integer_powers.RelaxIntegerPowers`
+    then relaxes an integer-exponent ``pow`` to ``ipow`` (exact repeated multiply).
+    """
 
     @staticmethod
     def _is_pow_call(call_node: ast.Call) -> bool:
@@ -84,19 +106,19 @@ class PowerOperatorExpander(ast.NodeTransformer):
                                              op=ast.Mult(),
                                              right=ast.copy_location(ast.fix_missing_locations(left), left))
                     return ast.copy_location(new_node, loc)
-                # n in {0, 1} → leave the original `left ** right` shape as a BinOp; caller decides
-                return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
+                # n in {0, 1} → canonical ``pow`` call; RelaxIntegerPowers folds it to ipow.
+                return _pow_call(left, right, loc)
 
-        # Case 2: non-constant / non-integer exponent → leave it as ``left ** right``
-        # for the tile binop to lower to ``std::pow``. The former ``exp(right *
-        # log(left))`` identity is only valid for a POSITIVE base: ``log(left)`` is NaN
-        # for a negative ``left``, so ``sin(x)**2`` -- whose exponent arrives as a
-        # connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1 does not
-        # fire -- produced NaN on every lane where ``sin(x) < 0`` (npbench arc_distance).
-        # ``std::pow`` computes a negative base with an integer exponent correctly and
-        # matches numpy's ``**``; ``**`` carries an ISA-less pure lowering
-        # (``_PURE_ONLY_MATH_OPS`` / ``_OP_CPP["**"]``) so it vectorizes via libmvec.
-        return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
+        # Case 2: non-constant / non-integer exponent → canonical ``pow(base, exp)`` call.
+        # The former ``exp(right * log(left))`` identity is only valid for a POSITIVE base:
+        # ``log(left)`` is NaN for a negative ``left``, so ``sin(x)**2`` -- whose exponent
+        # arrives as a connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1
+        # does not fire -- produced NaN on every lane where ``sin(x) < 0`` (npbench
+        # arc_distance). ``std::pow`` computes a negative base with an integer exponent
+        # correctly and matches numpy's ``**``; ``pow`` carries an ISA-less pure lowering
+        # (``_PURE_ONLY_MATH_OPS`` / ``_OP_CPP["pow"]``) so it vectorizes via libmvec.
+        # ``RelaxIntegerPowers`` later relaxes a provable-integer exponent to ``ipow``.
+        return _pow_call(left, right, loc)
 
     def visit_BinOp(self, node):
         """Expand a ``**`` binary operation, recursing into children first.
@@ -236,6 +258,63 @@ def _remove_math_prefix_from_source(source: str) -> str:
     return ast.unparse(tree)
 
 
+class PowerExponentCastStripper(ast.NodeTransformer):
+    """Strip a redundant float dtype-cast wrapping a power EXPONENT.
+
+    The frontend renders ``base ** e`` as ``base ** dace.float64(e)`` (NumPy's
+    ``float ** x`` promotes the exponent). The cast is a no-op on the power's value --
+    ``**`` / ``std::pow`` promote the exponent to ``double`` regardless -- but it hides an
+    integer exponent from :class:`~dace.transformation.passes.relax_integer_powers.RelaxIntegerPowers`,
+    which can only relax a provable-integer ``base ** k`` to the exact ``ipow``. Removing
+    the cast (``base ** float64(N)`` -> ``base ** N``) is value-preserving and exposes the
+    integer exponent. Covers the ``pow`` / ``ipow`` / ``math.pow`` call forms too.
+    """
+
+    _is_float_cast = staticmethod(re.compile(r"float\d*$").fullmatch)
+
+    def _unwrap_float_cast(self, node: ast.AST) -> ast.AST:
+        """Return the inner argument of a single-arg ``[dace.]floatNN(x)`` cast call, else ``node``."""
+        if not (isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords):
+            return node
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "dace" \
+                and self._is_float_cast(func.attr):
+            return node.args[0]
+        if isinstance(func, ast.Name) and self._is_float_cast(func.id):
+            return node.args[0]
+        return node
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        self.generic_visit(node)  # strip nested casts first
+        if isinstance(node.op, ast.Pow):
+            node.right = self._unwrap_float_cast(node.right)
+        return node
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        func = node.func
+        is_pow = (isinstance(func, ast.Name) and func.id in ("pow", "ipow")) or \
+                 (isinstance(func, ast.Attribute) and func.attr == "pow")
+        if is_pow and len(node.args) == 2:
+            node.args[1] = self._unwrap_float_cast(node.args[1])
+        return node
+
+
+def _strip_power_exponent_cast(src: str) -> str:
+    """Strip a redundant float cast on a power exponent in Python source.
+
+    :param src: Python source string.
+    :returns: source with ``base ** float64(e)`` rewritten to ``base ** e`` (unchanged
+        when it carries no power).
+    """
+    if "**" not in src and "pow(" not in src:  # fast path: no power to touch
+        return src
+    tree = ast.parse(src)
+    tree = PowerExponentCastStripper().visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
 class ModuloToPyModExpander(ast.NodeTransformer):
     """Rewrite every ``a % b`` (``ast.Mod`` binop) into a ``py_mod(a, b)`` call.
 
@@ -360,6 +439,18 @@ class _BodyRewritePass(ppl.Pass):
         _rewrite_python_tasklet_bodies(sdfg, self._rewrite)
         sdfg.validate()
         return None
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class StripPowerExponentCast(_BodyRewritePass):
+    """Pass that removes a redundant float cast on a power exponent in every Python tasklet
+    body (``base ** float64(e)`` -> ``base ** e``). Value-preserving; exposes an integer
+    exponent to :class:`~dace.transformation.passes.relax_integer_powers.RelaxIntegerPowers`.
+    Runs in the vectorizer's tasklet-prep and in canonicalize's cleaning stage."""
+
+    def _rewrite(self, src: str) -> str:
+        return _strip_power_exponent_cast(src)
 
 
 @properties.make_properties

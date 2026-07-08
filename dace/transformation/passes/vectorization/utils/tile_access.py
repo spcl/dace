@@ -1,75 +1,56 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """K-dim tile access classifier for the vectorization tile pipeline.
 
-One primitive -- :func:`classify_tile_access` -- answers: *given a memlet
-subset, the K tile iter-vars, and (optionally) the inner SDFG, how does
-the access vary as the K-dim tile iterates over its (W_0, ..., W_{K-1})
-lanes?*
+:func:`classify_tile_access`: given a memlet subset, the K tile iter-vars, optionally the inner
+SDFG, how does access vary as the K-dim tile iterates its (W_0, ..., W_{K-1}) lanes?
 
-The classifier is **target-isa-agnostic** and does **no SDFG mutation**:
-its sole output is a :class:`TileAccess` record. The emitter consumes
-that record to pick a tile lib node (``TileLoad`` / ``TileLoadStrided``
-/ ``TileLoad`` (with ``gather_dims``) / ``TileStore`` / ``TileStore`` (with ``gather_dims``) / ``TileBroadcast``)
-and arch-specific intrinsics live in the lib-node expansions.
+Target-isa-agnostic, no SDFG mutation. Sole output = :class:`TileAccess` record; emitter consumes
+it to pick a tile lib node (``TileLoad`` / ``TileLoadStrided`` / ``TileLoad`` (``gather_dims``) /
+``TileStore`` / ``TileStore`` (``gather_dims``) / ``TileBroadcast``). Arch intrinsics live in
+lib-node expansions.
 
 Per-dim classification
 ----------------------
 
-Every dim of the subset is tagged independently as one of
-:class:`PerDimKind`:
+Each subset dim tagged independently as a :class:`PerDimKind`:
 
-* **BROADCAST** -- no tile iter-var anywhere in the dim's expression
-  (loop-invariant; one element splats to all lanes of this dim).
-* **STRUCTURED_1** -- one tile iter-var as a *direct top-level symbol*
-  with identity coefficient (``iter_var + c``). The cleanest case: lane
-  ``l`` reads ``addr + l * elem_size``.
-* **AFFINE** -- one or more tile iter-vars present as direct symbols
-  but with non-unit coefficient (``2*i + 3``) or multiple iter-vars
-  combined (``i + j``). Emitter chooses strided-load intrinsic vs.
-  loop-of-loads vs. fallback to GATHER per arch.
-* **GATHER** -- a tile iter-var appears inside a :class:`Subscript`
-  (``arr[idx[i]]``). Data-dependent access; always lowers to TileLoad (gather_dims).
+* **BROADCAST** -- no tile iter-var in dim expr (loop-invariant; one element splats to all lanes).
+* **STRUCTURED_1** -- one tile iter-var as direct top-level symbol, identity coeff
+  (``iter_var + c``): lane ``l`` reads ``addr + l * elem_size``.
+* **AFFINE** -- iter-var(s) as direct symbols, non-unit coeff (``2*i + 3``) or combined (``i + j``).
+  Emitter picks strided-load / loop-of-loads / GATHER fallback per arch.
+* **GATHER** -- tile iter-var inside a :class:`Subscript` (``arr[idx[i]]``). Data-dependent; always
+  lowers to TileLoad (gather_dims).
 
 Whole-subset composition (DIAGONAL / TRANSPOSE flags)
 -----------------------------------------------------
 
-The whole-subset kind is the strongest per-dim kind, in order
-``GATHER > AFFINE > STRUCTURED > BROADCAST``. Two composition flags are
-also captured:
+Whole-subset kind = strongest per-dim kind, order ``GATHER > AFFINE > STRUCTURED > BROADCAST``.
+Two composition flags:
 
-* **diagonal** -- a STRUCTURED_1 iter-var appears as the direct symbol
-  in *multiple* dims (``arr[i, i]``). Per the locked design, lowers as
-  GATHER with a 1-D index tile.
-* **transpose** -- STRUCTURED_1 iter-vars appear in a non-canonical
-  permutation of ``spec.iter_vars``. Lowers as GATHER with a permuted
-  index tile (or a transpose intrinsic when the emitter can use one).
+* **diagonal** -- a STRUCTURED_1 iter-var is direct symbol in multiple dims (``arr[i, i]``).
+* **transpose** -- STRUCTURED_1 iter-vars in non-canonical permutation of ``spec.iter_vars``.
 
-The classifier captures these as informational fields; the emitter
-decides the actual lib-node target. Per the user's locked direction,
-DIAGONAL and TRANSPOSE both fold into ``TileLoad`` (with ``gather_dims``) today.
+Both informational; per locked design both fold into ``TileLoad`` (``gather_dims``) today
+(diagonal → 1-D index tile; transpose → permuted index tile or transpose intrinsic).
 
 dim_strides convention
 ----------------------
 
-For non-GATHER classifications the per-dim coefficient is exposed as
-``dim_strides`` so the load/store lib nodes can directly consume it:
+Non-GATHER dims expose the per-dim coefficient as ``dim_strides`` for load/store lib nodes:
 
-* ``0`` -- BROADCAST dim (this dim doesn't vary per lane; splat).
-* ``1`` -- STRUCTURED_1 dim (lane ``l`` reads index ``l`` more).
-* ``c > 1`` -- AFFINE dim with coefficient ``c``.
+* ``0`` -- BROADCAST (dim invariant per lane; splat).
+* ``1`` -- STRUCTURED_1 (lane ``l`` reads index ``l`` more).
+* ``c > 1`` -- AFFINE with coefficient ``c``.
 
-Mixed-rank broadcasts (K=0 -> K=2 full splat; K=1 -> K=2 broadcast on
-one dim; etc.) drop out automatically: the BROADCAST dims get
-``dim_stride = 0`` and the load lib node's expansion replicates that
-value across the dim's lanes.
+Mixed-rank broadcasts (K=0->K=2 full splat; K=1->K=2 one-dim broadcast; ...) drop out
+automatically: BROADCAST dims get ``dim_stride = 0``, expansion replicates across lanes.
 
 Gather-side composition rule
 ----------------------------
 
-When ANY dim is GATHER, the whole-subset kind is GATHER. Non-GATHER
-dims fold into the gather's index expression (the structured dims
-contribute affine sub-expressions inline; no separate index tile
-materialisation is needed for them).
+ANY GATHER dim → whole-subset kind GATHER. Non-GATHER dims fold into the gather's index expr inline
+(structured dims contribute affine sub-exprs; no separate index tile).
 """
 import enum
 import re
@@ -89,45 +70,35 @@ class PerDimKind(enum.Enum):
     See TILIFICATION_TRANSFORMATION_DESIGN.md section 4 for the lattice.
     """
 
-    #: No tile iter-var -- loop-invariant. All W lanes share one source
-    #: element (codegen splats).
+    #: No tile iter-var -- loop-invariant. All W lanes share one source element (codegen splats).
     CONSTANT = "constant"
 
-    #: Exactly ``iter_var + c`` -- stride 1, constant offset. Lane ``l``
-    #: reads index ``l`` more.
+    #: ``iter_var + c`` -- stride 1, constant offset. Lane ``l`` reads index ``l`` more.
     LINEAR = "linear"
 
-    #: ``int_floor(c * iter_var + c0, k)`` / ``int_ceil(...)`` with
-    #: ``1 < k < W`` -- group-broadcast within the dim with factor ``k``
-    #: (codegen loads ``W/k`` and replicates each ``k`` times).
+    #: ``int_floor(c * iter_var + c0, k)`` / ``int_ceil(...)`` with ``1 < k < W`` -- group-broadcast
+    #: within the dim, factor ``k`` (codegen loads ``W/k``, replicates each ``k`` times).
     REPLICATE = "replicate"
 
-    #: ``s * iter_var + c`` with ``s`` outer-scope constant, ``s >= 1``.
-    #: Strided load with constant stride. Multiple iter-vars sharing a
-    #: dim is GATHER.
+    #: ``s * iter_var + c``, ``s`` outer-scope constant, ``s >= 1``. Strided load. Multiple iter-vars
+    #: sharing a dim → GATHER.
     AFFINE = "affine"
 
-    #: ``(c * iter_var + c0) % N`` with ``N`` outer-scope constant.
-    #: Cyclic wrap. When ``N | c * W_p`` (tile-aligned), reduces to
-    #: LINEAR with a per-tile constant offset.
+    #: ``(c * iter_var + c0) % N``, ``N`` outer-scope constant. Cyclic wrap. When ``N | c * W_p``
+    #: (tile-aligned), reduces to LINEAR with a per-tile constant offset.
     MODULAR = "modular"
 
-    #: Data-dependent / unsupported. Tile-dependent symbols in the
-    #: expression force GATHER (see section 4.2 join rule).
+    #: Data-dependent / unsupported. Tile-dependent symbols force GATHER (section 4.2 join rule).
     GATHER = "gather"
 
-    # Backwards-compat aliases -- removed after the rename has
-    # propagated through every consumer.
+    # Backwards-compat aliases -- removed once the rename propagates through every consumer.
     BROADCAST = "constant"
     STRUCTURED_1 = "linear"
 
 
 class TileAccessKind(enum.Enum):
-    """Whole-subset kind. The strongest per-dim kind wins, in the order
-    ``GATHER > AFFINE > STRUCTURED > BROADCAST``. Two specialised
-    compositions (DIAGONAL / TRANSPOSE) of STRUCTURED_1 dims are tagged
-    on the :class:`TileAccess` record for emitter information only --
-    both fold into ``TileLoad`` (with ``gather_dims``) per the locked design."""
+    """Whole-subset kind: strongest per-dim kind wins, order ``GATHER > AFFINE > STRUCTURED >
+    BROADCAST``. DIAGONAL / TRANSPOSE compositions tagged on :class:`TileAccess` for emitter info."""
 
     BROADCAST = "broadcast"
     STRUCTURED = "structured"
@@ -137,70 +108,50 @@ class TileAccessKind(enum.Enum):
 
 @dataclass(frozen=True)
 class TileAccess:
-    """Result of :func:`classify_tile_access` (data only, no behaviour).
+    """Result of :func:`classify_tile_access` (data only). Emitter reads it + surrounding scope
+    (mask availability, target_isa) to pick a lib node and wire its properties."""
 
-    The emitter reads this record + the surrounding scope (mask
-    availability, target_isa) to pick a lib node and wire its
-    properties.
-    """
-
-    #: Whole-subset kind. Determined by the strongest per-dim kind.
+    #: Whole-subset kind (strongest per-dim kind).
     kind: TileAccessKind
 
     #: Per-dim classification, one entry per subset dim (in subset order).
     per_dim_kind: Tuple[PerDimKind, ...]
 
-    #: Per-dim stride. ``0`` = broadcast dim; ``1`` = identity stride;
-    #: ``c > 1`` = affine coefficient. ``None`` for GATHER dims (the
-    #: stride lives in the gather-index expression). Same length as
-    #: ``per_dim_kind``.
+    #: Per-dim stride. ``0`` = broadcast; ``1`` = identity; ``c > 1`` = affine coeff. ``None`` for
+    #: GATHER dims (stride lives in the gather-index expr). Same length as ``per_dim_kind``.
     dim_strides: Tuple[Optional[int], ...]
 
-    #: For dims where the per-dim kind is STRUCTURED_1 or AFFINE: which
-    #: tile iter-var is the dim's per-lane stride driver. ``None`` for
-    #: BROADCAST and GATHER dims. Same length as ``per_dim_kind``.
+    #: STRUCTURED_1 / AFFINE dims: which tile iter-var drives the dim's per-lane stride. ``None`` for
+    #: BROADCAST / GATHER dims. Same length as ``per_dim_kind``.
     dim_iter_var: Tuple[Optional[str], ...]
 
-    #: For GATHER dims: the in-scope :class:`AccessNode` of the index
-    #: array, when resolvable. ``None`` for non-GATHER dims OR when the
-    #: index source isn't a direct array read. Same length as
+    #: GATHER dims: the in-scope :class:`AccessNode` of the index array, when resolvable. ``None``
+    #: for non-GATHER dims OR when the index source isn't a direct array read. Same length as
     #: ``per_dim_kind``.
     gather_index_per_dim: Tuple[Optional[nodes.AccessNode], ...]
 
-    #: For dims where the per-dim kind is STRUCTURED_1 or AFFINE: the
-    #: constant offset (the ``c`` in ``iter_var + c``). ``None`` for
-    #: BROADCAST and GATHER dims.
+    #: STRUCTURED_1 / AFFINE dims: the constant offset (``c`` in ``iter_var + c``). ``None`` for
+    #: BROADCAST / GATHER dims.
     dim_offset: Tuple[Optional[sympy.Expr], ...]
 
-    #: Per-dim replicate factor (lanes-per-distinct-value within the dim).
-    #: The unifying field across BROADCAST / STRUCTURED_1 / REPLICATE
-    #: regimes:
+    #: Per-dim replicate factor (lanes-per-distinct-value within the dim); unifies BROADCAST /
+    #: STRUCTURED_1 / REPLICATE. Same length as :attr:`per_dim_kind`:
     #:
-    #: * ``None`` for BROADCAST dims -- the codegen reads one element and
-    #:   splats it to the dim's full W lanes (equivalently, factor = W
-    #:   but the dim's W isn't visible to the classifier, so ``None`` is
-    #:   the sentinel for "all lanes").
-    #: * ``1`` for STRUCTURED_1 dims -- each lane reads a distinct
-    #:   consecutive element, no replication.
-    #: * ``k > 1`` for REPLICATE dims (``int_floor`` / ``int_ceil`` of an
-    #:   affine arg) -- ``k`` consecutive lanes share each source
-    #:   element; the codegen loads ``W / k`` elements and group-broadcasts
-    #:   each ``k`` times.
-    #: * ``None`` for AFFINE and GATHER dims (the concept doesn't apply).
-    #:
-    #: Same length as :attr:`per_dim_kind`.
+    #: * ``None`` BROADCAST -- one element splat to dim's full W lanes (factor = W, but W invisible
+    #:   to classifier → ``None`` = "all lanes" sentinel).
+    #: * ``1`` STRUCTURED_1 -- each lane reads a distinct consecutive element, no replication.
+    #: * ``k > 1`` REPLICATE (``int_floor`` / ``int_ceil`` of affine arg) -- ``k`` consecutive lanes
+    #:   share each element; codegen loads ``W / k``, group-broadcasts each ``k`` times.
+    #: * ``None`` AFFINE / GATHER -- N/A.
     replicate_factor_per_dim: Tuple[Optional[int], ...]
 
-    #: Diagonal composition: maps a tile iter-var name to the tuple of
-    #: subset dims it appears in directly. Only populated when one
-    #: iter-var spans multiple dims. Empty dict when no diagonal pattern.
+    #: Diagonal composition: tile iter-var name → tuple of subset dims it appears in directly. Only
+    #: populated when one iter-var spans multiple dims. Empty dict when no diagonal.
     diagonal: Dict[str, Tuple[int, ...]] = field(default_factory=dict)
 
-    #: Transpose composition: when present, the permutation of tile
-    #: iter-vars across the subset dims, as a tuple ``(perm_0, ..., perm_{K-1})``
-    #: with ``perm_d`` the iter-var INDEX in ``spec.iter_vars`` that
-    #: drives dim ``d``. ``None`` when the dim order is canonical or
-    #: the subset isn't a pure permutation.
+    #: Transpose composition: permutation of tile iter-vars across subset dims as
+    #: ``(perm_0, ..., perm_{K-1})``, ``perm_d`` = iter-var INDEX in ``spec.iter_vars`` driving dim
+    #: ``d``. ``None`` when the dim order is canonical or the subset isn't a pure permutation.
     transpose: Optional[Tuple[int, ...]] = None
 
 
@@ -208,9 +159,8 @@ class TileAccess:
 
 
 def _safe_sympify(expr) -> Optional[sympy.Expr]:
-    """Best-effort sympify. Returns ``None`` on failure (the caller treats
-    unparseable expressions as opaque -- typically classified as GATHER
-    or refused)."""
+    """Best-effort sympify. ``None`` on failure (caller treats unparseable exprs as opaque --
+    typically GATHER or refused)."""
     try:
         return symbolic.pystr_to_symbolic(str(expr))
     except Exception:
@@ -218,19 +168,15 @@ def _safe_sympify(expr) -> Optional[sympy.Expr]:
 
 
 def _direct_symbols(expr: sympy.Expr) -> Set[str]:
-    """Set of symbol names that appear **outside any gather Subscript**
-    in ``expr``. Math functions on iter-vars (``floor(i / 4)``,
-    ``exp(i)``) still expose ``i`` as direct -- the iter-var participates
-    in the address arithmetic without going through a memory load; the
-    affine-coefficient analysis then catches the non-affine cases.
-    :class:`~dace.symbolic.Subscript` is the only stop boundary because
-    it explicitly represents a data-dependent access."""
+    """Symbol names appearing OUTSIDE any gather Subscript in ``expr``. Math functions on iter-vars
+    (``floor(i / 4)``, ``exp(i)``) still expose ``i`` as direct (iter-var in address arithmetic, no
+    memory load; affine-coeff analysis catches non-affine cases). :class:`~dace.symbolic.Subscript`
+    = only stop boundary (explicit data-dependent access)."""
     if expr is None:
         return set()
     if isinstance(expr, sympy.Symbol):
         return {str(expr)}
-    # Subscript is the gather stop boundary: its inner symbols are
-    # gather-index inputs, not address-arithmetic contributors.
+    # Subscript = gather stop boundary: inner symbols are gather-index inputs, not address arithmetic
     if isinstance(expr, symbolic.Subscript):
         return set()
     args = getattr(expr, 'args', None)
@@ -242,27 +188,25 @@ def _direct_symbols(expr: sympy.Expr) -> Set[str]:
     return result
 
 
-#: DaCe / numpy dtype names that appear as cast *functions* in tasklet bodies
-#: (``int64(i)``, ``float64(x)``). After sympify these are :class:`sympy.Function`
-#: nodes; :func:`_strip_casts` collapses them to their argument.
+#: DaCe / numpy dtype names appearing as cast *functions* in tasklet bodies (``int64(i)``,
+#: ``float64(x)``). After sympify these are :class:`sympy.Function` nodes; :func:`_strip_casts`
+#: collapses them to their argument.
 _CAST_NAMES = frozenset({
     'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'float16', 'float32', 'float64', 'bool',
     'bool_'
 })
 
-#: Strips the ``dace.`` / ``np.`` / ``numpy.`` module prefix in front of a cast
-#: name so the remainder parses (``dace.int64(`` -> ``int64(``; the attribute
-#: form ``dace.int64`` is what :func:`dace.symbolic.pystr_to_symbolic` cannot
-#: parse, so this minimal prefix strip is the only text-level fixup needed).
+#: Strip ``dace.`` / ``np.`` / ``numpy.`` prefix before a cast name so the remainder parses
+#: (``dace.int64(`` -> ``int64(``). Attribute form ``dace.int64`` is what
+#: :func:`dace.symbolic.pystr_to_symbolic` can't parse; this minimal strip = only text fixup.
 _CAST_PREFIX_RE = re.compile(r'\b(?:dace|np|numpy)\.(?=(?:u?int(?:8|16|32|64)|float(?:16|32|64)|bool_?)\b)')
 
 
 def _strip_casts(expr: sympy.Expr) -> sympy.Expr:
     """Collapse dtype-cast Function nodes (``int64(i)`` -> ``i``) in ``expr``.
 
-    The cast is a no-op for index arithmetic and would otherwise hide the
-    affine structure (``int64(i) + c`` is not recognised as ``i + c``). Done
-    at the sympy level per the "parse with dace.symbolic" convention.
+    Cast = no-op for index arithmetic but hides affine structure (``int64(i) + c`` not recognised as
+    ``i + c``). Done at sympy level per the "parse with dace.symbolic" convention.
     """
     if expr is None:
         return expr
@@ -274,32 +218,30 @@ def _strip_casts(expr: sympy.Expr) -> sympy.Expr:
 
 
 def _sympify_tasklet_rhs(text: str) -> Optional[sympy.Expr]:
-    """Parse a tasklet/interstate RHS to a sympy expr with casts collapsed.
+    """Parse a tasklet/interstate RHS to a sympy expr, casts collapsed.
 
-    Strips only the unparseable ``dace.``/``np.`` module prefix textually, then
-    defers entirely to :func:`dace.symbolic.pystr_to_symbolic` and the
-    sympy-level cast collapse.
+    Strip only the unparseable ``dace.``/``np.`` prefix textually, then defer to
+    :func:`dace.symbolic.pystr_to_symbolic` + sympy-level cast collapse.
     """
     return _strip_casts(_safe_sympify(_CAST_PREFIX_RE.sub('', text)))
 
 
 def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = None) -> Optional[str]:
-    """Backward-walk the (flat) state graph from ``state`` to find the nearest
-    interstate-edge assignment of ``symbol`` (its reaching definition).
+    """Backward-walk the (flat) state graph from ``state`` for the nearest interstate-edge
+    assignment of ``symbol`` (its reaching definition).
 
-    The frontend emits one ``__sym_i_plus_offset1 = <local>`` per program point
-    (read-b, read-a, write-a), so the symbol is multiply-assigned across the
-    body; only the assignment on the path into ``state`` is the right one.
+    Frontend emits one ``__sym_i_plus_offset1 = <local>`` per program point (read-b, read-a,
+    write-a), so symbol is multiply-assigned across the body; only the assignment on the path into
+    ``state`` is right.
 
-    Relies on the flat-states pre-condition: after if-condition mask lowering
-    the body CFG is a single level of plain states, so a one-level BFS over
-    ``state``'s region edges is a complete reaching-def — no parent-CFG ascent
-    is needed.
+    Flat-states pre-condition: after if-condition mask lowering the body CFG is one level of plain
+    states, so a one-level BFS over ``state``'s region edges is a complete reaching-def (no
+    parent-CFG ascent).
 
     :param state: The access state (an :class:`SDFGState`).
-    :param symbol: The symbol whose reaching definition is sought.
+    :param symbol: Symbol whose reaching definition is sought.
     :param inner_sdfg: Unused (kept for call-site symmetry / future use).
-    :returns: The RHS expression string, or ``None`` when no assignment reaches.
+    :returns: RHS expression string, or ``None`` when no assignment reaches.
     """
     region = getattr(state, "parent_graph", None)
     if region is None:
@@ -321,31 +263,26 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
 
 
 def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[str, sympy.Expr]:
-    """Map ``symbol_name -> defining sympy expression`` for symbols resolvable
-    within ``inner_sdfg`` (optionally reaching-def-disambiguated at ``state``).
+    """Map ``symbol_name -> defining sympy expression`` for symbols resolvable within ``inner_sdfg``
+    (optionally reaching-def-disambiguated at ``state``).
 
-    Two definition sources are collected (the frontend promotes a computed
-    index like ``i + offset1`` through *both* on its way into a memlet subset):
+    Two definition sources (frontend promotes a computed index like ``i + offset1`` through BOTH into
+    a memlet subset):
 
-    1. **Interstate-edge assignments** ``sym = rhs``. A uniquely-assigned symbol
-       is recorded directly. A multiply-assigned symbol (the frontend emits one
-       ``__sym_i_plus_offset1`` per program point) is disambiguated by the
-       reaching definition at ``state`` when ``state`` is given; otherwise it is
-       omitted (left unresolved).
-    2. **Scalar AccessNodes written by a single tasklet** ``__out = <body>``.
-       The body's input connectors are rewritten to their source data names
-       (``__in2`` -> ``offset1``) via :meth:`subs` and dtype casts collapsed, so
-       the recorded expression is in terms of source arrays/scalars + directly-
-       read symbols (the map iter-var ``i`` appears verbatim in the body).
+    1. **Interstate-edge assignments** ``sym = rhs``. Uniquely-assigned → recorded directly.
+       Multiply-assigned (one ``__sym_i_plus_offset1`` per program point) → disambiguated by reaching
+       def at ``state`` when given, else omitted (unresolved).
+    2. **Scalar AccessNodes written by a single tasklet** ``__out = <body>``. Body input connectors
+       rewritten to source data names (``__in2`` -> ``offset1``) via :meth:`subs`, casts collapsed,
+       so recorded expr is in terms of source arrays/scalars + directly-read symbols (map iter-var
+       ``i`` appears verbatim).
 
-    Ambiguity is resolved conservatively toward *omission*: an unresolvable
-    symbol is simply not in the map, so :func:`resolve_index_expr` leaves it
-    as-is and downstream classification falls back to its current
-    (correctness-preserving) behavior.
+    Ambiguity resolved toward omission: unresolvable symbol absent from map, so
+    :func:`resolve_index_expr` leaves it as-is (correctness-preserving fallback).
 
     :param inner_sdfg: Body SDFG to scan; ``None`` yields an empty map.
-    :param state: Optional access state for reaching-def disambiguation of
-        multiply-assigned interstate symbols.
+    :param state: Optional access state for reaching-def disambiguation of multiply-assigned
+        interstate symbols.
     :returns: ``{name: sympy.Expr}`` of resolvable symbols.
     """
     if inner_sdfg is None:
@@ -367,7 +304,7 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
             if chosen is None:
                 continue
         else:
-            continue  # ambiguous, no state -> leave unresolved
+            continue  # ambiguous, no state -> unresolved
         expr = _safe_sympify(chosen)
         if expr is not None:
             defs[k] = expr
@@ -395,7 +332,7 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
                 rhs_expr = _sympify_tasklet_rhs(body[len(prefix):].strip())
                 if rhs_expr is None:
                     continue
-                # Rewrite input connectors -> their source data names via subs.
+                # Rewrite input connectors -> source data names
                 rename = {}
                 for ie in state.in_edges(producer):
                     if ie.dst_conn and ie.data is not None and ie.data.data is not None:
@@ -410,6 +347,13 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
         expr = _safe_sympify(next(iter(rhs_set)))
         if expr is not None:
             defs[name] = expr
+    # Self-referential def (``j = j + 1``) = loop-carried RECURRENCE, not a resolvable index. Such a
+    # loop is never a tiled parallel map (LoopToMap refuses recurrences) → access stays in scalar
+    # control flow, so leave symbol UNRESOLVED, preserve subset (``a[j]``) verbatim. Substituting
+    # would run ``resolve_index_expr``'s fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt
+    # the subset (TSVC s123). (Tiled access carrying such an index is refused downstream by the
+    # tile-index builder, not rewritten -- see InsertTileLoadStore.)
+    defs = {k: v for k, v in defs.items() if k not in {str(s) for s in v.free_symbols}}
     return defs
 
 
@@ -417,22 +361,20 @@ def resolve_index_expr(expr: sympy.Expr,
                        inner_sdfg: Optional[SDFG],
                        _defs: Optional[Dict[str, sympy.Expr]] = None,
                        _max_depth: int = 16) -> sympy.Expr:
-    """Resolve promoted index symbols in ``expr`` back to their defining
-    arithmetic so iter-var dependence is visible to the classifier.
+    """Resolve promoted index symbols in ``expr`` back to their defining arithmetic so iter-var
+    dependence is visible to the classifier.
 
-    The frontend promotes a computed index ``i + offset1`` to a scalar then to
-    a symbol ``__sym_i_plus_offset1`` used in the memlet subset; the classifier
-    would otherwise see that opaque symbol as loop-invariant. This substitutes
-    each resolvable free symbol (see :func:`_build_symbol_definition_map`) with
-    its definition, recursively, until a fixpoint or ``_max_depth`` is reached.
-    Cycle/ambiguity safe: unresolvable symbols are left untouched.
+    Frontend promotes a computed index ``i + offset1`` to a scalar then to a symbol
+    ``__sym_i_plus_offset1`` in the memlet subset; classifier would else see that opaque symbol as
+    loop-invariant. Substitutes each resolvable free symbol (see
+    :func:`_build_symbol_definition_map`) with its definition, recursively, to a fixpoint or
+    ``_max_depth``. Cycle/ambiguity safe: unresolvable symbols untouched.
 
     :param expr: The (sympified) index expression to resolve.
     :param inner_sdfg: Body SDFG carrying the definitions.
     :param _defs: Precomputed definition map (internal; built once per subset).
     :param _max_depth: Substitution-iteration cap (cycle guard).
-    :returns: The resolved expression (or ``expr`` unchanged if nothing
-        resolves).
+    :returns: Resolved expression (or ``expr`` unchanged if nothing resolves).
     """
     if expr is None:
         return expr
@@ -448,20 +390,18 @@ def resolve_index_expr(expr: sympy.Expr,
         subs = {symbolic.pystr_to_symbolic(s): rhs for s, rhs in applicable.items()}
         nxt = cur.subs(subs)
         if nxt == cur:
-            break  # fixpoint (or self-referential def) -> stop
+            break  # fixpoint (or self-referential def)
         cur = nxt
     return cur
 
 
 def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
-    """Whether ``expr`` is a *data-dependent* index — it reads an array value
-    (a gather like ``idx[i]``), so it must NOT be inlined into a memlet subset
-    (it stays the gather form and flows to the gather machinery).
+    """True if ``expr`` is a data-dependent index -- reads an array value (a gather like ``idx[i]``),
+    so must NOT be inlined into a memlet subset (stays gather form for the gather machinery).
 
-    Detected two ways: a :class:`~dace.symbolic.Subscript` node anywhere in the
-    expression, or a free symbol that names a non-Scalar :class:`~dace.data.Array`
-    descriptor (the resolver rewrites a gather scalar's defining tasklet to read
-    the source array name, so ``idx`` shows up as a free symbol).
+    Detected two ways: a :class:`~dace.symbolic.Subscript` node anywhere, or a free symbol naming a
+    non-Scalar :class:`~dace.data.Array` descriptor (resolver rewrites a gather scalar's defining
+    tasklet to read the source array name, so ``idx`` shows up as a free symbol).
     """
     if expr is None:
         return False
@@ -479,15 +419,14 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
 
 
 def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
-    """Rewrite a memlet ``subset`` by inlining promoted index symbols back to
-    their original arithmetic (``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i+offset]``)
-    so the access pattern is direct and widens to a dense load.
+    """Rewrite a memlet ``subset`` by inlining promoted index symbols back to their original
+    arithmetic (``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i+offset]``) so access is direct, widens
+    to a dense load.
 
-    Each range bound is resolved via :func:`resolve_index_expr` (crossing
-    interstate-edge assignments + scalar-defining tasklets, reaching-def via
-    ``state``). A bound is left untouched when its resolved form is
-    **data-dependent** (:func:`expr_is_data_dependent`) — that is a genuine
-    gather index and must keep its symbol/Subscript for the gather machinery.
+    Each range bound resolved via :func:`resolve_index_expr` (crossing interstate-edge assignments +
+    scalar-defining tasklets, reaching-def via ``state``). Bound left untouched when its resolved
+    form is data-dependent (:func:`expr_is_data_dependent`) -- a genuine gather index that must keep
+    its symbol/Subscript for the gather machinery.
 
     :param subset: The memlet :class:`~dace.subsets.Range` to rewrite.
     :param inner_sdfg: Body SDFG carrying the symbol/scalar definitions.
@@ -508,7 +447,7 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
         if resolved == e:
             return bound, False
         if expr_is_data_dependent(resolved, inner_sdfg):
-            return bound, False  # gather index -> keep original
+            return bound, False  # gather index -> keep
         return resolved, True
 
     new_ranges = []
@@ -528,24 +467,17 @@ def _is_tile_dependent(symbol: str,
                        iter_vars: Set[str],
                        inner_sdfg: Optional[SDFG],
                        memo: Optional[Dict[str, bool]] = None) -> bool:
-    """True iff ``symbol`` transitively depends on a tile iter-var.
+    """True iff ``symbol`` transitively depends on a tile iter-var (section 4.2 join rule).
 
-    Implements the section 4.2 join rule: a symbol is tile-dependent
-    iff it (or any symbol it transitively depends on via interstate-
-    edge assignments inside ``inner_sdfg``) is a tile iter-var. This
-    is the same dependency relation the codegen uses to decide whether
-    a symbol requires per-lane materialisation, so the classifier
-    reuses it as the ground truth for GATHER fallback.
-
-    Walks ``inner_sdfg.all_interstate_edges()`` collecting
-    ``edge.data.assignments`` and follows the RHS free symbols
-    transitively. ``memo`` caches per-symbol results.
+    Depends via interstate-edge assignments in ``inner_sdfg``. Same relation codegen uses for
+    per-lane materialisation, reused as ground truth for GATHER fallback. Walks
+    ``inner_sdfg.all_interstate_edges()`` collecting ``edge.data.assignments``, follows RHS free
+    symbols transitively. ``memo`` caches per-symbol results.
 
     :param symbol: Symbol name to test.
     :param iter_vars: The K tile iter-var names.
-    :param inner_sdfg: The body NSDFG (assignments live on its
-        interstate edges). When ``None`` only the direct check
-        ``symbol in iter_vars`` fires.
+    :param inner_sdfg: Body NSDFG (assignments live on its interstate edges). ``None`` → only the
+        direct ``symbol in iter_vars`` check fires.
     :param memo: Optional shared memo across calls.
     :returns: ``True`` if ``symbol`` is (transitively) tile-dependent.
     """
@@ -557,7 +489,7 @@ def _is_tile_dependent(symbol: str,
         memo = {}
     if symbol in memo:
         return memo[symbol]
-    memo[symbol] = False  # tentatively assume no -- guards against cycles
+    memo[symbol] = False  # tentative no -- cycle guard
     for edge in inner_sdfg.all_interstate_edges():
         assigns = edge.data.assignments if edge.data is not None else {}
         if symbol not in assigns:
@@ -578,9 +510,8 @@ def classify_symbols(expr: sympy.Expr, iter_vars: Sequence[str], inner_sdfg: Opt
     :param expr: The expression to walk.
     :param iter_vars: Tile iter-var names.
     :param inner_sdfg: Body NSDFG carrying interstate assignments.
-    :returns: ``{symbol_name: is_tile_dependent}`` for every free
-        symbol in ``expr``. Tile iter-vars appear in the map (always
-        ``True``).
+    :returns: ``{symbol_name: is_tile_dependent}`` for every free symbol in ``expr``. Tile
+        iter-vars appear in the map (always ``True``).
     """
     if expr is None:
         return {}
@@ -597,23 +528,19 @@ def compute_per_iter_var_dep_mask(gather_expr: str, iter_vars: Sequence[str],
                                   inner_sdfg: Optional[SDFG]) -> Tuple[bool, ...]:
     """Per-iter-var dependency mask for a gather expression.
 
-    For each tile iter-var, returns ``True`` iff the gather expression
-    transitively depends on it (via interstate-edge assignments inside
-    ``inner_sdfg``). Walks back through per-lane symbols introduced by
-    :class:`BypassTrivialAssignTasklets` -- e.g. ``__sym_<>`` defined by
-    ``__sym_<> = idx[i]`` is tracked as dep on ``i``, not on ``j``.
+    Per tile iter-var, ``True`` iff gather expr transitively depends on it (via interstate-edge
+    assignments in ``inner_sdfg``). Walks back through per-lane symbols introduced by
+    :class:`BypassTrivialAssignTasklets` -- e.g. ``__sym_<>`` from ``__sym_<> = idx[i]`` tracked as
+    dep on ``i``, not ``j``.
 
-    This is the post-Bypass-aware version of the direct ``free_symbols``
-    check the materialiser does on its own. The walker calls this helper
-    BEFORE invoking :func:`materialise_per_lane_index_tile` so the per-dim
-    ONE-marker emission has the correct dep mask.
+    Post-Bypass-aware version of the materialiser's direct ``free_symbols`` check. Walker calls this
+    BEFORE :func:`materialise_per_lane_index_tile` so per-dim ONE-marker emission has the correct dep
+    mask.
 
-    :param gather_expr: The gather expression string (e.g. ``"__sym_x"``
-        or ``"idx[i]"``).
+    :param gather_expr: Gather expr string (e.g. ``"__sym_x"`` or ``"idx[i]"``).
     :param iter_vars: Tile iter-var names in order.
-    :param inner_sdfg: Body NSDFG carrying interstate assignments. When
-        ``None`` the function falls back to the direct iter-var membership
-        check (no transitive walk).
+    :param inner_sdfg: Body NSDFG carrying interstate assignments. ``None`` → direct iter-var
+        membership check (no transitive walk).
     :returns: A tuple ``(dep_i, dep_j, ...)`` of length ``len(iter_vars)``.
     """
     expr = _safe_sympify(gather_expr)
@@ -632,8 +559,8 @@ def compute_per_iter_var_dep_mask(gather_expr: str, iter_vars: Sequence[str],
 
 
 def _gather_subscripts(expr: sympy.Expr) -> List[symbolic.Subscript]:
-    """Every :class:`Subscript` node anywhere in ``expr``. Used to
-    detect data-dependent indices (``arr[idx[i]]``)."""
+    """Every :class:`Subscript` node anywhere in ``expr``. Detects data-dependent indices
+    (``arr[idx[i]]``)."""
     if expr is None:
         return []
     result: List[symbolic.Subscript] = []
@@ -647,12 +574,10 @@ def _gather_subscripts(expr: sympy.Expr) -> List[symbolic.Subscript]:
 
 
 def _find_named_symbol(expr: sympy.Expr, var_name: str) -> Optional[sympy.Symbol]:
-    """Return the actual :class:`sympy.Symbol` instance in ``expr`` whose
-    name is ``var_name``. DaCe's ``symbol`` subclasses :class:`sympy.Symbol`
-    but does not compare equal to a freshly-constructed ``sympy.Symbol``;
-    :func:`sympy.Poly` treats the mismatched generator as opaque (degree
-    0). Picking the real symbol out of ``expr.free_symbols`` lets the
-    Poly call see the variable correctly."""
+    """Actual :class:`sympy.Symbol` instance in ``expr`` named ``var_name``. DaCe's ``symbol``
+    subclasses :class:`sympy.Symbol` but doesn't compare equal to a fresh ``sympy.Symbol``;
+    :func:`sympy.Poly` then treats the mismatched generator as opaque (degree 0). Picking the real
+    symbol out of ``expr.free_symbols`` lets Poly see the variable."""
     if expr is None:
         return None
     for s in expr.free_symbols:
@@ -662,10 +587,8 @@ def _find_named_symbol(expr: sympy.Expr, var_name: str) -> Optional[sympy.Symbol
 
 
 def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
-    """Return the coefficient of ``var_name`` in ``expr`` if ``expr`` is
-    affine in ``var_name`` (i.e. ``expr = coeff * var + rest`` with
-    ``rest`` having no ``var_name``). ``None`` if non-affine or
-    unresolvable."""
+    """Coefficient of ``var_name`` in ``expr`` if ``expr`` is affine in it (``expr = coeff * var +
+    rest``, ``rest`` free of ``var_name``). ``None`` if non-affine or unresolvable."""
     if expr is None:
         return None
     sym = _find_named_symbol(expr, var_name) or sympy.Symbol(var_name)
@@ -677,13 +600,12 @@ def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
         return None
     if poly.degree() == 0:
         return sympy.Integer(0)
-    # Degree 1: coefficient of the variable.
-    return poly.coeff_monomial(sym)
+    return poly.coeff_monomial(sym)  # degree 1
 
 
 def _affine_offset_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
-    """Constant term of ``expr`` w.r.t. ``var_name``, i.e. the ``c`` in
-    ``coeff * var + c``. ``None`` if non-affine."""
+    """Constant term of ``expr`` w.r.t. ``var_name`` (the ``c`` in ``coeff * var + c``). ``None`` if
+    non-affine."""
     if expr is None:
         return None
     sym = _find_named_symbol(expr, var_name) or sympy.Symbol(var_name)
@@ -693,53 +615,39 @@ def _affine_offset_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
         return None
     if poly.degree() > 1:
         return None
-    # ``nth(0)`` returns the constant term.
-    return poly.nth(0)
+    return poly.nth(0)  # constant term
 
 
 def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
-    """Detect the ``int_floor(affine_in_var, k)`` / ``int_ceil(...)``
-    pattern at the top of ``expr`` and return the integer divisor ``k``
-    when the inner argument is affine in ``var_name``.
+    """Detect ``int_floor(affine_in_var, k)`` / ``int_ceil(...)`` at the top of ``expr``; return
+    integer divisor ``k`` when the inner arg is affine in ``var_name``.
 
-    Returns ``None`` when:
+    ``None`` when: not an ``int_floor`` / ``int_ceil`` call, divisor not a concrete positive integer,
+    or dividend not affine in ``var_name``.
 
-    * ``expr`` is not an ``int_floor`` / ``int_ceil`` call,
-    * the divisor isn't a concrete positive integer,
-    * the dividend isn't affine in ``var_name``.
-
-    This is the within-dim replicate detection: the dim still walks the
-    source array (so it's not a full-dim broadcast), but every ``k``
-    consecutive lanes share the same source element. The codegen reads
-    a ``W / k``-element contracted box and group-broadcasts.
+    Within-dim replicate: dim still walks the source array (not a full-dim broadcast), but every
+    ``k`` consecutive lanes share one source element. Codegen reads a ``W / k``-element contracted
+    box, group-broadcasts.
     """
     if expr is None:
         return None
     fname = type(expr).__name__
-    # DaCe has two equivalent function names for these patterns:
-    # ``int_floor`` / ``int_ceil`` are the user-facing forms, and
-    # ``__int_floor`` / ``__int_ceil`` are the Python-operator-derived
-    # forms (produced when ``i // 4`` is parsed). Both lower to the
-    # same operation.
+    # Two equivalent names: ``int_floor`` / ``int_ceil`` (user-facing) and ``__int_floor`` /
+    # ``__int_ceil`` (Python-operator-derived, from ``i // 4``). Same operation.
     if fname not in ("int_floor", "int_ceil", "__int_floor", "__int_ceil"):
         return None
     if len(expr.args) != 2:
         return None
     dividend, divisor = expr.args
-    # Divisor must be a positive integer OR a symbolic expression (e.g.
-    # ``DV`` in ``i // DV``). Per user direction 2026-06-10: ``We can
-    # enforce tile dim needs to be multiple of replicate factor``.
-    # * Static factor: TileLoad construction validates ``W % k == 0`` and
-    #   refuses with ValueError when violated.
-    # * Symbolic factor: cannot be statically verified; the codegen emits
-    #   ``__l / DV`` which is CORRECT only when ``W % DV == 0`` at runtime.
-    #   User responsibility (documented in the TileLoad property): pass a
-    #   divisor that divides ``W``. Tests with non-dividing symbolic divisors
-    #   (e.g. ``test_div_index_symbol[3]`` with DV=3, W=8) produce incorrect
-    #   results -- this is by-design refusal, not a codegen bug.
-    # Refuse floats outright -- access expressions are integer-valued by
-    # definition; a float divisor means an upstream pass leaked a numeric
-    # type. Fall to AFFINE/GATHER rather than silently truncating to int.
+    # Divisor: positive integer OR symbolic (e.g. ``DV`` in ``i // DV``). Per user direction
+    # 2026-06-10 (tile dim must be a multiple of replicate factor):
+    # * Static: TileLoad construction validates ``W % k == 0``, ValueError on violation.
+    # * Symbolic: not statically verifiable; codegen emits ``__l / DV``, CORRECT only when
+    #   ``W % DV == 0`` at runtime (user responsibility, documented on TileLoad property).
+    #   Non-dividing symbolic divisors (e.g. ``test_div_index_symbol[3]``: DV=3, W=8) give wrong
+    #   results -- by-design refusal, not a codegen bug.
+    # Refuse floats: access exprs integer-valued; float divisor = upstream pass leaked a numeric
+    # type. Fall to AFFINE/GATHER rather than truncating to int.
     if isinstance(divisor, (sympy.Float, float)):
         return None
     try:
@@ -749,10 +657,9 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     except (TypeError, ValueError):
         if divisor is None:
             return None
-        k = divisor  # symbolic -- runtime check (W % k == 0) at codegen per 2c7b88e26.
-    # Dividend must be affine in ``var_name`` (so the replication is
-    # regular -- ``int_floor(idx[i], 2)`` is data-dependent and lowers
-    # as GATHER, not REPLICATE).
+        k = divisor  # symbolic -- runtime check (W % k == 0) at codegen per 2c7b88e26
+    # Dividend must be affine in ``var_name`` (regular replication -- ``int_floor(idx[i], 2)`` is
+    # data-dependent → GATHER, not REPLICATE).
     coeff = _affine_coeff_for(dividend, var_name)
     if coeff is None:
         return None
@@ -762,18 +669,15 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
 def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     """Detect ``(c * var + c0) % N`` -- the MODULAR per-dim pattern.
 
-    Returns ``N`` (positive integer) when ``expr`` is a Mod / mod call
-    whose RHS is a positive integer constant and whose LHS is affine
-    in ``var_name``. Returns ``None`` otherwise. Tile-aligned cases
-    (``N | c * W_p``) are detected later by the classifier so MODULAR
-    can reduce to LINEAR.
+    Returns ``N`` (positive integer) when ``expr`` is a Mod / mod call with positive-integer RHS and
+    LHS affine in ``var_name``; else ``None``. Tile-aligned cases (``N | c * W_p``) detected later by
+    the classifier so MODULAR can reduce to LINEAR.
     """
     if expr is None:
         return None
     fname = type(expr).__name__
-    # SymPy's modulo is ``Mod`` (also produced by ``a % b``). DaCe's
-    # ``__mod__`` overload may yield ``mod`` or ``Mod`` depending on
-    # how the expression was constructed.
+    # SymPy modulo is ``Mod`` (also from ``a % b``); DaCe's ``__mod__`` overload may yield ``mod``
+    # or ``Mod`` depending on construction.
     if fname not in ("Mod", "mod", "__mod__"):
         return None
     if len(expr.args) != 2:
@@ -791,11 +695,9 @@ def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
 
 
 def _resolve_gather_index_an(inner_sdfg: Optional[SDFG], expr: sympy.Expr) -> Optional[nodes.AccessNode]:
-    """If ``expr`` contains exactly one Subscript whose base is an array
-    name in ``inner_sdfg.arrays``, find an :class:`AccessNode` for that
-    array in any state and return it. Returns ``None`` when there are
-    zero or multiple subscripts, the base isn't an array, or no
-    AccessNode exists."""
+    """If ``expr`` has exactly one Subscript whose base is an array name in ``inner_sdfg.arrays``,
+    return an :class:`AccessNode` for that array from any state. ``None`` when there are zero /
+    multiple subscripts, the base isn't an array, or no AccessNode exists."""
     if inner_sdfg is None or expr is None:
         return None
     subs = _gather_subscripts(expr)
@@ -821,20 +723,14 @@ def classify_tile_access(subset: Range,
                          state=None) -> TileAccess:
     """Classify a memlet subset for tile lib-node dispatch.
 
-    :param subset: The :class:`Range` to classify (typically a memlet's
-        ``subset`` field).
-    :param iter_vars: The K tile iter-var names, in tile-lane order
-        (innermost-last by convention).
-    :param inner_sdfg: Optional inner SDFG used to resolve GATHER index
-        AccessNodes and promoted index symbols. Pass ``None`` when the
-        analysis runs outside the body context (the gather-index field is
-        left empty).
-    :param state: Optional access state; disambiguates multiply-assigned
-        promoted index symbols by reaching definition (the frontend emits
-        one ``__sym_i_plus_offset1`` per program point).
-    :returns: A :class:`TileAccess` record. Always returns; never
-        raises. Unrecognisable patterns degrade to GATHER (correctness
-        fallback).
+    :param subset: The :class:`Range` to classify (typically a memlet's ``subset``).
+    :param iter_vars: The K tile iter-var names, in tile-lane order (innermost-last by convention).
+    :param inner_sdfg: Optional inner SDFG to resolve GATHER index AccessNodes and promoted index
+        symbols. ``None`` outside the body context (gather-index field left empty).
+    :param state: Optional access state; disambiguates multiply-assigned promoted index symbols by
+        reaching definition (one ``__sym_i_plus_offset1`` per program point).
+    :returns: A :class:`TileAccess` record. Always returns, never raises. Unrecognisable patterns
+        degrade to GATHER (correctness fallback).
     """
     iter_var_set: Set[str] = set(iter_vars)
     n_dims = len(subset.ranges)
@@ -850,10 +746,9 @@ def classify_tile_access(subset: Range,
     iter_var_in_dim: Dict[str, List[int]] = {v: [] for v in iter_vars}
     dim_to_canonical_iter_var: List[Optional[int]] = []
 
-    # Resolve promoted index symbols (``__sym_i_plus_offset1`` -> ``i + offset1``)
-    # once per subset so each dim's iter-var dependence is visible. Built lazily;
-    # empty/unresolvable leaves the original expressions untouched. The access
-    # ``state`` disambiguates multiply-assigned interstate symbols by reaching def.
+    # Resolve promoted index symbols (``__sym_i_plus_offset1`` -> ``i + offset1``) once per subset so
+    # each dim's iter-var dependence is visible. Empty/unresolvable leaves exprs untouched. ``state``
+    # disambiguates multiply-assigned interstate symbols by reaching def.
     _sym_defs = _build_symbol_definition_map(inner_sdfg, state)
 
     for d, (lo, _hi, _stp) in enumerate(subset.ranges):
@@ -864,13 +759,11 @@ def classify_tile_access(subset: Range,
         direct_tile_vars = direct & iter_var_set
 
         # Stop 1: any tile iter-var inside a Subscript -> GATHER dim.
-        # Recompute the symbols nested inside Subscripts to detect this.
         gather_dim = False
         if lo_sym is not None:
             for sub in _gather_subscripts(lo_sym):
-                # A Subscript stores (container, idx0, idx1, ...) in args.
-                # Iter-var appears nested if it shows up in any subscript
-                # argument's free symbols.
+                # Subscript args = (container, idx0, idx1, ...); iter-var nested if in any idx arg's
+                # free symbols.
                 for sub_arg in sub.args[1:]:
                     fs = {str(s) for s in sub_arg.free_symbols}
                     if fs & iter_var_set:
@@ -888,10 +781,9 @@ def classify_tile_access(subset: Range,
             dim_to_canonical_iter_var.append(None)
             continue
 
-        # Section 4.2 join rule: any non-iter-var symbol in the expression that is
-        # transitively tile-dependent (defined by an interstate edge whose RHS touches
-        # a tile iter-var) forces GATHER. Catches the `a[2*sym + 1]` (sym <- i + 3)
-        # pattern that would otherwise look CONSTANT to the direct-symbol check.
+        # Section 4.2 join rule: any non-iter-var symbol that is transitively tile-dependent
+        # (defined by an interstate edge whose RHS touches a tile iter-var) forces GATHER. Catches
+        # ``a[2*sym + 1]`` (sym <- i + 3), which would else look CONSTANT to the direct-symbol check.
         if lo_sym is not None and inner_sdfg is not None:
             non_tile_syms = direct - iter_var_set
             if any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in non_tile_syms):
@@ -904,9 +796,8 @@ def classify_tile_access(subset: Range,
                 dim_to_canonical_iter_var.append(None)
                 continue
 
-        # Stop 2: no tile iter-var as direct symbol -> BROADCAST dim
-        # (replicate_factor = None, meaning all W lanes of the dim
-        # share one element).
+        # Stop 2: no tile iter-var as direct symbol -> BROADCAST dim (replicate_factor = None: all W
+        # lanes share one element).
         if not direct_tile_vars:
             per_dim_kind.append(PerDimKind.BROADCAST)
             dim_strides.append(0)
@@ -917,17 +808,15 @@ def classify_tile_access(subset: Range,
             dim_to_canonical_iter_var.append(None)
             continue
 
-        # Stop 3: exactly one tile iter-var directly -> STRUCTURED_1,
-        # REPLICATE, or AFFINE.
+        # Stop 3: exactly one tile iter-var directly -> STRUCTURED_1, REPLICATE, or AFFINE.
         if len(direct_tile_vars) == 1:
             tvar = next(iter(direct_tile_vars))
-            # Stop 3a: ``int_floor(c*tvar + c0, k)`` / ``int_ceil(...)``
-            # -> REPLICATE with factor k. Detected BEFORE the affine
-            # check so the function call doesn't fall through to AFFINE.
+            # Stop 3a: ``int_floor(c*tvar + c0, k)`` / ``int_ceil(...)`` -> REPLICATE factor k.
+            # Before the affine check so the function call doesn't fall through to AFFINE.
             replicate_k = _detect_replicate_factor(lo_sym, tvar)
             if replicate_k is not None:
                 per_dim_kind.append(PerDimKind.REPLICATE)
-                dim_strides.append(1)  # contracted-box stride = 1
+                dim_strides.append(1)  # contracted-box stride
                 dim_iter_var.append(tvar)
                 gather_index_per_dim.append(None)
                 dim_offset.append(None)
@@ -935,10 +824,8 @@ def classify_tile_access(subset: Range,
                 iter_var_in_dim[tvar].append(d)
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
-            # Stop 3b: ``(c * tvar + c0) % N`` -> MODULAR. The codegen
-            # falls back to GATHER for the general case; the tile-
-            # aligned reduction to LINEAR is a future optimisation
-            # (TILIFICATION_TRANSFORMATION_DESIGN.md section 4.2).
+            # Stop 3b: ``(c * tvar + c0) % N`` -> MODULAR. Codegen falls back to GATHER for the
+            # general case; tile-aligned reduction to LINEAR is future work (design section 4.2).
             modular_N = _detect_modular_factor(lo_sym, tvar)
             if modular_N is not None:
                 per_dim_kind.append(PerDimKind.MODULAR)
@@ -963,11 +850,10 @@ def classify_tile_access(subset: Range,
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
             if coeff is not None:
-                # G6 (design section 4.2 join rule): the AFFINE coefficient must be tile-
-                # independent. `a[N*i]` with N outer-constant is AFFINE stride N; with N tile-
-                # dependent (defined by an interstate edge whose RHS touches a tile iter-var)
-                # the access is GATHER. Forces a GATHER fallback for unrecognised symbolic
-                # coefficients whose tile-independence we cannot prove.
+                # G6 (design section 4.2 join rule): AFFINE coefficient must be tile-independent.
+                # ``a[N*i]`` with N outer-constant = AFFINE stride N; with N tile-dependent (defined
+                # by an interstate edge whose RHS touches a tile iter-var) → GATHER. Forces GATHER for
+                # symbolic coefficients whose tile-independence we can't prove.
                 tile_dep_coeff = False
                 if inner_sdfg is not None:
                     coeff_syms = {str(s) for s in coeff.free_symbols} if hasattr(coeff, "free_symbols") else set()
@@ -982,12 +868,10 @@ def classify_tile_access(subset: Range,
                     replicate_factor_per_dim.append(None)
                     dim_to_canonical_iter_var.append(None)
                     continue
-                # Affine in one iter-var. Coerce to int when possible
-                # (the emitter prefers concrete strides). When the coefficient
-                # is symbolic and tile-independent (the ``tile_dep_coeff``
-                # check above ruled out tile-dep), keep the sympy expression
-                # so the lib node's ListProperty (element_type=pystr_to_symbolic)
-                # serialises it and the codegen inlines it as a C++ variable.
+                # Affine in one iter-var. Coerce to int when possible (emitter prefers concrete
+                # strides). Symbolic tile-independent coefficient: keep the sympy expr so the lib
+                # node's ListProperty (element_type=pystr_to_symbolic) serialises it and codegen
+                # inlines it as a C++ variable.
                 try:
                     stride_value = int(coeff)
                 except (TypeError, ValueError):
@@ -1001,9 +885,8 @@ def classify_tile_access(subset: Range,
                 iter_var_in_dim[tvar].append(d)
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
-            # Non-affine and not int_floor/int_ceil (e.g. ``i**2``):
-            # fall through to AFFINE without an int stride; the emitter
-            # degrades to GATHER with the per-lane expression.
+            # Non-affine, not int_floor/int_ceil (e.g. ``i**2``): AFFINE without an int stride;
+            # emitter degrades to GATHER with the per-lane expression.
             per_dim_kind.append(PerDimKind.AFFINE)
             dim_strides.append(None)
             dim_iter_var.append(tvar)
@@ -1014,12 +897,11 @@ def classify_tile_access(subset: Range,
             dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
             continue
 
-        # Stop 4: multiple tile iter-vars in the dim. AFFINE only if the expression
-        # is JOINTLY affine -- each tile var's coefficient must be tile-independent
-        # (e.g. ``i + j``, a diagonal access). A cross-term like ``i*j`` (or a
-        # resolved ``syma*i`` with ``syma <- j``) makes one var's coefficient depend
-        # on another tile var -> non-linear in the tile vars -> GATHER (G6 join rule,
-        # design section 4.2). Mirrors the single-var coefficient check at Stop 3.
+        # Stop 4: multiple tile iter-vars in the dim. AFFINE only if JOINTLY affine -- each tile
+        # var's coefficient must be tile-independent (e.g. ``i + j``, a diagonal). Cross-term like
+        # ``i*j`` (or resolved ``syma*i`` with ``syma <- j``) makes one var's coefficient depend on
+        # another tile var -> non-linear in tile vars -> GATHER (G6 join rule, section 4.2). Mirrors
+        # the single-var check at Stop 3.
         multi_var_gather = False
         for tv in direct_tile_vars:
             c = _affine_coeff_for(lo_sym, tv)
@@ -1043,8 +925,7 @@ def classify_tile_access(subset: Range,
         # Jointly affine in multiple tile vars (e.g. ``i + j``) -> AFFINE (multi-var).
         per_dim_kind.append(PerDimKind.AFFINE)
         dim_strides.append(None)
-        # No single representative iter-var for the dim; report the
-        # first one alphabetically for consistency.
+        # No single representative iter-var; report the first alphabetically for consistency.
         rep = sorted(direct_tile_vars)[0]
         dim_iter_var.append(rep)
         gather_index_per_dim.append(None)
@@ -1054,13 +935,11 @@ def classify_tile_access(subset: Range,
             iter_var_in_dim[tv].append(d)
         dim_to_canonical_iter_var.append(list(iter_vars).index(rep))
 
-    # Whole-subset kind: strongest per-dim kind. MODULAR / REPLICATE
-    # share the STRUCTURED bucket (both perfectly regular; codegen
-    # picks the right intrinsic from the per-dim records).
+    # Whole-subset kind: strongest per-dim kind. MODULAR / REPLICATE share the STRUCTURED bucket
+    # (both perfectly regular; codegen picks the intrinsic from the per-dim records).
     kinds = set(per_dim_kind)
     if PerDimKind.GATHER in kinds or PerDimKind.MODULAR in kinds:
-        # MODULAR currently routes to GATHER until the tile-aligned
-        # reduction lands (section 4.2 future work).
+        # MODULAR routes to GATHER until the tile-aligned reduction lands (section 4.2 future work).
         kind = TileAccessKind.GATHER
     elif PerDimKind.AFFINE in kinds:
         kind = TileAccessKind.AFFINE
@@ -1072,11 +951,10 @@ def classify_tile_access(subset: Range,
     # Diagonal: any iter-var spans >= 2 dims.
     diagonal = {v: tuple(dims) for v, dims in iter_var_in_dim.items() if len(dims) >= 2}
 
-    # Transpose: STRUCTURED with iter-vars in non-canonical order.
-    # Canonical order: dim ``d`` carries ``iter_vars[d]``.
+    # Transpose: STRUCTURED with iter-vars in non-canonical order (canonical: dim ``d`` carries
+    # ``iter_vars[d]``).
     transpose: Optional[Tuple[int, ...]] = None
     if kind == TileAccessKind.STRUCTURED and len(per_dim_kind) == len(iter_vars):
-        # Build the permutation from each dim's iter-var index.
         perm = tuple(dim_to_canonical_iter_var)  # type: ignore[arg-type]
         if all(p is not None for p in perm) and tuple(perm) != tuple(range(len(iter_vars))):
             transpose = perm  # type: ignore[assignment]

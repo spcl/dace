@@ -172,3 +172,37 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             if isinstance(cfg, LoopRegion) and self._normalize_loop(cfg):
                 count += 1
         return count or None
+
+
+@transformation.explicit_cf_compatible
+class NormalizeStridedMaps(NormalizeLoopsAndMaps):
+    """Normalize only maps that carry a NON-UNIT step to ``0:trip:1``, folding
+    the step into the index (``a[i]`` under ``0:N:2`` -> ``a[2*k]`` under
+    ``0:int_floor(N-1,2)+1:1``). Unit-step maps and every ``LoopRegion`` counter
+    are left untouched.
+
+    The multi-dim tiler requires unit-step maps -- ``MarkTileDims`` and
+    ``LiftMapReductionToReduce`` both bail on ``step != 1``. Rather than teach
+    the whole tile lowering to carry a per-lane step (and hit the non-uniform
+    step/index composition pitfall -- ``a[i]`` needs ``*step`` but a reduction
+    buffer ``buf[i//step]`` must not), run this at the vectorizer entry: AFTER
+    ``LoopToMap`` (so, unlike an early loop-arm rewrite, it can never block a
+    lift by making a scatter's write index non-provably-injective) and BEFORE
+    the reduction lifts. The strided reduction map a frontend
+    ``for i in range(0, N, 2)`` lifts to then becomes dense, and its ``a[2*k]``
+    read is a plain STRIDED index the tiler's existing ``dim_strides`` machinery
+    vectorizes with no step-aware change anywhere in the tile lowering. The
+    ``p -> b + s*p`` substitution is value-preserving; the ``int_floor(e-b, s)``
+    trip is nonnegative under the canon "symbols nonnegative" contract.
+    """
+
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict) -> Optional[int]:
+        """Normalize every map with a non-unit step; leave unit-step maps and
+        all loops alone."""
+        count = 0
+        for node, parent in sdfg.all_nodes_recursive():
+            if not (isinstance(node, nodes.MapEntry) and isinstance(parent, dace.SDFGState)):
+                continue
+            if any(str(s) != "1" for (_, _, s) in node.map.range.ranges) and self._normalize_map(parent, node):
+                count += 1
+        return count or None

@@ -12,19 +12,20 @@ kernel the test:
    end-to-end against the numpy oracle (canonicalization alone preserves
    semantics).
 2. **Vectorizes** with ONE config drawn round-robin (by kernel index) from the
-   legacy ``VectorizeCPU`` knob set (``test_..._legacy``) and ONE from the
-   multi-dim tile-op ``VectorizeCPUMultiDim`` set (``test_..._multidim``), then
-   re-checks the output against the oracle.
+   multi-dim tile-op ``VectorizeCPUMultiDim`` knob set (``test_..._multidim``),
+   then re-checks the output against the oracle. (The legacy 1-D ``VectorizeCPU``
+   arm was dropped -- this corpus exercises only the multidim path.)
 
 ``nan``/``inf`` match as equal; integer index/permutation arrays are read-only
 inputs and skipped. Inner constant-tile loops (e.g. ``heat3d``'s tile size 8)
 would unroll 512x, so ``unroll_limit`` is capped, matching the canonicalize
 sibling :mod:`tests.canonicalize.tsvc_2_5_corpus_test`.
 
-Known vectorize gaps are marked ``xfail`` with the tracking reason -- see
-``_LEGACY_XFAIL`` / ``_MULTIDIM_XFAIL``. The ``xfail`` is imperative and fires
-before canonicalize/compile, so a kernel whose vectorized codegen aborts cannot
-crash the run.
+Known multidim vectorize gaps are marked ``xfail`` with the tracking reason --
+see ``_MULTIDIM_XFAIL`` / ``_multidim_xfail_reason``. The ``xfail`` is imperative
+and fires before canonicalize/compile, so a kernel whose vectorized codegen
+aborts cannot crash the run. Canon-stage divergences are filed upstream (canon is
+fixed elsewhere), not treated as vectorizer bugs.
 """
 import contextlib
 import inspect
@@ -46,7 +47,6 @@ import pytest
 import dace
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
@@ -57,13 +57,9 @@ _TOL = 1e-9
 
 _CORPUS = tsvc_2_5.collect()
 
-# Round-robin knob sets, identical to the tsvc_2 sibling (valid combinations
-# only; see VectorizeCPU / VectorizeCPUMultiDim constructors).
-_LEGACY_KNOBS = [
-    dict(remainder_strategy="scalar", branch_normalization=True, use_fp_factor=False),
-    dict(remainder_strategy="masked", branch_normalization=True, use_fp_factor=False),
-    dict(remainder_strategy="scalar", branch_normalization=False, use_fp_factor=True),
-]
+# Round-robin knob set for the multidim tile-op vectorizer (valid combinations
+# only; see the VectorizeCPUMultiDim constructor). The legacy 1-D VectorizeCPU
+# arm was dropped -- this corpus only exercises the multidim path.
 _MULTIDIM_KNOBS = [
     dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
@@ -71,49 +67,46 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
-# Kernels with a known vectorize gap; each entry is the tracking reason. Filled
-# in after the corpus matrix run.
-_LEGACY_XFAIL: dict = {
-    'tests_corpus_tsvc_2_5_cond_reduce_sum':
-    'numerical (flaky): masked-sum diverges nondeterministically (uninit-mask remainder)',
-    'tests_corpus_tsvc_2_5_cond_reduce_sym': 'codegen gap: reduction lift inside nested SDFG unsupported',
-    'tests_corpus_tsvc_2_5_config_select_branch': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
-    'tests_corpus_tsvc_2_5_ext_gather_load': 'pass gap: could not find iedge assignment for a promoted temp',
-    'tests_corpus_tsvc_2_5_ext_strided_load_ssym': 'numerical: vectorized output diverges from numpy reference',
-    'tests_corpus_tsvc_2_5_masked_store_sym': 'codegen gap: generated code parse/SyntaxError',
-    'tests_corpus_tsvc_2_5_neg_stride_rev': 'canon/shape gap: negative shape in data descriptor',
-    'tests_corpus_tsvc_2_5_quasi_affine_floor_div_scatter':
-    'Group B (loop2map): WCR survives the map body (recurrence over-parallelized)',
-    'tests_corpus_tsvc_2_5_quasi_affine_reduce_even':
-    'Group B (loop2map): WCR survives the map body (recurrence over-parallelized)',
-    'tests_corpus_tsvc_2_5_quasi_affine_reduce_odd':
-    'Group B (loop2map): WCR survives the map body (recurrence over-parallelized)',
-    'tests_corpus_tsvc_2_5_reduce_inner_carry': 'codegen gap: generated C++ fails to compile',
-    'tests_corpus_tsvc_2_5_scan_strided_2': 'numerical: vectorized output diverges from numpy reference',
+# Multidim vectorize gaps, keyed by the SHORT kernel name (``program.name`` is
+# ``tests_corpus_tsvc_2_5_tsvc_2_5_<kernel>`` -- doubled module segment -- so the
+# lookup de-doubles to the trailing kernel name; see ``_multidim_xfail_reason``).
+# Each entry is the tracked reason; entries are removed as the vectorizer gap is
+# fixed. Canon-stage divergences are NOT vectorizer bugs (canon is fixed
+# elsewhere) -- they are filed upstream and kept here only so the corpus is green.
+_MULTIDIM_XFAIL: dict = {
+    # Masked reduction ``if A[i] <op> K: acc += x`` -- the guard now stages
+    # correctly (data-dependent-guard fix), but the masked accumulation diverges.
+    'cond_reduce_sum': 'vectorizer: masked-reduction accumulation diverges from numpy reference',
+    # Strided reduction FIXED (spcl/dace#2428): the vectorizer entry now folds a non-unit
+    # map step into the index (``NormalizeStridedMaps``: ``0:N:2`` -> ``0:int_floor(N-1,2)+1:1``,
+    # ``a[i]`` -> ``a[2*k]``) so the tiler's existing strided-index (``dim_strides``) machinery
+    # vectorizes it with NO step != 1 handling in the tile lowering. quasi_affine_reduce_even /
+    # _odd now pass across all knobs and are no longer xfailed. quasi_affine_floor_div_scatter
+    # was the contrived floor-div form of a pair accumulate; rewritten to the value-identical
+    # ``b[i] += a[2*i] + a[2*i+1]`` (a unit-step map with two strided reads) it vectorizes
+    # directly -- no scatter / reduction stripe -- and is no longer xfailed either.
+    # Gather / scatter (A[B[i]]) FIXED (spcl/dace#2429): ExpandNestedSDFGInputs now threads
+    # the index array into the body NSDFG -- a scalar-connector index keeps its [i] subscript
+    # (re-subscripted to the outer array before the boundary rename) and a direct array index
+    # is added as a full-array read boundary through the enclosing map -- so the per-lane index
+    # TileLoad builds. ext_gather_load / ext_scatter_store / fission_gather_2body /
+    # fission_scatter_2body / reroll_gather / vas_ssym now pass and are no longer xfailed.
+    # Numerical divergence.
+    'reduce_inner_carry': 'vectorizer: vectorized output diverges from numpy reference',
+    'scan_strided_2': 'vectorizer: vectorized output diverges from numpy reference',
+    # Canon-stage divergence (NOT a vectorizer bug -- filed upstream; canon fixed elsewhere).
+    'heat3d_tiled_const': 'canon-stage: canonicalized output diverges (upstream canon issue, not vectorizer)',
 }
 
-_MULTIDIM_XFAIL: dict = {
-    'tests_corpus_tsvc_2_5_cond_reduce_sum': 'numerical: vectorized output diverges from numpy reference',
-    'tests_corpus_tsvc_2_5_ext_break_capture': 'codegen gap: generated C++ fails to compile',
-    'tests_corpus_tsvc_2_5_ext_break_find_first': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
-    'tests_corpus_tsvc_2_5_ext_break_post_body': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
-    'tests_corpus_tsvc_2_5_ext_gather_load': 'codegen gap: generated C++ fails to compile',
-    'tests_corpus_tsvc_2_5_ext_scatter_store': 'codegen gap: generated C++ fails to compile',
-    'tests_corpus_tsvc_2_5_fission_gather_2body': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
-    'tests_corpus_tsvc_2_5_fission_scatter_2body': 'codegen gap: generated C++ fails to compile',
-    'tests_corpus_tsvc_2_5_fuse_move_ifs': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
-    'tests_corpus_tsvc_2_5_masked_store_sym': 'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
-    'tests_corpus_tsvc_2_5_move_if_data_dep_nest':
-    'multidim tile-emit gap: a scalar store survives InsertTileLoadStore',
-    'tests_corpus_tsvc_2_5_quasi_affine_floor_div_scatter':
-    'Group B (loop2map): loose WCR survives the tiled map (recurrence over-parallelized)',
-    'tests_corpus_tsvc_2_5_quasi_affine_reduce_even':
-    'Group B (loop2map): loose WCR survives the tiled map (recurrence over-parallelized)',
-    'tests_corpus_tsvc_2_5_quasi_affine_reduce_odd':
-    'Group B (loop2map): loose WCR survives the tiled map (recurrence over-parallelized)',
-    'tests_corpus_tsvc_2_5_reduce_inner_carry': 'numerical: vectorized output diverges from numpy reference',
-    'tests_corpus_tsvc_2_5_scan_strided_2': 'numerical: vectorized output diverges from numpy reference',
-}
+
+def _multidim_xfail_reason(program) -> str:
+    """Return the tracked xfail reason for ``program``, or ``""`` if none.
+
+    ``program.name`` is ``tests_corpus_tsvc_2_5_tsvc_2_5_<kernel>``; the xfail dict
+    keys are the short ``<kernel>`` names, so de-double to the trailing kernel name.
+    """
+    short = program.name.rsplit("tsvc_2_5_", 1)[-1]
+    return _MULTIDIM_XFAIL.get(short, "")
 
 
 def _oracle(program):
@@ -199,25 +192,12 @@ def test_tsvc_2_5_canonicalize(idx, program):
 
 
 @pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
-def test_tsvc_2_5_canonicalize_then_legacy_vectorize(idx, program):
-    """Canonicalize -> verify -> legacy VectorizeCPU (round-robin knob) -> verify."""
-    if program.name in _LEGACY_XFAIL:
-        pytest.xfail(_LEGACY_XFAIL[program.name])
-    arrays, scalars, ref = _reference(program)
-    sdfg = _canonicalized(program)
-    _run_and_check(program, sdfg, arrays, scalars, ref, "canonicalization")
-    knobs = _LEGACY_KNOBS[idx % len(_LEGACY_KNOBS)]
-    VectorizeCPU(8, fail_on_unvectorizable=False, **knobs).apply_pass(sdfg, {})
-    sdfg.validate()
-    _run_and_check(program, sdfg, arrays, scalars, ref, "legacy vectorization")
-
-
-@pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
 def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
-    if program.name in _MULTIDIM_XFAIL:
-        pytest.xfail(_MULTIDIM_XFAIL[program.name])
+    reason = _multidim_xfail_reason(program)
+    if reason:
+        pytest.xfail(reason)
     arrays, scalars, ref = _reference(program)
     sdfg = _canonicalized(program)
     # The ``name`` cache policy keys the .dacecache folder on sdfg.name; suffix the

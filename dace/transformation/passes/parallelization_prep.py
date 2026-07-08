@@ -415,17 +415,25 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return None  # non-loop-var dimension does not match -> no collision
         return sol
 
-    def _split_loop_at(self, sdfg: SDFG, loop: LoopRegion, x) -> bool:
-        """Index-set-split ``loop`` at iteration ``x`` into the range segments
-        [start, x-1], the single iteration {x}, and [x+1, end] -- each a clone of the
-        body, wired in sequence in place of the loop. A boundary ``x`` drops the side
-        that would be empty: ``x == start`` (e.g. ``i == 0``) has no preceding
-        iterations, so only {x} + [x+1, end] are emitted; ``x == end`` (the last
-        iteration) has no following iterations, so only [start, x-1] + {x}. The
-        enclosing-range-aware ``LiftTrivialIf`` (run by
+    def _split_loop_at(self, sdfg: SDFG, loop: LoopRegion, x, middle_singleton: bool = True) -> bool:
+        """Index-set-split ``loop`` at iteration ``x`` into range segments, each a
+        clone of the body wired in sequence in place of the loop. Unit stride only;
+        returns whether it split.
+
+        With ``middle_singleton=True`` (the default) the split carves out the single
+        iteration ``x``: [start, x-1] + {x} + [x+1, end], for peeling a special-case
+        iteration out of a range. A boundary ``x`` drops the side that would be empty
+        (``x == start`` emits only {x} + [x+1, end]; ``x == end`` only [start, x-1] +
+        {x}). The enclosing-range-aware ``LiftTrivialIf`` (run by
         :meth:`_clean_peeled_remainder` afterwards) then resolves the ``if i == x``
         guard per segment: a contradiction in the range segments, a tautology in the
-        single middle iteration. Unit stride only. Returns whether it split."""
+        single middle iteration.
+
+        With ``middle_singleton=False`` the split is the two halves [start, x-1] +
+        [x, end] (``x`` joins the second half), for a band-boundary split where each
+        half's wrap-around modulo folds to a different affine index -- the symbolic
+        modular split ``a[(i + K) % N]`` at ``x = N - K``. A no-op ``x == start``
+        (whole loop is the second half) returns ``False`` without splitting."""
         import copy
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
@@ -445,6 +453,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         # Drop a range segment that is provably empty at a boundary split point.
         want_before = symbolic.simplify(x - start) != 0  # x != start -> [start, x-1] is non-empty
         want_after = symbolic.simplify(x - end) != 0  # x != end   -> [x+1, end] is non-empty
+        if not middle_singleton and not want_before:
+            return False  # [x, end] would be the whole loop -> nothing to split
 
         def clone_segment() -> LoopRegion:
             seg = copy.deepcopy(loop)
@@ -457,13 +467,18 @@ class BestEffortLoopPeeling(ppl.Pass):
             before = clone_segment()
             before.loop_condition = CodeBlock(f'{ivar} < ({x})')  # [start, x-1]
             chain.append(before)
-        at = clone_segment()  # {x}: a single iteration
-        at.init_statement = CodeBlock(f'{ivar} = ({x})')
-        at.loop_condition = CodeBlock(f'{ivar} < ({x}) + 1')
-        chain.append(at)
-        if want_after:
-            after = clone_segment()
-            after.init_statement = CodeBlock(f'{ivar} = ({x}) + 1')  # [x+1, end], original condition
+        if middle_singleton:
+            at = clone_segment()  # {x}: a single iteration
+            at.init_statement = CodeBlock(f'{ivar} = ({x})')
+            at.loop_condition = CodeBlock(f'{ivar} < ({x}) + 1')
+            chain.append(at)
+            if want_after:
+                after = clone_segment()
+                after.init_statement = CodeBlock(f'{ivar} = ({x}) + 1')  # [x+1, end], original condition
+                chain.append(after)
+        else:
+            after = clone_segment()  # [x, end]: x joins the second half, original condition
+            after.init_statement = CodeBlock(f'{ivar} = ({x})')
             chain.append(after)
 
         in_edges = list(parent.in_edges(loop))
@@ -554,13 +569,16 @@ class BestEffortLoopPeeling(ppl.Pass):
             prev = cur
         EmptyStateElimination().apply_pass(sdfg, {})
 
-    def _clean_peeled_remainder(self, sdfg: SDFG):
+    def _clean_peeled_remainder(self, sdfg: SDFG, collect: Optional[set] = None):
         """Post-peel cleanup so the remainder body is affine and mappable: collapse
         the now-dead boundary guards (:meth:`_prune_dead_loop_branches`) and rewrite
-        the modulo subsets the peel made affine over the shortened range
-        (:meth:`_rewrite_modulo_over_range`)."""
+        the modulo subsets the peel/split made affine over the shortened range
+        (:meth:`_rewrite_modulo_over_range`). When ``collect`` is given, the
+        ``offset < modulus`` relations a fold relied on are added to it -- the
+        symbolic-split search uses that set as the ``if cond: par else: seq`` branch
+        condition (a constant / no-offset fold contributes nothing)."""
         self._prune_dead_loop_branches(sdfg)
-        self._rewrite_modulo_over_range(sdfg)
+        self._rewrite_modulo_over_range(sdfg, collect)
 
     @staticmethod
     def _provably_nonneg(x) -> bool:
@@ -569,27 +587,59 @@ class BestEffortLoopPeeling(ppl.Pass):
         s = symbolic.simplify(x)
         return s.is_number and s >= 0
 
-    def _nonneg_assuming_large_modulus(self, x, m) -> bool:
-        """Whether ``x`` is provably ``>= 0`` given the modulus ``m`` is at least
-        ``peel_limit + 1``. Peeling a symbolic loop by ``k <= peel_limit`` iterations
-        already presupposes the loop runs at least ``k`` times (the peeled iterations
-        execute unconditionally), so when ``m`` is the trip count it is ``> peel_limit``.
-        Handles a concrete number, or an expression affine and non-decreasing in the
-        single modulus symbol ``m`` with no other free symbols (e.g. ``m - 1 >= 0``)."""
+    def _nonneg_assuming_large_modulus(self, x, m, offsets=frozenset()):
+        """Prove ``x >= 0`` given the modulus ``m`` is at least ``peel_limit + 1`` and
+        every symbol in ``offsets`` lies in ``[0, m - 1]``. Returns the (possibly empty)
+        subset of ``offsets`` the bound *leaned on* -- i.e. the ``offset < m`` facts a
+        caller must record and runtime-check -- when ``x`` is provably ``>= 0``, else
+        ``None`` (so ``result is None`` means "not proven"; an empty set means "proven
+        without any offset assumption").
+
+        Peeling/splitting a symbolic loop by ``k <= peel_limit`` iterations already
+        presupposes the loop runs at least ``k`` times, so when ``m`` is the trip count
+        it is ``> peel_limit``. The ``offset < m`` facts model the modular-wrap contract
+        that a wrap offset is smaller than the modulus (``K < N`` for ``a[(i + K) % N]``);
+        offsets are ``>= 0`` unconditionally (the canonicalization nonnegative-symbol
+        contract, already runtime-guarded). ``x`` must be affine in ``m`` and the offset
+        symbols with numeric coefficients; the minimum is taken at ``o = 0`` for a
+        non-negative coefficient and ``o = m - 1`` for a negative one (the latter is what
+        needs ``o < m``), then checked at the smallest admissible ``m``."""
         import sympy
         s = symbolic.simplify(x)
         if s.is_number:
-            return bool(s >= 0)
+            return frozenset() if s >= 0 else None
         if not isinstance(m, sympy.Symbol):
-            return False
-        c1 = s.coeff(m, 1)
-        c0 = s - c1 * m
-        if (m in c1.free_symbols or m in c0.free_symbols or c0.free_symbols or c1.free_symbols
-                or not (c1.is_number and c0.is_number)):
-            return False  # not affine in m alone
-        if c1 < 0:
-            return False  # decreasing in m -> not bounded below by the m-minimum
-        return bool(c0 + c1 * (self.peel_limit + 1) >= 0)
+            return None
+        # Affine decomposition in m and each offset symbol; every coefficient numeric.
+        coeffs: Dict[Any, Any] = {}
+        rem = s
+        for sym in (m, *offsets):
+            c = s.coeff(sym, 1)
+            if not c.is_number:
+                return None  # nonlinear or a cross term (e.g. m*offset) -- cannot bound
+            coeffs[sym] = c
+            rem = rem - c * sym
+        c0 = symbolic.simplify(rem)
+        if not c0.is_number:
+            return None  # a free symbol we have no bound for remains
+        # Fold each offset into the worst-case (C1*m + C0): a negative coefficient is
+        # worst at o = m - 1 (contributing c*m - c, and needing o < m); a non-negative
+        # one at o = 0. Record exactly the offsets whose lower extreme we relied on.
+        C1 = coeffs[m]
+        C0 = c0
+        relied = set()
+        for o in offsets:
+            if coeffs[o] < 0:
+                C1 += coeffs[o]
+                C0 -= coeffs[o]
+                relied.add(o)
+        if not (C1.is_number and C0.is_number):
+            return None
+        if C1 < 0:
+            return None  # decreasing in m -> not bounded below as m grows
+        if bool(C0 + C1 * (self.peel_limit + 1) >= 0):
+            return frozenset(relied)
+        return None
 
     def _enclosing_loop_ranges(self, block) -> Dict[Any, Any]:
         """``{loop_variable: (start, end)}`` for every ``LoopRegion`` enclosing
@@ -638,18 +688,26 @@ class BestEffortLoopPeeling(ppl.Pass):
     def _modulo_to_affine(self, mod, ranges: Dict[Any, Any]):
         """If ``mod`` is a modulo ``arg % m`` (operator or helper function) with
         ``arg`` affine in the enclosing loop variables and provably confined to a
-        single band ``[t*m, (t+1)*m - 1]`` over their ranges, return the equivalent
-        affine ``arg - t*m`` (so the result lands in ``[0, m-1]`` -- i.e. ``arg % m``);
-        else ``None``. This makes a peeled wrap-around access affine WITHOUT relying
-        on C's truncated ``%`` (which would mis-handle a negative or beyond-``m``
-        argument): the remainder of ``arr[(i + k) % N]`` rewrites to ``i + k`` (band
-        ``t = 0``), and a peeled wrapping iteration ``Mod(N, N)`` rewrites to ``0``
-        (band ``t = 1``), ``Mod(-1, N)`` to ``N - 1`` (band ``t = -1``). ``m`` may be
-        symbolic."""
+        single band ``[t*m, (t+1)*m - 1]`` over their ranges, return ``(arg - t*m,
+        relations)`` -- the equivalent affine index (landing in ``[0, m-1]``, i.e.
+        ``arg % m``) and the ``frozenset`` of ``offset < m`` relations the band
+        proof leaned on (empty when none were needed); else ``None``. This makes a
+        wrap-around access affine WITHOUT relying on C's truncated ``%`` (which
+        would mis-handle a negative or beyond-``m`` argument): the remainder of
+        ``arr[(i + k) % N]`` rewrites to ``i + k`` (band ``t = 0``), a peeled
+        wrapping iteration ``Mod(N, N)`` to ``0`` (band ``t = 1``), ``Mod(-1, N)``
+        to ``N - 1`` (band ``t = -1``); the far half of a symbolic-boundary split
+        ``a[(i + K) % N]`` rewrites to ``i + K - N`` under the assumption ``K < N``,
+        returned in ``relations`` for a caller to record and runtime-check. ``m``
+        may be symbolic."""
         operands = self._modulo_operands(mod)
         if operands is None:
             return None
         arg, m = operands
+        # Symbols in ``arg`` that are neither the modulus nor a ranged loop variable
+        # are wrap OFFSETS: modelled as lying in ``[0, m - 1]`` (the modular-wrap
+        # contract, ``offset < m``), which lets the band proof fold the far segment.
+        offsets = frozenset(arg.free_symbols - set(ranges.keys()) - {m})
         # Reduce ``arg`` to its extremes over the enclosing loop box: affine in each
         # ranged variable, so the min/max sit at the range ends (per slope sign). A
         # peeled region has no enclosing loop, so ``arg`` is already a fixed point.
@@ -667,12 +725,18 @@ class BestEffortLoopPeeling(ppl.Pass):
             else:
                 return None  # indeterminate slope sign
         # Find the band ``t`` such that ``arg - t*m`` stays in ``[0, m-1]`` over the
-        # whole range. Peeling shifts the argument by a bounded number of strides, so
-        # the band index is within +/-(peel_limit + 1).
+        # whole range. Peeling/splitting shifts the argument by a bounded number of
+        # strides, so the band index is within +/-(peel_limit + 1).
+        import sympy
         for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
-            if (self._nonneg_assuming_large_modulus(lo - t * m, m)
-                    and self._nonneg_assuming_large_modulus(m - 1 - (hi - t * m), m)):
-                return arg - t * m
+            lo_relied = self._nonneg_assuming_large_modulus(lo - t * m, m, offsets)
+            if lo_relied is None:
+                continue
+            hi_relied = self._nonneg_assuming_large_modulus(m - 1 - (hi - t * m), m, offsets)
+            if hi_relied is None:
+                continue
+            relations = frozenset(sympy.StrictLessThan(o, m) for o in (lo_relied | hi_relied))
+            return arg - t * m, relations
         return None
 
     def _loop_own_ranges(self, loop: LoopRegion) -> Dict[Any, Any]:
@@ -686,20 +750,17 @@ class BestEffortLoopPeeling(ppl.Pass):
             return {}
         return {symbolic.pystr_to_symbolic(loop.loop_variable): (start, end)}
 
-    def _has_wrapping_modulo(self, loop: LoopRegion) -> bool:
-        """Whether ``loop``'s body holds a memlet-subset modulo ``Mod(arg, m)`` whose
-        ``arg`` is affine in the loop variable yet spans more than one band over the
-        loop's full range -- so it does *not* reduce to a single affine index there
-        (:meth:`_modulo_to_affine` returns ``None``). Such a wrap reads/writes the
-        wrong element under C's truncated ``%`` at the boundary iteration, and peeling
-        that boundary lets the band fold make both the remainder and the peeled
-        iteration affine and floor-correct. A non-affine (e.g. data-dependent) modulo
-        argument is ignored: no bounded peel could ever fold it."""
+    def _affine_body_modulos(self, loop: LoopRegion):
+        """Yield ``(mod, arg, m, a, b)`` for every memlet-subset modulo ``Mod(arg,
+        m)`` in ``loop``'s body whose argument ``arg = a*ivar + b`` is affine in the
+        loop variable -- the only modulos a bounded peel or a band split can fold.
+        Data-dependent / non-affine arguments are skipped: no bounded rewrite folds
+        them. ``a`` and ``b`` may be symbolic (e.g. a symbolic stride or offset)."""
         import sympy
         from dace import subsets
         ranges = self._loop_own_ranges(loop)
         if not ranges:
-            return False
+            return
         (ivar, _), = ranges.items()
         for st in loop.all_states():
             for e in st.edges():
@@ -716,15 +777,62 @@ class BestEffortLoopPeeling(ppl.Pass):
                                 operands = self._modulo_operands(mod)
                                 if operands is None:
                                     continue
-                                arg = operands[0]
+                                arg, m = operands
                                 if ivar not in arg.free_symbols:
                                     continue
                                 a = arg.coeff(ivar, 1)
-                                if ivar in a.free_symbols or ivar in (arg - a * ivar).free_symbols:
+                                b = arg - a * ivar
+                                if ivar in a.free_symbols or ivar in b.free_symbols:
                                     continue  # arg not affine in the loop variable
-                                if self._modulo_to_affine(mod, ranges) is None:
-                                    return True  # affine but genuinely wrapping
+                                yield mod, arg, m, a, symbolic.simplify(b)
+
+    def _has_wrapping_modulo(self, loop: LoopRegion) -> bool:
+        """Whether ``loop``'s body holds an affine memlet-subset modulo ``Mod(arg, m)``
+        whose ``arg`` spans more than one band over the loop's full range -- so it does
+        *not* reduce to a single affine index there (:meth:`_modulo_to_affine` returns
+        ``None``). Such a wrap reads/writes the wrong element under C's truncated ``%``
+        at the boundary iteration; peeling or splitting that boundary lets the band
+        fold make each segment affine and floor-correct."""
+        ranges = self._loop_own_ranges(loop)
+        for mod, _arg, _m, _a, _b in self._affine_body_modulos(loop):
+            if self._modulo_to_affine(mod, ranges) is None:
+                return True  # affine but genuinely wrapping
         return False
+
+    def _modulo_split_points(self, loop: LoopRegion):
+        """Iteration values ``x`` where an affine wrapping body modulo ``arg = a*i +
+        b`` (mod ``m``) crosses a band boundary ``t*m`` over ``loop``'s range: the
+        solution of ``a*x + b == t*m``, i.e. ``x = (t*m - b)/a``, for each band the
+        argument might reach. These are the SYMBOLIC split points that carve a wrap
+        with a symbolic boundary (``a[(i + K) % N]`` crosses at ``x = N - K``) into
+        single-band affine halves -- unreachable by a bounded, constant-count peel.
+
+        Only unit-stride arguments (``|a| == 1``) yield a candidate: then ``x`` is an
+        exact integer for every ``t``. Points provably at/outside the loop range are
+        dropped (their split is a no-op or leaves an empty segment); the rest are
+        returned liberally -- :meth:`_best_modulo_split_for` probes each on an
+        isolated copy and keeps only one whose fold actually removes the wrap, so a
+        non-splitting candidate is harmless."""
+        import sympy
+        ranges = self._loop_own_ranges(loop)
+        if not ranges:
+            return []
+        (ivar, (start, end)), = ranges.items()
+        points = []
+        for _mod, _arg, m, a, b in self._affine_body_modulos(loop):
+            if not (a.is_number and symbolic.simplify(a * a - 1) == 0):
+                continue  # |a| != 1: the crossing is not an exact integer in general
+            for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
+                x = symbolic.simplify((t * m - b) / a)
+                if ivar in x.free_symbols:
+                    continue
+                # Drop x at/left of the start (empty/no-op before-segment) or right of
+                # the end (empty after-segment) when that is PROVABLE; keep the rest.
+                if self._provably_nonneg(start - x) or self._provably_nonneg(x - end - 1):
+                    continue
+                if x not in points:
+                    points.append(x)
+        return points
 
     def _best_modulo_peel_for(self, loop: LoopRegion, sdfg: SDFG):
         """The smallest ``(count, direction)`` peel that turns a genuinely-wrapping
@@ -761,13 +869,60 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return (count, direction)
         return None
 
-    def _rewrite_modulo_over_range(self, sdfg: SDFG):
+    def _best_modulo_split_for(self, loop: LoopRegion, sdfg: SDFG):
+        """``(x, condition_relations)`` for the band-crossing split that turns a
+        genuinely-wrapping body modulo into affine, floor-correct indices on BOTH
+        halves of ``loop``, probed on an isolated copy; ``None`` if the loop has no
+        such wrap or no candidate split folds it. This is the symbolic-boundary
+        counterpart of :meth:`_best_modulo_peel_for`: a bounded peel can only reach a
+        boundary a constant number of iterations from an end, so a wrap whose
+        boundary is symbolic (``a[(i + K) % N]``, boundary ``i = N - K``) needs a
+        split at the symbolic crossing ``x = N - K`` instead. Each half's wrap then
+        folds to a single-band affine index -- the near half ``i + K``
+        unconditionally, the far half ``i + K - N`` under ``K < N``. Those
+        ``offset < modulus`` relations are returned as the ``if cond: par else: seq``
+        branch condition: the split (parallel) form is emitted under them and the
+        original modular loop is the sequential fallback for the rest. A split is
+        accepted as soon as it removes every wrapping modulo while staying valid."""
+        if not self._has_wrapping_modulo(loop):
+            return None
+        points = self._modulo_split_points(loop)
+        if not points:
+            return None
+        mini, _ = self._isolate_loop(loop, sdfg)
+        if mini is None:
+            return None
+        for x in points:
+            cand = copy.deepcopy(mini)
+            cloops = _loops(cand)
+            if not cloops:
+                return None
+            if not self._split_loop_at(cand, cloops[0], x, middle_singleton=False):
+                continue
+            relations: set = set()
+            self._clean_peeled_remainder(cand, collect=relations)  # capture the branch condition
+            try:
+                cand.validate()
+                if any(self._has_wrapping_modulo(l) for l in _loops(cand)):
+                    continue  # a wrapping modulo still survives -> C ``%`` remains
+            except Exception:
+                continue
+            return x, frozenset(relations)
+        return None
+
+    def _rewrite_modulo_over_range(self, sdfg: SDFG, collect: Optional[set] = None):
         """Rewrite every ``Mod(arg, m)`` memlet subset to an equivalent affine form
         when ``arg`` provably stays in one band over its enclosing loops' ranges (see
         :meth:`_modulo_to_affine`). A peel that removes the wrapping boundary
         iterations leaves a remainder whose wrap-around modulo is the identity, and
         the peeled iterations themselves carry the wrapped constant index -- both are
-        folded here so the body is affine and C's truncated ``%`` is never emitted."""
+        folded here so the body is affine and C's truncated ``%`` is never emitted.
+
+        When ``collect`` is given, every ``offset < modulus`` relation a fold leaned
+        on is added to it. The symbolic-split search reads that set back as the
+        ``if cond: par else: seq`` branch condition (the fold is applied inside the
+        parallel branch, where the condition already holds, so the relation guards
+        the branch rather than aborting)."""
         import sympy
         from dace import subsets
         for st in sdfg.all_states():
@@ -788,9 +943,12 @@ class BestEffortLoopPeeling(ppl.Pass):
                             for mod in self._modulo_nodes(expr):
                                 if mod in repl:
                                     continue
-                                affine = self._modulo_to_affine(mod, ranges)
-                                if affine is not None:
+                                result = self._modulo_to_affine(mod, ranges)
+                                if result is not None:
+                                    affine, relations = result
                                     repl[mod] = affine
+                                    if collect is not None:
+                                        collect.update(relations)
             if repl:
                 for r in ranges_seen:
                     r.replace(repl)
@@ -828,8 +986,13 @@ class BestEffortLoopPeeling(ppl.Pass):
         away from the boundary) is carved out as [start, x-1] + {x} + [x+1, end], which
         no bounded boundary peel could reach. Next a wrapping-modulo peel fixes a
         boundary that reads/writes the wrong element under C's truncated ``%`` (a
-        correctness fix that runs even when the loop already maps). Whatever stays
-        stuck then goes through the front/back/both peel search."""
+        correctness fix that runs even when the loop already maps). A wrap whose
+        boundary is symbolic -- unreachable by any constant-count peel -- is instead
+        *specialized* into ``if (K < N) { band-split into affine maps } else {
+        original modular loop }`` (``a[(i + K) % N]`` split at ``x = N - K``): the
+        parallel split is value-correct only below the modulus, so the untouched
+        modular loop is kept as the sequential fallback. Whatever stays stuck then
+        goes through the front/back/both peel search."""
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
         applied = 0
@@ -847,6 +1010,15 @@ class BestEffortLoopPeeling(ppl.Pass):
             if best is not None and self._peel_one_loop(sdfg, loop, *best):
                 self._clean_peeled_remainder(sdfg)
                 applied += 1
+        # 2b. Specialize a symbolic-boundary wrap the constant peel could not reach
+        #     into `if (offset < modulus) { band split } else { original loop }`. Only
+        #     fires when a wrap survived the peel (constant offsets are handled there).
+        for loop in list(_loops(sdfg)):
+            res = self._best_modulo_split_for(loop, sdfg)
+            if res is not None:
+                x, relations = res
+                self._specialize_modulo_split(sdfg, loop, x, relations)
+                applied += 1
         # 3. Best-effort boundary peel for the loops splitting did not resolve.
         for loop in list(_loops(sdfg)):
             best = self._best_peel_for(loop, sdfg)
@@ -854,3 +1026,27 @@ class BestEffortLoopPeeling(ppl.Pass):
                 self._clean_peeled_remainder(sdfg)
                 applied += 1
         return applied or None
+
+    def _specialize_modulo_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:
+        """Replace ``loop`` with ``if (offset < modulus) { band split into affine
+        maps } else { original modular loop }``.
+
+        The far split half's fold to ``i + K - N`` is value-correct only below the
+        modulus, so the split (parallel) form is emitted as the true branch guarded
+        by ``relations`` (``K < N``) and the untouched modular loop -- correct for
+        any nonnegative offset via C's floor-mod -- is the sequential fallback. With
+        no relation (an unconditional fold) the split is applied in place, no branch.
+        """
+        from dace.codegen.common import sym2cpp
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+        if not relations:
+            if self._split_loop_at(sdfg, loop, x, middle_singleton=False):
+                self._clean_peeled_remainder(sdfg)
+            return
+        condition = ' && '.join(sym2cpp(r) for r in sorted(relations, key=str))
+
+        def _parallelize(par_loop, par_region, _owner):
+            if self._split_loop_at(sdfg, par_loop, x, middle_singleton=False):
+                self._clean_peeled_remainder(par_region)
+
+        specialize_loop_under_condition(loop, condition, _parallelize, sdfg)

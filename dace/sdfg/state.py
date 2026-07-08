@@ -3276,6 +3276,12 @@ class LoopRegion(ControlFlowRegion):
     unroll_factor = Property(dtype=int,
                              default=0,
                              desc='If unrolling is enabled, the factor by which to unroll the loop.')
+    pinned_sequential = Property(
+        dtype=bool,
+        default=False,
+        desc='If True, this loop is a deliberate sequential fallback (e.g. the else branch of an '
+        '``if cond: parallel else: sequential`` specialization) and parallelizing passes '
+        '(``LoopToMap`` / ``LoopToReduce``) must leave it as a loop.')
 
     def __init__(self,
                  label: str,

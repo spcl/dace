@@ -1,20 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Invariant checker functions for K-dim vectorization passes.
+"""Invariant checkers for K-dim vectorization passes.
 
-Per user direction 2026-06-12: ``We should have pre condition and post
-condition checks for all passes and by default and always and always run
-them.`` + ``Does pre condition really need to pass? Can't be just a
-function that checks the condition holds true in a graph / subgraph etc?``
+Per user direction 2026-06-12: pre/post-condition checks, always run, as plain functions (not a
+pass-pass boolean). No mixin/inheritance/env gate.
 
-This module exposes plain functions:
+* checker(SDFG or other args) → ``None`` if invariant holds, else violation string.
+* :func:`assert_invariant` raises ``AssertionError`` on violation (pass name + description +
+  offending node/edge/state).
 
-* Each checker takes an SDFG (and optionally other args) and returns
-  ``None`` if the invariant holds, or a string describing the violation.
-* :func:`assert_invariant` raises ``AssertionError`` on violation with a
-  formatted message including the pass name + checker description +
-  offending node / edge / state.
-
-Each pass calls the checkers directly from its ``apply_pass``:
+Each pass calls checkers directly from ``apply_pass``:
 
 .. code-block:: python
 
@@ -23,8 +17,6 @@ Each pass calls the checkers directly from its ``apply_pass``:
         assert_invariant(no_memlet_dim_mismatch(sdfg),
                          "WidenAccesses", "memlet dim consistent")
         return result
-
-No mixin, no inheritance, no env gate. Always runs.
 """
 from typing import Optional, Tuple
 
@@ -34,12 +26,11 @@ from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 
 
 def assert_invariant(violation: Optional[str], pass_name: str, description: str) -> None:
-    """Raise :class:`AssertionError` if ``violation`` is non-None.
+    """Raise :class:`AssertionError` if ``violation`` non-None.
 
-    :param violation: The checker's return value (``None`` on success or
-        the offending-node description).
-    :param pass_name: The pass name to include in the error message.
-    :param description: One-line description of the invariant.
+    :param violation: checker return (``None`` on success, else offending-node description).
+    :param pass_name: pass name for the error message.
+    :param description: one-line invariant description.
     """
     if violation is None:
         return
@@ -52,21 +43,15 @@ def assert_invariant(violation: Optional[str], pass_name: str, description: str)
 
 
 def no_memlet_dim_mismatch(scope) -> Optional[str]:
-    """For memlets connecting a tasklet / lib-node / NSDFG connector to
-    an AccessNode (or two such connectors), ``subset`` and ``other_subset``
-    must have matching rank. Accepts an SDFG OR a single :class:`SDFGState`.
-    Returns ``None`` on success or a description.
+    """``subset`` and ``other_subset`` ranks must match for memlets connecting a tasklet /
+    lib-node / NSDFG connector to an AccessNode (or two such connectors).
 
-    AN -> AN memlets are exempt: they describe pure copies between two
-    descriptors that may have different ranks (e.g. a 4D slice copied
-    into a 1D flat buffer) so the two subsets are intentionally
-    different-rank when the descriptors are.
+    Exempt AN -> AN copies: pure copies between possibly different-rank descriptors (e.g. 4D
+    slice → 1D flat buffer) → different-rank subsets intended.
 
-    ``MapEntry`` / ``MapExit`` pass-through edges are likewise exempt: they are
-    scope plumbing, not the tasklet / lib-node / NSDFG-connector <-> AN edges
-    this invariant targets, and they legitimately carry a different-rank
-    ``other_subset`` when one side is a scalar staging element (e.g. a 2-D point
-    ``a[jk, jc]`` copied through the map into the scalar ``c_slice`` after
+    Exempt ``MapEntry`` / ``MapExit`` pass-through edges: scope plumbing, not the connector <-> AN
+    edges targeted here; legitimately carry a different-rank ``other_subset`` when one side is a
+    scalar staging element (e.g. 2-D point ``a[jk, jc]`` → scalar ``c_slice`` after
     ``ConvertLengthOneArraysToScalars``).
     """
     states = _iter_states(scope)
@@ -75,11 +60,10 @@ def no_memlet_dim_mismatch(scope) -> Optional[str]:
             mem = edge.data
             if mem is None or mem.subset is None or mem.other_subset is None:
                 continue
-            # Pure AN -> AN copies are allowed to carry different-rank
-            # subsets when the two descriptors have different ranks.
+            # AN -> AN copies: different-rank subsets allowed (see docstring)
             if isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode):
                 continue
-            # Scope pass-through edges (Map entry/exit) are out of scope -- see docstring.
+            # Map entry/exit pass-through edges: out of scope (see docstring)
             if isinstance(edge.src, (MapEntry, MapExit)) or isinstance(edge.dst, (MapEntry, MapExit)):
                 continue
             if len(mem.subset.size()) != len(mem.other_subset.size()):
@@ -89,20 +73,15 @@ def no_memlet_dim_mismatch(scope) -> Optional[str]:
 
 
 def no_transient_scalar_stores(scope) -> Optional[str]:
-    """No TILE (multi-element) memlet may be stored into a TRANSIENT Scalar.
+    """No TILE (multi-element) memlet may store into a TRANSIENT Scalar.
 
-    Per the K-dim design (user direction 2026-06-14): inside a body NSDFG a scalar
-    *write* only targets a NON-transient program output (e.g. a reduction result,
-    section 3.5); a TILE result written into a TRANSIENT scalar is a widening miss
-    -- ``WidenAccesses`` should have widened that transient to a tile so the edge
-    is ``tile -> tile``. This is the clean replacement for the old
-    ``_maybe_elide_scalar_passthrough`` patch-fix (removed).
+    K-dim design (user direction 2026-06-14): inside a body NSDFG a scalar *write* only targets a
+    NON-transient program output (e.g. reduction result, section 3.5); TILE result into a TRANSIENT
+    scalar = widening miss -- ``WidenAccesses`` should have widened that transient to a tile so the
+    edge is ``tile -> tile``. Replaces old ``_maybe_elide_scalar_passthrough`` patch-fix.
 
-    Scalar load-staging -- a single element copied into a transient scalar for a
-    broadcast, e.g. ``a_const`` from ``a[0]`` feeding a ``TileLoad(src_kind=
-    "Scalar")`` -- is single-element and therefore allowed.
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success.
+    Allowed scalar load-staging: single element → transient scalar for a broadcast (e.g.
+    ``a_const`` from ``a[0]`` feeding ``TileLoad(src_kind="Scalar")``).
     """
     for sd, state in _iter_states(scope):
         for edge in state.edges():
@@ -127,9 +106,7 @@ def no_transient_scalar_stores(scope) -> Optional[str]:
 
 
 def no_isolated_access_nodes(scope) -> Optional[str]:
-    """No AccessNode may have zero in-edges AND zero out-edges. Accepts
-    an SDFG or a single state.
-    """
+    """No AccessNode may have zero in-edges AND zero out-edges. Accepts SDFG or a single state."""
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, AccessNode):
@@ -142,9 +119,8 @@ def no_isolated_access_nodes(scope) -> Optional[str]:
 def no_duplicate_connector_edges(scope) -> Optional[str]:
     """Every NSDFG / Tasklet / lib-node connector has <=1 edge per direction.
 
-    :class:`~dace.sdfg.nodes.MapEntry` and :class:`~dace.sdfg.nodes.MapExit`
-    are skipped: their pass-through connectors are designed to fan-out
-    (entry's ``OUT_X``) and fan-in (exit's ``IN_X``).
+    Skips :class:`~dace.sdfg.nodes.MapEntry` / :class:`~dace.sdfg.nodes.MapExit`: their
+    pass-through connectors fan-out (entry ``OUT_X``) and fan-in (exit ``IN_X``) by design.
     """
     from dace.sdfg.nodes import MapEntry, MapExit
     for sd, state in _iter_states(scope):
@@ -175,14 +151,11 @@ def no_duplicate_connector_edges(scope) -> Optional[str]:
 
 
 def mask_connectors_are_bool(scope) -> Optional[str]:
-    """Every edge feeding a tile lib-node ``_mask`` connector must be sourced
-    from a ``bool`` array. A mask selects per-lane, so a non-bool mask (e.g. a
-    ``double`` 1.0/0.0 value mask) is invalid — comparison ops and lifted
-    if-conditions produce ``bool``, and every mask consumer (TileBinop /
-    TileUnop / TileITE ``_mask``) is defined over a boolean tile.
+    """Every edge feeding a tile lib-node ``_mask`` connector must source from a ``bool`` array.
 
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on
-    success or a description identifying the first non-bool mask source.
+    Mask selects per-lane → non-bool mask (e.g. ``double`` 1.0/0.0) invalid. Comparison ops and
+    lifted if-conditions produce ``bool``; every mask consumer (TileBinop / TileUnop / TileITE
+    ``_mask``) defined over a boolean tile.
     """
     import dace.dtypes as _dt
     for sd, state in _iter_states(scope):
@@ -205,16 +178,11 @@ def mask_connectors_are_bool(scope) -> Optional[str]:
 def tile_mask_gen_dominates_consumers(scope) -> Optional[str]:
     """Every :class:`TileMaskGen` must sit in the start block of its own SDFG.
 
-    The iteration mask is branch-independent ("which lanes are in bounds"), so its
-    producer must DOMINATE every masked consumer -- otherwise a data-dependent
-    ``if`` (-> TileITE) body reads ``_tile_iter_mask`` from a branch state the
-    producer does not dominate (uninitialized lanes, flaky writes). The start block
-    has no predecessors and dominates every reachable state, so producing the mask
-    there is the simplest sufficient guarantee. ``GenerateTileIterationMask`` emits
-    it in a dedicated ``_tile_mask_init`` start state; this is its post-condition.
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success or
-    a description of the first mis-placed producer.
+    Iteration mask branch-independent ("which lanes in bounds") → producer must DOMINATE every
+    masked consumer; else a data-dependent ``if`` (→ TileITE) body reads ``_tile_iter_mask`` from a
+    branch state the producer doesn't dominate (uninitialized lanes, flaky writes). Start block has
+    no predecessors + dominates every reachable state → simplest sufficient guarantee. Post-condition
+    of ``GenerateTileIterationMask`` (emits it in a dedicated ``_tile_mask_init`` start state).
     """
     from dace.libraries.tileops import TileMaskGen
     for sd, state in _iter_states(scope):
@@ -228,16 +196,11 @@ def tile_mask_gen_dominates_consumers(scope) -> Optional[str]:
 
 
 def memlet_subset_matches_descriptor(scope) -> Optional[str]:
-    """Every memlet's ``subset`` rank must match the rank of the descriptor it
-    accesses (``len(sdfg.arrays[memlet.data].shape)``). A memlet that reads a
-    ``(1,)`` scalar bridge with a 2-D ``[0:8, 0:8]`` tile subset (or vice
-    versa) is invalid — the descriptor and the access disagree on rank, which
-    ``sdfg.validate()`` later rejects. Surfacing it as a pass post-condition
-    localizes which pass widened the memlet without widening the descriptor (or
+    """Every memlet's ``subset`` rank must match the accessed descriptor's rank
+    (``len(sdfg.arrays[memlet.data].shape)``). E.g. a ``(1,)`` scalar bridge read with a 2-D
+    ``[0:8, 0:8]`` tile subset (or vice versa) invalid -- ``sdfg.validate()`` later rejects it.
+    Post-condition localizes which pass widened the memlet without widening the descriptor (or
     staged a too-narrow bridge under a widened consumer).
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
-    or a description of the first offender.
     """
     for sd, state in _iter_states(scope):
         for edge in state.edges():
@@ -257,13 +220,8 @@ def memlet_subset_matches_descriptor(scope) -> Optional[str]:
 
 
 def logical_binops_are_bool(scope) -> Optional[str]:
-    """Every ``TileBinop`` with a logical op (``&&`` / ``||``) must have two
-    ``bool`` inputs (``_a``, ``_b``) and a ``bool`` output (``_c``). A logical
-    op over non-bool operands is invalid — the operands are predicates / masks
-    and the result is a predicate.
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on
-    success or a description of the first offender.
+    """Every ``TileBinop`` with a logical op (``&&`` / ``||``) must have ``bool`` inputs
+    (``_a``, ``_b``) and ``bool`` output (``_c``): operands = predicates / masks, result = predicate.
     """
     import dace.dtypes as _dt
     from dace.libraries.tileops import TileBinop
@@ -284,69 +242,22 @@ def logical_binops_are_bool(scope) -> Optional[str]:
     return None
 
 
-def _is_reduce_at_output_map(map_entry) -> bool:
-    """True iff ``map_entry`` is tagged for the ``reduce_at_output`` tile-reduce lowering
-    (its body reduction is relocated to a boundary ``TileReduce`` after widening, so the
-    WCR invariants intentionally allow the transient in-body WCR)."""
-    from dace.transformation.passes.vectorization.mark_reduce_at_output import REDUCE_AT_OUTPUT_MARKER
-    # Substring, not ``endswith``: the reduce-at-output tag is applied early (after
-    # LiftEinsum), then ``SplitMapForTileRemainder`` appends its own ``__tile_main`` /
-    # ``__scalar_tail`` suffix, so the marker ends up in the MIDDLE of the label
-    # (``comp_mean__reduce_out__tile_main``).
-    return REDUCE_AT_OUTPUT_MARKER in map_entry.map.label
-
-
-def _is_reduce_at_output_map_node(node) -> bool:
-    """True iff ``node`` -- a :class:`MapEntry` OR :class:`MapExit` -- belongs to a
-    ``reduce_at_output``-tagged map (both expose ``.map.label``)."""
-    from dace.transformation.passes.vectorization.mark_reduce_at_output import REDUCE_AT_OUTPUT_MARKER
-    return REDUCE_AT_OUTPUT_MARKER in node.map.label
-
-
-def _nsdfg_in_reduce_at_output_scope(sd) -> bool:
-    """True iff nested SDFG ``sd``'s enclosing map (via ``parent_nsdfg_node``) is a tagged
-    ``reduce_at_output`` map."""
-    node = sd.parent_nsdfg_node
-    st = getattr(sd, "parent", None)
-    if node is None or st is None:
-        return False
-    scope = st.scope_dict()
-    entry = scope.get(node)
-    while entry is not None:
-        if isinstance(entry, MapEntry) and _is_reduce_at_output_map(entry):
-            return True
-        entry = scope.get(entry)
-    return False
-
-
 def no_wcr_in_map_body(scope) -> Optional[str]:
     """No edge inside a map scope may carry a write-conflict resolution.
 
-    **Legacy vectorization precondition.** ``VectorizeCPU`` vectorizes the
-    tasklets of a free map in place; a surviving WCR inside the map body is a
-    loop-carried reduction the vectorizer does NOT lower (it would widen the
-    body without resolving the conflict, racing the lanes). ``WCRToAugAssign``
-    must first convert every such WCR into an explicit read-modify-write
-    tasklet -- this checker is that pass's post-condition / the vectorizer's
-    entry pre-condition.
+    **Legacy vectorization precondition.** ``VectorizeCPU`` vectorizes a free map's tasklets in
+    place; a surviving body WCR = loop-carried reduction it does NOT lower (widening the body
+    without resolving the conflict races the lanes). ``WCRToAugAssign`` must first convert each such
+    WCR to an explicit read-modify-write tasklet -- its post-condition / vectorizer entry pre-condition.
 
-    "The map body" is the set of nodes strictly between a ``MapEntry`` and its
-    ``MapExit`` (:meth:`~dace.sdfg.state.SDFGState.all_nodes_between`); every
-    edge incident to one of those nodes is a body edge. The reduction-out
-    boundary edge ``MapExit -> AccessNode`` is incident only to the exit and an
-    outer AccessNode -- neither is in the body -- so it is not flagged: that is
-    the legitimate place a reduction's WCR lives once lifted out of the body.
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
-    or a description of the first offending edge.
+    Map body = nodes strictly between ``MapEntry`` and its ``MapExit``
+    (:meth:`~dace.sdfg.state.SDFGState.all_nodes_between`); every incident edge is a body edge. The
+    reduction-out boundary edge ``MapExit -> AccessNode`` touches only the exit + an outer
+    AccessNode, not the body → not flagged: where a reduction's WCR legitimately lives once lifted out.
     """
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, MapEntry):
-                continue
-            # A tagged ``reduce_at_output`` map keeps its reduction WCR in the body until a
-            # boundary ``TileReduce`` is spliced (post-widening); do not flag it here.
-            if _is_reduce_at_output_map(node):
                 continue
             body = state.all_nodes_between(node, state.exit_node(node))
             if not body:
@@ -354,48 +265,65 @@ def no_wcr_in_map_body(scope) -> Optional[str]:
             for edge in state.all_edges(*body):
                 if edge.data is None or edge.data.wcr is None:
                     continue
+                # Allowed: scalar/len-1 reduction-boundary WCR (``scalar/len1 -wcr-> MapExit -wcr->
+                # AN``, e.g. ``acc = sum(A)``); resolved at boundary, no lane race. Per-element
+                # scatter (``a[idx[i]] (op)= ...``, full-array sink) stays flagged. See
+                # _is_reduction_boundary_wcr.
+                if _is_reduction_boundary_wcr(sd, state, node, edge):
+                    continue
                 return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                         f"``{edge.data.wcr}`` inside a map body (convert it to an explicit "
                         f"read-modify-write via WCRToAugAssign before vectorizing)")
     return None
 
 
+def _is_reduction_boundary_wcr(sdfg, state, map_entry, edge) -> bool:
+    """True iff ``edge`` is the allowed reduction-boundary WCR of ``map_entry``.
+
+    Shape ``scalar / length-1 AN -wcr-> MapExit -wcr-> AccessNode``: WCR edge terminates at this
+    map's exit and the reduction sink is a scalar / length-1 array. Resolved at the boundary by
+    codegen (OpenMP ``reduction(op:var)`` / GPU block-reduce + atomic), never in the widened body
+    → not a loop-carried in-body reduction the tiler would race.
+
+    Rejects a per-element scatter (``a[idx[i]] (op)= ...``): its MapExit sink is a full array, not a
+    scalar / length-1 accumulator.
+    """
+    map_exit = state.exit_node(map_entry)
+    if edge.dst is not map_exit:
+        return False
+    conn = edge.dst_conn
+    if not conn or not conn.startswith("IN_"):
+        return False
+    out_conn = "OUT_" + conn[len("IN_"):]
+    outs = [e for e in state.out_edges(map_exit) if e.src_conn == out_conn]
+    if len(outs) != 1 or not isinstance(outs[0].dst, AccessNode):
+        return False
+    desc = sdfg.arrays.get(outs[0].dst.data)
+    if desc is None:
+        return False
+    # Scalar / length-1 array accumulator (genuine reduction target, not scatter into one element)
+    if isinstance(desc, dace.data.Scalar):
+        return True
+    return isinstance(desc, dace.data.Array) and (desc.total_size == 1) == True
+
+
 def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
     """No edge INSIDE any nested SDFG may carry a write-conflict resolution.
 
-    **Multi-dim vectorization precondition.** The tile emitters lower the body
-    NSDFG of the tile map assuming every inner edge is a plain (conflict-free)
-    write (design 3.5). An inner WCR that survives into tiling is silently
-    dropped, degrading e.g. an in-place ``a[i] += b[i]`` to ``a[i] = b[i]``.
-    ``WCRToAugAssign`` (incl. its AN->AN copy case) must eliminate every inner
-    WCR first -- this checker is that pass's post-condition.
+    **Multi-dim vectorization precondition.** Tile emitters lower the body NSDFG assuming every
+    inner edge is a plain conflict-free write (design 3.5). Inner WCR surviving into tiling is
+    silently dropped, degrading e.g. in-place ``a[i] += b[i]`` → ``a[i] = b[i]``. ``WCRToAugAssign``
+    (incl. its AN->AN copy case) must eliminate every inner WCR first -- its post-condition.
 
-    The ALLOWED scalar-reduction-out form -- the NSDFG writes a scalar that
-    exits via a WCR reduction on the ``NestedSDFG -> MapExit`` edge in the
-    PARENT state -- is not flagged: that edge lives in the parent SDFG, not
-    inside the nested SDFG, so it is skipped by the ``parent_nsdfg_node`` guard.
-
-    Accepts an SDFG or a single :class:`SDFGState`. Returns ``None`` on success
-    or a description of the first offending edge.
+    ALLOWED scalar-reduction-out form (NSDFG writes a scalar exiting via a WCR reduction on the
+    ``NestedSDFG -> MapExit`` edge in the PARENT state) not flagged: that edge lives in the parent
+    SDFG, skipped by the ``parent_nsdfg_node`` guard.
     """
     for sd, state in _iter_states(scope):
         if sd.parent_nsdfg_node is None:
             continue
-        # Skip a body NSDFG whose enclosing map is a tagged ``reduce_at_output`` map: its
-        # inner reduction WCR is intentionally kept until the boundary ``TileReduce`` splice.
-        if _nsdfg_in_reduce_at_output_scope(sd):
-            continue
         for edge in state.edges():
             if edge.data is None or edge.data.wcr is None:
-                continue
-            # A WCR on the reduction-out chain of a tagged ``reduce_at_output`` map --
-            # ``AN ─[wcr]→ MapExit`` / ``MapExit ─[wcr]→ acc`` -- is the intended scalar-out
-            # form kept until the boundary ``TileReduce`` splice. The tagged reduction map
-            # can itself be nested inside another (untagged) map's body NSDFG (azimint's
-            # ``j`` reduction inside the ``i`` map's ``loop_body``), so the ``sd``-level scope
-            # skip above misses it; recognise it per-edge by the incident tagged map exit/entry.
-            if any(isinstance(n, (MapEntry, MapExit)) and _is_reduce_at_output_map_node(n)
-                   for n in (edge.src, edge.dst)):
                 continue
             return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                     f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
@@ -409,12 +337,9 @@ def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
 
 
 def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:
-    """Every lane-dependent transient in a tile-tagged body NSDFG is at
-    the tile shape ``widths`` OR is an exempt bridge name (gather idx
-    tile / ITE materialised tile / cond broadcast tile / Scalar bridge).
-
-    Per user example 2026-06-12: ``all non-scalar non-gather dims are
-    widened``.
+    """Every lane-dependent transient in a tile-tagged body NSDFG is at tile shape ``widths`` OR an
+    exempt bridge name (gather idx tile / ITE materialised tile / cond broadcast tile / Scalar
+    bridge). Per user example 2026-06-12: all non-scalar non-gather dims widened.
     """
     import dace.data as _dd
     for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
@@ -466,9 +391,7 @@ def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: Tuple[int, ...]) ->
 
 
 def _iter_states(scope):
-    """Yield ``(sub_sdfg, state)`` for an SDFG (every state recursively)
-    OR a single state passed directly.
-    """
+    """Yield ``(sub_sdfg, state)`` for an SDFG (every state recursively) OR a single state directly."""
     if isinstance(scope, SDFGState):
         yield scope.sdfg, scope
         return

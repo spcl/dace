@@ -26,10 +26,13 @@ which downstream canonicalize passes (``LoopToReduce``, ``LoopToScan``,
 Pattern
 =======
 
-The outer loop must be ``for i in range(0, N, K)`` where ``K`` is a concrete
-positive integer literal and the start is ``0``. The single body block of the
+The outer loop must be ``for i in range(0, N, K)`` where ``K`` is a positive
+tile size -- a concrete integer literal ``> 1`` **or** a positive symbol (e.g.
+a block-size parameter) -- and the start is ``0``. The single body block of the
 outer must be exactly one nested :class:`~dace.sdfg.state.LoopRegion` and
-nothing else (perfect nest).
+nothing else (perfect nest). Symbolic tiles admit only a unit inner stride
+(single-level untile); a concrete tile additionally admits cascade rungs whose
+inner stride divides ``K``.
 
 The inner loop must be one of the following shapes (both with unit stride):
 
@@ -65,10 +68,14 @@ The original ``i`` / ``ii`` symbols are removed from the SDFG symbol table
 still be referenced by interstate-edge assignments that the cascade-up pass
 hoisted; those are left alone.)
 """
+import copy
 from typing import List, Optional, Set, Tuple
+
+import sympy
 
 import dace
 from dace import SDFG, properties, symbolic
+from dace.sdfg.graph import NodeNotFoundError
 from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -201,7 +208,49 @@ def _is_zero(expr) -> bool:
     return getattr(s, 'is_number', False) and s == 0
 
 
-def _match_inner_case(inner: LoopRegion, outer_var: str, K: int) -> Optional[Tuple[str, int]]:
+def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
+    """Classify an outer-loop stride as a tile size.
+
+    Returns ``(K_expr, K_const)`` where ``K_expr`` is the simplified
+    stride expression and ``K_const`` is its value if the stride is a
+    concrete integer literal ``> 1``, else ``None``. Returns ``None``
+    entirely when the stride cannot be used as a tile:
+
+    * a concrete literal ``<= 1`` (``1`` is already untiled; ``<= 0`` is
+      not a forward tile);
+    * a symbolic stride that SymPy can prove is non-positive.
+
+    A **bare symbol** tile (e.g. a block-size parameter ``BS``) is accepted
+    (``K_const=None``): DaCe treats every symbol as non-negative by
+    convention -- we do *not* rely on SymPy sign assumptions -- and the
+    collapse to a unit-stride ``[start, N)`` traversal is sound for any
+    ``K >= 1`` (even the degenerate ``K == 1`` symbolic case). A **compound
+    symbolic expression** (e.g. ``s1 - s2`` or ``N // 4``) is *not* assumed
+    positive and is refused: it is not a plausible tile size and its sign
+    cannot be trusted. Symbolic tiles admit only a unit inner stride
+    (single-level untile) -- see :func:`_match_inner_case` -- because a
+    concrete stride cannot be proven to divide a symbol.
+    """
+    try:
+        s = symbolic.simplify(expr)
+    except Exception:
+        return None
+    if getattr(s, 'is_number', False):
+        if not getattr(s, 'is_Integer', False):
+            return None
+        v = int(s)
+        if v <= 1:
+            return None
+        return (s, v)
+    # Symbolic: accept a bare symbol only (assumed non-negative by DaCe
+    # convention). A compound expression's sign is not proven, so refuse it.
+    if isinstance(s, sympy.Symbol):
+        return (s, None)
+    return None
+
+
+def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.SymbolicType,
+                      K_const: Optional[int]) -> Optional[Tuple[str, int]]:
     """Classify the inner loop shape and return ``(case, inner_stride)``.
 
     * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``),
@@ -214,6 +263,12 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K: int) -> Optional[Tup
     1), so a subsequent fixpoint iteration can collapse it with the next
     inner.
 
+    ``K_expr`` is the (possibly symbolic) outer tile size; ``K_const`` is
+    its concrete value or ``None`` when it is symbolic. A concrete tile
+    admits any cascade rung ``S | K``; a symbolic tile admits only
+    ``S == 1`` (the concrete stride's divisibility into a symbol is
+    unprovable), i.e. a single-level untile.
+
     Returns ``None`` if neither shape matches.
     """
     stride = loop_analysis.get_loop_stride(inner)
@@ -224,10 +279,17 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K: int) -> Optional[Tup
     S_concrete = _is_constant_positive_int(stride)
     if S_concrete is None:
         return None
-    # Inner stride must divide the outer stride so the cascade level is
-    # an exact tile (no partial-tile remainder).
-    if K % S_concrete != 0:
-        return None
+    if K_const is not None:
+        # Concrete tile: inner stride must divide it exactly so the
+        # cascade level is a whole tile (no partial-tile remainder).
+        if K_const % S_concrete != 0:
+            return None
+    else:
+        # Symbolic tile: a concrete stride's divisibility into a symbol
+        # cannot be proven, so only a unit inner stride (a genuine
+        # single-level untile) is admitted.
+        if S_concrete != 1:
+            return None
     outer_sym = symbolic.pystr_to_symbolic(outer_var)
     s_sym = symbolic.simplify(start)
     e_sym = symbolic.simplify(end)
@@ -237,15 +299,16 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K: int) -> Optional[Tup
     # therefore match against ``K - 1`` rather than ``K - S``. The
     # ``_diff_is_zero`` helper tolerates symbolic differences (returns
     # False rather than raising), so the multi-dim descent can probe
-    # non-matching candidates without crashing.
+    # non-matching candidates without crashing, and it folds a symbolic
+    # ``K`` (e.g. ``end == K - 1`` against ``K_expr - 1``) to zero.
     # Case A: start == 0, end == K - 1.
     if _is_zero(s_sym):
-        if _diff_is_zero(e_sym, K - 1):
+        if _diff_is_zero(e_sym, K_expr - 1):
             return ('A', S_concrete)
         return None
     # Case B: start == i, end == i + K - 1.
     if _diff_is_zero(s_sym, outer_sym):
-        if _diff_is_zero(e_sym, outer_sym + K - 1):
+        if _diff_is_zero(e_sym, outer_sym + K_expr - 1):
             return ('B', S_concrete)
     return None
 
@@ -351,8 +414,10 @@ class UntileLoops(ppl.Pass):
     * Case B -- ``for i in range(0, N, K): for ii in range(i, i + K, S): ...``,
       body addresses arrays via ``ii``.
 
-    ``K`` must be a concrete positive integer with ``S`` (inner stride)
-    dividing ``K``. ``S == 1`` is the classic single-level untile; ``S > 1``
+    ``K`` is either a concrete positive integer literal (``> 1``) with ``S``
+    (inner stride) dividing ``K``, or a positive **symbol** (in which case
+    only ``S == 1`` is admitted -- a concrete stride cannot be proven to
+    divide a symbol). ``S == 1`` is the classic single-level untile; ``S > 1``
     is an intermediate cascade rung that fixpoint then collapses with the
     next inner.
 
@@ -486,15 +551,17 @@ class UntileLoops(ppl.Pass):
         return total or None
 
     def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
-        # The outer must be ``for i in range(0, N, K)`` with concrete K > 0.
+        # The outer must be ``for i in range(0, N, K)`` with a positive tile
+        # ``K`` -- a concrete literal ``> 1`` or a positive symbol.
         outer_stride = loop_analysis.get_loop_stride(outer)
         outer_start = loop_analysis.get_init_assignment(outer)
         outer_end = loop_analysis.get_loop_end(outer)
         if outer_stride is None or outer_start is None or outer_end is None:
             return False
-        K = _is_constant_positive_int(outer_stride)
-        if K is None or K == 1:
-            return False  # K must be > 1 (K == 1 is already untiled)
+        tile = _tile_size(outer_stride)
+        if tile is None:
+            return False  # stride <= 1, or a provably non-positive symbol
+        K_expr, K_const = tile
         # ``outer_start`` need not be 0: a tiled stencil walks tile origins over
         # the interior ``[S, N)`` (e.g. ``for ii in range(1, N-1-K, K)``). The
         # collapsed loop simply starts at the same ``S`` (set below). Only reject
@@ -513,7 +580,7 @@ class UntileLoops(ppl.Pass):
         for candidate in _iter_candidate_inners(outer):
             if not candidate.loop_variable:
                 continue
-            match = _match_inner_case(candidate, outer.loop_variable, K)
+            match = _match_inner_case(candidate, outer.loop_variable, K_expr, K_const)
             if match is None:
                 continue
             cand_case, cand_stride = match
@@ -574,25 +641,48 @@ class UntileLoops(ppl.Pass):
         # rewriting its iteration descriptors below.
         parent_of_inner: ControlFlowRegion = inner.parent_graph
         inner_was_start = (parent_of_inner.start_block is inner)
+        # ``inner`` need NOT be the sole/start block of its parent: after the
+        # Map round-trip's inline step the parent LoopRegion holds connective
+        # states (``block_*_pre/post_state``) with interstate edges FEEDING
+        # ``inner`` and FLOWING OUT of it. A naive detach that only moves
+        # ``inner``'s children and drops those parent edges orphans the
+        # connective states (unreachable-from-start -> dominator ``KeyError``
+        # at codegen). So capture the parent's edges incident to ``inner`` and
+        # ``inner``'s own entry/exit BEFORE mutating, then reconnect the chain.
+        pred_edges = list(parent_of_inner.in_edges(inner))
+        succ_edges = list(parent_of_inner.out_edges(inner))
+        try:
+            inner_start_block = inner.start_block if inner.number_of_nodes() > 0 else None
+        except (NodeNotFoundError, ValueError):
+            inner_start_block = None
+        inner_sinks = inner.sink_nodes()
+        child_blocks = list(inner.nodes())
+        inner_edges = list(inner.edges())
+        # Detach the inner wrapper (drops its incident parent edges too), then
+        # splice its blocks up into the parent. ``add_node`` re-parents each
+        # child (sets ``parent_graph``/``sdfg``, recursing into nested CFRs)
+        # and, when ``is_start_block`` is set, fixes the parent's start pointer
+        # via the reliable add API (a post-hoc ``start_block =`` assignment is
+        # silently dropped when the parent's start is ambiguous).
         parent_of_inner.remove_node(inner)
-        new_start: Optional[ControlFlowRegion] = None
-        for child in list(inner.nodes()):
+        for child in child_blocks:
             inner.remove_node(child)
-            is_start = (child is inner.start_block)
-            parent_of_inner.add_node(child, is_start_block=(inner_was_start and is_start))
-            if inner_was_start and is_start:
-                new_start = child
-        # Re-attach the inner's interstate edges.
-        for ie in list(inner.edges()):
+            child_is_start = inner_was_start and (child is inner_start_block)
+            parent_of_inner.add_node(child, is_start_block=child_is_start)
+        # Re-attach the inner's own body interstate edges.
+        for ie in inner_edges:
             parent_of_inner.add_edge(ie.src, ie.dst, ie.data)
-        # If ``inner`` was the start block of its parent, the parent's
-        # start_block index was reset by ``remove_node`` -- restore it
-        # to the spliced-in start child.
-        if new_start is not None:
-            try:
-                parent_of_inner.start_block = parent_of_inner.node_id(new_start)
-            except (AttributeError, KeyError):
-                pass
+        # Reconnect the parent chain through the spliced body: predecessors of
+        # the old ``inner`` now flow into its entry block; its exit block(s)
+        # flow to the old successors. Deep-copy the interstate-edge payload so
+        # each new edge owns its condition/assignments (a shared object across
+        # fan-out edges corrupts propagation).
+        if inner_start_block is not None:
+            for pe in pred_edges:
+                parent_of_inner.add_edge(pe.src, inner_start_block, copy.deepcopy(pe.data))
+        for se in succ_edges:
+            for sink in inner_sinks:
+                parent_of_inner.add_edge(sink, se.dst, copy.deepcopy(se.data))
 
         # Rewrite the outer's iteration descriptors to drive ``k`` over
         # ``[outer_start, N)`` in steps of ``inner_stride``. Case A collapses

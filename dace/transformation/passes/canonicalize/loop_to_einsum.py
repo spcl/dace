@@ -269,6 +269,16 @@ def _extract_einsum(probe: SDFG, written: Set[str]) -> Optional[EinsumSpec]:
     if len(einsums) != 1 or tasklets or maps or others or nested or loops:
         return None
     node = einsums[0]
+    # A scalar-output Einsum -- no free output indices, e.g. ``i,i->`` (a dot product) or
+    # ``ij,ij->`` -- is a pure REDUCTION, not an array-producing contraction. Per this
+    # pass's own design (see ``_has_loop_ancestor``) a bare 1-D/0-D reduction is
+    # LoopToReduce's domain, not an einsum. ``_has_loop_ancestor`` only excludes nests
+    # inside an enclosing *LoopRegion*, so an inner reduction nested in outer *map* scopes
+    # (covariance's per-``(i,j)`` k-dot ``sum_k data[k,i]*data[k,j]``) slips through and is
+    # lifted to a standalone scalar-output Einsum whose result never re-embeds into the
+    # per-iteration ``cov[i,j]`` -- corrupting the kernel. Refuse it; LoopToReduce lifts it.
+    if node.einsum_str.rstrip().endswith('->'):
+        return None
     host = next((st for st in probe.states() if node in st.nodes()), None)
     if host is None:
         return None

@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for
-:class:`~dace.transformation.passes.normalize_nested_reduction.NormalizeNestedReduction`.
+:class:`~dace.transformation.passes.normalize_wcr.NormalizeWCR`.
 
 The pass rewrites a masked/nested scalar reduction emitted as an in-nsdfg WCR into a
 write-only output connector (the ``azimint_naive`` shape) into the seeded-body-local +
@@ -26,7 +26,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation.passes.normalize_nested_reduction import NormalizeNestedReduction
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus import corpus_suite as CS
 
 
@@ -49,6 +49,18 @@ def _write_only_scalar_wcr_conns(sdfg: dace.SDFG):
     return out
 
 
+def _wcr_edges(sdfg: dace.SDFG, single: bool):
+    """WCR edges whose subset is single-element (``single=True``) or multi-element."""
+    out = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for st in sd.all_states():
+            for e in st.edges():
+                if e.data is not None and e.data.wcr is not None and e.data.subset is not None:
+                    if (e.data.subset.num_elements() == 1) == single:
+                        out.append(e)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Corpus tests: value-preservation on the untransformed baseline (normalize only).
 # ---------------------------------------------------------------------------
@@ -66,13 +78,13 @@ _NESTED_REDUCTION_KERNELS = [
 
 
 def _normalize_only(sdfg: dace.SDFG) -> dace.SDFG:
-    NormalizeNestedReduction().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     return sdfg
 
 
 @pytest.mark.parametrize('suite,name', _NESTED_REDUCTION_KERNELS)
 def test_normalize_only_preserves_semantics(suite, name):
-    """``NormalizeNestedReduction`` alone (no canonicalize) is value-preserving."""
+    """``NormalizeWCR`` alone (no canonicalize) is value-preserving."""
     ctx = CS.make(suite, name, 'S')
     sdfg = CS.build(ctx, _normalize_only, 'nnr_' + uuid.uuid4().hex[:8])
     assert CS.run_matches(ctx, sdfg), f'normalize changed {suite}:{name} output vs reference'
@@ -86,13 +98,37 @@ def test_normalize_is_idempotent(suite, name):
     second = {}
 
     def twice(sdfg):
-        NormalizeNestedReduction().apply_pass(sdfg, {})
-        second['res'] = NormalizeNestedReduction().apply_pass(sdfg, {})
+        NormalizeWCR().apply_pass(sdfg, {})
+        second['res'] = NormalizeWCR().apply_pass(sdfg, {})
         return sdfg
 
     sdfg = CS.build(ctx, twice, 'nnr2_' + uuid.uuid4().hex[:8])
     assert second['res'] is None, f'second apply on {suite}:{name} should be a no-op; got {second["res"]}'
     assert CS.run_matches(ctx, sdfg), f'double-normalize changed {suite}:{name} output vs reference'
+
+
+def test_symm_slice_wcr_extracted_to_single_element():
+    """symm's ``C[0:i,j]`` slice WCR (a per-instance scatter trapped in a 2-state nsdfg,
+    surfacing as a multi-element WCR at the boundary) is extracted to an outer
+    single-element ``C[k,j]`` WCR; no multi-element WCR survives and the value matches."""
+    ctx = CS.make('poly', 'symm', 'S')
+    seen = {}
+
+    def norm(sdfg):
+        seen['before'] = len(_wcr_edges(sdfg, single=False))
+        NormalizeWCR(extract_slice_wcr=True).apply_pass(sdfg, {})
+        # The trapped nsdfg output is redirected to a dead transient; its inner producer is
+        # then dead. simplify's DCE prunes it (as the canonicalize pipeline does downstream).
+        sdfg.simplify()
+        seen['after_slice'] = len(_wcr_edges(sdfg, single=False))
+        seen['after_single'] = len(_wcr_edges(sdfg, single=True))
+        return sdfg
+
+    sdfg = CS.build(ctx, norm, 'nnrslice_' + uuid.uuid4().hex[:8])
+    assert seen['before'] >= 1, 'symm baseline should carry the C[0:i,j] slice WCR'
+    assert seen['after_slice'] == 0, f'slice WCR not fully extracted: {seen["after_slice"]} remain'
+    assert seen['after_single'] >= 1, 'expected a single-element scatter WCR after extraction'
+    assert CS.run_matches(ctx, sdfg), 'slice-WCR extraction changed symm output vs reference'
 
 
 def test_azimint_naive_structure_after_normalize():
@@ -103,7 +139,7 @@ def test_azimint_naive_structure_after_normalize():
     captured = {}
 
     def tf(sdfg):
-        captured['res'] = NormalizeNestedReduction().apply_pass(sdfg, {})
+        captured['res'] = NormalizeWCR().apply_pass(sdfg, {})
         return sdfg
 
     sdfg = CS.build(ctx, tf, 'nnrstruct_' + uuid.uuid4().hex[:8])
@@ -171,7 +207,7 @@ def test_micro_single_accumulator_sum():
     """The single-scalar ``+`` reduction is bit-exact after normalization (the bug drops
     the cross-iteration accumulation -> ~one lane's value)."""
     sdfg = _build_masked_reduction('lambda x, y: x + y', seed_outer=True)
-    res = NormalizeNestedReduction().apply_pass(sdfg, {})
+    res = NormalizeWCR().apply_pass(sdfg, {})
     assert res is not None
     assert not _write_only_scalar_wcr_conns(sdfg)
     sdfg.validate()
@@ -188,7 +224,7 @@ def test_micro_single_accumulator_min_seeds_outer_accumulator():
     """The ``min`` reduction seeds the outer accumulator to ``+inf`` when it is not already
     seeded (a ``min`` reduction started from 0, or from garbage, is silently wrong)."""
     sdfg = _build_masked_reduction('lambda x, y: min(x, y)', seed_outer=False)
-    res = NormalizeNestedReduction().apply_pass(sdfg, {})
+    res = NormalizeWCR().apply_pass(sdfg, {})
     assert res is not None
     sdfg.validate()
 
@@ -204,8 +240,8 @@ def test_micro_no_op_when_map_exit_edge_already_has_wcr():
     """A NestedSDFG whose ``NestedSDFG -> MapExit`` edge already carries a WCR (the
     already-normalized / native ``symm`` shape) is left untouched."""
     sdfg = _build_masked_reduction('lambda x, y: x + y', seed_outer=True)
-    NormalizeNestedReduction().apply_pass(sdfg, {})  # first run normalizes it
-    res = NormalizeNestedReduction().apply_pass(sdfg, {})  # already has map-exit WCR
+    NormalizeWCR().apply_pass(sdfg, {})  # first run normalizes it
+    res = NormalizeWCR().apply_pass(sdfg, {})  # already has map-exit WCR
     assert res is None
 
 

@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Shared lane-fanout detection used by the gather / scatter / strided-load / strided-store passes.
+Shared lane-fanout detection for gather / scatter / strided-load / strided-store passes.
 
-All passes look for an access node tagged ``_packed`` whose neighbours
-are a contiguous fan of ``assign_<i>`` tasklets reading or writing the
-same indirect array, and collapse that fan into a single intrinsic call
-(``gather`` / ``scatter`` for arbitrary indices, ``strided_*`` for a
+Look for an access node tagged ``_packed`` whose neighbours = a contiguous fan of
+``assign_<i>`` tasklets reading/writing the same indirect array; collapse that fan into
+one intrinsic call (``gather`` / ``scatter`` for arbitrary indices, ``strided_*`` for a
 fixed-increment progression).
 """
 import re
@@ -34,14 +33,13 @@ _INDEX_ARRAY_READ_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*\[(.+)\]\s*$")
 
 def _find_iter_mask(sdfg: dace.SDFG) -> Optional[str]:
     """
-    Return the name of an ``_iter_mask`` array in ``sdfg.arrays``, or ``None``.
+    Name of an ``_iter_mask`` array in ``sdfg.arrays``, or ``None``.
 
-    When the iteration mask is in scope, the collapsed tasklet must
-    consume it via a ``_mask`` connector and the ``_masked`` template
-    variant.
+    In scope -> collapsed tasklet consumes it via a ``_mask`` connector + the ``_masked``
+    template variant.
 
-    :param sdfg: The SDFG whose arrays to inspect.
-    :returns: The mask array name, or ``None`` if absent.
+    :param sdfg: SDFG whose arrays to inspect.
+    :returns: mask array name, or ``None`` if absent.
     """
     for name in sdfg.arrays:
         if name == _ITER_MASK_PREFIX or name.startswith(_ITER_MASK_PREFIX + "_"):
@@ -211,12 +209,10 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
     """
     Collapse a multi-dim linear-combination fan around a ``_packed`` node into one intrinsic.
 
-    Recognises patterns such as ``A[i,i]``, ``A[2*i,i]``, ``A[i,2*i]``.
-    Per-lane subsets are linearised through the array strides; if the
-    offsets form a fixed-increment sequence, the assign tasklets are
-    replaced by one CPP strided-load/store intrinsic tasklet whose memlet
-    is the bounding box of the touched elements. Only fully matched fans
-    are collapsed.
+    Recognises patterns like ``A[i,i]``, ``A[2*i,i]``, ``A[i,2*i]``. Per-lane subsets
+    linearised through array strides; if offsets form a fixed-increment sequence, the
+    assign tasklets -> one CPP strided-load/store intrinsic tasklet whose memlet = bbox
+    of the touched elements. Only fully matched fans collapse.
 
     :param sdfg: The SDFG to transform (recursively, including nested SDFGs).
     :param direction: ``"load"`` or ``"store"``.
@@ -256,10 +252,9 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
             if len(linear_offsets) != vector_length:
                 continue
 
-            # Linearised offsets may contain symbols that are constant per
-            # lane (e.g. ``N`` in ``N*tile_i + l*(N+1)``); ``detect_fixed_increment``
-            # demands a single free symbol so we directly check that consecutive
-            # differences are equal here.
+            # Linearised offsets may contain per-lane-constant symbols (e.g. ``N`` in
+            # ``N*tile_i + l*(N+1)``); ``detect_fixed_increment`` demands a single free
+            # symbol, so check consecutive differences equal directly here.
             deltas = [sp.expand(linear_offsets[k + 1] - linear_offsets[k]) for k in range(vector_length - 1)]
             if not all(d == deltas[0] for d in deltas[1:]):
                 continue
@@ -267,10 +262,9 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
 
             dtype_cpp = state.sdfg.arrays[node.data].dtype.ctype
 
-            # The fan can be rooted at the surrounding MapEntry (when the
-            # AccessNode lives outside the map scope, as for multi-dim arrays)
-            # or at an AccessNode (1D arrays moved inside the map). Either is
-            # acceptable — we re-plumb the replacement tasklet to the same root.
+            # Fan may root at the surrounding MapEntry (AccessNode outside map scope, as
+            # for multi-dim arrays) or at an AccessNode (1D arrays moved inside the map).
+            # Either is fine — re-plumb the replacement tasklet to the same root.
             indirect = _single_indirect_neighbour(state, sorted_tasklets, is_pack_in_side)
             if not isinstance(indirect, (dace.nodes.AccessNode, dace.nodes.MapEntry, dace.nodes.MapExit)):
                 continue
@@ -287,9 +281,9 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
                 state.remove_node(t)
 
             iter_mask_name = _find_iter_mask(state.sdfg) if intrinsic_template_masked is not None else None
-            # Emit ``strided_{load,store}`` with the lane count as a template arg
-            # and the stride as a template arg too when it is a compile-time
-            # constant (runtime arg only for a genuinely symbolic stride).
+            # Emit ``strided_{load,store}``: lane count as template arg, stride as
+            # template arg when compile-time constant (runtime arg only for symbolic
+            # stride).
             fn = "strided_load" if direction in ("gather", "load") else "strided_store"
             intrinsic_code = render_strided_call(fn,
                                                  dtype_cpp,
@@ -346,12 +340,11 @@ def _collect_interstate_assignments(sdfg: SDFG) -> Dict[str, Set[str]]:
     """
     Collect every interstate-edge assignment ``lhs -> {rhs, ...}`` in ``sdfg``.
 
-    Only the SDFG's own control-flow-region edges are walked (not nested
-    SDFGs): the per-lane laneid symbols are bound on interstate edges of
-    the same SDFG that holds the fan.
+    Walks only the SDFG's own control-flow-region edges (not nested SDFGs): per-lane
+    laneid symbols are bound on interstate edges of the same SDFG holding the fan.
 
-    :param sdfg: The SDFG whose interstate edges to scan.
-    :returns: Map from assigned symbol to the set of distinct RHS strings.
+    :param sdfg: SDFG whose interstate edges to scan.
+    :returns: map from assigned symbol to the set of distinct RHS strings.
     """
     asg: Dict[str, Set[str]] = {}
     for cfg in sdfg.all_control_flow_regions(recursive=True):
@@ -365,30 +358,26 @@ def outside_index_param_coeff(inner_sdfg: SDFG, idxarr: str, vector_length: int)
     """
     Recover the per-lane stride into the index array from the NSDFG boundary.
 
-    The inside contiguity check (``_laneid_<k> = idxarr[begin + k]``)
-    proves the fan reads the *view* ``idxarr`` contiguously, but the view
-    is the NSDFG-input window into the original index array and may be
-    strided: ``idx[c*i]`` feeds a step-1 box
-    ``idx[c*tile : c*tile + c*(W-1)]`` (every element touched), so lane
-    ``k``'s real index lives at view offset ``c*k``, not ``k``. The true
-    per-lane stride ``c`` is the coefficient of the enclosing vectorized
-    map param in the feeding memlet's param-bearing dim.
+    Inside contiguity check (``_laneid_<k> = idxarr[begin + k]``) proves the fan reads
+    the *view* ``idxarr`` contiguously, but the view is the NSDFG-input window into the
+    original index array and may be strided: ``idx[c*i]`` feeds a step-1 box
+    ``idx[c*tile : c*tile + c*(W-1)]`` (every element touched), so lane ``k``'s real index
+    lives at view offset ``c*k``, not ``k``. True per-lane stride ``c`` = coefficient of
+    the enclosing vectorized map param in the feeding memlet's param-bearing dim.
 
-    The collapse can still emit a *strided* gather/scatter — the view
-    already contains all touched elements; the intrinsic just indexes it
-    by ``c`` (``__vec_lane_idx[l] = _idx[l*c]``). So this returns ``c``
-    rather than refusing.
+    Collapse can still emit a *strided* gather/scatter — the view already holds all
+    touched elements; the intrinsic indexes it by ``c`` (``__vec_lane_idx[l] =
+    _idx[l*c]``). So returns ``c`` rather than refusing.
 
-    Conservative: returns ``None`` (caller keeps the per-lane laneid fan)
-    when the boundary cannot be proven — ambiguous feeding edge, non-unit
-    step, non-constant / non-positive-integer coefficient, or a window
-    too short to hold the ``c*(W-1)+1`` touched span. A static window
-    with no param dependence is contiguous, returns ``1``.
+    Conservative: returns ``None`` (caller keeps the per-lane laneid fan) when the
+    boundary can't be proven — ambiguous feeding edge, non-unit step, non-constant /
+    non-positive-integer coefficient, or a window too short for the ``c*(W-1)+1`` touched
+    span. Static window with no param dependence is contiguous, returns ``1``.
 
-    :param inner_sdfg: The nested SDFG holding the fan (``state.sdfg``).
-    :param idxarr: The recognised index-array / connector name.
-    :param vector_length: The fan width ``W``.
-    :returns: The integer per-lane stride ``c >= 1``, or ``None``.
+    :param inner_sdfg: nested SDFG holding the fan (``state.sdfg``).
+    :param idxarr: recognised index-array / connector name.
+    :param vector_length: fan width ``W``.
+    :returns: integer per-lane stride ``c >= 1``, or ``None``.
     """
     nsdfg_node = inner_sdfg.parent_nsdfg_node
     parent_state = inner_sdfg.parent
@@ -419,9 +408,8 @@ def outside_index_param_coeff(inner_sdfg: SDFG, idxarr: str, vector_length: int)
         if not is_integer(c_expr) or int(c_expr) < 1:
             return None
         c = int(c_expr)
-        # The window must hold every touched element ``begin + c*k``,
-        # k=0..W-1 (over-coverage is safe; the strided read only hits
-        # positions 0, c, ..., c*(W-1)).
+        # Window must hold every touched element ``begin + c*k``, k=0..W-1 (over-coverage
+        # safe; the strided read only hits 0, c, ..., c*(W-1)).
         span = dace.symbolic.simplify(e_sym - b_sym + 1 - (c * (vector_length - 1) + 1))
         if not (is_integer(span) and int(span) >= 0):
             return None
@@ -435,27 +423,24 @@ def _recognize_laneid_index_slice(
     """
     Recognise a per-lane laneid fan and the per-lane stride into the index array.
 
-    Each fan tasklet's far edge reads ``<data>[<base>_laneid_<k>]`` for
-    ``k = 0 .. W-1``. The W laneid symbols must be defined by interstate-
-    edge assignments ``<base>_laneid_<k> = <idxarr>[<begin> + s*<k>]`` for
-    the *same* index array ``<idxarr>``, the same (possibly symbolic)
-    ``<begin>``, and a constant positive integer per-lane stride ``s``.
-    ``expand_interstate_assignments_to_lanes`` already injects the true
-    boundary coefficient into the fan (``view(c*i)``), so the inside
-    exprs carry the correct ``s`` directly — it is read here, not
-    re-derived from the boundary (re-applying ``c`` would double it).
-    ``s == 1`` is a genuine contiguous gather; ``s > 1`` is a strided
-    index access (``idx[s*i]``) the collapse emits as a strided gather
-    (the view holds every touched element; the intrinsic indexes it by
-    ``s``).
+    Each fan tasklet's far edge reads ``<data>[<base>_laneid_<k>]`` for ``k = 0 .. W-1``.
+    The W laneid symbols must be defined by interstate-edge assignments
+    ``<base>_laneid_<k> = <idxarr>[<begin> + s*<k>]`` for the *same* ``<idxarr>``, same
+    (possibly symbolic) ``<begin>``, constant positive integer per-lane stride ``s``.
+    ``expand_interstate_assignments_to_lanes`` already injects the true boundary
+    coefficient into the fan (``view(c*i)``), so inside exprs carry the correct ``s``
+    directly — read here, not re-derived from the boundary (re-applying ``c`` would double
+    it). ``s == 1`` = contiguous gather; ``s > 1`` = strided index access (``idx[s*i]``)
+    the collapse emits as a strided gather (view holds every touched element; intrinsic
+    indexes by ``s``).
 
-    :param state: The state holding the fan (its ``sdfg`` owns the
-        interstate edges that bind the laneid symbols).
-    :param idx_data_and_subset: ``(data, subset)`` per fan tasklet, in
-        lane order, as returned by :func:`_match_assign_fan`.
-    :param vector_length: The fan width ``W``.
-    :returns: ``(idxarr, begin_expr, stride, [laneid_sym_0 .. _{W-1}])``
-        or ``None`` if the fan / boundary cannot be proven.
+    :param state: state holding the fan (its ``sdfg`` owns the interstate edges binding
+        the laneid symbols).
+    :param idx_data_and_subset: ``(data, subset)`` per fan tasklet, in lane order, from
+        :func:`_match_assign_fan`.
+    :param vector_length: fan width ``W``.
+    :returns: ``(idxarr, begin_expr, stride, [laneid_sym_0 .. _{W-1}])`` or ``None`` if
+        the fan / boundary can't be proven.
     """
     base_name: Optional[str] = None
     for lane, (_, subset) in enumerate(idx_data_and_subset):

@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""ParallelizeUnderConstraint: guard-and-parallelize a symbolic-stride loop.
+"""ParallelizeUnderConstraint: specialize a symbolic-stride loop into
+``if cond: parallel-Map else: sequential-loop``.
 
-A symbolic-stride write is data-parallel iff its stride coefficient is nonzero.
-The pass should emit a runtime ``__builtin_trap()`` guard that fires on the
-violated assumption (``coeff == 0``) and lift the loop to a plain (WCR-free) Map.
-Two write shapes qualify: the in-place read-modify-write TSVC ``s171``
-(``a[i*inc] = a[i*inc] + b[i]``) and the plain injective store
+A symbolic-stride write is data-parallel iff its stride coefficient is nonzero. The
+pass replaces the loop with a two-way conditional: true branch (guard ``coeff != 0``)
+= loop lifted to a plain WCR-free Map, else branch = original sequential loop -- a
+violating value still computes on the fallback, never a trap. Two write shapes qualify:
+in-place RMW TSVC ``s171`` (``a[i*inc] = a[i*inc] + b[i]``) and the injective store
 (``dst[i*S] = src[i]*scale``, TSVC-2.5 ``ext_strided_store_ssym``). A loop-carried
-recurrence (the array read at a *different* subset) is excluded.
+recurrence (array read at a *different* subset) is excluded.
 """
 import os
 
@@ -21,7 +22,7 @@ import numpy as np
 import dace
 from dace import Memlet
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 
@@ -38,26 +39,42 @@ def affine_stride_rmw(a: dace.float64[N], b: dace.float64[N], inc: dace.int64):
 @dace.program
 def symbolic_stride_store(src: dace.float64[N], dst: dace.float64[S * N], scale: dace.float64):
     """Plain symbolic-stride store ``dst[i*S] = src[i]*scale`` (TSVC-2.5
-    ``ext_strided_store_ssym``): injective -- hence data-parallel -- iff ``S != 0``.
-    Not a read-modify-write; ``dst`` is written but never read."""
+    ``ext_strided_store_ssym``): injective (data-parallel) iff ``S != 0``. Not RMW;
+    ``dst`` written, never read."""
     for i in range(N):
         dst[i * S] = src[i] * scale
 
 
-def _trap_tasklets(sdfg):
+def _has_map(region):
+    return any(isinstance(n, nodes.MapEntry) for n, _ in region.all_nodes_recursive())
+
+
+def _sequential_loops(region):
     return [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.Tasklet) and '__builtin_trap' in (n.code.as_string or '')
+        r for r in region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
 
 
-def _single_state_stride_loop(read_subset):
-    """A one-state ``for i`` loop that writes ``a[S*i]`` and, when ``read_subset``
-    is given, reads ``a[read_subset]`` -- the minimal fixture for exercising
-    :meth:`ParallelizeUnderConstraint._symbolic_stride_violation` directly.
+def _specialize_conditional(sdfg):
+    """The single ``if cond: parallel else: sequential`` conditional this pass emits, as
+    ``(condition_string, parallel_region, sequential_region)``. First branch holds a Map;
+    else branch (condition ``None``) keeps a sequential loop."""
+    cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+    assert len(cbs) == 1, f'expected exactly one specialization conditional, got {len(cbs)}'
+    branches = cbs[0].branches
+    assert len(branches) == 2, f'expected an if/else (2 branches), got {len(branches)}'
+    (cond, par_region), (else_cond, seq_region) = branches
+    assert cond is not None and else_cond is None, 'branches must be (cond -> parallel, else -> sequential)'
+    return cond.as_string, par_region, seq_region
 
-    ``read_subset=None`` is a plain store, ``'S*i'`` an in-place read-modify-write,
-    ``'S*i - 1'`` a loop-carried recurrence.
+
+def _single_state_stride_loop(read_subset):
+    """One-state ``for i`` loop writing ``a[S*i]`` and (when ``read_subset`` given)
+    reading ``a[read_subset]`` -- minimal fixture for
+    :meth:`ParallelizeUnderConstraint._symbolic_stride_condition`.
+
+    ``read_subset=None`` = plain store, ``'S*i'`` = in-place RMW, ``'S*i - 1'`` =
+    loop-carried recurrence.
     """
     sdfg = dace.SDFG('stride_loop')
     sdfg.add_array('a', [N], dace.float64)
@@ -78,21 +95,18 @@ def _single_state_stride_loop(read_subset):
     return sdfg, loop
 
 
-def test_symbolic_stride_emits_trap_guard_and_parallel_map():
+def test_symbolic_stride_specializes_if_par_else_seq():
     sdfg = affine_stride_rmw.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
 
-    traps = _trap_tasklets(sdfg)
-    assert len(traps) == 1, f'expected exactly one runtime trap guard, got {len(traps)}'
-    trap = traps[0]
-    assert trap.side_effects, 'trap must be side-effecting so DCE does not prune it'
-    assert 'inc' in trap.code.as_string, f'trap must check the constraint symbol inc: {trap.code.as_string!r}'
-
-    assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive()), 'loop should be lifted to a Map'
-    assert not any(
-        isinstance(cf, LoopRegion) and cf.loop_variable
-        for cf in sdfg.all_control_flow_regions(recursive=True)), 'no sequential loop should remain'
-    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'the parallel Map must carry no WCR'
+    cond, par_region, seq_region = _specialize_conditional(sdfg)
+    assert 'inc' in cond and '!= 0' in cond, f'true branch must be guarded by inc != 0: {cond!r}'
+    assert _has_map(par_region), 'the inc != 0 branch must be the loop lifted to a Map'
+    assert _sequential_loops(seq_region), 'the else branch must keep the original sequential loop'
+    # The fallback loop is pinned so no later parallelizer lifts it back to a Map.
+    assert all(l.pinned_sequential for l in _sequential_loops(seq_region))
+    assert all(e.data.wcr is None for s in par_region.all_states() for e in s.edges()), \
+        'the parallel-branch Map must carry no WCR'
 
 
 def test_value_preserving_under_nonzero_stride():
@@ -110,41 +124,36 @@ def test_value_preserving_under_nonzero_stride():
     assert np.allclose(got, exp), 'value mismatch at inc=1'
 
 
-def test_symbolic_stride_violation_matches_store_and_rmw_excludes_recurrence():
+def test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence():
     """The structural matcher admits an injective symbolic-stride write -- a plain
     store *or* a same-subset read-modify-write -- and refuses a loop-carried
     recurrence (the array read at a subset other than the one written)."""
     inst = ParallelizeUnderConstraint()
 
     store_sdfg, store_loop = _single_state_stride_loop(read_subset=None)
-    assert inst._symbolic_stride_violation(store_loop, store_sdfg) == '(S) == 0', \
-        'a plain symbolic-stride store must be guardable on S == 0'
+    assert inst._symbolic_stride_condition(store_loop, store_sdfg) == '(S) != 0', \
+        'a plain symbolic-stride store is parallel iff S != 0'
 
     rmw_sdfg, rmw_loop = _single_state_stride_loop(read_subset='S*i')
-    assert inst._symbolic_stride_violation(rmw_loop, rmw_sdfg) == '(S) == 0', \
-        'a same-subset read-modify-write (s171) must be guardable on S == 0'
+    assert inst._symbolic_stride_condition(rmw_loop, rmw_sdfg) == '(S) != 0', \
+        'a same-subset read-modify-write (s171) is parallel iff S != 0'
 
     rec_sdfg, rec_loop = _single_state_stride_loop(read_subset='S*i - 1')
-    assert inst._symbolic_stride_violation(rec_loop, rec_sdfg) is None, \
+    assert inst._symbolic_stride_condition(rec_loop, rec_sdfg) is None, \
         'a loop-carried recurrence (read at a different subset) must be excluded'
 
 
-def test_symbolic_stride_store_emits_trap_guard_and_parallel_map():
+def test_symbolic_stride_store_specializes_if_par_else_seq():
     sdfg = symbolic_stride_store.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
 
-    traps = _trap_tasklets(sdfg)
-    assert len(traps) == 1, f'expected exactly one runtime trap guard, got {len(traps)}'
-    trap = traps[0]
-    assert trap.side_effects, 'trap must be side-effecting so DCE does not prune it'
-    assert 'S' in trap.code.as_string, f'trap must check the stride symbol S: {trap.code.as_string!r}'
-
-    assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive()), \
-        'the plain symbolic-stride store should be lifted to a Map'
-    assert not any(
-        isinstance(cf, LoopRegion) and cf.loop_variable
-        for cf in sdfg.all_control_flow_regions(recursive=True)), 'no sequential loop should remain'
-    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'the parallel Map must carry no WCR'
+    cond, par_region, seq_region = _specialize_conditional(sdfg)
+    assert 'S' in cond and '!= 0' in cond, f'true branch must be guarded by S != 0: {cond!r}'
+    assert _has_map(par_region), 'the S != 0 branch must lift the store to a Map'
+    assert _sequential_loops(seq_region), 'the else branch must keep the original sequential loop'
+    assert all(l.pinned_sequential for l in _sequential_loops(seq_region))
+    assert all(e.data.wcr is None for s in par_region.all_states() for e in s.edges()), \
+        'the parallel-branch Map must carry no WCR'
 
 
 def test_value_preserving_symbolic_stride_store():
@@ -164,8 +173,8 @@ def test_value_preserving_symbolic_stride_store():
 
 
 if __name__ == '__main__':
-    test_symbolic_stride_emits_trap_guard_and_parallel_map()
+    test_symbolic_stride_specializes_if_par_else_seq()
     test_value_preserving_under_nonzero_stride()
-    test_symbolic_stride_violation_matches_store_and_rmw_excludes_recurrence()
-    test_symbolic_stride_store_emits_trap_guard_and_parallel_map()
+    test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence()
+    test_symbolic_stride_store_specializes_if_par_else_seq()
     test_value_preserving_symbolic_stride_store()

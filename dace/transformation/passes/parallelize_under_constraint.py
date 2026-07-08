@@ -5,20 +5,18 @@ Some loops are safe to map iff a symbolic quantity satisfies a side condition
 that cannot be discharged at compile time. Canonicalization historically *assumed*
 such conditions (e.g. symbols are nonnegative), which is unsound when the
 assumption is violated at runtime. This pass instead makes the assumption
-explicit and checked: it emits a **runtime guard** -- a side-effecting CPP
-tasklet that calls ``__builtin_trap()`` when the constraint is violated -- that
-dominates the map, then parallelizes the loop on the assumption that the
-constraint holds. The contract is "parallelize-or-abort": the result is either
-the correct parallel computation or a hard trap, never a silent miscompile. (A
-later post-cleanup may replace the trap with a sequential fallback so a violated
-assumption degrades instead of aborting; the trap is the always-correct floor.)
+explicit by *specializing*: it replaces the loop with a two-way conditional
+``if (constraint) { parallel Map } else { original sequential loop }`` (see
+:func:`~dace.transformation.passes.loop_specialization.specialize_loop_under_condition`).
+A runtime value that satisfies the constraint takes the parallel path; one that
+violates it still computes correctly on the sequential fallback -- ``if cond:
+par else: seq``, never a silent miscompile and never an abort.
 
-This is the same guarded-parallelization shape as
-:class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`
-(whose guard is a sorted duplicate-count), but the guard here is an algebraic
-predicate over loop symbols.
+This is the same conditional-parallelization shape as
+:class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`,
+but the predicate here is an algebraic condition over loop symbols.
 
-Guard types:
+Constraint types:
 
 * **``coeff != 0``** -- a write whose index has a *symbolic* coefficient on the
   loop variable. Two sub-shapes qualify:
@@ -29,28 +27,27 @@ Guard types:
     ``ext_strided_store_ssym`` symbolic-stride scatter *store*).
 
   In both cases the write is injective -- and the loop therefore data-parallel --
-  exactly when that coefficient is nonzero; permissive :class:`LoopToMap` then
-  lifts it to a plain (WCR-free, vectorizable) Map. The trap fires on ``inc ==
-  0`` / ``SSYM == 0``. A loop-carried recurrence (``aa[c*i] = aa[c*i - 1]``, the
-  array read at a subset *other* than the one written) is deliberately excluded:
-  a ``coeff != 0`` guard does not make that data-parallel.
-
-Each guarded map gets its own trap state, spliced to immediately dominate it, so
-the (constraint, map) association is unambiguous when several guards coexist.
+  exactly when that coefficient is nonzero; permissive :class:`LoopToMap` lifts
+  the true branch to a plain (WCR-free, vectorizable) Map, while the else branch
+  keeps the sequential loop for ``inc == 0`` / ``SSYM == 0``. A loop-carried
+  recurrence (``aa[c*i] = aa[c*i - 1]``, the array read at a subset *other* than
+  the one written) is deliberately excluded: a ``coeff != 0`` condition does not
+  make that data-parallel.
 """
 from typing import Optional, Set
 
-import dace
-from dace import SDFG, dtypes, symbolic
+from dace import SDFG, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
 from dace.transformation.transformation import explicit_cf_compatible
 
 
 @explicit_cf_compatible
 class ParallelizeUnderConstraint(ppl.Pass):
-    """Guard-and-parallelize loops that are data-parallel only under a constraint."""
+    """Specialize into ``if cond: parallel-Map else: sequential-loop`` the loops
+    that are data-parallel only under a symbolic constraint."""
 
     CATEGORY: str = 'Optimization Preparation'
 
@@ -64,14 +61,14 @@ class ParallelizeUnderConstraint(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
-        """Guard-and-parallelize every constraint-parallel loop.
+        """Specialize every constraint-parallel loop into ``if cond: par else: seq``.
 
         :param sdfg: SDFG to mutate in place.
-        :returns: The number of loops guarded + parallelized, or ``None`` if none.
+        :returns: The number of loops specialized, or ``None`` if none.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
 
-        guarded = 0
+        specialized = 0
         for sd in sdfg.all_sdfgs_recursive():
             owner = sd
             while owner.parent_sdfg is not None:
@@ -83,13 +80,13 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 if parent is None or loop not in parent.nodes():
                     continue
                 # Cheap, read-only structural filter FIRST: only the symbolic-
-                # stride in-place RMW shape is a candidate. Probing every loop with
-                # LoopToMap (below) is both wasteful and unsafe on shapes it cannot
-                # handle (e.g. 2-D recurrences), so gate on the structure first.
-                trap_cond = self._symbolic_stride_violation(loop, sd)
-                if trap_cond is None:
+                # stride injective-write shape is a candidate. Probing every loop
+                # with LoopToMap (below) is both wasteful and unsafe on shapes it
+                # cannot handle (e.g. 2-D recurrences), so gate on structure first.
+                condition = self._symbolic_stride_condition(loop, sd)
+                if condition is None:
                     continue
-                # Confirm the only blocker is the guarded condition: LoopToMap
+                # Confirm the only blocker is the constrained condition: LoopToMap
                 # refuses it outright but accepts permissively.
                 probe = LoopToMap()
                 probe.loop = loop
@@ -97,23 +94,27 @@ class ParallelizeUnderConstraint(ppl.Pass):
                     continue
                 if not probe.can_be_applied(parent, 0, owner, permissive=True):
                     continue
-                self._insert_trap_guard(parent, loop, trap_cond)
-                # Parallelize on the (now trap-guarded) assumption. Permissive
-                # LoopToMap lifts the injective-under-the-guard write to a plain
-                # Map with no WCR -- directly vectorizable.
-                inst = LoopToMap()
-                inst.loop = loop
-                inst.apply(parent, owner)
-                guarded += 1
-        return guarded or None
 
-    def _symbolic_stride_violation(self, loop: LoopRegion, sdfg: SDFG) -> Optional[str]:
-        """Runtime trap condition for a symbolic-stride **injective write**.
+                # Specialize: the true branch is the loop lifted to a plain
+                # (WCR-free, vectorizable) Map -- injective under ``condition`` --
+                # and the else branch keeps the original sequential loop for when
+                # the condition fails at runtime.
+                def _parallelize(par_loop, par_region, own):
+                    inst = LoopToMap()
+                    inst.loop = par_loop
+                    inst.apply(par_region, own)
+
+                specialize_loop_under_condition(loop, condition, _parallelize, owner)
+                specialized += 1
+        return specialized or None
+
+    def _symbolic_stride_condition(self, loop: LoopRegion, sdfg: SDFG) -> Optional[str]:
+        """The parallel-validity condition for a symbolic-stride **injective write**.
 
         Targets a non-transient array written at a subset with a *symbolic*
         (non-numeric) coefficient ``c`` on the loop variable, where that write is
-        injective iff ``c != 0`` -- so the assumption is ``c != 0`` and the trap
-        fires on its negation, ``c == 0``. Two write shapes qualify:
+        injective -- hence the loop data-parallel -- iff ``c != 0``. Two write
+        shapes qualify:
 
         * the in-place read-modify-write ``a[c * i + d] = a[c * i + d] <op> ...``
           (TSVC ``s171``): the array is read and written at the *same* subset, and
@@ -122,13 +123,14 @@ class ParallelizeUnderConstraint(ppl.Pass):
           positions.
 
         Non-aliasing recurrences (``aa[c*i] = aa[c*i - 1] ...`` -- the array read
-        at a subset *other* than the one written) are excluded: a ``c != 0`` guard
-        does not make a loop-carried recurrence data-parallel. Returns ``"(c) ==
-        0"`` when exactly one such coefficient governs the body, else ``None``.
+        at a subset *other* than the one written) are excluded: a ``c != 0``
+        condition does not make a loop-carried recurrence data-parallel. Returns
+        ``"(c) != 0"`` when exactly one such coefficient governs the body, else
+        ``None``.
 
         :param loop: The candidate loop region.
         :param sdfg: The SDFG owning ``loop``'s arrays.
-        :returns: The trap condition string, or ``None``.
+        :returns: The parallel-validity condition string, or ``None``.
         """
         loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
         # (array, subset-string) pairs read from / written to non-transient arrays.
@@ -173,34 +175,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 coeffs.add(coeff)
         if len(coeffs) != 1:
             return None
-        return f"({symbolic.symstr(next(iter(coeffs)))}) == 0"
-
-    def _insert_trap_guard(self, parent, loop: LoopRegion, trap_cond: str) -> None:
-        """Splice a side-effecting trap state to immediately dominate ``loop``.
-
-        The new state holds a connector-less CPP tasklet ``if (trap_cond) {
-        __builtin_trap(); }`` over the constraint's free symbols, and inherits
-        ``loop``'s incoming edges (so it runs before the loop / its lifted Map).
-        Named after ``loop`` so each guarded map carries its own uniquely-tagged
-        guard.
-
-        :param parent: The control-flow region holding ``loop``.
-        :param loop: The loop about to be parallelized under the guard.
-        :param trap_cond: The CPP condition that, when true, traps.
-        """
-        was_start = parent.start_block is loop
-        in_edges = list(parent.in_edges(loop))
-        guard_state = parent.add_state(f'_pconstraint_guard_{loop.label}', is_start_block=was_start)
-        trap = guard_state.add_tasklet(f'trap_{loop.label}', {}, {},
-                                       f'if ({trap_cond}) {{ __builtin_trap(); }}',
-                                       language=dtypes.Language.CPP)
-        # The trap has no data connectors, so dead-code elimination would prune
-        # it; mark it side-effecting so the runtime guard always survives.
-        trap.side_effects = True
-        for e in in_edges:
-            parent.add_edge(e.src, guard_state, e.data)
-            parent.remove_edge(e)
-        parent.add_edge(guard_state, loop, dace.InterstateEdge())
+        return f"({symbolic.symstr(next(iter(coeffs)))}) != 0"
 
 
 __all__ = ['ParallelizeUnderConstraint']

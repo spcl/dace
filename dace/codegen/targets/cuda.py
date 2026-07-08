@@ -87,6 +87,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
+        # Reductions folded by thread-block cub::BlockReduce for the current kernel
+        # (one per scalar map-exit WCR accumulator). Filled at kernel-scope entry,
+        # drained at exit. See _collect_gpu_reductions / generate_kernel_scope.
+        self._gpu_block_reductions: List[dict] = []
         self._scope_has_collaborative_copy = False
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
@@ -2183,6 +2187,98 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
+    def _collect_gpu_reductions(self, sdfg: SDFG, state: SDFGState, kernel_entry: nodes.MapEntry,
+                                block_dims: list) -> List[dict]:
+        """Scalar map-exit WCR accumulators under a GPU device map that fold via one
+        thread-block ``cub::BlockReduce`` + one atomic/block -- GPU mirror of the CPU
+        ``reduction(op:var)`` clause (:meth:`CPUCodeGen._collect_omp_reductions`).
+
+        Each thread folds its register partial with cub, thread 0 commits ONE atomic (vs
+        one atomic/thread: correct but heavily contended). Narrow guard: single-element
+        accumulator, register-resident per-thread partial (shared/global source races →
+        refuse), built-in op with known identity, constant block size (cub's template thread
+        count), loop-invariant target. At most one descriptor/map (CPU single-target limit);
+        anything else keeps the per-thread atomic fallback.
+        """
+        out: List[dict] = []
+        try:
+            map_exit = state.exit_node(kernel_entry)
+        except (KeyError, StopIteration):
+            return out
+        # cub::BlockReduce<T, N> requires a compile-time-constant thread count.
+        if any(symbolic.issymbolic(b, sdfg.constants) for b in block_dims):
+            return out
+        num_threads = 1
+        for b in block_dims:
+            num_threads *= int(b)
+        map_params = set(kernel_entry.map.params)
+        for iedge in state.in_edges(map_exit):
+            if iedge.data is None or iedge.data.wcr is None:
+                continue
+            # Per-thread partial: WCR source must be a register AccessNode of a single element
+            # (the interposed _nmr_out partial; AddThreadBlockMap keeps partial → tb-exit WCR,
+            # device exit only forwards it). Shared/global source races across threads → refuse.
+            src = iedge.src
+            if not isinstance(src, nodes.AccessNode):
+                continue
+            part_desc = sdfg.arrays.get(src.data)
+            if part_desc is None or part_desc.storage != dtypes.StorageType.Register:
+                continue
+            try:
+                if int(part_desc.total_size) != 1:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            # Accumulator = WCR memlet's target container (acc), one element at a time. Its
+            # AccessNode sits past the device exit, but the memlet names the global target →
+            # codegen addresses it by pointer.
+            acc_desc = sdfg.arrays.get(iedge.data.data)
+            if acc_desc is None:
+                continue
+            try:
+                if int(iedge.data.subset.num_elements()) != 1:
+                    continue
+            except (TypeError, ValueError, AttributeError):
+                continue
+            # Loop-invariant target (not indexed by the map iteration variables).
+            if iedge.data.subset is not None and any(
+                    str(s) in map_params for s in iedge.data.subset.free_symbols):
+                continue
+            redtype = operations.detect_reduction_type(iedge.data.wcr)
+            identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
+            if redtype == dtypes.ReductionType.Custom or identity is None:
+                continue  # only built-in ops with a known identity element
+            ctype = acc_desc.dtype.ctype
+            out.append({
+                'acc_ptr': self.ptr(iedge.data.data, acc_desc, sdfg),
+                'partial': self.ptr(src.data, part_desc, sdfg),
+                'ctype': ctype,
+                'credtype': 'dace::ReductionType::' + str(redtype).split('.')[-1],
+                'identity': f'{ctype}({float(identity)!r})',
+                'num_threads': num_threads,
+                'data': iedge.data.data,
+            })
+        if len(out) > 1:  # single folded reduction per map (mirror CPU limit)
+            return []
+        return out
+
+    def _emit_gpu_block_reduction(self, red: dict, idstr: str, cfg: ControlFlowRegion, state_id: int,
+                                  node: nodes.Node, stream: CodeIOStream) -> None:
+        """Emit the thread-block fold for one reduction: ``cub::BlockReduce`` over each
+        thread's register partial, then one ``reduce_atomic`` from thread 0. Emitted AFTER
+        the bounds guard closes so all threads reach the (barrier-using) cub call;
+        out-of-range threads carry the identity set at kernel-scope entry."""
+        functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
+        stream.write(
+            '{{\n'
+            'typedef cub::BlockReduce<{ctype}, {num_threads}> __brt_{id};\n'
+            '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
+            '{ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}, {functor}());\n'
+            'if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{\n'
+            '    {functor}::reduce_atomic({acc_ptr}, __bres_{id});\n'
+            '}}\n'
+            '}}'.format(id=idstr, functor=functor, **red), cfg, state_id, node)
+
     def generate_kernel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                               kernel_map: nodes.Map, kernel_name: str, grid_dims: list, block_dims: list,
                               has_tbmap: bool, has_dtbmap: bool, kernel_params: list, function_stream: CodeIOStream,
@@ -2288,6 +2384,18 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         scope_entry = dfg_scope.source_nodes()[0]
 
+        # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold scalar map-exit
+        # WCR accumulators via cub::BlockReduce + one atomic/block, not one atomic/thread.
+        # Default path only (no explicit tb map). Partial register identity-inited BEFORE the
+        # bounds guard (out-of-range threads still join the fold); per-thread atomic suppressed;
+        # block fold emitted once the guard closes below.
+        self._gpu_block_reductions = []
+        if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
+            self._gpu_block_reductions = self._collect_gpu_reductions(sdfg, cfg.node(state_id), node, block_dims)
+        for red in self._gpu_block_reductions:
+            kernel_stream.write('%s = %s;' % (red['partial'], red['identity']), cfg, state_id, node)
+            self._cpu_codegen._gpu_block_reduction_covered.add(red['data'])
+
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
         # unless this is handled by another map down the line
@@ -2326,6 +2434,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
             for _ in kernel_map.params:
                 kernel_stream.write('}', cfg, state_id, node)
+
+        # Drain thread-block reductions: bounds guard closed → all threads live for the cub
+        # fold (out-of-range partials hold the identity set above). Here, not at MapExit,
+        # because this default path closes the guard inline.
+        for i, red in enumerate(self._gpu_block_reductions):
+            self._emit_gpu_block_reduction(red, '%s_%d' % (kernel_name, i), cfg, state_id, node, kernel_stream)
+            self._cpu_codegen._gpu_block_reduction_covered.discard(red['data'])
+        self._gpu_block_reductions = []
 
         self._block_dims = None
         self._kernel_map = None
@@ -2707,6 +2823,17 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Emit internal array allocation here (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
+            # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold each scalar
+            # device-map-exit WCR accumulator via cub::BlockReduce + one atomic/block. Partial
+            # (allocated just above) identity-inited BEFORE the bounds guard (out-of-range
+            # threads still join the fold); per-thread atomic suppressed; fold emitted once the
+            # guard closes at the thread-block MapExit. Detected on the enclosing device map,
+            # whose exit carries the reduction WCR.
+            self._gpu_block_reductions = self._collect_gpu_reductions(sdfg, dfg, scope_entry, self._block_dims)
+            for red in self._gpu_block_reductions:
+                callsite_stream.write('%s = %s;' % (red['partial'], red['identity']), cfg, state_id, scope_entry)
+                self._cpu_codegen._gpu_block_reduction_covered.add(red['data'])
+
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
             minels = brange.min_element()
@@ -2886,6 +3013,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Close block invocation conditions
             for i in range(len(node.map.params)):
                 callsite_stream.write('}', cfg, state_id, node)
+
+            # Drain thread-block reductions primed at scope entry: bounds guard just closed →
+            # all threads live for the (barrier-using) cub fold. Out-of-range threads carry the
+            # identity; thread 0 commits the single atomic.
+            for i, red in enumerate(self._gpu_block_reductions):
+                self._emit_gpu_block_reduction(red, '%s_%d' % (node.map.label, i), cfg, state_id, node,
+                                               callsite_stream)
+                self._cpu_codegen._gpu_block_reduction_covered.discard(red['data'])
+            self._gpu_block_reductions = []
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function

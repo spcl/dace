@@ -123,9 +123,17 @@ class NormalizeMapBody(ppl.Pass):
         base = keep.sdfg
         for drop in siblings[1:]:
             tail = copy.deepcopy(drop.sdfg)
-            # Rename tail's data that collides with base's, tracking how drop's
-            # connectors were renamed so we can rewire the outer edges.
-            drepl = _uniquify_data_against(tail, set(base.arrays.keys()))
+            # Rename tail's data that collides with any base identifier, tracking how
+            # drop's connectors were renamed so we can rewire the outer edges. DaCe forbids
+            # an array name that also names a symbol, constant, or tasklet connector -- so
+            # the reserved set is base's arrays PLUS its symbols, constants, and every node
+            # connector (e.g. symm's ``reset_tmp`` writes a connector ``tmp``; a tail array
+            # ``tmp`` merged in unchecked would collide with it).
+            reserved = set(base.arrays.keys()) | set(base.symbols.keys()) | set(base.constants_prop.keys())
+            for bstate in base.all_states():
+                for bnode in bstate.nodes():
+                    reserved |= set(bnode.in_connectors.keys()) | set(bnode.out_connectors.keys())
+            drepl = _uniquify_data_against(tail, reserved)
             # Carry tail's (now non-colliding) data descriptors + symbols into base.
             for name, desc in list(tail.arrays.items()):
                 if name not in base.arrays:

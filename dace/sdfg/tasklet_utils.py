@@ -569,6 +569,7 @@ _SUPPORTED = {
     'ln',
     'exp',
     'pow',
+    'ipow',
     'py_mod',
     'min',
     'max',

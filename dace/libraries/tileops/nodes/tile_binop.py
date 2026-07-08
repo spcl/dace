@@ -145,9 +145,17 @@ _OP_CPP = {
     "min": ("std::min(", ", ", ")"),
     "max": ("std::max(", ", ", ")"),
     # Python ``**`` -> ``std::pow``. ``PowerOperatorExpansion`` runs upstream in the
-    # multi-dim pipeline and rewrites integer-constant exponents (``x**2`` -> ``x*x``);
-    # only true runtime / non-constant exponents reach this lowering.
+    # multi-dim pipeline: it rewrites integer-constant exponents (``x**2`` -> ``x*x``) and
+    # every other ``**`` to the canonical ``pow(base, exp)`` call; only a residual bare
+    # ``**`` (never produced by that pass, kept for robustness) reaches this lowering.
     "**": ("std::pow(", ", ", ")"),
+    # ``pow(base, exp)`` (the canonical spelling ``PowerOperatorExpansion`` emits) ->
+    # ``std::pow`` (libm ``double``); vectorizes via libmvec through the pure per-lane loop.
+    "pow": ("std::pow(", ", ", ")"),
+    # ``ipow(base, exp)`` -- an integer-exponent power ``RelaxIntegerPowers`` relaxed from
+    # ``pow`` / ``**``. ``dace::math::ipow`` is exact repeated multiply (bit-exact with
+    # NumPy integer powers, and correct for a negative base where ``std::pow`` is not).
+    "ipow": ("dace::math::ipow(", ", ", ")"),
     # Binary elemental math functions (``np.arctan2`` -> the frontend's bare
     # ``atan2(a, b)``; likewise ``hypot`` / ``fmod``). Emitted as a per-lane
     # ``std::atan2(a[i], b[i])`` inside the tile for-loop; the ``_dace_tile_vectorize``

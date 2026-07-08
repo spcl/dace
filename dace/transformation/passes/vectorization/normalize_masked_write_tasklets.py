@@ -1,26 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Normalize a masked-write bare-if tasklet to the first-class ``IT`` function form.
 
-The Python frontend lowers a boolean-masked assignment ``A[mask] = value``
-(``dace/frontend/python/newast.py``: ``tasklet_code += 'if __in_cond:\\n    '``)
-to a tasklet whose body is a bare ``if`` statement with no else::
+Python frontend lowers a boolean-masked assignment ``A[mask] = value``
+(``dace/frontend/python/newast.py``: ``tasklet_code += 'if __in_cond:\\n    '``) to a tasklet
+whose body is a bare ``if`` with no else::
 
     if __in_cond:
-        __out = value            # __out writes A[i]; when !cond, A[i] is left as-is
+        __out = value            # __out writes A[i]; when !cond, A[i] left as-is
 
-A bare ``if`` STATEMENT in a Python tasklet is not straight-line, so
-``SplitTasklets`` mis-splits it and every op detector in
-``ConvertTaskletsToTileOps`` (which expect ``lhs = rhs`` bodies) skips it. This
-pass rewrites it to a first-class conditional-write function -- a single,
-straight-line expression analysed uniformly like ``ITE``::
+A bare ``if`` STATEMENT is not straight-line -> ``SplitTasklets`` mis-splits it and every op
+detector in ``ConvertTaskletsToTileOps`` (expect ``lhs = rhs`` bodies) skips it. Rewrite to a
+first-class conditional-write function: single straight-line expression analysed uniformly like
+``ITE``::
 
     __out = IT(__in_cond, value)
 
-``IT(cond, e)`` is the write-only ternary: *write ``e`` where ``cond``, else leave
-the destination unchanged*. Unlike ``ITE(cond, t, e)`` it has NO else arm, so it
-never reads the old value -- ``ConvertTaskletsToTileOps`` lowers it to a **masked
-``TileStore``** (the ``cond`` mask gates the store, inactive lanes untouched). Runs
-in the vectorize prep, before ``SplitTasklets``.
+``IT(cond, e)`` = write-only ternary: write ``e`` where ``cond``, else leave destination
+unchanged. Unlike ``ITE(cond, t, e)`` it has NO else arm -> never reads the old value;
+``ConvertTaskletsToTileOps`` lowers it to a masked ``TileStore`` (``cond`` mask gates the store,
+inactive lanes untouched). Runs in vectorize prep, before ``SplitTasklets``.
 """
 import ast
 from typing import List, Optional
@@ -30,10 +28,9 @@ from dace.sdfg import SDFG, SDFGState, nodes as nd
 from dace.sdfg.nodes import CodeBlock
 from dace.transformation import pass_pipeline as ppl
 
-#: The first-class conditional-write function emitted for a masked write. Two args
-#: ``IT(cond, value)``: write ``value`` where ``cond``, else leave unchanged. Distinct
-#: from ``ITE(cond, t, e)`` (which reads both arms); the ``(`` immediately after ``IT``
-#: keeps it unambiguous from the ``ITE(`` prefix.
+#: First-class conditional-write function for a masked write. ``IT(cond, value)``: write
+#: ``value`` where ``cond``, else leave unchanged. Distinct from ``ITE(cond, t, e)`` (reads both
+#: arms); the ``(`` right after ``IT`` keeps it unambiguous from the ``ITE(`` prefix.
 CONDITIONAL_WRITE_FUNC = "IT"
 
 
@@ -61,11 +58,11 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
                     continue
                 if tasklet.code.language != dace.dtypes.Language.Python:
                     continue
-                # Leave a masked-write tasklet in a SCALAR / tile-K1 remainder tail as the
-                # original bare-``if``: those tails are plain step-1 scalar loops that the
-                # tile passes (incl. ``ConvertTaskletsToTileOps``) skip, so a first-class
-                # ``IT(...)`` there would survive to codegen undefined. Only tiled bodies
-                # -- the divisible interior and the masked-tail slab -- get the ``IT`` form.
+                # Leave a masked-write tasklet in a SCALAR / tile-K1 remainder tail as the original
+                # bare-``if``: those tails are plain step-1 scalar loops the tile passes (incl.
+                # ``ConvertTaskletsToTileOps``) skip, so a first-class ``IT(...)`` there would
+                # survive to codegen undefined. Only tiled bodies (divisible interior + masked-tail
+                # slab) get the ``IT`` form.
                 if self._in_tail_scope(scope, tasklet):
                     continue
                 if self._normalize(tasklet):
@@ -73,9 +70,9 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         return count or None
 
     def _in_tail_scope(self, scope: dict, tasklet: nd.Tasklet) -> bool:
-        """True iff ``tasklet`` sits inside a SCALAR / tile-K1 remainder-tail map scope
-        (the ones ``ConvertTaskletsToTileOps._body_nsdfgs`` skips), so it must keep its
-        bare-``if`` form rather than the tile-only ``IT`` function."""
+        """True iff ``tasklet`` sits inside a SCALAR / tile-K1 remainder-tail map scope (those
+        ``ConvertTaskletsToTileOps._body_nsdfgs`` skips) -> must keep bare-``if`` form, not the
+        tile-only ``IT`` function."""
         from dace.sdfg.nodes import MapEntry
         from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                            TILE_K1_TAIL_MARKER)
@@ -111,9 +108,8 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
             lhs = s.targets[0].id
             rhs = ast.unparse(s.value)
             if lhs in out_conns:
-                # First-class conditional write: ``out = IT(cond, value)`` -- write value
-                # where cond, else leave unchanged. No old-value read; lowered to a masked
-                # TileStore. ``cond`` (e.g. ``__in_cond``) stays a live input via the call.
+                # First-class conditional write ``out = IT(cond, value)`` (see module docstring).
+                # ``cond`` (e.g. ``__in_cond``) stays a live input via the call.
                 new_lines.append("%s = %s(%s, %s)" % (lhs, CONDITIONAL_WRITE_FUNC, cond_src, rhs))
             else:  # intermediate local: compute unconditionally (defined for every lane)
                 new_lines.append("%s = %s" % (lhs, rhs))

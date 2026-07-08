@@ -21,7 +21,7 @@ from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepen
                                                                           thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
-    is_innermost_map,
+    is_vectorizable_map,
 )
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names, free_symbols
 
@@ -79,7 +79,7 @@ class GenerateIterationMask(ppl.Pass):
         applied = 0
         for n, g in [(n, g) for n, g in sdfg.all_nodes_recursive()
                      if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)]:
-            if not is_innermost_map(g, n):
+            if not is_vectorizable_map(g, n):
                 continue
             if not n.map.range.ranges:
                 continue
@@ -94,20 +94,16 @@ class GenerateIterationMask(ppl.Pass):
                 raise NotImplementedError(f"GenerateIterationMask requires every innermost map's body to be a single "
                                           f"NestedSDFG (run NestInnermostMapBodyIntoNSDFG first); map {n.label!r} has "
                                           f"a bare-tasklet body")
-            # Auto-degrade an unsafe masked remainder to a scalar one.
-            # A masked remainder runs the W-wide body and relies on each
-            # per-lane gather/scatter/strided fan collapsing to a *masked*
-            # intrinsic that honours ``_iter_mask`` (so inactive tail lanes
-            # never dereference an out-of-bounds address). Without
-            # ``lower_to_intrinsics`` that collapse cannot happen, so a
-            # body whose access fans out per-lane (transposed / strided
-            # over the lane variable) would OOB-fault on inactive lanes.
-            # Rather than mask it (and have ``assert_no_lane_memlet_reads``
-            # raise downstream), degrade THIS map to a scalar remainder:
-            # strip the ``__masked_rem`` marker and force ``Sequential`` so
-            # the vectorizer skips it and codegen emits a plain scalar
-            # tail. The main (vectorised) map is unaffected. The scalar
-            # postamble is universally correct for any access pattern.
+            # Auto-degrade an unsafe masked remainder to scalar. A masked
+            # remainder runs the W-wide body relying on each per-lane
+            # gather/scatter/strided fan collapsing to a masked intrinsic that
+            # honours ``_iter_mask`` (inactive tail lanes never deref OOB).
+            # Without ``lower_to_intrinsics`` that collapse can't happen, so a
+            # per-lane-fanning body (transposed / strided over the lane var)
+            # OOB-faults on inactive lanes. Rather than mask it (and trip
+            # ``assert_no_lane_memlet_reads`` downstream), degrade THIS map:
+            # strip ``__masked_rem`` + force ``Sequential`` -> plain scalar tail
+            # (universally correct). The main vectorised map is unaffected.
             if (self.mode == "masked" and not self.lower_to_intrinsics
                     and self._body_fans_out_per_lane(g, n, nsdfg_node, n.map.params[-1])):
                 if n.map.label.endswith("__masked_rem"):
@@ -137,23 +133,22 @@ class GenerateIterationMask(ppl.Pass):
     def _lane_variant_indirect_dim_count(inner_sdfg, sub, iter_var: str) -> int:
         """Count subset dims that are LANE-VARIANT indirect gather components.
 
-        A dim counts iff its ``begin`` reaches an array read whose index
-        depends on ``iter_var`` (the vectorised lane), either:
+        A dim counts iff its ``begin`` reaches an array read whose index depends
+        on ``iter_var`` (the vectorised lane), either:
 
-        - directly: ``begin`` contains an array-subscript ``A[... iter_var
-          ...]`` (a SymPy ``Function`` named after an array in
-          ``inner_sdfg.arrays`` whose args mention ``iter_var``); or
-        - via a symbol: ``begin`` references a symbol whose interstate-
-          edge assignment is ``<sym> = A[... iter_var ...]``.
+        - directly: ``begin`` contains ``A[... iter_var ...]`` (a SymPy
+          ``Function`` named after an array in ``inner_sdfg.arrays`` whose args
+          mention ``iter_var``); or
+        - via a symbol: ``begin`` references a symbol whose interstate-edge
+          assignment is ``<sym> = A[... iter_var ...]``.
 
-        ``>= 2`` such dims in one array access is a multi-variable
-        gather — no hardware gather intrinsic takes two per-lane index
-        vectors — so a masked remainder containing it must degrade to a
-        scalar tail. A LOOP-INVARIANT array-indexed index (no
-        ``iter_var`` in its source) does NOT count: a single-index
-        gather still collapses to the R2 masked-gather intrinsic.
-        Direct affine ``iter_var`` indices are handled separately by
-        :func:`classify_lane_access`; they are not counted here.
+        >= 2 such dims in one access is a multi-variable gather (no hardware
+        gather intrinsic takes two per-lane index vectors) -> a masked remainder
+        containing it must degrade to a scalar tail. A LOOP-INVARIANT
+        array-indexed index (no ``iter_var`` in its source) does NOT count: a
+        single-index gather still collapses to the R2 masked-gather intrinsic.
+        Direct affine ``iter_var`` indices are handled by
+        :func:`classify_lane_access`, not counted here.
 
         :param inner_sdfg: The body NestedSDFG's inner SDFG.
         :param sub: The memlet subset.
@@ -167,8 +162,7 @@ class GenerateIterationMask(ppl.Pass):
             fsyms = free_symbol_names(expr)
             if not fsyms:
                 return False
-            # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names come
-            # from ``arrays`` (a bare-name scalar would be a free symbol instead).
+            # Array accesses ``arr[i]`` are Subscript nodes; names come from ``arrays``.
             arr_reads = dace.symbolic.arrays(expr)
             return bool((arr_reads | fsyms) & arrays) and (iter_var in fsyms)
 
@@ -207,16 +201,15 @@ class GenerateIterationMask(ppl.Pass):
                                 nsdfg_node: dace.nodes.NestedSDFG, iter_var: str) -> bool:
         """Whether the remainder map accesses an array transposed/strided over ``iter_var``.
 
-        Such an access lowers to a per-lane gather/scatter fan, only safe
-        under a masked remainder if collapsed to a masked intrinsic
-        (``lower_to_intrinsics``). The per-lane index can live in two
-        places, so both are checked:
+        Such an access lowers to a per-lane gather/scatter fan, safe under a
+        masked remainder only if collapsed to a masked intrinsic
+        (``lower_to_intrinsics``). The per-lane index lives in two places, both
+        checked:
 
-        - the NSDFG **boundary** edges in the parent state (outer array
-          strides) — e.g. ``t[i, 1]`` passed sliced into the body; or
-        - the **inner** NSDFG memlets (inner array strides) — e.g.
-          cloudsc_one passes ``zqx`` whole and indexes ``zqx[z1, i, j]``
-          inside.
+        - NSDFG boundary edges in the parent state (outer array strides) — e.g.
+          ``t[i, 1]`` passed sliced into the body; or
+        - inner NSDFG memlets (inner array strides) — e.g. cloudsc_one passes
+          ``zqx`` whole and indexes ``zqx[z1, i, j]`` inside.
 
         :param state: Parent state containing ``nsdfg_node``.
         :param map_entry: The remainder map entry (its body is the NSDFG).
@@ -238,12 +231,10 @@ class GenerateIterationMask(ppl.Pass):
                 arr = inner.arrays[e.data.data]
                 if cls._subset_fans_out(e.data.subset, arr.strides, iter_var):
                     return True
-                # Multi-variable indirect gather: >=2 lane-variant
-                # gathered index components in one access -> no gather
-                # intrinsic exists, so a masked remainder must degrade
-                # to a scalar tail (a single-index gather still
-                # collapses to the R2 masked-gather intrinsic and is
-                # left alone).
+                # Multi-variable indirect gather: >=2 lane-variant gathered index
+                # components in one access -> no gather intrinsic exists, so a
+                # masked remainder degrades to a scalar tail (single-index gather
+                # still collapses to the R2 masked-gather intrinsic; left alone).
                 if e.data.subset is not None and cls._lane_variant_indirect_dim_count(inner, e.data.subset,
                                                                                       iter_var) >= 2:
                     return True
@@ -260,38 +251,26 @@ class GenerateIterationMask(ppl.Pass):
         :returns: ``True`` if a mask was added, ``False`` if one already existed.
         """
         inner: dace.SDFG = nsdfg_node.sdfg
-        # Idempotency, skip if a mask is already attached.
+        # Idempotency: skip if a mask already attached.
         if any(name.startswith("_iter_mask") for name in inner.arrays):
             return False
 
         mask_name = add_mask(inner, "_iter_mask", W)
 
-        # Mask fill formula uses the map's STATIC start value (``lb``) rather
-        # than the dynamic ``iter_var``. Reason: after Vectorize tiles the
-        # map (W-step outer + step-1 length-W inner), the body NSDFG runs
-        # per-inner-iteration; if the formula referenced the loop param it
-        # would re-fill the mask 8x with shifting values. Using ``lb`` (a
-        # symbolic expression in the outer-scope symbols, e.g. ``8*floor(N/8)``
-        # for the masked remainder) makes the formula invariant — same value
-        # on every inner iteration. For step-W trip-1 maps (the legacy
-        # ``step_w_only`` path), ``lb == iter_var`` at runtime so this is
-        # backward compatible.
-        # Map's STATIC start value (``lb``) rather than the dynamic
-        # ``iter_var``. Reason: after Vectorize tiles the map (W-step
-        # outer + step-1 length-W inner), the body NSDFG runs
-        # per-inner-iteration; referencing the loop param would re-fill
-        # the mask 8x with shifting values. ``lb`` (e.g. ``8*floor(N/8)``
-        # for the masked remainder) is invariant across inner
-        # iterations. For step-W trip-1 maps (legacy ``step_w_only``),
-        # ``lb == iter_var`` at runtime so this is backward compatible.
+        # Fill formula uses the map's STATIC start ``lb``, not the dynamic
+        # ``iter_var``: after Vectorize tiles the map (W-step outer + step-1
+        # length-W inner) the body NSDFG runs per-inner-iteration; referencing
+        # the loop param would re-fill the mask Wx with shifting values. ``lb``
+        # (e.g. ``8*floor(N/8)`` for the masked remainder) is invariant across
+        # inner iterations. For step-W trip-1 maps (legacy ``step_w_only``),
+        # ``lb == iter_var`` at runtime -> backward compatible.
         key_str = str(lb)
         bound_str = str(ub)
         cmp = "<="
         bound_syms = [str(s) for s in dace.symbolic.symlist(ub).values()]
 
-        # Ensure every free symbol in the key/bound is visible inside the
-        # inner NSDFG. The map's own ``iter_var`` is also kept in the symbol
-        # set for backward compatibility with callers that might rely on it.
+        # Ensure every free symbol in the key/bound is visible inside the inner
+        # NSDFG. ``iter_var`` kept too for backward compat with callers relying on it.
         symbols_to_ensure = ([iter_var] + bound_syms + [str(s) for s in dace.symbolic.symlist(lb).values()])
         thread_symbols_into_nsdfg(inner, nsdfg_node, symbols_to_ensure, nsdfg_node.sdfg.parent_sdfg)
 

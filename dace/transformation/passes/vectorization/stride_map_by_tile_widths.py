@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``StrideMapByTileWidths`` — set the inner map step to the per-dim
-tile width on every K-dim eligible inner map.
+"""``StrideMapByTileWidths`` — set inner map step to the per-dim tile width on
+every K-dim eligible inner map.
 
-The pass rewrites ``map.range`` in place so the K innermost dims step
-by ``widths[k]`` (each map iteration covers one tile worth of work).
-The masked iteration handles partial tiles at the trip boundary; no
-main + remainder split.
+Rewrites ``map.range`` in place so the K innermost dims step by ``widths[k]``
+(one tile per iteration). Masked iteration handles partial tiles at the trip
+boundary; no main + remainder split.
 """
 from typing import Dict, Optional, Tuple
 
@@ -15,7 +14,7 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
                                                                             tile_main_map_step_is_widths)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
@@ -25,10 +24,9 @@ from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 class StrideMapByTileWidths(ppl.Pass):
     """Stride every K-dim eligible inner map's innermost dims by ``widths``.
 
-    The pass walks each inner map flagged by :class:`MarkTileDims`,
-    replaces the step on the K innermost dims with the corresponding
-    entry of ``widths``, and otherwise leaves the map untouched. Outer
-    dims keep their original step.
+    Walks each inner map flagged by :class:`MarkTileDims`, replaces the step on
+    the K innermost dims with the matching ``widths`` entry. Outer dims keep
+    their original step.
     """
 
     CATEGORY: str = "Vectorization Preparation"
@@ -72,8 +70,8 @@ class StrideMapByTileWidths(ppl.Pass):
         :returns: ``True`` if ``map.range`` was rewritten; ``False`` if
             the map already steps by ``widths`` (idempotent no-op).
         """
-        # ``__tile_k1_tail`` maps are K=1 widths=(1,): stride stays 1 since
-        # the postamble is a per-element single-lane tile-op loop.
+        # ``__tile_k1_tail`` maps = K=1 widths=(1,): stride stays 1 (postamble
+        # is a per-element single-lane tile-op loop).
         widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
         K = len(widths)
         ranges = list(map_entry.map.range.ranges)
@@ -110,7 +108,7 @@ class StrideMapByTileWidths(ppl.Pass):
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_innermost_map(g, n):
+            if not is_vectorizable_map(g, n):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: keep step 1
                 continue

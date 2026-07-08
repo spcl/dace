@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tasklet creation / classification / vectorized-code-emission helpers.
 
-The emission core ``instantiate_tasklet_from_info`` picks per-template C++
-code from the ``TaskletType`` classification in ``dace.sdfg.tasklet_utils``,
-falling back to a scalar lane loop when no template applies.
+Core ``instantiate_tasklet_from_info`` picks per-template C++ from the
+``TaskletType`` classification in ``dace.sdfg.tasklet_utils``; falls back to a
+scalar lane loop when no template applies.
 """
 import copy
 from dataclasses import dataclass
@@ -24,12 +24,10 @@ from dace.transformation.passes.vectorization.utils.name_schemes import (LaneIdS
 
 
 def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
-    """Check whether a tasklet is a simple one-in one-out assignment.
+    """True iff tasklet is a one-in one-out assignment (``a = b`` or ``a = b;``).
 
-    Matches ``a = b`` or ``a = b;``.
-
-    :param node: The Tasklet to check.
-    :returns: True iff it is a single assignment tasklet.
+    :param node: Tasklet to check.
+    :returns: True iff single-assignment tasklet.
     """
     if (len(node.in_connectors) == 1 and len(node.out_connectors) == 1):
         in_conn = next(iter(node.in_connectors.keys()))
@@ -40,30 +38,23 @@ def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
 
 
 def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
-    """ONE-aware classification: ``desc`` is a tile (full ``widths``) or a
-    broadcast-tile (each dim is the tile width ``w_d`` or a broadcast marker --
-    the ``dace.symbolic.ONE`` symbol / a literal ``1``), with at least one real
-    (non-broadcast) width dim.
+    """ONE-aware classify: ``desc`` is a tile (full ``widths``) or broadcast-tile
+    (each dim = tile width ``w_d`` or broadcast marker ``dace.symbolic.ONE`` /
+    literal ``1``), with >=1 real (non-broadcast) width dim.
 
-    CLASSIFICATION ONLY -- this never reshapes a memlet. ``(W, ONE)`` / ``(ONE,
-    W)`` broadcast shapes live solely on ``TileLoad`` / ``TileStore`` index
-    connectors, which know how to handle them internally; collapsing such a
-    shape to ``(W,)`` in a memlet trips DaCe's subset-dimensionality validator
-    (user direction 2026-06-15: ``(W, ONE) and similar shapes should be only
-    passed to the tile load or tile store``). This predicate lets callers (e.g.
-    the K-dim tile-only test contract) recognise that a value is tile-shaped
-    -- treating the ``ONE`` marker as the integer ``1`` it stands for -- without
-    ever touching the memlet.
+    CLASSIFY ONLY, never reshapes a memlet. ``(W, ONE)`` / ``(ONE, W)`` broadcast
+    shapes live only on ``TileLoad`` / ``TileStore`` index connectors; collapsing
+    to ``(W,)`` in a memlet trips DaCe's subset-dimensionality validator (user
+    2026-06-15: such shapes only passed to tile load/store). Treats the ``ONE``
+    marker as the int ``1`` it stands for without touching the memlet.
 
-    Note the rank gate: a scalar ``(1,)`` bridge in a K=1 ``__tile_k1_tail``
-    body has rank 1, so against a rank-2 ``widths`` it is correctly NOT a tile
-    (scalar-load -> scalar chains stay python scalar tasklets, user direction
-    2026-06-15). The strict-output sibling is ``tile_binop._is_tile_shape``.
+    Rank gate: a scalar ``(1,)`` bridge in a K=1 ``__tile_k1_tail`` body is rank
+    1, so vs a rank-2 ``widths`` it is correctly NOT a tile (scalar-load -> scalar
+    chains stay python tasklets). Strict-output sibling = ``tile_binop._is_tile_shape``.
 
-    :param desc: A data descriptor (``dace.data.Array`` / ``Scalar`` / ...).
+    :param desc: Data descriptor (``dace.data.Array`` / ``Scalar`` / ...).
     :param widths: Per-tile-dim widths, innermost-last.
-    :returns: True iff ``desc`` is a tile or a broadcast-tile of rank
-        ``len(widths)``.
+    :returns: True iff ``desc`` is a tile or broadcast-tile of rank ``len(widths)``.
     """
     import sympy
     from dace.symbolic import ONE
@@ -93,14 +84,13 @@ def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
 
 
 def tasklet_reads_or_writes_tile(state: dace.SDFGState, tasklet: dace.nodes.Tasklet, widths: Tuple[int, ...]) -> bool:
-    """True iff any in/out edge of ``tasklet`` carries data whose descriptor is a
-    tile or broadcast-tile (see :func:`descriptor_is_tile_or_broadcast`).
+    """True iff any in/out edge of ``tasklet`` carries a tile / broadcast-tile
+    descriptor (see :func:`descriptor_is_tile_or_broadcast`).
 
-    Encodes the K-dim tile-only invariant: tile-shaped values flow ONLY through
-    tile lib nodes, never through raw tasklets. A raw tasklet that touches a
-    tile is unlowered residue (a real failure); a tasklet operating purely on
-    scalars (e.g. the scalar ``__tile_k1_tail`` remainder) is legitimate and is
-    NOT counted.
+    K-dim tile-only invariant: tile-shaped values flow ONLY through tile lib
+    nodes, never raw tasklets. A raw tasklet touching a tile = unlowered residue
+    (real failure); a pure-scalar tasklet (e.g. the scalar ``__tile_k1_tail``
+    remainder) is legit, NOT counted.
     """
     sdfg = state.sdfg
     for edge in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
@@ -112,27 +102,25 @@ def tasklet_reads_or_writes_tile(state: dace.SDFGState, tasklet: dace.nodes.Task
     return False
 
 
-# Operator tables consumed by ``instantiate_tasklet_from_info``. Kept at
-# module level so callers / tests can inspect them without poking at
-# function-local state.
+# Operator tables for ``instantiate_tasklet_from_info``; module-level so
+# callers / tests can inspect them.
 PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
 BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
-# ``+`` is excluded — unary ``+`` is rejected by the body with
-# ``raise Exception("Unary + …")``; keeping it out of the set lets the
-# ``op in UNARY_OPERATORS`` check stay honest.
+# ``+`` excluded: unary ``+`` rejected by body (``raise Exception("Unary + …")``);
+# keeping it out keeps the ``op in UNARY_OPERATORS`` check honest.
 UNARY_OPERATORS = {"!", "-"}
 
-# Dtype-cast op names (``float64`` / ``int32`` / ...). A kept ``dace.float64(x)`` cast
-# reaches the emit as a 1-input "function" op named by its dtype; it must lower to the
-# ``dace::<dtype>(x)`` cast function (cppunparse's typecast form) -- a bare ``float64(x)``
-# is not valid C++. Built from the dtype registry so names are never hardcoded.
+# Dtype-cast op names (``float64`` / ``int32`` / ...). A kept ``dace.float64(x)``
+# cast reaches emit as a 1-input "function" op named by its dtype; must lower to
+# ``dace::<dtype>(x)`` (cppunparse typecast) -- bare ``float64(x)`` not valid C++.
+# Built from the dtype registry so names never hardcoded.
 CAST_OP_NAMES = frozenset(s.split("::")[-1] for s in dace.dtypes.TYPECLASS_TO_STRING.values())
 
 
 def emit_op(op_: str) -> str:
     """C++ spelling of a fallback op: a dtype cast becomes ``dace::<dtype>``.
 
-    :param op_: The op label (an operator symbol, a function name, or a dtype cast name).
+    :param op_: Op label (operator symbol, function name, or dtype cast name).
     :returns: ``dace::<dtype>`` for a cast op, else ``op_`` unchanged.
     """
     return f"dace::{op_}" if op_ in CAST_OP_NAMES else op_
@@ -141,18 +129,17 @@ def emit_op(op_: str) -> str:
 def binop_cpp(l_op: str, op_: str, r_op: str) -> str:
     """C++ rendering of a binary operator in the CPP fallback lane loop.
 
-    ``%`` lowers to ``py_mod(l, r)`` -- Python/NumPy modulo (the result follows the
-    *divisor's* sign), NOT C's truncated ``%`` (follows the dividend's) -- so the
-    vectorised body matches the scalar reference on negative operands and is
-    well-formed for floating-point operands (where C ``%`` is ill-formed). ``py_mod``
-    is the GLOBAL runtime helper (it lives outside ``dace::math``), called unqualified
-    -- the same form the tile-op backends and the ``np.mod`` ufunc emit. Every other
-    operator is emitted infix.
+    ``%`` -> ``py_mod(l, r)``: Python/NumPy modulo (result follows the *divisor's*
+    sign), NOT C's truncated ``%`` (dividend's) -- matches the scalar reference on
+    negative operands + well-formed for floats (C ``%`` ill-formed there).
+    ``py_mod`` = GLOBAL runtime helper (outside ``dace::math``), called
+    unqualified, same form the tile-op backends / ``np.mod`` ufunc emit. Every
+    other operator emitted infix.
 
     :param l_op: Left operand expression.
     :param op_: Operator symbol.
     :param r_op: Right operand expression.
-    :returns: The C++ expression string.
+    :returns: C++ expression string.
     """
     if op_ == "%":
         return f"py_mod({l_op}, {r_op})"
@@ -162,23 +149,22 @@ def binop_cpp(l_op: str, op_: str, r_op: str) -> str:
 def _roundtrip_constant(s: Union[int, float, str, None]):
     """Return the constant verbatim for emission — no ``float()`` round-trip.
 
-    The constant is only ever string-formatted into a C++ template, so the
-    exact written form must survive: ``float(s)`` would turn ``"Infinity"``
-    into ``"inf"`` (not valid C++), drop sympy ``"oo"``, re-precision a clean
-    ``"0.1"`` to ``"0.10000000149..."``, and rewrite ``"2"`` to ``"2.0"``.
-    Passing it through preserves the source literal exactly.
+    Constant is only ever string-formatted into a C++ template, so the exact
+    written form must survive: ``float(s)`` would turn ``"Infinity"`` -> ``"inf"``
+    (invalid C++), drop sympy ``"oo"``, re-precision ``"0.1"`` ->
+    ``"0.10000000149..."``, rewrite ``"2"`` -> ``"2.0"``.
 
-    :param s: The constant (numeric or string literal), or ``None``.
+    :param s: Constant (numeric or string literal), or ``None``.
     :returns: ``s`` unchanged.
     """
     return s
 
 
 def _is_number(s: Union[int, float, str, None]) -> bool:
-    """Whether ``s`` is a numeric literal (so it's a constant, not a symbol).
+    """Whether ``s`` is a numeric literal (a constant, not a symbol).
 
-    Recognises ints/floats, plain numeric strings, the IEEE infinity spellings
-    (``inf`` / ``Infinity`` via ``float``), and sympy's ``oo`` / ``-oo``.
+    Recognises ints/floats, numeric strings, IEEE infinity (``inf`` /
+    ``Infinity`` via ``float``), sympy ``oo`` / ``-oo``.
 
     :param s: Candidate token.
     :returns: ``True`` iff ``s`` denotes a numeric constant.
@@ -199,10 +185,9 @@ def _is_number(s: Union[int, float, str, None]) -> bool:
 class EmitCtx:
     """Per-tasklet emission state shared by every per-``TaskletType`` emitter.
 
-    Bundles the values that ``_generate_code`` and the per-type emitters need.
-    ``mask_connector`` is the name of an ``_iter_mask: bool[W]`` input
-    connector; when set the emitter routes to the ``op + "_masked"`` template
-    and passes ``mask=<name>``, otherwise it uses the unsuffixed template.
+    ``mask_connector`` = name of an ``_iter_mask: bool[W]`` input connector; when
+    set, the emitter routes to the ``op + "_masked"`` template + passes
+    ``mask=<name>``, else uses the unsuffixed template.
     """
     state: dace.SDFGState
     node: dace.nodes.Tasklet
@@ -216,21 +201,19 @@ class EmitCtx:
 
 
 def _emit_ite_with_symbol_arms(ctx: EmitCtx) -> str:
-    """Emit a per-lane C++ select for ``ITE(cond, then, else)`` with symbol
-    arms (i.e. 1 array input + 2 symbol/literal arms).
+    """Per-lane C++ select for ``ITE(cond, then, else)`` with symbol arms (1
+    array input + 2 symbol/literal arms).
 
-    This is the lowering for the canonicalize ``EarlyExitToFindIndex`` phi
-    tasklet (``__out = ITE(__t0, _loop_it_0, LEN_1D)``) where the cond is an
-    array connector but the arms are loop-index symbols / literals. Parses
-    the 3 ``ITE`` arguments straight from the tasklet's Python code, then
-    emits a per-lane loop ``out[lane] = cond[lane] ? then(lane) : else``
-    with the vectorized map param shifted to ``(<param> + _vi)`` inside
-    arm expressions so a lane-index symbol walks W values per call.
+    Lowering for the canonicalize ``EarlyExitToFindIndex`` phi tasklet (``__out =
+    ITE(__t0, _loop_it_0, LEN_1D)``): cond is an array connector, arms are
+    loop-index symbols / literals. Parses the 3 ``ITE`` args from the tasklet's
+    Python code, emits per-lane ``out[lane] = cond[lane] ? then(lane) : else``
+    with the vectorized map param shifted to ``(<param> + _vi)`` inside arms so a
+    lane-index symbol walks W values per call.
 
     :param ctx: Emission context.
-    :returns: Generated C++ code for the per-lane select.
-    :raises NotImplementedError: When the tasklet shape isn't the expected
-        ``__out = ITE(cond, t, e)`` form.
+    :returns: Generated C++ for the per-lane select.
+    :raises NotImplementedError: tasklet shape isn't ``__out = ITE(cond, t, e)``.
     """
     import ast
     import re
@@ -294,8 +277,8 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
 
     Uses the matching template (array-array, array-scalar, constant variants,
     commutative / non-commutative) or a scalar lane-loop fallback. When
-    ``ctx.mask_connector`` is set, masked template variants are used and the
-    fallback loop is iter-mask-gated.
+    ``ctx.mask_connector`` set, masked template variants are used + the fallback
+    loop is iter-mask-gated.
 
     :param ctx: Emission context.
     :param rhs1_: First array operand, or ``None``.
@@ -304,8 +287,8 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
     :param const2_: Second constant operand, or ``None``.
     :param lhs_: Output connector name.
     :param op_: Operator string.
-    :returns: The generated C++ code string.
-    :raises Exception: on an invalid operand configuration for the fallback.
+    :returns: Generated C++ code string.
+    :raises Exception: invalid operand configuration for the fallback.
     """
 
     # Get out edge and its dtype
@@ -354,7 +337,7 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                     else:
                         assert constant == const2_
                         cop_ = op_ + "c"
-                    # Maybe this constant version is not implemented in templates
+                    # constant version may not be in templates
                     if cop_ in templates:
                         key = _template_key(ctx, cop_)
                         return templates[key].format(rhs1=rhs,
@@ -376,25 +359,23 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                                              dtype=dtype_,
                                              mask=mask_arg)
 
-    # Tasklet bodies are expected to be free of Python ``if ... else ...``
-    # syntax: canonicalize passes that need a ternary emit ``ITE(c, t, e)``
-    # (the :mod:`dace.symbolic` alias of ``merge``) which ``classify_tasklet``
-    # picks up as ``TERNARY_ARRAY`` and the dispatcher lowers via
-    # ``vector_select``. A surviving Python ``IfExp`` here is a producer-side
-    # bug -- the comparison-suffix fallback below would silently drop the
-    # arms and miscompile, so refuse loudly.
+    # Tasklet bodies must be free of Python ``if ... else ...``: canonicalize
+    # passes needing a ternary emit ``ITE(c, t, e)`` (``dace.symbolic`` alias of
+    # ``merge``), which ``classify_tasklet`` picks up as ``TERNARY_ARRAY`` +
+    # dispatcher lowers via ``vector_select``. A surviving Python ``IfExp`` = a
+    # producer-side bug: the comparison-suffix fallback below would silently drop
+    # the arms + miscompile, so refuse loudly.
     code_str = (ctx.node.code.as_string or "").strip()
     if " if " in code_str and " else " in code_str:
         raise NotImplementedError(f"vectorization: tasklet {ctx.node.label!r} carries a Python ternary "
                                   f"({code_str!r}); producers must emit ``ITE(c, t, e)`` instead so the "
                                   f"vectorizer can lower it as a ``TERNARY_ARRAY``.")
 
-    # Fallback: unsupported operator (or op with no ``_masked`` template).
-    # When ``ctx.mask_connector`` is set the per-lane write MUST be gated
-    # by the iter-mask: the masked remainder runs this body once over
-    # the trailing R<W elements and the inactive lanes must NOT write
-    # back (an unconditional store clobbers live array data — e.g. the
-    # pre-loop ``a[LEN_1D-1]`` scalar write in TSVC s2244).
+    # Fallback: unsupported operator (or op with no ``_masked`` template). When
+    # ``ctx.mask_connector`` set, the per-lane write MUST be iter-mask-gated: the
+    # masked remainder runs this body once over the trailing R<W elements +
+    # inactive lanes must NOT write back (an unconditional store clobbers live
+    # array data — e.g. the pre-loop ``a[LEN_1D-1]`` scalar write in TSVC s2244).
     comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
     code_lines = [f"_dace_vectorize({ctx.vector_width})"]
     code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
@@ -432,9 +413,9 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                 code_lines.append(f"{lhs_expr} = {emit_op(op_)}({rhs}[_vi]){comparison_suffix};")
     else:
         if op_ in BINARY_OPERATORS:
-            # A constant operand is emitted bare; an array operand is indexed
-            # ``[_vi]``. ``binop_cpp`` renders ``%`` as ``dace::math::py_mod`` (Python
-            # semantics) and every other operator infix.
+            # Constant operand emitted bare; array operand indexed ``[_vi]``.
+            # ``binop_cpp`` renders ``%`` as ``dace::math::py_mod`` (Python
+            # semantics), every other operator infix.
             l_operand = rhs_left if rhs_left == const1_ else f"{rhs_left}[_vi]"
             r_operand = rhs_right if rhs_right == const2_ else f"{rhs_right}[_vi]"
             code_lines.append(f"{lhs_expr} = {binop_cpp(l_operand, op_, r_operand)}{comparison_suffix};")
@@ -460,18 +441,18 @@ def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> No
 
 
 def _binary_expr(l_op: str, op: str, r_op: str) -> str:
-    """Build a binary expression string for the scalar/symbol lane paths.
+    """Binary expression string for the scalar/symbol lane paths.
 
-    A named-function op (``int_floor``, ``int_ceil``, ``min``, ``max``, ...)
-    is emitted in call syntax ``op(l, r)``; an operator symbol (``+``, ``<``,
-    ...) is emitted infix ``(l op r)``. Without this a function op was
-    written infix (``LEN_1D int_floor 2``) and later failed to sympify
-    (TSVC s276's ``int_floor(LEN_1D, 2)`` comparison RHS).
+    A named-function op (``int_floor``, ``int_ceil``, ``min``, ``max``, ...) ->
+    call syntax ``op(l, r)``; an operator symbol (``+``, ``<``, ...) -> infix
+    ``(l op r)``. Without this a function op was written infix
+    (``LEN_1D int_floor 2``) + later failed to sympify (TSVC s276's
+    ``int_floor(LEN_1D, 2)`` comparison RHS).
 
     :param l_op: Left operand.
     :param op: Operator symbol or function name.
     :param r_op: Right operand.
-    :return: The expression string.
+    :return: Expression string.
     """
     if op.isidentifier():
         return f"{op}({l_op}, {r_op})"
@@ -482,22 +463,17 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
                                       vector_map_param: str) -> bool:
     """Whether input connector ``conn`` reads a lane-invariant value.
 
-    A subset that does NOT mention the vectorized map parameter is by
-    definition constant across the W lanes -- every lane reads the same
-    memory. Two shapes:
+    A subset NOT mentioning the vectorized map param is constant across the W
+    lanes -- every lane reads the same memory. Two shapes:
 
-    * Unwidened length-1 read (TSVC s176 ``b[i+m-j-1] * c[j]``: outer
-      ``j`` is constant inside the inner ``i`` loop -- subset stays
-      ``[j:j+1]``).
-    * Inner subset widened to ``[0:W]`` while the original outer-side
-      access was a constant index (TSVC s113 ``a[i] = a[0] + b[i]``:
-      inner widening inflates ``a[0:1]`` to ``a[0:8]`` over the full
-      ``a`` array but no ``i`` ever enters the subset -- the lanes still
-      see the same value).
+    * Unwidened length-1 read (TSVC s176 ``b[i+m-j-1] * c[j]``: outer ``j``
+      constant inside the inner ``i`` loop -- subset stays ``[j:j+1]``).
+    * Inner subset widened to ``[0:W]`` while the outer-side access was a
+      constant index (TSVC s113 ``a[i] = a[0] + b[i]``: widening inflates
+      ``a[0:1]`` -> ``a[0:8]`` over the full ``a`` but no ``i`` enters the subset).
 
-    Both shapes route through the ``vector_*_w_scalar`` (broadcast)
-    template; the dispatcher dereferences pointer-typed operands at the
-    callsite via :func:`_scalar_operand_expr`.
+    Both route through the ``vector_*_w_scalar`` (broadcast) template; the
+    dispatcher dereferences pointer operands via :func:`_scalar_operand_expr`.
 
     :param state: State containing the tasklet.
     :param node: Tasklet whose input edges are inspected.
@@ -505,45 +481,40 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
     :param vector_map_param: The vectorized map parameter.
     :return: ``True`` when the connector reads a lane-invariant value.
     """
-    # Authoritative per-lane signal: when the INNER access subset itself still
-    # mentions the vectorized map parameter, every lane reads a DIFFERENT
-    # element -- it is per-lane data, never a broadcast. The legacy widening
-    # rewrites many inner views to ``[0:W]`` (dropping the param), so a subset
-    # that STILL carries it is unambiguous and must short-circuit the
-    # outer-begin heuristic below. This is the gather-sibling case: a contiguous
-    # operand ``c[i:i+W]`` riding alongside a packed gather, whose OUTER NSDFG
+    # Authoritative per-lane signal: an INNER access subset still mentioning the
+    # vectorized map param -> every lane reads a DIFFERENT element = per-lane
+    # data, never a broadcast. Legacy widening rewrites many inner views to
+    # ``[0:W]`` (dropping the param), so a subset STILL carrying it is unambiguous
+    # + must short-circuit the outer-begin heuristic below. Gather-sibling case: a
+    # contiguous operand ``c[i:i+W]`` alongside a packed gather whose OUTER NSDFG
     # boundary memlet is the whole array ``c[0:N]`` (begin 0) -- the outer-begin
-    # rule would otherwise mis-read it as a broadcast and collapse W lanes to
-    # ``c[0]`` (TSVC s4113 ``a[ip[i]] = b[ip[i]] + c[i]``).
+    # rule would else mis-read it as a broadcast + collapse W lanes to ``c[0]``
+    # (TSVC s4113 ``a[ip[i]] = b[ip[i]] + c[i]``).
     for ie in state.in_edges(node):
         if ie.dst_conn == conn and ie.data is not None and ie.data.subset is not None:
             if vector_map_param in {str(s) for s in ie.data.subset.free_symbols}:
                 return False
             break
-    # The inner subset alone is not enough: the legacy widening rewrites
-    # the inner view's index to ``[0:W]`` for every connector, so neither
-    # ``a[0]`` (intended broadcast) nor ``b[i]`` (intended sliding window)
-    # mentions ``vector_map_param`` inside the body. The OUTER NSDFG-
-    # boundary memlet's BEGIN is what differentiates them:
-    #
-    #   * ``b[i:i+8]``  -- begin == i  -> base pointer slides per
-    #                                      iteration -> vector read
-    #   * ``a[0:i+8]``  -- begin == 0 -> base pointer is constant ->
-    #                                      every lane reads ``a[0]`` ->
-    #                                      broadcast
+    # Inner subset alone not enough: legacy widening rewrites the inner view's
+    # index to ``[0:W]`` for every connector, so neither ``a[0]`` (broadcast) nor
+    # ``b[i]`` (sliding window) mentions ``vector_map_param`` inside the body. The
+    # OUTER NSDFG-boundary memlet's BEGIN differentiates them:
+    #   * ``b[i:i+8]`` -- begin == i -> base pointer slides per iter -> vector read
+    #   * ``a[0:i+8]`` -- begin == 0 -> base pointer constant -> every lane reads
+    #                     ``a[0]`` -> broadcast
     nsdfg_node = state.sdfg.parent_nsdfg_node
     parent_state = nsdfg_node.sdfg.parent if nsdfg_node is not None else None
     if nsdfg_node is None or parent_state is None:
-        # Top-level vectorize: there is no outer memlet to consult, so classify
-        # from the inner subset alone. A length-1 subset that does not depend on
-        # the lane parameter is the unambiguous lane-invariant case (TSVC
-        # s176-shape). A multi-element subset is lane-invariant ONLY when it is a
-        # fixed-position sub-slice of a LARGER source array -- the legacy widening
-        # inflates an invariant ``a[0]`` to ``a[0:W]`` (TSVC s113) but keeps its
-        # lane-invariant begin. A multi-element subset that spans an ENTIRE
-        # tile-width transient (e.g. ``B_slice_times_2[0:W]``) is per-lane data,
-        # not a broadcast -- treating it as a scalar collapses W lane values to
-        # one and miscompiles ``test_knob_only_apply_vectorization_pass_bypass``.
+        # Top-level vectorize: no outer memlet, so classify from the inner subset
+        # alone. A length-1 subset independent of the lane param = unambiguous
+        # lane-invariant (TSVC s176-shape). A multi-element subset is
+        # lane-invariant ONLY when a fixed-position sub-slice of a LARGER source
+        # array -- legacy widening inflates an invariant ``a[0]`` -> ``a[0:W]``
+        # (TSVC s113) but keeps its lane-invariant begin. A multi-element subset
+        # spanning an ENTIRE tile-width transient (e.g. ``B_slice_times_2[0:W]``)
+        # = per-lane data, not a broadcast -- treating it as a scalar collapses W
+        # lane values to one + miscompiles
+        # ``test_knob_only_apply_vectorization_pass_bypass``.
         for ie in state.in_edges(node):
             if ie.dst_conn == conn and ie.data.data is not None:
                 sub = ie.data.subset
@@ -558,15 +529,15 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
                 if desc is None:
                     return False
                 # Broadcast iff the read does NOT span the whole descriptor: a
-                # sub-slice of a larger array (widened invariant read) vs a whole
-                # tile-width transient (genuine per-lane data).
+                # sub-slice of a larger array (widened invariant read) vs a
+                # whole tile-width transient (genuine per-lane data).
                 try:
                     return dace.symbolic.simplify(sub.num_elements() - desc.total_size) != 0
                 except (TypeError, ValueError):
                     return False
         return False
-    # Match the outer in-edge whose dst_conn equals our connector name --
-    # NSDFG connector names mirror the inner data names.
+    # Match the outer in-edge whose dst_conn == our connector name -- NSDFG
+    # connector names mirror the inner data names.
     for ie in state.in_edges(node):
         if ie.dst_conn != conn or ie.data.data is None:
             continue
@@ -578,11 +549,11 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
             # A packed per-lane buffer -- the ``multiplexed_*`` transient from the
             # halve-index rewrite (``a[i // 2]``; see utils/multiplex.py), or a
             # packed strided-load buffer -- is a W-wide TRANSIENT read in FULL:
-            # every lane holds a DISTINCT value, so it is per-lane data, NOT a
-            # broadcast, even though its begin is the constant 0 (the outer-begin
-            # heuristic below would otherwise collapse the W lanes to element 0 and
-            # miscompile e.g. TSVC s4117 ``a[i] = b[i] + c[i // 2] * d[i]``).
-            # Mirror the top-level "spans the whole descriptor" rule.
+            # every lane holds a DISTINCT value = per-lane data, NOT a broadcast,
+            # even though its begin is the constant 0 (the outer-begin heuristic
+            # below would else collapse the W lanes to element 0 + miscompile e.g.
+            # TSVC s4117 ``a[i] = b[i] + c[i // 2] * d[i]``). Mirror the top-level
+            # "spans the whole descriptor" rule.
             outer_desc = parent_state.sdfg.arrays.get(outer_ie.data.data)
             if outer_desc is not None and outer_desc.transient:
                 try:
@@ -603,19 +574,18 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
 def _scalar_operand_expr(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str) -> str:
     """C++ expression that reads the lane-invariant scalar through ``conn``.
 
-    DaCe codegen materialises a tasklet's input connector either as a
-    by-value ``T`` (Scalar, or Array shape ``(1,)`` whose memlet covers
-    one element -- the read collapses to a scalar at the C++ boundary)
-    or as a ``T*`` pointer (Array whose memlet covers >1 elements, e.g.
-    the inner-widened ``a[0:W]`` of TSVC s113). The broadcast template
-    wants the scalar VALUE: emit ``conn`` directly when it is a value, or
-    ``conn[0]`` to dereference a pointer.
+    DaCe codegen materialises a tasklet input connector as by-value ``T`` (Scalar,
+    or Array shape ``(1,)`` whose memlet covers one element -> read collapses to a
+    scalar at the C++ boundary) or as a ``T*`` pointer (Array whose memlet covers
+    >1 elements, e.g. the inner-widened ``a[0:W]`` of TSVC s113). Broadcast
+    template wants the scalar VALUE: emit ``conn`` when a value, else ``conn[0]``
+    to dereference.
 
     :param state: State containing the tasklet.
     :param node: Tasklet whose input edges are inspected.
-    :param conn: Input connector name (already classified as
-        lane-invariant by :func:`_connector_reads_invariant_scalar`).
-    :returns: A C++ rvalue expression for the scalar.
+    :param conn: Input connector name (classified lane-invariant by
+        :func:`_connector_reads_invariant_scalar`).
+    :returns: C++ rvalue expression for the scalar.
     """
     for ie in state.in_edges(node):
         if ie.dst_conn != conn or ie.data.data is None:
@@ -623,9 +593,9 @@ def _scalar_operand_expr(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: 
         desc = state.sdfg.arrays.get(ie.data.data)
         if isinstance(desc, dace.data.Scalar):
             return conn
-        # Array shape (1,) + 1-element memlet: codegen emits the connector
-        # as a by-value scalar (TSVC s176: ``double __in2 = c[0];``).
-        # Subscripting it would be invalid C++.
+        # Array shape (1,) + 1-element memlet: codegen emits the connector as a
+        # by-value scalar (TSVC s176: ``double __in2 = c[0];``). Subscripting it
+        # would be invalid C++.
         try:
             shape_is_one = (isinstance(desc, dace.data.Array) and len(desc.shape) == 1
                             and bool(dace.symbolic.simplify(desc.shape[0] - 1) == 0))
@@ -647,12 +617,11 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
                                   vector_map_param: str,
                                   vector_dtype: typeclass,
                                   mask_connector: Optional[str] = None) -> None:
-    """
-    Rewrite ``node.code`` into vectorized C++ from ``classify_tasklet`` info.
+    """Rewrite ``node.code`` into vectorized C++ from ``classify_tasklet`` info.
 
     Dispatches on the classified ``TaskletType`` (array-array, array-scalar,
-    scalar-symbol, ...) and substitutes the matching ``templates`` entry, or
-    falls back to a scalar lane loop when no template applies.
+    scalar-symbol, ...) + substitutes the matching ``templates`` entry, else a
+    scalar lane loop.
 
     :param state: State containing the tasklet.
     :param node: Tasklet to rewrite.
@@ -684,15 +653,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
     out_dtypes = {state.sdfg.arrays[oe.data.data].dtype for oe in oes if oe.data.data is not None}
     all_dtypes = in_dtypes.union(out_dtypes)
 
-    # NOTE: the C.2-b ``_iter_mask`` (``bool[W]``) connector makes
-    # ``all_dtypes`` non-homogeneous so masked tasklets take the
-    # fallback lane-loop below rather than the ``vector_*_av_masked``
-    # templates. That fallback is now mask-gated (see ``_generate_code``
-    # fallback: ``if (mask[_vi]) ...``), which is the correct behaviour;
-    # we deliberately do NOT exclude the mask from this check, because
-    # the ``vector_*_av_masked`` scalar-variant templates have an
-    # inconsistent arg order vs their runtime macros (separate bug),
-    # so routing masked-scalar ops through the template path
+    # C.2-b ``_iter_mask`` (``bool[W]``) connector makes ``all_dtypes``
+    # non-homogeneous, so masked tasklets take the fallback lane-loop below rather
+    # than the ``vector_*_av_masked`` templates. That fallback is now mask-gated
+    # (``_generate_code`` fallback: ``if (mask[_vi]) ...``) = correct. Deliberately
+    # do NOT exclude the mask from this check: the ``vector_*_av_masked``
+    # scalar-variant templates have inconsistent arg order vs their runtime macros
+    # (separate bug), so routing masked-scalar ops through the template path
     # mis-compiles. The gated fallback is correct for all ops.
     fallbackcode_due_to_types = len(all_dtypes) != 1
 
@@ -718,23 +685,18 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
 
     # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
-        # Loop-invariant scalar read into a W-wide vector buffer
-        # (s176-style ``c[j]`` where ``j`` is the outer-loop param):
-        # the RHS edge's subset is a single element, so the codegen
-        # types the ``_in`` connector as ``T``, not ``T*``.  Route to
-        # the broadcast template ``=c`` (``vector_copy_w_scalar``) by
-        # placing the scalar input name in the constant slot — the
-        # dispatcher then picks ``op_ + "c"`` (``"=c"``).  Without this
-        # the ``=`` template emits ``vector_copy<T,W>(_out, _in)`` and
-        # the compile fails with ``cannot convert 'double' to 'const
-        # double*'`` for ``_in``.
-        # A length-1 invariant read (s176 ``c[j]``) is typed by-value by codegen,
-        # so the connector name goes straight into the broadcast slot. A WIDENED
-        # invariant read (s113 ``a[0]`` inflated to ``a[0:W]``) is typed as a
-        # pointer, so it must be dereferenced via ``_scalar_operand_expr`` before
-        # entering the ``=c`` (``vector_copy_w_scalar``) broadcast template;
-        # otherwise the ``=`` template emits a per-lane ``vector_copy`` that reads
-        # ``a[0:W]`` instead of broadcasting ``a[0]``.
+        # Loop-invariant scalar read into a W-wide vector buffer (s176 ``c[j]``,
+        # ``j`` = outer-loop param): RHS edge subset is a single element, so
+        # codegen types ``_in`` as ``T``, not ``T*``. Route to the broadcast
+        # template ``=c`` (``vector_copy_w_scalar``) by placing the scalar input
+        # name in the constant slot -> dispatcher picks ``op_ + "c"`` (``"=c"``).
+        # Else the ``=`` template emits ``vector_copy<T,W>(_out, _in)`` + compile
+        # fails (``cannot convert 'double' to 'const double*'`` for ``_in``).
+        # A length-1 invariant read (s176 ``c[j]``) is typed by-value -> connector
+        # name goes straight into the broadcast slot. A WIDENED invariant read
+        # (s113 ``a[0]`` inflated to ``a[0:W]``) is typed as a pointer -> deref via
+        # ``_scalar_operand_expr`` first, else the ``=`` template emits a per-lane
+        # ``vector_copy`` reading ``a[0:W]`` instead of broadcasting ``a[0]``.
         in_scalar_rhs = None
         in_widened_rhs = None
         for ie in ies:
@@ -777,49 +739,48 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         if _is_number(str(c1)):
             _set_template(ctx, None, None, c1, None, lhs, "=")
         else:
-            # Per-lane materialisation of a laneid index (``_idx[i] = base_laneid_i``).
-            # This carries no SIMD intrinsic, so keep it a Python tasklet: emitting
-            # CPP here hides the ``base_laneid_i`` symbols from ``free_symbols``, so
-            # ``resolve_missing_laneid_symbols`` never binds ``base_laneid_i = base + i``
-            # and codegen references an undeclared symbol. CPP lowering is reserved for
-            # the intrinsic ops; the matching ``SCALAR_SYMBOL`` / ``SYMBOL_SYMBOL`` /
-            # ``SCALAR_SCALAR`` per-lane assignments stay Python for the same reason.
+            # Per-lane materialisation of a laneid index (``_idx[i] =
+            # base_laneid_i``). No SIMD intrinsic, so keep a Python tasklet:
+            # emitting CPP hides the ``base_laneid_i`` symbols from
+            # ``free_symbols``, so ``resolve_missing_laneid_symbols`` never binds
+            # ``base_laneid_i = base + i`` + codegen references an undeclared
+            # symbol. CPP lowering reserved for intrinsic ops; the matching
+            # ``SCALAR_SYMBOL`` / ``SYMBOL_SYMBOL`` / ``SCALAR_SCALAR`` per-lane
+            # assignments stay Python for the same reason.
             node.code = dace.properties.CodeBlock(
                 code="\n".join([f"{lhs}[{i}] = {LaneIdScheme.make_dim(c1, 0, i)}" for i in range(vw)]) + "\n",
                 language=dace.Language.Python)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
-        # A binop operand whose connector reads a single (non-vectorized)
-        # element is a scalar value at the C level, not a vector pointer.
-        # Route it through the constant slot so the ``*c`` / ``c*``
-        # ``vector_*_w_scalar`` template is picked instead of the
-        # vector-vector one (TSVC s176: ``b[i+m-j-1] * c[j]`` with
-        # ``c[j]`` invariant in the vectorized param).
+        # A binop operand whose connector reads a single (non-vectorized) element
+        # is a scalar value at the C level, not a vector pointer. Route it through
+        # the constant slot so the ``*c`` / ``c*`` ``vector_*_w_scalar`` template
+        # is picked instead of the vector-vector one (TSVC s176 ``b[i+m-j-1] *
+        # c[j]`` with ``c[j]`` invariant in the vectorized param).
         rhs1_is_scalar = rhs2_is_scalar = False
         if rhs1 is not None and rhs2 is not None:
             rhs1_is_scalar = _connector_reads_invariant_scalar(state, node, rhs1, vector_map_param)
             rhs2_is_scalar = _connector_reads_invariant_scalar(state, node, rhs2, vector_map_param)
         if rhs2_is_scalar and not rhs1_is_scalar:
-            # rhs2 is the lane-invariant operand; route it through the const2
-            # slot, dereferenced if its connector is a pointer (Array).
+            # rhs2 = lane-invariant operand; route through the const2 slot,
+            # dereferenced if its connector is a pointer (Array).
             _set_template(ctx, rhs1, None, None, _scalar_operand_expr(state, node, rhs2), lhs, op)
         elif rhs1_is_scalar and not rhs2_is_scalar:
             _set_template(ctx, None, rhs2, _scalar_operand_expr(state, node, rhs1), None, lhs, op)
         else:
             _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
     elif ttype == tutil.TaskletType.TERNARY_ARRAY:
-        # ``_o = ITE(_c, _t, _e)`` lowered to ``vector_select<{dtype}, {W}>``.
-        # All three operands are arrays, the classifier carries them as
-        # semantic ``cond`` / ``then_arm`` / ``else_arm`` names.
+        # ``_o = ITE(_c, _t, _e)`` -> ``vector_select<{dtype}, {W}>``. All three
+        # operands are arrays; the classifier carries them as semantic ``cond`` /
+        # ``then_arm`` / ``else_arm`` names.
         out_edges = state.out_edges(node)
         assert len(out_edges) == 1
         out_data = state.sdfg.arrays[out_edges[0].data.data]
         dtype_ = dace.dtypes.TYPECLASS_TO_STRING[out_data.dtype]
-        # In a masked remainder the ITE must be iter-mask-gated: an
-        # active lane selects, an INACTIVE lane keeps ``else_arm`` (which
-        # branch-normalization always sets to the ITE destination), so
-        # the W-wide writeback over R<W lanes is a no-op on the trailing
-        # inactive lanes instead of OOB-reading/writing past the array
-        # with an unfilled ``cond`` (the TSVC s1161 masked-ITE-65 bug).
+        # Masked remainder: the ITE must be iter-mask-gated -- an active lane
+        # selects, an INACTIVE lane keeps ``else_arm`` (branch-normalization always
+        # sets it to the ITE destination), so the W-wide writeback over R<W lanes
+        # is a no-op on the trailing inactive lanes instead of OOB read/write past
+        # the array with an unfilled ``cond`` (the TSVC s1161 masked-ITE-65 bug).
         sel_op = "ITE"
         if ctx.mask_connector is not None and "ITE_masked" in templates:
             sel_op = "ITE_masked"
@@ -834,12 +795,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
         # ``ITE`` / ``merge`` with 1 connector + 2 symbol arms (TSVC s481's
         # ``EarlyExitToFindIndex`` phi tasklet: ``__out = ITE(__t0, _loop_it_0,
-        # LEN_1D)``). The classifier sees a single array input plus a function
-        # call so it returns ``UNARY_ARRAY`` with ``op='ITE'``; the standard
-        # unary template would emit ``ITE(_t0[_vi])`` and drop the arms.
-        # Lower to a per-lane ``cond[lane] ? then : else`` select instead, with
-        # the vectorized map param shifted to ``(<param> + _vi)`` so a lane
-        # index symbol like ``_loop_it_0`` walks the W consecutive lane values.
+        # LEN_1D)``). The classifier sees 1 array input + a function call ->
+        # ``UNARY_ARRAY`` with ``op='ITE'``; the standard unary template would emit
+        # ``ITE(_t0[_vi])`` + drop the arms. Lower via ``_emit_ite_with_symbol_arms``.
         if op in ('ITE', 'merge'):
             node.code = dace.properties.CodeBlock(code=_emit_ite_with_symbol_arms(ctx), language=dace.Language.CPP)
             return
@@ -856,14 +814,14 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
     elif ttype in {
             tutil.TaskletType.SCALAR_ARRAY,
     }:
-        # The tasklet-info treads scalars as arrays and only symbols as constants
-        # For the vector-code scalar is the same as a constant
+        # tasklet-info treats scalars as arrays, only symbols as constants; for
+        # vector-code a scalar == a constant.
         _set_template(ctx, None, rhs2, rhs1, None, lhs, op)
     elif ttype in {
             tutil.TaskletType.ARRAY_SCALAR,
     }:
-        # The tasklet-info treads scalars as arrays and only symbols as constants
-        # For the vector-code scalar is the same as a constant
+        # tasklet-info treats scalars as arrays, only symbols as constants; for
+        # vector-code a scalar == a constant.
         _set_template(ctx, rhs1, None, None, rhs2, lhs, op)
     elif ttype == tutil.TaskletType.SCALAR_SYMBOL:
         code_lines = []
@@ -920,11 +878,11 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         if op == "!=":
             raise Exception(lhs, rhs1, rhs2, c1, c2)
         # Distinguish a prefix operator (``-x`` / ``!x``) from a unary FUNCTION
-        # (``sqrt``/``exp``/``cos``/... and the dtype casts ``float64``/``int32``/...):
-        # a function is emitted in call syntax ``op(x)``, not the prefix form
-        # ``f"{op}{l_op}"`` (which fuses e.g. ``float64`` and ``S`` into a bogus symbol
-        # ``float64S``). This is a PYTHON tasklet, so the bare call is used (cppunparse
-        # lowers ``float64(x)`` -> ``dace::float64(x)``, ``sqrt(x)`` -> ``std::sqrt(x)``).
+        # (``sqrt``/``exp``/``cos``/... and dtype casts ``float64``/``int32``/...):
+        # a function -> call syntax ``op(x)``, not the prefix form ``f"{op}{l_op}"``
+        # (which fuses e.g. ``float64`` and ``S`` into a bogus symbol ``float64S``).
+        # PYTHON tasklet, so bare call (cppunparse lowers ``float64(x)`` ->
+        # ``dace::float64(x)``, ``sqrt(x)`` -> ``std::sqrt(x)``).
         expr = f"{op}{l_op}" if op in UNARY_OPERATORS else f"{op}({l_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
@@ -939,17 +897,17 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
                      vector_map_param: str) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
     """Duplicate an access node into a packed vector buffer of width ``vector_width``.
 
-    Writes to packed storage using per-lane (laneid-offset) symbols and
-    updates the feeding tasklet / memlets accordingly.
+    Writes packed storage via per-lane (laneid-offset) symbols; updates the
+    feeding tasklet / memlets.
 
-    :param state: The SDFG state containing the node.
-    :param node: The AccessNode to duplicate.
+    :param state: SDFG state containing the node.
+    :param node: AccessNode to duplicate.
     :param vector_width: Number of elements to pack.
     :param vector_map_param: Map param used for per-lane symbol offsetting.
     :returns: ``(touched_nodes, touched_edges)`` created during duplication.
     """
-    # ``repl_subset_to_use_laneid_offset`` lives in ``utils.subsets`` (S6d-b).
-    # Imported lazily to keep this module's top-level import surface narrow.
+    # ``repl_subset_to_use_laneid_offset`` lives in ``utils.subsets`` (S6d-b);
+    # imported lazily to keep the top-level import surface narrow.
     from dace.transformation.passes.vectorization.utils.subsets import repl_subset_to_use_laneid_offset
 
     touched_nodes = set()

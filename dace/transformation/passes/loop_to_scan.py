@@ -41,6 +41,8 @@ import ast
 import copy
 from typing import Any, Dict, List, NamedTuple, Optional
 
+import sympy
+
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.sdfg import nodes
@@ -322,6 +324,29 @@ class LoopToScan(ppl.Pass):
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not a keepable map
             return False
 
+    def _specialize_scan_under_stride_guard(self, parent: ControlFlowRegion, loop: LoopRegion, guard: str, sdfg: SDFG):
+        """Replace a symbolic-stride scan ``loop`` with ``if (guard) { scan } else
+        { original sequential loop }`` via :func:`specialize_loop_under_condition`.
+
+        The true-branch clone is re-matched and lifted to the ``Scan`` pipeline;
+        the else-branch clone is pinned sequential (``LoopToMap`` / a re-run of
+        this pass leave it alone). ``guard`` is the ``stride >= 1`` predicate from
+        :func:`_symbolic_stride_guard` under which the residue-class scan is valid.
+        """
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+
+        def _lift(par_loop: LoopRegion, par_region: ControlFlowRegion, _owner: SDFG):
+            par_infos = _match_all(par_loop, sdfg)
+            if par_infos and not self.lift_nested_scan:
+                par_infos = [
+                    info for info in par_infos
+                    if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, sdfg))
+                ]
+            for info in par_infos:
+                _rewrite(par_region, par_loop, info, sdfg)
+
+        specialize_loop_under_condition(loop, guard, _lift, sdfg)
+
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         # Whole-SDFG preprocess: strip frontend ``__out = __inp`` copy tasklets so the
         # matcher sees the bare ``out[i+1] = out[i] + delta[i]`` shape. Without this the
@@ -390,6 +415,11 @@ class LoopToScan(ppl.Pass):
         for loop, parent in _collect_loops(sdfg):
             if id(loop) in interchanged_loop_ids:
                 continue
+            if loop.pinned_sequential:
+                # A deliberate sequential fallback spliced in by a prior stride
+                # specialization (below); re-matching it would recurse into
+                # another if/else. Leave it as the original sequential loop.
+                continue
             infos = _match_all(loop, sdfg)
             # NESTED (vector) scan default: when the matched scan wraps a
             # data-parallel inner loop, prefer to KEEP THE MAP INSIDE -- leave
@@ -405,6 +435,18 @@ class LoopToScan(ppl.Pass):
                     if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, sdfg))
                 ]
             if infos:
+                guard = _symbolic_stride_guard(infos)
+                if guard is not None:
+                    # At least one matched scan has a symbolic stride whose sign
+                    # is unproven. The residue-class decomposition is valid only
+                    # for stride >= 1, so specialize the loop into
+                    # ``if stride >= 1: <scan pipeline> else: <sequential loop>``
+                    # rather than lift unconditionally: a violating runtime value
+                    # (stride 0 -> a degenerate in-place update) degrades to the
+                    # sequential fallback and still computes correctly.
+                    self._specialize_scan_under_stride_guard(parent, loop, guard, sdfg)
+                    count += 1
+                    continue
                 for info in infos:
                     _rewrite(parent, loop, info, sdfg)
                     count += 1
@@ -719,22 +761,31 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
             if node.data not in carrier_set:
                 return []
 
-    # Refuse when a matched carrier is also WRITTEN by a sibling block of the
-    # loop (i.e. somewhere in the loop's containing region but OUTSIDE the
-    # loop body). Such a sibling write is the seed for the scan recurrence
-    # (e.g. ``flux[i, 0] = fall[i, 0]`` immediately before the inner ``for k``
-    # prefix-scan loop, or Thomas's ``x[i, K-1] = dp[K-1]`` before the
-    # backward sweep), and the scan rewrite does not propagate that seed into
-    # the carry buffer -- the parallel result reads an uninitialised slot at
-    # iteration 0 and the values diverge from the sequential oracle. Until
-    # the rewrite captures the external seed, leave such loops sequential.
+    # A matched carrier written by a sibling block of the loop (outside the loop
+    # body but in its containing region) is the scan's SEED -- the pre-loop value
+    # ``out[iter_start + k_r, ...]`` the seed-add reads back.
+    #
+    # For a FORWARD FLAT 1-D scan (``coef == 1``, no inner/vector axis, no
+    # non-scan ``other_indices``) that seed is consumed correctly with no extra
+    # work: :func:`_emit_seed_add` reads the seed slot straight from the LIVE
+    # array after the sibling state runs, and the scan writes only
+    # ``out[iter_start + k_w + _i]`` for ``_i >= 0`` -- strictly ahead of the read
+    # slot ``iter_start + k_r`` (``k_w > k_r``), so the seed slot is never
+    # overwritten. So an in-kernel seed like ``a[0] = x[0]`` before
+    # ``for i: a[i] = a[i-1] + x[i]`` (TSVC ``fission_dep_then_indep`` /
+    # ``fission_dep_const_offset``) lifts safely.
+    #
+    # The NESTED / per-row 2-D seed shape (``flux[i, 0] = fall[i, 0]`` before the
+    # inner ``for k`` prefix scan; Thomas's ``x[i, K-1] = dp[K-1]`` backward
+    # sweep) is NOT yet seed-captured into the carry buffer, so it stays refused.
+    seed_captured = all(s.coef == 1 and s.inner_loop is None and not s.other_indices for s in matched)
     parent = loop.parent_graph
-    if parent is not None:
+    if parent is not None and not seed_captured:
         sibling_blocks = [b for b in parent.nodes() if b is not loop]
         for sb in sibling_blocks:
-            states = list(sb.all_states()) if hasattr(sb, 'all_states') else [sb]
+            states = list(sb.all_states()) if isinstance(sb, (ControlFlowRegion, LoopRegion)) else [sb]
             for st in states:
-                if not hasattr(st, 'data_nodes'):
+                if not isinstance(st, SDFGState):
                     continue
                 for node in st.data_nodes():
                     if st.in_degree(node) == 0:
@@ -2260,6 +2311,53 @@ def _iter_write_edges(state: SDFGState, name: str) -> List[Any]:
     return edges
 
 
+def _admissible_scan_stride(diff):
+    """Return the scan stride if ``diff`` (``= k_w - k_r`` in iteration order) is an
+    admissible positive stride, else ``None``.
+
+    A *constant* integer stride must be ``>= 1`` -- ``1`` is the contiguous scan,
+    ``S > 1`` the residue-class scan (TSVC ``s1221`` ``b[i] = b[i-4] + a[i]``).
+
+    A *symbolic* integer stride whose sign cannot be proven ``<= 0`` is also
+    admissible (TSVC-2.5 ``scan_strided_sym`` ``a[i] = a[i-K] + x[i]``): the
+    residue-class decomposition into ``stride`` independent prefix scans is valid
+    for any runtime value ``>= 1``, and :meth:`LoopToScan.apply_pass` guards the
+    lift with an ``if stride >= 1: scan else: sequential`` specialization for the
+    values it cannot prove. Returns an ``int`` for a constant stride and the
+    sympy expression itself for a symbolic one (the ``Scan`` libnode's ``stride``
+    property and its residue-class expansions accept both via ``sym2cpp``).
+    """
+    if diff is None or not isinstance(diff, sympy.Basic):
+        return None
+    if diff.is_Integer:
+        return int(diff) if int(diff) >= 1 else None
+    # Symbolic: admit an integer-typed stride whose sign is not provably non-positive.
+    if diff.is_integer and diff.is_nonpositive is not True:
+        return diff
+    return None
+
+
+def _symbolic_stride_guard(infos: List['_Scan']) -> Optional[str]:
+    """The ``&&``-joined ``stride >= 1`` predicate for every matched scan whose
+    stride is symbolic with a sign not provably positive, or ``None`` when all
+    strides lift unconditionally (constant, or a provably-positive symbol).
+
+    A residue-class scan is only valid for ``stride >= 1``; the returned
+    predicate is the true-branch guard of the ``if stride >= 1: scan else: seq``
+    specialization :meth:`LoopToScan._specialize_scan_under_stride_guard` builds.
+    """
+    conds: List[str] = []
+    seen = set()
+    for info in infos:
+        s = info.scan_stride
+        if isinstance(s, sympy.Basic) and not s.is_Integer and s.is_positive is not True:
+            cond = f'({symbolic.symstr(s)}) >= 1'
+            if cond not in seen:
+                seen.add(cond)
+                conds.append(cond)
+    return ' && '.join(conds) if conds else None
+
+
 def _find_scan_update_tasklet(state: SDFGState,
                               sdfg: SDFG,
                               out_name: str,
@@ -2342,14 +2440,14 @@ def _find_scan_update_tasklet(state: SDFGState,
                         diff = symbolic.simplify((k_w - k_r_cand) if write_coef == 1 else (k_r_cand - k_w))
                     except Exception:
                         diff = None
-                    if (diff is not None and getattr(diff, 'is_number', False) and getattr(diff, 'is_Integer', False)
-                            and int(diff) >= 1):
+                    stride_val = _admissible_scan_stride(diff)
+                    if stride_val is not None:
                         if carry_edge is not None:
                             ambiguous = True
                             break
                         carry_edge = e
                         carry_anchor = e.src
-                        scan_stride = int(diff)
+                        scan_stride = stride_val
                         continue
             if delta_edge is not None:
                 # Two non-carry inputs -- this isn't the scan-update tasklet.

@@ -14,7 +14,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
@@ -330,6 +330,62 @@ def test_loop_peeling_modulo_read_wraparound_knob_is_correct(prog, offset):
     got = np.zeros(8)
     on(A=got, B=B.copy(), N=8)
     assert np.allclose(got, ref)  # the OFF (no-knob) result is pre-existing-WRONG; only the peeled form is correct
+
+
+K = dace.symbol('K')
+
+
+@dace.program
+def _mod_wrap_symK(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        A[(i + K) % N] = B[i] * 2.0
+
+
+def _specialize_conditionals(sdfg):
+    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+
+
+def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
+    """A wrap-around write with a SYMBOLIC offset ``A[(i + K) % N]`` wraps at the
+    boundary ``i = N - K`` -- a symbolic index no constant-count peel can reach. The
+    ``peel_limit`` knob instead *specializes* the loop into ``if (K < N) { band split
+    } else { original modular loop }``: the true branch index-set-splits at the band
+    crossing into ``[0, N-K)`` (fold ``% N`` -> ``i + K``) and ``[N-K, N)`` (fold ->
+    ``i + K - N``), two disjoint affine writes that both map; the far half's fold is
+    sound only below the modulus, so the untouched modular loop -- correct for any
+    nonnegative offset via C's floor-mod -- is the sequential fallback for ``K >= N``.
+    No trap: a violated condition degrades to the sequential path, not an abort."""
+    off = _mod_wrap_symK.to_sdfg(simplify=True)
+    canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
+    assert _nmaps(off) == 0 and _nloops(off) == 1, 'symbolic-offset wrap must stay sequential without the knob'
+    assert not _specialize_conditionals(off), 'no specialization without the knob'
+
+    on = _mod_wrap_symK.to_sdfg(simplify=True)
+    canonicalize(on, validate=True, peel_limit=8)
+
+    # Specialized into if (K < N): parallel band-split, else: the sequential loop.
+    cbs = _specialize_conditionals(on)
+    assert len(cbs) == 1, f'expected one if/else specialization, got {len(cbs)}'
+    (cond, par_region), (else_cond, seq_region) = cbs[0].branches
+    assert cond is not None and else_cond is None
+    assert 'K < N' in cond.as_string, f'true branch must be guarded by K < N: {cond.as_string!r}'
+    assert any(isinstance(n, nodes.MapEntry) for n, _ in par_region.all_nodes_recursive()), \
+        'the K < N branch must be the band split lifted to Maps'
+    seq_loops = [r for r in seq_region.all_control_flow_regions(recursive=True)
+                 if isinstance(r, LoopRegion) and r.loop_variable]
+    assert seq_loops and all(l.pinned_sequential for l in seq_loops), \
+        'the else branch must keep the original (pinned) sequential modular loop'
+
+    # Value-exact for every offset -- including K >= N, which takes the sequential
+    # fallback and must still compute correctly (no abort).
+    for kval in (0, 1, 3, 5, 8, 12):
+        B = np.arange(8, dtype=np.float64) + 0.5
+        ref = np.zeros(8)
+        for i in range(8):
+            ref[(i + kval) % 8] = B[i] * 2.0
+        got = np.zeros(8)
+        on(A=got, B=B.copy(), N=8, K=kval)
+        assert np.allclose(got, ref), f'K={kval}'
 
 
 @dace.program

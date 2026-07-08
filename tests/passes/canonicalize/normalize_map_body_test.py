@@ -100,5 +100,64 @@ def test_all_tasklet_body_untouched():
     assert np.allclose(c, a * 2.0)
 
 
+def _sibling_nsdfg(label: str, with_tmp_conn: bool, with_tmp_array: bool):
+    """A one-state nested SDFG: reads scalar ``x`` -> writes scalar ``o``. Optionally the
+    writing tasklet's out-connector is named ``tmp`` (``with_tmp_conn``) or an inner
+    transient scalar is named ``tmp`` (``with_tmp_array``)."""
+    nsdfg = dace.SDFG(label)
+    nsdfg.add_scalar('x', dace.float64)
+    nsdfg.add_scalar('o', dace.float64)
+    st = nsdfg.add_state('st_' + label)
+    conn = 'tmp' if with_tmp_conn else 'r'
+    rd = st.add_access('x')
+    if with_tmp_array:
+        nsdfg.add_scalar('tmp', dace.float64, transient=True)
+        t = st.add_tasklet(label + '_t', {'a'}, {conn}, f'{conn} = a + 1.0')
+        mid = st.add_access('tmp')
+        st.add_edge(rd, None, t, 'a', dace.Memlet('x[0]'))
+        st.add_edge(t, conn, mid, None, dace.Memlet('tmp[0]'))
+        st.add_edge(mid, None, st.add_access('o'), None, dace.Memlet('o[0]'))
+    else:
+        t = st.add_tasklet(label + '_t', {'a'}, {conn}, f'{conn} = a + 2.0')
+        st.add_edge(rd, None, t, 'a', dace.Memlet('x[0]'))
+        st.add_edge(t, conn, st.add_access('o'), None, dace.Memlet('o[0]'))
+    return nsdfg
+
+
+def test_merge_siblings_data_vs_connector_name_collision():
+    """``_merge_siblings`` must uniquify a tail array against base's tasklet connector
+    names, not only its array names: base sibling writes through a connector ``tmp``,
+    tail sibling owns an array ``tmp`` -- merging the array in unchecked collides with the
+    connector (``'tmp' already used as ... array name``). The tail array must be renamed."""
+    sdfg = dace.SDFG('merge_conn_collision')
+    for arr in ('X', 'A', 'B'):
+        sdfg.add_array(arr, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', {'i': '0:N'})
+    # sibling A: tasklet out-connector named 'tmp'; sibling B: inner array named 'tmp'.
+    sibA = _sibling_nsdfg('sibA', with_tmp_conn=True, with_tmp_array=False)
+    sibB = _sibling_nsdfg('sibB', with_tmp_conn=False, with_tmp_array=True)
+    nA = state.add_nested_sdfg(sibA, {'x'}, {'o'})
+    nB = state.add_nested_sdfg(sibB, {'x'}, {'o'})
+    rd = state.add_read('X')
+    state.add_memlet_path(rd, me, nA, dst_conn='x', memlet=dace.Memlet('X[i]'))
+    state.add_memlet_path(rd, me, nB, dst_conn='x', memlet=dace.Memlet('X[i]'))
+    state.add_memlet_path(nA, mx, state.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(nB, mx, state.add_write('B'), src_conn='o', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) is not None, 'the two siblings should merge'
+    sdfg.validate()  # would raise the connector/array-name collision without the fix
+    merged = [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert len(merged) == 1, 'siblings merged into one nested SDFG'
+
+    n = 8
+    rng = np.random.default_rng(0)
+    X = rng.random(n)
+    A, B = np.zeros(n), np.zeros(n)
+    sdfg(X=X.copy(), A=A, B=B, N=n)
+    assert np.allclose(A, X + 2.0) and np.allclose(B, X + 1.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

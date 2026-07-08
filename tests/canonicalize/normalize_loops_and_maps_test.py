@@ -231,5 +231,53 @@ def test_many_maps_varied_steps():
     assert np.allclose(pre['B'], exp)
 
 
+@dace.program
+def _strided_and_offset_maps(A: dace.float64[64], B: dace.float64[64], C: dace.float64[64]):
+    for i in dace.map[0:64:2]:  # non-unit step -> normalized (step folded into index)
+        B[i] = A[i] * 2.0
+    for i in dace.map[3:60:1]:  # unit step, non-zero base -> LEFT ALONE (strided-only)
+        C[i] = A[i] + 1.0
+
+
+def test_normalize_strided_maps_only_touches_strided_maps():
+    """``NormalizeStridedMaps`` folds a non-unit map step into the index and
+    leaves unit-step maps -- even with a non-zero base -- untouched (unlike the
+    parent ``NormalizeLoopsAndMaps``, which also zero-bases them)."""
+    from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+    a = np.random.rand(64)
+    sdfg = _strided_and_offset_maps.to_sdfg(simplify=False)
+    ref = copy.deepcopy(sdfg)
+    pre = dict(A=a.copy(), B=np.full(64, -1.0), C=np.full(64, -1.0))
+    ref(**pre)
+
+    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
+    changed = NormalizeStridedMaps().apply_pass(sdfg, {})
+    assert changed is not None, "did not normalize the strided map"
+    sdfg.validate()
+
+    ranges = _map_ranges(sdfg)
+    assert all(str(s) == "1" for _b, _e, s in ranges), f"a non-unit map step survived: {ranges}"
+    # The unit-step non-zero-base map keeps its base (only strided maps are touched).
+    assert any(str(b) == "3" for b, _e, _s in ranges), f"a unit-step non-zero-base map was normalized: {ranges}"
+
+    post = dict(A=a.copy(), B=np.full(64, -1.0), C=np.full(64, -1.0))
+    sdfg(**post)
+    assert np.allclose(post['B'], pre['B']) and np.allclose(post['C'], pre['C'])
+
+
+def test_normalize_strided_maps_leaves_loops_untouched():
+    """``NormalizeStridedMaps`` is map-only: a strided ``LoopRegion`` counter is
+    left as-is (only maps are normalized)."""
+    from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+    sdfg = loop_offset_stride.to_sdfg(simplify=False)  # a strided for-loop, no maps
+    changed = NormalizeStridedMaps().apply_pass(sdfg, {})
+    assert changed is None, "strided LoopRegion was wrongly normalized by the map-only pass"
+    for cfg in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(cfg, LoopRegion):
+            assert loop_analysis.get_loop_stride(cfg) != 1 or loop_analysis.get_init_assignment(cfg) != 0, \
+                "loop counter was normalized"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

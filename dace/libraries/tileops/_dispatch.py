@@ -42,11 +42,12 @@ _ISA_TO_IMPL = {
 # ``pure`` loop expansion even at K=1 (a ``std::<fn>`` call the compiler's vector-math
 # library / libmvec captures). These are the elemental math functions the frontend
 # emits as bare calls: binary ``atan2`` / ``hypot`` / ``fmod`` and the extended trig
-# ``tan`` / ``asin`` / ``acos`` / ``atan`` / ``sinh`` / ``cosh``; ``pow`` / ``**`` for a
-# true runtime exponent likewise has no ISA char. (``sin`` / ``cos`` / ``exp`` / ``log``
-# / ``sqrt`` / ``tanh`` DO carry ISA char codes and stay on the intrinsic path.)
+# ``tan`` / ``asin`` / ``acos`` / ``atan`` / ``sinh`` / ``cosh``; ``pow`` / ``ipow`` / ``**``
+# for a true runtime exponent likewise has no ISA char (``ipow`` is the exact
+# integer-exponent repeated-multiply ``dace::math::ipow``). (``sin`` / ``cos`` / ``exp`` /
+# ``log`` / ``sqrt`` / ``tanh`` DO carry ISA char codes and stay on the intrinsic path.)
 _PURE_ONLY_MATH_OPS = frozenset(
-    {"atan2", "hypot", "fmod", "tan", "asin", "acos", "atan", "sinh", "cosh", "pow", "**"})
+    {"atan2", "hypot", "fmod", "tan", "asin", "acos", "atan", "sinh", "cosh", "pow", "ipow", "**"})
 
 
 @functools.lru_cache(maxsize=1)

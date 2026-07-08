@@ -448,3 +448,82 @@ def test_inplace_same_array_read_and_write_no_double_offset():
     copy.deepcopy(_inplace_tile_rmw.to_sdfg(simplify=True))(a=a_ref, b=b_ref, N=n, M=m)
     sdfg(a=a, b=b, N=n, M=m)
     assert np.allclose(a, a_ref), f"max diff: {np.abs(a - a_ref).max():.3e}"
+
+
+# ---------------------------------------------------------------------------
+# Gather / scatter index-array threading (spcl/dace#2429). A data-dependent
+# ``A[B[i]]`` index array ``B`` is referenced ONLY inside another memlet's
+# subset, so the vectorizer's body-NSDFG nest never makes it a boundary
+# connector. ``ExpandNestedSDFGInputs`` must thread it into the body:
+#   * case 1 -- a collapsed scalar-connector index (``dst[__tmp]``, from
+#     ``dst[idx[i]] = ...``) is re-subscripted to the outer array before the
+#     connector rename, else it collapses to a loop-invariant ``dst[idx]``;
+#   * case 2 -- a direct-array index (``src[ip[i]]``, ``ip`` never a connector)
+#     is added as a full-array read boundary, else the index dangles.
+# ---------------------------------------------------------------------------
+@dace.program
+def _gather_indirect(src: dace.float64[N], ip: dace.int64[N], dst: dace.float64[N]):
+    for i in dace.map[0:N]:
+        dst[i] = src[ip[i]]
+
+
+@dace.program
+def _scatter_indirect(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], scale: dace.float64):
+    for i in dace.map[0:N]:
+        dst[idx[i]] = src[i] * scale
+
+
+def _nest_then_expand(sdfg):
+    """Reproduce the vectorizer's body-NSDFG boundary (Nest + Expand) -- the point
+    at which a gather/scatter index array must be threaded into the body."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
+    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+
+def _index_reached_a_body(sdfg, index_name):
+    """Whether ``index_name`` is a readable inner array of some body NSDFG."""
+    return any(index_name in n.sdfg.arrays for n, _ in sdfg.all_nodes_recursive()
+               if isinstance(n, nodes.NestedSDFG))
+
+
+def test_threads_direct_array_gather_index():
+    """A direct-array gather index ``src[ip[i]]`` (``ip`` is never a boundary
+    connector) must be threaded into the body NSDFG as a full-array read, else
+    the indirect read dangles and cannot codegen. Regression for the case-2 arm
+    of spcl/dace#2429."""
+    sdfg = _gather_indirect.to_sdfg(simplify=True)
+    _nest_then_expand(sdfg)
+    assert _index_reached_a_body(sdfg, "ip"), "gather index 'ip' was not threaded into a body NSDFG"
+    n = 32
+    rng = np.random.default_rng(0)
+    src, ip, dst = rng.standard_normal(n), rng.permutation(n).astype(np.int64), np.zeros(n)
+    sdfg(src=src.copy(), ip=ip.copy(), dst=dst, N=n)
+    assert np.allclose(dst, src[ip]), f"gather diverged, max|diff|={np.abs(dst - src[ip]).max():.3e}"
+
+
+def test_threads_scalar_connector_scatter_index():
+    """A scatter whose index is hoisted into a collapsed scalar connector
+    ``dst[__tmp]`` (from ``dst[idx[i]] = src[i]*scale``) must keep its
+    per-iteration subscript -- re-subscripted to the outer ``idx`` before the
+    boundary rename -- else it collapses to a loop-invariant ``dst[idx]`` (every
+    lane writes one cell). Regression for the case-1 arm of spcl/dace#2429."""
+    sdfg = _scatter_indirect.to_sdfg(simplify=True)
+    _nest_then_expand(sdfg)
+    assert _index_reached_a_body(sdfg, "idx"), "scatter index 'idx' was not threaded into a body NSDFG"
+    # The index must never survive as a BARE (loop-invariant) subset in a body.
+    for nsdfg, _ in [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]:
+        for st in nsdfg.sdfg.all_states():
+            for e in st.edges():
+                if e.data is not None and e.data.subset is not None:
+                    assert str(e.data.subset).strip() != "idx", "scatter index collapsed to a bare loop-invariant 'idx'"
+    n = 32
+    rng = np.random.default_rng(1)
+    src, idx, dst, scale = rng.standard_normal(n), rng.permutation(n).astype(np.int64), np.zeros(n), 2.5
+    sdfg(src=src.copy(), idx=idx.copy(), dst=dst, scale=scale, N=n)
+    ref = np.zeros(n)
+    ref[idx] = src * scale
+    assert np.allclose(dst, ref), f"scatter diverged, max|diff|={np.abs(dst - ref).max():.3e}"

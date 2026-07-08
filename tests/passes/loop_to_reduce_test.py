@@ -57,12 +57,11 @@ def _count_wcr_scalar_targets(sdfg: dace.SDFG, expected_wcr: str) -> int:
 
 
 def _expected_loop_count_after_lift(prefer: str, libnode_count: int, wcr_scalar_count: int) -> int:
-    """Mode-aware expected ``_count_loops`` after the pass runs.
+    """Mode-aware expected ``_count_loops`` after the pass.
 
-    The ``reduce-libnode`` emit removes the loop entirely (replaced by a
-    ``Reduce`` node); the ``wcr-scalar`` emit replaces it with a fresh
-    LoopRegion of equivalent extent. Tests pass the value expected for each
-    mode; the helper returns whichever applies.
+    ``reduce-libnode`` removes the loop (replaced by a ``Reduce`` node); ``wcr-scalar``
+    replaces it with a fresh LoopRegion of equal extent. Tests pass the value for each
+    mode; helper returns whichever applies.
     """
     return libnode_count if prefer == 'reduce-libnode' else wcr_scalar_count
 
@@ -177,14 +176,11 @@ def _frontend_per_row_inner_reduction(acc: dace.float64[N], B: dace.float64[N, M
 
 
 def test_per_row_inner_reduction_multidim_is_lifted(prefer):
-    """Per-row inner reduction ``acc[jl] += B[jl, jm]`` over ``jm`` (the CloudSC
-    ZQPRETOT shape: ``for jl: for jm: zqpretot[jl] += zpfplsx[jl, jm]``).
-
-    The reduced array ``B[jl, jm]`` is 2-D, so the lift must expand ONLY the
-    reduction axis ``jm`` -- ``B[jl, 0:M]`` -- and keep the outer ``jl`` index
-    as-is. Regression for ``_expand_over_loop`` previously rejecting any subset
-    with a dimension independent of the reduction axis (it computed
-    ``jl - jm`` for the ``jl`` dimension and bailed)."""
+    """Per-row inner reduction ``acc[jl] += B[jl, jm]`` over ``jm`` (CloudSC ZQPRETOT:
+    ``for jl: for jm: zqpretot[jl] += zpfplsx[jl, jm]``). ``B`` is 2-D, so the lift
+    expands ONLY the reduction axis ``jm`` (``B[jl, 0:M]``) and keeps ``jl`` as-is.
+    Regression: ``_expand_over_loop`` used to reject any subset with a dim independent
+    of the reduction axis (computed ``jl - jm`` for ``jl`` and bailed)."""
     import numpy as np
     sdfg = _frontend_per_row_inner_reduction.to_sdfg(simplify=True)
     sdfg.validate()
@@ -502,15 +498,13 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
 
 
 # ---------------------------------------------------------------------------
-# Reduction patterns surfaced by the TSVC corpus (see
+# Reduction patterns from the TSVC corpus (see
 # ``tests/corpus/parallelization_report.md`` group B).
 #
-# Each test mirrors a real TSVC kernel body, builds the simplified SDFG and
-# applies the same prelude canonicalize runs before ``LoopToReduce``
-# (``TrivialTaskletElimination``) so the entry shape matches what the pass
-# sees in the pipeline. Patterns the pass cannot detect yet are ``xfail``
-# with a TODO reference -- when the pass is extended they should flip to
-# passing without test edits.
+# Each test mirrors a real TSVC kernel body and runs the same prelude
+# (``TrivialTaskletElimination``) before ``LoopToReduce`` so the entry shape matches
+# the pipeline. Patterns the pass can't detect yet are ``xfail`` with a TODO -> flip to
+# passing without test edits when the pass is extended.
 # ---------------------------------------------------------------------------
 
 import pytest
@@ -566,12 +560,10 @@ def _array_slot_dot_product(a: dace.float64[N], b: dace.float64[N], dot: dace.fl
 def test_array_slot_dot_product_is_lifted(prefer):
     """TSVC s313/vdotr: ``dot: float64[N]; for i: dot[0] += a[i] * b[i]``.
 
-    The body has two tasklets (compute multiply then accumulate-add); the
-    ``Reduce`` libnode form cannot wrap arbitrary in-body expressions, so
-    only the ``wcr-scalar`` emit can express this shape. In
-    ``reduce-libnode`` mode the single-tasklet matcher refuses
-    (``_extract`` returns ``None``) and the test pins that refusal as
-    the ``Reduce`` libnode's domain boundary.
+    Body has two tasklets (multiply then accumulate-add); the ``Reduce`` libnode can't
+    wrap arbitrary in-body expressions, so only ``wcr-scalar`` expresses this. In
+    ``reduce-libnode`` the single-tasklet matcher refuses (``_extract`` -> ``None``);
+    the test pins that as the libnode's domain boundary.
     """
     sdfg = _array_slot_dot_product.to_sdfg(simplify=True)
     sdfg.validate()
@@ -622,12 +614,11 @@ def _branched_max(a: dace.float64[N], result: dace.float64[N]):
 def test_branched_max_is_lifted(prefer):
     """TSVC s314: ``for i: if a[i] > x: x = a[i]``.
 
-    The frontend lowers the masked update into a loop body of
-    ``[ConditionalBlock, cond_prep_state, post_state]`` joined by iedges
-    ``{arr_sym: a[i]}`` and ``{guard_sym: arr_sym > x}``. ``max`` is
-    idempotent so the conditional is redundant at the WCR level
-    (``acc = max(acc, a[i])`` matches the masked semantics whether the
-    guard fires or not). Both emit modes produce the right result.
+    Frontend lowers the masked update into ``[ConditionalBlock, cond_prep_state,
+    post_state]`` joined by iedges ``{arr_sym: a[i]}`` and ``{guard_sym: arr_sym > x}``.
+    ``max`` is idempotent so the conditional is redundant at the WCR level
+    (``acc = max(acc, a[i])`` matches the masked semantics whether the guard fires or
+    not). Both emit modes are correct.
     """
     sdfg = _branched_max.to_sdfg(simplify=True)
     sdfg.validate()
@@ -666,14 +657,12 @@ def _gather_sum_reduction(a: dace.float64[N], b: dace.float64[N], ip: dace.int32
 def test_gather_sum_reduction_is_lifted(prefer):
     """TSVC s4115: ``s += a[i] * b[ip[i]]`` -- gather + sum.
 
-    Multi-state body: the frontend lowers the gather through an interstate
-    edge ``{ip_index: ip[i]}`` between two body states. ``reduce-libnode``
-    mode refuses on body-shape grounds (the libnode form cannot express the
-    in-body gather indirection). ``wcr-scalar`` lifts via the dedicated
-    multi-state-chain matcher: the iedge stays (the gather depends on it),
-    the compute-then-accumulate chain in the second state is rewritten in
-    place to drop the carry input and add WCR on the privatised scalar, and
-    init/writeback states seed/drain the original ``s``.
+    Multi-state body: frontend lowers the gather through an iedge ``{ip_index: ip[i]}``
+    between two body states. ``reduce-libnode`` refuses on body-shape grounds (can't
+    express the in-body gather). ``wcr-scalar`` lifts via the multi-state-chain matcher:
+    the iedge stays (the gather depends on it), the compute-then-accumulate chain in the
+    second state is rewritten to drop the carry input + add WCR on the privatised scalar,
+    and init/writeback states seed/drain the original ``s``.
     """
     sdfg = _gather_sum_reduction.to_sdfg(simplify=True)
     sdfg.validate()
@@ -688,16 +677,14 @@ def test_gather_sum_reduction_is_lifted(prefer):
 
 
 def test_gemm_innermost_loop_not_lifted_to_reduce(prefer):
-    """A textbook GEMM ``C[i, j] += A[i, k] * B[k, j]`` has THREE data reads in
-    the body (``C[i, j]``, ``A[i, k]``, ``B[k, j]``), TWO of which depend on
-    the innermost loop variable ``k``. ``LoopToReduce``'s matcher only handles
-    single-binary-op tasklets with exactly 2 data inputs and AT MOST ONE
-    input subset using the loop variable -- the second loop-var-dependent
-    input (``B[k, j]``) trips the "multiple arrays" early-out and the loop is
-    refused. The k-loop in GEMM is semantically a 1-D reduction per
-    ``(i, j)``, but lifting it loses the multi-array structure that
-    GEMM-as-a-whole has; downstream library matching or tiling is the right
-    handler. This test pins the refusal so the matcher does not get widened."""
+    """Textbook GEMM ``C[i, j] += A[i, k] * B[k, j]`` has THREE data reads
+    (``C[i, j]``, ``A[i, k]``, ``B[k, j]``), TWO depending on the inner var ``k``.
+    ``LoopToReduce``'s matcher handles single-binary-op tasklets with exactly 2 data
+    inputs and AT MOST ONE input subset using the loop var -- ``B[k, j]`` trips the
+    "multiple arrays" early-out and the loop is refused. The k-loop is semantically a
+    1-D reduction per ``(i, j)``, but lifting loses GEMM's multi-array structure;
+    downstream library matching/tiling is the right handler. Pins the refusal so the
+    matcher isn't widened."""
     N, M, K = (dace.symbol(s) for s in ['NN', 'MM', 'KK'])
 
     @dace.program
@@ -715,13 +702,11 @@ def test_gemm_innermost_loop_not_lifted_to_reduce(prefer):
         # after the frontend splits ``Mul`` and ``Add``). No libnode is emitted.
         assert lifted == 0
     else:
-        # ``wcr-scalar`` mode: the multi-tasklet matcher lifts the k-loop into
-        # ``init + LoopRegion(WCR-on-scalar body) + writeback``. Downstream
-        # ``LoopToMap`` produces the canonical ``Map + WCR-on-scalar`` shape
-        # ``LiftEinsum`` consumes to detect the BLAS contraction. The
-        # GEMM-vs-scalar-reduction classification is intentionally NOT
-        # LoopToReduce's job -- LiftEinsum runs the parent-Map check
-        # separately. Pinning the lift here documents that contract.
+        # ``wcr-scalar``: the multi-tasklet matcher lifts the k-loop into
+        # ``init + LoopRegion(WCR-on-scalar body) + writeback``. Downstream ``LoopToMap``
+        # produces the ``Map + WCR-on-scalar`` shape ``LiftEinsum`` consumes to detect the
+        # BLAS contraction. GEMM-vs-scalar-reduction classification is LiftEinsum's job
+        # (separate parent-Map check), not LoopToReduce's. Pins the lift documenting that.
         assert lifted == 1
 
 
@@ -751,11 +736,9 @@ def test_matvec_innermost_loop_not_lifted_to_reduce(prefer):
 
 
 def test_outer_axis_reduction_per_column_is_lifted(prefer):
-    """Genuine 1-D reduction along ``i`` with a single loop-var-dependent
-    read: ``c[j] += A[i, j]``. Per fixed outer-loop ``j``, this is a
-    standard 1-D fold over ``i`` of ``A[:, j]`` -- exactly what
-    ``LoopToReduce`` is designed to handle. Pinning this ensures the
-    refusal in ``test_gemm_innermost_loop_not_lifted_to_reduce`` doesn't
+    """Genuine 1-D reduction along ``i`` with a single loop-var-dependent read:
+    ``c[j] += A[i, j]``. Per fixed ``j``, a standard 1-D fold over ``i`` of ``A[:, j]``
+    -- exactly what ``LoopToReduce`` handles. Pins that the GEMM-test refusal doesn't
     over-tighten and reject legitimate 1-D outer-axis reductions."""
     N, M = (dace.symbol(s) for s in ['NN', 'MM'])
 
@@ -785,13 +768,10 @@ def _masked_compound_gather(a: dace.float64[N], idx: dace.int32[N], cond: dace.i
 
 
 def test_masked_compound_gather_is_lifted(prefer):
-    """``for i: if cond[i]: s += a[idx[i]]`` — a non-idempotent (``+``)
-    masked reduction with an in-body gather.
-
-    ``reduce-libnode`` mode refuses: the libnode shape cannot express the
-    in-body mask or the gather indirection. ``wcr-scalar`` lifts via the
-    chain matcher; the conditional sits inside the privatised body and the
-    WCR write fires only when the guard is true.
+    """``for i: if cond[i]: s += a[idx[i]]`` -- non-idempotent (``+``) masked reduction
+    with an in-body gather. ``reduce-libnode`` refuses (can't express the in-body mask or
+    gather). ``wcr-scalar`` lifts via the chain matcher: the conditional sits inside the
+    privatised body and the WCR write fires only when the guard is true.
     """
     import numpy as np
     sdfg = _masked_compound_gather.to_sdfg(simplify=True)
@@ -831,13 +811,10 @@ def test_interleaved_two_accumulator_partial_lift(prefer):
     """Single loop with two independent accumulators
     (``evens += A[2*i]; odds += A[2*i+1]``).
 
-    LoopToReduce's matchers are single-accumulator by design (the
-    canonical reduction shape is one fold target). The matcher lifts at
-    most one of the two; the other stays in the sequential body.
-    Numerical correctness is preserved because the partial privatisation
-    is semantics-preserving — both accumulators end up with the right
-    value. Parallelising both requires ``LoopFission`` to split the
-    interleaved loop into two single-accumulator loops first (covered by
+    LoopToReduce's matchers are single-accumulator by design; it lifts at most one, the
+    other stays sequential. Correctness holds (partial privatisation is
+    semantics-preserving). Parallelising both needs ``LoopFission`` to split into two
+    single-accumulator loops first (see
     ``test_interleaved_two_accumulator_lifts_both_after_loop_fission``).
     """
     import numpy as np
@@ -863,14 +840,11 @@ def test_interleaved_two_accumulator_partial_lift(prefer):
 
 def test_interleaved_two_accumulator_lifts_both_after_loop_fission():
     """``LoopFission`` splits the interleaved 2-accumulator loop into two
-    single-accumulator loops; ``LoopToReduce`` then handles each
-    independently.
+    single-accumulator loops; ``LoopToReduce`` then handles each independently.
 
-    Canonicalization round-trip: this is the user-decided pipeline order
-    for the interleaved case (interleaved -> fission -> reduce). The lift
-    target shape after the fission is two parallel WCR-scalar loops the
-    downstream ``LoopToMap`` can independently parallelise into Maps
-    with ``reduction(+:_priv_X)`` clauses.
+    Pipeline order for the interleaved case: interleaved -> fission -> reduce. Post-fission
+    the lift target is two parallel WCR-scalar loops that downstream ``LoopToMap`` maps
+    independently with ``reduction(+:_priv_X)`` clauses.
     """
     import numpy as np
     from dace.transformation.passes.loop_fission import LoopFission
@@ -894,6 +868,41 @@ def test_interleaved_two_accumulator_lifts_both_after_loop_fission():
     assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
 
 
+def test_interleaved_dual_strided_lifts_to_two_reduce_nodes():
+    """Interleaved dual strided reduction ``evens += A[2*i]; odds += A[2*i+1]``, split by
+    ``LoopFission`` into two single-accumulator loops, lifts under ``reduce-libnode`` to
+    TWO ``Reduce`` library nodes, each reading a STRIDE-2 subset (``A[0:N:2]`` /
+    ``A[1:N:2]``). "Split statements, then detect both as strided reductions": the read
+    index ``coeff*i + off`` folds into the reduce subset's step, which the ``Reduce``
+    expansions honor.
+    """
+    import numpy as np
+    from dace.transformation.passes.loop_fission import LoopFission
+    from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+    sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
+    sdfg.validate()
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    assert LoopFission().apply_pass(sdfg, {}), 'LoopFission must split the interleaved 2-accumulator loop'
+    lifted = LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {})
+    assert lifted == 2, f'both fissioned strided loops must lift to Reduce nodes; got {lifted}'
+    sdfg.validate()
+
+    # Two Reduce library nodes, each over a stride-2 input subset.
+    reduces = [(n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert len(reduces) == 2, f'expected 2 Reduce nodes, got {len(reduces)}'
+    steps = sorted(str(rng[2]) for red, st in reduces for rng in st.in_edges(red)[0].data.subset.ndrange())
+    assert steps == ['2', '2'], f'each Reduce must read a stride-2 subset; got {steps}'
+
+    n = 16
+    rng = np.random.default_rng(0)
+    A_arr = rng.standard_normal(n)
+    evens_out = np.zeros(1)
+    odds_out = np.zeros(1)
+    sdfg(A=A_arr.copy(), evens_out=evens_out, odds_out=odds_out, N=n)
+    assert np.isclose(evens_out[0], float(A_arr[::2].sum()))
+    assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
+
+
 # ---- split two strided loops (independent reductions) -----------------------
 
 
@@ -911,16 +920,12 @@ def _split_two_strided(A: dace.float64[N], evens_out: dace.float64[1], odds_out:
 
 
 def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
-    """TSVC s317 ``q[0] *= 0.99`` is NOT a LoopToReduce target -- it is an
-    induction variable closed form ``q[0] *= 0.99**N``, handled by
-    ``InductionVariableSubstitution`` (which the canonicalize pipeline
-    runs BEFORE LoopToReduce). This test documents the contract: after
-    ``TTE + IVS`` the loop is gone, so a subsequent LoopToReduce sees
-    nothing to lift -- which is the right outcome.
-
-    The ``test_array_slot_const_product_is_lifted`` xfails above pin the
-    inverse: LoopToReduce in isolation must NOT recognise the IV shape,
-    so the path through IVS is the only correct one.
+    """TSVC s317 ``q[0] *= 0.99`` is NOT a LoopToReduce target -- it's an
+    induction-variable closed form ``q[0] *= 0.99**N`` handled by
+    ``InductionVariableSubstitution`` (run BEFORE LoopToReduce in the pipeline). After
+    ``TTE + IVS`` the loop is gone, so a subsequent LoopToReduce has nothing to lift. The
+    ``test_array_slot_const_product_is_lifted`` xfails pin the inverse: LoopToReduce alone
+    must NOT recognise the IV shape.
     """
     import numpy as np
     from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution)
@@ -947,20 +952,17 @@ def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
 
 
 def test_split_two_strided_loops_both_lift(prefer):
-    """Two strided reductions (``evens += A[2*i]``, ``odds += A[2*i+1]``)
-    in two separate loops. Each is a single-accumulator loop with a
-    stride-2 array access. ``wcr-scalar`` lifts both; ``reduce-libnode``
-    refuses because the strided per-iter subset is not the canonical
-    full-array reduction shape the libnode targets.
+    """Two strided reductions (``evens += A[2*i]``, ``odds += A[2*i+1]``) in two separate
+    loops. Each is single-accumulator with stride-2 access; BOTH modes lift both. The read
+    index ``coeff*i + off`` folds into a strided reduce subset (``A[0:N:2]`` / ``A[1:N:2]``):
+    ``reduce-libnode`` consumes it directly (pure/OpenMP expansions honor the subset step),
+    ``wcr-scalar`` keeps a per-iter ``A[2*i]`` WCR write.
     """
     import numpy as np
     sdfg = _split_two_strided.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
-        assert lifted == 0
-    else:
-        assert lifted == 2, f'wcr-scalar must lift both strided loops; got {lifted}'
+    assert lifted == 2, f'{prefer} must lift both strided loops; got {lifted}'
     sdfg.validate()
     n = 16
     rng = np.random.default_rng(0)
@@ -973,21 +975,16 @@ def test_split_two_strided_loops_both_lift(prefer):
 
 
 def test_wcr_scalar_refuses_scan_shape_recurrence():
-    """``LoopToReduce(prefer='wcr-scalar')`` must NOT lift a loop-carried
-    recurrence (``b[i] = b[i+1] + a[i]``) to a WCR write, even after
-    ``LoopToScan`` has rewritten the body into a scan shape with a
-    similar-looking ``out = in_carry + in_value`` tasklet.
+    """``LoopToReduce(prefer='wcr-scalar')`` must NOT lift a loop-carried recurrence
+    (``b[i] = b[i+1] + a[i]``) to a WCR write, even after ``LoopToScan`` rewrote the body
+    into a scan shape with a similar ``out = in_carry + in_value`` tasklet.
 
-    Regression: a previous version called ``AugAssignToWCR`` with
-    ``permissive=True`` from inside ``LoopToReduce.apply_pass`` to catch
-    multi-tasklet ``compute then accumulate`` shapes (s313/s4115). The
-    permissive matcher cannot tell a scan from a reduction and rewrote the
-    recurrence body into a WCR write; the downstream parallelisation then
-    lost the carried dependence and produced an off-by-one-iteration
-    answer (``b[0]`` = ``sum(a)`` instead of ``1.0 + sum(a)``).
-
-    Pinning this test means the matcher stays strict
-    (``permissive=False``) for the inner ``AugAssignToWCR`` step.
+    Regression: a previous version called ``AugAssignToWCR(permissive=True)`` from inside
+    ``LoopToReduce.apply_pass`` to catch multi-tasklet compute-then-accumulate shapes
+    (s313/s4115). The permissive matcher couldn't tell a scan from a reduction and
+    rewrote the recurrence into a WCR write; downstream parallelisation then lost the
+    carried dependence -> off-by-one answer (``b[0]`` = ``sum(a)`` not ``1.0 + sum(a)``).
+    Pins the matcher strict (``permissive=False``) for the inner ``AugAssignToWCR``.
     """
     import numpy as np
     from dace.transformation.passes.canonicalize.pipeline import _build_stages

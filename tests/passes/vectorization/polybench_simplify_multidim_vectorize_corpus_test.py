@@ -1,20 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""polybench corpus: base(simplify+loop2map+mapfusion) then multi-dim tile-op
-vectorize, value-preserving.
+"""polybench corpus: base(simplify+loop2map+mapfusion) then multi-dim tile-op vectorize, value-preserving.
 
-polybench ships no numpy oracle (the original suite validated against a C dump),
-so correctness is *value-preservation*: every phase is compared against the
-untransformed baseline SDFG run on identical inputs (see
-:mod:`tests.corpus.polybench`). A fresh SDFG is taken through the shared base
-pipeline; the base SDFG + inputs + baseline reference are memoized per kernel and
-each phase deep-copies the base:
+polybench ships no numpy oracle (orig suite validated vs C dump), so correctness = value-preservation: each phase
+compared against the untransformed baseline SDFG on identical inputs. Fresh SDFG through the shared base pipeline;
+base SDFG + inputs + baseline reference memoized per kernel; each phase deep-copies the base:
 
-* ``base``          -- base pipeline only (must be value-preserving).
-* ``<isa>_<mode>``  -- base then :class:`VectorizeCPUMultiDim` at the config's
-  ISA / branch mode (all ``scalar_postamble`` remainder; widths per-kernel).
+* ``base``          -- base pipeline only (value-preserving).
+* ``<isa>_<mode>``  -- base then :class:`VectorizeCPUMultiDim` at config ISA / branch mode (``scalar_postamble``
+  remainder; widths per-kernel).
 
-Known gaps are marked ``xfail`` via ``_XFAIL[(kernel, phase)]`` with a tracking
-reason; these are removed as each root cause is fixed.
+Known gaps: ``xfail`` via ``_XFAIL[(kernel, phase)]`` with tracking reason; removed as fixed.
 """
 import os
 
@@ -32,8 +27,7 @@ from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipe
 
 _KERNELS = [k.name for k in polybench.collect()]
 
-# Known gaps keyed by (kernel, phase) -> tracking reason; removed as each is
-# fixed. Populated from the corpus sweep (see project memory).
+# Known gaps keyed by (kernel, phase) -> tracking reason; removed as fixed.
 _XFAIL: dict = {}
 
 _BASE: dict = {}
@@ -58,6 +52,8 @@ def test_polybench_corpus(name, phase):
         pytest.xfail(_XFAIL[(name, phase)])
     base, call_arrays, psize, ref, widths = _base(name)
     sdfg = copy.deepcopy(base)
+    # Per-(kernel, phase) name: concurrent xdist builds must not share .dacecache (race -> spurious CompilationError).
+    sdfg.name = f"{sdfg.name}_{phase}"
     if phase != "base":
         make_pass(widths, phase).apply_pass(sdfg, {})
     sdfg.validate()

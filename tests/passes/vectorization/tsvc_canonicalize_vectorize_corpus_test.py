@@ -97,30 +97,20 @@ _MULTIDIM_XFAIL: dict = {
     's118_d_single': 'numerical: vectorized output diverges from numpy reference',
     's1221_d_single': 'numerical: vectorized output diverges from numpy reference',
     's122_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's123_d_single': 'codegen gap: BranchNormalization IF-arm carries an unsupported body',
     's124_d_single': 'numerical: vectorized output diverges from numpy reference',
     's128_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's141_d_single': 'tile gap: could not build a tile-op gather index',
-    's172_d_single': 'tile gap: MarkTileDims ineligible map (non-uniform/illegal tile dims)',
-    's175_d_single': 'tile gap: MarkTileDims ineligible map (non-uniform/illegal tile dims)',
-    's2101_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
-    's2275_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
     's232_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's272_d_single': 'codegen gap: missing symbol on nested SDFG',
     # scalar-cond ``tile_unop<bool,'!'>`` scalar-output codegen now fixed (compiles);
     # residual is a numerical divergence on ``a`` (uninitialized ``a_index`` gather /
     # masked predicated-write), a separate gap.
     's274_d_single': 'numerical: vectorized output diverges from numpy reference (masked predicated write / gather)',
     's3111_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's331_d_single': 'numerical: vectorized output diverges from numpy reference',
     's332_d_single': 'Group B (loop2map): race condition on interstate edge (recurrence over-parallelized)',
     's341_d_single': 'numerical: vectorized output diverges from numpy reference',
     's342_d_single': 'numerical: vectorized output diverges from numpy reference',
     's343_d_single': 'numerical: vectorized output diverges from numpy reference',
     's4115_d_single': 'codegen gap: augassign_binop output-kind rule violated',
     's4116_d_single': 'codegen gap: augassign_binop output-kind rule violated',
-    's481_d_single': 'numerical: find-first exit index off-by-~1 (scalar-store+ITE-tiling fixed; cause TBD)',
-    's482_d_single': 'numerical: find-first exit index off-by-~1 (scalar-store+ITE-tiling fixed; cause TBD)',
 }
 
 

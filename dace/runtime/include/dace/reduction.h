@@ -332,6 +332,57 @@ struct _wcr_fixed<ReductionType::Max, double> {
     return ::max(a, b);
   }
 };
+
+// half has no CUDA atomicMin/Max overload → 16-bit CAS (smallest atomic word, sm_70+),
+// mirroring the float/double CAS specializations. Host + pre-sm_70: promote to float
+// (half min/max exact through float → bit-identical either way).
+template <>
+struct _wcr_fixed<ReductionType::Min, half> {
+  static DACE_HDFI half reduce_atomic(half *ptr, const half &value) {
+#if defined(DACE_USE_GPU_ATOMICS) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+    unsigned short int *iptr = (unsigned short int *)ptr;
+    unsigned short int old = *iptr, assumed;
+    do {
+      assumed = old;
+      old = atomicCAS(iptr, assumed,
+                      __half_as_ushort(half(::min(float(__ushort_as_half(assumed)), float(value)))));
+    } while (assumed != old);
+    return __ushort_as_half(old);
+#else
+    half old = *ptr;
+    *ptr = half(::min(float(old), float(value)));
+    return old;
+#endif
+  }
+
+  DACE_HDFI half operator()(const half &a, const half &b) const {
+    return half(::min(float(a), float(b)));
+  }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Max, half> {
+  static DACE_HDFI half reduce_atomic(half *ptr, const half &value) {
+#if defined(DACE_USE_GPU_ATOMICS) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+    unsigned short int *iptr = (unsigned short int *)ptr;
+    unsigned short int old = *iptr, assumed;
+    do {
+      assumed = old;
+      old = atomicCAS(iptr, assumed,
+                      __half_as_ushort(half(::max(float(__ushort_as_half(assumed)), float(value)))));
+    } while (assumed != old);
+    return __ushort_as_half(old);
+#else
+    half old = *ptr;
+    *ptr = half(::max(float(old), float(value)));
+    return old;
+#endif
+  }
+
+  DACE_HDFI half operator()(const half &a, const half &b) const {
+    return half(::max(float(a), float(b)));
+  }
+};
 // End of specialization
 
 template <typename T>

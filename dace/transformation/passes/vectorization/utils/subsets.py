@@ -3,15 +3,13 @@
 
 Three rough sub-families:
 
-- Pattern replace (``repl_subset``, ``repl_subset_to_use_*_offset``):
-  symbolic substitution on a single subset.
-- Memlet rewrite (``replace_memlet_expression``,
-  ``expand_memlet_expression``, ``replace_all_access_subsets``): walk edges
-  and replace the payload in-place.
-- Post-collapse (``squeeze_memlets_of_packed_arrays``,
-  ``use_previous_subsets``, ``try_clean_other_subset_going_out_from_map_entry``):
-  fix up memlets after upstream passes changed the descriptor shape or
-  surrounding map.
+- Pattern replace (``repl_subset``, ``repl_subset_to_use_*_offset``): symbolic substitution on a
+  single subset.
+- Memlet rewrite (``replace_memlet_expression``, ``expand_memlet_expression``,
+  ``replace_all_access_subsets``): walk edges, replace the payload in-place.
+- Post-collapse (``squeeze_memlets_of_packed_arrays``, ``use_previous_subsets``,
+  ``try_clean_other_subset_going_out_from_map_entry``): fix up memlets after upstream passes changed
+  the descriptor shape or surrounding map.
 """
 import copy
 from typing import Dict, Iterable, Optional, Set, Union
@@ -28,24 +26,21 @@ from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import
 
 
 def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG):
-    """Return the (src_data_name, src_subset, dst_data_name, dst_subset) tuple
-    for a memlet edge with both endpoints inferred.
+    """``(src_data_name, src_subset, dst_data_name, dst_subset)`` for a memlet edge, both endpoints
+    inferred.
 
-    Per user direction 2026-06-10 (design 3.7 + 3.8.3): classifiers and
-    validators should ALWAYS know both real array names + subsets, not just the
-    one matching ``memlet.data``. This helper centralises the "which side is
-    which" reasoning so call sites don't reimplement the lookup.
+    Per user direction 2026-06-10 (design 3.7 + 3.8.3): classifiers and validators should ALWAYS
+    know both real array names + subsets, not just the one matching ``memlet.data``. Centralises the
+    "which side is which" reasoning so call sites don't reimplement the lookup.
 
-    Returns ``None`` for ``data_name`` when the corresponding endpoint is not
-    an :class:`AccessNode` (e.g. a lib node connector or a tasklet); in that
-    case the matching ``subset`` is also ``None`` (the connector descriptor
-    defines the shape on that side, not the memlet).
+    ``data_name`` = ``None`` when the endpoint isn't an :class:`AccessNode` (lib node connector /
+    tasklet); its ``subset`` is then also ``None`` (connector descriptor defines that side's shape,
+    not the memlet).
 
     :param edge: A memlet-carrying edge.
     :param sdfg: SDFG owning the endpoint descriptors.
-    :returns: ``(src_data_name, src_subset, dst_data_name, dst_subset)`` where
-        the ``subset`` fields are fresh :class:`Range` copies (safe to mutate)
-        or ``None`` for non-AN endpoints.
+    :returns: ``(src_data_name, src_subset, dst_data_name, dst_subset)``; ``subset`` fields are fresh
+        :class:`Range` copies (safe to mutate) or ``None`` for non-AN endpoints.
     """
     from dace.sdfg.nodes import AccessNode as _AccessNode
     mem = edge.data
@@ -67,27 +62,20 @@ def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG):
 def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG) -> Range:
     """Return the subset belonging to ``an`` on the AN-incident ``edge``.
 
-    Per TILIFICATION_TRANSFORMATION_DESIGN.md section 3.7, an
-    AN-incident edge carries the subset of one array as
-    ``edge.data.subset`` (the array named by ``edge.data.data``) and the
-    other side as ``edge.data.other_subset``. When ``other_subset`` is
-    absent the convention is an implicit full-shape copy, so the AN's
-    full descriptor range is the answer.
+    Per TILIFICATION_TRANSFORMATION_DESIGN.md section 3.7, an AN-incident edge carries one array's
+    subset as ``edge.data.subset`` (array named by ``edge.data.data``) and the other side as
+    ``edge.data.other_subset``. Absent ``other_subset`` = implicit full-shape copy, so the AN's full
+    descriptor range is the answer.
 
-    This three-way is the **only correct way** to read an AN's subset
-    from an AN-incident edge. Direct ``edge.data.subset`` reads silently
-    pick the wrong array when ``data`` points at the other endpoint.
-    Every consumer (classifier, staging pass, lib-node emitter) routes
-    through this helper.
+    This three-way is the **only correct way** to read an AN's subset from an AN-incident edge.
+    Direct ``edge.data.subset`` reads silently pick the wrong array when ``data`` points at the other
+    endpoint. Every consumer (classifier, staging pass, lib-node emitter) routes through this helper.
 
     :param edge: An edge with ``an`` as one of its endpoints.
     :param an: The :class:`AccessNode` whose subset is wanted.
-    :param sdfg: The SDFG owning ``an`` (used to look up the descriptor
-        for the full-shape fallback).
-    :returns: A fresh :class:`Range` carrying ``an``'s subset on
-        ``edge``.
-    :raises ValueError: When ``edge`` has no memlet or its endpoints
-        don't include ``an``.
+    :param sdfg: The SDFG owning ``an`` (descriptor lookup for the full-shape fallback).
+    :returns: A fresh :class:`Range` carrying ``an``'s subset on ``edge``.
+    :raises ValueError: When ``edge`` has no memlet or its endpoints don't include ``an``.
     """
     mem = edge.data
     if mem is None:
@@ -261,26 +249,22 @@ def expand_memlet_expression(state: SDFGState,
                              connector_lane_dim: Optional[dict] = None) -> Set[Edge[Memlet]]:
     """Widen single-element memlet subsets to ``vector_width`` on the lane dim.
 
-    The W lanes step the dimension that carries the vectorized map
-    parameter, *not* necessarily the array's storage-contiguous dim. For
-    a contiguous body access (``A[..., i]`` with ``i`` in the stride-1
-    dim) the two coincide. But a *transposed* read — e.g. a branch
-    condition ``zqx[z1, i, j]`` where ``i`` (the lane var) sits in a
-    non-contiguous dim while the stride-1 dim holds the outer-loop
-    constant ``j`` — must widen the ``i`` dim (the memory gather stride
-    is then implicit in the array layout). Widening the storage-stride-1
-    dim there would read ``W`` wrong elements along the constant ``j``
-    and corrupt the per-lane condition.
+    W lanes step the dim carrying the vectorized map parameter, NOT necessarily the array's
+    storage-contiguous dim. For a contiguous body access (``A[..., i]`` with ``i`` in the stride-1
+    dim) the two coincide. But a *transposed* read — e.g. branch condition ``zqx[z1, i, j]`` where
+    ``i`` (lane var) sits in a non-contiguous dim while the stride-1 dim holds outer-loop constant
+    ``j`` — must widen the ``i`` dim (memory gather stride then implicit in the array layout).
+    Widening the storage-stride-1 dim there would read ``W`` wrong elements along constant ``j`` and
+    corrupt the per-lane condition.
 
     :param state: The SDFG state containing the edges.
     :param edges: The memlet edges to inspect and possibly modify.
     :param edges_to_skip: Edges that must not be expanded.
     :param vector_width: Number of elements to widen the lane dim to.
-    :param vector_map_param: The vectorized map parameter. When given,
-        the dim whose ``begin`` references it is widened (index step 1);
-        the array's per-dim stride supplies the memory gather stride
-        downstream. When ``None`` (or the param is absent from every
-        dim's ``begin``), fall back to widening the storage-stride-1 dim.
+    :param vector_map_param: The vectorized map parameter. When given, the dim whose ``begin``
+        references it is widened (index step 1); the array's per-dim stride supplies the memory
+        gather stride downstream. When ``None`` (or absent from every dim's ``begin``), fall back to
+        widening the storage-stride-1 dim.
     :returns: The set of edges whose memlets were modified.
     :raises Exception: if a subset is neither all length-1 nor has exactly
         one ``vector_width``-length dim.
@@ -290,10 +274,8 @@ def expand_memlet_expression(state: SDFGState,
     for edge in edges:
         if edge.data is not None:
             if not all(((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset):
-                # Edge found where not all memlet subsets are length 1.
-                # That's still acceptable iff exactly one dim has length
-                # equal to ``vector_width`` (the dim we'll expand); any
-                # other mix raises below.
+                # Not all subsets length 1. Acceptable iff exactly one dim has length ==
+                # ``vector_width`` (the dim we'll expand); any other mix raises below.
                 vlens = {((e + 1 - b) // s) == vector_width for b, e, s in edge.data.subset}
                 if len(vlens) > 1:
                     raise Exception(
@@ -305,23 +287,19 @@ def expand_memlet_expression(state: SDFGState,
                     continue
 
             subset = edge.data.subset
-            # The dim whose ``begin`` references the vectorized map
-            # parameter is the lane dim — that, not the storage
-            # stride-1 dim, must be widened. ``classify_lane_access``
-            # is the single source of truth: ``lane_dim`` is set for a
-            # single-param dim (CONTIGUOUS / STRIDED / TRANSPOSED) and
-            # ``None`` for the param-free (CONSTANT) and multi-param
-            # (DIAGONAL) cases, which both take the legacy path.
+            # The dim whose ``begin`` references the vectorized map param = lane dim; that, not the
+            # storage stride-1 dim, must be widened. ``classify_lane_access`` = single source of
+            # truth: ``lane_dim`` set for a single-param dim (CONTIGUOUS / STRIDED / TRANSPOSED),
+            # ``None`` for param-free (CONSTANT) and multi-param (DIAGONAL) cases (both take legacy
+            # path).
             ld = None
             if param_sym is not None:
                 ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides, vector_map_param).lane_dim
-            # When the lane param is absent from the inner subset (the NSDFG
-            # connector consumed it into a length-1 view, e.g. ``bb[0, 0]``
-            # for a ``bb[i, j]`` body access with ``i`` innermost), the lane
-            # dim cannot be recovered from the subset. Fall back to the dim
-            # the boundary edge says carries the param (``connector_lane_dim``),
-            # so a non-contiguous vectorised dim widens the right (lane) dim
-            # rather than the storage-stride-1 dim.
+            # When the lane param is absent from the inner subset (NSDFG connector consumed it into a
+            # length-1 view, e.g. ``bb[0, 0]`` for a ``bb[i, j]`` body access with ``i`` innermost),
+            # lane dim can't be recovered from the subset. Fall back to the dim the boundary edge says
+            # carries the param (``connector_lane_dim``), so a non-contiguous vectorised dim widens
+            # the right (lane) dim, not the storage-stride-1 dim.
             if ld is None and connector_lane_dim is not None:
                 ld = connector_lane_dim.get(edge.data.data)
 
@@ -334,10 +312,8 @@ def expand_memlet_expression(state: SDFGState,
                     else:
                         new_subset_list.append((b, e, s))
             else:
-                # No (or ambiguous multi-dim) lane param in the subset —
-                # keep the legacy storage-stride-1 widening (unchanged
-                # behaviour for contiguous accesses and the param-free
-                # boundary case).
+                # No (or ambiguous multi-dim) lane param in the subset — keep legacy storage-stride-1
+                # widening (unchanged for contiguous accesses and the param-free boundary case).
                 for (b, e, s), stride in zip(subset, state.sdfg.arrays[edge.data.data].strides):
                     assert b == e and s == 1
                     if stride == 1:

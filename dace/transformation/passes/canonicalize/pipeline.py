@@ -15,7 +15,10 @@ from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (RewriteModuloToPyMod,
+                                                                                   StripPowerExponentCast,
+                                                                                   PowerOperatorExpansion)
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
@@ -63,7 +66,7 @@ from dace.transformation.passes.canonicalize.normalize_negative_stride import No
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
-from dace.transformation.passes.normalize_nested_reduction import NormalizeNestedReduction
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
@@ -74,7 +77,10 @@ from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolsNonnegative
+from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
+from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
+from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -329,6 +335,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # split across states becomes fissionable / liftable instead of being left
     # alone. The later _structural_cleanup runs only have to mop up what the
     # transforms re-introduce.
+    # loop_to_symm (semantic lift, BEFORE normalize_reduction): the hand-written
+    # symmetric matrix-multiply nest (polybench symm) is recognised on its raw
+    # frontend shape -- a 2-D map whose NestedSDFG boundary carries a triangular
+    # self-scatter ``C[0:i, j]`` plus a point-write ``C[i, j]`` fed by a symmetric
+    # operand -- and replaced by a ``Symm`` BLAS node (vendor dsymm / cublasDsymm).
+    # It must run before normalize_reduction, which would otherwise rewrite that
+    # boundary WCR into a seeded-local reduction the recogniser no longer matches. A
+    # strict, no-op-on-any-deviation match (gated on the semantic-lifting knobs, like
+    # LiftEinsum), so the vectorizer path (semantic_lifting=False) leaves symm as the
+    # plain reduction nest.
+    if semantic_lifting and lift:
+        s += [('loop_to_symm', LoopToSymm())]
+
     # normalize_reduction (FIRST, on the frontend shape): a masked reduction emitted as an
     # in-nsdfg WCR into a write-only output connector (plain map-exit edge) is rewritten to
     # the seeded-local + map-exit-WCR shape the frontend already emits for the equivalent
@@ -336,7 +355,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # WCRToAugAssign keeps the scalar WCR, MapToForLoop's map-exit-WCR refusal keeps it a
     # parallel map, MapFusionVertical's seeded-reduction guard fires -- so it is neither
     # severed nor double-counted. Idempotent, so the vectorizer can also run it standalone.
-    s += [('normalize_reduction', NormalizeNestedReduction())]
+    s += [('normalize_reduction', NormalizeWCR())]
 
     # A loop with a ``break`` / ``continue`` is not splittable and its induction variable
     # is not closed-form (the trip count is data-dependent), so SplitStatements / IVS below
@@ -484,6 +503,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # refuse-check sees the cleaned-up shape.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
+    # distribute (BEFORE loop_to_symmetrize / loop_to_x): split a linear-chain loop
+    # across a forward per-iteration producer->consumer dependence -- atax's two
+    # matvecs coupled through ``tmp``, and covariance's per-column normalize ->
+    # transpose-mirror -- so the LoopToEinsum / LoopToSymmetrize lifts below each see
+    # a single-contraction / pure-copy loop. Placed here so the mirror is already its
+    # own triangular loop when LoopToSymmetrize matches.
+    s += [('distribute', DistributeProducerConsumerLoop())]
+
     # loop_to_symmetrize (BEFORE break_antidep): lift a triangular in-place
     # matrix-symmetrization nest (``for i: for j in i+1:M: X[j,i] = X[i,j]``) to a
     # ``Symmetrize`` library node whose expansion is the parallel triangular copy.
@@ -597,7 +624,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # stages, and re-running it in loop_to_x lifted nothing the early pass had
     # not already handled. LoopToSymmetrize likewise runs earlier (its own stage,
     # before break_antidep).
-    s += [('loop_to_x', LoopToReduce()),
+    # LoopToEinsum runs FIRST (before LoopToReduce): a contraction loop nest
+    # (matvec / matmul / transpose) must be claimed as a single Einsum node before
+    # LoopToReduce lifts its reduction axis to a Reduce. It probes on a throwaway
+    # copy and is a clean no-op on any nest that does not collapse to one Einsum.
+    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
           ('loop_to_x', LoopToConditionalReduce())]
 
@@ -653,7 +684,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         _uniq_fast_ssa = UniqueLoopIterators(assign_loop_iterator_post_value=False)
         s += [('fission', LoopFission()), ('fission', _uniq_fast_fis)]
         s += [('loop_stride_permutation', LoopStridePermutation())]
-        s += [('loop_to_x', LoopToReduce()),
+        s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
               ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
               ('loop_to_x', ArgMaxLift()), ('loop_to_x', LoopToConditionalReduce())]
         s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', _uniq_fast_ssa)]
@@ -883,18 +914,37 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # sub-passes still run.
     s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
 
-    # assume_nonneg (LAST): make the "all free symbols are nonnegative" contract
-    # that the offset-sign reasoning relied on explicit and runtime-checked, by
-    # prepending a side-effecting ``__builtin_trap`` start state that aborts on a
-    # negative signed-integer free symbol. Runs AFTER every structural pass +
-    # the terminal simplify: a guard prepended earlier is orphaned by any pass
-    # that builds its own entry state (LoopToScan's scan-init block, reduction
-    # init, ...), which resets the top-level start block and leaves the guard a
-    # disconnected source that dominator analyses then KeyError on. Emitting it
-    # last -- nothing runs after -- avoids that entirely while still yielding a
-    # first-state guard at codegen. The external free-symbol set is unchanged by
-    # canonicalization (only loop iterators are renamed, and those are bound).
-    s += [('end', AssumeSymbolsNonnegative())]
+    # assume_constraints (LAST): make the assumptions the pipeline relied on
+    # explicit and runtime-checked, by prepending a side-effecting
+    # ``__builtin_trap`` start state that aborts when one is violated -- a
+    # negative signed-integer free symbol (the offset-sign nonnegativity
+    # contract) or a false tracked relation (e.g. the ``K < N`` a modular-wrap
+    # split leaned on). Runs AFTER every structural pass + the terminal simplify:
+    # a guard prepended earlier is orphaned by any pass that builds its own entry
+    # state (LoopToScan's scan-init block, reduction init, ...), which resets the
+    # top-level start block and leaves the guard a disconnected source that
+    # dominator analyses then KeyError on. Emitting it last -- nothing runs after
+    # -- avoids that entirely while still yielding a first-state guard at codegen.
+    # The external free-symbol set is unchanged by canonicalization (only loop
+    # iterators are renamed, and those are bound).
+    s += [('end', AssumeSymbolConstraints())]
+
+    # pow_cleanup (AFTER assume_constraints): normalize every power to one canonical
+    # form. StripPowerExponentCast drops the frontend's redundant ``float64(e)`` cast
+    # so an integer exponent is visible; PowerOperatorExpansion rewrites each ``**``
+    # to an unrolled product (constant integer exponent) or a ``pow`` call (matches
+    # numpy / ``std::pow``, correct for a negative base -- no ``exp(e*log(base))``
+    # identity that NaNs there); RelaxIntegerPowers then lowers a provable
+    # non-negative-integer ``pow`` -- above all the size / subscript / bound powers
+    # (stockham_fft's ``2**k`` array sizes) -- to the exact integer ``ipow``, and also
+    # ``pow`` / ``**`` in tasklet bodies (both lowerings kept: a non-integer or
+    # unprovable exponent stays ``pow``). All three are value-preserving. They run
+    # after assume_constraints so the non-negative symbol assumptions it establishes
+    # are live for the ipow proof, and they rewrite only tasklet bodies + symbolic
+    # sites (descriptors / subsets / bounds) -- never the CFG -- so the guard start
+    # state assume_constraints prepended is left intact.
+    s += [('pow_cleanup', StripPowerExponentCast()), ('pow_cleanup', PowerOperatorExpansion()),
+          ('pow_cleanup', RelaxIntegerPowers(relax_tasklet_bodies=True))]
     return s
 
 

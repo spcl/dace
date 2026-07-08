@@ -38,14 +38,17 @@ AccessNode-sourced), so neither detection condition matches on a second run.
 """
 import ast
 import copy
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
 
 import numpy
 
 from dace import SDFG, SDFGState, data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.subsets import Range
+from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.helpers import unsqueeze_memlet
 
 #: Reduction op -> the augassign op it normalizes to (``-`` accumulates like ``+``).
 _WCR_OP = {'+': '+', '-': '+', '*': '*', 'min': 'min', 'max': 'max'}
@@ -92,12 +95,35 @@ def _identity_value(op: str, dtype: dtypes.typeclass):
 
 
 @transformation.explicit_cf_compatible
-class NormalizeNestedReduction(ppl.Pass):
-    """Rewrite masked in-nsdfg write-only WCR reductions into the seeded-local +
-    map-exit-WCR shape.
+class NormalizeWCR(ppl.Pass):
+    """Normalize WCR into the codegen-supported shapes.
+
+    Two rewrites, both under a map-body NestedSDFG:
+    - Scalar reduction (``num_elements()==1``): masked in-nsdfg write-only WCR ->
+      seeded-body-local transient + WCR on the ``NestedSDFG -> MapExit ->
+      accumulator`` edge chain (see module docstring).
+    - Slice reduction (``num_elements()>1``, e.g. symm ``C[0:i,j] +=``): the nsdfg
+      traps a per-element scatter map whose ``X[k]`` single-element WCR only surfaces
+      as a slice at the boundary (the nsdfg is multi-state -> not inlinable).
+      ``_extract_slice_wcr`` clones that scatter map to the OUTER scope writing the
+      destination ``dest[k,...]`` single-element WCR directly (inputs recomposed
+      through the nsdfg boundary via ``unsqueeze_memlet``); the trapped nsdfg output
+      is redirected to a dead transient (DCE prunes). Yields the vectorizable
+      single-element form; a slice WCR is neither omp- nor tblock-reducible.
+
+    ``extract_slice_wcr`` gates the slice rewrite. It assumes the post-``LoopToMap``
+    structure (parallel outer map, per-element inner scatter). Run before ``LoopToMap``
+    -- as the current canonicalize ``normalize_reduction`` stage does -- it fires on a
+    partially-canonicalized body and is unsound, so canonicalize keeps it off until the
+    pipeline is reordered to run this pass after ``LoopToMap`` (per the WCR design). The
+    scalar rewrite is always on.
     """
 
     CATEGORY: str = 'Simplification'
+
+    def __init__(self, extract_slice_wcr: bool = False):
+        super().__init__()
+        self.extract_slice_wcr = extract_slice_wcr
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
@@ -250,6 +276,121 @@ class NormalizeNestedReduction(ppl.Pass):
             seed.add_edge(me, None, t, None, Memlet())
             seed.add_memlet_path(t, mx, w, src_conn='__out', memlet=Memlet(data=acc, subset=idx))
 
+    def _fresh_symbol(self, sdfg: SDFG, base: str) -> str:
+        """A map-parameter name unused as a symbol/free-symbol in ``sdfg``."""
+        used = set(sdfg.symbols.keys()) | {str(s) for s in sdfg.free_symbols}
+        name, i = base, 0
+        while name in used:
+            i += 1
+            name = f'{base}_{i}'
+        return name
+
+    def _find_inner_scatter(self, inner: SDFG, oc: str) -> Optional[Tuple]:
+        """The inner ``(state, MapEntry, tasklet, out_conn, param)`` whose single-element
+        ``oc[param]`` WCR write aggregates to the slice output ``oc``. ``None`` unless the
+        producer is exactly one single-param per-element scatter map.
+        """
+        for ist in inner.all_states():
+            for tasklet in [n for n in ist.nodes() if isinstance(n, nodes.Tasklet)]:
+                for oe in ist.out_edges(tasklet):
+                    if (oe.data is not None and oe.data.data == oc and oe.data.wcr is not None
+                            and oe.data.subset is not None and oe.data.subset.num_elements() == 1
+                            and isinstance(oe.dst, nodes.MapExit)):
+                        ime = ist.entry_node(oe.dst)
+                        if len(ime.map.params) != 1:
+                            return None
+                        return ist, ime, tasklet, oe.src_conn, ime.map.params[0]
+        return None
+
+    def _extract_slice_wcr(self, state: SDFGState, nsdfg: nodes.NestedSDFG, oc: str) -> bool:
+        """Extract a trapped per-element scatter (slice-WCR output ``oc``) to the outer
+        scope as a single-element ``dest[...]`` WCR. Returns True on rewrite.
+
+        Detection is complete before any mutation: an unhandled shape returns False with
+        the graph untouched.
+        """
+        out_edge = next((oe for oe in state.out_edges(nsdfg) if oe.src_conn == oc), None)
+        if (out_edge is None or out_edge.data.wcr is None or out_edge.data.subset is None
+                or out_edge.data.subset.num_elements() == 1 or not isinstance(out_edge.dst, nodes.MapExit)):
+            return False
+        if _op_from_wcr(out_edge.data.wcr) is None:
+            return False
+        prod = self._find_inner_scatter(nsdfg.sdfg, oc)
+        if prod is None:
+            return False
+        istate, ime, tasklet, tconn, iparam = prod
+        outer_me = state.entry_node(nsdfg)
+        outer_mx = state.exit_node(outer_me)
+        dest = out_edge.data.data
+        dest_an = next((oe.dst for oe in state.out_edges(outer_mx) if oe.data is not None and oe.data.data == dest
+                        and isinstance(oe.dst, nodes.AccessNode)), None)
+        if dest_an is None:
+            return False
+        # Every tasklet input must trace to a direct nsdfg boundary connector fed by a
+        # top-level source at the outer map. Resolve the whole plan before mutating.
+        boundary_in = {oe.dst_conn: oe for oe in state.in_edges(nsdfg)}
+        top_in: Dict[str, Any] = {}
+        for ie in state.in_edges(outer_me):
+            if ie.data is not None:
+                top_in.setdefault(ie.data.data, ie.src)
+        plan = []
+        for ie in istate.in_edges(tasklet):
+            ext = boundary_in.get(ie.data.data)
+            if ext is None or ext.data.data not in top_in:
+                return False
+            plan.append((ie, ext, top_in[ext.data.data]))
+
+        # --- mutate: clone the scatter map to the outer scope ---
+        ksym, nksym = symbol(iparam), symbol(self._fresh_symbol(state.sdfg, '_wcr_' + iparam))
+        new_me, new_mx = state.add_map('extract_' + oc, {str(nksym): str(ime.map.range)})
+        new_t = state.add_tasklet('extract_' + oc, set(tasklet.in_connectors), set(tasklet.out_connectors),
+                                  tasklet.code.as_string)
+        for ie, ext, top_src in plan:
+            ml = unsqueeze_memlet(ie.data, ext.data)
+            ml.subset.replace({ksym: nksym})
+            state.add_memlet_path(top_src, outer_me, new_me, new_t, dst_conn=ie.dst_conn, memlet=ml)
+        for oe in istate.out_edges(tasklet):
+            if oe.src_conn == tconn:
+                ml = unsqueeze_memlet(oe.data, out_edge.data)
+                ml.subset.replace({ksym: nksym})
+                ml.wcr = None
+                state.add_memlet_path(new_t, new_mx, outer_mx, dest_an, src_conn=oe.src_conn, memlet=ml)
+                # WCR lives ONLY on the innermost single-element edge; the re-widen edges
+                # up to the accumulator stay plain (the shape LoopToMap emits natively).
+                inner_edge = next(e for e in state.out_edges(new_t) if e.src_conn == oe.src_conn)
+                for pe in state.memlet_path(inner_edge):
+                    pe.data.wcr = out_edge.data.wcr if pe is inner_edge else None
+            else:
+                # Non-scatter co-output (e.g. a scalar reduction sharing the tasklet) is
+                # recomputed into a dead scalar; DCE prunes it.
+                inner_desc = nsdfg.sdfg.arrays[oe.data.data]
+                dname, _ = state.sdfg.add_scalar('_wcrdead_' + oe.src_conn, inner_desc.dtype, transient=True,
+                                                 find_new_name=True)
+                state.add_memlet_path(new_t, new_mx, state.add_access(dname), src_conn=oe.src_conn,
+                                      memlet=Memlet(data=dname, subset='0'))
+
+        # Redirect the trapped nsdfg slice output to a dead transient (mirror dest's
+        # descriptor so no inner-only symbol leaks into the shape); drop the slice WCR.
+        dead_desc = copy.deepcopy(state.sdfg.arrays[dest])
+        dead_desc.transient = True
+        dead = state.sdfg.add_datadesc('_wcrdead_' + dest, dead_desc, find_new_name=True)
+        redir = copy.deepcopy(out_edge.data)
+        redir.data = dead
+        redir.wcr = None
+        dst_conn = out_edge.dst_conn
+        state.remove_edge(out_edge)
+        state.add_edge(nsdfg, oc, state.add_access(dead), None, redir)
+        # If the slice used a dedicated MapExit connector (now unfed), drop it + its pair.
+        if dst_conn is not None and not any(e.dst_conn == dst_conn for e in state.in_edges(outer_mx)):
+            out_conn = 'OUT_' + dst_conn[3:] if dst_conn.startswith('IN_') else None
+            for oe in list(state.out_edges(outer_mx)):
+                if oe.src_conn == out_conn:
+                    state.remove_edge(oe)
+            outer_mx.remove_in_connector(dst_conn)
+            if out_conn is not None and out_conn in outer_mx.out_connectors:
+                outer_mx.remove_out_connector(out_conn)
+        return True
+
     def _apply(self, sdfg: SDFG) -> int:
         total = 0
         for sd in sdfg.all_sdfgs_recursive():
@@ -259,7 +400,10 @@ class NormalizeNestedReduction(ppl.Pass):
                         continue
                     write_only = [oc for oc in nsdfg.out_connectors if oc not in nsdfg.in_connectors]
                     for oc in write_only:
-                        if self._rewrite_nsdfg_output(state, nsdfg, oc):
+                        # Slice WCR (num_elements > 1) -> extract; scalar WCR -> seed-local rewrite.
+                        if self.extract_slice_wcr and self._extract_slice_wcr(state, nsdfg, oc):
+                            total += 1
+                        elif self._rewrite_nsdfg_output(state, nsdfg, oc):
                             total += 1
         return total
 

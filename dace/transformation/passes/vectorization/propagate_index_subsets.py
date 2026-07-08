@@ -1,20 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``PropagateIndexSubsets`` — inline promoted index symbols back into memlet subsets.
 
-The Python/Fortran frontend promotes a computed index ``i + offset`` to a scalar
-(``i_plus_offset``, written by a tasklet) then to a symbol (``__sym = i_plus_offset``
-on an interstate edge) used in a memlet subset ``A[__sym]``. That opaque symbol hides the
-iter-var ``i`` from the tile-access classifier, which then mis-stages the access. This pass
-rewrites every memlet subset by inlining the promoted index back to its original arithmetic
-(``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i + offset]``) via
-:func:`~dace.transformation.passes.vectorization.utils.tile_access.propagate_subset`, so the
-access is direct and widens to a dense load.
+Frontend promotes computed index ``i + offset`` -> scalar (``i_plus_offset``, tasklet-written)
+-> symbol (``__sym = i_plus_offset`` on iedge) used in subset ``A[__sym]``. Opaque symbol hides
+iter-var ``i`` from tile-access classifier -> mis-staged access. Fix: inline promoted index back
+to original arithmetic (``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i + offset]``) via
+:func:`~dace.transformation.passes.vectorization.utils.tile_access.propagate_subset` -> direct
+access, widens to dense load.
 
-Data-dependent indices (a gather ``A[idx[i]]``) are left untouched — they keep their symbol
-and flow to the gather machinery. Run AFTER if-condition mask lowering (flat single-level body
-states, so the reaching-def walk is complete) and BEFORE the tiling passes (so widening sees the
-direct subset). Pairs with ``SymbolPropagation`` (folds the ``__sym`` layer) before it and
-``RemoveUnusedSymbols`` (sweeps the now-dead promotion symbols) after it.
+Data-dependent indices (gather ``A[idx[i]]``) left untouched: keep symbol, flow to gather
+machinery. Run AFTER if-condition mask lowering (flat single-level body states -> reaching-def
+walk complete), BEFORE tiling passes (widening sees direct subset). Pairs: ``SymbolPropagation``
+(folds ``__sym`` layer) before, ``RemoveUnusedSymbols`` (sweeps dead promotion symbols) after.
 """
 from typing import Any, Dict, Optional
 
@@ -35,9 +32,9 @@ class PropagateIndexSubsets(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
-        """Rewrite every memlet ``subset`` / ``other_subset`` in ``sdfg`` and its
-        nested SDFGs by inlining promoted index symbols. ``propagate_subset`` is a
-        best-effort no-op when a bound is unresolvable or data-dependent.
+        """Rewrite every memlet ``subset`` / ``other_subset`` in ``sdfg`` + nested SDFGs by
+        inlining promoted index symbols. ``propagate_subset`` = best-effort no-op on
+        unresolvable / data-dependent bound.
 
         :param sdfg: SDFG to transform in place.
         :returns: Number of subsets rewritten, or ``None`` if none.

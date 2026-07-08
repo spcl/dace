@@ -202,15 +202,72 @@ def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
 # -----------------------------------------------------------------------------
 
 
-def test_refuses_when_outer_stride_is_not_concrete_int():
-    """``for i in range(0, N, K)`` with ``K`` symbolic -- can't collapse without
-    a literal stride to match against the inner trip count."""
-    K_sym = dace.symbol('K_step')
+def test_untiles_when_outer_stride_is_bare_symbol():
+    """``for i in range(0, N, BS): for ii in range(BS): a[i+ii] = ...`` with a
+    bare-**symbol** tile ``BS``. A symbol is assumed non-negative by DaCe
+    convention (we do not rely on SymPy sign assumptions), so the single-level
+    tile collapses to ``for k in range(0, N)`` -- ``end == BS - 1`` folds against
+    ``K_expr - 1`` symbolically. Only a unit inner stride is admitted for
+    symbolic tiles (a concrete stride cannot be proven to divide a symbol)."""
+    BS = dace.symbol('BS')
+
+    @dace.program
+    def tiled(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(0, N, BS):
+            for ii in range(BS):
+                a[i + ii] = b[i + ii] * 2.0
+
+    sdfg = tiled.to_sdfg(simplify=True)
+    assert len(_loops(sdfg)) == 2
+    res = UntileLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    loops_after = _loops(sdfg)
+    assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
+    assert loops_after[0].loop_variable.startswith('_untile_k_')
+
+    n = 16  # multiple of BS=4 (clean tile)
+    rng = np.random.default_rng(7)
+    a = np.zeros(n)
+    b = rng.standard_normal(n)
+    sdfg(a=a, b=b, N=n, BS=4)
+    assert np.allclose(a, b * 2.0), f'value mismatch: got {a}'
+
+
+def test_untiles_when_outer_stride_is_bare_symbol_case_b():
+    """Case B with a bare-symbol tile: ``for i in range(0, N, BS):
+    for ii in range(i, i + BS): a[ii] = ...`` collapses to a single loop."""
+    BS = dace.symbol('BS')
+
+    @dace.program
+    def tiled(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(0, N, BS):
+            for ii in range(i, i + BS):
+                a[ii] = b[ii] + 1.0
+
+    sdfg = tiled.to_sdfg(simplify=True)
+    res = UntileLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    assert len(_loops(sdfg)) == 1
+
+    n = 16
+    rng = np.random.default_rng(8)
+    a = np.zeros(n)
+    b = rng.standard_normal(n)
+    sdfg(a=a, b=b, N=n, BS=4)
+    assert np.allclose(a, b + 1.0)
+
+
+def test_refuses_when_outer_stride_is_compound_symbolic_expr():
+    """A **compound** symbolic expression tile (``M - 2``) is refused: DaCe
+    assumes bare symbols are non-negative but does NOT prove the sign of an
+    expression, and such an expression is not a plausible tile size."""
 
     @dace.program
     def tiled(a: dace.float64[N]):
-        for i in range(0, N, K_sym):
-            for ii in range(K_sym):
+        for i in range(0, N, M - 2):
+            for ii in range(M - 2):
                 a[i + ii] = 1.0
 
     sdfg = tiled.to_sdfg(simplify=True)
@@ -420,16 +477,16 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     sdfg = jacobi2d_tiled.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
-    # ExpandNestedSDFGInputs + InlineMultistateSDFG flattens the NSDFGs
-    # the round-trip creates, multi-dim ascent fires, and the fixpoint
-    # collapses to <= ``axes`` LoopRegions. Validation passes; isolated
-    # probes execute cleanly. The full pipeline still trips a stale
-    # state-reference in the inline step's post-state metadata at
-    # execution time (KeyError: SDFGState (block_*_post_state)) which
-    # is a separate follow-up. Skipping numerics for now.
+    # ExpandNestedSDFGInputs + InlineMultistateSDFG flatten the round-trip
+    # NSDFGs, the multi-dim ascent fires, and the fixpoint collapses to
+    # <= ``axes`` CFR constructs. The general splice reconnects the parent's
+    # pred/succ chain through the spliced body, so no orphan states remain
+    # and the result executes bit-exactly.
     n_maps = _count_maps(sdfg)
     n_loops = _count_loops(sdfg)
     assert n_maps + n_loops <= 2, f'expected <=2 collapsed CFR constructs, got {n_maps} maps + {n_loops} loops'
+    sdfg(a=a, b=b, N=n, M=m)
+    assert np.allclose(b, ref)
 
 
 def test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
@@ -534,11 +591,13 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     sdfg = heat3d_tiled.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
-    # 3 axes -> at most 3 collapsed CFR constructs; see the 2D variant
-    # above for the post-execution stale-state follow-up.
+    # 3 axes -> at most 3 collapsed CFR constructs; executes bit-exactly
+    # (the general splice leaves no orphan connective states).
     n_maps = _count_maps(sdfg)
     n_loops = _count_loops(sdfg)
     assert n_maps + n_loops <= 3, f'expected <=3 collapsed CFR constructs, got {n_maps} maps + {n_loops} loops'
+    sdfg(a=a, b=b, N=n, M=m, P=p)
+    assert np.allclose(b, ref)
 
 
 def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
@@ -580,6 +639,95 @@ def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     assert _count_loops(sdfg) == 3, f'expected 3 fully-collapsed axes, got {_count_loops(sdfg)}'
     sdfg(a=a, b=b, N=n, M=m, P=p)
     assert np.allclose(b, ref)
+
+
+# ---- Symbolic-tile multi-dim coverage --------------------------------------
+
+
+def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
+    """1-level 2D tile with a bare-**symbol** tile ``BS`` per axis. The
+    fixpoint collapses (ii, i) and (jj, j) in two iterations, leaving a
+    single 2D nest -- same as the concrete-``K`` variant but the tile is a
+    runtime block-size parameter."""
+    BS = dace.symbol('BS')
+
+    @dace.program
+    def jacobi2d_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
+        for ii in range(0, N - 2, BS):
+            for jj in range(0, M - 2, BS):
+                for i in range(BS):
+                    for j in range(BS):
+                        b[ii + i + 1, jj + j +
+                          1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] + a[ii + i + 1, jj + j + 2] +
+                                      a[ii + i, jj + j + 1] + a[ii + i + 2, jj + j + 1])
+
+    n, m, bs = 10, 10, 4  # N-2 == M-2 == 8 divisible by BS=4 (clean tile)
+    rng = np.random.default_rng(20)
+    a = rng.standard_normal((n, m))
+    b = np.zeros((n, m))
+    ref = b.copy()
+    for i in range(1, n - 1):
+        for j in range(1, m - 1):
+            ref[i, j] = 0.2 * (a[i, j] + a[i, j - 1] + a[i, j + 1] + a[i - 1, j] + a[i + 1, j])
+
+    sdfg = jacobi2d_tiled.to_sdfg(simplify=True)
+    UntileLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _count_loops(sdfg) == 2, f'expected 2 collapsed loops, got {_count_loops(sdfg)}'
+    sdfg(a=a, b=b, N=n, M=m, BS=bs)
+    assert np.allclose(b, ref)
+
+
+def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
+    """1-level 3D tile with a bare-symbol tile ``BS`` per axis; fixpoint
+    collapses all three tile axes to a single 3D nest."""
+    BS = dace.symbol('BS')
+
+    @dace.program
+    def heat3d_tiled(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
+        for ii in range(0, N - 2, BS):
+            for jj in range(0, M - 2, BS):
+                for kk in range(0, P - 2, BS):
+                    for i in range(BS):
+                        for j in range(BS):
+                            for k in range(BS):
+                                I = ii + i + 1
+                                J = jj + j + 1
+                                Kk = kk + k + 1
+                                b[I, J, Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] +
+                                                       a[I, J + 1, Kk] - 2.0 * a[I, J, Kk] + a[I, J - 1, Kk] +
+                                                       a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
+
+    n, m, p, bs = 10, 10, 10, 4
+    rng = np.random.default_rng(21)
+    a = rng.standard_normal((n, m, p))
+    b = np.zeros((n, m, p))
+    ref = b.copy()
+    copy.deepcopy(heat3d_tiled.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m, P=p, BS=bs)
+
+    sdfg = heat3d_tiled.to_sdfg(simplify=True)
+    UntileLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _count_loops(sdfg) == 3, f'expected 3 collapsed loops, got {_count_loops(sdfg)}'
+    sdfg(a=a, b=b, N=n, M=m, P=p, BS=bs)
+    assert np.allclose(b, ref)
+
+
+def test_refuses_symbolic_tile_with_nonunit_inner_stride():
+    """A symbolic tile with a concrete non-unit inner stride is refused: the
+    stride's divisibility into a symbol is unprovable, so untiling could drop
+    the remainder. Must decline cleanly (no crash), not collapse."""
+    BS = dace.symbol('BS')
+
+    @dace.program
+    def tiled(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(0, N, BS):
+            for ii in range(i, i + BS, 2):
+                a[ii] = b[ii]
+
+    sdfg = tiled.to_sdfg(simplify=True)
+    res = UntileLoops().apply_pass(sdfg, {})
+    assert res is None
 
 
 if __name__ == '__main__':

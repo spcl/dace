@@ -1,36 +1,30 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lift a scalar reduction carried across an innermost map to a ``Reduce`` libnode.
 
-The spmv "row reduction" ``for idx: acc = acc + data[idx] * x[indices[idx]]``
-is, in SDFG form, an innermost map whose single body node (an *indirect-access*
-NestedSDFG that cannot be inlined) reads a scalar ``acc[0]`` at the map entry
-and writes it back at the map exit -- a loop-carried read-modify-write. The
-legacy 1-D ``VectorizeCPU`` mis-vectorizes this RMW once the reduced trip
-exceeds the vector width (the per-chunk partial sums are never folded), so the
-reduction must instead be expressed as the canonical product-map + ``Reduce``
-shape the vectorizer already lowers correctly.
+The spmv row reduction ``for idx: acc = acc + data[idx] * x[indices[idx]]`` is an
+innermost map whose body (an indirect-access NestedSDFG that cannot be inlined)
+reads scalar ``acc[0]`` at map entry and writes it at map exit -- a loop-carried
+RMW. Legacy 1-D ``VectorizeCPU`` mis-vectorizes this once the reduced trip exceeds
+the vector width (partial sums never folded), so express it as the canonical
+product-map + ``Reduce`` the vectorizer lowers correctly.
 
-This pass performs that lift **without touching the opaque body**, via a
-*feed-identity* rewrite:
+Feed-identity lift, WITHOUT touching the opaque body:
 
-1. The carried accumulator is pre-seeded to the reduction identity; we feed
-   that identity (broadcast, no longer carried) into the map in place of the
-   loop-carried value, so the body now computes ``identity (op) expr == expr``
-   -- i.e. just the per-iteration product, gather included.
-2. The per-iteration result is written to a fresh 1-D buffer ``acc_buf[idx-lb]``
-   instead of back onto the scalar.
+1. Accumulator is pre-seeded to the op identity; feed that identity (broadcast,
+   not carried) into the map, so the body computes ``identity (op) expr == expr``
+   -- just the per-iteration product, gather included.
+2. Per-iteration result -> fresh 1-D buffer ``acc_buf[idx-lb]`` instead of the scalar.
 3. A ``Reduce`` libnode folds ``acc_buf`` into the accumulator
    (``implementation="vectorized"`` -> :class:`ExpandReduceVectorized`, a
    self-contained ``horizontal_reduce_<op>`` kernel with a scalar tail).
 
 The product-fill map is then an ordinary gather + product map the vectorizer
-strides correctly (scalar remainder on the reduced dim keeps the gather tail
-in-range); the ``Reduce`` carries its own vectorized fold + scalar tail.
+strides (scalar remainder keeps the gather tail in-range); ``Reduce`` carries its
+own vectorized fold + scalar tail.
 
-Detection is :func:`recognize_map_reduction` (an extension of the flat
-:func:`recognize_reduction` utility); only reductions whose accumulator is
-pre-initialised to the operator identity are lifted (so seeding the fold with
-the identity reproduces the original ``init (op) fold`` semantics).
+Detection: :func:`recognize_map_reduction`. Only accumulators pre-initialised to
+the op identity are lifted, so seeding the fold with the identity reproduces the
+original ``init (op) fold``.
 """
 import ast
 import copy
@@ -52,13 +46,11 @@ _REDTYPE_OP = {
     dtypes.ReductionType.Product: "*",
 }
 
-#: Reduction-op token -> the ``Reduce`` libnode WCR lambda string. Restricted to
-#: ``+`` / ``*`` -- the only ops this lift is designed and tested for (the spmv
-#: row-sum, plus product), and whose identities (0 / 1) are finite numerics that
+#: Reduction-op token -> ``Reduce`` libnode WCR lambda. Restricted to ``+`` / ``*``:
+#: the only ops this lift is tested for, with finite identities (0 / 1) that
 #: ``add_reduce`` lowers cleanly. ``max`` / ``min`` (identities -inf / +inf) and
-#: the bitwise ops are deliberately excluded: their identities do not round-trip
-#: through the finite-float gate below, so they are rejected here at the WCR
-#: lookup rather than mis-lifted with a non-finite identity.
+#: bitwise ops are excluded -- their identities fail the finite-float gate below,
+#: so they are rejected here rather than mis-lifted with a non-finite identity.
 _WCR_LAMBDA = {
     "+": "lambda a, b: a + b",
     "*": "lambda a, b: a * b",
@@ -92,11 +84,10 @@ def _const_assign_value(code: str) -> Optional[float]:
 
 
 class PureWCRReductionInfo:
-    """A pure-WCR boundary reduction recognised by :func:`_recognize_pure_wcr_reduction`.
+    """Pure-WCR boundary reduction from :func:`_recognize_pure_wcr_reduction`.
 
-    The ``body -> map_exit`` ``write_edge`` carries the scalar accumulator with a
-    ``CR:op`` WCR and the accumulator is *not* read at the map entry (no
-    loop-carried RMW -- the WCR alone expresses the fold).
+    The ``body -> map_exit`` ``write_edge`` carries the scalar accumulator under a
+    ``CR:op`` WCR; accumulator is NOT read at map entry (WCR alone folds).
     """
 
     __slots__ = ("map_entry", "map_exit", "body", "accumulator", "op", "write_edge")
@@ -112,26 +103,22 @@ class PureWCRReductionInfo:
 
 def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
                                   map_entry: "dace.nodes.MapEntry") -> Optional[PureWCRReductionInfo]:
-    """Recognise ``acc (op)= f(...)`` expressed as a MapExit WCR with no carry-in.
+    """Recognise ``acc (op)= f(...)`` as a MapExit WCR with no carry-in.
 
-    The canonical ``acc = sum(A)`` / ``dot += a[i]*b[i]`` shape: a single-param,
-    unit-step, *top-level* map whose body (any acyclic sub-DAG -- the product
-    ``a[i]*b[i]`` may be several tasklets feeding a private ``_wcr_priv_*`` access
-    node) has exactly one scalar ``body -> map_exit`` edge writing the accumulator
-    under a ``CR:+`` / ``CR:*`` WCR, where that accumulator is a FIXED scalar slot
-    (subset independent of the map param) and is *not* read at the map entry. (The
-    loop-carried RMW shape -- accumulator read at entry + written at exit -- is
-    :func:`recognize_map_reduction`.)
+    Canonical ``acc = sum(A)`` / ``dot += a[i]*b[i]``: single-param, unit-step,
+    top-level map whose body (any acyclic sub-DAG; the product may fan several
+    tasklets into a private ``_wcr_priv_*`` node) has exactly one scalar
+    ``body -> map_exit`` edge writing the accumulator under ``CR:+`` / ``CR:*``,
+    where the accumulator is a FIXED scalar slot (subset independent of the map
+    param) NOT read at map entry. (Loop-carried RMW is :func:`recognize_map_reduction`.)
 
-    The guards reject the look-alikes canonicalisation also emits as a scalar
-    ``CR:`` MapExit edge: an indexed scatter / recurrence ``a[i] (op)= ...`` /
-    ``a[i*inc] += ...`` (target subset depends on the map param), a non-additive
-    fold (``CR:-`` etc. -- only ``+`` / ``*`` round-trip through the finite-float
-    identity), and a *nested* reduction (its trip depends on the enclosing map
-    param, so the lifted product buffer's symbolic shape would be out of scope
-    after re-nesting -- deferred).
+    Guards reject look-alikes emitted as the same scalar ``CR:`` MapExit edge:
+    indexed scatter / recurrence ``a[i] (op)= ...`` (subset depends on param),
+    non-additive fold (only ``+`` / ``*`` round-trip the finite-float identity),
+    and nested reduction (trip depends on enclosing param -> lifted buffer's
+    symbolic shape out of scope after re-nest; deferred).
 
-    :returns: A :class:`PureWCRReductionInfo`, or ``None`` if not recognised.
+    :returns: A :class:`PureWCRReductionInfo`, or ``None``.
     """
     from dace.frontend.operations import detect_reduction_type
     if not isinstance(map_entry, dace.nodes.MapEntry):
@@ -155,9 +142,9 @@ def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
         return (e.data is not None and e.data.data is not None and e.data.subset is not None
                 and e.data.subset.num_elements() == 1)
 
-    # Exactly one scalar WCR write into the map exit, from any body node (the
-    # canonicalised product map feeds it from a ``_wcr_priv_*`` access node, not
-    # the flat tasklet of the bare ``acc = sum(A)`` map -- both are accepted).
+    # Exactly one scalar WCR write into the map exit, from any body node (bare
+    # ``acc = sum(A)`` flat tasklet OR canonicalised product map via a
+    # ``_wcr_priv_*`` node -- both accepted).
     wcr_writes = [e for e in state.in_edges(map_exit) if _scalar_slot(e) and e.data.wcr is not None]
     if len(wcr_writes) != 1:
         return None
@@ -174,9 +161,8 @@ def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
     op = _REDTYPE_OP.get(detect_reduction_type(write_edge.data.wcr))
     if op is None or op not in IDENTITY:
         return None
-    # Pure WCR: the accumulator must NOT be read at the map entry (else it is a
-    # loop-carried RMW -- handled by the other recogniser) and must not appear
-    # anywhere else in the map scope (no aliasing we would silently break).
+    # Pure WCR: accumulator NOT read at map entry (else loop-carried RMW) and
+    # absent elsewhere in the map scope (no aliasing to silently break).
     if any(e.data is not None and e.data.data == acc for e in state.out_edges(map_entry)):
         return None
     for n in (x for x in inner if x not in (map_entry, map_exit)):
@@ -195,14 +181,20 @@ class LiftMapReductionToReduce(ppl.Pass):
         self-contained, no-tile-node CPU vectorized fold). Default ``True``.
     """
 
-    def __init__(self, vectorized: bool = True, pure_wcr_only: bool = False):
+    def __init__(self, vectorized: bool = True, pure_wcr_only: bool = False, rmw_only: bool = False):
         super().__init__()
         self._vectorized = vectorized
-        #: When set, lift ONLY pure-WCR boundary reductions (skip the
-        #: loop-carried RMW recogniser). Used for the early pipeline call that
-        #: must run before ``WCRToAugAssign`` rewrites the WCR away; the RMW
-        #: shape is lifted later, after ``LoopToMap`` has produced the map.
+        #: Lift ONLY pure-WCR boundary reductions (skip RMW recogniser). For the
+        #: early pipeline call before ``WCRToAugAssign`` rewrites the WCR away; the
+        #: RMW shape is lifted later, after ``LoopToMap`` produces the map.
         self._pure_wcr_only = pure_wcr_only
+        #: Lift ONLY the loop-carried RMW; leave the pure-WCR ``acc = sum(A)`` as a
+        #: map-exit WCR for codegen to lower directly (CPU ``reduction(op:var)`` /
+        #: GPU thread-block reduce + one atomic per block). The multi-dim tile
+        #: vectorizer sets this so it never materialises a scalar reduction to a
+        #: product buffer; opt-in :class:`LiftWCRMapToBufferAndReduce` still gives
+        #: the buffer + ``Reduce`` form. Mutually exclusive with ``pure_wcr_only``.
+        self._rmw_only = rmw_only
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
@@ -222,12 +214,10 @@ class LiftMapReductionToReduce(ppl.Pass):
         for me, state in targets:
             if me not in state.nodes():
                 continue  # removed by an earlier lift in this sweep
-            # Pure-WCR boundary reduction (``acc(CR:op)`` at the MapExit, no
-            # carry-in read) is lifted directly to a product buffer + vectorized
-            # Reduce; this is the canonical ``acc = sum(A)`` map that DaCe emits
-            # for ``acc(1, lambda x, y: x + y)``. Tried first so it fires before
-            # the RMW recogniser (which needs a map-entry carry-in read).
-            pure = _recognize_pure_wcr_reduction(state, me)
+            # Pure-WCR boundary reduction (``acc(CR:op)`` at MapExit, no carry-in):
+            # canonical ``acc = sum(A)``. Tried before the RMW recogniser (which
+            # needs a map-entry carry-in read).
+            pure = None if self._rmw_only else _recognize_pure_wcr_reduction(state, me)
             if pure is not None and self._lift_pure_wcr(state, pure):
                 count += 1
                 continue
@@ -243,16 +233,13 @@ class LiftMapReductionToReduce(ppl.Pass):
     def _lift_pure_wcr(self, state: dace.SDFGState, info: "PureWCRReductionInfo") -> bool:
         """Lift a pure-WCR boundary reduction to a product buffer + Reduce.
 
-        The body writes a per-iteration value to the accumulator through a
-        ``CR:op`` WCR at the map exit (no carry-in read). We redirect that write
-        to a fresh 1-D buffer (dropping the WCR -- it becomes an ordinary
-        per-iteration store the tiler strides) and fold the buffer into the
-        accumulator with a ``Reduce`` libnode. The ``Reduce -> acc`` edge keeps
-        the ``CR:op`` WCR so the original ``acc (op)= fold`` semantics survive
-        for any initial accumulator value (the test seeds ``acc = 0``).
+        Redirect the ``CR:op`` map-exit write to a fresh 1-D buffer (drop the WCR
+        -> ordinary per-iteration store the tiler strides), then fold the buffer
+        into the accumulator via a ``Reduce`` libnode. The ``Reduce -> acc`` edge
+        keeps the ``CR:op`` WCR so ``acc (op)= fold`` survives for any initial acc.
 
-        :returns: ``True`` if lifted, ``False`` if a precondition failed (SDFG
-            left unchanged).
+        :returns: ``True`` if lifted, ``False`` on failed precondition (SDFG
+            unchanged).
         """
         sdfg = state.sdfg
         me, mx, acc, op, write_edge = (info.map_entry, info.map_exit, info.accumulator, info.op, info.write_edge)
@@ -300,19 +287,16 @@ class LiftMapReductionToReduce(ppl.Pass):
     def _split_inout_connector(state: dace.SDFGState, info: MapReductionInfo):
         """Give the accumulator distinct in/out connectors on the body NSDFG.
 
-        When the body reads and writes the accumulator through a single *inout*
-        connector (the s4115 ``sum_val`` shape -- same name in ``in_connectors``
-        and ``out_connectors``), the feed-identity lift would feed two different
-        outer arrays (the identity in, the buffer out) through one connector,
-        which is invalid. Split it: rename the inner write-side access nodes to a
-        fresh array and expose it as a new output connector, leaving the read on
-        the original connector.
+        When the body reads+writes the accumulator through one *inout* connector
+        (s4115 ``sum_val``: same name in in/out_connectors), the feed-identity lift
+        would push two outer arrays (identity in, buffer out) through one connector
+        -- invalid. Split: rename inner write-side access nodes to a fresh array on
+        a new output connector; leave the read on the original.
 
-        :param state: The state holding the body node.
-        :param info: The recognised reduction (its ``write_edge`` is replaced
-            when a split occurs).
-        :returns: The (possibly new) ``body -> map_exit`` write edge, or ``None``
-            if the inout connector could not be split safely.
+        :param state: State holding the body node.
+        :param info: Recognised reduction; its ``write_edge`` is replaced on split.
+        :returns: (possibly new) ``body -> map_exit`` write edge, or ``None`` if the
+            inout connector could not be split safely.
         """
         body = info.body
         read_conn, write_conn = info.read_edge.dst_conn, info.write_edge.src_conn
@@ -373,11 +357,9 @@ class LiftMapReductionToReduce(ppl.Pass):
             return False  # defensive: only +/* reach here, with finite identities 0/1
 
         # --- validate every precondition BEFORE mutating (atomic lift) ---
-        # Locate the carried accumulator's map-entry feed and the post-map sink.
-        # The inout split below only retargets the body->map_exit *src* connector,
-        # never the map-entry feed or the map_exit->sink edge, so these lookups
-        # (keyed off the unchanged ``info.write_edge.dst_conn`` / read connector)
-        # stay valid across it.
+        # Locate the accumulator's map-entry feed and post-map sink. The inout
+        # split retargets only the body->map_exit *src* connector, so these lookups
+        # (keyed off the unchanged ``write_edge.dst_conn`` / read connector) stay valid.
         read_in_conn = "IN_" + info.read_edge.src_conn[len("OUT_"):]
         me_in = [e for e in state.in_edges(me) if e.dst_conn == read_in_conn]
         write_out_conn = "OUT_" + info.write_edge.dst_conn[len("IN_"):]
@@ -391,9 +373,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         if not (isinstance(acc_out_node, nodes.AccessNode) and acc_out_node.data == acc):
             return False
 
-        # Correctness gate: the accumulator must be pre-seeded to the op
-        # identity, so seeding the fold with the identity reproduces the
-        # original ``init (op) fold`` value.
+        # Correctness gate: accumulator pre-seeded to the op identity, so seeding
+        # the fold with the identity reproduces ``init (op) fold``.
         init_edges = state.in_edges(acc_in_node)
         if not init_edges:
             return False
@@ -405,8 +386,8 @@ class LiftMapReductionToReduce(ppl.Pass):
                 return False
 
         # --- all preconditions hold; mutate from here on ---
-        # Normalise a shared inout accumulator connector into distinct in/out so
-        # the identity (in) and the product buffer (out) ride separate ports.
+        # Split a shared inout accumulator connector so identity (in) and product
+        # buffer (out) ride separate ports.
         write_edge = self._split_inout_connector(state, info)
         if write_edge is None:
             return False
@@ -414,9 +395,9 @@ class LiftMapReductionToReduce(ppl.Pass):
         buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip, ), dtype, find_new_name=True)
         zero, _ = sdfg.add_scalar(f"_red_zero_{acc}", dtype, transient=True, find_new_name=True)
 
-        # READ side: rename the pre-map accumulator + its seed writes to the
-        # fresh identity scalar so the carried scalar now has a single writer
-        # (the Reduce below) -- no two-access-node aliasing on ``acc``.
+        # READ side: rename pre-map accumulator + its seed writes to the fresh
+        # identity scalar, so ``acc`` has a single writer (the Reduce) -- no
+        # two-access-node aliasing.
         acc_in_node.data = zero
         me_in_edge.data = dace.Memlet(f"{zero}[0]")
         info.read_edge.data = dace.Memlet(f"{zero}[0]")
@@ -436,16 +417,14 @@ class LiftMapReductionToReduce(ppl.Pass):
         state.add_edge(buf_node, None, red, None, dace.Memlet(f"{buf}[0:{trip}]"))
         state.add_edge(red, None, acc_out_node, None, dace.Memlet(f"{acc}[0]"))
 
-        # If the reduced trip depends on data-dependent symbols (spmv's
-        # ``row_start``/``row_end`` = ``indptr[i]`` / ``indptr[i+1]``, bound by
-        # an interstate-edge assignment from a scalar), keep those symbols in
-        # scope for the buffer + Reduce through the downstream re-nesting passes
-        # by wrapping the product-map/buffer/Reduce in a single-iteration map
-        # whose dynamic-range connectors re-define them from their scalar
-        # sources.  An interstate-edge binding does not survive
-        # ``ExpandNestedSDFGInputs``' re-nest (the symbol gets demanded from a
-        # parent scope that no longer defines it); a dynamic-range connector is
-        # carried as a data edge and so does.
+        # If the reduced trip depends on data-dependent symbols (spmv
+        # ``row_start``/``row_end`` = ``indptr[i]`` / ``indptr[i+1]``, bound by an
+        # interstate-edge assignment from a scalar), wrap product-map/buffer/Reduce
+        # in a single-iteration map whose dynamic-range connectors re-define them
+        # from their scalar sources -- keeping them in scope through re-nesting. An
+        # interstate binding does not survive ``ExpandNestedSDFGInputs``' re-nest
+        # (symbol demanded from a parent that no longer defines it); a
+        # dynamic-range connector rides a data edge and does.
         self._scope_dynamic_range_symbols(state, me, mx, buf_node, red)
 
         sdfg.validate()
@@ -458,20 +437,17 @@ class LiftMapReductionToReduce(ppl.Pass):
         map that re-defines the product-map's data-dependent range symbols as
         dynamic-range connectors.
 
-        Only the symbols of ``me``'s range that are (a) SDFG symbols and (b)
-        bound by an interstate-edge assignment to a plain ``Scalar`` source are
-        scoped -- a genuine free/global symbol (e.g. ``N`` in a static
-        ``0:N`` reduction) is already in scope everywhere and is left untouched
-        (no wrap emitted). The wrap reuses the original symbol names on the
-        connectors: they shadow the interstate-bound symbols with the SAME
-        value, so the buffer-shape references (at SDFG level) stay satisfied by
-        the surviving interstate binding while the in-scope copy survives the
-        re-nest.
+        Only ``me`` range symbols that are (a) SDFG symbols AND (b) bound by an
+        interstate-edge assignment to a plain ``Scalar`` are scoped; a genuine
+        free/global symbol (``N`` in ``0:N``) is already in scope -> no wrap. The
+        wrap reuses the original symbol names on the connectors: they shadow the
+        interstate-bound symbols with the SAME value, so SDFG-level buffer-shape
+        references stay satisfied while the in-scope copy survives the re-nest.
 
-        :param state: The state holding the lifted reduction.
-        :param me: The product-fill map entry (its range carries the symbols).
-        :param mx: The product-fill map exit.
-        :param buf_node: The product buffer access node.
+        :param state: State holding the lifted reduction.
+        :param me: Product-fill map entry (range carries the symbols).
+        :param mx: Product-fill map exit.
+        :param buf_node: Product buffer access node.
         :param red: The ``Reduce`` library node.
         """
         sdfg = state.sdfg
@@ -488,7 +464,7 @@ class LiftMapReductionToReduce(ppl.Pass):
                     if rhs in sdfg.arrays and isinstance(sdfg.arrays[rhs], dace.data.Scalar):
                         scalar_src[sym] = rhs
         if set(scalar_src) != range_syms:
-            return  # not all symbols are scalar-bound dynamic ranges; nothing to scope
+            return  # not all symbols scalar-bound dynamic ranges; nothing to scope
 
         cluster = (set(state.all_nodes_between(me, mx)) | {me, mx, buf_node, red})
         me_w, mx_w = state.add_map("reduce_scope", {"__reduce_scope_it": "0:1"})
@@ -498,9 +474,8 @@ class LiftMapReductionToReduce(ppl.Pass):
             me_w.add_in_connector(sym)
             state.add_edge(state.add_access(src), None, me_w, sym, dace.Memlet(f"{src}[0]"))
 
-        # Route every cluster<->outside edge through the wrap map.  Internal
-        # edges (both endpoints in the cluster) and the dynamic-range feeds we
-        # just added are left alone.
+        # Route every cluster<->outside edge through the wrap map. Internal edges
+        # and the dynamic-range feeds just added are left alone.
         idx = 0
         for e in list(state.all_edges(*cluster)):
             if e.src in (me_w, mx_w) or e.dst in (me_w, mx_w):
@@ -520,3 +495,22 @@ class LiftMapReductionToReduce(ppl.Pass):
         # The buffer's symbolic shape is only valid inside the wrap scope where
         # the symbols are defined; allocate it there.
         sdfg.arrays[buf_node.data].lifetime = dace.dtypes.AllocationLifetime.Scope
+
+
+class LiftWCRMapToBufferAndReduce(LiftMapReductionToReduce):
+    """Opt-in: lift a pure-WCR boundary reduction to a product buffer + ``Reduce``.
+
+    Canonical ``acc = sum(A)`` (scalar ``CR:op`` WCR at a MapExit, no carry-in) is
+    by default left AS a map-exit WCR for direct codegen (CPU ``reduction(op:var)``
+    OpenMP clause; GPU thread-block reduce + one atomic per block). This pass is the
+    alternative: redirect the per-iteration result to a fresh 1-D buffer + fold with
+    a ``Reduce`` libnode (product-fill map the tiler strides + device/vectorized
+    ``Reduce``). Run explicitly by callers who want the buffer + libnode form (e.g.
+    to pick a specific ``Reduce`` expansion); NOT in the default multi-dim
+    vectorization pipeline.
+
+    Thin alias of :class:`LiftMapReductionToReduce` restricted to the pure-WCR lift.
+    """
+
+    def __init__(self, vectorized: bool = True):
+        super().__init__(vectorized=vectorized, pure_wcr_only=True)

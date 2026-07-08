@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.sort.nodes.integer_sort import IntegerSort
+from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard)
 
 N = dace.symbol('N')
@@ -47,12 +47,8 @@ def tsvc_vas(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N]):
 # -- Helpers ------------------------------------------------------------------
 
 
-def _has_integer_sort(sdfg: dace.SDFG) -> bool:
-    return any(isinstance(n, IntegerSort) for n, _ in sdfg.all_nodes_recursive())
-
-
-def _has_sorted_transient(sdfg: dace.SDFG, idx_name: str) -> bool:
-    return f'_scatter_guard_sorted_{idx_name}' in sdfg.arrays
+def _has_conflict_check(sdfg: dace.SDFG) -> bool:
+    return any(isinstance(n, ScatterConflictCheck) for n, _ in sdfg.all_nodes_recursive())
 
 
 def _make_permutation(n: int, seed: int) -> np.ndarray:
@@ -63,12 +59,11 @@ def _make_permutation(n: int, seed: int) -> np.ndarray:
 
 
 def test_s4113_permutation_runs_cleanly():
-    """s4113 with a permutation idx: guard runs (sort + compare), no abort, correct result."""
+    """s4113 with a permutation idx: guard runs (conflict check), no abort, correct result."""
     sdfg = tsvc_s4113.to_sdfg(simplify=True)
     insert_scatter_guard(sdfg, 'ip')
     sdfg.validate()
-    assert _has_integer_sort(sdfg)
-    assert _has_sorted_transient(sdfg, 'ip')
+    assert _has_conflict_check(sdfg)
 
     n = 64
     ip = _make_permutation(n, seed=0)
@@ -88,7 +83,7 @@ def test_s491_permutation_runs_cleanly():
     sdfg = tsvc_s491.to_sdfg(simplify=True)
     insert_scatter_guard(sdfg, 'ip')
     sdfg.validate()
-    assert _has_integer_sort(sdfg)
+    assert _has_conflict_check(sdfg)
 
     n = 48
     ip = _make_permutation(n, seed=2)
@@ -109,7 +104,7 @@ def test_vas_permutation_runs_cleanly():
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     insert_scatter_guard(sdfg, 'ip')
     sdfg.validate()
-    assert _has_integer_sort(sdfg)
+    assert _has_conflict_check(sdfg)
 
     n = 32
     ip = _make_permutation(n, seed=4)
@@ -126,22 +121,20 @@ def test_vas_permutation_runs_cleanly():
 
 
 def test_guard_states_inserted_before_scatter():
-    """The guard's four states (init flag, sort, compare-with-race-write, trap)
-    are reachable from the SDFG start and precede every state that reads ``ip``."""
+    """The guard's two states (conflict check, trap) are reachable from the SDFG
+    start and precede every state that reads ``ip``."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     states_before = set(sdfg.states())
     insert_scatter_guard(sdfg, 'ip')
     new_states = set(sdfg.states()) - states_before
 
-    assert len(new_states) == 4, (f"Expected exactly 4 new states (init+sort+compare+trap); got {len(new_states)}.")
+    assert len(new_states) == 2, (f"Expected exactly 2 new states (check+trap); got {len(new_states)}.")
     # Each new state's label carries the guard tag.
     new_labels = sorted(s.label for s in new_states)
-    assert any('_scatter_guard_init_' in l for l in new_labels), new_labels
-    assert any('_scatter_guard_sort_' in l for l in new_labels), new_labels
-    assert any('_scatter_guard_compare_' in l for l in new_labels), new_labels
+    assert any('_scatter_guard_check_' in l for l in new_labels), new_labels
     assert any('_scatter_guard_trap_' in l for l in new_labels), new_labels
 
-    # All four guard states sit at the head of the CFG.
+    # Both guard states sit at the head of the CFG.
     reachable_before_original = set()
     cur = sdfg.start_block
     while cur in new_states:
@@ -151,7 +144,7 @@ def test_guard_states_inserted_before_scatter():
             break
         cur = out[0].dst
     assert reachable_before_original == new_states, (
-        f"All four guard states should sit at the head of the CFG; reached {reachable_before_original}")
+        f"Both guard states should sit at the head of the CFG; reached {reachable_before_original}")
 
 
 def test_guard_pass_emits_for_each_named_idx():
@@ -159,7 +152,7 @@ def test_guard_pass_emits_for_each_named_idx():
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     res = GuardScatterConflicts(['ip']).apply_pass(sdfg, {})
     assert res == 1
-    assert _has_integer_sort(sdfg)
+    assert _has_conflict_check(sdfg)
 
 
 def test_guard_refuses_non_integer_idx():

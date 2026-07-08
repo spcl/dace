@@ -2,17 +2,13 @@
 """
 NestedSDFG connector-array shape / reshape helpers.
 
-These helpers manage the shape contract at the NSDFG boundary: when a
-parent state passes a slice of an outer array through a connector, the
-inner SDFG's array descriptor must match the slice shape. DaCe collapses
-length-1 dims at the boundary by convention, so the inner shape is
-typically a strict subset of the outer dims.
+Shape contract at the NSDFG boundary: parent passes a slice of an outer array through a
+connector -> inner SDFG's array descriptor must match the slice shape. DaCe collapses
+length-1 dims at the boundary, so inner shape is typically a strict subset of outer dims.
 
-Defensive checks (the validation ``assert`` inside
-``check_nsdfg_connector_array_shapes_match``, the ``original.shape``
-rebuild contract inside ``fix_nsdfg_connector_array_shapes_mismatch``)
-are intentional — loud failures are preferred over silent shape
-corruption at the NSDFG boundary.
+Defensive checks (validation ``assert`` in ``check_nsdfg_connector_array_shapes_match``,
+``original.shape`` rebuild contract in ``fix_nsdfg_connector_array_shapes_mismatch``) are
+intentional: loud failure over silent shape corruption.
 """
 import copy
 from typing import Optional, Set
@@ -31,17 +27,15 @@ _ITER_MASK_PREFIX = "_iter_mask"
 def _iter_mask_name(sdfg: dace.SDFG) -> Optional[str]:
     """Return the ``_iter_mask`` array name in ``sdfg.arrays``, or ``None``.
 
-    When a strided load / store runs inside a masked-remainder NSDFG
-    (``GenerateIterationMask`` attached ``_iter_mask: bool[W]`` to it),
-    the boundary ``strided_{load,store}`` must use the ``_masked``
-    runtime variant: at the tail only ``R < W`` lanes are in bounds, so
-    an unmasked W-wide store writes ``arr[N .. base + (W-1)*stride]``
-    past the real array (the diagonal-scatter OOB write that corrupts
-    the heap and aborts later innocent tests with ``free(): invalid
-    size``). Returns ``None`` for the unmasked main body.
+    Strided load/store inside a masked-remainder NSDFG (``GenerateIterationMask`` attached
+    ``_iter_mask: bool[W]``) must use the ``_masked`` runtime variant: at the tail only
+    ``R < W`` lanes are in bounds, so an unmasked W-wide store writes
+    ``arr[N .. base + (W-1)*stride]`` past the real array (diagonal-scatter OOB write ->
+    heap corruption -> later tests abort with ``free(): invalid size``). ``None`` = unmasked
+    main body.
 
-    :param sdfg: The inner SDFG receiving the prep / finish state.
-    :returns: The mask array name, or ``None`` if absent.
+    :param sdfg: Inner SDFG receiving the prep / finish state.
+    :returns: Mask array name, or ``None`` if absent.
     """
     for name in sdfg.arrays:
         if name == _ITER_MASK_PREFIX or name.startswith(_ITER_MASK_PREFIX + "_"):
@@ -60,18 +54,15 @@ _STRIDED_AUX_STATE_PREFIXES = (_STRIDED_LOAD_PREP_PREFIX, _STRIDED_STORE_FINISH_
 def _is_strided_aux_state(state: SDFGState) -> bool:
     """Return whether ``state`` is a strided load/store prep or finish state.
 
-    These auxiliary states are minted by ``_setup_strided_inside_nsdfg`` /
-    ``_setup_multi_element_strided_inside_nsdfg`` to run the boundary
-    ``strided_{load,store}`` against the bbox connector. The body-memlet
-    rename loops must skip them: an inout (RMW) connector is processed
-    twice — ``in`` then ``out`` — and the ``out`` pass would otherwise
-    rename the bbox-connector read inside the ``in`` pass's load-prep
-    state to the W-wide buffer, so the strided load reads the
-    uninitialised buffer instead of the connector (the s2101 diagonal /
-    s2275 column RMW corruption).
+    Minted by ``_setup_strided_inside_nsdfg`` / ``_setup_multi_element_strided_inside_nsdfg``
+    to run the boundary ``strided_{load,store}`` against the bbox connector. Body-memlet
+    rename loops must skip them: an inout (RMW) connector is processed twice (``in`` then
+    ``out``); the ``out`` pass would else rename the bbox-connector read in the ``in`` pass's
+    load-prep state to the W-wide buffer -> strided load reads the uninitialised buffer, not
+    the connector (s2101 diagonal / s2275 column RMW corruption).
 
-    :param state: An inner-SDFG state.
-    :returns: ``True`` if it is a strided prep / finish state.
+    :param state: Inner-SDFG state.
+    :returns: ``True`` if a strided prep / finish state.
     """
     return any(state.label.startswith(p) for p in _STRIDED_AUX_STATE_PREFIXES)
 
@@ -79,20 +70,17 @@ def _is_strided_aux_state(state: SDFGState) -> bool:
 def _compute_subset_union(subsets):
     """Bounding-box union of overlapping subsets and its per-dim shape.
 
-    Reuses the exact union / extent math of the standalone
+    Reuses the exact union / extent math of standalone
     :class:`~dace.transformation.passes.vectorization.fuse_overlapping_loads.FuseOverlappingLoads`
-    pass, so the baked-in fusion (knob ``fuse_overlapping_loads``) and the
-    legacy standalone pass stay numerically identical: the bounding box is
-    the left fold of :meth:`dace.subsets.Range.union` over ``subsets`` and
-    each dimension extent is ``int_floor((end + 1) - begin, step)``.
-    ``int_floor`` (not sympy ``//``) is used so a strided window emits a
-    correct C++ integer extent rather than a broken ``floor((x - 1) / s)``.
+    so baked-in fusion (knob ``fuse_overlapping_loads``) stays numerically identical to it:
+    bbox = left fold of :meth:`dace.subsets.Range.union` over ``subsets``; each dim extent =
+    ``int_floor((end + 1) - begin, step)``. ``int_floor`` (not sympy ``//``) so a strided
+    window emits a correct C++ integer extent, not a broken ``floor((x - 1) / s)``.
 
-    :param subsets: Iterable of :class:`dace.subsets.Range` accesses to the
-        same array (the multiple per-lane / per-stencil-arm views that the
-        unmovable-array classification gathered).
-    :returns: ``(union_subset, union_shape)`` — the bounding-box
-        :class:`dace.subsets.Range` and its integer per-dim shape list.
+    :param subsets: Iterable of :class:`dace.subsets.Range` accesses to the same array (the
+        per-lane / per-stencil-arm views the unmovable-array classification gathered).
+    :returns: ``(union_subset, union_shape)`` — bbox :class:`dace.subsets.Range` + its
+        integer per-dim shape list.
     """
     union_subset = None
     for s in subsets:
@@ -104,51 +92,39 @@ def _compute_subset_union(subsets):
 def _is_trivial_exact_vlen_copy(subset, arr: dace.data.Array, vector_width: int, masked: bool) -> bool:
     """Decide whether a single-subset NSDFG-boundary access may stay *outside*.
 
-    The R4/R5 copy-inside rule: a boundary access is materialised as a
-    plain ``vector_copy<T, W>`` access node *outside* the NSDFG (the
-    "movable" path) **only** when it is a trivial exact-VLEN, step-1,
-    contiguous window — i.e. exactly ``vector_width`` consecutive
-    elements on the array's stride-1 dimension with every other
-    dimension collapsed to length 1. Anything else must be staged
-    *inside* the NSDFG body, where :func:`emit_staging_copy` is in scope
-    and gates every lane against the in-scope ``_iter_mask`` / the real
-    array's extent. The outside path has no such gate, so a non-trivial
-    access placed there silently produces wrong results:
+    R4/R5 copy-inside rule: a boundary access materialises as a plain ``vector_copy<T, W>``
+    access node *outside* the NSDFG (movable path) ONLY when it is a trivial exact-VLEN,
+    step-1, contiguous window (exactly ``vector_width`` consecutive elements on the array's
+    stride-1 dim, every other dim collapsed to length 1). Else it stages *inside* the NSDFG
+    body, where :func:`emit_staging_copy` gates every lane against the in-scope
+    ``_iter_mask`` / the real array's extent. The outside path has no gate -> a non-trivial
+    access placed there is silently wrong:
 
-    - **Strided** (step ``> 1`` on the contiguous dim, e.g. ``b[4*i]``):
-      an outside ``vector_copy`` reads ``W`` *contiguous* elements, not
-      the strided lanes — wrong numerics. Belongs inside via the
-      ``strided_{load,store}`` handlers.
-    - **Non-exact-W extent** (e.g. a masked-remainder tail with only
-      ``R < W`` valid elements, or an un-collapsed multi-dim window):
-      an outside W-wide copy OOB-reads / -writes the real array.
-    The ``masked`` flag is accepted for call-site clarity but does *not*
-    by itself force the inside path: a trivial exact-W contiguous copy
-    in a masked-remainder body is already correctly per-lane gated by
-    :func:`emit_staging_copy` (``mask_name`` / ``gate_extent``) on the
-    movable path, and strided masked accesses are already routed inside
-    by the ``strided_{load,store}`` handlers. Forcing *every* masked
-    single-subset access inside instead reclassifies those
-    already-correct accesses into the per-subset ``_emit_unmovable_copy``
-    path, which does not handle masked strided / diagonal shapes —
-    regressing them. The genuine correctness gain here is therefore the
-    *shape* gate (strided / partial / non-collapsed → inside), not a
-    blanket masked rule.
+    - **Strided** (step ``> 1`` on contiguous dim, e.g. ``b[4*i]``): outside ``vector_copy``
+      reads ``W`` *contiguous* elements, not the strided lanes. Belongs inside via
+      ``strided_{load,store}``.
+    - **Non-exact-W extent** (masked-remainder tail with ``R < W`` valid elements, or an
+      un-collapsed multi-dim window): outside W-wide copy OOB-reads / -writes the real array.
 
-    Multi-subset arrays are handled by the union / per-subset
-    classifier before this predicate is consulted; this only refines the
-    single-subset decision (previously: movable iff its free symbols are
-    available outside — which silently kept strided / partial accesses
-    outside and corrupted them).
+    ``masked`` does NOT by itself force inside: a trivial exact-W contiguous copy in a masked
+    body is already per-lane gated by :func:`emit_staging_copy` (``mask_name`` /
+    ``gate_extent``) on the movable path, and strided masked accesses already route inside.
+    Forcing every masked single-subset access inside reclassifies those into the per-subset
+    ``_emit_unmovable_copy`` path, which mishandles masked strided / diagonal shapes ->
+    regression. The correctness gain is the *shape* gate (strided / partial / non-collapsed
+    -> inside), not a blanket masked rule.
+
+    Multi-subset arrays go through the union / per-subset classifier first; this only refines
+    the single-subset decision (was: movable iff free symbols available outside, which kept
+    strided / partial accesses outside and corrupted them).
 
     :param subset: The single boundary access :class:`dace.subsets.Range`.
-    :param arr: The inner-SDFG array descriptor for the accessed data.
-    :param vector_width: The SIMD lane count ``W``.
-    :param masked: ``True`` if the enclosing NSDFG is a masked-remainder
-        body (an ``_iter_mask`` is in scope). Accepted for call-site
-        clarity; does not by itself force the inside path (see above).
-    :returns: ``True`` iff the access may stay outside as a plain
-        ``vector_copy<T, W>``; ``False`` to force inside staging.
+    :param arr: Inner-SDFG array descriptor for the accessed data.
+    :param vector_width: SIMD lane count ``W``.
+    :param masked: ``True`` if the enclosing NSDFG is a masked-remainder body (``_iter_mask``
+        in scope). Does not by itself force inside (see above).
+    :returns: ``True`` iff the access may stay outside as a plain ``vector_copy<T, W>``;
+        ``False`` to force inside staging.
     """
     strides = list(arr.strides)
     contig = strides.index(1) if 1 in strides else len(strides) - 1
@@ -179,29 +155,24 @@ def emit_staging_copy(state: SDFGState,
                       gate_extent: bool = False) -> None:
     """Splice one staging copy between a real array and a W-wide buffer.
 
-    The single emitter behind every vector-staging boundary copy
-    (``_emit_unmovable_copy``, ``_process_edges`` movable in/out, and
-    ``Vectorize._copy_in_and_copy_out``). In a masked remainder only
-    ``R < W`` lanes are in bounds, so an unconditional W-wide copy
-    OOB-reads / -writes the real (caller, non-W-padded) array at the
-    tail — an OOB write corrupts the heap. Each lane is gated:
+    Single emitter behind every vector-staging boundary copy (``_emit_unmovable_copy``,
+    ``_process_edges`` movable in/out, ``Vectorize._copy_in_and_copy_out``). In a masked
+    remainder only ``R < W`` lanes are in bounds, so an unconditional W-wide copy
+    OOB-reads / -writes the real (caller, non-W-padded) array at the tail (OOB write -> heap
+    corruption). Each lane is gated:
 
-    - ``mask_name`` set: the copy lives inside the masked-remainder body
-      NSDFG; gate by the in-scope ``_iter_mask`` and wire a ``_mask``
-      connector.
-    - ``gate_extent`` set: the copy lives at the outer NSDFG boundary
-      where ``_iter_mask`` is not in scope; gate by the real array's own
-      extent (``base + l < extent``) — the algebraic equivalent of the
-      iteration mask, correct for every access shape.
-    - neither: plain ``vector_copy<T, W>`` (main loop / scalar remainder;
-      unchanged, no per-lane overhead).
+    - ``mask_name`` set: copy inside the masked-remainder body NSDFG; gate by in-scope
+      ``_iter_mask``, wire a ``_mask`` connector.
+    - ``gate_extent`` set: copy at the outer NSDFG boundary (``_iter_mask`` out of scope);
+      gate by the real array's own extent (``base + l < extent``) — algebraic equivalent of
+      the iteration mask, correct for every access shape.
+    - neither: plain ``vector_copy<T, W>`` (main loop / scalar remainder; no per-lane
+      overhead).
 
-    A length-1 array or ``Scalar`` source on the ``"in"`` side is a
-    loop-invariant broadcast (e.g. TSVC s293 ``a0 = a[0]; a[i] = a0``):
-    it must replicate element 0 to every lane, never read ``W`` elements
-    from a 1-element source (that OOB-reads ``W-1`` elements past it and
-    corrupts the heap). This case ignores the mask/extent guards — a
-    broadcast is in-bounds and valid for every lane.
+    A length-1 array or ``Scalar`` source on the ``"in"`` side is a loop-invariant broadcast
+    (TSVC s293 ``a0 = a[0]; a[i] = a0``): replicate element 0 to every lane, never a W-wide
+    read of a 1-element source (OOB-reads ``W-1`` elements past it -> heap corruption).
+    Ignores the mask/extent guards — a broadcast is in-bounds for every lane.
 
     :param state: State to splice into.
     :param src: Edge source node.
@@ -224,9 +195,8 @@ def emit_staging_copy(state: SDFGState,
     is_broadcast = (direction == "in" and src_desc is not None
                     and (isinstance(src_desc, dace.data.Scalar) or str(src_desc.total_size) == "1"))
     if is_broadcast:
-        # Read element 0 once (single-element memlet -> scalar connector)
-        # and replicate to every lane. Never a W-wide read of a 1-element
-        # source.
+        # element 0 -> every lane (single-element memlet -> scalar connector); never a
+        # W-wide read of a 1-element source
         t = state.add_tasklet(name=f"_stage_in_bcast_{buf_name}",
                               inputs={"_in"},
                               outputs={"_out"},
@@ -317,16 +287,13 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
         connector_name = in_edge.dst_conn  # Connector name in nested SDFG
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
 
-        # Calculate expected shapes based on subset.
-        # Apply ``.simplify()`` so that the canonicalisation matches the
-        # sibling ``fix_nsdfg_connector_array_shapes_mismatch`` — previously
-        # the check used raw ``(end + 1 - begin)`` and the fix used
-        # ``.simplify()``, so the same input could be flagged as a mismatch
-        # by ``check_*`` but accepted by ``fix_*``.
-        # Analysis-only extent check (this shape is ONLY compared against
-        # connector_array.shape, never emitted) — sympy ``//`` is the
-        # blessed exception here; the codegen-reaching rebuild in
-        # fix_nsdfg_connector_array_shapes_mismatch uses int_floor.
+        # Expected shapes from subset. ``.simplify()`` to match sibling
+        # ``fix_nsdfg_connector_array_shapes_mismatch`` (was: check used raw
+        # ``(end + 1 - begin)``, fix used ``.simplify()`` -> same input flagged by
+        # ``check_*`` but accepted by ``fix_*``).
+        # Analysis-only extent check (shape ONLY compared against connector_array.shape,
+        # never emitted) -> sympy ``//`` is the blessed exception here; codegen-reaching
+        # rebuild in fix_nsdfg_connector_array_shapes_mismatch uses int_floor.
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
         expected_shape_strided = tuple([(((end + 1 - begin) // step)).simplify() for begin, end, step in subset])
@@ -396,26 +363,23 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str,
                                          vector_width: Optional[int] = None) -> None:
     """Guard ``fix_nsdfg_connector_array_shapes_mismatch`` against corrupting rebuilds.
 
-    Four rebuilds are legitimate: narrowing (every new dim <= original),
-    drop-dims (lower rank), vector-widening (a halo dim grown by exactly
-    ``vector_width - 1``), and placeholder expansion (original all-1s, or a
-    1-D ``(K,)`` widened to a strided bounding box). A rank-equal rebuild that
-    strictly enlarges a non-1 original dim is corrupting and rejected.
+    Legitimate rebuilds: narrowing (every new dim <= original), drop-dims (lower rank),
+    vector-widening (a halo dim grown by exactly ``vector_width - 1``), placeholder expansion
+    (original all-1s, or a 1-D ``(K,)`` widened to a strided bbox). A rank-equal rebuild that
+    strictly enlarges a non-1 original dim is corrupting -> rejected.
 
-    :param connector_name: Connector being rebuilt (for the error message).
+    :param connector_name: Connector being rebuilt (error message).
     :param original_shape: Connector array shape before the rebuild.
     :param new_shape: Proposed (collapsed-full) shape.
-    :param expected_full: Full expected shape (for the error message).
-    :param expected_strided: Strided expected shape (for the error message).
+    :param expected_full: Full expected shape (error message).
+    :param expected_strided: Strided expected shape (error message).
     :param expected_collapsed_strided: Collapsed-strided expected shape.
-    :param direction: ``"in"`` or ``"out"`` (for the error message).
-    :param vector_width: When set, enables the vector-widening / strided-bbox
-        exceptions.
-    :raises ValueError: if the rebuild expands a non-placeholder dim or grows
-        the rank.
+    :param direction: ``"in"`` or ``"out"`` (error message).
+    :param vector_width: When set, enables the vector-widening / strided-bbox exceptions.
+    :raises ValueError: if the rebuild expands a non-placeholder dim or grows the rank.
     """
-    # Drop-dims case (new has fewer dims than original) — always
-    # allowed; the helper computes ``dims_to_keep`` separately.
+    # Drop-dims (new has fewer dims than original) — always allowed; helper computes
+    # ``dims_to_keep`` separately.
     if len(new_shape) < len(original_shape):
         return
 
@@ -442,41 +406,35 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str,
         per_dim_growth = []
         for orig_d, new_d in zip(original_shape, new_shape):
             orig_int = _int_or_none(orig_d)
-            # ``shape`` entries are always int or sympy Expr -- both expose
-            # ``__sub__``; no defensive guard required.
+            # ``shape`` entries always int or sympy Expr -- both expose ``__sub__``.
             diff = _int_or_none(new_d - orig_d)
             per_dim_growth.append(diff)
             if diff is not None and diff > 0 and (orig_int is None or orig_int > 1):
                 expands_real_dim = True
 
-        # Vector-widening exception: every dim either unchanged (diff 0)
-        # or grown by exactly ``vector_width - 1`` (a stencil halo being
-        # widened for the W-wide vector body, e.g. jacobi ``(3,3)`` →
-        # ``(3,10)`` at W=8).  The inner vectorized accesses legitimately
-        # address the wider range — allow it.
+        # Vector-widening exception: every dim unchanged (diff 0) or grown by exactly
+        # ``vector_width - 1`` (a stencil halo widened for the W-wide body, e.g. jacobi
+        # ``(3,3)`` → ``(3,10)`` at W=8). Inner vectorized accesses legitimately address the
+        # wider range.
         if (expands_real_dim and vector_width is not None
                 and all(d == 0 or d == vector_width - 1 for d in per_dim_growth if d is not None)
                 and all(d is not None for d in per_dim_growth) and any(d == vector_width - 1 for d in per_dim_growth)):
             expands_real_dim = False
 
-        # Strided-bbox exception: a 1-D ``(K,)`` connector (K elements
-        # per iter) widened to the strided bounding box ``(W-1)*S + K``
-        # for some inter-lane stride ``S >= 1`` — the legitimate reshape
-        # the strided / multi-element-strided handlers
-        # (``_setup_strided_inside_nsdfg`` /
-        # ``_setup_multi_element_strided_inside_nsdfg``) need, e.g. a K=2
-        # stride-4 gather ``(2,) -> (30,)`` at W=8 (7*4 + 2). The inner
-        # body still accesses it K-wise; only the boundary copy spans
-        # the bbox.
+        # Strided-bbox exception: a 1-D ``(K,)`` connector (K elements/iter) widened to the
+        # strided bbox ``(W-1)*S + K`` for some inter-lane stride ``S >= 1`` — the reshape
+        # the strided / multi-element-strided handlers (``_setup_strided_inside_nsdfg`` /
+        # ``_setup_multi_element_strided_inside_nsdfg``) need, e.g. K=2 stride-4 gather
+        # ``(2,) -> (30,)`` at W=8 (7*4 + 2). Body accesses it K-wise; only the boundary copy
+        # spans the bbox.
         if (expands_real_dim and vector_width is not None and len(original_shape) == 1 and len(new_shape) == 1):
             K = _int_or_none(original_shape[0])
             bbox = _int_or_none(new_shape[0])
             if K is not None and bbox is not None and K >= 1 and bbox > K:
                 num = bbox - K
                 den = vector_width - 1
-                # bbox == (W-1)*S + K  ⇔  (bbox-K) divisible by (W-1),
-                # quotient S >= 1 (S >= K is the gather/scatter-with-gaps
-                # case; S < K never happens for a real strided bbox).
+                # bbox == (W-1)*S + K  ⇔  (bbox-K) divisible by (W-1), quotient S >= 1
+                # (S >= K = gather/scatter-with-gaps; S < K never happens for a real bbox).
                 if den > 0 and num % den == 0 and (num // den) >= 1:
                     expands_real_dim = False
 
@@ -498,18 +456,15 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
                                               vector_width: Optional[int] = None) -> None:
     """Detect and fix shape mismatches in nested SDFG connector arrays.
 
-    For each connector whose array shape matches none of the expected
-    interpretations, the array is recreated at the collapsed-full shape (after
-    the expansion guard accepts the rebuild) and inner accesses are updated via
-    ``drop_dims``. See also ``check_nsdfg_connector_array_shapes_match``.
+    Each connector whose shape matches no expected interpretation: array recreated at the
+    collapsed-full shape (after the expansion guard accepts the rebuild), inner accesses
+    updated via ``drop_dims``. See ``check_nsdfg_connector_array_shapes_match``.
 
     :param parent_state: State in the parent SDFG containing the NSDFG node.
     :param nsdfg_node: NSDFG node whose connector shapes to fix.
-    :param vector_width: When set, lets the expansion guard recognise a
-        legitimate vector-widening rebuild (a halo dim grown by exactly
-        ``vector_width - 1``) instead of raising.
-    :raises ValueError: if a rebuild would corrupt the connector shape
-        (via the expansion guard).
+    :param vector_width: When set, lets the expansion guard recognise a legitimate
+        vector-widening rebuild (halo dim grown by exactly ``vector_width - 1``) not raise.
+    :raises ValueError: if a rebuild would corrupt the connector shape (expansion guard).
     """
 
     # ===== Fix Input Edge Connector Arrays =====
@@ -550,18 +505,12 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
             continue  # No fix needed
 
         # ===== Mismatch detected - decide rebuild vs raise =====
-        # Cloudsc-class kernels pass the FULL outer-array shape as the
-        # connector (e.g. ``(klon, klev)``) with a smaller memlet subset
-        # (e.g. ``arr[8*i, 0:j+1]``); the rebuild to ``collapsed_full``
-        # narrows the connector to the actual slice and is legitimate.
-        #
-        # The rebuild is ONLY safe when it NARROWS (drops dims or
-        # shrinks each surviving dim). When the rebuild would EXPAND
-        # the connector (any new dim is larger than the corresponding
-        # original dim), the inner SDFG's existing accesses can't
-        # legitimately address the larger range — raise loudly so the
-        # caller fixes its inputs, rather than silently corrupting
-        # downstream codegen.
+        # Cloudsc-class kernels pass the FULL outer-array shape as connector (e.g.
+        # ``(klon, klev)``) with a smaller memlet subset (``arr[8*i, 0:j+1]``); rebuild to
+        # ``collapsed_full`` narrows the connector to the actual slice = legitimate. Safe
+        # ONLY when it NARROWS (drops dims / shrinks each surviving dim). An EXPAND (any new
+        # dim > original) means inner accesses can't legitimately address the larger range ->
+        # raise loudly, don't silently corrupt downstream codegen.
         _raise_on_expansion_rebuild_mismatch(connector_name,
                                              original_shape,
                                              expected_shape_collapsed_full,
@@ -590,14 +539,11 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
             alignment=connector_array.alignment,
             may_alias=False)
 
-        # Determine which dimensions to keep (1) vs drop (0)
-        # Keep dimensions that have size > 1
+        # Keep dims (1) with size > 1, drop (0) size-1 dims
         dims_to_keep = [1 if (end + 1 - begin) != 1 else 0 for begin, end, step in subset]
 
-        # Update all accesses inside nested SDFG if:
-        # 1. Not a 1D array (len > 1)
-        # 2. Original shape matches the subset dimensionality
-        # 3. Original shape had more dimensions than the collapsed shape
+        # Update inner accesses iff: not 1-D (len > 1), original rank == subset rank,
+        # original rank > collapsed rank.
         should_drop_dims = (len(dims_to_keep) != 1 and len(original_shape) == len(dims_to_keep)
                             and len(original_shape) > len(expected_shape_collapsed_full))
 
@@ -669,13 +615,11 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
             alignment=connector_array.alignment,
             may_alias=False)
 
-        # Determine which dimensions to keep (1) vs drop (0)
+        # Keep dims (1) with size > 1, drop (0) size-1 dims
         dims_to_keep = [1 if (end + 1 - begin) != 1 else 0 for begin, end, step in subset]
 
-        # Update all accesses inside nested SDFG if:
-        # 1. Not a 1D array (len > 1)
-        # 2. Original shape matches the subset dimensionality
-        # 3. Original shape had more dimensions than the collapsed shape
+        # Update inner accesses iff: not 1-D (len > 1), original rank == subset rank,
+        # original rank > collapsed rank.
         should_drop_dims = (len(dims_to_keep) != 1 and len(original_shape) == len(dims_to_keep)
                             and len(original_shape) > len(expected_shape_collapsed_full))
 

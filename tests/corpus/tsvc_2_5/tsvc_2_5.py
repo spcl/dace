@@ -1,20 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TSVC-2.5 extension corpus: ``@dace.program`` kernels.
 
-Each kernel exercises a vectorization failure mode that the standard
-TSVC-2 corpus does not cover. Recurring theme: symbolic dependence
-vectors (stride / offset / index function) that survive the front end
-and require runtime checks, snapshot renames, or guarded lifts to
-parallelize. Pluto-class polyhedral tools refuse these because their
-dependence is not affine in the integers.
+Each kernel exercises a vectorization failure mode TSVC-2 misses: symbolic
+dependence vectors (stride / offset / index function) that survive the front
+end and need runtime checks, snapshot renames, or guarded lifts to parallelize.
+Pluto-class polyhedral tools refuse them (dependence not affine in integers).
 
 Source contracts:
-
-* Kernel names mirror their `@dace.program` symbol and become the
-  per-kernel split file name (matching the ``tsvc_2`` convention).
-* Symbolic-stride kernels take an extra ``S`` (or ``ssym``) symbol; the
-  caller binds it at run-time, so the SDFG is built once and reused
-  across stride values.
+* Kernel name mirrors its ``@dace.program`` symbol and per-kernel split file
+  name (``tsvc_2`` convention).
+* Symbolic-stride kernels take an extra ``S``/``ssym`` symbol bound at runtime;
+  SDFG built once, reused across stride values.
 * Each kernel pairs with a numpy oracle in ``reference_python``.
 """
 from math import sqrt, exp
@@ -42,11 +38,10 @@ LEN_R7 = dace.symbol("LEN_R7")  # reroll length; bound to a multiple of the 7x r
 
 @dace.program
 def ext_strided_load_ssym(src: dace.float64[SSYM * LEN_1D], dst: dace.float64[LEN_1D], scale: dace.float64):
-    """``dst[i] = src[i * SSYM] * scale`` with ``SSYM`` a runtime symbol.
+    """``dst[i] = src[i * SSYM] * scale``, ``SSYM`` runtime symbol.
 
-    The compiler cannot prove the access pattern is contiguous because
-    ``SSYM`` is unknown; native auto-vectorizers fall back to scalar
-    code unless they emit a runtime stride check + gather intrinsic.
+    Contiguity unprovable (``SSYM`` unknown) -> auto-vectorizers scalarize
+    unless they emit a runtime stride check + gather intrinsic.
     """
     for i, in dace.map[0:LEN_1D:1]:
         dst[i] = src[i * SSYM] * scale
@@ -54,9 +49,8 @@ def ext_strided_load_ssym(src: dace.float64[SSYM * LEN_1D], dst: dace.float64[LE
 
 @dace.program
 def ext_strided_load_2(src: dace.float64[2 * LEN_1D], dst: dace.float64[LEN_1D], scale: dace.float64):
-    """``dst[i] = src[i * 2] * scale`` -- the constant-stride sibling
-    of ``ext_strided_load_ssym``. Most compilers vectorize this via
-    ``vpcompressd``-style gathers."""
+    """``dst[i] = src[i * 2] * scale`` -- constant-stride sibling of
+    ``ext_strided_load_ssym``. Vectorizes via ``vpcompressd``-style gathers."""
     for i, in dace.map[0:LEN_1D:1]:
         dst[i] = src[i * 2] * scale
 
@@ -68,9 +62,8 @@ def ext_strided_load_2(src: dace.float64[2 * LEN_1D], dst: dace.float64[LEN_1D],
 
 @dace.program
 def ext_strided_store_ssym(src: dace.float64[LEN_1D], dst: dace.float64[SSYM * LEN_1D], scale: dace.float64):
-    """``dst[i * SSYM] = src[i] * scale``. The scatter is potentially
-    non-permutation (depends on ``SSYM``); a safe lift requires a
-    runtime guard ensuring distinct write indices."""
+    """``dst[i * SSYM] = src[i] * scale``. Scatter potentially non-permutation
+    (depends on ``SSYM``); safe lift needs a runtime guard for distinct writes."""
     for i, in dace.map[0:LEN_1D:1]:
         dst[i * SSYM] = src[i] * scale
 
@@ -89,8 +82,7 @@ def ext_strided_store_2(src: dace.float64[LEN_1D], dst: dace.float64[2 * LEN_1D]
 
 @dace.program
 def ext_gather_load(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: dace.float64[LEN_1D], scale: dace.float64):
-    """``dst[i] = src[idx[i]] * scale``. The read pattern is fully
-    data-dependent; vectorization requires a gather intrinsic."""
+    """``dst[i] = src[idx[i]] * scale``. Data-dependent read; needs a gather intrinsic."""
     for i, in dace.map[0:LEN_1D:1]:
         dst[i] = src[idx[i]] * scale
 
@@ -98,10 +90,9 @@ def ext_gather_load(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: dac
 @dace.program
 def ext_scatter_store(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: dace.float64[LEN_1D],
                       scale: dace.float64):
-    """``dst[idx[i]] = src[i] * scale``. Safe parallelization requires
-    proving that ``idx`` is a permutation -- the ScatterToGuardedMaps
-    pass emits a sort+duplicate-count check that lets the lift fire
-    only when the runtime indices are distinct."""
+    """``dst[idx[i]] = src[i] * scale``. Safe lift needs an ``idx`` permutation
+    proof; ScatterToGuardedMaps emits a sort+dup-count check, fires only when
+    runtime indices are distinct."""
     for i, in dace.map[0:LEN_1D:1]:
         dst[idx[i]] = src[i] * scale
 
@@ -113,29 +104,26 @@ def ext_scatter_store(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: d
 
 @dace.program
 def ext_floordiv_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """``a[i] = a[i + LEN_1D // 2] + b[i]`` -- forward read across the
-    array midpoint. Polyhedral dependence analysis fails because the
-    offset is a floor-div of the trip count, not an affine integer
-    constant."""
+    """``a[i] = a[i + LEN_1D // 2] + b[i]`` -- forward read across midpoint.
+    Polyhedral analysis fails: offset is floor-div of trip count, not an affine
+    integer constant."""
     for i in range(LEN_1D // 2):
         a[i] = a[i + LEN_1D // 2] + b[i]
 
 
 @dace.program
 def ext_floordiv_offset_m(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """Generalised ``a[i] = a[i + LEN_1D // M] + b[i]`` with ``M`` a
-    runtime symbol. The offset is a quasi-affine function of two
-    symbols and is the canonical Pluto-defeat case."""
+    """``a[i] = a[i + LEN_1D // M] + b[i]``, ``M`` runtime. Offset quasi-affine
+    in two symbols -- canonical Pluto-defeat case."""
     for i in range(LEN_1D // M):
         a[i] = a[i + LEN_1D // M] + b[i]
 
 
 @dace.program
 def ext_modular_wrap(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """``a[(i + K) % LEN_1D] = b[i]`` -- modulo wraparound write. The
-    write index is data-dependent through ``K``; the canonicalize
-    pipeline's ``peel_limit`` knob unlocks parallelization by peeling
-    the boundary iteration."""
+    """``a[(i + K) % LEN_1D] = b[i]`` -- modulo wraparound write, index
+    data-dependent through ``K``. Canonicalize ``peel_limit`` knob peels the
+    boundary iteration to parallelize."""
     for i in range(LEN_1D):
         a[(i + K) % LEN_1D] = b[i]
 
@@ -148,17 +136,15 @@ def ext_modular_wrap(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 @dace.program
 def ext_war_unit(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     """TSVC ``s121`` shape: ``a[i] = a[i+1] + b[i]``. ``LoopToMap`` refuses
-    without ``break_anti_dependence=True``; the canonicalize knob
-    snapshot-renames ``a`` so the loop lifts."""
+    without ``break_anti_dependence=True``, which snapshot-renames ``a`` to lift."""
     for i in range(LEN_1D - 1):
         a[i] = a[i + 1] + b[i]
 
 
 @dace.program
 def ext_war_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """Symbolic-offset WAR: ``a[i] = a[i + K] + b[i]`` with ``K`` runtime.
-    Same snapshot-rename trick lifts the loop when ``K > 0``; ``K`` may
-    require a runtime guard to prove non-negativity."""
+    """Symbolic-offset WAR: ``a[i] = a[i + K] + b[i]``, ``K`` runtime. Same
+    snapshot-rename lifts when ``K > 0``; ``K`` may need a non-negativity guard."""
     for i in range(LEN_1D - K):
         a[i] = a[i + K] + b[i]
 
@@ -170,9 +156,8 @@ def ext_war_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 @dace.program
 def ext_peel_multi_back(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """Two tail iterations write conflicting elements; peeling them off
-    leaves a disjoint-write remainder that maps cleanly. Anchors the
-    ``peel_limit >= 2`` requirement."""
+    """Two tail iterations write conflicting elements; peeling them leaves a
+    disjoint-write remainder that maps cleanly. Anchors ``peel_limit >= 2``."""
     for i in range(LEN_1D):
         a[i] = b[i] * 2.0
         if i == LEN_1D - 1:
@@ -188,10 +173,9 @@ def ext_peel_multi_back(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 @dace.program
 def ext_tile_2d_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
-    """Two-axis tile with symbolic tile size ``S``. The untile pass
-    must detect the (outer_i, inner_i) and (outer_j, inner_j) tile
-    pairs across the multi-dim ascent. Requires both the cascade and
-    the multi-dim ascent extensions."""
+    """Two-axis tile, symbolic tile size ``S``. Untile pass must detect
+    (outer_i, inner_i) and (outer_j, inner_j) pairs across the multi-dim
+    ascent. Needs both the cascade + multi-dim ascent extensions."""
     for ti in range(0, LEN_2D, S):
         for tj in range(0, LEN_2D, S):
             for i in range(ti, ti + S):
@@ -203,19 +187,17 @@ def ext_tile_2d_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN
 #  %H  TSVC-named symbolic-step variants (parallel-naming with tsvc_2/)
 # ==========================================================================
 #
-# Each kernel mirrors a specific TSVC-2 kernel's loop shape but takes a
-# symbolic offset / stride. The naming convention matches ``tsvc_2/``'s
-# ``s<id>`` prefix so a join across the kernel tables identifies the
-# symbolic-variant of each TSVC-2 kernel directly.
+# Each mirrors a TSVC-2 kernel's loop shape but takes a symbolic offset/stride.
+# Naming matches ``tsvc_2/``'s ``s<id>`` prefix so a table join maps each to its
+# TSVC-2 base kernel.
 
 
 @dace.program
 def s121_sym_k(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """TSVC ``s121`` with symbolic offset ``K``:
-    ``a[i] = a[i + K] + b[i]``. The original ``s121`` uses ``K = 1``
-    (a unit-offset read-ahead WAR); here ``K`` is a runtime symbol, so
-    the snapshot-rename guard in ``break_anti_dependence`` must add a
-    ``K > 0`` runtime check before lifting to a Map.
+    """TSVC ``s121`` with symbolic offset ``K``: ``a[i] = a[i + K] + b[i]``.
+    Original ``s121`` uses ``K = 1`` (unit-offset read-ahead WAR); ``K`` runtime
+    here, so ``break_anti_dependence``'s snapshot-rename adds a ``K > 0`` check
+    before lifting to a Map.
     """
     for i in range(LEN_1D - K):
         a[i] = a[i + K] + b[i]
@@ -224,11 +206,9 @@ def s121_sym_k(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 @dace.program
 def s4113_ssym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], ip: dace.int64[LEN_1D]):
     """TSVC ``s4113`` with symbolic stride on the index array:
-    ``a[ip[i * SSYM]] = b[ip[i * SSYM]] + c[i]``. The original
-    ``s4113`` reads ``ip[i]`` (unit stride). Here the gather index
-    is itself strided by ``SSYM``, breaking the ``ip`` permutation
-    proof at any constant offset and exposing the gather/scatter
-    runtime check.
+    ``a[ip[i * SSYM]] = b[ip[i * SSYM]] + c[i]``. Original ``s4113`` reads
+    ``ip[i]`` (unit stride); striding the gather index by ``SSYM`` breaks the
+    ``ip`` permutation proof, exposing the gather/scatter runtime check.
     """
     for i in range(LEN_1D // SSYM):
         a[ip[i * SSYM]] = b[ip[i * SSYM]] + c[i]
@@ -236,12 +216,10 @@ def s4113_ssym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
 
 @dace.program
 def vas_ssym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int64[LEN_1D]):
-    """TSVC ``vas`` with symbolic-stride scatter:
-    ``a[ip[i * SSYM]] = b[i]``. Pure write-scatter form. Symbolic
-    stride means even known-permutation ``ip`` arrays no longer prove
-    distinct writes statically; the
-    ``ScatterToGuardedMaps`` sort+dup-count guard is required for the
-    lift.
+    """TSVC ``vas`` symbolic-stride scatter: ``a[ip[i * SSYM]] = b[i]``. Pure
+    write-scatter. Symbolic stride means even a known-permutation ``ip`` no
+    longer proves distinct writes statically; needs the ScatterToGuardedMaps
+    sort+dup-count guard.
     """
     for i in range(LEN_1D // SSYM):
         a[ip[i * SSYM]] = b[i]
@@ -251,19 +229,17 @@ def vas_ssym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int64[LE
 #  %I  Loop-fission family (sequential `for` with multiple bodies)
 # ==========================================================================
 #
-# These kernels exercise the LoopFission canonicalize pass: a body that
-# either pairs two independent statements (so they can vectorize
-# separately if reuse pressure forces a split) or one carried-dep
-# statement next to an independent statement (where fission MUST fire
-# for the independent body to vectorize).
+# Exercise the LoopFission canonicalize pass: a body pairing two independent
+# statements (split only if reuse pressure forces it), or a carried-dep
+# statement beside an independent one (fission MUST fire for the independent
+# body to vectorize).
 
 
 @dace.program
 def fission_indep_2body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
                         y: dace.float64[LEN_1D], z: dace.float64[LEN_1D]):
-    """Two independent writes sharing three reads. Either fused or
-    fissioned bodies are correct; fission gives both bodies independent
-    vector loops if register / reuse pressure forces the split."""
+    """Two independent writes sharing three reads. Fused or fissioned both
+    correct; fission gives each body its own vector loop under reuse pressure."""
     for i in range(LEN_1D):
         a[i] = x[i] * y[i] + z[i]
         b[i] = x[i] - y[i] * z[i]
@@ -272,9 +248,8 @@ def fission_indep_2body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dac
 @dace.program
 def fission_dep_then_indep(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
                            y: dace.float64[LEN_1D]):
-    """Body A carries a unit-offset dependence (prefix-sum on ``a``),
-    body B is independent. LoopFission must fire so that the
-    independent body vectorizes while the prefix-sum body stays scalar
+    """Body A carries a unit-offset dependence (prefix-sum on ``a``), body B
+    independent. LoopFission must fire so B vectorizes while A stays scalar
     (or lifts to a Scan)."""
     a[0] = x[0]
     for i in range(1, LEN_1D):
@@ -285,10 +260,9 @@ def fission_dep_then_indep(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: 
 @dace.program
 def fission_dep_const_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
                              y: dace.float64[LEN_1D], z: dace.float64[LEN_1D]):
-    """Body A carries a constant-offset (stride 2) dependence on ``a``,
-    body B is independent. After fission the independent body
-    vectorizes; the carried-dep body needs offset-2 software pipelining
-    or stays scalar."""
+    """Body A carries a constant-offset (stride 2) dependence on ``a``, body B
+    independent. After fission B vectorizes; A needs offset-2 software
+    pipelining or stays scalar."""
     a[0] = x[0]
     a[1] = x[1]
     for i in range(2, LEN_1D):
@@ -299,9 +273,8 @@ def fission_dep_const_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x
 @dace.program
 def fission_dep_sym_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
                            y: dace.float64[LEN_1D], z: dace.float64[LEN_1D]):
-    """Same shape as :func:`fission_dep_const_offset` but the offset is
-    the runtime symbol ``K``. Caller initializes ``a[0..K-1]`` before
-    invocation."""
+    """As :func:`fission_dep_const_offset` but offset is runtime symbol ``K``.
+    Caller initializes ``a[0..K-1]``."""
     for i in range(K, LEN_1D):
         a[i] = a[i - K] + x[i]
         b[i] = y[i] * z[i]
@@ -311,19 +284,15 @@ def fission_dep_sym_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: 
 #  %J  Already-tiled stencils (constant + symbolic tile size)
 # ==========================================================================
 #
-# Outer tile loops + inner stencil. Both the constant- and the
-# symbolic-tile-size variants are written explicitly so the
-# vectorizer's tile-untile + multi-dim ascent passes have stable anchor
-# kernels for benchmarking.
+# Outer tile loops + inner stencil. Constant- and symbolic-tile-size variants
+# both written explicitly as stable anchors for the vectorizer's tile-untile +
+# multi-dim ascent passes.
 
 
 @dace.program
 def jacobi2d_tiled_const(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
-    """2D Jacobi 5-point stencil pre-tiled with constant tile size 64.
-
-    Outer ``ii``/``jj`` walk tile origins, inner ``i``/``j`` walk the
-    in-tile coordinates.
-    """
+    """2D Jacobi 5-point stencil pre-tiled, constant tile size 64. Outer
+    ``ii``/``jj`` walk tile origins, inner ``i``/``j`` the in-tile coords."""
     for ii in range(1, LEN_2D - 1 - 64, 64):
         for jj in range(1, LEN_2D - 1 - 64, 64):
             for i in range(ii, ii + 64):
@@ -333,9 +302,8 @@ def jacobi2d_tiled_const(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D
 
 @dace.program
 def jacobi2d_tiled_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
-    """2D Jacobi 5-point stencil pre-tiled with symbolic tile size
-    ``T``. Same body as :func:`jacobi2d_tiled_const` with the literal
-    ``64`` replaced by the runtime symbol ``T``."""
+    """2D Jacobi 5-point stencil pre-tiled, symbolic tile size ``T`` (literal
+    ``64`` of :func:`jacobi2d_tiled_const` -> runtime ``T``)."""
     for ii in range(1, LEN_2D - 1 - T, T):
         for jj in range(1, LEN_2D - 1 - T, T):
             for i in range(ii, ii + T):
@@ -409,10 +377,8 @@ def ecrad_clamped_reduction(x: dace.float64[LEN_1D], y: dace.float64[LEN_1D], d:
                             out: dace.float64[LEN_1D]):
     """ECRAD-shaped per-element clamped transmittance:
     ``out[i] = clamp(exp(-sqrt(max(x*x + y*y, 1e-12)) * d), 0, 1)``.
-
-    Two ``max``/``min`` clamps + an ``exp`` + a ``sqrt`` in the body
-    stress the transcendental-clamp recognizer and the SLEEF / libmvec
-    intrinsic lowerings.
+    Two ``max``/``min`` clamps + ``exp`` + ``sqrt`` stress the
+    transcendental-clamp recognizer and SLEEF / libmvec lowerings.
     """
     for i in dace.map[0:LEN_1D]:
         k = sqrt(max(x[i] * x[i] + y[i] * y[i], 1e-12))
@@ -436,9 +402,8 @@ def masked_store_const(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], mask: d
 
 @dace.program
 def masked_store_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], threshold_data: dace.float64[LEN_1D]):
-    """Predicated store keyed on a comparison against the symbolic
-    threshold ``K`` (treated as a double scalar): ``if threshold_data[i]
-    > K: a[i] = b[i]``."""
+    """Predicated store keyed on symbolic threshold ``K`` (double scalar):
+    ``if threshold_data[i] > K: a[i] = b[i]``."""
     for i in dace.map[0:LEN_1D]:
         if threshold_data[i] > K:
             a[i] = b[i]
@@ -448,21 +413,18 @@ def masked_store_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], threshold
 #  %M  Quasi-affine subscript ranges (even/odd, pairwise, mod-K, floor-div)
 # ==========================================================================
 #
-# These kernels exercise quasi-affine subscript and iteration patterns
-# that polyhedral analysis still struggles with -- a striding subset
-# (even-only / odd-only), pairwise reads at ``2*i`` and ``2*i+1``, a
-# data-flow split by ``i % K``, and a write-conflict scatter via
-# ``b[i // 2] += a[i]`` where pairs of source iterations land in the
-# same output cell.
+# Quasi-affine subscript/iteration patterns polyhedral analysis struggles with:
+# striding subset (even/odd-only), pairwise reads at ``2*i`` / ``2*i+1``, a
+# dataflow split by ``i % K``, and a write-conflict scatter ``b[i // 2] += a[i]``
+# (pairs of source iterations land in one output cell).
 
 
 @dace.program
 def quasi_affine_reduce_even(a: dace.float64[LEN_1D], out: dace.float64[1]):
-    """Reduce only the even-indexed entries: ``sum(a[i] for i in
-    range(0, LEN_1D, 2))``. The stride-2 access subset survives the
-    front end as ``range(0, N, 2)``; the auto-vectorizer must spot
-    that the iteration space is contiguous after a /2 strength-
-    reduction (and a contig-load proof on ``a[2*i]``)."""
+    """Reduce even-indexed entries: ``sum(a[i] for i in range(0, LEN_1D, 2))``.
+    Stride-2 subset survives as ``range(0, N, 2)``; vectorizer must see the
+    iteration space is contiguous after /2 strength-reduction (+ a contig-load
+    proof on ``a[2*i]``)."""
     out[0] = 0.0
     for i in range(0, LEN_1D, 2):
         out[0] = out[0] + a[i]
@@ -470,10 +432,9 @@ def quasi_affine_reduce_even(a: dace.float64[LEN_1D], out: dace.float64[1]):
 
 @dace.program
 def quasi_affine_reduce_odd(a: dace.float64[LEN_1D], out: dace.float64[1]):
-    """Sibling of :func:`quasi_affine_reduce_even` with a non-zero
-    base: ``sum(a[i] for i in range(1, LEN_1D, 2))``. The non-zero
-    starting offset is the extra hop the polyhedral check has to
-    canonicalize."""
+    """Sibling of :func:`quasi_affine_reduce_even`, non-zero base:
+    ``sum(a[i] for i in range(1, LEN_1D, 2))``. Non-zero start offset is the
+    extra hop the polyhedral check must canonicalize."""
     out[0] = 0.0
     for i in range(1, LEN_1D, 2):
         out[0] = out[0] + a[i]
@@ -481,21 +442,19 @@ def quasi_affine_reduce_odd(a: dace.float64[LEN_1D], out: dace.float64[1]):
 
 @dace.program
 def quasi_affine_pairwise_sum(a: dace.float64[2 * LEN_1D], b: dace.float64[LEN_1D]):
-    """``b[i] = a[2*i] + a[2*i + 1]`` -- two quasi-affine reads per
-    iteration. The compiler should recognise this as a half-stride
-    gather + a shuffle (or a deinterleave load), but in practice both
-    Clang and GCC frequently scalarise the ``a[2*i + 1]`` read."""
+    """``b[i] = a[2*i] + a[2*i + 1]`` -- two quasi-affine reads/iter. Should
+    become a half-stride gather + shuffle (or deinterleave load); Clang and GCC
+    often scalarize the ``a[2*i + 1]`` read."""
     for i in dace.map[0:LEN_1D]:
         b[i] = a[2 * i] + a[2 * i + 1]
 
 
 @dace.program
 def quasi_affine_mod_k_stripe(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
-    """Every ``K``-th iteration takes a different branch:
-    ``a[i] = b[i] * 2.0 if i % K == 0 else c[i]``. The branch
-    predicate is a quasi-affine function of ``i`` and a symbolic
-    divisor; the masked-store optimization has to either peel a
-    finite period or emit two predicated stores per vector chunk."""
+    """Every ``K``-th iteration branches differently:
+    ``a[i] = b[i] * 2.0 if i % K == 0 else c[i]``. Predicate quasi-affine in
+    ``i`` + symbolic divisor; masked-store opt must peel a finite period or emit
+    two predicated stores per vector chunk."""
     for i in dace.map[0:LEN_1D]:
         if (i % K) == 0:
             a[i] = b[i] * 2.0
@@ -505,35 +464,35 @@ def quasi_affine_mod_k_stripe(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], 
 
 @dace.program
 def quasi_affine_floor_div_scatter(a: dace.float64[2 * LEN_1D], b: dace.float64[LEN_1D]):
-    """``b[i // 2] += a[i]`` -- write-conflict scatter where pairs of
-    source iterations (``i, i+1``) land in the same output cell. This
-    pattern is genuinely sequential under naive vectorization (it has
-    a length-2 reduction stripe) and must lower to either a pairwise
-    horizontal add or a sequential loop."""
-    for i in range(2 * LEN_1D):
-        b[i // 2] = b[i // 2] + a[i]
+    """Accumulate each consecutive pair of ``a`` into ``b``:
+    ``b[i] += a[2*i] + a[2*i + 1]``. Value-identical naturally-parallel rewrite
+    of the floor-div scatter ``b[i // 2] += a[i]`` (each output cell gets its two
+    source elements; ``np.add.at`` in the oracle). As a unit-step map with two
+    strided reads it vectorizes directly -- half-stride gather of
+    ``a[2*i]`` / ``a[2*i + 1]`` + load-add-store on ``b[i]`` -- no scatter,
+    floor-div, or reduction stripe."""
+    for i in dace.map[0:LEN_1D]:
+        b[i] = b[i] + a[2 * i] + a[2 * i + 1]
 
 
 # ==========================================================================
 #  %N  Wavefront / loop-skew (2D anti-diagonal parallelism)
 # ==========================================================================
 #
-# A perfectly-nested 2D update whose body reads the left (``a[i, j-1]``)
-# and top (``a[i-1, j]``) neighbours carries dependence vectors ``(0, 1)``
-# and ``(1, 0)``. Neither loop is parallel on its own, but the
-# anti-diagonal ``i + j = const`` is: the ``WavefrontSkew`` canonicalize
-# pass applies the classical ``(i, j) -> (i + j, j)`` skew so the inner
-# loop becomes a parallel Map. The base TSVC kernel is ``s2111``.
+# Perfectly-nested 2D update reading left (``a[i, j-1]``) + top (``a[i-1, j]``)
+# carries dependence vectors ``(0, 1)`` and ``(1, 0)``: neither loop parallel,
+# but the anti-diagonal ``i + j = const`` is. ``WavefrontSkew`` applies the
+# classical ``(i, j) -> (i + j, j)`` skew so the inner loop becomes a Map. Base
+# TSVC kernel ``s2111``.
 
 
 @dace.program
 def wavefront2d(a: dace.float64[LEN_2D, LEN_2D]):
-    """2D in-place relaxation with left + top + corner reads:
+    """2D in-place relaxation, left + top + corner reads:
     ``a[i, j] = 0.25 * (a[i, j] + a[i-1, j] + a[i, j-1] + a[i-1, j-1])``.
-
-    Dependence vectors ``(0, 1)``, ``(1, 0)``, ``(1, 1)`` make both loops
-    sequential as written; only the ``i + j`` anti-diagonal is parallel,
-    so ``WavefrontSkew`` must skew before ``LoopToMap`` can fire."""
+    Dependence vectors ``(0, 1)``, ``(1, 0)``, ``(1, 1)`` serialize both loops;
+    only the ``i + j`` anti-diagonal is parallel, so ``WavefrontSkew`` must skew
+    before ``LoopToMap``."""
     for i in range(1, LEN_2D):
         for j in range(1, LEN_2D):
             a[i, j] = 0.25 * (a[i, j] + a[i - 1, j] + a[i, j - 1] + a[i - 1, j - 1])
@@ -543,20 +502,20 @@ def wavefront2d(a: dace.float64[LEN_2D, LEN_2D]):
 #  %O  Early-exit / find-first (break loops)
 # ==========================================================================
 #
-# ``for i: ... if cond(i): break; ...`` loops lower to a sequential scan
-# the ``EarlyExitToFindIndex`` pass rewrites into a parallel find-first
-# reduction plus body Maps clipped to the discovered bound. Base TSVC
-# kernels: ``s481`` (guard before body), ``s482`` (guard after body),
-# ``s332`` (find-first-above-threshold with index/value capture).
+# ``for i: ... if cond(i): break; ...`` lowers to a sequential scan;
+# ``EarlyExitToFindIndex`` rewrites to a parallel find-first reduction + body
+# Maps clipped to the discovered bound. Base TSVC: ``s481`` (guard before body),
+# ``s482`` (guard after body), ``s332`` (find-first-above-threshold, index/value
+# capture).
 
 
 @dace.program
 def ext_break_find_first(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D],
                          d: dace.float64[LEN_1D]):
-    """TSVC ``s481``: guard checked *before* the body. ``if d[i] < 0: break``
-    then ``a[i] = a[i] + b[i] * c[i]``. The break bound is data-dependent
-    on ``d``; the lift needs a find-first ``min`` reduction over
-    ``{i : d[i] < 0}`` before the body can run as a clipped parallel Map."""
+    """TSVC ``s481``: guard before body. ``if d[i] < 0: break`` then
+    ``a[i] = a[i] + b[i] * c[i]``. Break bound data-dependent on ``d``; lift
+    needs a find-first ``min`` reduction over ``{i : d[i] < 0}`` before the body
+    runs as a clipped parallel Map."""
     for i in range(LEN_1D):
         if d[i] < 0.0:
             break
@@ -565,10 +524,9 @@ def ext_break_find_first(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: da
 
 @dace.program
 def ext_break_post_body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
-    """TSVC ``s482``: body runs *before* the guard. ``a[i] = a[i] + b[i]*c[i]``
-    then ``if c[i] > b[i]: break``. The breaking iteration's write is
-    retained, so the find-first bound is inclusive -- a different clip
-    than :func:`ext_break_find_first`."""
+    """TSVC ``s482``: body before guard. ``a[i] = a[i] + b[i]*c[i]`` then
+    ``if c[i] > b[i]: break``. Breaking iteration's write retained -> inclusive
+    find-first bound (different clip than :func:`ext_break_find_first`)."""
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] * c[i]
         if c[i] > b[i]:
@@ -577,10 +535,9 @@ def ext_break_post_body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dac
 
 @dace.program
 def ext_break_capture(a: dace.float64[LEN_1D], out_index: dace.int64[1], out_value: dace.float64[1]):
-    """TSVC ``s332`` with a symbolic threshold ``K`` (bound as a double):
-    find the first ``i`` with ``a[i] > K``, capture its index and value,
-    and break. The scalar rebind at the exit edge is what
-    ``EarlyExitToFindIndex`` must reconstruct as an argmin-of-index."""
+    """TSVC ``s332`` with symbolic threshold ``K`` (double): find first ``i``
+    with ``a[i] > K``, capture index + value, break. The exit-edge scalar rebind
+    is what ``EarlyExitToFindIndex`` reconstructs as an argmin-of-index."""
     out_index[0] = -1
     out_value[0] = -1.0
     for i in range(LEN_1D):
@@ -594,11 +551,10 @@ def ext_break_capture(a: dace.float64[LEN_1D], out_index: dace.int64[1], out_val
 #  %P  Conditional reduction (predicated accumulate)
 # ==========================================================================
 #
-# ``if cond(i): acc = acc OP expr`` sits inside a ConditionalBlock, so the
-# state-level ``AugAssignToWCR`` matcher cannot reach it and the carry on
-# ``acc`` blocks ``LoopToMap``. ``LoopToConditionalReduce`` masks the
-# addend with the OP identity on the false branch so the loop lifts to a
-# parallel Map with a WCR-on-scalar reduction. Base TSVC kernel: ``s3111``.
+# ``if cond(i): acc = acc OP expr`` inside a ConditionalBlock: state-level
+# ``AugAssignToWCR`` can't reach it and the ``acc`` carry blocks ``LoopToMap``.
+# ``LoopToConditionalReduce`` masks the addend with the OP identity on the false
+# branch, lifting to a parallel Map with WCR-on-scalar. Base TSVC ``s3111``.
 
 
 @dace.program
@@ -614,9 +570,8 @@ def cond_reduce_sum(a: dace.float64[LEN_1D], out: dace.float64[1]):
 @dace.program
 def cond_reduce_sym(a: dace.float64[LEN_1D], out: dace.float64[1]):
     """Symbolic-threshold sibling of :func:`cond_reduce_sum`:
-    ``if a[i] > K: out += a[i]`` with ``K`` bound as a double. The
-    predicate's symbolic comparison forces the mask to be computed at
-    runtime before the WCR reduction."""
+    ``if a[i] > K: out += a[i]``, ``K`` double. Symbolic comparison forces the
+    mask computed at runtime before the WCR reduction."""
     out[0] = 0.0
     for i in range(LEN_1D):
         if a[i] > K:
@@ -627,19 +582,18 @@ def cond_reduce_sym(a: dace.float64[LEN_1D], out: dace.float64[1]):
 #  %Q  Induction-variable closed form (scalar evolution)
 # ==========================================================================
 #
-# ``acc = acc OP const`` over ``N`` iterations is a scalar recurrence with
-# a closed form (Aho/Lam/Sethi/Ullman Ch. 9.6, LLVM ``IndVarSimplify``).
-# ``InductionVariableSubstitution`` collapses the ``O(N)`` loop to ``O(1)``
-# straight-line code. The addend/factor must be a literal constant (not a
-# per-element read) for the closed form to exist.
+# ``acc = acc OP const`` over ``N`` iterations is a scalar recurrence with a
+# closed form (Aho/Lam/Sethi/Ullman Ch. 9.6, LLVM ``IndVarSimplify``).
+# ``InductionVariableSubstitution`` collapses the ``O(N)`` loop to ``O(1)``.
+# Addend/factor must be a literal constant (not a per-element read) for the
+# closed form to exist.
 
 
 @dace.program
 def iv_additive(out: dace.float64[1]):
     """Additive induction variable: ``s = 0; for i in range(LEN_1D): s += 1.5``.
-    Closed form ``s = 1.5 * LEN_1D``. The trip count is the symbol
-    ``LEN_1D``; there is no per-element data, so the loop is a pure
-    recurrence the substitution eliminates."""
+    Closed form ``s = 1.5 * LEN_1D``. Trip count = ``LEN_1D``, no per-element
+    data -> pure recurrence the substitution eliminates."""
     s = 0.0
     for i in range(LEN_1D):
         s = s + 1.5
@@ -648,9 +602,9 @@ def iv_additive(out: dace.float64[1]):
 
 @dace.program
 def iv_multiplicative(out: dace.float64[1]):
-    """Multiplicative induction variable: ``s = 1; for i: s *= 0.99``.
-    Closed form ``s = 0.99 ** LEN_1D`` -- the geometric-product case that
-    distinguishes scalar evolution from a plain reduction."""
+    """Multiplicative induction variable: ``s = 1; for i: s *= 0.99``. Closed
+    form ``s = 0.99 ** LEN_1D`` -- geometric-product case distinguishing scalar
+    evolution from a plain reduction."""
     s = 1.0
     for i in range(LEN_1D):
         s = s * 0.99
@@ -661,10 +615,10 @@ def iv_multiplicative(out: dace.float64[1]):
 #  %R  Argmax / argmin value reduction (conditional carry -> Reduce)
 # ==========================================================================
 #
-# ``x = a[0]; for i: if a[i] OP x: x = a[i]`` is a max/min reduction hidden
-# behind a conditional scalar carry. ``ArgMaxLift`` recognises the chain
-# and replaces the loop with a ``Reduce`` libnode (``Max`` for ``>``/``>=``,
-# ``Min`` for ``<``/``<=``). Base TSVC kernels: ``s314`` / ``s316``.
+# ``x = a[0]; for i: if a[i] OP x: x = a[i]`` is a max/min reduction behind a
+# conditional scalar carry. ``ArgMaxLift`` replaces the loop with a ``Reduce``
+# libnode (``Max`` for ``>``/``>=``, ``Min`` for ``<``/``<=``). Base TSVC
+# ``s314`` / ``s316``.
 
 
 @dace.program
@@ -694,34 +648,31 @@ def argmin_value(a: dace.float64[LEN_1D], out: dace.float64[1]):
 #  %S  Negative-stride loop + manually-unrolled lane chain
 # ==========================================================================
 #
-# Two normalization anchors that block ``LoopToMap`` until rewritten:
-# ``NormalizeNegativeStride`` flips a literal negative-stride loop to
-# positive form (base TSVC ``s112``), and ``RerollUnrolledLoops`` collapses
-# a hand-unrolled step-``m`` lane chain back to a unit-step loop (base
-# TSVC ``s351``).
+# Two normalization anchors blocking ``LoopToMap`` until rewritten:
+# ``NormalizeNegativeStride`` flips a literal negative-stride loop to positive
+# form (base TSVC ``s112``); ``RerollUnrolledLoops`` collapses a hand-unrolled
+# step-``m`` lane chain to a unit-step loop (base TSVC ``s351``).
 
 
 @dace.program
 def neg_stride_rev(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """Reverse-iteration write with no carried dependence:
-    ``for i in range(LEN_1D - 1, -1, -1): a[i] = b[i] + 1``. Parallel in
-    principle, but the negative literal stride defeats ``LoopToMap``'s
-    affine-subset classifier until ``NormalizeNegativeStride`` rewrites it
-    to positive form."""
+    """Reverse-iteration write, no carried dependence:
+    ``for i in range(LEN_1D - 1, -1, -1): a[i] = b[i] + 1``. Parallel, but the
+    negative literal stride defeats ``LoopToMap``'s affine-subset classifier
+    until ``NormalizeNegativeStride`` flips it to positive form."""
     for i in range(LEN_1D - 1, -1, -1):
         a[i] = b[i] + 1.0
 
 
 @dace.program
 def reroll_saxpy7(a: dace.float64[LEN_R7], b: dace.float64[LEN_R7]):
-    """TSVC ``s351``: a saxpy hand-unrolled 7x. Seven structurally-identical
-    lanes at offsets ``{0..6}`` over a step-7 loop look like one strided
-    ``7*i + k`` access that blocks ``LoopToMap``; ``RerollUnrolledLoops``
-    re-rolls to a unit-step loop first. The unroll factor is deliberately
-    a **prime** (7) so it cannot coincide with any vector width -- the
-    lane chain never accidentally tiles a SIMD register, so the reroll is
-    genuinely required rather than a lucky alignment. Length is its own
-    symbol ``LEN_R7`` so it can be bound to a multiple of 7."""
+    """TSVC ``s351``: saxpy hand-unrolled 7x. Seven identical lanes at offsets
+    ``{0..6}`` over a step-7 loop look like one strided ``7*i + k`` access that
+    blocks ``LoopToMap``; ``RerollUnrolledLoops`` re-rolls to a unit-step loop
+    first. Unroll factor is a **prime** (7) so it can't coincide with any vector
+    width -- the lane chain never accidentally tiles a SIMD register, so the
+    reroll is genuinely required. Length is its own symbol ``LEN_R7``, bound to a
+    multiple of 7."""
     for i in range(0, LEN_R7 - 6, 7):
         a[i] = a[i] + b[i] * 2.0
         a[i + 1] = a[i + 1] + b[i + 1] * 2.0

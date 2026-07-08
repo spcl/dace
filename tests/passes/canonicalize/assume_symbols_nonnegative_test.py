@@ -27,9 +27,12 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
-    AssumeSymbolsNonnegative, insert_symbol_nonnegative_guard, _GUARD_STATE_LABEL)
+    AssumeSymbolConstraints, AssumeSymbolsNonnegative, insert_assumption_guards, insert_symbol_nonnegative_guard,
+    _GUARD_STATE_LABEL)
+from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
 
 N = dace.symbol('N', dtype=dace.int64)
+K = dace.symbol('K', dtype=dace.int64)
 
 
 def _axpy_sdfg():
@@ -139,6 +142,60 @@ def test_guard_aborts_on_negative_symbol():
     assert proc.returncode != 0
 
 
+def _kn_sdfg():
+    """An SDFG whose free symbols are ``K`` and ``N`` (both signed ints), so a
+    recorded ``K < N`` relation is in scope at the entry state."""
+
+    @dace.program
+    def kn(x: dace.float64[N]):
+        for i in dace.map[0:N]:
+            x[i] = x[i] + K
+
+    return kn.to_sdfg(simplify=True)
+
+
+def test_tracked_assumption_emitted_as_own_tasklet():
+    """A recorded relation becomes its own trap tasklet (guarded on its negation),
+    in the single guard state alongside the one-per-symbol nonnegativity tasklets."""
+    sdfg = _kn_sdfg()
+    record_assumption(sdfg, K < N)
+    assert insert_assumption_guards(sdfg) == 1
+    traps = _trap_tasklets(sdfg)
+    # One tasklet per assumption: nonneg K, nonneg N, and the tracked K < N.
+    assert len(traps) == 3
+    assert all(t.side_effects is True for t in traps)
+    # All three tasklets live in the single guard start state.
+    assert all(t in sdfg.start_block.nodes() for t in traps)
+    conds = [t.code.as_string for t in traps]
+    assert any('K < 0' in c for c in conds) and any('N < 0' in c for c in conds)  # nonnegativity
+    assert any('K >= N' in c for c in conds)  # the tracked K < N, guarded on its negation
+    sdfg.validate()
+
+
+def test_tracked_assumption_deduped_and_true_dropped():
+    sdfg = _kn_sdfg()
+    record_assumption(sdfg, K < N)
+    record_assumption(sdfg, K < N)          # duplicate -> single entry
+    record_assumption(sdfg, N < N + 1)      # simplifies to True -> dropped
+    assert [str(r) for r in tracked_assumptions(sdfg)] == ['K < N']
+
+
+def test_tracked_assumption_out_of_scope_skipped():
+    """A relation over a symbol that is not an SDFG free symbol cannot be checked
+    at the entry state, so it is skipped (only the nonneg tasklets remain)."""
+    sdfg = _kn_sdfg()
+    record_assumption(sdfg, dace.symbol('Q', dtype=dace.int64) < N)  # Q is not in the SDFG
+    assert insert_assumption_guards(sdfg) == 1
+    conds = [t.code.as_string for t in _trap_tasklets(sdfg)]
+    assert all('Q' not in c for c in conds)
+    assert any('K < 0' in c for c in conds) and any('N < 0' in c for c in conds)
+
+
+def test_back_compat_aliases():
+    assert AssumeSymbolsNonnegative is AssumeSymbolConstraints
+    assert insert_symbol_nonnegative_guard is insert_assumption_guards
+
+
 if __name__ == '__main__':
     test_emits_guard_as_first_state()
     test_idempotent()
@@ -146,4 +203,8 @@ if __name__ == '__main__':
     test_pass_wrapper_matches_helper()
     test_survives_full_canonicalize_and_runs()
     test_guard_aborts_on_negative_symbol()
+    test_tracked_assumption_emitted_as_own_tasklet()
+    test_tracked_assumption_deduped_and_true_dropped()
+    test_tracked_assumption_out_of_scope_skipped()
+    test_back_compat_aliases()
     print("OK")

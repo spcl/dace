@@ -1,29 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A ``"vectorized"`` implementation for the standard ``Reduce`` library node.
+"""``"vectorized"`` implementation for the standard ``Reduce`` library node.
 
 The vectorization pipeline lifts a recognised accumulator pattern into a
-``dace.libraries.standard.nodes.Reduce`` node and sets its
-``implementation`` to ``"vectorized"``; this module registers that
-implementation. :class:`ExpandReduceVectorized` is a thin, **schedule-aware
-dispatcher** (no OOP abstraction — a single ``ExpandTransformation`` as the
-DaCe library API requires):
+``dace.libraries.standard.nodes.Reduce`` with ``implementation="vectorized"``;
+this module registers that implementation. :class:`ExpandReduceVectorized` is a
+schedule-aware dispatcher (single ``ExpandTransformation``, as the DaCe library
+API requires):
 
-- ``Sequential`` / ``Default`` schedule — the vectorized sequential
-  reduction (a per-lane vector accumulator folded by a single
-  ``horizontal_reduce_<op>`` intrinsic). RV-1b-alpha delegates this to
-  the proven :class:`ExpandReducePure` expansion to land the
-  registration + dispatcher contract with zero risk; RV-1b-beta swaps
-  in the real vectorized horizontal-reduce kernel.
-- ``CPU_Multicore`` schedule — delegate to :class:`ExpandReduceOpenMP`,
-  whose ``#pragma omp parallel for reduction(...)`` owns the per-thread
-  private accumulators and the cross-thread combine (thread count is an
-  OpenMP runtime concern, ``omp_get_max_threads()`` — never an SDFG
-  symbol, no manual ``M/NUM_CORES`` tiling).
-- Any other schedule (GPU, MPI, Snitch, …) or an unsupported reduction
-  operator — raise ``NotImplementedError``. Loud failure over a silent
-  fallback: in the CPU vectorization pipeline an unexpected schedule /
-  a non-associative or custom reduction must surface, not be silently
-  mis-lowered.
+- ``Sequential`` / ``Default`` -> vectorized sequential reduction (per-lane
+  vector accumulator folded by one ``horizontal_reduce_<op>`` intrinsic).
+- ``CPU_Multicore`` -> :class:`ExpandReduceOpenMP`; its
+  ``#pragma omp parallel for reduction(...)`` owns per-thread accumulators +
+  cross-thread combine (thread count = OpenMP runtime concern,
+  ``omp_get_max_threads()``, never an SDFG symbol; no manual ``M/NUM_CORES`` tiling).
+- Any other schedule (GPU, MPI, Snitch, …) or unsupported reduction op -> raise
+  ``NotImplementedError``. An unexpected schedule or a non-associative / custom
+  reduction must surface, not be silently mis-lowered.
 """
 from copy import deepcopy as dcpy
 
@@ -39,11 +31,10 @@ from dace.libraries.standard.nodes.reduce import (
 from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
-#: Reduction operators with an associative identity and a matching
-#: ``horizontal_reduce_<op>`` runtime primitive. Maps to the op-token
-#: suffix used by ``cpu_vectorizable_math_*.h``. Sub / Div / Logical_* /
-#: *_Location / Exchange / Custom are intentionally absent — they have
-#: no associative-fold identity and must raise rather than mis-reduce.
+#: Reduction ops with an associative identity + matching ``horizontal_reduce_<op>``
+#: primitive; value = op-token suffix used by ``cpu_vectorizable_math_*.h``. Sub /
+#: Div / Logical_* / *_Location / Exchange / Custom absent — no associative-fold
+#: identity, must raise rather than mis-reduce.
 REDTYPE_TO_OP = {
     dtypes.ReductionType.Sum: "add",
     dtypes.ReductionType.Product: "mul",
@@ -59,9 +50,8 @@ _VECTORIZED_SEQUENTIAL_SCHEDULES = (
     dtypes.ScheduleType.Sequential,
 )
 
-#: Per-op C++ binary fold ``OP(x, y)`` used for the W-wide partials and
-#: the scalar tail, paired with the accumulator identity element when
-#: the ``Reduce`` node does not carry its own ``identity``.
+#: Per-op C++ binary fold ``OP(x, y)`` for the W-wide partials + scalar tail;
+#: paired with the identity element when ``Reduce`` carries no ``identity``.
 _OP_CXX = {
     "add": lambda x, y: f"(({x}) + ({y}))",
     "mul": lambda x, y: f"(({x}) * ({y}))",
@@ -81,31 +71,29 @@ _OP_IDENTITY_CXX = {
     "bxor": "({T})0",
 }
 
-#: The horizontal-reduce primitive is templated on a compile-time lane
-#: count; use the pipeline's default vector width (the runtime header
-#: handles any width — single-instruction where the ISA has it, the
-#: portable log-depth tree otherwise).
+#: horizontal-reduce primitive is templated on a compile-time lane count; use the
+#: pipeline default width (runtime header handles any width — single instruction
+#: where the ISA has it, portable log-depth tree otherwise).
 _VEC_W = 8
 
 
 def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
     """Vectorized 1-D full-reduction nested SDFG, or ``None`` if out of scope.
 
-    Scope: a full reduction (every input axis reduced) of a contiguous
-    1-D input to a single output element — the shape the vectorizer's
-    lifted accumulators produce. Anything else (partial / multi-axis /
-    multi-element output) returns ``None`` so the caller delegates to
-    :class:`ExpandReducePure` (still correct, just not vectorized).
+    Scope: full reduction (every axis reduced) of a contiguous 1-D input to a
+    single output element — the shape the vectorizer's lifted accumulators
+    produce. Anything else (partial / multi-axis / multi-element output) ->
+    ``None``, caller delegates to :class:`ExpandReducePure` (still correct).
 
-    The kernel keeps ``_VEC_W`` independent partial accumulators, folds
-    them with one ``horizontal_reduce_<op>`` intrinsic, then a scalar
-    tail handles the non-``W``-multiple remainder.
+    Kernel keeps ``_VEC_W`` partial accumulators, folds with one
+    ``horizontal_reduce_<op>`` intrinsic, then a scalar tail handles the
+    non-``W``-multiple remainder.
 
-    :param node: The ``Reduce`` node.
-    :param state: The state containing ``node``.
-    :param sdfg: The containing SDFG.
-    :param opname: The ``horizontal_reduce_<opname>`` suffix.
-    :returns: The expanded nested SDFG, or ``None`` if unsupported here.
+    :param node: the ``Reduce`` node.
+    :param state: state containing ``node``.
+    :param sdfg: containing SDFG.
+    :param opname: the ``horizontal_reduce_<opname>`` suffix.
+    :returns: expanded nested SDFG, or ``None`` if unsupported here.
     """
     node.validate(sdfg, state)
     inedge = state.in_edges(node)[0]
@@ -123,8 +111,11 @@ def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
     for s in outsubset.size():
         out_elems *= s
 
-    # Only the contiguous 1-D full-reduction-to-scalar case.
-    if len(axes) != len(inedge.data.subset) or len(in_sizes) != 1 or out_elems != 1:
+    # Only contiguous 1-D full-reduction-to-scalar. Non-unit step (strided input
+    # ``a[0:2N:2]``) can't use the contiguous SIMD load ``__inp[_i + _l]`` below ->
+    # fall back to pure/OpenMP (strided SIMD gather not worth it).
+    if (len(axes) != len(inedge.data.subset) or len(in_sizes) != 1 or out_elems != 1
+            or any(str(step) != "1" for (_, _, step) in insubset.ranges)):
         return None
 
     ctype = input_data.dtype.ctype
@@ -150,10 +141,9 @@ def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
         ident = _OP_IDENTITY_CXX[opname].replace("{T}", ctype)
     fold = _OP_CXX[opname]
     W = _VEC_W
-    # The per-lane loops have a compile-time-constant trip count (the vector
-    # width): declare it ``constexpr`` and hint a full unroll so the body lowers
-    # to straight-line SIMD. The ``_i`` loop over the runtime length ``_M`` is
-    # data-dependent and stays a plain loop.
+    # Per-lane loops have compile-time-constant trip (vector width): ``constexpr``
+    # + full-unroll hint -> straight-line SIMD. The ``_i`` loop over runtime ``_M``
+    # is data-dependent, stays a plain loop.
     code = f"""{{
 constexpr int _W = {W};
 const long long _M = (long long)({m_expr});
@@ -189,14 +179,13 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
     def expansion(node: Reduce, state, sdfg):
         """Dispatch the reduction by operator and schedule.
 
-        :param node: The ``Reduce`` library node.
-        :param state: The state containing ``node``.
-        :param sdfg: The SDFG containing ``state``.
-        :returns: The expanded nested SDFG (delegated).
-        :raises NotImplementedError: If the reduction operator is not an
-            associative one with a horizontal-reduce primitive, or the
-            node's schedule is neither sequential/default nor CPU
-            multicore.
+        :param node: the ``Reduce`` library node.
+        :param state: state containing ``node``.
+        :param sdfg: SDFG containing ``state``.
+        :returns: expanded nested SDFG (delegated).
+        :raises NotImplementedError: reduction op is not associative with a
+            horizontal-reduce primitive, or schedule is neither sequential/default
+            nor CPU multicore.
         """
         redtype = detect_reduction_type(node.wcr)
         if redtype not in REDTYPE_TO_OP:
@@ -207,21 +196,18 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
 
         schedule = node.schedule
         if schedule in _VECTORIZED_SEQUENTIAL_SCHEDULES:
-            # RV-1b-beta: the real per-lane vector accumulator +
-            # horizontal_reduce_<op> CPP kernel for the contiguous 1-D
-            # full-reduction-to-scalar shape. Other shapes (partial /
-            # multi-axis / multi-element output) fall back to the proven
-            # pure expansion — still correct, just not vectorized (the
-            # loud-no-fallback policy applies to schedule / redtype, not
-            # to shape coverage within the supported sequential path).
+            # Vectorized kernel for the contiguous 1-D full-reduction-to-scalar
+            # shape; other shapes fall back to pure expansion (still correct).
+            # Loud-no-fallback policy applies to schedule/redtype, not to shape
+            # coverage within the sequential path.
             opname = REDTYPE_TO_OP[redtype]
             vec = _build_vectorized_full_reduction(node, state, sdfg, opname)
             if vec is not None:
                 return vec
             return ExpandReducePure.expansion(node, state, sdfg)
         if schedule == dtypes.ScheduleType.CPU_Multicore:
-            # OpenMP owns the thread split + cross-thread combine via its
-            # reduction clause; the per-thread chunk is the inner kernel.
+            # OpenMP owns thread split + cross-thread combine via its reduction
+            # clause; per-thread chunk is the inner kernel.
             return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
         raise NotImplementedError(f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
