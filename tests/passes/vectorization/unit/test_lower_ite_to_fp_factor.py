@@ -49,8 +49,9 @@ def test_rewrites_simple_ite_tasklet():
     # The rewrite should preserve the three operands.
     for op in ("_c", "_t", "_e"):
         assert op in body
-    # And introduce the (1 - _c) factor.
-    assert "1 - _c" in body.replace(" ", "").replace("1-_c", "1 - _c")
+    # And introduce the (1 - c) complement factor, with the bool cond promoted to
+    # the float64 arm dtype (uniform-dtype tile binop; see the pass docstring).
+    assert "1 - dace.float64(_c)" in body
 
 
 def test_no_match_when_no_ite_call():

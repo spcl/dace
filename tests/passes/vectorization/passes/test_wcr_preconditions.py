@@ -120,28 +120,43 @@ def test_bypass_carries_wcr_across_trivial_assign():
 
 
 def _map_with_optional_body_wcr(body_wcr: bool):
-    """Reduction map ``s += A[i]``. ``body_wcr`` puts the WCR on the in-body
-    ``tasklet -> MapExit`` edge (legacy violation); otherwise only the boundary
-    ``MapExit -> AccessNode`` edge carries it (allowed -- lifted out of body)."""
+    """Map ``m`` over ``i=0:8`` with an optional in-body write-conflict.
+
+    ``body_wcr=True`` routes the tasklet through an in-body ``tasklet -[wcr]-> MapExit``
+    edge whose sink is a FULL array (``B[i] (+)= ...``) -- a loose in-body reduction the
+    tiler would race, so ``no_wcr_in_map_body`` flags it. A scalar/length-1 boundary WCR
+    would NOT be flagged (it is the allowed ``s += A[i]`` reduction codegen lowers directly),
+    so the flaggable case must target a full array, not a length-1 accumulator.
+
+    ``body_wcr=False`` is that allowed form: the WCR lives only on the ``MapExit -> AccessNode``
+    boundary into a length-1 accumulator ``s`` -- lifted out of the body, not a body edge."""
     sdfg = dace.SDFG("redmap")
     sdfg.add_array("A", (8, ), dace.float64)
-    sdfg.add_array("s", (1, ), dace.float64)
     state = sdfg.add_state()
     a = state.add_access("A")
-    s = state.add_access("s")
     me, mx = state.add_map("m", dict(i="0:8"))
     t = state.add_tasklet("t", {"_a"}, {"_o"}, "_o = _a")
     state.add_memlet_path(a, me, t, dst_conn="_a", memlet=Memlet("A[i]"))
-    mx.add_in_connector("IN_s")
-    mx.add_out_connector("OUT_s")
-    body_m = Memlet("s[0]")
-    boundary_m = Memlet("s[0]")
     if body_wcr:
+        # In-body WCR into a full-array sink (per-element scatter): flagged.
+        sdfg.add_array("B", (8, ), dace.float64)
+        sink = state.add_access("B")
+        mx.add_in_connector("IN_B")
+        mx.add_out_connector("OUT_B")
+        body_m = Memlet("B[i]")
         body_m.wcr = "lambda x, y: x + y"
+        state.add_edge(t, "_o", mx, "IN_B", body_m)
+        state.add_edge(mx, "OUT_B", sink, None, Memlet("B[i]"))
     else:
+        # Allowed scalar reduction: WCR only on the MapExit -> AN boundary into a len-1 sink.
+        sdfg.add_array("s", (1, ), dace.float64)
+        sink = state.add_access("s")
+        mx.add_in_connector("IN_s")
+        mx.add_out_connector("OUT_s")
+        state.add_edge(t, "_o", mx, "IN_s", Memlet("s[0]"))
+        boundary_m = Memlet("s[0]")
         boundary_m.wcr = "lambda x, y: x + y"
-    state.add_edge(t, "_o", mx, "IN_s", body_m)
-    state.add_edge(mx, "OUT_s", s, None, boundary_m)
+        state.add_edge(mx, "OUT_s", sink, None, boundary_m)
     return sdfg
 
 

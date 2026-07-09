@@ -86,14 +86,22 @@ def _device_code(sdfg):
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
 def test_partial_is_thread_local_register(kind):
-    """The interposed reduction access node ``_nmr_out`` is a single-element Register
-    transient (per-thread), never the shared global accumulator."""
+    """The per-thread reduction partial -- the WCR source feeding the map-exit boundary --
+    is a single-element, thread-private transient, detected by structure (not a hardcoded
+    ``_nmr_out`` name). Any per-thread storage is fine (``Register`` / kernel-local
+    ``Default`` / ...); only ``GPU_Shared`` / ``GPU_Global`` (shared across the folding
+    threads) is refused by :meth:`_collect_gpu_reductions`, since a single such slot read by
+    every thread would over-count the block fold."""
+    from dace.sdfg.nodes import AccessNode, MapExit
     sdfg = _vectorized(_PROGRAMS[kind][0])
-    parts = [(k, d) for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items() if k.startswith("_nmr_out")]
-    assert parts, "expected an interposed _nmr_out reduction partial"
-    for k, d in parts:
-        assert d.storage == dtypes.StorageType.Register, f"{k} partial must be Register, got {d.storage}"
-        assert d.total_size == 1, f"{k} reduction partial must fold onto a single element, got {d.total_size}"
+    cross_thread = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global)
+    partials = [(e.src.data, s.arrays[e.src.data]) for s in sdfg.all_sdfgs_recursive() for st in s.states()
+                for n in st.nodes() if isinstance(n, MapExit) for e in st.in_edges(n)
+                if e.data is not None and e.data.wcr is not None and isinstance(e.src, AccessNode)]
+    assert partials, "expected a per-thread reduction partial feeding the map-exit WCR"
+    for name, d in partials:
+        assert d.total_size == 1, f"{name} reduction partial must fold onto a single element, got {d.total_size}"
+        assert d.storage not in cross_thread, f"{name} partial must be thread-private, got {d.storage}"
 
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))

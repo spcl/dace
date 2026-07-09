@@ -151,18 +151,24 @@ def test_gpu_half2_compiles(name, prog):
 
 
 def test_gpu_reduction_uses_gpu_expansion():
-    """A top-level fp16 reduction lifts to a ``Reduce`` node placed on the GPU
-    (``GPU_Device`` schedule, ``GPU_Global`` input) so it selects a GPU expansion
-    (``GPUAuto`` / cub) rather than the CPU horizontal fold -- and compiles."""
-    from dace.libraries.standard.nodes.reduce import Reduce
+    """A top-level fp16 scalar reduction (``out = sum(A)``) is kept as a
+    GPU-scheduled map-exit WCR (``... -[CR:+]-> MapExit -[CR:+]-> out``), NOT lifted
+    to a buffer + ``Reduce`` node. Codegen lowers that boundary WCR directly as a GPU
+    block-reduce + one atomic per block -- the pure-WCR boundary form (see
+    ``VectorizeMultiDim`` reduction handling; the ``Reduce``-node lift is the opt-in
+    buffer form, dropped here). The map staying ``GPU_Device`` is what keeps the
+    reduction on the device rather than a CPU horizontal fold; it compiles with nvcc."""
+    from dace.sdfg.nodes import MapExit
     sdfg = _prep(_vsum16)
     VectorizeGPU().apply_pass(sdfg, {})
-    reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert reduces, "expected the sum to lift to a Reduce node"
-    for r in reduces:
-        assert r.schedule == ScheduleType.GPU_Device, f"Reduce not GPU-scheduled: {r.schedule}"
-        assert r.implementation in ("GPUAuto", "CUDA (device)", "CUDA (block)"), \
-            f"Reduce did not pick a GPU expansion: {r.implementation}"
+    # The reduction stays a map-exit WCR (an in-edge to a MapExit carrying a CR).
+    wcr_exits = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+                 if isinstance(n, MapExit) and any(e.data is not None and e.data.wcr is not None
+                                                   for e in st.in_edges(n))]
+    assert wcr_exits, "expected the scalar sum to remain a map-exit WCR reduction"
+    for st, mx in wcr_exits:
+        assert st.entry_node(mx).map.schedule == ScheduleType.GPU_Device, \
+            "reduction map must be GPU-scheduled so codegen emits the GPU block-reduce, not a CPU fold"
     if _HAS_NVCC:
         sdfg.expand_library_nodes()
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)

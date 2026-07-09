@@ -128,11 +128,18 @@ def test_tile_load_pure_replicate_factor_1_is_contiguous():
 
 
 def test_tile_load_rejects_invalid_replicate_factor():
-    """Constructor refuses replicate factors that don't divide widths
-    or that are < 1."""
+    """Constructor refuses replicate factors of the wrong length or < 1.
+
+    Divisibility of ``widths`` is deliberately NOT a constructor concern: a
+    non-dividing (replicate-with-remainder) factor is legal and lowered by the
+    phase-aware expansion when the source begin is an ``int_floor`` under an
+    enclosing map (see :func:`_phase_aware_lane_exprs`). A standalone plain-source
+    non-dividing load instead raises ``NotImplementedError`` at *expansion*, not
+    construction -- so the constructor must accept it."""
     with pytest.raises(ValueError, match="replicate_factor_per_dim"):
         TileLoad(name="bad_factor_dim", widths=(8, ), replicate_factor_per_dim=(1, 2))
     with pytest.raises(ValueError, match="must be >= 1"):
         TileLoad(name="bad_factor_zero", widths=(8, ), replicate_factor_per_dim=(0, ))
-    with pytest.raises(ValueError, match="must divide"):
-        TileLoad(name="bad_factor_no_div", widths=(8, ), replicate_factor_per_dim=(3, ))
+    # 3 does not divide 8, yet the constructor accepts it (divisibility is an
+    # expansion-time concern, not a construction-time one).
+    TileLoad(name="nondiv_ok", widths=(8, ), replicate_factor_per_dim=(3, ))

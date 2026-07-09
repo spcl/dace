@@ -2212,26 +2212,32 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         for b in block_dims:
             num_threads *= int(b)
         map_params = set(kernel_entry.map.params)
+        # ``cub::BlockReduce`` folds each thread's OWN partial value, so the WCR source must be
+        # thread-private. Any per-thread storage works (``Register``, kernel-local ``Default``,
+        # ...); only the two kinds shared across the folding threads are refused -- ``GPU_Shared``
+        # (one slot per block) and ``GPU_Global`` (one per grid): a single such slot is read
+        # identically by every thread, so the fold would count it N times and race the writes.
+        cross_thread_storage = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global)
         for iedge in state.in_edges(map_exit):
             if iedge.data is None or iedge.data.wcr is None:
                 continue
-            # Per-thread partial: WCR source must be a register AccessNode of a single element
-            # (the interposed _nmr_out partial; AddThreadBlockMap keeps partial → tb-exit WCR,
-            # device exit only forwards it). Shared/global source races across threads → refuse.
+            # ``wcr -> MapExit -> wcr`` boundary: the WCR source is each thread's partial and
+            # the memlet target is the accumulator (named through any intervening threadblock
+            # map exit, so read it from the memlet -- following a single OUT_ edge misses the
+            # nested device+threadblock exits). Detected by structure, not by partial name.
             src = iedge.src
             if not isinstance(src, nodes.AccessNode):
                 continue
             part_desc = sdfg.arrays.get(src.data)
-            if part_desc is None or part_desc.storage != dtypes.StorageType.Register:
+            if part_desc is None or part_desc.storage in cross_thread_storage:
                 continue
             try:
                 if int(part_desc.total_size) != 1:
                     continue
             except (TypeError, ValueError):
                 continue
-            # Accumulator = WCR memlet's target container (acc), one element at a time. Its
-            # AccessNode sits past the device exit, but the memlet names the global target →
-            # codegen addresses it by pointer.
+            # Accumulator = the WCR memlet's target container, one element per write. A GPU
+            # atomic takes a pointer, so a scalar OR a length-1 Array slot is a valid target.
             acc_desc = sdfg.arrays.get(iedge.data.data)
             if acc_desc is None:
                 continue

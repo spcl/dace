@@ -386,10 +386,10 @@ class WidenAccesses(ppl.Pass):
                     desc = inner_sdfg.arrays.get(dst_name)
                     if desc is None or not desc.transient:
                         continue
-                    if not self._is_widenable(desc):
-                        continue
                     if dst_name in index_symbols:
                         continue  # index/address symbol -> stays scalar
+                    if not self._is_widenable(desc):
+                        raise self._unwidenable_lane_dep_error(dst_name, desc)
                     if dst_name not in lane_dep_transients:
                         lane_dep_transients.add(dst_name)
                         changed = True
@@ -413,10 +413,10 @@ class WidenAccesses(ppl.Pass):
                             desc = inner_sdfg.arrays.get(nm)
                             if desc is None or not desc.transient:
                                 continue
-                            if not self._is_widenable(desc):
-                                continue
                             if nm in index_symbols:
                                 continue  # index/address symbol -> stays scalar
+                            if not self._is_widenable(desc):
+                                raise self._unwidenable_lane_dep_error(nm, desc)
                             if nm not in lane_dep_transients:
                                 lane_dep_transients.add(nm)
                                 changed = True
@@ -442,6 +442,23 @@ class WidenAccesses(ppl.Pass):
             except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
                 return False
         return False
+
+    @staticmethod
+    def _unwidenable_lane_dep_error(name: str, desc) -> NotImplementedError:
+        """Build the refusal for a lane-dependent transient we cannot widen.
+
+        A lane-dependent transient must become a per-lane tile of shape ``widths``,
+        which only ``Scalar``/length-1 buffers support. A genuine multi-element
+        per-lane buffer (e.g. a 2-element sliding window ``tmp[0:2] = a[i:i+2]``)
+        would need a ``(W, ...)`` widening the descent does not implement. Refuse
+        loudly with ``NotImplementedError`` rather than silently leaving it
+        under-widened (which the post-widen invariant would later flag as a broken
+        invariant instead of an honest unsupported-pattern refusal).
+        """
+        return NotImplementedError(
+            f"WidenAccesses: lane-dependent transient '{name}' has non-scalar shape "
+            f"{tuple(desc.shape)}; widening a multi-element per-lane buffer to (W, ...) is "
+            f"unsupported. Refusing rather than emitting an under-widened tile.")
 
     # --- Step 5: seed per-lane symbols for Bypass-form gathers --------------
     def _seed_per_lane_symbols(self,
