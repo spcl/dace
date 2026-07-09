@@ -275,14 +275,32 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
 
-        # A single return value is named `__return`; a tuple (including a
-        # one-element tuple) uses `__return_<i>`. The two naming schemes are
-        # mutually exclusive - the CompiledSDFG wrappers rely on this to tell a
-        # single value from a tuple - so an SDFG must not contain both.
-        if sdfg.parent is None and '__return' in sdfg._arrays and any(n.startswith('__return_') for n in sdfg._arrays):
+        # Test the return value.
+        tuple_return_args = {n for n in sdfg._arrays if n.startswith('__return_')}
+        if '__return' in sdfg._arrays and tuple_return_args:
             raise InvalidSDFGError(
                 'Ambiguous return values: an SDFG cannot have both a `__return` (single value) '
                 'and `__return_<i>` (tuple) data descriptor.', sdfg, None)
+        elif '__return' in sdfg._arrays:
+            tuple_return_args = {'__return'}  # This is abuse
+        elif tuple_return_args and tuple_return_args != {f'__return_{i}' for i in range(len(tuple_return_args))}:
+            raise InvalidSDFGError('Tuple return values are not consecutively named')
+        for ret_name_to_check in tuple_return_args:
+            ret_desc = sdfg._arrays[ret_name_to_check]
+            if ret_desc.transient:
+                raise InvalidSDFGError(f'The return value `{ret_name_to_check}` can not be a transient.')
+            if sdfg.parent is None:
+                # These are some top level specific test
+                if isinstance(ret_desc, dt.Scalar):
+                    # This is an implementation level constraint and is thus a separate error.
+                    #  In certain cases the frontend will promote it to a length 1 array.
+                    raise InvalidSDFGError(f'{ret_name_to_check} is a scalar and scalars can not be returned.')
+                if not isinstance(ret_desc, dt.Array):
+                    # This is a limitation of the Python <-> Binary interface, because Python needs to allocate
+                    #  the return value and for that NumPy/CuPy is used.
+                    raise InvalidSDFGError(
+                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(desc).__name__}`'
+                    )
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
@@ -291,17 +309,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     f'Duplicate data descriptor object detected: "{name}". Please copy objects '
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
-
-            # Only arrays can be returned from a top-level function; scalars and
-            # other descriptors (e.g. structures) are not supported as return
-            # values by the code generator. (A ``return 5`` is stored as a
-            # shape-(1,) array; only an explicit scalar annotation yields a
-            # ``dt.Scalar``.)
-            if (sdfg.parent is None and name.startswith("__return") and not desc.transient
-                    and not isinstance(desc, dt.Array)):
-                raise InvalidSDFGError(
-                    f'Cannot use non-array data descriptor ("{name}") of type "{type(desc).__name__}" as return '
-                    f'value of a top-level function; only arrays can be returned.', sdfg, None)
 
             # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
             if desc.transient:
