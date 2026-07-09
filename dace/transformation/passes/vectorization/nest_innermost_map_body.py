@@ -14,6 +14,7 @@ from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
+from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_vectorizable_map,
@@ -176,6 +177,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             subgraph = SubgraphView(g, body_nodes)
             nsdfg_node = nest_state_subgraph(g.sdfg, g, subgraph, name=f"{n.label}_body")
             self._strip_boundary_other_subsets(g, nsdfg_node)
+            demote_connector_views(nsdfg_node)
             # A postamble tail (``__scalar_tail`` / ``__tile_k1_tail``) runs the original body as
             # a step-1 loop the tile emitter skips, so its reduction stays a per-iteration
             # boundary WCR (no in-body TileReduce fold).

@@ -57,16 +57,24 @@ class SplitMultiOutputTasklets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         count = 0
-        for state in sdfg.all_states():
-            for tasklet in list(state.nodes()):
-                if not isinstance(tasklet, nd.Tasklet):
-                    continue
-                if len(tasklet.out_connectors) <= 1:
-                    continue
-                if tasklet.code.language != dace.dtypes.Language.Python:
-                    continue
-                if self._split_one(state, tasklet):
-                    count += 1
+        # Recurse into every nested SDFG: a multi-output tasklet can live inside a body
+        # NSDFG -- e.g. ``LoopToMap`` wraps a parallel map body (here adi's row-tile map)
+        # around a sequential recurrence ``LoopRegion`` in a ``loop_body`` NSDFG. Plain
+        # ``sdfg.all_states()`` descends through control-flow regions but NOT into nested
+        # SDFGs, so such a tasklet would stay multi-output; ``SplitTasklets`` then skips it
+        # (it refuses >1-output tasklets) and it reaches codegen unsplit -- its
+        # tile-widened connectors read as scalars (``double * double*`` compile error).
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.all_states():
+                for tasklet in list(state.nodes()):
+                    if not isinstance(tasklet, nd.Tasklet):
+                        continue
+                    if len(tasklet.out_connectors) <= 1:
+                        continue
+                    if tasklet.code.language != dace.dtypes.Language.Python:
+                        continue
+                    if self._split_one(state, tasklet):
+                        count += 1
         return count or None
 
     def _split_one(self, state: SDFGState, tasklet: nd.Tasklet) -> bool:

@@ -999,6 +999,80 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
+    def _detect_indirection(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
+        """If ``tasklet`` is a per-lane gather ``_out = _arr[_idx]`` (the frontend's
+        ``x[idx[i]]`` indirection shape), return ``(out_conn, arr_conn, idx_conn)``; else
+        ``None``.
+
+        ``_arr`` reads the whole base array; ``_idx`` is the per-lane index. The walker
+        widens ``_idx`` to a ``(W,)`` index tile and ``_out`` to a ``(W,)`` result tile but
+        leaves the tasklet body alone -- ``_out = _arr[_idx]`` then reads a tile *pointer*
+        as a scalar subscript (a hard ``double*[uint*]`` compile error). Lower it here to a
+        ``TileLoad`` gather (``_out[l] = _arr[_idx[l]]``).
+        """
+        if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
+            return None
+        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        out_conn = next(iter(tasklet.out_connectors))
+        in_conns = list(tasklet.in_connectors)
+        for arr, idx in (in_conns, list(reversed(in_conns))):
+            for form in (f"{out_conn} = {arr}[{idx}]", f"{out_conn} = ({arr}[{idx}])"):
+                if body == form:
+                    return out_conn, arr, idx
+        return None
+
+    def _convert_indirection(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        """Lower a per-lane gather ``_out = _arr[_idx]`` to a ``TileLoad(gather_dims=(0,))``.
+
+        Contract (post-walker): ``_arr`` a 1-D base array read whole, ``_idx`` a ``(W,)``
+        index tile, ``_out`` a ``(W,)`` result tile. The gather TileLoad emits
+        ``_out[l] = _arr[_idx[l]]`` per lane (``tile_gather`` intrinsic on the ISA backends,
+        per-lane ``pure`` loop otherwise). A shape outside the contract (multi-dim base, a
+        non-tile index / result) is declined so it is not silently mis-lowered.
+        """
+        out_conn, arr_conn, idx_conn = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if arr_conn not in in_edges or idx_conn not in in_edges or not out_edges:
+            return False
+        arr_edge, idx_edge, out_edge = in_edges[arr_conn], in_edges[idx_conn], out_edges[0]
+        if arr_edge.data is None or idx_edge.data is None or out_edge.data is None:
+            return False
+        sdfg = inner_state.sdfg
+        widths = tuple(self.widths)
+        arr_desc = sdfg.arrays.get(arr_edge.data.data)
+        idx_desc = sdfg.arrays.get(idx_edge.data.data)
+        out_desc = sdfg.arrays.get(out_edge.data.data)
+        if not (isinstance(arr_desc, dace.data.Array) and len(arr_desc.shape) == 1):
+            return False  # multi-dim indirection base: not a 1-D per-lane gather
+        if not (isinstance(idx_desc, dace.data.Array) and tuple(idx_desc.shape) == widths):
+            return False  # index not widened to a full-lane tile
+        if not (isinstance(out_desc, dace.data.Array) and tuple(out_desc.shape) == widths):
+            return False  # result not widened to a full-lane tile
+        mask_an = self._find_mask_an(inner_state)
+        load = TileLoad(name=f"{tasklet.label}_gather",
+                        widths=widths,
+                        src_kind="Tile",
+                        gather_dims=(0, ),
+                        has_mask=mask_an is not None)
+        inner_state.add_node(load)
+        # ``_src`` <- the whole base array: the gather dim spans full extent, the per-lane
+        # ``_idx_0`` supplies the position (lib-node-boundary memlet -- data + subset only).
+        src_full = ", ".join(f"0:{s}" for s in arr_desc.shape)
+        inner_state.add_edge(arr_edge.src, arr_edge.src_conn, load, "_src",
+                             dace.Memlet(data=arr_edge.data.data, subset=src_full))
+        idx_subset = ", ".join(f"0:{s}" for s in idx_desc.shape)
+        inner_state.add_edge(idx_edge.src, idx_edge.src_conn, load, "_idx_0",
+                             dace.Memlet(data=idx_edge.data.data, subset=idx_subset))
+        dst_subset = ", ".join(f"0:{w}" for w in widths)
+        inner_state.add_edge(load, "_dst", out_edge.dst, out_edge.dst_conn,
+                             dace.Memlet(data=out_edge.data.data, subset=dst_subset))
+        self._wire_mask(inner_state, load, mask_an)
+        for edge in list(in_edges.values()) + out_edges:
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
+
     def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet, iter_vars: Tuple[str, ...]) -> bool:
         """Replace ``tasklet`` with a Tile lib node if its body matches a recognised
         op shape. Dispatch (in order, by in-connector count): 0-in (Symbol-only) ->
@@ -1023,6 +1097,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         cond_write = self._detect_conditional_write(tasklet)
         if cond_write is not None:
             return self._convert_conditional_write(inner_state, tasklet, cond_write, iter_vars)
+        # Per-lane gather ``_out = _arr[_idx]`` (the frontend ``x[idx[i]]`` indirection) —
+        # detect FIRST among the 2-in shapes: the ``_arr[_idx]`` subscript is unambiguous vs
+        # every arithmetic op form, and it lowers to a TileLoad gather, not a binop.
+        indirection = self._detect_indirection(tasklet)
+        if indirection is not None:
+            return self._convert_indirection(inner_state, tasklet, indirection)
         # 0-in-conn (purely Symbol-driven) tasklets first.
         unop_sym = self._detect_unop_with_symbol(tasklet)
         if unop_sym is not None:

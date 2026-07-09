@@ -17,6 +17,7 @@ Locked knobs (constructor has full semantics):
 
 Every other combo → ``NotImplementedError``.
 """
+import copy
 from typing import Literal, Optional, Tuple
 
 import sympy
@@ -63,6 +64,8 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     StripPowerExponentCast,
 )
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
+from dace.transformation.passes.remove_views import RemoveViews
+from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
                                                                                 insert_assumption_guards)
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
@@ -82,9 +85,9 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
 # expansion handles only TileLoad / TileStore / TileMaskGen.
 from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess)
+from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess,
+                                            StateFusionExtended)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
@@ -170,6 +173,14 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         applied = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+        # ``ExpandNestedSDFGInputs`` re-derives each widened connector descriptor by deep-copying
+        # the outer array inward (``_replace_desc_and_uncollapse_dims``) and only clearing
+        # ``transient`` -- so a frontend reshape/flatten ``View`` parent (e.g. ``C_0`` viewing
+        # ``C``) re-introduces an invalid inner ``View`` connector (no viewing edge in the body).
+        # Re-demote every connector ``View`` to a plain array so the widened bodies validate.
+        for node, _parent in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                demote_connector_views(node)
         return applied or None
 
 
@@ -232,6 +243,89 @@ class _AssertNoBodyWCR(ppl.Pass):
         assert_invariant(no_wcr_inside_nested_sdfgs(sdfg), "VectorizeMultiDim",
                          "no loose WCR inside the body NSDFG before tiling")
         return None
+
+
+def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> None:
+    """Promote a single-state NestedSDFG output connector also read internally to a full inout.
+
+    Branch lowering rewrites a same-write-set masked write ``if cond: arr[s] = f(...)`` into
+    ``arr[s] = ITE(cond, f(...), arr[s])`` (merge) / ``cond*f(...) + (1-cond)*arr[s]``
+    (fp_factor). The else-operand is the PRE-conditional value of the write target ``arr``.
+    When the rewrite happens inside the frontend's per-``if`` body NestedSDFG — whose only
+    external wiring for ``arr`` is an OUTPUT connector — that else-operand read reads the
+    output-connector array directly. Such a connector (declared output, read internally, not
+    declared input) is malformed: it relies on in-place aliasing of the output buffer,
+    ``InlineSDFG`` refuses it (``sdfg_nesting`` output-read-in-scope guard), and left nested
+    it escapes the tiler (the walker does not descend into a body-internal NestedSDFG, so the
+    masked compute would run once at the tile base — lane 0 only, 7/8 lanes unwritten).
+
+    Add ``arr`` as an INPUT connector reading the pre-conditional value from the write
+    target's own outer source at the write subset — the in-place ``arr = f(arr)`` read of
+    ``arr`` for its RHS, an in-edge already boundary-routed through the scope entry. A masked
+    write whose fused output name/subset diverges from any live input (no in-place read; e.g.
+    a per-lane rename) has no such source and is left nested — correct where its result feeds
+    the checked output, else numerically stale (lane 0 only) until a general re-route lands.
+    """
+    for node, parent in list(sdfg.all_nodes_recursive()):
+        if not isinstance(node, dace.nodes.NestedSDFG) or not isinstance(parent, dace.SDFGState):
+            continue
+        if len(node.sdfg.nodes()) != 1:
+            continue
+        istate = node.sdfg.nodes()[0]
+        for oc in list(node.out_connectors):
+            if oc in node.in_connectors:
+                continue
+            read_internally = any(
+                isinstance(n, dace.nodes.AccessNode) and n.data == oc and istate.out_degree(n) > 0
+                for n in istate.nodes())
+            if not read_internally:
+                continue
+            out_edge = next((e for e in parent.out_edges(node) if e.src_conn == oc), None)
+            if out_edge is None or out_edge.data.data is None:
+                continue
+            template = next((e for e in parent.in_edges(node)
+                             if e.data.data == out_edge.data.data and str(e.data.subset) == str(out_edge.data.subset)),
+                            None)
+            if template is None:
+                continue
+            node.add_in_connector(oc)
+            parent.add_edge(template.src, template.src_conn, node, oc, copy.deepcopy(out_edge.data))
+
+
+class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
+    """Fuse the branch-lowered states, promote masked-write out-connectors to inout, then
+    inline the now-straight-line body NestedSDFGs into their map bodies.
+
+    ``NormalizeStridedMaps`` / ``normalize_loop_nests`` inlined the loop-nest wrapper
+    NestedSDFGs up front, but the frontend's per-``if`` body NestedSDFG still held a
+    ``ConditionalBlock`` (control flow) then, so it was left nested. After the branch front
+    lowers that control flow to straight-line dataflow, this pass gives those NestedSDFGs the
+    same inline treatment so the tiler reaches the (now unconditional) masked compute — else,
+    left nested, it runs once at the tile base (lane 0 only) and 7/8 lanes go unwritten.
+
+    ``StateFusionExtended`` collapses the compute-then / compute-else / apply-ITE arms into a
+    single state (the shape ``InlineSDFG`` requires); the inout promotion makes the write
+    target well-formed so the inline is accepted.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        sdfg.apply_transformations_repeated(StateFusionExtended, permissive=False, validate=False)
+        _promote_read_output_connectors_to_inout(sdfg)
+        applied = sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG],
+                                                      permissive=False,
+                                                      validate=False)
+        return applied or None
 
 
 def _is_power_of_two(n: int) -> bool:
@@ -469,6 +563,18 @@ class VectorizeMultiDim(ppl.Pipeline):
             # same-write-set if/else; BranchNormalization flattens any residual single-arm /
             # disjoint-write two-arm ConditionalBlocks (recursing through nested ones).
             passes += [FlattenBranches(), SameWriteSetIfElseToITECFG(), BranchNormalization()]
+        # Branch lowering (both modes) rewrote each same-write-set ``if arr[s] = f(...)`` into
+        # ``arr[s] = ITE(cond, f(...), arr[s])`` (merge) / ``cond*f + (1-cond)*arr[s]`` (fp_factor)
+        # INSIDE the frontend's per-``if`` body NestedSDFG, whose only external wiring for the
+        # write target ``arr`` is an OUTPUT connector. The else-operand read of the pre-conditional
+        # value then reads that output-connector array directly — a form that both blocks
+        # ``InlineSDFG`` (an out-connector read internally but not declared an input) AND, left
+        # nested, escapes the tiler (the walker does not descend into a body-internal NestedSDFG,
+        # so the masked compute would run once at the tile base — lane 0 only). Promote the read
+        # to a proper inout connector, then inline the now-straight-line NestedSDFG into the map
+        # body so its compute tiles alongside its siblings. Mode-agnostic (same NestedSDFG shape
+        # under both branch modes).
+        passes.append(_RunInlineBranchLoweredNSDFGs())
         # Full prep before tiling (mirrors the legacy 1D pipeline so the tile path handles
         # the same kernels):
         #   * RemoveEmptyStates — tidy the CFG after branch lowering.
@@ -645,6 +751,15 @@ class VectorizeMultiDim(ppl.Pipeline):
         # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;
         # already-simplified inputs are a near no-op.
         sdfg.simplify(validate_all=self._validate_all)
+        # Fold every frontend reshape / flatten ``View`` (e.g. ``C_0`` viewing ``C[0:XN, 0:YN]``
+        # as flat ``C[0:XN*YN]``) into a direct access. Runs UNCONDITIONALLY -- the multi-dim
+        # corpus enters via ``base_pipeline`` (simplify + LoopToMap + MapFusion), NOT canonicalize,
+        # so no earlier ``RemoveViews`` ran; and even a canonicalized input is re-cleaned cheaply.
+        # A surviving ``View`` gets deep-copied inward as a NestedSDFG connector descriptor by
+        # ``NestInnermostMapBodyIntoNSDFG`` / ``ExpandNestedSDFGInputs`` -- a connector ``View`` has
+        # no viewing edge in the body, so ``validate()`` rejects it ("Ambiguous or invalid edge
+        # to/from a View access node"). Removing views here dissolves that at the root.
+        RemoveViews().apply_pass(sdfg, {})
         # Fold any non-unit map step into the index (``a[i]`` under ``0:N:2`` → ``a[2*k]``
         # under ``0:int_floor(N-1,2)+1:1``) so the tiler — which requires unit-step maps
         # (``MarkTileDims`` / ``LiftMapReductionToReduce`` bail on ``step != 1``) — sees a
@@ -704,6 +819,21 @@ class VectorizeMultiDim(ppl.Pipeline):
         # non-reductions.
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
         LiftMapReductionToReduce(vectorized=reduce_vectorized, rmw_only=True).apply_pass(sdfg, {})
+        # A pure-WCR reduction (``acc = sum_j ...``, no carry-in) trapped INSIDE a body NSDFG
+        # -- the outer loop was parallelised by ``LoopToMap`` (atax ``tmp[i] = sum_j A[i,j]*x[j]``
+        # consumed in-body; trmm/symm/gramschmidt scalar folds) -- cannot keep its map-exit WCR:
+        # that boundary lands inside the nested SDFG, and the multi-dim invariant forbids any loose
+        # in-NSDFG WCR (the tile emitter silently drops it). The top-level ``rmw_only`` call above
+        # deliberately leaves such reductions as a boundary WCR, correct ONLY when the boundary is
+        # at top level. So materialise every remaining nested pure-WCR reduction to a product-fill
+        # map + ``Reduce`` with a WCR-FREE explicit ``acc = acc <op> fold`` read-back: no WCR
+        # survives, the product-fill map is ordinary elementwise dataflow the tiler strides, and
+        # the read-back reproduces the original ``acc (op)= ...`` for any prior ``acc``. No-op at
+        # top level (``nested_only``) and on non-reductions.
+        LiftMapReductionToReduce(vectorized=reduce_vectorized,
+                                 pure_wcr_only=True,
+                                 nested_only=True,
+                                 wcr_free_output=True).apply_pass(sdfg, {})
         # ExpandNestedSDFGInputs runs as an embedded Pass (see ``_RunExpandNestedSDFGInputs``);
         # it fires after Nest and before MarkTileDims / the walker.
         result = super().apply_pass(sdfg, pipeline_results)
