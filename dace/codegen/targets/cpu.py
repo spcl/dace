@@ -1009,16 +1009,17 @@ class CPUCodeGen(TargetCodeGenerator):
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
 
         # An OMP ``reduction(op:var)`` clause target: the clause privatizes the scalar
-        # per thread and tree-reduces at the end, so the body must accumulate into the
-        # private copy with the PLAIN operator -- not a ``wcr_fixed`` helper, which is
-        # redundant machinery on an already-privatized scalar. (Emitting the atomic here
-        # would be wrong; emitting the non-atomic helper is merely noise.)
+        # per thread and tree-reduces at the end, so the body accumulates into the private
+        # copy directly. For an op with a plain C++ infix operator (``+``/``*``/bitwise/
+        # logical) emit that -- no ``wcr_fixed`` helper, which is redundant machinery on an
+        # already-privatized scalar. ``min`` / ``max`` have no infix operator, so they fall
+        # through to the ``wcr_fixed<...>::reduce`` emission below, which is already the
+        # NON-atomic form here (``atomic`` was cleared to "" for an omp-covered target) and
+        # matches the reduction runtime's ``::min`` / ``::max`` bit-for-bit.
         if _omp_covered:
             omp_op = _REDUCTION_TO_OMP_OP.get(redtype)
             if omp_op in ("+", "*", "&", "|", "^", "&&", "||"):
                 return f'*({ptr}) = *({ptr}) {omp_op} ({inname})'
-            if omp_op in ("min", "max"):
-                return f'*({ptr}) = dace::math::{omp_op}(*({ptr}), {inname})'
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type

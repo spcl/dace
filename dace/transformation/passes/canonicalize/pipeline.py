@@ -936,6 +936,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('relax_powers', RelaxIntegerPowers())]
     s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
 
+    # Final parallelize sweep: the symbolic-stride scan specialization
+    # (``LoopToScan._specialize_scan_under_stride_guard``) emits its carry-free
+    # delta-build loop INSIDE the ``if stride >= 1`` ConditionalBlock branch. The
+    # earlier ``parallelize`` LoopToMap stages ran before that loop settled into
+    # liftable form (subsets propagated, offsets normalized by the intervening
+    # simplify / symbol passes), so it survived as a residual sequential loop even
+    # though it is embarrassingly parallel (``scan_strided_sym`` / ``ext_floordiv_offset``
+    # / ``fission_dep_sym_offset`` -- the delta-build ``_scan_in[i-K] = x[i]``). Lift
+    # any such residual now. LoopToMap only fires on genuinely parallel loops and
+    # no-ops otherwise, so this cannot mis-parallelize a real carry. BEFORE
+    # AssumeSymbolConstraints, which must stay the terminal stage.
+    s += [('end', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR
     # accumulator, so a reduction into genuinely-uninitialized scratch reads garbage. That pass

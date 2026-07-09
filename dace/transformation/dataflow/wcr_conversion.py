@@ -864,7 +864,17 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # LoopRegions -- sequential by construction -- are excluded (their ordered accumulation
         # reverts safely, and a loop-remapped injective write like covariance / azimint, whose
         # boundary maps a distinct element per outer iteration, must still revert).
-        if sdfg.parent is not None:
+        # A WCR into a transient LOCAL to this nested SDFG with SCOPE lifetime is
+        # per-invocation private: an enclosing parallel map invokes the body with its OWN
+        # copy each iteration, so a constant-index write cannot race across iterations and
+        # the aug-assign revert is sound regardless of whether the outer map params appear in
+        # the write index. (``NormalizeWCR`` interposes exactly such a ``_nnr_priv`` seeded
+        # scalar for a masked/nested reduction; without this the outer-map-param check below
+        # would wrongly keep its WCR, trapping a loose in-NSDFG WCR the tile emitter drops.)
+        dst_desc = sdfg.arrays.get(edge.dst.data) if isinstance(edge.dst, nodes.AccessNode) else None
+        dst_scope_private = (dst_desc is not None and dst_desc.transient
+                             and dst_desc.lifetime == dtypes.AllocationLifetime.Scope)
+        if sdfg.parent is not None and not dst_scope_private:
             outer_map_params = set()
             for scope in get_parent_map_and_loop_scopes(sdfg, edge.src, graph):
                 if isinstance(scope, nodes.MapEntry):

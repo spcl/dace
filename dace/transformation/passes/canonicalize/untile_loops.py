@@ -80,6 +80,7 @@ from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 _UNTILE_PREFIX = '_untile_k_'
@@ -250,8 +251,8 @@ def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
 
 
 def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.SymbolicType,
-                      K_const: Optional[int]) -> Optional[Tuple[str, int]]:
-    """Classify the inner loop shape and return ``(case, inner_stride)``.
+                      K_const: Optional[int]) -> Optional[Tuple[str, symbolic.SymbolicType, bool]]:
+    """Classify the inner loop shape and return ``(case, inner_stride, needs_div_assumption)``.
 
     * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``),
     * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``),
@@ -264,10 +265,16 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.Symbol
     inner.
 
     ``K_expr`` is the (possibly symbolic) outer tile size; ``K_const`` is
-    its concrete value or ``None`` when it is symbolic. A concrete tile
-    admits any cascade rung ``S | K``; a symbolic tile admits only
-    ``S == 1`` (the concrete stride's divisibility into a symbol is
-    unprovable), i.e. a single-level untile.
+    its concrete value or ``None`` when it is symbolic. A concrete tile with a
+    concrete stride admits a cascade rung iff ``S | K``. When either the tile or
+    the stride is symbolic, the rung is a whole tile only under ``K % S == 0``,
+    which cannot be proven -- ``needs_div_assumption`` is then ``True`` and the
+    caller records that relation as a runtime-trapped assumption. (The source
+    nest ``for iii in range(ii, ii+K, S): for i in range(iii, iii+S)`` already
+    requires ``S | K`` -- else its last inner tile overshoots ``ii+K`` and the
+    numpy oracle overshoots identically -- so the assumption never diverges from
+    the reference on any input the kernel is valid for.) A unit inner stride
+    needs no assumption.
 
     Returns ``None`` if neither shape matches.
     """
@@ -277,19 +284,29 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.Symbol
     if stride is None or start is None or end is None:
         return None
     S_concrete = _is_constant_positive_int(stride)
-    if S_concrete is None:
-        return None
-    if K_const is not None:
-        # Concrete tile: inner stride must divide it exactly so the
-        # cascade level is a whole tile (no partial-tile remainder).
-        if K_const % S_concrete != 0:
-            return None
+    needs_div_assumption = False
+    if S_concrete is not None:
+        inner_stride: symbolic.SymbolicType = S_concrete
+        if S_concrete == 1:
+            pass  # unit inner stride: a genuine single-level untile, always sound
+        elif K_const is not None:
+            # Concrete tile + concrete cascade stride: a whole tile only when it
+            # divides exactly (no partial-tile remainder).
+            if K_const % S_concrete != 0:
+                return None
+        else:
+            # Concrete stride into a symbolic tile: divisibility unprovable -> admit
+            # under a recorded ``K % S == 0`` assumption.
+            needs_div_assumption = True
     else:
-        # Symbolic tile: a concrete stride's divisibility into a symbol
-        # cannot be proven, so only a unit inner stride (a genuine
-        # single-level untile) is admitted.
-        if S_concrete != 1:
+        # Symbolic inner stride: accept only a bare positive symbol (a block-size
+        # parameter -- the inner tile ``T2`` of a ``T1``/``T2`` double tile), never
+        # a compound expression. Always a cascade rung requiring divisibility.
+        s_stride = symbolic.simplify(stride)
+        if not isinstance(s_stride, sympy.Symbol):
             return None
+        inner_stride = s_stride
+        needs_div_assumption = True
     outer_sym = symbolic.pystr_to_symbolic(outer_var)
     s_sym = symbolic.simplify(start)
     e_sym = symbolic.simplify(end)
@@ -304,12 +321,12 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.Symbol
     # Case A: start == 0, end == K - 1.
     if _is_zero(s_sym):
         if _diff_is_zero(e_sym, K_expr - 1):
-            return ('A', S_concrete)
+            return ('A', inner_stride, needs_div_assumption)
         return None
     # Case B: start == i, end == i + K - 1.
     if _diff_is_zero(s_sym, outer_sym):
         if _diff_is_zero(e_sym, outer_sym + K_expr - 1):
-            return ('B', S_concrete)
+            return ('B', inner_stride, needs_div_assumption)
     return None
 
 
@@ -575,7 +592,8 @@ class UntileLoops(ppl.Pass):
         # levels deep with foreign-axis loops between -- the descent
         # walks past those.
         case: Optional[str] = None
-        inner_stride: Optional[int] = None
+        inner_stride: symbolic.SymbolicType = None
+        needs_div_assumption = False
         inner: Optional[LoopRegion] = None
         for candidate in _iter_candidate_inners(outer):
             if not candidate.loop_variable:
@@ -583,7 +601,7 @@ class UntileLoops(ppl.Pass):
             match = _match_inner_case(candidate, outer.loop_variable, K_expr, K_const)
             if match is None:
                 continue
-            cand_case, cand_stride = match
+            cand_case, cand_stride, cand_needs_div = match
             if not _audit_combined_access(candidate, outer.loop_variable, candidate.loop_variable, cand_case):
                 continue
             # Multi-dim sanity: any intermediate LoopRegion between outer
@@ -596,9 +614,17 @@ class UntileLoops(ppl.Pass):
             inner = candidate
             case = cand_case
             inner_stride = cand_stride
+            needs_div_assumption = cand_needs_div
             break
         if inner is None:
             return False
+
+        # A cascade rung whose stride divides the tile only under an unprovable
+        # relation (symbolic tile and/or symbolic stride) is admitted here; record
+        # ``K % S == 0`` so the terminal AssumeSymbolConstraints pass emits a
+        # runtime trap. The source tile nest already requires it.
+        if needs_div_assumption:
+            record_assumption(sdfg, sympy.Eq(sympy.Mod(K_expr, inner_stride), 0))
 
         # Synthesise the new iterator with step = ``inner_stride`` and
         # rewrite both loops in place. ``inner_stride == 1`` is the
@@ -703,7 +729,7 @@ class UntileLoops(ppl.Pass):
         outer.loop_variable = k_var
         outer.init_statement = dace.properties.CodeBlock(f"{k_var} = {symbolic.symstr(outer_start_sym)}")
         outer.loop_condition = dace.properties.CodeBlock(f"{k_var} < ({symbolic.symstr(N_excl)})")
-        outer.update_statement = dace.properties.CodeBlock(f"{k_var} = {k_var} + {inner_stride}")
+        outer.update_statement = dace.properties.CodeBlock(f"{k_var} = {k_var} + {symbolic.symstr(inner_stride)}")
         return True
 
 

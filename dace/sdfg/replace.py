@@ -158,8 +158,16 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
             for name, new_name in repl.items():
                 if name not in tokenized:
                     continue
+                new_code = cppunparse.pyexpr2cpp(new_name)
+                if new_code == name:
+                    # Textual no-op: the replacement prints to the same token as the
+                    # name (e.g. rebuilding a symbol with only a different SymPy
+                    # assumption such as ``nonnegative=True``). Emitting the shadow
+                    # ``auto k = k;`` would be a self-referential declaration that
+                    # does not compile ("use of 'k' before deduction of 'auto'").
+                    continue
                 # Use local variables and shadowing to replace
-                replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
+                replacement = f'auto {name} = {new_code};\n'
                 prefix = replacement + prefix
                 active_replacements.add(name)
 

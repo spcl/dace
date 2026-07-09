@@ -147,14 +147,21 @@ class NormalizeMapBody(ppl.Pass):
             _append_cfg(base, tail)
 
             # Re-point drop's boundary edges onto keep with (possibly renamed) connectors.
+            # ``force=True``: a carrier read by one sibling and written by another (an
+            # in-place update like ``b`` in TSVC s212 -- ``a = a*b`` then ``b = b + ...``)
+            # legitimately becomes BOTH an in- and an out-connector of the merged nested
+            # SDFG. Without ``force`` the second ``add_*_connector`` silently no-ops
+            # because the name already exists on the other side, leaving an edge that
+            # references a nonexistent connector (invalid SDFG: "b written but only given
+            # as an input connector").
             for e in list(state.in_edges(drop)):
                 conn = drepl.get(e.dst_conn, e.dst_conn)
-                keep.add_in_connector(conn)
+                keep.add_in_connector(conn, force=True)
                 state.add_edge(e.src, e.src_conn, keep, conn, copy.deepcopy(e.data))
                 state.remove_edge(e)
             for e in list(state.out_edges(drop)):
                 conn = drepl.get(e.src_conn, e.src_conn)
-                keep.add_out_connector(conn)
+                keep.add_out_connector(conn, force=True)
                 state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
                 state.remove_edge(e)
 

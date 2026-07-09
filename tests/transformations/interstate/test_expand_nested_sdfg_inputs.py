@@ -87,6 +87,56 @@ def test_apply_preserves_numerics_via_inline():
     assert np.allclose(b, ref), f'max diff: {np.abs(b - ref).max():.3e}'
 
 
+@dace.program
+def _masked_power(A: dace.float64[N, N], I: dace.bool[N, N]):
+    # ``where=I`` -> a per-element nested SDFG whose inner ConditionalBlock reads a collapsed
+    # size-1 mask ``I[0]`` via an interstate assignment; the nest sits in a 2-D map [__i0, __i1].
+    np.power(A, -1.5, out=A, where=I)
+
+
+def test_uncollapse_multidim_condition_keeps_all_map_dims():
+    """A collapsed mask ``I[0]`` (inner ``Array(1,)``) read by an interstate assignment inside
+    an N-D map must uncollapse to ALL map dims, not just the first.
+
+    Regression: ``_uncollapse_subscript`` zipped the original subscript indices (``args[1:]``,
+    inner rank 1) against the full-rank ``offset_dims`` / ``collapsed_dims`` (outer rank 2); the
+    zip truncated to the shorter, so ``I[0]`` on an (N, N) map widened to ``I[__i0]`` (a whole
+    row) instead of ``I[__i0, __i1]``. ``I[__i0]`` on a 2-D array is a 1-D row -> ``if I_0``
+    fails. Only the codeblock/interstate path was wrong; the memlet path was already correct."""
+    sdfg = _masked_power.to_sdfg(simplify=True)
+    applied = PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+    assert applied, 'expected ExpandNestedSDFGInputs to widen the collapsed mask'
+    sdfg.validate()
+
+    # The interstate assignment reading the mask must index EVERY map dim.
+    checked = False
+    for state in sdfg.states():
+        for n in state.nodes():
+            if not isinstance(n, nodes.NestedSDFG) or state.entry_node(n) is None:
+                continue
+            params = state.entry_node(n).map.params
+            for cfg in n.sdfg.all_control_flow_regions():
+                for e in cfg.edges():
+                    for var, expr in (e.data.assignments or {}).items():
+                        if 'I' in expr:  # the widened mask read
+                            for p in params:
+                                assert p in expr, \
+                                    f'mask assignment {var}={expr!r} dropped map dim {p!r} (params {params})'
+                            checked = True
+    assert checked, 'no mask interstate assignment found to check'
+
+    # Bit-exact vs the numpy reference (a dropped dim would gather the wrong lanes).
+    n = 12
+    rng = np.random.default_rng(0xF00D)
+    A = rng.uniform(0.5, 2.0, (n, n))
+    mask = rng.uniform(0.0, 1.0, (n, n)) > 0.4
+    got = A.copy()
+    ref = A.copy()
+    np.power(ref, -1.5, out=ref, where=mask)
+    sdfg(A=got, I=mask, N=n)
+    assert np.allclose(got, ref), f'masked power diverged: max diff {np.abs(got - ref).max():.3e}'
+
+
 def test_refuses_inside_map_scope():
     """If the NSDFG is inside a Map scope, the per-iteration narrowing
     is intentional and the transformation must refuse."""

@@ -713,10 +713,15 @@ def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
     assert np.allclose(b, ref)
 
 
-def test_refuses_symbolic_tile_with_nonunit_inner_stride():
-    """A symbolic tile with a concrete non-unit inner stride is refused: the
-    stride's divisibility into a symbol is unprovable, so untiling could drop
-    the remainder. Must decline cleanly (no crash), not collapse."""
+def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
+    """A symbolic tile with a non-unit inner stride collapses as a cascade rung
+    under a recorded ``tile % stride == 0`` divisibility assumption. The stride's
+    divisibility into a symbol is unprovable, so rather than refuse, the pass
+    admits the rung and records the relation for the terminal
+    AssumeSymbolConstraints trap. The source nest already requires it (else its
+    own inner tile overshoots). Value-preserving when the tile divides evenly."""
+    import sympy
+    from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
     BS = dace.symbol('BS')
 
     @dace.program
@@ -727,7 +732,29 @@ def test_refuses_symbolic_tile_with_nonunit_inner_stride():
 
     sdfg = tiled.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
-    assert res is None
+    assert res == 1, 'symbolic tile + non-unit inner stride should collapse (under assumption)'
+    recorded = tracked_assumptions(sdfg)
+    assert any(a == sympy.Eq(sympy.Mod(BS, 2), 0) for a in recorded), \
+        f'expected a recorded BS % 2 == 0 divisibility assumption; got {recorded}'
+    # No residual tile loop remains for the collapsed axis.
+    tile_loops = [
+        r for r in sdfg.all_control_flow_regions()
+        if isinstance(r, LoopRegion) and r.loop_variable and 'untile' not in r.loop_variable
+    ]
+    assert not tile_loops, f'tile loops should be collapsed, found {[l.label for l in tile_loops]}'
+
+    # Value-preserving with an even tile (BS | N): copies the even indices.
+    sdfg.validate()
+    n, bs = 16, 4
+    rng = np.random.default_rng(0)
+    a = np.zeros(n)
+    b = rng.standard_normal(n)
+    exp = a.copy()
+    for i in range(0, n, bs):
+        for ii in range(i, i + bs, 2):
+            exp[ii] = b[ii]
+    sdfg(a=a, b=b, N=n, BS=bs)
+    assert np.allclose(a, exp), f'symbolic strided untile diverged: {a} vs {exp}'
 
 
 if __name__ == '__main__':

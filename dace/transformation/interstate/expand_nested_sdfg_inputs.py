@@ -231,12 +231,16 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         # uncollapsed to ``edge_idx[jb,jc,0]`` (every lane gathered the same element). Dataflow-
         # memlet path unaffected: rewrites subset ranges directly, never comparing symbols.
         if str(base) == inner_name:
-            new_indices = []
-            for idx, offset, collapsed in zip(args[1:], offset_dims, collapsed_dims):
-                if collapsed:
-                    new_indices.append(offset)
-                else:
-                    new_indices.append(idx)
+            # Iterate the FULL outer rank (offset_dims/collapsed_dims), pulling an original
+            # index only for non-collapsed dims. The original subscript ``args[1:]`` spans the
+            # INNER rank (one index per surviving dim), which is shorter than the outer rank
+            # whenever a dim was collapsed to size 1. A ``zip(args[1:], ...)`` truncated to that
+            # shorter length, so a collapsed mask ``I[0]`` on an (N, N) map widened to ``I[__i0]``
+            # (a whole row) instead of ``I[__i0, __i1]`` -- dropping every trailing map dim.
+            orig_indices = iter(args[1:])
+            new_indices = [
+                offset if collapsed else next(orig_indices) for offset, collapsed in zip(offset_dims, collapsed_dims)
+            ]
             return symbolic.Subscript(base, *new_indices)
         # Not our target: rebuild the original Subscript verbatim.
         return symbolic.Subscript(*args)

@@ -94,6 +94,13 @@ required:
                     is treated as strictly positive. This is necessary
                     for certain Range evaluations using Subgraph Fusion.
 
+            new_gpu_offloading:
+                type: bool
+                default: true
+                title: Enable new GPU offloading transformation
+                description: >
+                    Whatever
+
             match_exception:
                 type: bool
                 default: false

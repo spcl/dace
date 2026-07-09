@@ -186,11 +186,70 @@ def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
     return sp.Integer(diff) % g != 0
 
 
+def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
+    """ Prove that two point-subset writes ``m1``, ``m2`` to the same container can only address
+        the same element when their loop iterations coincide.
+
+        Substitute the iteration variable by a fresh symbol ``p`` in ``m1`` and ``q`` in ``m2`` and
+        build the collision system ``{m1[d]|i=p == m2[d]|i=q  for every dim d}`` (all other symbols
+        are free parameters). If this affine system linearly implies ``p == q`` -- i.e. a rational
+        combination ``sum_d lam_d * (m1[d]|p - m2[d]|q)`` equals ``p - q`` identically -- then a
+        cross-iteration collision is impossible: any overlap between the two writes happens only
+        within a single iteration, where program order in the map body is preserved.
+
+        Whenever such a certificate exists, ``m1@p == m2@q`` forces ``p == q``, so the equality
+        holds on the whole (affine) solution set and the proof is sound for every parameter value.
+        Conservative: returns ``False`` on any non-point subset, any non-affine index, or when no
+        certificate is found, so the caller keeps its safe ``may-overlap`` answer.
+
+        This handles transpose/permutation-symmetric writes such as covariance's ``cov[i,j]`` and
+        ``cov[j,i]``, where the iteration variable lands in *different* dimensions of the two writes
+        so no single dimension is provably disjoint, yet a collision forces ``i == j`` (the diagonal
+        of one iteration).
+    """
+    nd1 = list(m1.subset.ndrange())
+    nd2 = list(m2.subset.ndrange())
+    if len(nd1) != len(nd2) or len(nd1) == 0:
+        return False
+    p, q = sp.Dummy('p'), sp.Dummy('q')
+    eqs = []
+    params: Set[str] = set()
+    for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
+        if b1 != e1 or b2 != e2:  # only point subsets participate in the collision system
+            return False
+        x1 = symbolic.pystr_to_symbolic(b1)
+        x2 = symbolic.pystr_to_symbolic(b2)
+        eqs.append(sp.expand(x1.subs(itersym, p) - x2.subs(itersym, q)))
+        params |= {s for s in (set(x1.free_symbols) | set(x2.free_symbols)) if str(s) != str(itersym)}
+    monomials = [p, q] + sorted(params, key=str)
+    # Require every equation affine (total degree <= 1) in {p, q, params}; bail conservatively
+    # on anything non-linear (e.g. ``A[i*i]``) where a linear certificate would be unsound.
+    for eq in eqs:
+        try:
+            if sp.Poly(eq, *monomials).total_degree() > 1:
+                return False
+        except sp.PolynomialError:
+            return False
+    # Look for rationals ``lam_d`` with ``sum_d lam_d * eq_d == p - q`` as a polynomial identity in
+    # {p, q, params}. Matching every monomial's coefficient to that of ``p - q`` gives a linear
+    # system in the ``lam_d``; a solution is a soundness certificate that a collision forces p == q.
+    lambdas = list(sp.symbols(f'_l2m_lam0:{len(eqs)}'))
+    diff = sp.expand(sum(l * e for l, e in zip(lambdas, eqs)) - (p - q))
+    lin_eqs = [diff.coeff(mono) for mono in monomials]
+    const = diff
+    for mono in monomials:
+        const = const.subs(mono, 0)
+    lin_eqs.append(const)
+    return len(sp.linsolve(lin_eqs, lambdas)) > 0
+
+
 def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
     """ Conservatively decide whether two write memlets to the same container
         can address the same element on different loop iterations. Returns
         ``False`` only if some subset dimension is provably disjoint (the
-        multidimensional element can then never coincide).
+        multidimensional element can then never coincide), or if a collision
+        provably forces the two iterations to coincide (see
+        :func:`_collision_forces_same_iteration`).
     """
     nd1 = list(m1.subset.ndrange())
     nd2 = list(m2.subset.ndrange())
@@ -207,6 +266,11 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
             return False
         if _dim_provably_disjoint(b1, b2, itersym):
             return False
+    # No single dimension settled it. Fall back to the whole-subset collision system: the iter var
+    # may appear in different dimensions of the two writes (a transpose), yet a collision can still
+    # force the two iterations to coincide.
+    if _collision_forces_same_iteration(m1, m2, itersym):
+        return False
     return True
 
 

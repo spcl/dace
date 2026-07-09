@@ -491,25 +491,23 @@ def test_vadd_int(remainder_strategy):
 
 
 def test_vadd_with_different_types(remainder_strategy):
-    """Mixed-dtype operands (int64 + float64) are intentionally rejected per the
-    walker-primary contract (2026-06-10): a single dtype per lib node is locked in
-    design 6.2. The converter raises ``NotImplementedError`` with a clear message
-    telling the caller to rewrite with an explicit cast. This test confirms the
-    error is raised; it's not a numerical-correctness test."""
+    """Mixed-dtype operands (int64 + float64) are HANDLED: ``ResolveMixedDtypeBinops``
+    inserts cast tasklets after ``SplitTasklets`` so the tile pipeline still sees one
+    dtype per lib node (design 6.2), following NumPy promotion. The result must be
+    bit-exact with the unvectorized reference (which computes the same int/float mix)."""
     N = 64
-    A = numpy.random.random((N, N)).astype(numpy.int64)
-    B = numpy.random.random((N, N)).astype(numpy.float64)
+    A = numpy.random.randint(-1000, 1000, (N, N)).astype(numpy.int64)
+    B = numpy.random.random((N, N)).astype(numpy.float64) * 10.0
 
-    with pytest.raises(NotImplementedError, match="mixed-dtype"):
-        run_vectorization_test(dace_func=add_mixed_types,
-                               arrays={
-                                   'A': A,
-                                   'B': B
-                               },
-                               params={'N': N},
-                               vector_width=8,
-                               sdfg_name="add_mixed_types",
-                               remainder_strategy=remainder_strategy)
+    run_vectorization_test(dace_func=add_mixed_types,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={'N': N},
+                           vector_width=8,
+                           sdfg_name="add_mixed_types",
+                           remainder_strategy=remainder_strategy)
 
 
 def test_vadd_with_scalars_int(remainder_strategy):

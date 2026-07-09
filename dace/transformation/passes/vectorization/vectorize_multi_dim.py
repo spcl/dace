@@ -77,6 +77,7 @@ try:
 except ImportError:  # transition: canonicalize's shared reduction-normalize still lives in normalize_nested_reduction
     from dace.transformation.passes.normalize_nested_reduction import NormalizeWCR
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+from dace.transformation.passes.vectorization.predicate_masked_reduction import PredicateMaskedReduction
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
 # Walker-primary pipeline -- no legacy descent / emit_tile_ops imports. The walker
 # (InsertTileLoadStore + PreparePerLaneIndices) replaces both PromoteNSDFGBodyToTiles and the legacy
@@ -139,7 +140,19 @@ class _MultiOutputReductionMapFission(MapFission):
             for e in graph.out_edges(map_exit)
             if e.data is not None and e.data.data is not None and e.data.wcr is not None
         }
-        return len(wcr_arrays) >= 2
+        if len(wcr_arrays) < 2:
+            return False
+        # Do NOT fission a map whose multiple WCR outputs are all independent pure-scalar
+        # reductions (azimint ``s += a[j]; cnt += 1``): ``LiftMapReductionToReduce`` lifts
+        # each in place, and codegen emits one ``reduction(op:var)`` clause / thread-block
+        # fold per accumulator. Fissioning them would have to duplicate a shared body read
+        # (the mask) and can hoist it out of the map-param scope. Fission stays for the
+        # CONTRACTION case (gesummv ``tmp[i] += A[i,j]*x[j]``: param-dependent write, not a
+        # pure scalar reduction) that ``LiftEinsum`` needs separated.
+        from dace.transformation.passes.vectorization.lift_map_reduction import _recognize_pure_wcr_reductions
+        if len(_recognize_pure_wcr_reductions(graph, self.map_entry)) >= 2:
+            return False
+        return True
 
 
 #: "AUTO" resolves to the host's best ISA at expansion time
@@ -806,6 +819,13 @@ class VectorizeMultiDim(ppl.Pipeline):
         # Before the reduction lifts below (they need a unit-step map to size the product
         # buffer). Value-preserving; no-op on unit-step maps.
         NormalizeStridedMaps().apply_pass(sdfg, {})
+        # Predicate a masked reduction (``if mask: acc op= f``) into an unconditional
+        # select-addend reduction (``acc op= ITE(mask, f, identity)``) while the mask is
+        # still a ConditionalBlock in the CFG. Must run BEFORE NormalizeWCR (which buries
+        # the reduction across the nsdfg boundary) and before WCRToAugAssign / the reduction
+        # lifts (which refuse or cannot fold a WCR trapped inside a conditional). Bit-exact:
+        # the false lanes contribute the op identity. No-op on unmasked kernels.
+        PredicateMaskedReduction().apply_pass(sdfg, {})
         # Normalize masked in-nsdfg write-only WCR reductions FIRST, on the frontend shape,
         # before any WCR-consuming lift below. The frontend emits ``if mask: acc += x`` (in a
         # ``dc.map``) as a WCR edge INSIDE a body NestedSDFG writing a write-only connector;
@@ -823,6 +843,19 @@ class VectorizeMultiDim(ppl.Pipeline):
         # ``vectorized`` selects the CPU horizontal-SIMD fold for the RMW lift below; the GPU
         # path lifts UN-vectorized so a lifted RMW ``Reduce`` stays device-selectable.
         reduce_vectorized = self._device != DeviceType.GPU
+        # Materialise nested pure-WCR reductions NOW, while the WCR is intact -- before
+        # ``WCRToAugAssign`` (866) rewrites/mangles the boundary edge the pure-WCR recogniser
+        # needs, and before the fission/einsum prep. A body-NSDFG map may fold SEVERAL
+        # independent scalar accumulators (azimint ``s += a[j]; cnt += 1``); each is lifted in
+        # place to a product buffer + WCR-free ``Reduce``, so no in-NSDFG WCR survives and no
+        # fission (which would duplicate a shared body read out of map-param scope) is needed.
+        # The later ``nested_only`` call (below) catches reductions whose map the vectorizer's
+        # own ``LoopToMap`` mints after this point.
+        from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
+        LiftMapReductionToReduce(vectorized=reduce_vectorized,
+                                 pure_wcr_only=True,
+                                 nested_only=True,
+                                 wcr_free_output=True).apply_pass(sdfg, {})
         # Prep for the einsum / reduction lifts: fission fused compute so each contraction /
         # reduction is a single-output map the lifts can match. A fused multi-output tasklet
         # (gesummv's ``ot = A[i,j]*x[j]; oy = B[i,j]*x[j]``) blocks MapFission (one component)

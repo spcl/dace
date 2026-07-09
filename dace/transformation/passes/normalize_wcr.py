@@ -45,6 +45,7 @@ import numpy
 from dace import SDFG, SDFGState, data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.subsets import Range
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -211,22 +212,42 @@ class NormalizeWCR(ppl.Pass):
         if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
             return False
 
-        # --- Rewrite the body: accumulate into a seeded private transient. ---
-        priv_desc = self._seed_desc(oc_desc)
-        priv = inner.add_datadesc(f'_nnr_priv_{oc}', priv_desc, find_new_name=True)
-        priv_node = wcr_state.add_access(priv)
-        new_data = copy.deepcopy(wcr_edge.data)
-        new_data.data = priv
-        wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_node, None, new_data)
-        old_sink = wcr_edge.dst
-        wcr_state.remove_edge(wcr_edge)
-        if wcr_state.degree(old_sink) == 0:
-            wcr_state.remove_node(old_sink)
-
         wcr_str = wcr_edge.data.wcr
-        self._seed_state(inner, priv, priv_desc, op)
-        self._copyback_state(inner, priv, oc, oc_desc)
-        inner.reset_cfg_list()
+        # --- Rewrite the body: surface the reduction to the boundary edge chain. ---
+        # Two body shapes, chosen by whether the WCR write runs UNCONDITIONALLY exactly
+        # once per NestedSDFG invocation (:meth:`_write_runs_unconditionally_once`):
+        #
+        # * Unconditional write-once (post-``PredicateMaskedReduction``: the mask is folded
+        #   into the addend as ``ITE(mask, val, identity)``): just DROP the WCR on the body
+        #   edge -- ``oc (CR)= addend`` becomes ``oc = addend``, exact because a write-only
+        #   ``oc`` starts at the op's identity by WCR first-write semantics. This keeps the
+        #   body a SINGLE-STATE dataflow chain the tile vectorizer can widen to K lanes; the
+        #   seeded ``_nnr_priv`` form below is a 3-state sub-CFG (seed -> accumulate ->
+        #   copyback) the widener cannot widen, which strands K-1 lanes of the reduction
+        #   buffer uninitialised (all-zero output).
+        # * Otherwise (a ConditionalBlock survived -> STILL masked, or an inner loop ->
+        #   multiple writes per invocation): keep the seeded body-local ``_nnr_priv``
+        #   accumulator. Never surface a still-masked write as unconditional -- that would
+        #   run the masked body on every lane.
+        if self._write_runs_unconditionally_once(inner, wcr_state, oc, wcr_edge):
+            plain = copy.deepcopy(wcr_edge.data)
+            plain.wcr = None
+            wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, wcr_edge.dst, wcr_edge.dst_conn, plain)
+            wcr_state.remove_edge(wcr_edge)
+        else:
+            priv_desc = self._seed_desc(oc_desc)
+            priv = inner.add_datadesc(f'_nnr_priv_{oc}', priv_desc, find_new_name=True)
+            priv_node = wcr_state.add_access(priv)
+            new_data = copy.deepcopy(wcr_edge.data)
+            new_data.data = priv
+            wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_node, None, new_data)
+            old_sink = wcr_edge.dst
+            wcr_state.remove_edge(wcr_edge)
+            if wcr_state.degree(old_sink) == 0:
+                wcr_state.remove_node(old_sink)
+            self._seed_state(inner, priv, priv_desc, op)
+            self._copyback_state(inner, priv, oc, oc_desc)
+            inner.reset_cfg_list()
 
         # --- Rewrite the map level: put the reduction on the accumulator edge chain. ---
         # The WCR must source from an AccessNode: a WCR left on the NestedSDFG->MapExit
@@ -246,6 +267,36 @@ class NormalizeWCR(ppl.Pass):
         state.remove_edge(out_edge)
         if op in ('min', 'max') and acc_node is not None:
             self._ensure_outer_seed(state.sdfg, acc_node.data, op)
+        return True
+
+    def _write_runs_unconditionally_once(self, inner: SDFG, wcr_state: SDFGState, oc: str, wcr_edge) -> bool:
+        """True if the body WCR write of ``oc`` executes exactly once, unconditionally,
+        per NestedSDFG invocation -- so its accumulation can be surfaced to the boundary
+        WITHOUT a seeded body-local ``_nnr_priv`` (see :meth:`_rewrite_nsdfg_output`).
+
+        Requires (both, else the seeded path is the sound choice):
+
+        * No enclosing :class:`ConditionalBlock` or :class:`LoopRegion` between the write
+          state and the NestedSDFG. A surviving ConditionalBlock means the reduction is
+          STILL masked (``PredicateMaskedReduction`` did not fold the guard into the
+          addend); an enclosing loop means the write fires several times per invocation.
+          In either case ``oc = addend`` (drop-WCR) would be wrong -- a masked lane would
+          execute unconditionally, or only the last loop write would survive.
+        * ``oc`` has no OTHER writer in the body: the single WCR write is its sole
+          definition, so dropping the WCR leaves exactly one plain write of ``oc``.
+        """
+        block = wcr_state.parent_graph
+        while block is not None and not isinstance(block, SDFG):
+            if isinstance(block, (ConditionalBlock, LoopRegion)):
+                return False
+            block = block.parent_graph
+        for ist in inner.all_states():
+            for e in ist.edges():
+                if e is wcr_edge:
+                    continue
+                if (e.data is not None and e.data.data == oc and isinstance(e.dst, nodes.AccessNode)
+                        and e.dst.data == oc):
+                    return False
         return True
 
     def _ensure_outer_seed(self, sdfg: SDFG, acc: str, op: str) -> None:
