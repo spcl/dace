@@ -1667,6 +1667,91 @@ def test_symbolic_stride_scan_value_exact(k):
     assert np.allclose(got, exp), f'value mismatch at K={k}: max diff {np.abs(got - exp).max():.2e}'
 
 
+def _carried_writes_in_loops(sdfg, name):
+    """Count AccessNodes of ``name`` that are WRITTEN (have an in-edge) inside any
+    LoopRegion body -- i.e. a surviving sequential recurrence write."""
+    total = 0
+    for loop in sdfg.all_control_flow_regions():
+        if not (isinstance(loop, LoopRegion) and loop.loop_variable):
+            continue
+        for st in loop.all_states():
+            total += sum(1 for n in st.data_nodes() if n.data == name and st.in_degree(n) > 0)
+    return total
+
+
+def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
+    """Masked prefix scan (TSVC-2.5 ``scan_conditional``): ``if mask[i]>0: out[i] =
+    out[i-1] + delta[i] else: out[i] = out[i-1]``. The rewrite folds the masked
+    delta into a pre-zeroed buffer + Scan; the else-branch's ``out[i]=out[i-1]``
+    hold must be NEUTRALIZED (else the loop stays a live sequential recurrence,
+    correct only by redundant recompute). Post-pass: one Scan, no carried ``out``
+    write left in the loop body, and bit-exact vs the sequential oracle."""
+
+    @dace.program
+    def masked_scan(out: dace.float64[N], delta: dace.float64[N], mask: dace.int64[N]):
+        for i in range(1, N):
+            if mask[i] > 0:
+                out[i] = out[i - 1] + delta[i]
+            else:
+                out[i] = out[i - 1]
+
+    sdfg = masked_scan.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, f'expected one masked-scan rewrite; got {res}'
+    assert _num_scan_nodes(sdfg) == 1
+    # The fix: the loop body no longer carries a write to ``out`` (delta-build
+    # only). ``out`` is written solely by the post-loop seed-add Map.
+    assert _carried_writes_in_loops(sdfg, 'out') == 0, \
+        'else-branch recurrence write to `out` was not neutralized'
+
+    n = 32
+    rng = np.random.default_rng(7)
+    delta = rng.standard_normal(n)
+    mask = (rng.standard_normal(n) > 0.0).astype(np.int64)
+    out = rng.standard_normal(n)
+    exp = out.copy()
+    for i in range(1, n):
+        exp[i] = exp[i - 1] + (delta[i] if mask[i] > 0 else 0.0)
+    sdfg(out=out, delta=delta, mask=mask, N=n)
+    assert np.allclose(out, exp), f'masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
+
+
+def test_multi_slot_same_array_five_carries():
+    """Five INDEPENDENT prefix sums carried in one loop body writing distinct
+    constant slots of ONE array (TSVC-2.5 ``scan_multi_5carry`` / cloudsc
+    ``pfsqrf`` flat shape): ``acc[r, i] = acc[r, i-1] + delta[r, i]`` for
+    ``r=0..4``. Lifts to five Scan libnodes (one per slot) via the dedicated
+    multi-slot rewrite -- bit-exact vs the sequential oracle."""
+
+    @dace.program
+    def multi_slot(acc: dace.float64[5, N], delta: dace.float64[5, N]):
+        for i in range(1, N):
+            acc[0, i] = acc[0, i - 1] + delta[0, i]
+            acc[1, i] = acc[1, i - 1] + delta[1, i]
+            acc[2, i] = acc[2, i - 1] + delta[2, i]
+            acc[3, i] = acc[3, i - 1] + delta[3, i]
+            acc[4, i] = acc[4, i - 1] + delta[4, i]
+
+    sdfg = multi_slot.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, f'expected one multi-slot loop rewrite; got {res}'
+    assert _num_scan_nodes(sdfg) == 5, f'expected five per-slot Scan libnodes; got {_num_scan_nodes(sdfg)}'
+    assert _carried_writes_in_loops(sdfg, 'acc') == 0, 'a per-slot recurrence write to `acc` survived'
+
+    n = 24
+    rng = np.random.default_rng(909)
+    acc = rng.standard_normal((5, n))
+    delta = rng.standard_normal((5, n))
+    exp = acc.copy()
+    for i in range(1, n):
+        for r in range(5):
+            exp[r, i] = exp[r, i - 1] + delta[r, i]
+    sdfg(acc=acc, delta=delta, N=n)
+    assert np.allclose(acc, exp), f'multi-slot scan diverged: max diff {np.abs(acc - exp).max():.2e}'
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

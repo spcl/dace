@@ -420,7 +420,22 @@ class LoopToScan(ppl.Pass):
                 # specialization (below); re-matching it would recurse into
                 # another if/else. Leave it as the original sequential loop.
                 continue
-            infos = _match_all(loop, sdfg)
+            infos = _match_all(loop, sdfg, allow_multi_slot=True)
+            # Multi-slot shape (several independent scans on distinct constant
+            # slots of one carrier -- ``acc[0,i]``, ``acc[1,i]``, ...): the shared
+            # body can't go through the per-info ``_rewrite`` path (ambiguous
+            # write lookup). Route it to the dedicated multi-slot rewrite, or
+            # leave it sequential if it isn't a clean forward-flat slot set.
+            if infos and _is_multi_slot(infos):
+                if _multi_slot_liftable(infos):
+                    _rewrite_multi_slot(parent, loop, infos, sdfg)
+                    count += 1
+                    continue
+                # Not a clean forward-flat slot set (e.g. the nested cloudsc
+                # ``zvqx[r, jk, jl]`` shape): drop the match and fall through to
+                # the composite-body / scalar-carry paths, exactly as the old
+                # multi-slot refuse did.
+                infos = []
             # NESTED (vector) scan default: when the matched scan wraps a
             # data-parallel inner loop, prefer to KEEP THE MAP INSIDE -- leave
             # this carry loop sequential and let ``LoopToMap`` map the inner
@@ -662,7 +677,7 @@ def _merge_state_into(s1: SDFGState, s2: SDFGState):
         s1.add_edge(src, e.src_conn, dst, e.dst_conn, e.data)
 
 
-def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
+def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> List[_Scan]:
     """Match every independent scan recurrence in ``loop``.
 
     v4 -- multi-array bodies: a single loop may carry several independent prefix
@@ -810,6 +825,16 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
     # restores the documented "the body reads the carrier at more than one
     # distinct subset" intent. A legitimate scan reads its carrier at exactly
     # the one carry offset, so its aggregate count is 1 and it still matches.
+    #
+    # Multi-slot exception: several INDEPENDENT scans on distinct constant slots
+    # of one carrier (``acc[0,i-1]``, ``acc[1,i-1]``, ...) legitimately read the
+    # carrier at as many distinct subsets as there are matched slots -- one carry
+    # read per slot, none of them a stencil. When ``allow_multi_slot`` is set,
+    # permit up to ``infos_per_array[name]`` distinct reads (a genuine extra
+    # stencil read within a slot still trips the guard).
+    infos_per_array: Dict[str, int] = {}
+    for s in matched:
+        infos_per_array[s.out_name] = infos_per_array.get(s.out_name, 0) + 1
     carrier_reads: Dict[str, set] = {name: set() for name in carrier_set}
     for st in loop.all_states():
         for n in st.data_nodes():
@@ -819,27 +844,23 @@ def _match_all(loop: LoopRegion, sdfg: SDFG) -> List[_Scan]:
                 if e.data is None or e.data.subset is None:
                     continue
                 carrier_reads[n.data].add(str(e.data.subset))
-    if any(len(subs) > 1 for subs in carrier_reads.values()):
-        return []
+    for name, subs in carrier_reads.items():
+        allowed = infos_per_array.get(name, 1) if allow_multi_slot else 1
+        if len(subs) > allowed:
+            return []
 
-    # Refuse the multi-slot shape: several matched scan recurrences on the SAME
-    # carrier array at distinct constant slots (e.g. ``acc[0, i]``, ``acc[1, i]``,
-    # ... in one body -- both the flat shape and the nested ``zvqx[r, jk, jl]``
-    # cloudsc for_430 shape). The multi-slot rewrite chains a per-slot ``_rewrite``
-    # over the shared loop and mis-captures each slot's external seed
-    # (``acc[r, start]``), reading an uninitialised buffer -> numerically wrong
-    # (verified maxdiff ~0.85 vs the sequential oracle for the nested case). Leave
-    # the loop sequential -- for the flat shape ``LoopFission`` then splits the
-    # slots into independent single-slot loops, each lifted correctly by the
-    # single-carrier path. Keyed on the count of matched infos per array (not raw
-    # write subsets) so a single scan with an extra side-effect write to the
-    # carrier (the v5 fused-body shape -- one matched info) is NOT refused. The
-    # multi-*array* case (one info per distinct array, e.g. cloudsc pfsqrf's five
-    # different carriers) is likewise untouched.
-    infos_per_array: Dict[str, int] = {}
-    for s in matched:
-        infos_per_array[s.out_name] = infos_per_array.get(s.out_name, 0) + 1
-    if any(c > 1 for c in infos_per_array.values()):
+    # The multi-slot shape (several matched scan recurrences on the SAME carrier
+    # array at distinct constant slots -- ``acc[0, i]``, ``acc[1, i]``, ...) is
+    # refused on the default per-info ``_rewrite`` path: that path's write lookup
+    # is ambiguous with several carrier writes in one body. Callers that want the
+    # dedicated :func:`_rewrite_multi_slot` (which reroutes each slot to its own
+    # delta buffer and emits a per-slot Scan + seed-add) pass
+    # ``allow_multi_slot=True``. Keyed on the count of matched infos per array
+    # (not raw write subsets) so a single scan with an extra side-effect write to
+    # the carrier (the v5 fused-body shape -- one matched info) is NOT refused;
+    # the multi-*array* case (one info per distinct array, e.g. cloudsc pfsqrf's
+    # five different carriers) is likewise untouched.
+    if not allow_multi_slot and any(c > 1 for c in infos_per_array.values()):
         return []
     return matched
 
@@ -2732,6 +2753,13 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
 
     _mutate_body_to_delta_buffer(info, delta_buf)
 
+    # Sibling branches of the matched scan-update (the ``else: out[i] = out[i-1]``
+    # hold of a masked prefix scan) still carry a live recurrence write to ``out``.
+    # Neutralise them so the loop body is a pure delta-build (the pre-zeroed
+    # ``delta_buf`` already supplies the op identity for skipped iterations).
+    if _in_conditional_branch(info.body_state):
+        _mutate_sibling_branches_to_zero_delta(info, sdfg)
+
     out_edges = list(parent.out_edges(loop))
     s_scan = parent.add_state(loop.label + '_scan')
     parent.add_edge(loop, s_scan, dace.InterstateEdge())
@@ -2753,6 +2781,82 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
             parent.add_edge(s_apply, e.dst, e.data)
         _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
         _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
+    sdfg.reset_cfg_list()
+
+
+def _is_multi_slot(matched: List[_Scan]) -> bool:
+    """``True`` when several matched scans write DISTINCT constant slots of the
+    SAME carrier array (``acc[0,i]``, ``acc[1,i]``, ... -- the cloudsc ``pfsqrf``
+    flat shape). The multi-array case (one info per distinct array) is not
+    multi-slot and stays on the per-info :func:`_rewrite` path.
+    """
+    per_array: Dict[str, int] = {}
+    for s in matched:
+        per_array[s.out_name] = per_array.get(s.out_name, 0) + 1
+    return any(c > 1 for c in per_array.values())
+
+
+def _multi_slot_liftable(matched: List[_Scan]) -> bool:
+    """The multi-slot rewrite is a set of independent forward flat single-carrier
+    scans sharing a loop. It handles only the shapes the single-carrier general
+    path handles per slot: forward iteration (``coef == 1``), no nested inner
+    loop, and a unit scan stride. Anything else stays sequential.
+    """
+    return all(s.coef == 1 and s.inner_loop is None and s.scan_stride == 1 for s in matched)
+
+
+def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: List[_Scan], sdfg: SDFG):
+    """Lift several INDEPENDENT prefix scans that share one loop body but write
+    distinct constant slots of the same carrier (``acc[r, i] = acc[r, i-1] +
+    delta[r, i]`` for ``r = 0..4``; TSVC ``scan_multi_5carry`` / cloudsc
+    ``pfsqrf``). The single per-info :func:`_rewrite` path can't handle this --
+    :func:`_find_carried_write_an` is ambiguous with several carrier writes in
+    one body, and chaining ``_rewrite`` reroutes the shared loop's out-edges
+    once per slot. Instead: mutate every slot's write to its OWN 1-D delta buffer
+    in place (severing that slot's carry), leaving a single carry-free delta-build
+    loop; then emit a per-slot ``Scan`` + seed-add chain after it. The slots are
+    disjoint (distinct constant ``other_indices``), so each seed-add reads the
+    still-live external seed ``acc[r, iter_start]`` and writes only ``acc[r, >
+    iter_start]`` -- never clobbering another slot's seed.
+    """
+    import dace
+    out_name = matched[0].out_name
+    out_desc = sdfg.arrays[out_name]
+    trip = symbolic.simplify(matched[0].iter_end - matched[0].iter_start + 1)
+
+    slots: List[tuple] = []
+    for info in matched:
+        # This slot's own write AN: walk forward from its scan-update tasklet
+        # (ambiguity-free) rather than the by-name lookup.
+        chain = _collect_output_chain(info.body_state, info.scan_update_tasklet, info.out_conn)
+        write_an = chain[-1] if chain else None
+        delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{out_name}', [trip],
+                                      out_desc.dtype,
+                                      transient=True,
+                                      find_new_name=True)
+        _mutate_body_to_delta_buffer(info, delta_buf, write_an=write_an)
+        slots.append((info, delta_buf))
+
+    # The loop body is now a pure delta-build (no carry) -- a follow-up LoopToMap
+    # lifts it. Chain a Scan + seed-add per slot after it, then reroute the loop's
+    # original out-edges past the last apply state.
+    out_edges = list(parent.out_edges(loop))
+    prev = loop
+    for info, delta_buf in slots:
+        scan_buf, _ = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{out_name}', [trip],
+                                     out_desc.dtype,
+                                     transient=True,
+                                     find_new_name=True)
+        s_scan = parent.add_state(loop.label + '_scan')
+        parent.add_edge(prev, s_scan, dace.InterstateEdge())
+        s_apply = parent.add_state(loop.label + '_scan_apply')
+        parent.add_edge(s_scan, s_apply, dace.InterstateEdge())
+        _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
+        _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
+        prev = s_apply
+    for e in out_edges:
+        parent.remove_edge(e)
+        parent.add_edge(prev, e.dst, e.data)
     sdfg.reset_cfg_list()
 
 
@@ -3066,12 +3170,17 @@ def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta
                    mm.Memlet(data=info.out_name, subset=subsets.Range([(write_start, write_end, 1)])))
 
 
-def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):
+def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str, write_an: Optional[nodes.AccessNode] = None):
     """In-place: sever the scan-update tasklet's carry input, collapse the tasklet's
     body to a passthrough of its delta input, and re-route the body's *final* write
     to ``out`` so it lands in ``delta_buf[loop_var - iter_start]`` instead. Anything
     between the scan-update tasklet and that final write -- additional tasklets that
     extend the per-iteration delta computation (the v2 case) -- is kept verbatim.
+
+    ``write_an`` overrides the write target lookup: the multi-slot rewrite passes
+    THIS slot's own write AccessNode (found by walking forward from the slot's
+    scan-update tasklet) because :func:`_find_carried_write_an` is ambiguous when
+    several slots of the same array are written in one body.
     """
     state = info.body_state
     tasklet = info.scan_update_tasklet
@@ -3092,7 +3201,8 @@ def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):
 
     # 3. Locate the body's final write edge to ``out`` (the unique in-edge to its write
     #    AccessNode in the state) and re-route it to ``delta_buf[loop_var - iter_start]``.
-    write_an = _find_carried_write_an(state, info.out_name)
+    if write_an is None:
+        write_an = _find_carried_write_an(state, info.out_name)
     if write_an is None:
         return  # Nothing to re-route (defensive; matcher already established the write).
     final_write_edges = list(state.in_edges(write_an))
@@ -3116,6 +3226,72 @@ def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str):
                    mm.Memlet(data=delta_buf, subset=subsets.Range([(idx_expr, idx_expr, 1)])))
     if state.degree(write_an) == 0:
         state.remove_node(write_an)
+
+
+def _mutate_sibling_branches_to_zero_delta(info: _Scan, sdfg: SDFG):
+    """When the matched scan-update lives in one ``ConditionalBlock`` branch, the
+    OTHER branches that skip the delta computation still carry a live recurrence
+    write to ``out`` (a masked prefix scan's ``else: out[i] = out[i-1]`` hold).
+    That write keeps the loop a genuine sequential recurrence and is redundant
+    with the delta-buffer rewrite: ``delta_buf`` is pre-zeroed
+    (:func:`_emit_delta_buf_zero_init`), so a skipped iteration already
+    contributes the op identity and holds the running value. Neutralise each
+    sibling branch by dropping its carried write to ``out`` and pruning the now
+    dead carry-read chain, leaving the branch a no-op delta contribution that a
+    follow-up ``LoopToMap`` can lift.
+    """
+    # The masked conditional is nested INSIDE the scan loop body (loop -> ... ->
+    # ConditionalBlock -> branch -> body_state), so walking up from body_state we
+    # hit the ConditionalBlock BEFORE the enclosing scan LoopRegion. If we hit the
+    # loop first, any ConditionalBlock above it is a WRAPPER (e.g. the symbolic-
+    # stride ``if K>=1: scan else: seq`` specialization) whose sibling is the
+    # sequential fallback -- neutralising it would delete the fallback's real
+    # recurrence write. Only descend into a conditional strictly below the loop.
+    cond = getattr(info.body_state, 'parent_graph', None)
+    while cond is not None and not isinstance(cond, ConditionalBlock):
+        if isinstance(cond, LoopRegion) and cond.loop_variable:
+            return  # reached the scan loop first -> the conditional (if any) is a wrapper
+        cond = getattr(cond, 'parent_graph', None)
+    if cond is None:
+        return
+    for _cond_expr, branch in cond.branches:
+        for state in branch.all_states():
+            if state is info.body_state:
+                continue
+            write_an = _find_carried_write_an(state, info.out_name)
+            if write_an is None:
+                continue
+            _drop_carried_write(state, write_an)
+
+
+def _drop_carried_write(state: SDFGState, write_an: nodes.AccessNode):
+    """Remove the carried write AccessNode ``write_an`` and backward-prune every
+    producer that becomes dead (the intermediate copy transient and the isolated
+    ``out[i-1]`` carry read). Same conservative drop policy as
+    :func:`_disconnect_carry_chain`: never drop a still-live write to a
+    non-transient array, nor a node still read elsewhere.
+    """
+    producers = [e.src for e in state.in_edges(write_an)]
+    for ie in list(state.in_edges(write_an)):
+        state.remove_edge(ie)
+    if state.degree(write_an) == 0:
+        state.remove_node(write_an)
+    worklist = list(producers)
+    while worklist:
+        cur = worklist.pop()
+        if cur not in state.nodes() or state.out_degree(cur) != 0:
+            continue
+        if isinstance(cur, nodes.AccessNode):
+            desc = state.sdfg.arrays.get(cur.data)
+            if (desc is None or not desc.transient) and state.in_degree(cur) != 0:
+                continue  # a live write to a non-transient array -- never drop
+        elif not isinstance(cur, nodes.Tasklet):
+            continue
+        prod = [e.src for e in state.in_edges(cur)]
+        for ie in list(state.in_edges(cur)):
+            state.remove_edge(ie)
+        state.remove_node(cur)
+        worklist.extend(prod)
 
 
 def _find_carried_write_an(state: SDFGState, name: str) -> Optional[nodes.AccessNode]:

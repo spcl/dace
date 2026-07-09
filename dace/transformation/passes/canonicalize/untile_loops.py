@@ -608,16 +608,27 @@ class UntileLoops(ppl.Pass):
         # iteration.
         k_var = f"{_UNTILE_PREFIX}{_next_id(sdfg)}"
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
-        # Exclusive upper bound for the collapsed iterator is the
-        # original outer's exclusive upper bound, i.e. ``N`` (NOT
-        # ``N + K - 1``). ``get_loop_end`` returns
-        # ``exclusive_upper_bound - 1`` for the ``i < N`` condition, so
-        # we add 1 back. The previous formula ``outer_end +
-        # outer_stride`` over-iterated by ``K - 1`` extra steps, which
-        # wrote ``K - 1`` elements past the array end (latent OOB write,
-        # invisible to numpy ``allclose`` because the array view never
-        # included those bytes).
-        N_excl = symbolic.simplify(outer_end + 1)
+        # Exclusive upper bound for the collapsed iterator is the union of the
+        # tile spans the original nest actually visits. The outer walks tile
+        # origins ``ii = outer_start + m*K`` for every ``ii < stop`` (where
+        # ``stop = outer_end + 1`` is the outer's exclusive upper bound), and the
+        # inner covers ``[ii, ii + K)``. So the last visited element is
+        # ``last_origin + K`` where ``last_origin`` is the largest origin below
+        # ``stop`` -- i.e. the union end is ``stop`` rounded UP to the next tile
+        # boundary above ``outer_start``: ``outer_start + ceil((stop -
+        # outer_start) / K) * K``.
+        #
+        # When the tile evenly divides the span (the classic ``for i in
+        # range(0, N, K): for ii in range(0, K)`` shape with ``K | N``,
+        # ``outer_start == 0``) this reduces to exactly ``stop == N`` -- the old
+        # ``outer_end + 1`` formula. But a tiled stencil walks the interior with
+        # ``stop = LEN - 1 - K`` (NOT a tile multiple), so the last tile overshoots
+        # ``stop`` and ``outer_end + 1`` truncated the final tile (missed its tail
+        # rows/cols). The earlier ``outer_end + outer_stride`` over-shot the other
+        # way (a full extra tile). The round-up is the exact union.
+        stop_excl = symbolic.simplify(outer_end + 1)
+        span = symbolic.simplify(stop_excl - outer_start_sym)
+        N_excl = symbolic.simplify(outer_start_sym + symbolic.int_ceil(span, K_expr) * K_expr)
 
         # Body substitution: ``i + ii`` -> ``k`` (case A) or ``ii`` -> ``k`` (case B).
         i_sym = outer.loop_variable
