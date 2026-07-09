@@ -119,7 +119,10 @@ def collect(*,
 
     :param regime: keep only this regime (``"1d"``/``"2d"``).
     :param tags: keep kernels carrying *all* of these tags.
-    :param name: keep kernels whose name matches this regex.
+    :param name: keep only the kernel with this exact name. A substring/regex match would
+        wrongly return siblings whose names contain it (``vtv_d_single`` is a substring of both
+        ``vpvtv_d_single`` and ``vtvtv_d_single``, so ``collect(name="vtv_d_single")[0]`` used
+        to return ``vpvtv_d_single``).
     :returns: the matching kernels, in registration order.
     """
     out = list(_REGISTRY)
@@ -129,7 +132,7 @@ def collect(*,
         want = set(tags)
         out = [k for k in out if want <= k.tags]
     if name is not None:
-        out = [k for k in out if re.search(name, k.name)]
+        out = [k for k in out if k.name == name]
     return out
 
 
