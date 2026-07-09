@@ -248,6 +248,16 @@ class BranchNormalization(ppl.Pass):
                 if sym in pred_syms:
                     hoistable = False  # would change which branch is taken
                     break
+                if self._symbol_read_outside_arm(sym, br):
+                    # ``sym`` is live after ``cb``: this arm assigns it only on the taken path, so
+                    # hoisting to cb's unconditional in-edges also sets it on the bypass (implicit
+                    # else / other-arm) path -- NOT value-preserving. A single-arm ``if a[i] < 0: j
+                    # = i`` whose ``j`` a later ``b[0] = j`` reads is the miscompile this guards;
+                    # arm-local frontend aliases (``__sym_z1`` consumed only inside the arm) read
+                    # nothing outside and stay hoistable. Refusing just leaves the conditional for
+                    # ``_normalize_single_arm`` -- always correctness-safe.
+                    hoistable = False
+                    break
                 for ie in in_edges:
                     if sym in ie.data.assignments and str(ie.data.assignments[sym]) != str(expr):
                         hoistable = False  # conflicting pre-``cb`` binding
@@ -269,6 +279,56 @@ class BranchNormalization(ppl.Pass):
             br.start_block = br.node_id(successor)
             hoisted = True
         return hoisted
+
+    @staticmethod
+    def _symbol_read_outside_arm(sym: str, arm_body: ControlFlowRegion) -> bool:
+        """Whether ``sym`` is read anywhere outside ``arm_body``.
+
+        Walks the owning SDFG's interstate assignment RHSs / conditions, ``ConditionalBlock``
+        branch conditions, ``LoopRegion`` init/cond/update, and ``Tasklet`` code, skipping blocks
+        inside ``arm_body``. Used by :meth:`_hoist_branch_invariant_assignments` to keep a hoist
+        value-preserving: a binding whose symbol escapes the conditional must not move to the
+        unconditional in-edges. Mirrors the consumer scan in
+        ``same_write_set_if_else_to_ite_cfg._symbol_has_external_consumer``.
+
+        :param sym: the bound symbol under consideration.
+        :param arm_body: the arm whose binding would be hoisted.
+        :returns: ``True`` if any read of ``sym`` exists outside ``arm_body``.
+        """
+        from dace.sdfg.state import LoopRegion
+        sdfg = arm_body.sdfg
+        only = {sym}
+        inside_regions = set(arm_body.all_control_flow_regions(recursive=True))
+        inside_states = set(arm_body.all_states())
+        for cfg in sdfg.all_control_flow_regions(recursive=True):
+            if cfg in inside_regions:
+                continue
+            for e in cfg.edges():
+                for _lhs, rhs in (e.data.assignments or {}).items():
+                    if symbolic.symbols_in_code(str(rhs), potential_symbols=only):
+                        return True
+                if e.data.condition is not None and symbolic.symbols_in_code(e.data.condition.as_string,
+                                                                             potential_symbols=only):
+                    return True
+            if isinstance(cfg, ConditionalBlock):
+                for c, _br in cfg.branches:
+                    if c is not None and symbolic.symbols_in_code(c.as_string if isinstance(c, CodeBlock) else str(c),
+                                                                  potential_symbols=only):
+                        return True
+            if isinstance(cfg, LoopRegion):
+                for code in (cfg.loop_condition, cfg.update_statement, cfg.init_statement):
+                    if code is not None and symbolic.symbols_in_code(
+                            code.as_string if isinstance(code, CodeBlock) else str(code), potential_symbols=only):
+                        return True
+        for state in sdfg.all_states():
+            if state in inside_states:
+                continue
+            for n in state.nodes():
+                if isinstance(n, dace.nodes.Tasklet):
+                    code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
+                    if symbolic.symbols_in_code(code, potential_symbols=only):
+                        return True
+        return False
 
     @staticmethod
     def _substantive_states(body: ControlFlowRegion):

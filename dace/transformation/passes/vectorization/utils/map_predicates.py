@@ -62,17 +62,81 @@ def _sdfg_has_self_recurrent_assign(root_sdfg: dace.SDFG) -> bool:
     return False
 
 
+def _loop_bound_uses_symbols(region, param_syms: set) -> bool:
+    """True if ``region``'s init / condition / update references any name in ``param_syms``."""
+    for code in (region.loop_condition, region.init_statement, region.update_statement):
+        if code is None:
+            continue
+        try:
+            used = {str(s) for s in dace.symbolic.symbols_in_code(code.as_string)}
+        except Exception:  # noqa: BLE001 -- unparseable loop head is not a dependence we model
+            continue
+        if used & param_syms:
+            return True
+    return False
+
+
+def _sdfg_loops_depend_on_symbols(sdfg: dace.SDFG, param_syms: set) -> bool:
+    """True if some ``LoopRegion`` in ``sdfg`` (descending nested SDFGs, remapping ``param_syms``
+    through each ``symbol_mapping``) has a bound referencing a symbol in ``param_syms``."""
+    from dace.sdfg.state import LoopRegion
+    for region in sdfg.all_control_flow_regions(recursive=False):
+        if isinstance(region, LoopRegion) and _loop_bound_uses_symbols(region, param_syms):
+            return True
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, dace.nodes.NestedSDFG):
+                continue
+            inner_syms = {
+                inner_key
+                for inner_key, outer_val in node.symbol_mapping.items()
+                if param_syms & {str(s)
+                                 for s in dace.symbolic.pystr_to_symbolic(str(outer_val)).free_symbols}
+            }
+            if inner_syms and _sdfg_loops_depend_on_symbols(node.sdfg, inner_syms):
+                return True
+    return False
+
+
+def map_body_has_param_dependent_loop(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+    """True if the map body has a nested loop whose bound depends on a tiled map param.
+
+    A triangular ``for i in range(1, j+1)`` inside a ``j``-map (TSVC s232) has a per-lane trip
+    count once ``j`` is tiled -- the tiled body runs ONE tile-start bound for all W lanes and
+    applies the inner (recurrence) body uniformly, under-computing the higher rows. No single
+    strided loop honours W divergent bounds, so the map is refused (kept scalar, bit-exact) rather
+    than tiled incorrectly.
+    """
+    params = {str(p) for p in map_entry.map.params}
+    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+        if not isinstance(node, dace.nodes.NestedSDFG):
+            continue
+        inner_syms = {
+            inner_key
+            for inner_key, outer_val in node.symbol_mapping.items()
+            if params & {str(s)
+                         for s in dace.symbolic.pystr_to_symbolic(str(outer_val)).free_symbols}
+        }
+        if inner_syms and _sdfg_loops_depend_on_symbols(node.sdfg, inner_syms):
+            return True
+    return False
+
+
 def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """True if an (assumed innermost) ``map_entry`` can be safely tiled/vectorized.
 
     Refuses a body with a self-referential loop-carried recurrence (``k = f(k)``, e.g. TSVC
     s141's ``k = (k + i) + 1`` feeding ``flat_2d_array[k]``): per-iteration recurrence → map
-    stays scalar, refused REGARDLESS of use. Graceful-refuse gate: ineligible map left as
-    correct scalar rather than tiled over a recurrence.
+    stays scalar, refused REGARDLESS of use. Also refuses a body whose nested loop bound depends
+    on a tiled map param (triangular ``for i in range(1, j+1)``, TSVC s232): W lanes need divergent
+    trip counts a single tiled loop cannot honour. Graceful-refuse gate: ineligible map left as
+    correct scalar rather than tiled incorrectly.
     """
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
         if isinstance(node, dace.nodes.NestedSDFG) and _sdfg_has_self_recurrent_assign(node.sdfg):
             return False
+    if map_body_has_param_dependent_loop(state, map_entry):
+        return False
     return True
 
 

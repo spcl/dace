@@ -383,6 +383,15 @@ class WidenAccesses(ppl.Pass):
                     dst_name = edge.dst.data
                     if src_name not in nt_lane_dep and src_name not in lane_dep_transients:
                         continue
+                    # A CONSTANT (loop-invariant) read from a lane-dep source -- ``a[0]`` (or
+                    # ``a[j]`` with ``j`` an outer loop var) copied into a bridge, where ``a`` is
+                    # lane-dep only because ``a[i]`` is written elsewhere -- yields a value that is
+                    # identical across lanes. It must stay a Scalar broadcast operand (design 6.5),
+                    # NOT a per-lane tile: widening it leaves lanes 1..W-1 filled from a 1-element
+                    # copy (uninitialised) instead of broadcasting. Propagate lane-dep only when
+                    # THIS edge's source-side subset is itself lane-dependent.
+                    if not self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars):
+                        continue
                     desc = inner_sdfg.arrays.get(dst_name)
                     if desc is None or not desc.transient:
                         continue
@@ -421,6 +430,32 @@ class WidenAccesses(ppl.Pass):
                                 lane_dep_transients.add(nm)
                                 changed = True
         return lane_dep_transients
+
+    def _edge_reads_lane_dependent(self, edge, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> bool:
+        """True if the copy edge's SOURCE-side subset has >=1 non-CONSTANT (lane-dependent) dim.
+
+        A fully-CONSTANT read (``a[0]``, or ``a[j]`` with ``j`` loop-invariant w.r.t. the tiled
+        iter-vars) produces a value identical across lanes, so the destination stays a Scalar
+        broadcast. Mirrors the CONSTANT test in :meth:`_classify_non_transients`; conservatively
+        returns ``True`` when the subset cannot be classified (matches that method's fallback).
+
+        :param edge: The AN -> AN copy edge.
+        :param state: The state holding the edge.
+        :param inner_sdfg: The body NSDFG.
+        :param iter_vars: The tiled iter-var names.
+        :returns: ``True`` if the read is lane-dependent (dest must widen), else ``False``.
+        """
+        try:
+            sub = an_side_subset(edge, edge.src, inner_sdfg)
+        except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
+            return True
+        try:
+            record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=state)
+        except Exception:  # noqa: BLE001
+            return True
+        if not record.per_dim_kind:
+            return True
+        return not all(k == PerDimKind.CONSTANT for k in record.per_dim_kind)
 
     # --- Step 4: widen lane-dep transient descriptors -----------------------
     @staticmethod

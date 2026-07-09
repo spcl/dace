@@ -181,7 +181,44 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
         for node, _parent in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.NestedSDFG):
                 demote_connector_views(node)
+        self._bind_missing_free_symbols(sdfg)
         return applied or None
+
+    @staticmethod
+    def _bind_missing_free_symbols(sdfg: dace.SDFG) -> None:
+        """Identity-bind every body-NSDFG free symbol still absent from its ``symbol_mapping``.
+
+        ``ExpandNestedSDFGInputs`` widens a per-iteration boundary memlet (``a[i]`` →
+        ``a[i*n3 + n1_minus_1]``), pulling the index's free symbols into the inner memlets. It
+        propagates those into ``symbol_mapping`` EXCEPT any whose name also names a parent data
+        descriptor: a scalar loop parameter (``n3: dace.int64`` → a ``Scalar`` in
+        ``sdfg.arrays``) used purely symbolically is filtered out by the array-name guard and
+        left unbound, so ``validate`` reports "Missing symbols on nested SDFG". Bind each such
+        symbol identity (outer ``n3`` → inner ``n3``); the parent scope already resolves it (the
+        strided map range references it), and the type comes from the parent symbol / scalar
+        descriptor (default ``int64``).
+
+        :param sdfg: The SDFG whose body NSDFGs to repair in place.
+        """
+        for node, parent in sdfg.all_nodes_recursive():
+            if not isinstance(node, dace.nodes.NestedSDFG) or node.sdfg is None:
+                continue
+            inner = node.sdfg
+            parent_sdfg = parent.sdfg
+            connectors = set(node.in_connectors) | set(node.out_connectors)
+            for sym in inner.free_symbols:
+                sym_name = str(sym)
+                if sym_name in connectors or sym_name in node.symbol_mapping:
+                    continue
+                if sym_name in parent_sdfg.symbols:
+                    sym_type = parent_sdfg.symbols[sym_name]
+                elif sym_name in parent_sdfg.arrays:
+                    sym_type = parent_sdfg.arrays[sym_name].dtype
+                else:
+                    sym_type = dace.dtypes.int64
+                if sym_name not in inner.symbols:
+                    inner.add_symbol(sym_name, sym_type)
+                node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
 
 class _RunWCRToAugAssign(ppl.Pass):

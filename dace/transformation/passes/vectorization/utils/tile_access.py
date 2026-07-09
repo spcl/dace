@@ -347,14 +347,54 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
         expr = _safe_sympify(next(iter(rhs_set)))
         if expr is not None:
             defs[name] = expr
-    # Self-referential def (``j = j + 1``) = loop-carried RECURRENCE, not a resolvable index. Such a
-    # loop is never a tiled parallel map (LoopToMap refuses recurrences) → access stays in scalar
-    # control flow, so leave symbol UNRESOLVED, preserve subset (``a[j]``) verbatim. Substituting
-    # would run ``resolve_index_expr``'s fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt
-    # the subset (TSVC s123). (Tiled access carrying such an index is refused downstream by the
-    # tile-index builder, not rewritten -- see InsertTileLoadStore.)
-    defs = {k: v for k, v in defs.items() if k not in {str(s) for s in v.free_symbols}}
-    return defs
+    # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
+    # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap
+    # refuses recurrences) → access stays in scalar control flow, so leave the symbol UNRESOLVED,
+    # preserving the subset (``a[j]``) verbatim. Substituting would run ``resolve_index_expr``'s
+    # fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt the subset (TSVC s123). The same
+    # instability propagates transitively: an index DEFINED from a recurrence symbol (``k = j + 1``,
+    # snapshotted at loop-top while ``j`` is bumped before the ``b[k]``/``c[k]`` use -- TSVC s128) is
+    # equally unstable, because the substituted ``j`` would read its post-update value at the use
+    # site. Collect every recurrence symbol from the raw assignment RHSs and drop both the
+    # self-referential defs AND any def whose RHS depends on one. (Tiled access carrying such an
+    # index is refused downstream by the tile-index builder, not rewritten -- see InsertTileLoadStore.)
+    recurrence_syms: Set[str] = set()
+    for sym, rhs_set in ise_rhs.items():
+        for rhs in rhs_set:
+            rexpr = _safe_sympify(rhs)
+            if rexpr is not None and sym in {str(s) for s in rexpr.free_symbols}:
+                recurrence_syms.add(sym)
+                break
+    for name, rhs_set in scalar_defs.items():
+        for rhs in rhs_set:
+            rexpr = _safe_sympify(rhs)
+            if rexpr is not None and name in {str(s) for s in rexpr.free_symbols}:
+                recurrence_syms.add(name)
+                break
+    # Taint every def transitively reaching a recurrence symbol, to a fixpoint. A def that
+    # references a recurrence symbol is itself unstable (``LEN_1D_minus_k = LEN_1D - k``, ``k``
+    # carried; ``k = j + 1``, ``j`` carried), and so is any def that references such a tainted mint
+    # in turn (``__sym_LEN_1D_minus_k = LEN_1D_minus_k`` -- the frontend's promoted subset symbol).
+    # Propagating the taint UP the whole chain is essential: dropping only the leaf ``LEN_1D - k``
+    # link while keeping ``__sym_LEN_1D_minus_k -> LEN_1D_minus_k`` leaves resolution stranded at the
+    # dropped intermediate ``LEN_1D_minus_k`` -- a scalar the frontend already promoted away and no
+    # longer declares in the tiled scope, so the subset ``b[LEN_1D_minus_k]`` compiles to an
+    # undeclared reference (TSVC s122). Dropping the whole chain instead leaves the ORIGINAL promoted
+    # subset symbol unresolved (matching s128's fully-unresolved ``b[k]``), which the downstream
+    # tile-index builder refuses cleanly.
+    tainted: Set[str] = set(recurrence_syms)
+    changed = True
+    while changed:
+        changed = False
+        for k, v in defs.items():
+            if k in tainted:
+                continue
+            v_syms = {str(s) for s in v.free_symbols}
+            if k in v_syms or (v_syms & tainted):  # self-ref, or reaches a tainted symbol
+                tainted.add(k)
+                changed = True
+    filtered = {k: v for k, v in defs.items() if k not in tainted}
+    return filtered
 
 
 def resolve_index_expr(expr: sympy.Expr,

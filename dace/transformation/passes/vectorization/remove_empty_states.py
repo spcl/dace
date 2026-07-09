@@ -4,6 +4,7 @@ import copy
 from typing import Any, Dict
 from dace import SDFG, InterstateEdge, properties
 from dace.sdfg import nodes
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -69,10 +70,42 @@ class RemoveEmptyStates(ppl.Pass):
                             g.remove_node(state)
                             g.add_edge(src, dst, InterstateEdge(assignments=joined_assignments))
 
+        # A region's start block is stored as an integer index (``_start_block``) with a
+        # cached object (``_cached_start_block``); ``remove_node`` maintains neither. Removing
+        # a state shifts the surviving node indices, and an earlier CFG rewrite (branch
+        # lowering) can leave the cache pointing at a node we just removed. The ``start_block``
+        # property returns the stale cache before consulting ``source_nodes()``, so
+        # ``validate``'s ``dfs_edges(start_block)`` then dereferences a removed node. Re-derive
+        # every region's start block from its unique source node so it stays consistent.
+        for region in sdfg.all_control_flow_regions(recursive=False):
+            self._repair_start_block(region)
+
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     self._apply(node.sdfg)
+
+    def _repair_start_block(self, region: AbstractControlFlowRegion) -> None:
+        """Re-establish ``region``'s start block from its unique source node.
+
+        No-op for a :class:`ConditionalBlock` (its children are branches, not a linear graph)
+        and for an empty region. When the source node is unambiguous (the well-formed case
+        after empty-state splicing) it becomes the start block; an ambiguous region keeps its
+        explicit start index but drops a dangling cache.
+
+        :param region: The control-flow region whose start block to repair.
+        """
+        if isinstance(region, ConditionalBlock):
+            return
+        block_nodes = region.nodes()
+        if not block_nodes:
+            return
+        sources = region.source_nodes()
+        if len(sources) == 1:
+            region._cached_start_block = sources[0]
+            region._start_block = region.node_id(sources[0])
+        elif region._cached_start_block is not None and region._cached_start_block not in block_nodes:
+            region._cached_start_block = None
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         """Remove all empty states from the SDFG and validate the result.

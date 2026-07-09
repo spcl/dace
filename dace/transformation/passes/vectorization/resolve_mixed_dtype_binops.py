@@ -94,14 +94,20 @@ class ResolveMixedDtypeBinops(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         count = 0
-        for state in sdfg.all_states():
-            for tasklet in list(state.nodes()):
-                if not isinstance(tasklet, nodes.Tasklet):
-                    continue
-                if tasklet.code.language != dtypes.Language.Python:
-                    continue
-                if self._resolve(state, tasklet):
-                    count += 1
+        # Recurse into nested SDFGs: a map body is often a NestedSDFG (frontend ``loop_body`` /
+        # ``NestInnermostMapBodyIntoNSDFG``), so the split arithmetic + comparison tasklets that
+        # need dtype unifying live inside it -- the sibling ``SplitTasklets`` and
+        # ``ConvertTaskletsToTileOps`` both recurse, so a top-level-only sweep here leaves a mixed
+        # binop (``int32`` ``mid`` vs ``int64`` map-param compare) to trip the conversion guard.
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.all_states():
+                for tasklet in list(state.nodes()):
+                    if not isinstance(tasklet, nodes.Tasklet):
+                        continue
+                    if tasklet.code.language != dtypes.Language.Python:
+                        continue
+                    if self._resolve(state, tasklet):
+                        count += 1
         return count or None
 
     def _resolve(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
