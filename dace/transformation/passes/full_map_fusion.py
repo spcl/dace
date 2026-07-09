@@ -162,7 +162,7 @@ class FullMapFusion(ppl.Pass):
         return modified & (ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.States)
 
     def depends_on(self):
-        return {ap.FindSingleUseData}
+        return [ap.FindSingleUseData]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """
