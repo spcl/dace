@@ -63,6 +63,18 @@ def test_return_tuple():
     assert res == (5, 6)
 
 
+def test_return_tuple_multi():
+
+    @dace.program
+    def return_tuple_2():
+        return 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+
+    res = return_tuple_2()
+    assert isinstance(res, tuple)
+    assert len(res) == 12
+    assert res == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+
+
 def test_return_array_tuple():
 
     @dace.program
