@@ -708,11 +708,13 @@ def test_converter_emits_mixed_tilebinop_with_lane_id_and_invariant_symbols():
     "_o = pow(_a, _b)",
 ])
 def test_converter_emits_tilebinop_for_power(body_form):
-    """Both ``_a ** _b`` and ``pow(_a, _b)`` lower to a TileBinop with op='**'.
+    """Both ``_a ** _b`` and ``pow(_a, _b)`` lower to a TileBinop resolved to ``pow``.
 
-    ``PowerOperatorExpansion`` runs upstream and rewrites integer-constant exponents
-    (``x ** 2`` -> ``x * x``); only runtime exponents reach this dispatch. The lib node
-    lowers ``**`` to ``std::pow`` at expansion time.
+    The emitter classifies ``**`` / ``pow`` to its concrete tile op at convert time
+    (:meth:`ConvertTaskletsToTileOps._classify_power_op`): ``ipow`` only for an integer
+    base with a provable non-negative-integer exponent, else ``pow`` (``std::pow``). Here
+    the base ``_a`` is ``float64`` and the exponent ``_b`` is a runtime tile, so both forms
+    resolve to ``pow``.
     """
     sdfg, inner = _build_inner_body_with_binop(op="+")  # placeholder, body replaced below
     # Replace the tasklet body with the requested form.
@@ -721,4 +723,4 @@ def test_converter_emits_tilebinop_for_power(body_form):
     tasklet.code = dace.properties.CodeBlock(body_form)
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
-    assert binop.op == "**", f"expected op='**', got {binop.op!r}"
+    assert binop.op == "pow", f"expected op='pow', got {binop.op!r}"

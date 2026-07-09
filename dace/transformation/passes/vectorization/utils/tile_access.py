@@ -591,7 +591,7 @@ def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
     rest``, ``rest`` free of ``var_name``). ``None`` if non-affine or unresolvable."""
     if expr is None:
         return None
-    sym = _find_named_symbol(expr, var_name) or sympy.Symbol(var_name)
+    sym = _find_named_symbol(expr, var_name) or symbolic.pystr_to_symbolic(var_name)
     try:
         poly = sympy.Poly(expr, sym)
     except (sympy.PolynomialError, sympy.GeneratorsError, TypeError):
@@ -608,7 +608,7 @@ def _affine_offset_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
     non-affine."""
     if expr is None:
         return None
-    sym = _find_named_symbol(expr, var_name) or sympy.Symbol(var_name)
+    sym = _find_named_symbol(expr, var_name) or symbolic.pystr_to_symbolic(var_name)
     try:
         poly = sympy.Poly(expr, sym)
     except (sympy.PolynomialError, sympy.GeneratorsError, TypeError):

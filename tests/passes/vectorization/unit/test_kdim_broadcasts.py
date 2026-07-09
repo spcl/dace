@@ -36,6 +36,7 @@ import dace
 import pytest
 
 from dace.libraries.tileops import TileLoad, TileLoad, TileStore
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -51,9 +52,14 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     collapsing them into AN -> AN would silently drop the source-side
     coordinates). They are semantically fine and lower to a one-element
     copy at codegen, so the K-dim tile-only contract is preserved as
-    "no NON-assign raw tasklets" rather than "zero tasklets total"."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n))
+    "no NON-assign raw tasklets" rather than "zero tasklets total".
+
+    The runtime nonnegativity guard's ``__builtin_trap`` tasklets (symbolic-size
+    kernels) are infrastructure, not compute, so they are excluded exactly as the
+    ``tile_runtime`` divisibility trip guards are."""
+    return sum(
+        1 for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n) and not is_assumption_guard_block(parent))
 
 
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:

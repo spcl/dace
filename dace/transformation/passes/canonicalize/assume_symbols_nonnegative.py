@@ -41,6 +41,7 @@ from typing import List, Optional
 import sympy
 
 from dace import SDFG, dtypes, symbolic
+from dace.sdfg import SDFGState
 from dace.codegen.common import sym2cpp
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -139,6 +140,19 @@ class AssumeSymbolConstraints(ppl.Pass):
         return (assumed or 0) + (guarded or 0) or None
 
 
+def is_assumption_guard_block(block) -> bool:
+    """True if ``block`` is the runtime assumption-guard state emitted by
+    :func:`insert_assumption_guards` (label ``_assume_nonneg_syms``).
+
+    Its ``__builtin_trap`` tasklets are infrastructure -- they read only symbols
+    and touch no data -- so structural counts that verify a "tile-only descent"
+    exclude them exactly as they already exclude the ``tile_runtime`` divisibility
+    trip guards. Exposed so tests / audits recognize the guard without importing
+    the private label constant.
+    """
+    return isinstance(block, SDFGState) and block.label == _GUARD_STATE_LABEL
+
+
 def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     """Sorted names of the SDFG's signed-integer free symbols.
 
@@ -201,7 +215,7 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     guard_state = sdfg.add_state_before(sdfg.start_block, _GUARD_STATE_LABEL, is_start_block=True)
     for i, assumption in enumerate(assumptions):
         guard = guard_state.add_tasklet(
-            f'assume_{i}',
+            f'check_assumption_{i}',
             {},
             {},
             f'if ({sym2cpp(sympy.Not(assumption))}) {{ __builtin_trap(); }}',
@@ -226,4 +240,5 @@ __all__ = [
     'AssumeSymbolsNonnegative',
     'insert_assumption_guards',
     'insert_symbol_nonnegative_guard',
+    'is_assumption_guard_block',
 ]

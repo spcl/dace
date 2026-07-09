@@ -6,6 +6,8 @@ that walks the K-fold nested index space.
 """
 from typing import Optional, Tuple
 
+import sympy
+
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
@@ -411,7 +413,15 @@ class TileStore(nodes.LibraryNode):
             if subset_sizes is not None:
                 expected = tuple(widths[i] for i in range(K))
                 actual = tuple(subset_sizes[d] for d in dims) if max(dims, default=-1) < len(subset_sizes) else None
-                if actual is None or any(bool(dace.symbolic.simplify(a - e)) != 0 for a, e in zip(actual, expected)):
+                # Compare each per-dim extent to its width with symbol-name reconciliation:
+                # a full-tile size arrives as ``end - begin + W`` whose ``begin``/``end`` are the
+                # SAME iterator under DIFFERENT assumption objects, so it does NOT self-cancel under
+                # a plain ``simplify`` (``i - i`` stays). ``inequal_symbols`` equalizes same-name
+                # symbols first, so a genuine full tile reads equal and only a real partial-tile size
+                # trips the guard.
+                if actual is None or any(
+                        dace.symbolic.inequal_symbols(sympy.sympify(a), sympy.sympify(e))
+                        for a, e in zip(actual, expected)):
                     raise NotImplementedError(
                         f"{self.label}: non-full-tile structured store -- dest memlet "
                         f"subset sizes {subset_sizes} on dims {dims} != widths {expected}. Per user "

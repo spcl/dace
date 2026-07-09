@@ -1020,6 +1020,11 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :param external_offset: The external memlet's data descriptor offset.
         :return: Offset Memlet to set on the resulting graph.
     """
+    # A dependency edge (empty memlet) carries no subset to reindex -- the nested->outer
+    # semantics are identity. Guarding here covers every caller (e.g. InlineSDFG's
+    # _modify_memlet_path / _modify_access_to_access) with one fresh-copy return.
+    if internal_memlet.is_empty():
+        return Memlet.from_memlet(internal_memlet)
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
     internal_offset = internal_offset or [0] * len(internal_subset)
     external_offset = external_offset or [0] * len(external_memlet.subset)

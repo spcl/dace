@@ -344,9 +344,14 @@ def is_linear_in_param(expr, param_str: str) -> bool:
     """
     if not isinstance(expr, sympy.Basic):
         return True  # plain int/float literal
-    param_sym = sympy.Symbol(param_str)
-    if param_sym not in expr.free_symbols:
-        return True
+    # Use the parameter symbol AS IT APPEARS in ``expr`` (carrying its real assumptions), not a
+    # freshly fabricated bare ``sympy.Symbol`` -- a same-name symbol with mismatched assumptions is
+    # a DISTINCT sympy object, so ``in expr.free_symbols`` / ``Poly`` would miss it and the
+    # expression would look spuriously constant in the parameter (the ``i - i`` canonicalization
+    # class: mismatched-assumption same-name symbols never cancel).
+    param_sym = next((s for s in expr.free_symbols if s.name == param_str), None)
+    if param_sym is None:
+        return True  # expr is constant in the parameter -> linear
     try:
         poly = sympy.Poly(expr, param_sym)
     except (sympy.PolynomialError, sympy.GeneratorsNeeded):

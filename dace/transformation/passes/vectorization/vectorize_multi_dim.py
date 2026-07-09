@@ -45,6 +45,7 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.split_tasklets import SplitTasklets
+from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import ResolveMixedDtypeBinops
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
@@ -62,7 +63,8 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     StripPowerExponentCast,
 )
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import SetSymbolNonnegativeAssumptions
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
+                                                                                insert_assumption_guards)
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
@@ -497,6 +499,11 @@ class VectorizeMultiDim(ppl.Pipeline):
             # ``pow`` vs ``ipow`` per operand at emission time from the exponent.
             StripPowerExponentCast(),
             SplitTasklets(),
+            # After splitting each body into a single primitive op, unify any mixed-dtype
+            # binop by inserting cast tasklets (NumPy promotion). The tile pipeline locks
+            # one dtype per lib node (design 6.2), so no ``TileBinop`` may see operands of
+            # differing dtype -- resolve it here rather than refusing at conversion.
+            ResolveMixedDtypeBinops(),
             RemoveMathCall(),
             # Clean empty states from branch lowering + body rewrites so the tiling passes
             # see a tidy CFG. (``ppl.Pipeline`` forbids duplicate pass types, so this single
@@ -722,6 +729,17 @@ class VectorizeMultiDim(ppl.Pipeline):
             # intentional in the gather lowering (user 2026-06-10), and the survivors are
             # populate-tasklet references the audit can't tell from accidental leaks.
             RemoveUnusedPerLaneSymbols().apply_pass(sdfg, {})
+        # Runtime nonnegativity guard (Piece 3 of the symbol-canonicalization contract, mirrors
+        # canonicalize's terminal ``AssumeSymbolConstraints``): ``SetSymbolNonnegativeAssumptions``
+        # (line ~493) made every signed-integer free symbol ``nonnegative=True`` at COMPILE time so
+        # the tile emitter's offset/size reasoning (``x ** N`` -> ipow, full-tile store size
+        # ``end - begin + W``) is sound; that assumption is only valid if the caller actually passes
+        # ``s >= 0``. Prepend one dominating start state whose per-symbol ``__builtin_trap`` aborts
+        # on a negative value so the contract is CHECKED at the boundary, not silently assumed. Emit
+        # LAST -- after expansion + the per-lane audit -- so nothing reshapes the start block after
+        # (the same "runs last" rule the canonicalize guard follows to avoid orphaning its state).
+        # No-op when the SDFG has no signed-integer free symbols (fixed-size kernels).
+        insert_assumption_guards(sdfg)
         # Final validate (user 2026-06-14): the core passes (WidenAccesses + tile-lib
         # insertion) leave the SDFG transiently invalid, so the per-subpass gate skips them;
         # by here they've all completed (and, on the expand path, lowered to tasklets), so the

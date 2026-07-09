@@ -120,7 +120,8 @@ def _find_definition_states(sdfg: SDFG, idx_name: str) -> Set[SDFGState]:
     }
 
 
-def _build_guard_states(sdfg: SDFG, idx_name: str,
+def _build_guard_states(sdfg: SDFG,
+                        idx_name: str,
                         emit_trap: bool = True) -> tuple[SDFGState, Optional[SDFGState], str, str]:
     """Build (but do not splice) the guard states: check, [trap].
 
@@ -157,7 +158,7 @@ def _build_guard_states(sdfg: SDFG, idx_name: str,
     trap_state: Optional[SDFGState] = None
     if emit_trap:
         trap_state = sdfg.add_state(f"_scatter_guard_trap_{idx_name}")
-        trap_tasklet = trap_state.add_tasklet(f"trap_{idx_name}", {}, {},
+        trap_tasklet = trap_state.add_tasklet(f"check_assumption_{idx_name}", {}, {},
                                               f"if ({trap_sym} > 0) {{ __builtin_trap(); }}",
                                               language=dtypes.Language.CPP)
         trap_tasklet.side_effects = True
