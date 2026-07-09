@@ -929,6 +929,101 @@ def test_nanobind_interface_many_return_values():
         assert tuple(int(r[0]) for r in result) == tuple(range(1, 13))
 
 
+def test_nanobind_interface_optional_struct_array_binding():
+    """A nullable dtypes.struct-element array binds std::optional + .none(); a non-nullable one does not."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+    sdfg = dace.SDFG('opt_struct_probe')
+    sdfg.add_array('p', [4], pair)
+    sdfg.arrays['p'].optional = True
+    sdfg.add_array('q', [4], pair)
+    sdfg.arrays['q'].optional = False
+    code = generate_bindings_code(sdfg)
+
+    # nullable p: std::optional wrapper + .none()
+    assert 'std::optional<nb::ndarray<uint8_t, nb::device::cpu>> p' in code
+    assert 'nb::arg("p").noconvert().none()' in code
+    # non-nullable q: plain ndarray, no .none()
+    assert 'nb::ndarray<uint8_t, nb::device::cpu> q' in code
+    assert 'nb::arg("q").noconvert().none()' not in code
+
+
+def test_nanobind_interface_optional_struct_array_input():
+    """An optional struct-element array accepts a record array (read by reference) and None (null pointer)."""
+    from typing import Optional
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+
+        @dace.program
+        def optional_struct_arg(a: Optional[pair[1]], out: dace.int32[1]):
+            if a is None:
+                out[0] = -1
+            else:
+                out[0] = 1
+
+        sdfg = optional_struct_arg.to_sdfg()
+        assert sdfg.arrays['a'].optional is True
+        csdfg = sdfg.compile()
+
+        A = np.zeros(1, dtype=pair.as_numpy_dtype())
+        out = np.zeros(1, dtype=np.int32)
+        csdfg(a=A, out=out)
+        assert out[0] == 1  # a real (non-null) array is passed by reference
+
+        out = np.zeros(1, dtype=np.int32)
+        csdfg(a=None, out=out)
+        assert out[0] == -1  # None arrived as a null pointer
+
+
+def test_nanobind_interface_strict_scalar_cast_binding():
+    """The strict option adds .noconvert() to a numeric scalar arg; default does not."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    def build():
+        sdfg = dace.SDFG('strict_scalar_probe')
+        sdfg.add_scalar('a', dace.int32)
+        return sdfg
+
+    with set_temporary('compiler', 'nanobind_strict_scalar_cast', value=True):
+        strict_code = generate_bindings_code(build())
+    with set_temporary('compiler', 'nanobind_strict_scalar_cast', value=False):
+        loose_code = generate_bindings_code(build())
+
+    assert 'nb::arg("a").noconvert()' in strict_code
+    assert 'nb::arg("a").noconvert()' not in loose_code
+    assert 'nb::arg("a")' in loose_code  # present, just without .noconvert()
+
+
+def test_nanobind_interface_strict_scalar_cast_runtime():
+    """Strict off allows a safe widening scalar cast (int -> double); strict on rejects it."""
+    import pytest
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        # Default (off): a Python int widens to the double parameter.
+        @dace.program
+        def widen_off_prog(a: dace.float64):
+            return a + 1.0
+
+        off = widen_off_prog.to_sdfg().compile()
+        result = off(2)  # Python int -> double (widening), accepted
+        assert np.isclose(result[0], 3.0)
+
+        # On: the same widening is rejected. A distinct SDFG name keeps the
+        # .dacecache entry separate from the off build (the cache key is the SDFG
+        # hash, which does not capture the config option).
+        with set_temporary('compiler', 'nanobind_strict_scalar_cast', value=True):
+
+            @dace.program
+            def widen_on_prog(a: dace.float64):
+                return a + 1.0
+
+            on = widen_on_prog.to_sdfg().compile()
+            with pytest.raises(Exception):
+                on(2)  # Python int -> double rejected under .noconvert()
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -961,3 +1056,7 @@ if __name__ == '__main__':
     test_nanobind_interface_single_element_tuple_return()
     test_nanobind_interface_non_array_return_rejected()
     test_nanobind_interface_many_return_values()
+    test_nanobind_interface_optional_struct_array_binding()
+    test_nanobind_interface_optional_struct_array_input()
+    test_nanobind_interface_strict_scalar_cast_binding()
+    test_nanobind_interface_strict_scalar_cast_runtime()

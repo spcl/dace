@@ -13,6 +13,7 @@ extra keyword arguments, which the old ctypes interface allowed.
 """
 
 from dace import data as dt, dtypes
+from dace.config import Config
 
 
 def _has_gpu_code(sdfg) -> bool:
@@ -43,6 +44,7 @@ def _argument_binding(arglist, binding_order=None):
     params_by_name = {}
     nb_args_by_name = {}
     call_args = []
+    strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
     for name, desc in arglist.items():
         # pyobject (arguments and returns, incl. the PR#2206 bug-compatible
         # decay of pyobject arrays) is deferred to part 2 of the port; its
@@ -110,11 +112,18 @@ def _argument_binding(arglist, binding_order=None):
 
         elif isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
             # Array of a C struct declared with `dace.struct(...)`. Because `nanobind`
-            # rejects such inputs, we pass it as pointer. `NanobindCompiledSDFG`
-            # casts it into a byte array and the binding turns it back.
-            params_by_name[name] = f'nb::ndarray<uint8_t, nb::device::cpu> {name}'
-            call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
-            nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
+            # rejects such inputs, we pass it as a byte array (`NanobindCompiledSDFG`
+            # byte-views the caller's record array) and cast it back here. A nullable
+            # one (optional is not False) accepts None -> null pointer, like plain
+            # arrays; .none() is required.
+            if desc.optional is False:
+                params_by_name[name] = f'nb::ndarray<uint8_t, nb::device::cpu> {name}'
+                call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
+                nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
+            else:
+                params_by_name[name] = f'std::optional<nb::ndarray<uint8_t, nb::device::cpu>> {name}'
+                call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
+                nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
 
         elif isinstance(desc, dt.Array):
             # The ndarray scalar type may differ from the cast target: a vector
@@ -133,9 +142,12 @@ def _argument_binding(arglist, binding_order=None):
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
 
         elif isinstance(desc, dt.Scalar):
+            # `.noconvert()` (strict option on) makes nanobind reject even a safe
+            # widening scalar cast (e.g. int -> double). A lossy cast (float ->
+            # int) is rejected by nanobind regardless.
             params_by_name[name] = f'{ctype} {name}'
             call_args.append(name)
-            nb_args_by_name[name] = f'nb::arg("{name}")'
+            nb_args_by_name[name] = (f'nb::arg("{name}").noconvert()' if strict_scalar else f'nb::arg("{name}")')
 
         else:
             raise NotImplementedError(f'Nanobind interface: argument type {type(desc).__name__} '

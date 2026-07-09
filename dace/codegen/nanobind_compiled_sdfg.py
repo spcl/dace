@@ -153,7 +153,9 @@ class NanobindCompiledSDFG:
                 keepalive.append(value)
                 return ctypes.addressof(value)
             if name in self._struct_array_args:
-                return value.view(np.uint8)
+                # A nullable struct array may be None -> pass it through as the
+                # empty optional (null pointer); otherwise byte-view the buffer.
+                return value.view(np.uint8) if value is not None else None
             return value
 
         args = tuple(_process(self._arg_names[i], v) if i < len(self._arg_names) else v for i, v in enumerate(args))

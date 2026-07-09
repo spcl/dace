@@ -139,6 +139,19 @@ required:
                     taken name, for pipelines that consider a silent rename a bug.
                     Only consulted when ``compiler.interface`` is "nanobind".
 
+            nanobind_strict_scalar_cast:
+                type: bool
+                default: false
+                title: Strict scalar-argument casts on the nanobind interface
+                description: >
+                    When true, scalar arguments on the nanobind interface reject
+                    all implicit conversions, including safe widening (e.g. a
+                    Python int for a double parameter), with an error. When false
+                    (default), nanobind's standard conversions apply: safe widening
+                    is accepted, but a lossy cast (e.g. a Python float for an int
+                    parameter) is still rejected by nanobind regardless of this
+                    option. Only consulted when ``compiler.interface`` is "nanobind".
+
             build_folder_mode:
                 type: str
                 default: development
