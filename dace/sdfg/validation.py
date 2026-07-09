@@ -284,23 +284,24 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         elif '__return' in sdfg._arrays:
             tuple_return_args = {'__return'}  # This is abuse
         elif tuple_return_args and tuple_return_args != {f'__return_{i}' for i in range(len(tuple_return_args))}:
-            raise InvalidSDFGError('Tuple return values are not consecutively named')
+            raise InvalidSDFGError('Tuple return values are not consecutively named', sdfg, None)
         for ret_name_to_check in tuple_return_args:
             ret_desc = sdfg._arrays[ret_name_to_check]
             if ret_desc.transient:
-                raise InvalidSDFGError(f'The return value `{ret_name_to_check}` can not be a transient.')
+                raise InvalidSDFGError(f'The return value `{ret_name_to_check}` can not be a transient.', sdfg, None)
             if sdfg.parent is None:
                 # These are some top level specific test
                 if isinstance(ret_desc, dt.Scalar):
                     # This is an implementation level constraint and is thus a separate error.
                     #  In certain cases the frontend will promote it to a length 1 array.
-                    raise InvalidSDFGError(f'{ret_name_to_check} is a scalar and scalars can not be returned.')
+                    raise InvalidSDFGError(f'{ret_name_to_check} is a scalar and scalars can not be returned.', sdfg,
+                                           None)
                 if not isinstance(ret_desc, dt.Array):
                     # This is a limitation of the Python <-> Binary interface, because Python needs to allocate
                     #  the return value and for that NumPy/CuPy is used.
                     raise InvalidSDFGError(
-                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(desc).__name__}`'
-                    )
+                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(ret_desc).__name__}`',
+                        sdfg, None)
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
