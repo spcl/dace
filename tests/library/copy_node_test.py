@@ -774,10 +774,11 @@ def test_strided_expansions_accept_non_contiguous():
 
 
 # A (1, N) array whose unit leading dim carries a padded stride (here 64) is a
-# non-packed descriptor, so ``is_contiguous_subset`` is False even though the
-# accessed row is one physical run of N elements. The pad sits on an extent-1
-# axis that is never stepped, so a fresh contiguous (1, N) array backs it with
-# no view (``total_size`` only needs to cover the accessed run).
+# non-packed descriptor, yet the accessed row ``[0, 0:N]`` is one physical run of
+# N contiguous elements: the pad sits on an extent-1 axis that is never stepped.
+# ``is_contiguous_subset`` therefore reports True (the 1D-slice special case), and
+# the copy safely lowers to a single flat block. A fresh contiguous (1, N) array
+# backs it with no view (``total_size`` only needs to cover the accessed run).
 _PADDED_N = 60
 _PADDED_STRIDE = 64
 
@@ -792,7 +793,7 @@ def _padded_unit_spec(storage, name):
 
 
 def test_copy_padded_unit_dim_same_storage_cpu():
-    """Same-storage CPU copy of a padded (1, N) array: non-packed -> map fallback, exact result."""
+    """Same-storage CPU copy of a padded (1, N) array: contiguous run, CPU<->CPU map fallback, exact result."""
     sdfg, node = _make_copy_sdfg(
         _padded_unit_spec(dace.dtypes.StorageType.CPU_Heap, "A"),
         _padded_unit_spec(dace.dtypes.StorageType.CPU_Heap, "B"),
@@ -801,8 +802,10 @@ def test_copy_padded_unit_dim_same_storage_cpu():
     )
     state = sdfg.start_state
     _, inp, in_sub, _, out, out_sub = node.validate(state.sdfg, state, allow_cross_storage=True)
-    assert not in_sub.is_contiguous_subset(inp)
-    assert not out_sub.is_contiguous_subset(out)
+    # The accessed row is a single contiguous run (1D-slice special case).
+    assert in_sub.is_contiguous_subset(inp)
+    assert out_sub.is_contiguous_subset(out)
+    # CPU<->CPU multi-element copies never route to a memcpy libnode; they fall back to a map.
     assert select_copy_implementation(node, state) == "MappedTasklet"
 
     sdfg.validate()
@@ -818,7 +821,10 @@ def test_copy_padded_unit_dim_same_storage_cpu():
 
 
 def test_copy_padded_unit_dim_cross_storage_selection():
-    """Cross CPU/GPU copy of a padded (1, N) array routes to the pitched ``cudaMemcpy2D``, not a flat memcpy."""
+    """Cross CPU/GPU copy of a padded (1, N) array is a single contiguous row: flat ``cudaMemcpy``, not pitched.
+
+    With only one row the pitch gap is never crossed, so the row is one contiguous run on both sides and
+    ``MemcpyCUDA1D`` is exact (a pitched ``cudaMemcpy2D`` would be equivalent but needlessly 2D)."""
     for src_storage, dst_storage in (
         (dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global),
         (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Heap),
@@ -831,9 +837,9 @@ def test_copy_padded_unit_dim_cross_storage_selection():
         )
         state = sdfg.start_state
         _, inp, in_sub, _, out, out_sub = node.validate(state.sdfg, state, allow_cross_storage=True)
-        assert not in_sub.is_contiguous_subset(inp)
-        assert not out_sub.is_contiguous_subset(out)
-        assert select_copy_implementation(node, state) == "MemcpyCUDA2D"
+        assert in_sub.is_contiguous_subset(inp)
+        assert out_sub.is_contiguous_subset(out)
+        assert select_copy_implementation(node, state) == "MemcpyCUDA1D"
 
 
 @pytest.mark.gpu
