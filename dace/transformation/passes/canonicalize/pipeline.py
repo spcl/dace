@@ -857,8 +857,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # and BEFORE the WCR-normalization stages (LiftEinsum cancels the map's WCR and
     # folds it into the Einsum's beta, so it must precede normalize_wcr). A runtime
     # scalar coefficient (gemm's ``alpha``) is wired as the Einsum's explicit
-    # ``_alpha`` connector; ``finalize_for_target`` expands the node (fast BLAS if
-    # available, else a pure contraction SDFG). Non-contraction maps do not match.
+    # ``_alpha`` connector; ``finalize_for_target`` selects the node's implementation
+    # (fast BLAS if available, else a pure contraction SDFG) and codegen expands it.
+    # Non-contraction maps do not match.
     # ``lift=False`` skips this optimization entirely (the matmul stays a correct WCR
     # loop nest) -- a correctness-safe escape hatch while the Einsum lowering is hardened.
     # ``semantic_lifting=False`` (set by the vectorizer) skips BOTH map->library-node

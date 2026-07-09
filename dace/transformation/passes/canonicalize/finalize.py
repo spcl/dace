@@ -10,11 +10,14 @@ selects.
 
 This module supplies the optimization tail to run *after* canonicalization when
 the goal is raw runtime (not vectorization or equivalence checking): it picks
-the fast library implementation per node, expands the library nodes, and moves
-small/independent transients to registers and persistent storage. It mirrors
-``auto_optimize``'s library-and-storage finalization (everything fusion-related
-is already done by the canonicalize pipeline), so ``canonicalize(s); finalize_for_target(s)``
-is the perf-path counterpart to ``auto_optimize(s)``.
+the fast library implementation per node and moves small/independent transients
+to registers and persistent storage. The library nodes themselves stay
+un-expanded -- ``compile()`` expands each one exactly once at codegen, using the
+implementation selected here -- so one shape per computation survives all the way
+to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
+(everything fusion-related is already done by the canonicalize pipeline), so
+``canonicalize(s); finalize_for_target(s)`` is the perf-path counterpart to
+``auto_optimize(s)``.
 """
 from dace import SDFG, dtypes
 from dace.sdfg import infer_types, nodes
@@ -83,9 +86,9 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
 def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
-    Selects fast library implementations, expands the library nodes, then moves
-    small constant-size transients to the stack and independent transients to
-    persistent allocation. Operates in place.
+    Selects fast library implementations (leaving the nodes un-expanded for
+    codegen to lower), then moves small constant-size transients to the stack and
+    independent transients to persistent allocation. Operates in place.
 
     :param sdfg: A canonicalized SDFG.
     :param target: ``'cpu'`` or ``'gpu'`` (selects the fast-library priority).
@@ -97,11 +100,14 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     device = _TARGET_DEVICE[target]
 
     canonicalize_set_fast_implementations(sdfg, device)
-    # infer_types before expansion: a library node may expand into other library
-    # nodes whose connector types/schedules must be resolved first.
+    # Select the fast implementation per library node but DO NOT expand here: a library
+    # node is expanded exactly once, at codegen (``compile()`` auto-expands using the
+    # ``implementation`` chosen above). Expanding in canonicalization would re-introduce
+    # the per-implementation shapes (BLAS scratch, reduction accumulators) into a form the
+    # rest of the toolchain must then re-canonicalize; keeping one shape per computation
+    # until codegen is the invariant every downstream pass relies on.
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    sdfg.expand_library_nodes()
 
     move_small_arrays_to_stack(sdfg)
     made_persistent = make_transients_persistent(sdfg, device)
