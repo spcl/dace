@@ -389,8 +389,18 @@ class WidenAccesses(ppl.Pass):
                     # identical across lanes. It must stay a Scalar broadcast operand (design 6.5),
                     # NOT a per-lane tile: widening it leaves lanes 1..W-1 filled from a 1-element
                     # copy (uninitialised) instead of broadcasting. Propagate lane-dep only when
-                    # THIS edge's source-side subset is itself lane-dependent.
-                    if not self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars):
+                    # THIS edge's source-side subset is itself lane-dependent -- EXCEPT when the
+                    # source is a scalar-like (widenable) lane-dep transient: it holds ONE per-lane
+                    # value, so a FULL copy of it is per-lane, never a fixed-element broadcast. Its
+                    # sole-element subset ``[0,...]`` only LOOKS constant; once the source is widened
+                    # to a tile the copy must widen too, else the copy's ``other_subset`` keeps the
+                    # stale pre-widen rank and ``validate`` rejects it ("other_subset does not match
+                    # node dimension").
+                    src_desc = inner_sdfg.arrays.get(src_name)
+                    src_is_scalar_like = (src_desc is not None and src_desc.transient
+                                          and self._is_widenable(src_desc))
+                    if (not src_is_scalar_like
+                            and not self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars)):
                         continue
                     desc = inner_sdfg.arrays.get(dst_name)
                     if desc is None or not desc.transient:

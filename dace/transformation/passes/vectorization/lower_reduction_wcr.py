@@ -16,7 +16,7 @@ here only because the tile emitter folds the result to a ``TileReduce``.
 """
 import copy
 
-from dace import SDFG
+from dace import SDFG, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
@@ -59,9 +59,19 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
                                         f"__out = {_wcr_augassign_body(memlet.wcr)}")
             state.add_edge(state.add_access(acc), None, tasklet, '__in1',
                            Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
-            state.add_edge(edge.src, None, tasklet, '__in2',
-                           Memlet(data=edge.src.data,
-                                  subset=copy.deepcopy(src_subset if src_subset is not None else acc_subset)))
+            # ``__in2`` reads the reduction addend from ``edge.src`` -- the ``_wcr_priv_*`` buffer
+            # ``NormalizeWCRSource`` interposed, a SCALAR (rank 1) regardless of the accumulator's
+            # rank. Its subset must match ``edge.src``'s descriptor, NOT ``acc_subset``: a 2-D
+            # single-element accumulator connector (``C[i, j]`` -> ``(1, 1)``) gives a rank-2
+            # ``acc_subset`` that on the rank-1 scalar source trips "subset does not match node
+            # dimension".
+            if src_subset is not None:
+                in2_subset = copy.deepcopy(src_subset)
+            else:
+                src_desc = inner_sdfg.arrays.get(edge.src.data)
+                in2_subset = (subsets.Range.from_array(src_desc)
+                              if src_desc is not None else copy.deepcopy(acc_subset))
+            state.add_edge(edge.src, None, tasklet, '__in2', Memlet(data=edge.src.data, subset=in2_subset))
             state.add_edge(tasklet, '__out', dst, None, Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
             state.remove_edge(edge)
             rewritten += 1

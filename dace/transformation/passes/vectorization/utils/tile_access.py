@@ -435,13 +435,46 @@ def resolve_index_expr(expr: sympy.Expr,
     return cur
 
 
+def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
+    """True if ``name`` is a transient Scalar whose value is loaded from a (non-Scalar) Array -- a
+    gather-index scalar (``N__slice = Xiv[j]``, written by a memlet COPY). The frontend promotes such
+    a scalar to a subset symbol (``__sym_N__slice = N__slice``); ``_build_symbol_definition_map``
+    source 2 only rewrites TASKLET-defined scalars to their source array, so a COPY-defined one is
+    missed and the array name never surfaces. The scalar is state-local, so inlining it into a later
+    state's subset references it out of scope (undeclared-identifier compile error) -- keep the
+    promoted symbol instead.
+    """
+    import dace.data as _dd
+    desc = sdfg.arrays.get(name)
+    if not (isinstance(desc, _dd.Scalar) and desc.transient):
+        return False
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and node.data == name):
+                continue
+            for edge in state.in_edges(node):
+                src = edge.src
+                if isinstance(src, nodes.AccessNode):
+                    sources = [src.data]
+                elif isinstance(src, nodes.Tasklet):
+                    sources = [e.data.data for e in state.in_edges(src) if e.data is not None and e.data.data is not None]
+                else:
+                    sources = []
+                for sname in sources:
+                    sdesc = sdfg.arrays.get(sname)
+                    if isinstance(sdesc, _dd.Array) and not isinstance(sdesc, _dd.Scalar):
+                        return True
+    return False
+
+
 def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
     """True if ``expr`` is a data-dependent index -- reads an array value (a gather like ``idx[i]``),
     so must NOT be inlined into a memlet subset (stays gather form for the gather machinery).
 
-    Detected two ways: a :class:`~dace.symbolic.Subscript` node anywhere, or a free symbol naming a
+    Detected three ways: a :class:`~dace.symbolic.Subscript` node anywhere, a free symbol naming a
     non-Scalar :class:`~dace.data.Array` descriptor (resolver rewrites a gather scalar's defining
-    tasklet to read the source array name, so ``idx`` shows up as a free symbol).
+    tasklet to read the source array name, so ``idx`` shows up as a free symbol), or a transient
+    Scalar loaded from an Array (a copy-defined gather-index scalar the tasklet-only rewrite misses).
     """
     if expr is None:
         return False
@@ -454,6 +487,8 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
     for s in expr.free_symbols:
         desc = sdfg.arrays.get(str(s))
         if isinstance(desc, _dd.Array) and not isinstance(desc, _dd.Scalar):
+            return True
+        if _scalar_loaded_from_array(sdfg, str(s)):  # gather-index scalar (copy-defined)
             return True
     return False
 

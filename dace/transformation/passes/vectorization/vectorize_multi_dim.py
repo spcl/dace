@@ -99,16 +99,18 @@ _TILE_NODE_TYPES = (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileS
 
 
 def _expandable_during_vectorization(node) -> bool:
-    """Library nodes the vectorizer's ``expand_library_nodes`` may lower.
+    """Library nodes the vectorizer's ``expand_library_nodes`` may lower: ONLY its own tile-op
+    nodes (:data:`_TILE_NODE_TYPES`), nothing else (user 2026-07-09).
 
-    Tile-op nodes + vectorizer-lifted ``Reduce``/``Einsum`` expand now (own lowering). Scatter
-    guard's opaque primitives (``ScatterConflictCheck``, ``IntegerSort``) DEFERRED to codegen: sort
-    stays opaque until after vectorization (user 2026-07-08), so ``compile()``'s later
-    ``expand_library_nodes`` lowers them.
+    Every non-tile library node -- frontend ``Reduce`` / ``Einsum`` / ``MatMul`` / ``Transpose``
+    (including the ones the vectorizer itself lifts) and the scatter-guard opaque primitives
+    (``ScatterConflictCheck``, ``IntegerSort``) -- is left for ``compile()`` / codegen to expand on
+    the final SDFG. Expanding a frontend library node mid-pipeline re-enters the Python frontend on a
+    partially-lowered SDFG (fragile: the conv/newaxis-View broadcast ``IndexError``) and is
+    unnecessary -- codegen expands them anyway. ``_finalize_lifted_library_nodes`` still stamps the
+    lifted ``Reduce``/``Einsum`` implementation before returning so the deferred expansion is correct.
     """
-    from dace.libraries.sort.nodes.integer_sort import IntegerSort
-    from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
-    return not isinstance(node, (ScatterConflictCheck, IntegerSort))
+    return isinstance(node, _TILE_NODE_TYPES)
 
 
 class _MultiOutputReductionMapFission(MapFission):
