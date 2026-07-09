@@ -53,9 +53,15 @@ class NanobindCompiledSDFG:
         self._arg_names = list(arg_names or [])
         self._handle = module.make_compiled_sdfg()
 
-        # Name of the return values (special DaCe names).
-        self._return_values = tuple(
-            sorted(name for name, desc in sdfg.arrays.items() if name.startswith('__return') and (not desc.transient)))
+        if '__return' in sdfg.arrays:
+            self._return_values = ('__return', )
+            self._is_single_value_ret = True
+        else:
+            # Can not use `sorted()` here, because then `__return_11` would be ordered before `__return_2`.
+            return_names = {name for name in sdfg.arrays if name.startswith('__return_')}
+            self._return_values = tuple(f'__return_{i}' for i in range(len(return_names)))
+            self._is_single_value_ret = False
+            assert return_names == set(self._return_values)
 
         # Arguments that are structures. Needs to be a `set` for fast lookups.
         self._struct_args = frozenset(name for name, desc in sdfg.arrays.items()
@@ -66,11 +72,6 @@ class NanobindCompiledSDFG:
         # the call. Excludes `__return*` (handled in `_allocate_return_arrays`).
         self._struct_array_args = frozenset(name for name, desc in sdfg.arrays.items() if (not desc.transient) and (
             name not in self._return_values) and isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct))
-
-        # Whether a single (non-tuple) value is returned: DaCe names it `__return`,
-        # whereas a tuple (including a one-element tuple) uses `__return_<i>`. A
-        # bare count cannot tell a one-element tuple from a single value.
-        self._is_single_value_ret = '__return' in self._return_values
 
     @property
     def sdfg(self):

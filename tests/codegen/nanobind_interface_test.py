@@ -911,6 +911,24 @@ def test_nanobind_interface_non_array_return_rejected():
         generate_bindings_code(sdfg)
 
 
+def test_nanobind_interface_many_return_values():
+    """More than ten return values keep their numeric order (not lexicographic `sorted`).
+
+    With `sorted`, `__return_10` would precede `__return_2`, permuting the tuple.
+    """
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def many_returns_nanobind():
+            return 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+
+        csdfg = many_returns_nanobind.to_sdfg().compile()
+        result = csdfg()
+        assert isinstance(result, tuple)
+        assert len(result) == 12
+        assert tuple(int(r[0]) for r in result) == tuple(range(1, 13))
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()
@@ -942,3 +960,4 @@ if __name__ == '__main__':
     test_nanobind_interface_struct_element_input()
     test_nanobind_interface_single_element_tuple_return()
     test_nanobind_interface_non_array_return_rejected()
+    test_nanobind_interface_many_return_values()
