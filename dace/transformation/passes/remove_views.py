@@ -112,19 +112,29 @@ def _classify_view(
 
 def _derive_mapping_from_subset(
     viewed_subset: subsets.Range,
-    view_ndim: int,
+    view_shape: List,
 ) -> Optional[Dict[int, int]]:
     """
     Derive a view-dim -> array-dim mapping directly from the view edge
-    subset. Dimensions with size == 1 are squeezed.
+    subset, aligning the view's data (size != 1) dims with the array's
+    data dims in order.
 
-    Returns the mapping dict, or None on mismatch.
+    Both sides may carry size-1 dims: a size-1 array-subset dim is a
+    squeezed slice pinned to its offset; a size-1 view dim is an
+    ``np.newaxis`` broadcast axis with no array counterpart. The mapping
+    pairs the two sides' non-size-1 dims positionally -- the
+    squeeze/unsqueeze contract -- so a windowed view feeding a map
+    (``x[:, i:i+S, j:j+S, :, newaxis]``, a partial slice with an extra
+    newaxis) folds into its consumer even though ``map_view_to_array``
+    rejects it (the window offset makes strides virtual).
+
+    Returns the mapping dict, or None when the data-dim counts disagree.
     """
-    sizes = viewed_subset.size()
-    data_dims = [d for d, s in enumerate(sizes) if s != 1]
-    if len(data_dims) != view_ndim:
+    array_data_dims = [d for d, s in enumerate(viewed_subset.size()) if s != 1]
+    view_data_dims = [d for d, s in enumerate(view_shape) if s != 1]
+    if len(view_data_dims) != len(array_data_dims):
         return None
-    return {vd: ad for vd, ad in enumerate(data_dims)}
+    return {vd: ad for vd, ad in zip(view_data_dims, array_data_dims)}
 
 
 def _compute_rewritten_subset(
@@ -669,7 +679,7 @@ class RemoveViews(ppl.Pass):
                       f' returned None')
 
             # --- Strategy 1b: derive mapping from view edge subset ----------
-            mapping_1b = _derive_mapping_from_subset(viewed_subset, len(vdesc.shape))
+            mapping_1b = _derive_mapping_from_subset(viewed_subset, vdesc.shape)
             if mapping_1b is not None:
                 if _DEBUGPRINT:
                     print(f'[{_PASS}]     strategy 1b'
