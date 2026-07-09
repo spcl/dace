@@ -534,7 +534,11 @@ class LoopToMap(xf.MultiStateTransformation):
         for candidate in write_memlets[data]:
             # Simple case: read and write are in the same subset
             read = src_subset
-            write = candidate.dst_subset
+            # A one-sided copy memlet (e.g. a whole-array ``a[0:N] -> a`` boundary
+            # passthrough) carries its subset in ``.subset`` and leaves
+            # ``.dst_subset`` None; fall back to ``.subset`` so the dependency test
+            # doesn't crash on ``None.ndrange()``.
+            write = candidate.dst_subset if candidate.dst_subset is not None else candidate.subset
             if read == write:
                 continue
             ridx = _dependent_indices(itervar, read)
@@ -551,8 +555,8 @@ class LoopToMap(xf.MultiStateTransformation):
                                       sdfg.arrays[data], [itervar],
                                       subsets.Range([(start, end, step)]),
                                       use_dst=True)
-            t_pread = _sanitize_by_index(indices, pread.src_subset)
-            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
+            t_pread = _sanitize_by_index(indices, pread.src_subset if pread.src_subset is not None else pread.subset)
+            pwrite = _sanitize_by_index(indices, pwrite.dst_subset if pwrite.dst_subset is not None else pwrite.subset)
             if subsets.intersects(t_pread, pwrite) is False:
                 continue
             return False

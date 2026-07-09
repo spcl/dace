@@ -47,9 +47,18 @@ from dace.transformation.transformation import explicit_cf_compatible
 @explicit_cf_compatible
 class ParallelizeUnderConstraint(ppl.Pass):
     """Specialize into ``if cond: parallel-Map else: sequential-loop`` the loops
-    that are data-parallel only under a symbolic constraint."""
+    that are data-parallel only under a symbolic constraint.
+
+    With ``assume_constraint=True`` the runtime check is skipped and the loop is
+    parallelized unconditionally -- the caller asserts the constraint (e.g.
+    ``inc != 0``) always holds. Default ``False`` keeps the sound ``if cond: par
+    else: seq`` guard."""
 
     CATEGORY: str = 'Optimization Preparation'
+
+    def __init__(self, assume_constraint: bool = False):
+        super().__init__()
+        self.assume_constraint = assume_constraint
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -104,7 +113,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                     inst.loop = par_loop
                     inst.apply(par_region, own)
 
-                specialize_loop_under_condition(loop, condition, _parallelize, owner)
+                specialize_loop_under_condition(loop, condition, _parallelize, owner, assume=self.assume_constraint)
                 specialized += 1
         return specialized or None
 

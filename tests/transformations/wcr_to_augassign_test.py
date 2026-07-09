@@ -113,8 +113,39 @@ def test_scalar_source_multidim_target_subset():
     assert np.allclose(got, ref), "reverting a scalar-source multidim-target WCR must preserve the value"
 
 
+def test_slice_source_offset_wcr():
+    """expr_index-2 slice WCR ``A[0:n] (wcr+)= B[k:k+n]`` with a SHIFTED source (``k != 0``).
+    The reverted elementwise map must read the source at its OWN ``k + i``, not at the
+    destination's ``i`` -- regression for the offset bug where the map param indexed both the
+    write and the read by the destination's range (reading ``B[0:n]``)."""
+    n, k = 6, 2
+    sdfg = dace.SDFG('wcr_slice_offset')
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('B', [n + k], dace.float64)
+    state = sdfg.add_state()
+    rb = state.add_read('B')
+    wa = state.add_write('A')
+    state.add_edge(rb, None, wa, None,
+                   dace.Memlet(data='A', subset=f'0:{n}', other_subset=f'{k}:{k + n}', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1, 'the slice WCR (matching extent, shifted source) must revert'
+    sdfg.validate()
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'WCR must be gone after revert'
+
+    rng = np.random.default_rng(1)
+    A0 = rng.random(n)
+    B = rng.random(n + k)
+    ref = A0 + B[k:k + n]
+    got = A0.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref), f'A[i] += B[k+i]; got {got}, ref {ref}'
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
     test_noncommutative_operand_order()
     test_scalar_source_multidim_target_subset()
+    test_slice_source_offset_wcr()

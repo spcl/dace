@@ -33,7 +33,8 @@ def specialize_loop_under_condition(
     condition,
     parallelize: Callable[[LoopRegion, ControlFlowRegion, SDFG], None],
     owner_sdfg: Optional[SDFG] = None,
-) -> ConditionalBlock:
+    assume: bool = False,
+) -> Optional[ConditionalBlock]:
     """Replace ``loop`` with ``if (condition) { parallel } else { original loop }``.
 
     :param loop: Loop to specialize; removed from its parent graph, deep-copied into each branch.
@@ -43,10 +44,19 @@ def specialize_loop_under_condition(
         into its parallel form (run ``LoopToMap``, split into affine segments, ...). Runs after
         the conditional is spliced in, so ``par_loop.parent_graph is par_region`` with SDFG links set.
     :param owner_sdfg: Top-level SDFG (derived from ``loop`` if omitted).
-    :returns: The inserted :class:`ConditionalBlock`.
+    :param assume: When ``True``, the caller *asserts* ``condition`` always holds at runtime.
+        Skip the two-way conditional entirely and parallelize ``loop`` in place -- emit only the
+        parallel form, with no sequential fallback. Unsound if the condition is ever violated
+        (the caller owns that contract); returns ``None`` since no ``ConditionalBlock`` is built.
+    :returns: The inserted :class:`ConditionalBlock`, or ``None`` in ``assume`` mode.
     """
     if owner_sdfg is None:
         owner_sdfg = _owner_sdfg(loop)
+    # assume mode: the condition is taken as always-true, so there is no fallback to build --
+    # parallelize the original loop in its own parent graph and return (no ConditionalBlock).
+    if assume:
+        parallelize(loop, loop.parent_graph, owner_sdfg)
+        return None
     if not isinstance(condition, CodeBlock):
         condition = CodeBlock(condition)
 

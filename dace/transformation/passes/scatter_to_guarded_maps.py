@@ -80,9 +80,20 @@ class ScatterToGuardedMaps(ppl.Pass):
         "sequential execution instead of ``__builtin_trap()``.",
     )
 
-    def __init__(self, emit_unparallelized_else_branch: bool = False):
+    assume_no_conflicts = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="When True, ASSUME every scatter ``idx`` array is a permutation "
+        "(no duplicate targets): skip the sort + duplicate-count guard entirely "
+        "and lift the scatter loop to an unconditional parallel Map. Unsound if "
+        "the assumption is violated at runtime (write races); the caller owns "
+        "that contract. Takes precedence over ``emit_unparallelized_else_branch``.",
+    )
+
+    def __init__(self, emit_unparallelized_else_branch: bool = False, assume_no_conflicts: bool = False):
         super().__init__()
         self.emit_unparallelized_else_branch = emit_unparallelized_else_branch
+        self.assume_no_conflicts = assume_no_conflicts
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -100,6 +111,22 @@ class ScatterToGuardedMaps(ppl.Pass):
         from dace.transformation.interstate.loop_to_map import LoopToMap
 
         scatter_loops, idx_arrays = detect_scatter_loops_and_idx_arrays(sdfg)
+
+        if self.assume_no_conflicts:
+            # Caller asserts every idx array is a permutation: skip the sort +
+            # duplicate-count guard entirely and lift each scatter loop to an
+            # unconditional parallel Map (no ConditionalBlock, no trap).
+            for loop in scatter_loops:
+                parent = loop.parent_graph
+                if parent is None or loop not in parent.nodes():
+                    continue
+                instance = LoopToMap()
+                instance.loop = loop
+                try:
+                    instance.apply(parent, _owning_sdfg(sdfg, loop))
+                except Exception:
+                    pass
+            return len(idx_arrays) or None
 
         # Track each idx_array's duplicate-count symbol so the else-branch
         # dispatcher knows which symbol to gate on per scatter loop. None when
@@ -414,6 +441,11 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop
 
     sequential_clone = _copy.deepcopy(loop)
     sequential_clone.label = loop.label + '_seq_fallback'
+    # Pin the fallback so no later parallelizer re-lifts it, and so a parallelism
+    # counter can treat this guarded region as fully parallel (the pinned clone is
+    # the collision fallback, not a genuinely-sequential loop) -- same marker the
+    # specialize-family fallbacks carry (loop_specialization.py).
+    sequential_clone.pinned_sequential = True
 
     cb = ConditionalBlock(loop.label + '_dispatch')
     parent.add_node(cb, is_start_block=was_start)

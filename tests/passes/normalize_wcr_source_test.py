@@ -287,6 +287,168 @@ def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
     assert np.allclose(out_buf, src), f'got {out_buf}, expected {src}'
 
 
+def _seed_states(sdfg: dace.SDFG):
+    return [st.label for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() if '_wcr_seed' in st.label]
+
+
+def test_seed_fresh_write_once_accumulator():
+    """A write-once WCR (a distinct accumulator slot per map iteration -- a spurious
+    per-element assignment expressed as a WCR) into a *fresh transient* with no plain
+    initializer is identity-seeded, so codegen's ``acc = acc OP val`` read-back
+    (``0 + val``) starts defined instead of reading uninitialized memory."""
+    n = 16
+    sdfg = dace.SDFG('seed_write_once')
+    sdfg.add_array('src', [n], dace.float64)
+    sdfg.add_array('out', [n], dace.float64)
+    sdfg.add_transient('acc', [n], dace.float64)
+    st = sdfg.add_state('m')
+    sr = st.add_read('src')
+    aw = st.add_access('acc')
+    me, mx = st.add_map('m', {'i': f'0:{n}'})
+    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
+    st.add_memlet_path(sr, me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
+    st.add_memlet_path(t, mx, aw, src_conn='_out', memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
+    st2 = sdfg.add_state_after(st, 'c')
+    st2.add_nedge(st2.add_read('acc'), st2.add_write('out'), dace.Memlet(f'acc[0:{n}]'))
+    sdfg.validate()
+
+    assert not _seed_states(sdfg)
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    assert _seed_states(sdfg), 'fresh write-once WCR accumulator must be identity-seeded'
+
+    rng = np.random.default_rng(0)
+    src = rng.uniform(-1.0, 1.0, size=n)
+    out = np.empty(n)
+    sdfg(src=src, out=out)
+    assert np.allclose(out, src), f'write-once acc[i] = 0 + src[i]; got {out}'
+
+
+def test_seed_spares_top_level_argument():
+    """An in-place write-once WCR onto a top-level (non-transient) argument -- e.g.
+    gramschmidt's ``A[:,j] -= ...`` -- must NOT be seeded: the argument carries the
+    caller's value, which an identity fill would destroy."""
+    n = 16
+    sdfg = dace.SDFG('inplace_arg')
+    sdfg.add_array('src', [n], dace.float64)
+    sdfg.add_array('acc', [n], dace.float64)  # non-transient argument, updated in place
+    st = sdfg.add_state('m')
+    sr = st.add_read('src')
+    aw = st.add_write('acc')
+    me, mx = st.add_map('m', {'i': f'0:{n}'})
+    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
+    st.add_memlet_path(sr, me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
+    st.add_memlet_path(t, mx, aw, src_conn='_out', memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    assert not _seed_states(sdfg), 'in-place WCR onto a top-level argument must not be seeded'
+
+    rng = np.random.default_rng(3)
+    src = rng.uniform(-1.0, 1.0, size=n)
+    acc = np.full(n, 5.0)
+    sdfg(src=src, acc=acc)
+    assert np.allclose(acc, 5.0 + src), 'the caller-supplied prior must be preserved'
+
+
+def test_seed_spares_same_slot_fold():
+    """A same-slot fold (a constant, non-map-indexed subset -- a genuine reduction that
+    continues a prior value, like nussinov's ``_priv_table`` seeded through a separate
+    ``table`` input) must NOT be blindly reset. The pass leaves it unseeded so the prior
+    is preserved."""
+    n = 16
+    sdfg = dace.SDFG('fold_prior')
+    sdfg.add_array('src', [n], dace.float64)
+    sdfg.add_array('acc', [1], dace.float64)  # non-transient: caller supplies the prior
+    st = sdfg.add_state('m')
+    sr = st.add_read('src')
+    aw = st.add_write('acc')
+    me, mx = st.add_map('m', {'i': f'0:{n}'})
+    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
+    st.add_memlet_path(sr, me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
+    st.add_memlet_path(t, mx, aw, src_conn='_out', memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    assert not _seed_states(sdfg), 'same-slot fold onto a live accumulator must not be seeded'
+
+    src = np.ones(n)
+    acc = np.array([10.0])
+    sdfg(src=src, acc=acc)
+    assert np.isclose(acc[0], 10.0 + n), f'prior + sum(src); got {acc[0]}'
+
+
+def test_seed_spares_nested_out_only_aliasing_live_array():
+    """A nested-SDFG out-only connector bound (plain outer edge) to a LIVE non-transient array
+    is not fresh storage: the in-place reduction accumulates onto the caller's data, so seeding
+    it to identity would erase the live value. The pass must leave it unseeded."""
+    n = 8
+    sdfg = dace.SDFG('inplace_nested')
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('val', [n], dace.float64)
+    st = sdfg.add_state('s')
+    body = dace.SDFG('body')
+    body.add_array('out', [n], dace.float64)
+    body.add_array('bval', [n], dace.float64)
+    bst = body.add_state('b')
+    me, mx = bst.add_map('m', {'i': f'0:{n}'})
+    t = bst.add_tasklet('f', {'__v'}, {'__o'}, '__o = __v')
+    bst.add_memlet_path(bst.add_read('bval'), me, t, dst_conn='__v', memlet=dace.Memlet('bval[i]'))
+    bst.add_memlet_path(t,
+                        mx,
+                        bst.add_write('out'),
+                        src_conn='__o',
+                        memlet=dace.Memlet(data='out', subset='i', wcr='lambda a, b: a + b'))
+    nsdfg = st.add_nested_sdfg(body, {'bval'}, {'out'})
+    st.add_edge(st.add_read('val'), None, nsdfg, 'bval', dace.Memlet(f'val[0:{n}]'))
+    st.add_edge(nsdfg, 'out', st.add_write('A'), None, dace.Memlet(f'A[0:{n}]'))  # plain outer edge: out -> live A
+    sdfg.validate()
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    assert not _seed_states(sdfg), 'an out-only connector aliasing a live array must not be seeded'
+
+    A = np.full(n, 10.0)
+    val = np.arange(1, n + 1, dtype=np.float64)
+    sdfg(A=A, val=val)
+    assert np.allclose(A, 10.0 + val), f'A must be accumulated in place (10 + val), not overwritten; got {A}'
+
+
+def test_seed_spares_source_oriented_plain_init():
+    """A plain initializer written SOURCE-oriented -- a ``read(bias) -> write(acc)`` copy whose
+    memlet data is ``bias`` -- still initializes ``acc``. The pass must detect it (keying the
+    plain-writer scan on the edge DESTINATION, not the memlet data) and leave the accumulator
+    unseeded, so the init survives."""
+    n = 8
+    sdfg = dace.SDFG('src_oriented_init')
+    sdfg.add_array('bias', [n], dace.float64)
+    sdfg.add_array('src', [n], dace.float64)
+    sdfg.add_array('out', [n], dace.float64)
+    sdfg.add_transient('acc', [n], dace.float64)
+    s1 = sdfg.add_state('init')  # acc <- bias, source-oriented (memlet.data == 'bias')
+    s1.add_edge(s1.add_read('bias'), None, s1.add_write('acc'), None, dace.Memlet(f'bias[0:{n}]'))
+    s2 = sdfg.add_state_after(s1, 'accum')  # acc[i] (wcr+)= src[i]
+    me, mx = s2.add_map('m', {'i': f'0:{n}'})
+    t = s2.add_tasklet('f', {'__s'}, {'__o'}, '__o = __s')
+    s2.add_memlet_path(s2.add_read('src'), me, t, dst_conn='__s', memlet=dace.Memlet('src[i]'))
+    s2.add_memlet_path(t,
+                       mx,
+                       s2.add_access('acc'),
+                       src_conn='__o',
+                       memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
+    s3 = sdfg.add_state_after(s2, 'copyout')
+    s3.add_edge(s3.add_read('acc'), None, s3.add_write('out'), None, dace.Memlet(f'acc[0:{n}]'))
+    sdfg.validate()
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    assert not _seed_states(sdfg), 'acc already has a (source-oriented) plain init; must not be re-seeded'
+
+    rng = np.random.default_rng(2)
+    bias = rng.uniform(-1.0, 1.0, size=n)
+    src = rng.uniform(-1.0, 1.0, size=n)
+    out = np.empty(n)
+    sdfg(bias=bias, src=src, out=out)
+    assert np.allclose(out, bias + src), f'seeding would have dropped bias; got {out}'
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

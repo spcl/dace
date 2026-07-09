@@ -41,11 +41,23 @@ _GROUPS = [
 
 
 def _count(program):
-    """Canonicalize the program's simplified SDFG; return ``(for_loops, maps)``."""
+    """Canonicalize the program's simplified SDFG; return ``(for_loops, maps)``.
+
+    A guarded-parallel region -- ``if cond: parallel-Map else: sequential-loop``
+    emitted by ParallelizeUnderConstraint / ScatterToGuardedMaps / the
+    conditional-parallelization family -- is counted as PARALLEL: its parallel Map
+    is tallied in ``maps`` and its sequential fallback is EXCLUDED from ``loops``.
+    Both fallback forms carry ``LoopRegion.pinned_sequential = True`` (the
+    specialize helper and the scatter dispatcher both set it), which is the single
+    marker used to skip them -- otherwise every guard would inflate the loop count
+    by one while its Map is also counted, mis-reporting a parallelized loop as
+    still-sequential.
+    """
     sdfg = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(sdfg, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP, unroll_limit=_UNROLL_LIMIT)
-    loops = sum(1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion))
+    loops = sum(1 for cfr in sdfg.all_control_flow_regions()
+                if isinstance(cfr, LoopRegion) and not cfr.pinned_sequential)
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     return loops, maps
 

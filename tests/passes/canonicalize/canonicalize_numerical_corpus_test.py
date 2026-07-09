@@ -38,6 +38,34 @@ _CPU = dict(target='cpu',
             interchange_carry_with_map=True,
             scatter_to_guarded_maps=True)
 
+# Kernels where the transformed build and the untransformed baseline are the SAME computation
+# but differ only in the C compiler's FMA-contraction placement, which the default ``-ffast-math``
+# leaves free. That ULP difference is harmless on a well-conditioned kernel, but gramschmidt is
+# rank-deficient at preset S -- column 13 collapses to ~3.66e-14 -- so it amplifies to 100%
+# relative error and trips the 1e-9 tolerance even though canonicalization is provably
+# value-preserving (bit-exact once FMA contraction is off). For ONLY these kernels the fixture
+# below pins ``-ffp-contract=off`` for both builds; every other kernel keeps FMA so the gate
+# still catches a genuine FMA-order divergence there.
+_FP_CONTRACT_OFF = {('poly', 'gramschmidt')}
+
+
+@pytest.fixture(autouse=True)
+def _fp_contract(request):
+    """Pin ``-ffp-contract=off`` for the current test iff its kernel is in
+    ``_FP_CONTRACT_OFF`` (see above); a no-op otherwise. Scoped per-kernel, not gate-wide, and
+    the global default is left untouched (FMA stays on for performance elsewhere)."""
+    params = request.node.callspec.params
+    if (params.get('suite'), params.get('name')) not in _FP_CONTRACT_OFF:
+        yield
+        return
+    key = ('compiler', 'cpu', 'args')
+    prev = dace.config.Config.get(*key)
+    if '-ffp-contract=off' not in prev:
+        dace.config.Config.set(*key, value=prev + ' -ffp-contract=off')
+    yield
+    dace.config.Config.set(*key, value=prev)
+
+
 # Pre-existing canon correctness gaps, keyed by ``(suite, name)``. NOT regressions.
 # ``WRONG`` = numerical mismatch; ``ERR`` = transform/codegen raise; ``port`` = the
 # corpus port is wrong even untransformed (frontend/uninit); ``flaky`` =

@@ -50,9 +50,7 @@ def _has_map(region):
 
 
 def _sequential_loops(region):
-    return [
-        r for r in region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
-    ]
+    return [r for r in region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
 
 
 def _specialize_conditional(sdfg):
@@ -172,9 +170,49 @@ def test_value_preserving_symbolic_stride_store():
     assert np.allclose(dst, exp), 'value mismatch on the symbolic-stride store'
 
 
+def test_assume_constraint_emits_only_map():
+    """``canonicalize(assume_parallel_guards=True)``: the s171 symbolic-stride loop is
+    parallelized UNCONDITIONALLY -- no ``if cond: par else: seq`` ConditionalBlock and
+    no pinned sequential fallback, just the Map. Sound only when the caller guarantees
+    the stride is nonzero (the assume contract)."""
+    sdfg = affine_stride_rmw.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, assume_parallel_guards=True)
+
+    cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+    assert not cbs, f'assume mode must emit no specialization ConditionalBlock; got {len(cbs)}'
+    assert _has_map(sdfg), 'the loop must be lifted to a Map'
+    assert not [l for l in _sequential_loops(sdfg) if l.pinned_sequential], \
+        'assume mode must leave no pinned sequential fallback'
+
+    # Value-preserving at inc=1 (the realistic nonzero stride the caller asserts).
+    n, inc = 64, 1
+    rng = np.random.default_rng(0)
+    a0, b = rng.standard_normal(n), rng.standard_normal(n)
+    got = a0.copy()
+    sdfg(a=got, b=b, inc=inc, N=n)
+    assert np.allclose(got, a0 + b), 'value mismatch at inc=1 under assume mode'
+
+
+def test_guarded_region_counts_as_parallel():
+    """The DEFAULT ``if cond: par else: seq`` guard pins its sequential fallback, so a
+    parallelism counter that excludes ``pinned_sequential`` loops sees no residual
+    sequential loop -- the guarded region counts as fully parallelized (its parallel Map
+    is present, its fallback is the pinned collision/violation path, not a real loop)."""
+    sdfg = affine_stride_rmw.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)  # default: guarded (if cond: par else: seq)
+
+    all_loops = _sequential_loops(sdfg)
+    assert any(l.pinned_sequential for l in all_loops), 'the specialize fallback loop must be pinned'
+    residual = [l for l in all_loops if not l.pinned_sequential]
+    assert not residual, f'guarded region must count as parallel; residual sequential loops: {residual}'
+    assert _has_map(sdfg), 'the parallel-branch Map must be present'
+
+
 if __name__ == '__main__':
     test_symbolic_stride_specializes_if_par_else_seq()
     test_value_preserving_under_nonzero_stride()
     test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence()
     test_symbolic_stride_store_specializes_if_par_else_seq()
     test_value_preserving_symbolic_stride_store()
+    test_assume_constraint_emits_only_map()
+    test_guarded_region_counts_as_parallel()

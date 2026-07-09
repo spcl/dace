@@ -602,28 +602,24 @@ class EarlyExitToFindIndex(ppl.Pass):
         # iedge from reduce -> first phase 2 state binds exit_sym.
         sym_bound = False
 
-        if any(isinstance(b, SDFGState) and len(b.nodes()) > 0 for b in m.body_pre_blocks):
-            s_pre = parent.add_state(m.loop.label + '_body_pre_map')
-            edge_data = dace.InterstateEdge(assignments={exit_sym: exit_buf_name})
-            parent.add_edge(last_state, s_pre, edge_data)
+        body_pre = self._emit_body_loop(parent,
+                                        sdfg,
+                                        m.body_pre_blocks,
+                                        m,
+                                        upper_str=f'Min({exit_sym} + 1, {symbolic.symstr(m.iter_end + 1)})')
+        if body_pre is not None:
+            parent.add_edge(last_state, body_pre, dace.InterstateEdge(assignments={exit_sym: exit_buf_name}))
             sym_bound = True
-            self._emit_body_map(s_pre,
-                                sdfg,
-                                m.body_pre_blocks,
-                                m,
-                                upper_str=f'Min({exit_sym} + 1, {symbolic.symstr(m.iter_end + 1)})')
-            last_state = s_pre
+            last_state = body_pre
 
-        if any(isinstance(b, SDFGState) and len(b.nodes()) > 0 for b in m.body_post_blocks):
-            s_post = parent.add_state(m.loop.label + '_body_post_map')
+        body_post = self._emit_body_loop(parent, sdfg, m.body_post_blocks, m, upper_str=f'{exit_sym}')
+        if body_post is not None:
             if sym_bound:
-                parent.add_edge(last_state, s_post, dace.InterstateEdge())
+                parent.add_edge(last_state, body_post, dace.InterstateEdge())
             else:
-                edge_data = dace.InterstateEdge(assignments={exit_sym: exit_buf_name})
-                parent.add_edge(last_state, s_post, edge_data)
+                parent.add_edge(last_state, body_post, dace.InterstateEdge(assignments={exit_sym: exit_buf_name}))
                 sym_bound = True
-            self._emit_body_map(s_post, sdfg, m.body_post_blocks, m, upper_str=f'{exit_sym}')
-            last_state = s_post
+            last_state = body_post
 
         # Phase 3: true-branch scalar rebinds (s332-style).
         if m.true_branch_pre_break_states:
@@ -714,50 +710,49 @@ class EarlyExitToFindIndex(ppl.Pass):
         state.add_edge(read, None, node, '_in', mm.Memlet(data=phi_name, subset=subsets.Range([(0, size - 1, 1)])))
         state.add_edge(node, '_out', write, None, mm.Memlet(data=exit_buf_name, subset=subsets.Range([(0, 0, 1)])))
 
-    def _emit_body_map(self, state: SDFGState, sdfg: SDFG, body_blocks: List, m: _Match, upper_str: str):
-        """Emit a parallel Map wrapping the body work. We do this by directly
-        moving every node from each content state into a new Map scope.
+    def _emit_body_loop(self, parent: ControlFlowRegion, sdfg: SDFG, body_blocks: List, m: _Match,
+                        upper_str: str) -> Optional[LoopRegion]:
+        """Emit the body work as a clipped ``for loop_var in [start, upper)``
+        LoopRegion reusing the body's per-iteration dataflow; return it (or
+        ``None`` if there is no single content state to wrap).
+
+        We deliberately emit a LoopRegion, NOT a hand-built Map: the canonicalize
+        pipeline lowers every Map to a LoopRegion immediately after this pass, and a
+        hand-built Map with whole-array boundary memlets does not survive the
+        round-trip -- ``LoopToMap``'s per-iteration write-uniqueness rejects an
+        ``a[0:N]`` boundary and the find-first body stays sequential. A loop body
+        state instead carries the raw ``a[i]`` accesses -- exactly the shape the
+        ``parallelize`` stage's ``LoopToMap`` lifts -- so the body parallelizes on
+        its own with no special boundary handling.
         """
         loop_var = m.loop.loop_variable
         start_str = symbolic.symstr(m.iter_start)
-        # Find the unique content state in body_blocks (TSVC kernels have one).
+        # Single-content-state bodies only (multi-state needs NSDFG; refused in the matcher).
         content_states = [b for b in body_blocks if isinstance(b, SDFGState) and len(b.nodes()) > 0]
-        if not content_states:
-            return
         if len(content_states) != 1:
-            # v1: only single-content-state bodies. Multi-state body Maps need
-            # NSDFG construction; refused earlier in the matcher.
-            return
+            return None
         src_state = content_states[0]
-        # Map scope.
-        map_entry, map_exit = state.add_map(
-            f'{m.loop.label}_body_map',
-            ndrange={loop_var: f'{start_str}:{upper_str}'},
-        )
-        # Clone nodes from src_state into the Map body. Reuse node identities
-        # by referencing source nodes' (state, node) -- safer: clone with the
-        # same name + memlets.
+
+        body_loop = LoopRegion(label=f'{m.loop.label}_body',
+                               condition_expr=f'{loop_var} < ({upper_str})',
+                               loop_var=loop_var,
+                               initialize_expr=f'{loop_var} = {start_str}',
+                               update_expr=f'{loop_var} = {loop_var} + 1')
+        parent.add_node(body_loop)
+        body_state = body_loop.add_state('body', is_start_block=True)
+        # Clone the body's nodes + edges verbatim: the per-iteration ``a[i]``
+        # dataflow is already ``LoopToMap``-eligible (it was the original loop's
+        # body, minus the break conditional).
         node_map: Dict[Any, Any] = {}
         for n in src_state.nodes():
             cn = _copy.deepcopy(n)
-            state.add_node(cn)
+            body_state.add_node(cn)
             node_map[n] = cn
         for e in src_state.edges():
             if e.data is None or e.data.is_empty():
                 continue
-            state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, _copy.deepcopy(e.data))
-        # Wire all source AccessNodes through the map_entry, all sink
-        # AccessNodes through the map_exit.
-        for orig, cn in node_map.items():
-            if not isinstance(cn, nodes.AccessNode):
-                continue
-            if src_state.in_degree(orig) == 0 and src_state.out_degree(orig) > 0:
-                # Source: external_input -> map_entry -> cn
-                ext = state.add_read(cn.data)
-                state.add_memlet_path(ext, map_entry, cn, memlet=mm.Memlet.from_array(cn.data, sdfg.arrays[cn.data]))
-            elif src_state.in_degree(orig) > 0 and src_state.out_degree(orig) == 0:
-                ext = state.add_write(cn.data)
-                state.add_memlet_path(cn, map_exit, ext, memlet=mm.Memlet.from_array(cn.data, sdfg.arrays[cn.data]))
+            body_state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, _copy.deepcopy(e.data))
+        return body_loop
 
     def _emit_rebind(self, after_state: SDFGState, sdfg: SDFG, m: _Match, exit_sym: str):
         """Emit Phase 3: ``if exit_sym < N: <duplicated true-branch content>``.

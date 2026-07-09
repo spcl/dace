@@ -181,11 +181,20 @@ def find_promotable_scalars(sdfg: sd.SDFG,
             if candidate not in candidates:
                 continue
 
-            # If candidate is read by a library node, skip
+            # If candidate is read by a library node, or feeds a write-conflict resolution, skip
             removed = False
             for oe in state.out_edges(node):
                 for e in state.memlet_tree(oe):
                     if isinstance(e.dst, nodes.LibraryNode):
+                        candidates.remove(candidate)
+                        removed = True
+                        break
+                    # An outgoing WCR edge makes this scalar a reduction SOURCE
+                    # (``x -(wcr)-> arr``): promoting ``x`` to a symbol rewrites
+                    # ``arr = wcr(arr, x)`` into a plain ``arr = x`` overwrite, silently
+                    # dropping the reduction. Keep it a scalar. (Mirrors the incoming-WCR
+                    # guard below, which only covers a scalar WRITTEN by a WCR.)
+                    if e.data.wcr is not None:
                         candidates.remove(candidate)
                         removed = True
                         break

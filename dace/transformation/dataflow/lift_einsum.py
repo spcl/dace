@@ -110,19 +110,19 @@ class LiftEinsum(xf.SingleStateTransformation):
         if num_tensor_inputs < 2:
             return False
 
-        # A scalar / full-reduction output (no free output index) is the reduction
-        # pass's domain in general -- a MULTI-dimensional scalar contraction mis-lowers
-        # whenever the operand index ORDER differs (``ij,ji->`` folds to the wrong 1x1
-        # GEMM), and an AFFINE reversed access (durbin's ``sum += r[k-i-1]*y[i]``) is
-        # already refused by the map-parameter index check above. The ONE exception is
-        # a genuine 1-D dot product ``acc = sum_i a[i]*b[i]`` (``i,i->``) over the FULL
-        # operand extent: a single map parameter forces every tensor operand to index
-        # ``i``, so the einsum can only be ``i,...,i->`` -- which lowers correctly (2
-        # operands -> degenerate 1x1 GEMM; more -> pure contraction). Lift only that
-        # (its WCR is a Sum, checked below); refuse every wider scalar output.
+        # A scalar output (no free output index) is a DOT / full reduction, NOT a GEMM --
+        # do NOT lift it. A vector-vector dot lowers to ``cblas_ddot``, which sums in an
+        # implementation-defined blocked / vectorized order and so REASSOCIATES relative to
+        # the source reduction. That FP-order divergence is harmless for a well-conditioned
+        # kernel but catastrophic for an ill-conditioned one (gramschmidt's near-rank-deficient
+        # ``R[k,j] = sum_i Q[i,k]*A[i,j]`` at a column that has collapsed to ~1e-14 amplifies
+        # the ULP difference to 100% relative error). BLAS is no win for a 1-D dot anyway, and
+        # keeping it as its WCR reduction stays bit-exact with the baseline (and avoids the
+        # degenerate 1x1-GEMM lowering entirely). Only a matrix einsum -- a free output index --
+        # lifts. Matvec/matmul (``ij,j->i`` / ``ik,kj->ij``) have a free output index, so they
+        # are unaffected.
         if not (output_chars - {'0'}):
-            if len(self.map_entry.map.params) != 1 or self._partial_range():
-                return False
+            return False
 
         # Reject an ELEMENTWISE op: NO contracted index (every input index also appears in
         # the output) AND some tensor input accesses the SAME unit subset as the output --
@@ -282,6 +282,9 @@ class LiftEinsum(xf.SingleStateTransformation):
         #   4. Else it is a fresh, uninitialized transient -> OVERWRITE (beta=0)
         #      rather than fold garbage (the AccumulatorToMapAndReduce seed hazard).
         if out_edge.data.wcr is not None:
+            # Only a tensor output (a free output index) reaches here -- can_be_applied refuses
+            # a scalar-output dot (``i,i->``), which stays a WCR reduction. The output matrix's
+            # ``beta*C`` pre-scale is decided by the three signals above.
             out_data = out_edge.data.data
             out_node = state.memlet_path(out_edge)[-1].dst
             has_identity = isinstance(out_node, nodes.AccessNode) and out_node.setzero

@@ -510,6 +510,37 @@ def test_else_branch_dispatcher_emits_both_branches():
                                              f'got loops={len(par_loops)}, maps={par_maps}')
 
 
+# -- assume_no_conflicts=True: skip the guard entirely -----------------------
+
+
+def test_assume_no_conflicts_skips_guard_and_lifts_unconditionally():
+    """``assume_no_conflicts=True``: the caller asserts ``ip`` is a permutation, so the
+    pass emits NO sort/dup-count guard and NO ConditionalBlock -- the scatter loop is
+    lifted straight to an unconditional parallel Map. Values match the sequential
+    reference when ``ip`` really is a permutation (the caller's contract)."""
+    from dace.sdfg.state import ConditionalBlock
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    loops_before = _count_loop_regions(sdfg)
+    maps_before = _count_map_entries(sdfg)
+
+    ScatterToGuardedMaps(assume_no_conflicts=True).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert _count_integer_sort_nodes(sdfg) == 0, 'assume mode must emit NO sort guard'
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)], \
+        'assume mode must emit NO ConditionalBlock (no if-else fallback)'
+    assert _count_map_entries(sdfg) > maps_before, 'the scatter loop must be lifted to a Map'
+    assert _count_loop_regions(sdfg) < loops_before, 'the original LoopRegion must be lifted'
+
+    n = 32
+    b = np.random.default_rng(0).random(n)
+    ip = _make_permutation(n, seed=42)
+    a = np.zeros(n)
+    sdfg(a=a, ip=ip.astype(np.int32), b=b, N=n)
+    assert np.allclose(a, _vas_sequential(b, ip, n)), \
+        'assume-mode parallel Map must match the sequential reference for a permutation idx'
+
+
 @pytest.mark.parametrize('kernel', [tsvc_s4113, tsvc_s491, tsvc_vas])
 def test_no_conflict_guard_survives_full_canonicalize(kernel):
     """The runtime no-conflict guard (IntegerSort + __builtin_trap) must survive

@@ -5,7 +5,7 @@ import copy
 import re
 from typing import List
 import sympy
-from dace import nodes, dtypes, Memlet, data, symbolic
+from dace import nodes, dtypes, Memlet, data, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.transformation import transformation
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
@@ -86,6 +86,30 @@ def _wcr_augassign_body(wcr_str: str) -> str:
             return node
 
     return astutils.unparse(_Rename().visit(lam.body))
+
+
+def _multi_element_dims(subset):
+    """``(dim_index, (lo, hi, step))`` for each ``Range`` dimension of ``subset`` that spans
+    more than one element. A non-``Range`` subset (``Indices``) or a whole single element
+    yields an empty list -- the caller then emits a scalar RMW tasklet, no map."""
+    if not isinstance(subset, subsets.Range):
+        return []
+    return [(i, rng) for i, rng in enumerate(subset.ranges) if (rng[1] - rng[0]) != 0]
+
+
+def _index_dims(subset, dims, params):
+    """Copy of ``subset`` with each multi-element dim in ``dims`` addressed at the single element
+    ``lo + p*step`` picked out by the matching 0-based map ``param`` p (``p`` in ``0:count``).
+    Each side offsets by its OWN ``lo``/``step``, so a shifted / strided source slice
+    (``inp[k:k+n]``, ``inp[0:2n:2]``) is read at the right element rather than at the write's
+    coordinates. Used to turn a slice write/read into the per-iteration single element."""
+    out = copy.deepcopy(subset)
+    ranges = list(out.ranges)
+    for (di, (lo, _hi, step)), p in zip(dims, params):
+        idx = lo + p * step
+        ranges[di] = (idx, idx, 1)
+    out.ranges = ranges
+    return out
 
 
 class AugAssignToWCR(transformation.SingleStateTransformation):
@@ -786,6 +810,34 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         if edge.data.subset.num_elements() > edge.data.volume or edge.data.dynamic is True:
             return False
 
+        # A multi-element (slice) WCR write is an ELEMENTWISE RMW, not a scalar one. Only the
+        # AccessNode->AccessNode copy (expr 2) expands it into a Map over the sliced dims (see
+        # ``apply``); the tasklet-sourced (0, 1) and through-map-exit (3) patterns emit a scalar
+        # ``__out = __in1 op __in2`` tasklet, which over an array memlet would codegen a bogus
+        # ``double* + double*``. Refuse a non-scalar write for those -- the conflict-free WCR
+        # copy simply survives for codegen (correct, just un-reverted).
+        if expr_index != 2 and edge.data.subset.num_elements() != 1:
+            return False
+        # expr 2: the elementwise map indexes the write's slice dims and the read source's slice
+        # dims IN LOCKSTEP (the k-th source multi-element dim shares a map param with the k-th
+        # write multi-element dim). That is a valid elementwise copy only when the two dim
+        # sequences have the same count AND matching per-dim extents in order; otherwise the
+        # zip pairs mismatched dims (a wrong address). A broadcast scalar source (no multi
+        # dims) is always fine. Refuse anything else -- the conflict-free WCR copy survives.
+        if expr_index == 2:
+            out_sub = edge.data.get_dst_subset(edge, graph)
+            in_sub = edge.data.get_src_subset(edge, graph)
+            if out_sub is not None and in_sub is not None:
+                in_dims = _multi_element_dims(in_sub)
+                out_dims = _multi_element_dims(out_sub)
+                if in_dims:
+                    if len(in_dims) != len(out_dims):
+                        return False
+                    if any(
+                            sympy.simplify((i[1][1] - i[1][0]) - (o[1][1] - o[1][0])) != 0
+                            for i, o in zip(in_dims, out_dims)):
+                        return False
+
         # Soundness: dropping WCR for explicit RMW safe only where write is conflict-free.
         # Sequential (no enclosing Map) always holds; parallel Map requires write subset
         # injective over map params. Reduction (constant target) NOT injective → keeps WCR
@@ -871,21 +923,69 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # "expected 1, got 2" mismatch on 2-D writes (``aa[i, i]``). ``None`` side = whole array.
             out_subset = m.get_dst_subset(edge, state)
             in_subset = m.get_src_subset(edge, state)
-
-            def _dst_memlet() -> Memlet:  # a fresh copy per use (no shared subset refs)
-                if out_subset is not None:
-                    return Memlet(data=self.output.data, subset=copy.deepcopy(out_subset))
-                return Memlet.from_array(self.output.data, sdfg.arrays[self.output.data])
-
-            if in_subset is not None:
-                in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))
-            else:
-                in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
+            dims = _multi_element_dims(out_subset) if out_subset is not None else []
             read_back = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            state.add_edge(read_back, None, new_tasklet, '__in1', _dst_memlet())
-            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2', in_memlet)
-            state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, _dst_memlet())
+
+            if not dims:
+                # Scalar RMW: ``__in1``/``__out`` address DEST (output); ``__in2`` reads SOURCE
+                # (inp). Resolve each side from the edge via get_src/dst_subset so a SCALAR WCR
+                # source (per-iter transient from NormalizeWCRSource, ``other_subset`` None) reads
+                # its OWN element instead of inheriting dest's (possibly multi-dim) slice --
+                # inheriting gave the "expected 1, got 2" mismatch on 2-D writes (``aa[i, i]``).
+                # ``None`` side = whole array.
+                def _dst_memlet() -> Memlet:  # a fresh copy per use (no shared subset refs)
+                    if out_subset is not None:
+                        return Memlet(data=self.output.data, subset=copy.deepcopy(out_subset))
+                    return Memlet.from_array(self.output.data, sdfg.arrays[self.output.data])
+
+                if in_subset is not None:
+                    in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))
+                else:
+                    in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
+                state.add_edge(read_back, None, new_tasklet, '__in1', _dst_memlet())
+                state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2', in_memlet)
+                state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, _dst_memlet())
+            else:
+                # Slice-WCR ``out[slice] (wcr)= inp[slice]``: an elementwise RMW. Wrap the tasklet
+                # in a fresh Map with one 0-based iterator per multi-element dim -- ``out[i] =
+                # out[i] op inp[i]`` -- so codegen emits a per-element loop instead of a scalar
+                # body over an array memlet (the ``double* + double*`` bug). Each side is addressed
+                # at its OWN ``lo + q*step`` (``_index_dims``), so a shifted / strided source is
+                # read correctly (``can_be_applied`` guarantees matching per-dim counts). The map
+                # param counts come from the write's dims; a scalar / whole-array source broadcasts.
+                params = [f'__wcr_i{k}' for k in range(len(dims))]
+                psyms = [symbolic.pystr_to_symbolic(p) for p in params]
+                me, mx = state.add_map('augassign_map', {
+                    p: subsets.Range([(0, (rng[1] - rng[0]) // rng[2], 1)])
+                    for p, (_, rng) in zip(params, dims)
+                })
+                dst_pe = _index_dims(out_subset, dims, psyms)
+                in_dims = _multi_element_dims(in_subset) if in_subset is not None else []
+                if in_subset is not None and in_dims:
+                    src_pe = _index_dims(in_subset, in_dims, psyms[:len(in_dims)])
+                    in_memlet = Memlet(data=self.inp.data, subset=src_pe)
+                elif in_subset is not None:
+                    in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))  # scalar/broadcast
+                else:
+                    in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
+                state.add_memlet_path(read_back,
+                                      me,
+                                      new_tasklet,
+                                      dst_conn='__in1',
+                                      memlet=Memlet(data=self.output.data, subset=copy.deepcopy(dst_pe)))
+                state.add_memlet_path(self.inp,
+                                      me,
+                                      new_tasklet,
+                                      src_conn=edge.src_conn,
+                                      dst_conn='__in2',
+                                      memlet=in_memlet)
+                state.add_memlet_path(new_tasklet,
+                                      mx,
+                                      self.output,
+                                      src_conn='__out',
+                                      dst_conn=edge.dst_conn,
+                                      memlet=Memlet(data=self.output.data, subset=copy.deepcopy(dst_pe)))
             state.remove_edge(edge)
         else:
             # inp -[wcr]-> MapExit -> output: privatized source resolved at map boundary.
