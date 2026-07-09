@@ -781,6 +781,7 @@ def test_strided_expansions_accept_non_contiguous():
 # backs it with no view (``total_size`` only needs to cover the accessed run).
 _PADDED_N = 60
 _PADDED_STRIDE = 64
+_PADDED_ROWS = 3
 
 
 def _padded_unit_spec(storage, name):
@@ -789,6 +790,20 @@ def _padded_unit_spec(storage, name):
                       storage=storage,
                       strides=(_PADDED_STRIDE, 1),
                       total_size=_PADDED_N,
+                      name=name)
+
+
+def _padded_multirow_spec(storage, name):
+    """``_ArraySpec`` for a (``_PADDED_ROWS``, ``_PADDED_N``) array whose rows carry the padded stride.
+
+    Unlike the unit-row spec, the leading dim has extent > 1, so the inter-row pitch gap
+    (``_PADDED_STRIDE - _PADDED_N`` unused elements per row) is actually stepped over: the full
+    ``[0:ROWS, 0:N]`` copy is genuinely non-contiguous.
+    """
+    return _ArraySpec(shape=(_PADDED_ROWS, _PADDED_N),
+                      storage=storage,
+                      strides=(_PADDED_STRIDE, 1),
+                      total_size=_PADDED_STRIDE * _PADDED_ROWS,
                       name=name)
 
 
@@ -840,6 +855,32 @@ def test_copy_padded_unit_dim_cross_storage_selection():
         assert in_sub.is_contiguous_subset(inp)
         assert out_sub.is_contiguous_subset(out)
         assert select_copy_implementation(node, state) == "MemcpyCUDA1D"
+
+
+def test_copy_padded_multirow_cross_storage_uses_pitched():
+    """Cross CPU/GPU copy of a padded multi-row (ROWS, N) array must route to the pitched ``cudaMemcpy2D``.
+
+    With more than one row the inter-row pitch gap is stepped over, so the region is genuinely
+    non-contiguous and a flat ``MemcpyCUDA1D`` would drag the padding bytes between rows into the copy.
+    This pins the dangerous direction: were ``is_contiguous_subset`` to ever wrongly report this subset
+    contiguous, ``_refine_cuda_impl_for_subsets`` would keep the flat copy and silently corrupt the data --
+    this test would catch it before the numerical damage.
+    """
+    for src_storage, dst_storage in (
+        (dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global),
+        (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Heap),
+    ):
+        sdfg, node = _make_copy_sdfg(
+            _padded_multirow_spec(src_storage, "A"),
+            _padded_multirow_spec(dst_storage, "B"),
+            name="copy_padded_multirow_cross",
+            libnode_name="cp_padded_multirow",
+        )
+        state = sdfg.start_state
+        _, inp, in_sub, _, out, out_sub = node.validate(state.sdfg, state, allow_cross_storage=True)
+        assert not in_sub.is_contiguous_subset(inp)
+        assert not out_sub.is_contiguous_subset(out)
+        assert select_copy_implementation(node, state) == "MemcpyCUDA2D"
 
 
 @pytest.mark.gpu
