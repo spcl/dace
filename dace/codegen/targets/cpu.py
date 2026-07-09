@@ -1008,6 +1008,18 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
 
+        # An OMP ``reduction(op:var)`` clause target: the clause privatizes the scalar
+        # per thread and tree-reduces at the end, so the body must accumulate into the
+        # private copy with the PLAIN operator -- not a ``wcr_fixed`` helper, which is
+        # redundant machinery on an already-privatized scalar. (Emitting the atomic here
+        # would be wrong; emitting the non-atomic helper is merely noise.)
+        if _omp_covered:
+            omp_op = _REDUCTION_TO_OMP_OP.get(redtype)
+            if omp_op in ("+", "*", "&", "|", "^", "&&", "||"):
+                return f'*({ptr}) = *({ptr}) {omp_op} ({inname})'
+            if omp_op in ("min", "max"):
+                return f'*({ptr}) = dace::math::{omp_op}(*({ptr}), {inname})'
+
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
 
@@ -1868,12 +1880,11 @@ class CPUCodeGen(TargetCodeGenerator):
         supports (see ``_REDUCTION_TO_OMP_OP``). Anything else falls through to the existing
         atomic emission path -- correct but contended.
 
-        Limit: at most ONE OMP-reducible target per map. If two or more WCR edges qualify,
-        we refuse all of them and let the atomic path handle the lot -- multi-target
-        ``reduction(...)`` clauses are valid OpenMP but compose poorly with downstream
-        codegen (per-target scope tracking, per-thread storage cost) and the cases that
-        need them are rare. The single-target limit keeps the emit deterministic and the
-        scope stack simple.
+        Every qualifying target is returned; the caller emits one ``reduction(op:var)``
+        clause per pair (``reduction(+:sum) reduction(+:result)``, equivalent to the
+        comma form) and pushes them all onto one scope frame so ``write_and_resolve_expr``
+        skips the now-redundant ``reduce_atomic`` for each. Multi-target reduction is
+        plain valid OpenMP; a map summing two independent scalars needs exactly this.
 
         The clause runs the OpenMP runtime's per-thread privatization + final tree-reduce,
         which is fastest for scalar reductions in parallel maps; the atomic-add fallback is
@@ -1931,9 +1942,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             seen.add(key)
             out.append((op_str, var_name))
-        # Single-target limit: refuse if we found 2+ candidates (see docstring).
-        if len(out) > 1:
-            return []
         return out
 
     def _generate_MapEntry(

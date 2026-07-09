@@ -2197,8 +2197,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         one atomic/thread: correct but heavily contended). Narrow guard: single-element
         accumulator, register-resident per-thread partial (shared/global source races →
         refuse), built-in op with known identity, constant block size (cub's template thread
-        count), loop-invariant target. At most one descriptor/map (CPU single-target limit);
-        anything else keeps the per-thread atomic fallback.
+        count), loop-invariant target. Every qualifying accumulator is folded -- one
+        ``cub::BlockReduce`` per target (emitted with a distinct id); anything not matching
+        the guard keeps the per-thread atomic fallback.
         """
         out: List[dict] = []
         try:
@@ -2264,8 +2265,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 'num_threads': num_threads,
                 'data': iedge.data.data,
             })
-        if len(out) > 1:  # single folded reduction per map (mirror CPU limit)
-            return []
         return out
 
     def _emit_gpu_block_reduction(self, red: dict, idstr: str, cfg: ControlFlowRegion, state_id: int,
