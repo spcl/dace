@@ -64,6 +64,54 @@ _REDUCTION_TO_OMP_OP = {
     dtypes.ReductionType.Bitwise_Xor: "^",
 }
 
+#: Complex element types an OpenMP array/scalar reduction can target -- only via a
+#: ``#pragma omp declare reduction`` (OpenMP has no built-in reduction for complex).
+_COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
+
+
+def _contiguous_element_count(desc):
+    """Element count if ``desc`` is a plain, 0-offset, C-contiguous ``Array`` buffer.
+
+    Only such a buffer can be reduced as one flat ``A[0:count]`` OpenMP array section:
+    the section covers the whole allocation contiguously, so the runtime's per-thread
+    private copy + final element-wise combine is a faithful whole-buffer reduction.
+    Returns ``None`` (caller falls back to atomics) for views, strided/padded layouts,
+    or anything whose contiguity can't be proven. ``count`` may be symbolic.
+    """
+    # Exact type only -- subclasses (View, Reference, Stream) are not plain buffers.
+    if type(desc) is not data.Array:
+        return None
+    acc = 1
+    exp = []
+    for s in reversed(list(desc.shape)):
+        exp.append(acc)
+        acc = acc * s
+    if list(desc.strides) != list(reversed(exp)):
+        return None
+    # No allocation padding beyond the logical element count.
+    try:
+        if bool(symbolic.simplify(desc.total_size - acc) != 0):
+            return None
+    except TypeError:
+        return None
+    return acc
+
+
+def _complex_declare_reduction(op_str: str, ctype: str):
+    """``#pragma omp declare reduction`` line for a complex element type, or ``None``.
+
+    OpenMP has no native reduction over ``std::complex``; only ``+`` / ``*`` get a
+    well-defined identity (0 / 1) and combiner. Everything else returns ``None`` so the
+    caller falls back to the atomic path.
+    """
+    if op_str == "+":
+        return (f"#pragma omp declare reduction(+ : {ctype} : omp_out += omp_in) "
+                f"initializer(omp_priv = {ctype}(0))")
+    if op_str == "*":
+        return (f"#pragma omp declare reduction(* : {ctype} : omp_out *= omp_in) "
+                f"initializer(omp_priv = {ctype}(1))")
+    return None
+
 
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
@@ -1869,27 +1917,25 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _collect_omp_reductions(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
-        """Walk the map's WCR-write edges that target a single-element accumulator outside
-        the scope, and return ``(op_str, var_name)`` pairs suitable for ``reduction(op:var)``
-        clauses on the OpenMP ``parallel for`` pragma.
+        """Walk the map's WCR-write edges that target an accumulator outside the scope and
+        return ``(op_str, clause_target, data_name, declare_line)`` tuples for OpenMP
+        ``reduction(...)`` clauses on the ``parallel for`` pragma.
 
-        Detection is intentionally narrow: the WCR target must be (a) an ``AccessNode``
-        outside the map scope, (b) a true ``Scalar`` descriptor (length-1 / single-element
-        ``Array`` slots need ``PrivatizeReductionAccumulator`` to rewrite into a transient
-        ``Scalar`` first; OpenMP's ``reduction(...)`` clause needs a scalar VARIABLE, not a
-        pointer-passed array slot), and (c) one of the WCR operators OpenMP natively
-        supports (see ``_REDUCTION_TO_OMP_OP``). Anything else falls through to the existing
-        atomic emission path -- correct but contended.
+        The WCR target must be (a) an ``AccessNode`` outside the map scope, (b) either a
+        true ``Scalar`` (clause ``reduction(op:var)``, always eligible) or -- only when
+        ``sdfg.openmp_array_reductions`` is on -- a plain 0-offset C-contiguous ``Array``
+        buffer (clause ``reduction(op:A[0:n])`` over the whole buffer), (c) non-persistent
+        with a subset independent of THIS map's iter variables, and (d) a WCR operator
+        OpenMP supports (see ``_REDUCTION_TO_OMP_OP``); complex element types additionally
+        need a ``#pragma omp declare reduction`` (returned as ``declare_line``, ``+``/``*``
+        only). Anything else falls through to the atomic path -- correct but contended.
 
-        Every qualifying target is returned; the caller emits one ``reduction(op:var)``
-        clause per pair (``reduction(+:sum) reduction(+:result)``, equivalent to the
-        comma form) and pushes them all onto one scope frame so ``write_and_resolve_expr``
-        skips the now-redundant ``reduce_atomic`` for each. Multi-target reduction is
-        plain valid OpenMP; a map summing two independent scalars needs exactly this.
-
-        The clause runs the OpenMP runtime's per-thread privatization + final tree-reduce,
-        which is fastest for scalar reductions in parallel maps; the atomic-add fallback is
-        a synchronization-heavy alternative kept for cases the clause does not cover.
+        Each returned tuple yields one clause; the caller emits any unique ``declare_line``
+        ahead of the pragma and pushes ``data_name`` onto one scope frame so the nested
+        ``write_and_resolve_expr`` skips the now-redundant atomic and accumulates into the
+        OMP runtime's per-thread private copy (combined at the region barrier). Whole-buffer
+        array reduction is safe even when the body touches only a sub-region: untouched
+        elements keep their value (reduction identity + combine is a no-op).
         """
         out = []
         seen = set()
@@ -1914,21 +1960,15 @@ class CPUCodeGen(TargetCodeGenerator):
             desc = sdfg.arrays.get(oedge.dst.data)
             if desc is None:
                 continue
-            # OpenMP's reduction(...) clause needs a true scalar VARIABLE -- not a
-            # pointer-passed array slot. DaCe emits arrays (even length-1 ones) as
-            # ``T*`` and scalars as ``T``, so the clause only compiles when the
-            # accumulator is a ``Scalar`` descriptor. Larger array elements (e.g.
-            # ``arr[0]`` with shape (N,)) need ``PrivatizeReductionAccumulator``
-            # to rewrite into a transient ``Scalar`` first.
-            if not isinstance(desc, data.Scalar):
-                continue
             # A persistent / external accumulator is emitted as a state-struct member
-            # (``__state->x``), which is not a valid ``reduction(op:var)`` lvalue. Only
-            # a non-persistent (locally-declared) scalar can be privatized by the OMP
-            # runtime; persistent targets fall through to the atomic path (old style).
+            # (``__state->x``), which is not a valid ``reduction(...)`` lvalue. Only a
+            # non-persistent (locally-declared) target can be privatized by the OMP
+            # runtime; persistent targets fall through to the atomic path.
             if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
                 continue
-            # Loop-invariant subset (independent of the map's iter variables).
+            # Loop-invariant subset (independent of THIS map's iter variables): the WCR
+            # accumulates into the same region every iteration -- a genuine reduction over
+            # this map. A param-dependent subset is a scatter, not a reduction: atomic path.
             if iedge.data.subset is not None:
                 map_param_set = set(map_entry.map.params)
                 if any(s in map_param_set for s in (str(x) for x in iedge.data.subset.free_symbols)):
@@ -1938,11 +1978,41 @@ class CPUCodeGen(TargetCodeGenerator):
             if op_str is None:
                 continue
             var_name = self.ptr(oedge.dst.data, desc, sdfg)
-            key = (op_str, var_name)
+
+            # A true Scalar is always eligible for a plain ``reduction(op:var)`` clause
+            # (the pre-existing, flag-independent behavior). A whole contiguous Array
+            # buffer is eligible for an array-section clause ``reduction(op:A[0:n])`` ONLY
+            # under ``openmp_array_reductions`` (canonicalize turns it on for its output):
+            # the runtime privatizes the whole buffer per thread and combines element-wise,
+            # so the body's plain ``+=`` into the private copy is race-free and elements the
+            # body never touches stay unchanged (identity + combine is a no-op). Anything
+            # not provably a plain contiguous buffer falls through to the atomic path.
+            is_scalar = isinstance(desc, data.Scalar)
+            declare = None
+            if is_scalar:
+                clause_target = var_name
+            elif sdfg.openmp_array_reductions:
+                count = _contiguous_element_count(desc)
+                if count is None:
+                    continue
+                clause_target = "%s[0:%s]" % (var_name, cpp.sym2cpp(count))
+            else:
+                continue
+
+            # Complex element types have no built-in OpenMP reduction; under the flag emit
+            # a ``#pragma omp declare reduction`` (only ``+`` / ``*`` have a defined identity
+            # + combiner). Off the flag, preserve the exact prior scalar behavior (no dtype
+            # special-casing) so a disabled flag is a codegen no-op.
+            if sdfg.openmp_array_reductions and desc.dtype in _COMPLEX_TYPES:
+                declare = _complex_declare_reduction(op_str, desc.dtype.ctype)
+                if declare is None:
+                    continue
+
+            key = (op_str, clause_target)
             if key in seen:
                 continue
             seen.add(key)
-            out.append((op_str, var_name))
+            out.append((op_str, clause_target, oedge.dst.data, declare))
         return out
 
     def _generate_MapEntry(
@@ -2032,10 +2102,19 @@ class CPUCodeGen(TargetCodeGenerator):
             omp_reductions = []
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                 omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
-                for op_str, var_name in omp_reductions:
-                    map_header += f' reduction({op_str}:{var_name})'
-            # Push scope frame even if empty -- ``_generate_MapExit`` always pops.
-            self._omp_reduction_scope_stack.append({v: op for op, v in omp_reductions})
+                declares = []
+                for op_str, clause_target, _dname, declare in omp_reductions:
+                    map_header += f' reduction({op_str}:{clause_target})'
+                    if declare is not None and declare not in declares:
+                        declares.append(declare)
+                # ``declare reduction`` directives must be in scope before the pragma; emit
+                # each unique one on its own line ahead of the ``parallel for``.
+                for declare in declares:
+                    map_header = declare + '\n' + map_header
+            # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
+            # target data name so the nested WCR write's covered-check (``memlet.data in
+            # frame``) skips the now-redundant atomic and accumulates into the private copy.
+            self._omp_reduction_scope_stack.append({dname: op for op, _ct, dname, _dec in omp_reductions})
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):

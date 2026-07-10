@@ -470,6 +470,16 @@ class SDFG(ControlFlowRegion):
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
                                desc='Whether to generate OpenMP sections in code')
 
+    openmp_array_reductions = Property(
+        dtype=bool,
+        default=False,
+        desc='Whether codegen may emit OpenMP array-section reduction clauses '
+        '(``reduction(op:A[0:n])``, plus ``#pragma omp declare reduction`` for complex '
+        'element types) for whole-buffer WCR accumulators of a parallel map, instead of '
+        'per-element atomics. Off by default (atomic path); the canonicalize pipeline turns '
+        'it on for its output. Only provably-safe contiguous cases take the clause; anything '
+        'else falls back to the atomic path.')
+
     debuginfo = DebugInfoProperty(allow_none=True)
 
     callback_mapping = DictProperty(str,

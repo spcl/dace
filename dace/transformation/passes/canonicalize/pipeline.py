@@ -1292,4 +1292,10 @@ def canonicalize(sdfg: SDFG,
                              lift=lift,
                              lift_copy=lift_copy,
                              semantic_lifting=semantic_lifting).apply_pass(sdfg, {})
+    # Canonicalized output opts in to OpenMP array-section reduction codegen (whole-buffer
+    # WCR accumulators of a parallel map -> ``reduction(op:A[0:n])`` instead of per-element
+    # atomics; complex via ``declare reduction``). Off by default elsewhere; only provably
+    # contiguous cases take the clause, everything else still falls back to atomics.
+    for nested in sdfg.all_sdfgs_recursive():
+        nested.openmp_array_reductions = True
     return sdfg

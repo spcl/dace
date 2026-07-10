@@ -102,9 +102,11 @@ def test_scalar_wcr_numerically_correct():
     assert np.isclose(float(out[0]), float(src.sum()))
 
 
-def test_multiple_omp_reducible_targets_fall_back_to_atomic():
-    """With 2+ scalar WCR targets in one map, we refuse the OMP reduction clause
-    (single-target limit) and the atomic path emits as before."""
+def test_multiple_omp_reducible_targets_emit_multiple_clauses():
+    """With 2+ scalar WCR targets in one map, each qualifying accumulator gets its own
+    ``reduction(op:var)`` clause on the same pragma -- multi-target reduction is valid
+    OpenMP (the single-target cap was dropped in c1f38eedc). The atomic path is skipped
+    for the covered targets."""
     sdfg = dace.SDFG("wcr_two_scalars")
     sdfg.add_array("src", [N], dace.float64)
     sdfg.add_scalar("acc1", dace.float64, transient=True)
@@ -144,8 +146,9 @@ def test_multiple_omp_reducible_targets_fall_back_to_atomic():
     sdfg.validate()
     csdfg, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(" in l for l in pragma_lines), \
-        "expected no reduction(...) clause when 2+ targets qualify -- got:\n" + "\n".join(pragma_lines)
+    assert any("reduction(+:acc1)" in l and "reduction(+:acc2)" in l for l in pragma_lines), \
+        "expected reduction(+:acc1) and reduction(+:acc2) on one pragma -- got:\n" + "\n".join(pragma_lines)
+    assert "reduce_atomic" not in src, "covered reduction targets must skip the atomic path"
 
 
 def _build_op_sdfg(op_name: str, wcr: str, dtype: dace.typeclass, init: str) -> dace.SDFG:
@@ -459,6 +462,136 @@ def test_mixed_copy_and_product_reduce_detects_star_op():
     assert np.isclose(float(out[0]), float(np.prod(c))), "product reduction p=prod(c) wrong"
 
 
+# ---------------------------------------------------------------------------
+# OpenMP array-section reduction  reduction(op:A[0:n])  (openmp_array_reductions flag)
+# ---------------------------------------------------------------------------
+KK, NR, NM = 200, 5, 7
+
+
+def _build_wcr_array_sum(dtype, flag: bool, wcr: str = "lambda a, b: a + b", strides=None) -> dace.SDFG:
+    """Hand-built target shape: an outer CPU_Multicore reduction map whose body writes
+    a WHOLE array ``A`` with WCR -- ``outer(k){ inner(i,j){ A[i,j] op= X[k,i,j] } }``.
+
+    The WCR memlet at the OUTER map exit covers ``A[0:NR,0:NM]`` (independent of ``k``),
+    exactly the shape ``_collect_omp_reductions`` turns into ``reduction(op:A[0:NR*NM])``
+    when ``openmp_array_reductions`` is on. ``strides`` forces a non-contiguous layout
+    (to exercise the atomic fallback).
+    """
+    sd = dace.SDFG("wcr_arr_%s_%d_%s" % (dtype.to_string(), int(flag), "s" if strides else "c"))
+    sd.add_array("X", [KK, NR, NM], dtype)
+    if strides is None:
+        sd.add_array("A", [NR, NM], dtype)
+    else:
+        sd.add_array("A", [NR, NM], dtype, strides=strides)
+    st = sd.add_state()
+    oe, ox = st.add_map("outer", dict(k="0:%d" % KK), schedule=dace.ScheduleType.CPU_Multicore)
+    ie, ix = st.add_map("inner", dict(i="0:%d" % NR, j="0:%d" % NM))
+    t = st.add_tasklet("acc", {"xin"}, {"aout"}, "aout = xin")
+    st.add_memlet_path(st.add_read("X"), oe, ie, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k, i, j"))
+    st.add_memlet_path(t,
+                       ix,
+                       ox,
+                       st.add_write("A"),
+                       src_conn="aout",
+                       memlet=dace.Memlet(data="A", subset="i, j", wcr=wcr))
+    sd.validate()
+    sd.openmp_array_reductions = flag
+    return sd
+
+
+def _run_arr(sd, X, A0):
+    A = A0.copy()
+    sd(X=X, A=A)
+    return A
+
+
+def test_array_wcr_emits_omp_array_section_clause():
+    """Flag on: a whole-buffer WCR accumulator of a parallel map becomes
+    ``reduction(+:A[0:35])`` and the covered inner write skips ``reduce_atomic``."""
+    sd = _build_wcr_array_sum(dace.float64, flag=True)
+    _, src = _compile_and_read_src(sd)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any("reduction(+:A[0:" in l for l in pragma), \
+        "expected reduction(+:A[0:n]) array-section clause -- got:\n" + "\n".join(pragma)
+    assert not any("reduce_atomic" in l and "A " in l for l in src.splitlines()), \
+        "covered array target must not use the atomic path"
+
+
+def test_array_wcr_flag_off_falls_back_to_atomic():
+    """Flag off (default): no array-section clause; the atomic path emits as before."""
+    sd = _build_wcr_array_sum(dace.float64, flag=False)
+    _, src = _compile_and_read_src(sd)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert not any("[0:" in l and "reduction(" in l for l in pragma), \
+        "flag off must NOT emit an array-section reduction clause -- got:\n" + "\n".join(pragma)
+    assert "reduce_atomic" in src, "flag off must keep the atomic path"
+
+
+def test_array_wcr_numerically_correct_omp4():
+    """Flag on, OMP=4: the array reduction is race-free and bit-exact vs the sequential sum,
+    and matches the flag-off atomic result."""
+    rng = np.random.default_rng(2)
+    X = rng.standard_normal((KK, NR, NM))
+    A0 = rng.standard_normal((NR, NM))
+    ref = A0 + X.sum(axis=0)
+    old = os.environ.get("OMP_NUM_THREADS")
+    os.environ["OMP_NUM_THREADS"] = "4"
+    try:
+        got_on = _run_arr(_build_wcr_array_sum(dace.float64, flag=True), X, A0)
+        got_off = _run_arr(_build_wcr_array_sum(dace.float64, flag=False), X, A0)
+    finally:
+        if old is None:
+            os.environ.pop("OMP_NUM_THREADS", None)
+        else:
+            os.environ["OMP_NUM_THREADS"] = old
+    assert np.allclose(got_on, ref), "flag-on array reduction numerically wrong"
+    assert np.allclose(got_off, ref), "flag-off atomic reduction numerically wrong"
+
+
+def test_complex_array_wcr_emits_declare_reduction_and_is_correct():
+    """Complex element type: flag on emits a ``#pragma omp declare reduction`` for
+    ``dace::complex128`` (OpenMP has no built-in complex reduction) plus the array-section
+    clause, and is bit-exact at OMP=4."""
+    sd = _build_wcr_array_sum(dace.complex128, flag=True)
+    _, src = _compile_and_read_src(sd)
+    assert "declare reduction(+ : dace::complex128" in src, \
+        "expected complex declare-reduction directive"
+    assert any("reduction(+:A[0:" in l for l in src.splitlines() if "#pragma omp parallel for" in l)
+
+    rng = np.random.default_rng(3)
+    X = (rng.standard_normal((KK, NR, NM)) + 1j * rng.standard_normal((KK, NR, NM)))
+    A0 = np.zeros((NR, NM), np.complex128)
+    ref = A0 + X.sum(axis=0)
+    old = os.environ.get("OMP_NUM_THREADS")
+    os.environ["OMP_NUM_THREADS"] = "4"
+    try:
+        got = _run_arr(_build_wcr_array_sum(dace.complex128, flag=True), X, A0)
+    finally:
+        if old is None:
+            os.environ.pop("OMP_NUM_THREADS", None)
+        else:
+            os.environ["OMP_NUM_THREADS"] = old
+    assert np.allclose(got, ref), "complex array reduction numerically wrong"
+
+
+def test_noncontiguous_array_target_falls_back_to_atomic():
+    """Safety: a non-contiguous (transposed-stride) buffer can't be reduced as a flat
+    ``A[0:n]`` section, so even with the flag on it falls back to the atomic path."""
+    sd = _build_wcr_array_sum(dace.float64, flag=True, strides=[1, NR])
+    _, src = _compile_and_read_src(sd)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert not any("[0:" in l and "reduction(" in l for l in pragma), \
+        "non-contiguous buffer must NOT take the array-section clause -- got:\n" + "\n".join(pragma)
+
+
+def test_complex_product_declare_uses_identity_one():
+    """A complex ``*`` reduction declares identity 1 (not 0)."""
+    sd = _build_wcr_array_sum(dace.complex128, flag=True, wcr="lambda a, b: a * b")
+    _, src = _compile_and_read_src(sd)
+    assert "declare reduction(* : dace::complex128" in src
+    assert "initializer(omp_priv = dace::complex128(1))" in src
+
+
 if __name__ == "__main__":
     test_mixed_copy_and_reduce_map()
     test_mixed_copy_and_product_reduce_detects_star_op()
@@ -466,9 +599,15 @@ if __name__ == "__main__":
     test_scalar_wcr_emits_omp_reduction_clause()
     test_scalar_wcr_does_not_emit_atomic_for_covered_target()
     test_scalar_wcr_numerically_correct()
-    test_multiple_omp_reducible_targets_fall_back_to_atomic()
+    test_multiple_omp_reducible_targets_emit_multiple_clauses()
     for case in PER_OP_CASES:
         test_per_operator_emits_correct_omp_reduction_clause(*case)
         test_per_operator_suppresses_atomic_on_covered_target(*case)
     test_unsupported_op_falls_back_to_atomic()
     test_length_one_array_target_falls_back_to_atomic()
+    test_array_wcr_emits_omp_array_section_clause()
+    test_array_wcr_flag_off_falls_back_to_atomic()
+    test_array_wcr_numerically_correct_omp4()
+    test_complex_array_wcr_emits_declare_reduction_and_is_correct()
+    test_noncontiguous_array_target_falls_back_to_atomic()
+    test_complex_product_declare_uses_identity_one()
