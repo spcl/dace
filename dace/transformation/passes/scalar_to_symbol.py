@@ -320,13 +320,27 @@ def find_promotable_scalars(sdfg: sd.SDFG,
                 candidates.remove(candidate)
         candidates_seen |= candidates_in_state
 
-    # Filter out non-integral symbols that do not appear in inter-state edges
+    # Interstate symbols are still needed to keep read-only / interstate-only
+    # candidates in the final intersection below.
     interstate_symbols = set()
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
     for reg in sdfg.all_control_flow_regions():
         interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
-    for candidate in (candidates - interstate_symbols):
+
+    # Promotion targets only INTEGER-LIKE scalars (bool + the integer types --
+    # exactly ``dtypes.INTEGER_TYPES``). A non-integer scalar (float or complex)
+    # must never become a symbol: code generation has no float/complex symbol
+    # type. The former design also promoted a non-integer scalar that appeared in
+    # an inter-state CONDITION (contour_integral's ``abs(z) < 1`` makes the complex
+    # ``z = int_pts[idx]`` an interstate symbol), but promoting it inlines the
+    # array read ``int_pts[idx]`` into the consuming tasklet's code, leaking the
+    # array ``int_pts`` into the symbol namespace -- a later ``LoopToMap`` that
+    # nests the scope then registers ``int_pts`` as an ``int`` symbol and passes
+    # the array pointer where an ``int`` is declared (``int int_pts`` <-
+    # ``&int_pts[0]``, a type error). Apply the integer-only rule to EVERY
+    # candidate, dropping that non-integer interstate exemption.
+    for candidate in list(candidates):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
 

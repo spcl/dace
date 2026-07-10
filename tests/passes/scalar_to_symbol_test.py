@@ -176,7 +176,14 @@ def test_promote_copy():
 
 
 def test_promote_array_assignment():
-    """ Simple promotion with array assignment. """
+    """ A FLOAT scalar read from an array is NOT promotable: promotion targets
+    integer/bool scalars only (code generation has no float/complex symbol type).
+    A non-integer scalar used in an inter-state condition (``if j >= 0.0``) is no
+    longer exempted -- promoting it would inline the array read ``A[1, 1]`` into
+    the consuming tasklet's code and leak the array ``A`` into the symbol
+    namespace (the contour_integral ``int_pts`` bug: a later ``LoopToMap`` then
+    registers the array as an ``int`` symbol). The int64 variant
+    (:func:`test_promote_array_assignment_tasklet`) still promotes. """
 
     @dace.program
     def testprog6(A: dace.float64[20, 20]):
@@ -185,25 +192,9 @@ def test_promote_array_assignment():
             A[:] += j
 
     sdfg: dace.SDFG = testprog6.to_sdfg(simplify=False)
-    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == set()
+    # Promotion is a no-op here (nothing promotable); the program still runs.
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    sdfg.apply_transformations_repeated([isxf.StateFusion, isxf.BlockFusion])
-
-    # There should be 2 states:
-    # [empty] --j=A[1, 1]--> [Conditional]
-    assert sdfg.number_of_nodes() == 2
-    # The conditional should contain one branch, with one state, with a single map from A->A inside of it.
-    cond = None
-    for n in sdfg.nodes():
-        if isinstance(n, ConditionalBlock):
-            cond = n
-            break
-    assert cond is not None
-    assert len(cond.branches) == 1
-    assert len(cond.branches[0][1].nodes()) == 1
-    assert len(cond.branches[0][1].nodes()[0].nodes()) == 5
-
-    # Program should produce correct result
     A = np.random.rand(20, 20)
     expected = A + A[1, 1]
     sdfg(A=A)
