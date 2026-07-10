@@ -36,7 +36,7 @@ def build_up_b_np(b, rho, dt, u, v, dx, dy):
 
 
 def pressure_poisson_np(nit, p, dx, dy, b):
-    pn = np.empty_like(p)
+    pn = np.zeros_like(p)
     pn = p.copy()
     for q in range(nit):
         pn = p.copy()
@@ -49,8 +49,8 @@ def pressure_poisson_np(nit, p, dx, dy, b):
 
 
 def reference(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
-    un = np.empty_like(u)
-    vn = np.empty_like(v)
+    un = np.zeros_like(u)
+    vn = np.zeros_like(v)
     b = np.zeros((ny, nx), dtype=np.float64)
     for n in range(nt):
         un = u.copy()
@@ -88,7 +88,7 @@ def build_up_b(b: dc_float[ny, nx], rho: dc_float, dt: dc_float, u: dc_float[ny,
 
 @dc.program
 def pressure_poisson(p: dc_float[ny, nx], dx: dc_float, dy: dc_float, b: dc_float[ny, nx]):
-    pn = np.empty_like(p)
+    pn = np.zeros_like(p)
     pn[:] = p.copy()
     for q in range(nit):
         pn[:] = p.copy()
@@ -103,8 +103,8 @@ def pressure_poisson(p: dc_float[ny, nx], dx: dc_float, dy: dc_float, b: dc_floa
 @dc.program
 def kernel(nt: dc.int64, u: dc_float[ny, nx], v: dc_float[ny, nx], dt: dc_float, dx: dc_float, dy: dc_float,
            p: dc_float[ny, nx], rho: dc_float, nu: dc_float):
-    un = np.empty_like(u)
-    vn = np.empty_like(v)
+    un = np.zeros_like(u)
+    vn = np.zeros_like(v)
     b = np.zeros((ny, nx), dtype=np.float64)
     for n in range(nt):
         un[:] = u.copy()

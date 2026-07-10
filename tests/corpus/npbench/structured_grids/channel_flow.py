@@ -46,7 +46,7 @@ def build_up_b_np(rho, dt, dx, dy, u, v):
 
 
 def pressure_poisson_periodic_np(nit, p, dx, dy, b):
-    pn = np.empty_like(p)
+    pn = np.zeros_like(p)
     for q in range(nit):
         pn[:] = p.copy()
         p[1:-1, 1:-1] = ((pn[1:-1, 2:] + pn[1:-1, 0:-2]) * dy**2 + (pn[2:, 1:-1] + pn[0:-2, 1:-1]) * dx**2) / (
@@ -124,7 +124,7 @@ def build_up_b(rho: dc_float, dt: dc_float, dx: dc_float, dy: dc_float, u: dc_fl
 
 @dc.program
 def pressure_poisson_periodic(p: dc_float[ny, nx], dx: dc_float, dy: dc_float, b: dc_float[ny, nx]):
-    pn = np.empty_like(p)
+    pn = np.zeros_like(p)
     for q in range(nit):
         pn[:] = p.copy()
         p[1:-1, 1:-1] = ((pn[1:-1, 2:] + pn[1:-1, 0:-2]) * dy**2 + (pn[2:, 1:-1] + pn[0:-2, 1:-1]) * dx**2) / (

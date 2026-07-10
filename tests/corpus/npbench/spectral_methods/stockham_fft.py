@@ -76,9 +76,9 @@ def kernel(x: dc_complex_float[R**K], y: dc_complex_float[R**K]):
     ii_coord = np.ndarray((R, N), dtype=np.uint32)
     jj_coord = np.ndarray((R, N), dtype=np.uint32)
     mgrid2(ii_coord, jj_coord)
-    tmp_perm = np.empty_like(y)
-    D = np.empty_like(y)
-    tmp = np.empty_like(y)
+    tmp_perm = np.zeros_like(y)
+    D = np.zeros_like(y)
+    tmp = np.zeros_like(y)
     for i in range(K):
         yv = np.reshape(y, (R**i, R, R**(K - i - 1)))
         tmp_perm[:] = np.reshape(np.transpose(yv, axes=(1, 0, 2)), (N, ))
