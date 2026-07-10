@@ -894,6 +894,82 @@ def test_promotion_rejects_orphan_condition_scalar():
         scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
 
 
+def test_complex_scalar_from_array_not_promotable():
+    """A COMPLEX scalar read from a complex array and used in an inter-state
+    condition (``abs(z) < 1``) must NOT be promoted. Code generation has no
+    complex symbol type; promoting ``z`` would inline the complex array read
+    ``a[i]`` into consuming tasklet code and leak the array ``a`` into the symbol
+    namespace, where a later ``LoopToMap`` registers it as an ``int`` symbol
+    (the contour_integral / mandelbrot2 ``int_pts`` codegen bug). Promotion is
+    integer/bool-only; the non-integer inter-state-condition exemption is gone. """
+    Nsym = dace.symbol('Nsym')
+
+    @dace.program
+    def cplx_cond(a: dace.complex128[Nsym], out: dace.complex128[Nsym]):
+        for i in range(Nsym):
+            z = a[i]
+            if np.absolute(z) < 1.0:
+                out[i] = z * z
+            else:
+                out[i] = z
+
+    sdfg = cplx_cond.to_sdfg(simplify=False)
+    promotable = scalar_to_symbol.find_promotable_scalars(sdfg)
+    assert not any(sdfg.arrays[s].dtype.is_complex() for s in promotable), \
+        f"a complex scalar must not be promotable; got {promotable}"
+
+    # End-to-end value preservation through canonicalization (no complex symbol,
+    # no array-as-symbol leak -> compiles + runs correctly).
+    from dace.transformation.passes.canonicalize import canonicalize
+    csdfg = cplx_cond.to_sdfg(simplify=True)
+    canonicalize(csdfg, validate=True)
+    assert not any(csdfg.arrays.get(s) is None and s == 'a' for s in csdfg.symbols), "array 'a' leaked as a symbol"
+    n = 12
+    rng = np.random.default_rng(0)
+    a = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex128)
+    ref = np.array([av * av if abs(av) < 1.0 else av for av in a], dtype=np.complex128)
+    got = np.zeros(n, np.complex128)
+    csdfg(a=a.copy(), out=got, Nsym=n)
+    assert np.allclose(got, ref)
+
+
+def test_mandelbrot2_complex_escape_pattern():
+    """The mandelbrot2 escape-iteration pattern: a complex accumulator ``Z``
+    updated under ``abs(Z) < horizon`` guards over an iteration loop. The complex
+    guard scalar must not be promoted to a symbol (same int_pts fix as
+    contour_integral). Canonicalizes, compiles and runs bit-exact vs a
+    plain-Python reference. """
+    Nsym = dace.symbol('Nsym')
+
+    @dace.program
+    def mandel(C: dace.complex128[Nsym], Zout: dace.complex128[Nsym], maxiter: dace.int64):
+        Z = np.zeros((Nsym, ), dtype=dace.complex128)
+        for it in range(maxiter):
+            for i in dace.map[0:Nsym]:
+                if np.absolute(Z[i]) < 2.0:
+                    Z[i] = Z[i] * Z[i] + C[i]
+        Zout[:] = Z
+
+    from dace.transformation.passes.canonicalize import canonicalize
+    sdfg = mandel.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    # No array (complex ``C`` / ``Z`` / ``Zout``) may leak into the symbol namespace
+    # (the ``abs(Z[i]) < 2`` guard scalar must stay complex data, not a symbol).
+    assert not ({'C', 'Z', 'Zout'} & set(sdfg.symbols)), f"an array leaked as a symbol: {set(sdfg.symbols)}"
+
+    n, mit = 8, 10
+    rng = np.random.default_rng(1)
+    C = (0.5 * rng.standard_normal(n) + 0.5j * rng.standard_normal(n)).astype(np.complex128)
+    Zr = np.zeros(n, np.complex128)
+    for _ in range(mit):
+        for i in range(n):
+            if abs(Zr[i]) < 2.0:
+                Zr[i] = Zr[i] * Zr[i] + C[i]
+    Zout = np.zeros(n, np.complex128)
+    sdfg(C=C.copy(), Zout=Zout, maxiter=mit, Nsym=n)
+    assert np.allclose(Zout, Zr), f"Z mismatch: {np.abs(Zout - Zr).max():.2e}"
+
+
 if __name__ == '__main__':
     test_promotion_rejects_orphan_condition_scalar()
     test_find_promotable()
