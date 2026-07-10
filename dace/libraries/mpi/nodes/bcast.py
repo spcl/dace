@@ -24,9 +24,9 @@ class ExpandBcastMPI(ExpandTransformation):
         elif dtype == dtypes.float64:
             mpi_dtype_str = "MPI_DOUBLE"
         elif dtype == dtypes.complex64:
-            mpi_dtype_str = "MPI_COMPLEX"
+            mpi_dtype_str = "MPI_C_FLOAT_COMPLEX"
         elif dtype == dtypes.complex128:
-            mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
+            mpi_dtype_str = "MPI_C_DOUBLE_COMPLEX"
         elif dtype == dtypes.int32:
             mpi_dtype_str = "MPI_INT"
         elif dtype == dtypes.int64:

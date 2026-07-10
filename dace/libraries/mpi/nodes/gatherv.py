@@ -9,7 +9,7 @@ C ABI mandates plain ``int``).  Datatypes are inferred per buffer and the
 communicator is resolved from an optional ``_comm`` / ``_grid`` input connector,
 else the default world.
 """
-from dace import dtypes, library
+from dace import data, dtypes, library
 from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.symbolic import symstr
@@ -36,8 +36,11 @@ class ExpandGathervMPI(ExpandTransformation):
 
         comm = resolve_comm(node, parent_state)
 
+        # A scalar send buffer is a value in the tasklet, not a pointer; take its address.
+        in_ref = "&" if isinstance(inbuffer, data.Scalar) else ""
+
         code = f"""
-            MPI_Gatherv(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
+            MPI_Gatherv({in_ref}_inbuffer, {in_count_str}, {in_mpi_dtype_str},
                         _outbuffer, _recvcounts, _displs, {out_mpi_dtype_str},
                         _root, {comm});
             """
