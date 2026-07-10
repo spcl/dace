@@ -27,6 +27,8 @@ from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
+from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
+from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.loop_fission import LoopFission
@@ -947,7 +949,21 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # any such residual now. LoopToMap only fires on genuinely parallel loops and
     # no-ops otherwise, so this cannot mis-parallelize a real carry. BEFORE
     # AssumeSymbolConstraints, which must stay the terminal stage.
+    # Lift loop-carried in-place array reductions (contour_integral's
+    # ``for idx: P[i, j] += X[i, j]``) to WCR writes so the terminal LoopToMap
+    # parallelizes the enclosing loop. Runs post-canon (loops in fissioned /
+    # normalized form) right before the terminal parallelize sweep.
+    s += [('end', LiftLoopCarriedReduction())]
     s += [('end', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
+    # Terminal symbol cleanup: after fusion, a fused gather-map body carries
+    # duplicate index symbols that map fusion introduced -- ``idx_index`` and
+    # ``idx_index_0`` both ``idx[i]`` (``idx[i]`` computed twice). ``SymbolDedup``
+    # merges provably-equal interstate-edge symbols; the following
+    # ``SymbolPropagation`` + ``ConstantPropagation`` then re-fold the survivors
+    # (the merge can expose fresh constant/symbol chains). BEFORE
+    # AssumeSymbolConstraints, which must stay the terminal stage.
+    s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
 
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR

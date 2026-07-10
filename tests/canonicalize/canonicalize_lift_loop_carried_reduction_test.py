@@ -100,5 +100,188 @@ def test_refuses_loop_indexed_write():
     assert _num_wcr(sdfg) == 0
 
 
+# --------------------------------------------------------------------------- #
+# contour_integral pattern: an OUTER reduction loop whose body computes a
+# per-iteration array increment (an inner element map) and accumulates it into a
+# whole-array output whose index is INVARIANT over the loop variable. After the
+# lift + LoopToMap the outer loop parallelizes and the accumulation becomes a WCR
+# reduction. These run the FULL canonicalize pipeline (the wired pass) and check
+# both full parallelization (0 residual loops) and numerical correctness -- the
+# WCR nesting (inner element map WCR under a parallel outer map) must reduce
+# correctly, including under real multithreading.
+# --------------------------------------------------------------------------- #
+
+KK = dace.symbol('KK')
+NR = dace.symbol('NR')
+NM = dace.symbol('NM')
+
+
+def _canon_full(prog):
+    from dace.transformation.passes.canonicalize import canonicalize
+    sdfg = prog.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, target='cpu')
+    return sdfg
+
+
+def _residual_loops(sdfg) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive()
+               if isinstance(n, LoopRegion) and not getattr(n, 'pinned_sequential', False))
+
+
+@dace.program
+def _contour_sum(B: dace.float64[KK, NR, NM], P: dace.float64[NR, NM]):
+    P[:] = 0.0
+    for idx in range(KK):
+        X = np.zeros((NR, NM), dtype=np.float64)
+        for i, j in dace.map[0:NR, 0:NM]:
+            X[i, j] = B[idx, i, j] * B[idx, i, j]   # per-iteration computed increment
+        for i, j in dace.map[0:NR, 0:NM]:
+            P[i, j] = P[i, j] + X[i, j]             # reduction over idx (invariant subset)
+
+
+@dace.program
+def _contour_two(B: dace.float64[KK, NR, NM], P0: dace.float64[NR, NM], P1: dace.float64[NR, NM]):
+    P0[:] = 0.0
+    P1[:] = 0.0
+    for idx in range(KK):
+        X = np.zeros((NR, NM), dtype=np.float64)
+        for i, j in dace.map[0:NR, 0:NM]:
+            X[i, j] = B[idx, i, j] + 1.0
+        for i, j in dace.map[0:NR, 0:NM]:
+            P0[i, j] = P0[i, j] + X[i, j]
+            P1[i, j] = P1[i, j] + 2.0 * X[i, j]     # fused multi-output reduction (contour P0/P1)
+
+
+@dace.program
+def _contour_max(B: dace.float64[KK, NR, NM], M: dace.float64[NR, NM]):
+    M[:] = -1.0e30
+    for idx in range(KK):
+        for i, j in dace.map[0:NR, 0:NM]:
+            M[i, j] = max(M[i, j], B[idx, i, j])    # max reduction over idx
+
+
+@dace.program
+def _contour_prod(B: dace.float64[KK, NR, NM], P: dace.float64[NR, NM]):
+    P[:] = 1.0
+    for idx in range(KK):
+        for i, j in dace.map[0:NR, 0:NM]:
+            P[i, j] = P[i, j] * B[idx, i, j]        # product reduction over idx
+
+
+@dace.program
+def _contour_indexed_injective(B: dace.float64[KK, NM], Q: dace.float64[KK, NM]):
+    for idx in range(KK):
+        for j in dace.map[0:NM]:
+            Q[idx, j] = Q[idx, j] + B[idx, j]       # write index USES idx -> injective, NOT a reduction
+
+
+def test_contour_pattern_sum_reduction():
+    """Single-accumulator whole-array reduction over the outer loop, with a
+    per-iteration computed increment: fully parallelizes and sums correctly."""
+    sdfg = _canon_full(_contour_sum)
+    assert _residual_loops(sdfg) == 0
+    kk, nr, nm = 6, 5, 7
+    rng = np.random.default_rng(0)
+    B = rng.standard_normal((kk, nr, nm))
+    P = np.full((nr, nm), 123.0)
+    ref = (B * B).sum(axis=0)
+    sdfg(B=B.copy(), P=P, KK=kk, NR=nr, NM=nm)
+    assert np.allclose(P, ref)
+
+
+def test_contour_pattern_two_accumulators():
+    """Fused multi-output reduction (contour P0/P1): both accumulators lift and
+    parallelize; each reduces correctly."""
+    sdfg = _canon_full(_contour_two)
+    assert _residual_loops(sdfg) == 0
+    kk, nr, nm = 6, 4, 5
+    rng = np.random.default_rng(1)
+    B = rng.standard_normal((kk, nr, nm))
+    P0 = np.full((nr, nm), -7.0)
+    P1 = np.full((nr, nm), 9.0)
+    X = B + 1.0
+    ref0 = X.sum(axis=0)
+    ref1 = (2.0 * X).sum(axis=0)
+    sdfg(B=B.copy(), P0=P0, P1=P1, KK=kk, NR=nr, NM=nm)
+    assert np.allclose(P0, ref0) and np.allclose(P1, ref1)
+
+
+def test_contour_pattern_max_reduction():
+    """A max-reduction (WCR ``max``) over the outer loop parallelizes + is exact."""
+    sdfg = _canon_full(_contour_max)
+    assert _residual_loops(sdfg) == 0
+    kk, nr, nm = 5, 4, 6
+    rng = np.random.default_rng(2)
+    B = rng.standard_normal((kk, nr, nm))
+    M = np.zeros((nr, nm))
+    ref = B.max(axis=0)
+    sdfg(B=B.copy(), M=M, KK=kk, NR=nr, NM=nm)
+    assert np.allclose(M, ref)
+
+
+def test_contour_pattern_product_reduction():
+    """A product-reduction (WCR ``*``) over the outer loop parallelizes + is exact."""
+    sdfg = _canon_full(_contour_prod)
+    assert _residual_loops(sdfg) == 0
+    kk, nr, nm = 5, 3, 4
+    rng = np.random.default_rng(3)
+    B = 0.5 + rng.random((kk, nr, nm))  # away from 0 to keep the product well-conditioned
+    P = np.zeros((nr, nm))
+    ref = B.prod(axis=0)
+    sdfg(B=B.copy(), P=P, KK=kk, NR=nr, NM=nm)
+    assert np.allclose(P, ref)
+
+
+def test_contour_pattern_thread_safe_reduction():
+    """The nested WCR (inner element map's WCR under the PARALLEL outer map) must
+    reduce correctly under real multithreading -- an OMP=1-only check would miss a
+    cross-iteration race. Runs the two-accumulator kernel several times with
+    OMP_NUM_THREADS>1 and requires every run to match the reference."""
+    import os
+    sdfg = _canon_full(_contour_two)
+    assert _residual_loops(sdfg) == 0
+    kk, nr, nm = 8, 6, 5
+    rng = np.random.default_rng(4)
+    B = rng.standard_normal((kk, nr, nm))
+    X = B + 1.0
+    ref0 = X.sum(axis=0)
+    ref1 = (2.0 * X).sum(axis=0)
+    prev = os.environ.get('OMP_NUM_THREADS')
+    os.environ['OMP_NUM_THREADS'] = '4'
+    try:
+        csdfg = sdfg.compile()
+        for _ in range(6):
+            P0 = np.full((nr, nm), 0.0)
+            P1 = np.full((nr, nm), 0.0)
+            csdfg(B=B.copy(), P0=P0, P1=P1, KK=kk, NR=nr, NM=nm)
+            assert np.allclose(P0, ref0), f"P0 race: maxdiff {np.abs(P0 - ref0).max():.2e}"
+            assert np.allclose(P1, ref1), f"P1 race: maxdiff {np.abs(P1 - ref1).max():.2e}"
+    finally:
+        if prev is None:
+            os.environ.pop('OMP_NUM_THREADS', None)
+        else:
+            os.environ['OMP_NUM_THREADS'] = prev
+
+
+def test_contour_pattern_indexed_write_is_injective_not_reduction():
+    """When the write index USES the loop variable (``Q[idx, j]``), each iteration
+    writes a DISTINCT element -- an injective parallel aug-assign, NOT a reduction.
+    LiftLoopCarriedReduction must NOT add a WCR (the invariant-subset gate fails);
+    LoopToMap parallelizes it directly. Value-preserving."""
+    sdfg = _contour_indexed_injective.to_sdfg(simplify=True)
+    assert _apply(sdfg) == 0          # not lifted
+    assert _num_wcr(sdfg) == 0
+    from dace.transformation.passes.canonicalize import canonicalize
+    csdfg = _canon_full(_contour_indexed_injective)
+    kk, nm = 5, 6
+    rng = np.random.default_rng(5)
+    B = rng.standard_normal((kk, nm))
+    Q0 = rng.standard_normal((kk, nm))
+    ref = Q0 + B
+    Q = Q0.copy()
+    csdfg(B=B.copy(), Q=Q, KK=kk, NM=nm)
+    assert np.allclose(Q, ref)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
