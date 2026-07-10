@@ -806,8 +806,16 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         if edge is None:
             return False
 
-        # Overapproximated WCR subset (access may be dynamic) → unsupported.
-        if edge.data.subset.num_elements() > edge.data.volume or edge.data.dynamic is True:
+        # Overapproximated WCR subset (access may be dynamic) → unsupported. The two
+        # sizes can be SYMBOLIC (a scatter over a dataset-sized bin array compares
+        # ``npt`` vs ``1``), and a raw ``>`` on two symbolic sizes raises
+        # ``TypeError: cannot determine truth value of Relational: npt > 1``. Decide it
+        # symbolically and PROCEED only when the write is provably within its volume;
+        # an undecidable or provably-larger difference (the over-approximated /
+        # dynamic case) refuses, keeping the WCR.
+        diff = symbolic.simplify(edge.data.subset.num_elements() - edge.data.volume)
+        within_volume = (diff <= 0) == True  # noqa: E712 -- sympy Relational, not a bool
+        if not within_volume or edge.data.dynamic is True:
             return False
 
         # A multi-element (slice) WCR write is an ELEMENTWISE RMW, not a scalar one. Only the

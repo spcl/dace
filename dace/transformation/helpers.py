@@ -491,7 +491,13 @@ def nest_state_subgraph(sdfg: SDFG,
     for original_edge, new_edge in edges_to_offset:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
-            if not full_data:
+            # A whole-array / scalar access carries ``subset is None`` (a legal memlet
+            # representation, e.g. a bare scalar accumulator ``Memlet('delta')``). There is
+            # nothing to re-base into the nested SDFG's coordinate space in that case -- the
+            # nested descriptor is the whole array too -- so skip the offset instead of
+            # dereferencing ``None`` (the ``subset is not None`` guard is the idiom used for
+            # the same case throughout ``propagation.py`` / the memlet helpers below).
+            if not full_data and edge.data.subset is not None:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 

@@ -143,9 +143,48 @@ def test_slice_source_offset_wcr():
     assert np.allclose(got, ref), f'A[i] += B[k+i]; got {got}, ref {ref}'
 
 
+def test_symbolic_overapproximated_wcr_refused_no_typeerror():
+    """A WCR write with a SYMBOLIC over-approximated subset (a data-dependent
+    scatter: the subset spans ``npt`` elements but the volume is 1) must be
+    refused cleanly. Pre-fix the guard ``subset.num_elements() > volume`` raised
+    ``TypeError: cannot determine truth value of Relational: npt > 1`` -- the two
+    symbolic sizes cannot be bool-coerced by a raw ``>`` -- which the
+    pattern-match framework only swallowed to a printed warning. ``can_be_applied``
+    now decides the size comparison symbolically and returns ``False`` (keeps the
+    WCR) instead of raising (the azimint_hist histogram-accumulator shape).
+
+    Calls ``can_be_applied`` directly so the pre-fix ``TypeError`` would propagate
+    (the framework's ``apply_transformations`` wrapper otherwise hides it).
+    """
+    npt = dace.symbol('npt')
+    sdfg = dace.SDFG('wcr_symbolic_overapprox')
+    sdfg.add_array('hist', [npt], dace.float64)
+    sdfg.add_scalar('v', dace.float64, transient=True)
+    state = sdfg.add_state()
+    prod = state.add_tasklet('p', {}, {'o'}, 'o = 1.0')
+    vnode = state.add_access('v')
+    hist = state.add_write('hist')
+    state.add_edge(prod, 'o', vnode, None, dace.Memlet('v[0]'))
+    # Over-approximated dynamic scatter: subset 0:npt (npt elements), volume 1.
+    m = dace.Memlet(data='hist', subset=f'0:{npt}', wcr='lambda a, b: a + b')
+    m.volume = 1
+    m.dynamic = True
+    state.add_edge(vnode, None, hist, None, m)
+
+    # expr_index 2 == ``inp -[wcr]-> output`` (AccessNode -> AccessNode).
+    xform = WCRToAugAssign()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {
+        WCRToAugAssign.inp: state.node_id(vnode),
+        WCRToAugAssign.output: state.node_id(hist),
+    }, expr_index=2)
+    # Must return False without raising (pre-fix this raised the symbolic TypeError).
+    assert xform.can_be_applied(state, 2, sdfg) is False
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
     test_noncommutative_operand_order()
     test_scalar_source_multidim_target_subset()
     test_slice_source_offset_wcr()
+    test_symbolic_overapproximated_wcr_refused_no_typeerror()
