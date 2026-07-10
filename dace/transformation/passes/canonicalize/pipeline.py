@@ -52,7 +52,7 @@ from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pat
     CleanAccessNodeToScalarSliceToTaskletPattern)
 from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
     CleanTaskletToScalarSliceToAccessNodePattern)
-from dace.transformation.passes.scalar_fission import PrivatizeScalars
+from dace.transformation.passes.scalar_fission import PrivatizeScalars, ScalarFission
 from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
@@ -464,6 +464,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduce', UntileLoops())]
     if unroll_limit > 0:
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+    # scalar fission (after unroll + unique-loop-iterators): unrolling and iterator
+    # privatization expose transient scalars / size-1 arrays that a dominating write
+    # fully redefines; fissioning them into separate containers per dominated scope
+    # breaks the false write/write dependence that otherwise blocks LoopToMap and
+    # confuses later value analyses. Wrapped in a Pipeline so its
+    # ``ScalarWriteShadowScopes`` analysis dependency is resolved.
+    s += [('reduce', ppl.Pipeline([ScalarFission()]))]
     # PromoteConstantIndexAccess + BufferExpansion: both privatize loop-carried
     # false dependences that block ``LoopToMap``. PCIA promotes ``arr[c]``
     # constant-index slot writes-then-reads on a SHARED array to a per-iteration
