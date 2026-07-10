@@ -285,6 +285,93 @@ def test_rejects_shared_constant_dimension_with_shift():
     assert _applies(shared_constant_dim_shifted) == 0
 
 
+# ---------------------------------------------------------------------------
+# Transpose-symmetric writes: the loop variable lands in DIFFERENT dimensions
+# of the two writes (``A[i, C]`` and ``A[C, i]``), so no single dimension is
+# provably disjoint, yet a collision ``A[p, C] == A[C, q]`` forces ``p == C``
+# AND ``C == q``, i.e. ``p == q == C`` -- one iteration. This is the polybench
+# covariance pattern ``cov[i, j]`` / ``cov[j, i]``. Certified by the
+# whole-subset collision system (``_collision_forces_same_iteration``).
+# ---------------------------------------------------------------------------
+
+_TP = dace.symbol('TP')
+_TC = dace.symbol('TC')
+
+
+@dace.program
+def transpose_collision(A: dace.int64[_TP, _TP]):
+    for i in range(_TP):
+        A[i, _TC] = 1
+        A[_TC, i] = 2
+
+
+@dace.program
+def transpose_collision_shifted(A: dace.int64[_TP + 1, _TP + 1]):
+    for i in range(_TP):
+        A[i, _TC] = 1
+        A[_TC, i + 1] = 2
+
+
+@dace.program
+def transpose_collision_scaled(A: dace.int64[2 * _TP, 2 * _TP]):
+    for i in range(_TP):
+        A[i, _TC] = 1
+        A[_TC, 2 * i] = 2
+
+
+def test_accepts_transpose_collision():
+    """ ``A[i, C]`` and ``A[C, i]`` collide only on the diagonal ``i == C`` of a
+        single iteration (covariance ``cov[i,j]`` / ``cov[j,i]``); the loop var
+        appears in different dimensions so no dim is individually disjoint, but
+        the collision system certifies ``p == q``. SHOULD parallelize and be
+        value-preserving. """
+    sdfg = transpose_collision.to_sdfg(simplify=False)
+    ref_sdfg = copy.deepcopy(sdfg)
+    assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
+    assert _has_map(sdfg)
+
+    n, c = 16, 5
+    a = np.full((n, n), -1, dtype=np.int64)
+    a_ref = a.copy()
+    sdfg(A=a, TP=n, TC=c)
+    ref_sdfg(A=a_ref, TP=n, TC=c)
+    assert np.array_equal(a, a_ref)
+
+
+def test_rejects_transpose_collision_shifted():
+    """ Guard: ``A[i, C]`` and ``A[C, i+1]`` collide at ``p == C``, ``q == C-1``
+        -- DIFFERENT iterations -- so the writes genuinely alias across
+        iterations and the loop must stay sequential. """
+    sdfg = transpose_collision_shifted.to_sdfg(simplify=False)
+    ref_sdfg = copy.deepcopy(sdfg)
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 0
+    assert not _has_map(sdfg)
+
+    n, c = 16, 5
+    a = np.full((n + 1, n + 1), -1, dtype=np.int64)
+    a_ref = a.copy()
+    sdfg(A=a, TP=n, TC=c)
+    ref_sdfg(A=a_ref, TP=n, TC=c)
+    assert np.array_equal(a, a_ref)
+
+
+def test_rejects_transpose_collision_scaled():
+    """ Guard: ``A[i, C]`` and ``A[C, 2*i]`` collide at ``p == C``, ``q == C/2``
+        -- different iterations for even ``C`` -- so no single-iteration
+        certificate exists; the loop must stay sequential. """
+    sdfg = transpose_collision_scaled.to_sdfg(simplify=False)
+    ref_sdfg = copy.deepcopy(sdfg)
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 0
+    assert not _has_map(sdfg)
+
+    n, c = 16, 6
+    a = np.full((2 * n, 2 * n), -1, dtype=np.int64)
+    a_ref = a.copy()
+    sdfg(A=a, TP=n, TC=c)
+    ref_sdfg(A=a_ref, TP=n, TC=c)
+    assert np.array_equal(a, a_ref)
+
+
 def test_positive_control_disjoint_strides_becomes_map():
     """ Positive control: ``A[2*i]`` / ``A[2*i+1]`` are affine and
         gcd-disjoint, so the new fast path SHOULD parallelize (Map present). """
