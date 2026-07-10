@@ -5,7 +5,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.codegen.targets import cpp
 from dace import subsets
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
 
 
 @library.expansion
@@ -39,9 +39,11 @@ class ExpandRedistribute(ExpandTransformation):
             for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
         ])
 
+        comm = resolve_comm(node, parent_state)
+
         code = f"""
             int myrank;
-            MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+            MPI_Comm_rank({comm}, &myrank);
             MPI_Request* req = new MPI_Request[__state->{node._redistr}_sends];
             MPI_Status* status = new MPI_Status[__state->{node._redistr}_sends];
             MPI_Status recv_status;
@@ -49,7 +51,7 @@ class ExpandRedistribute(ExpandTransformation):
                 for (auto __idx = 0; __idx < __state->{node._redistr}_sends; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I send to %d\\n", myrank, __state->{node._redistr}_dst_ranks[__idx]);
                     // fflush(stdout);
-                    MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &req[__idx]);
+                    MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, {comm}, &req[__idx]);
                 }}
             }}
             if (__state->{array_b.pgrid}_valid) {{
@@ -65,7 +67,7 @@ class ExpandRedistribute(ExpandTransformation):
                 for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
                     // fflush(stdout);
-                    MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &recv_status);
+                    MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, {comm}, &recv_status);
                 }}
             }}
             if (__state->{array_a.pgrid}_valid) {{
@@ -78,7 +80,11 @@ class ExpandRedistribute(ExpandTransformation):
 
         """
 
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name,
+                                expanded_input_connectors(node, parent_state),
+                                node.out_connectors,
+                                code,
+                                language=dtypes.Language.CPP)
         return tasklet
 
 
