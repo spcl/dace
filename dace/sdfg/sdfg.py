@@ -1796,6 +1796,7 @@ class SDFG(ControlFlowRegion):
             :param filename: File name to load SDFG from.
             :return: An SDFG.
         """
+        filename = os.path.expanduser(filename)
         # Try compressed first. If fails, try uncompressed
         try:
             with gzip.open(filename, 'rb') as fp:
