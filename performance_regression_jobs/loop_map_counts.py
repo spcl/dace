@@ -8,14 +8,22 @@ than the *_perf.py scripts -- just build the SDFG, count, transform, count again
     python3 loop_map_counts.py --corpus tsvc2 --only s000
     python3 loop_map_counts.py --csv counts.csv
 """
+import os
+
+os.environ.setdefault('OMP_NUM_THREADS', '4')
+os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+os.environ.setdefault('OMPI_MCA_pml', 'ob1')
+os.environ.setdefault('OMPI_MCA_btl', 'self,vader')
+os.environ.setdefault('UCX_VFS_ENABLE', 'n')
+
 import argparse
 import csv
-import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import dace
+import dace.transformation.passes.canonicalize  # noqa: F401  (warm import graph; see engine.configure_dace_process)
 from dace.sdfg.state import LoopRegion
 
 import tsvc_corpus as tsvc

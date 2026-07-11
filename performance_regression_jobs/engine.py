@@ -5,18 +5,34 @@ world-rank detection, subprocess-isolated measurement (so a segfaulting SDFG or
 native binary never kills the whole sweep), and instrumentation-report-based
 timing (sdfg.instrument + get_latest_report instead of wall-clock wrapping).
 """
+import os
+
+# Set BEFORE any dace import (dace is imported lazily below, but every
+# entry-point script that imports this module must set the same defaults at its
+# own top too, ahead of its top-level `import dace`): DaCe scripts otherwise
+# block on MPI_Init and the sweep looks like it hangs. setdefault so an explicit
+# value in the environment (e.g. a real MPI launch) still wins.
+os.environ.setdefault('OMP_NUM_THREADS', '4')
+os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+os.environ.setdefault('OMPI_MCA_pml', 'ob1')
+os.environ.setdefault('OMPI_MCA_btl', 'self,vader')
+os.environ.setdefault('UCX_VFS_ENABLE', 'n')
+
 import copy
 import csv
+import glob
 import json
 import multiprocessing as mp
-import os
 import re
 import shutil
 import socket
+import subprocess
+import tempfile
 import time
 
 _RESULTS_CSV = 'results.csv'
 _STATUS_CSV = 'status.csv'
+_COMPILE_CSV = 'compile.csv'
 
 
 # --------------------------------------------------------------------------
@@ -109,6 +125,12 @@ def configure_dace_process():
       both a reference and a candidate SDFG)."""
     import dace
     import native_harness as nh
+    # Warm the transformation import graph before any to_sdfg() runs in this
+    # process. Parsing a nested @dace.program makes to_sdfg import
+    # dace.transformation.interstate first, which can trip a lazy-import cycle;
+    # importing canonicalize up front loads the modules in an order that resolves
+    # cleanly. Harmless (a no-op re-import) once the graph is cycle-free.
+    import dace.transformation.passes.canonicalize  # noqa: F401
     dace.Config.set('cache', value='name')
     dace.Config.set('compiler', 'use_cache', value=True)
     shm_root = '/dev/shm'
@@ -207,6 +229,64 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
     return _flatten_durations(sdfg.get_latest_report().durations)[warmup:]
 
 
+def _direct_compile_cmd(sdfg, folder):
+    """Our OWN compiler command line (not sdfg.compile() / CMake) to build the
+    generated frame into a .so: the configured C++ compiler + its OPT flags,
+    the generated include/ + DaCe's runtime include, -fopenmp for the parallel
+    maps, every src/cpu/*.cpp. Mirrors how nest-forge owns its build."""
+    import dace
+    cxx = dace.Config.get('compiler', 'cpu', 'executable') or shutil.which('g++') or 'g++'
+    args = (dace.Config.get('compiler', 'cpu', 'args') or '').split()
+    folder = str(folder)
+    srcs = sorted(glob.glob(os.path.join(folder, 'src', 'cpu', '*.cpp')))
+    runtime_inc = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include')
+    inc = [f"-I{os.path.join(folder, 'include')}", f'-I{runtime_inc}']
+    so = os.path.join(folder, f'lib{sdfg.name}.so')
+    # Don't pin a low standard (DaCe codegen may use newer C++); assume the toolchain supports >=23.
+    std = os.environ.get('DACE_PERF_CXX_STD', 'c++23')
+    return [cxx, *args, f'-std={std}', '-fPIC', '-shared', '-fopenmp', *inc, *srcs, '-o', so], srcs
+
+
+def compile_sdfg_timed(sdfg):
+    """Compile `sdfg` from scratch, returning (codegen_ms, cxx_ms): DaCe C++
+    codegen time, then a DIRECT compiler invocation timed on its own.
+
+    Does NOT call sdfg.compile() / DaCe's CMake build. That path pays a CMake
+    configure cost (seconds, dominated by CMake not the compiler) and, under
+    cache='name', would be a ~0ms no-op on an already-built variant -- neither
+    is a useful "compile speed" number. Instead: generate the C++, lay out the
+    program folder (fast file writes, not timed as compile), then invoke OUR OWN
+    `<cxx> <opt-flags> -fopenmp ... -shared` command (the same compiler + flags
+    the runtime lane uses) and time just that subprocess. Fresh temp folder each
+    call, so every sample is a real cold compile. Call from an isolated
+    subprocess (a bad SDFG can crash codegen)."""
+    from dace.codegen import codegen
+    from dace.codegen import compiler as dace_compiler
+    # Build on node-local RAM (/dev/shm) when available, same reason
+    # configure_dace_process redirects DaCe's own builds there: on a cluster the
+    # default temp dir is often a shared/network scratch FS, and many ranks
+    # compiling there at once turns a sub-second compile into minutes.
+    shm = '/dev/shm'
+    tmp_parent = shm if os.path.isdir(shm) and os.access(shm, os.W_OK) else None
+    build_root = tempfile.mkdtemp(prefix='dace_compilebench_', dir=tmp_parent)
+    try:
+        t0 = time.perf_counter()
+        code_objects = codegen.generate_code(sdfg)
+        codegen_ms = (time.perf_counter() - t0) * 1000.0
+        folder = dace_compiler.generate_program_folder(sdfg, code_objects, build_root)
+        cmd, srcs = _direct_compile_cmd(sdfg, folder)
+        if not srcs:
+            raise RuntimeError(f'no src/cpu/*.cpp generated for {sdfg.name}')
+        t1 = time.perf_counter()
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        cxx_ms = (time.perf_counter() - t1) * 1000.0
+        if p.returncode != 0:
+            raise RuntimeError(f'direct compile failed ({os.path.basename(cmd[0])}): {p.stderr[-1500:]}')
+    finally:
+        shutil.rmtree(build_root, ignore_errors=True)
+    return codegen_ms, cxx_ms
+
+
 def arrays_close(ref, got, tol=1e-9):
     """True if every floating-point array/scalar in `ref` matches its `got`
     counterpart within `tol` -- non-floating entries (ints, symbol values)
@@ -224,44 +304,103 @@ def arrays_close(ref, got, tol=1e-9):
 
 
 # --------------------------------------------------------------------------
-# Shared pipelines: existing passes/transformations only, nothing new.
-# "-seq" lanes are never a separate pipeline -- always make_sequential(par result).
+# Shared pipelines: existing passes/transformations only, nothing new. Every
+# pipeline takes (sdfg, device) where device is 'cpu' or 'gpu' -- so the exact
+# same four comparison points can be measured on either target. "-seq" lanes
+# are never a separate pipeline -- always make_sequential(par result).
 # --------------------------------------------------------------------------
-def pipeline_baseline(sdfg):
+def _device_type(device):
+    import dace
+    return dace.DeviceType.GPU if device == 'gpu' else dace.DeviceType.CPU
+
+
+def pipeline_dace_autoopt(sdfg, device='cpu'):
+    """DaCe's own auto_optimize for the target device -- the speedup baseline
+    every other pipeline is reported against."""
+    from dace.transformation.auto.auto_optimize import auto_optimize
+    return auto_optimize(sdfg, _device_type(device))
+
+
+def pipeline_dace_parallel(sdfg, device='cpu'):
+    """The light pipeline: simplify + LoopToMap + MapFusion + simplify. On GPU
+    the parallel maps are additionally moved onto the device
+    (apply_gpu_transformations, exactly as auto_optimize does) so the result is
+    a runnable GPU program rather than CPU maps merely measured on a GPU run."""
     from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
     sdfg.simplify(validate=True)
     sdfg.apply_transformations_repeated(LoopToMap())
     PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]).apply_pass(sdfg, {})
+    sdfg.simplify(validate=True)
+    if device == 'gpu':
+        sdfg.apply_gpu_transformations()
+        sdfg.simplify(validate=True)
     return sdfg
 
 
-def pipeline_canon(sdfg):
+#: The canonicalize knobs used everywhere (mirrors the sibling gate's _CPU
+#: preset). Passed verbatim for both targets -- only `target` differs.
+_CANON_KNOBS = dict(peel_limit=4,
+                    break_anti_dependence=True,
+                    interchange_carry_with_map=True,
+                    scatter_to_guarded_maps=True)
+
+
+def pipeline_canon(sdfg, device='cpu'):
     from dace.transformation.passes.canonicalize import canonicalize
-    return canonicalize(sdfg, validate=True)
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    return finalize_for_target(canonicalize(sdfg, validate=True, target=device, **_CANON_KNOBS), device)
 
 
-def pipeline_fast_canon(sdfg):
+def pipeline_fast_canon(sdfg, device='cpu'):
     from dace.transformation.passes.canonicalize import canonicalize
-    return canonicalize(sdfg, validate=True, fast=True)
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    return finalize_for_target(canonicalize(sdfg, validate=True, fast=True, target=device, **_CANON_KNOBS), device)
 
 
-def pipeline_auto_opt(sdfg):
-    import dace
-    from dace.transformation.auto.auto_optimize import auto_optimize
-    return auto_optimize(sdfg, dace.DeviceType.CPU)
-
-
-#: The 4 DaCe-side comparison points: two baselines (plain simplify+
-#: loop2map+mapfusion, and DaCe's own auto_optimize) vs. canonicalize and
-#: canonicalize(fast=True).
+#: The 4 DaCe-side comparison points. dace_autoopt is the BASELINE speedups are
+#: reported against; dace_parallel (light simplify+loop2map+mapfusion) and
+#: canonicalize / canonicalize(fast=True) are the candidates.
 PIPELINES = {
-    'baseline': pipeline_baseline,
-    'auto-opt': pipeline_auto_opt,
+    'dace_autoopt': pipeline_dace_autoopt,
+    'dace_parallel': pipeline_dace_parallel,
     'canon': pipeline_canon,
     'fast-canon': pipeline_fast_canon,
 }
+
+
+# --------------------------------------------------------------------------
+# GPU availability probe: run once per process (cached). A machine with no CUDA
+# toolchain / no device must DEGRADE GRACEFULLY -- the caller skips the gpu
+# device entirely instead of recording a per-kernel compile error for every
+# kernel. The probe itself is crash-isolated (run_isolated), so a missing nvcc
+# or driver is just (False, msg), never an exception in the sweep.
+# --------------------------------------------------------------------------
+_GPU_SUPPORTED = None
+
+
+def _probe_gpu():
+    import dace
+    import numpy as np
+
+    @dace.program
+    def _probe(a: dace.float64[32]):
+        a[:] = a + 1.0
+
+    sdfg = _probe.to_sdfg()
+    pipeline_dace_autoopt(sdfg, 'gpu')
+    a = np.ones(32, dtype=np.float64)
+    sdfg(a=a)
+    return bool(np.allclose(a, 2.0))
+
+
+def gpu_supported(timeout=600):
+    global _GPU_SUPPORTED
+    if _GPU_SUPPORTED is None:
+        ok, payload = run_isolated(_probe_gpu, (), timeout=timeout)
+        _GPU_SUPPORTED = bool(ok and payload)
+    return _GPU_SUPPORTED
 
 
 def make_sequential(sdfg):
@@ -271,8 +410,9 @@ def make_sequential(sdfg):
     for sd in s.all_sdfgs_recursive():
         sd.openmp_sections = False
     for n, _ in s.all_nodes_recursive():
-        if isinstance(n, dace.nodes.EntryNode) and getattr(n, 'schedule', False) in (
-                dace.ScheduleType.CPU_Multicore, dace.ScheduleType.CPU_Persistent, dace.ScheduleType.Default):
+        if isinstance(n, dace.nodes.EntryNode) and getattr(
+                n, 'schedule', False) in (dace.ScheduleType.CPU_Multicore, dace.ScheduleType.CPU_Persistent,
+                                          dace.ScheduleType.Default):
             n.schedule = dace.ScheduleType.Sequential
     return s
 
@@ -371,6 +511,28 @@ def append_results(kdir, pipeline, times_ms, start_index):
             w.writerow([pipeline, start_index + i, f'{t:.6f}'])
 
 
+def existing_compile_reps(kdir, pipeline):
+    path = os.path.join(kdir, _COMPILE_CSV)
+    if not os.path.exists(path):
+        return 0
+    with open(path, newline='') as f:
+        return sum(1 for row in csv.DictReader(f) if row['pipeline'] == pipeline)
+
+
+def append_compile_results(kdir, pipeline, samples, start_index):
+    """`samples` is a list of (codegen_ms, cxx_ms) pairs; one CSV row per sample
+    (resumable, exactly like append_results for runtime)."""
+    os.makedirs(kdir, exist_ok=True)
+    path = os.path.join(kdir, _COMPILE_CSV)
+    write_header = not os.path.exists(path)
+    with open(path, 'a', newline='') as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(['pipeline', 'rep_index', 'codegen_ms', 'cxx_ms', 'total_ms'])
+        for i, (cg, cx) in enumerate(samples):
+            w.writerow([pipeline, start_index + i, f'{cg:.6f}', f'{cx:.6f}', f'{cg + cx:.6f}'])
+
+
 def read_status(kdir, pipeline):
     path = os.path.join(kdir, _STATUS_CSV)
     if not os.path.exists(path):
@@ -425,17 +587,21 @@ def _median(values):
 
 
 def _read_kernel(kdir):
-    """(pipeline -> {'correct': bool, 'median_ms': float or None}) for one kernel/preset dir."""
+    """pipeline -> {'correct': bool, 'median_ms': float|None, 'min_ms': float|None}
+    for one kernel/preset dir. `min_ms` is the best-of-N used for speedups (the
+    spec's autoopt_min / pipeline_min); `median_ms` is kept for display."""
     out = {}
     for row in [] if not os.path.exists(os.path.join(kdir, _STATUS_CSV)) else csv.DictReader(
             open(os.path.join(kdir, _STATUS_CSV), newline='')):
-        out[row['pipeline']] = dict(correct=row['correct'] == 'True', median_ms=None)
+        out[row['pipeline']] = dict(correct=row['correct'] == 'True', median_ms=None, min_ms=None)
     times = {}
     if os.path.exists(os.path.join(kdir, _RESULTS_CSV)):
         for row in csv.DictReader(open(os.path.join(kdir, _RESULTS_CSV), newline='')):
             times.setdefault(row['pipeline'], []).append(float(row['time_ms']))
     for pipeline, ts in times.items():
-        out.setdefault(pipeline, dict(correct=True, median_ms=None))['median_ms'] = _median(ts)
+        e = out.setdefault(pipeline, dict(correct=True, median_ms=None, min_ms=None))
+        e['median_ms'] = _median(ts)
+        e['min_ms'] = min(ts) if ts else None
     return out
 
 
@@ -480,9 +646,9 @@ def write_tables(results_root, corpus, lanes, baseline_label):
     def _cell_speedup(entry, base):
         if not entry or not base or not entry.get('correct') or not base.get('correct'):
             return ''
-        if not entry.get('median_ms') or not base.get('median_ms'):
+        if not entry.get('min_ms') or not base.get('min_ms'):
             return ''
-        return f"{base['median_ms'] / entry['median_ms']:.2f}x"
+        return f"{base['min_ms'] / entry['min_ms']:.2f}x"
 
     os.makedirs(corpus_dir, exist_ok=True)
     with open(os.path.join(corpus_dir, 'correctness.md'), 'w') as f:
@@ -502,10 +668,106 @@ def write_tables(results_root, corpus, lanes, baseline_label):
     print(f'wrote {corpus_dir}/correctness.md and speedup.md ({len(rows)} kernel/preset rows)')
 
 
+def device_of_tag(tag):
+    """The device a result folder belongs to, read off its preset token: a
+    '...-gpu' preset (e.g. 'clang++_host_paper-gpu') is a GPU folder, everything
+    else (paper-cpu, default, ...) is CPU. Devices are namespaced by folder --
+    the CPU and GPU results.csv for one kernel never share a file."""
+    return 'gpu' if tag.rsplit('_', 1)[-1].endswith('-gpu') else 'cpu'
+
+
+def write_summary_csv(results_root, corpus, baseline_label=None):
+    """The flat 'listing all' summary CSV: one row per (kernel, tag, pipeline)
+    across the whole <results_root>/<corpus>/ tree (so it is also the cross-rank
+    + cross-device aggregation). Columns carry `device` and the pipeline/baseline
+    names; `speedup_vs_baseline` is filled when baseline_label is given and both
+    it and the row's pipeline are correct with a median in the same tag."""
+    corpus_dir = os.path.join(results_root, corpus)
+    fields = ['corpus', 'kernel', 'tag', 'device', 'preset', 'pipeline', 'correct', 'min_ms', 'median_ms',
+              'speedup_vs_baseline']
+    rows = []
+    if os.path.isdir(corpus_dir):
+        for kernel in sorted(os.listdir(corpus_dir)):
+            kpath = os.path.join(corpus_dir, kernel)
+            if not os.path.isdir(kpath):
+                continue
+            for tag in sorted(t for t in os.listdir(kpath) if os.path.isdir(os.path.join(kpath, t))):
+                entries = _read_kernel(os.path.join(kpath, tag))
+                base = entries.get(baseline_label) if baseline_label else None
+                base_ms = base['min_ms'] if base and base.get('correct') and base.get('min_ms') else None
+                for pipeline, e in entries.items():
+                    speedup = ''  # spec's autoopt_min / pipeline_min (best-of-N)
+                    if base_ms and e.get('correct') and e.get('min_ms'):
+                        speedup = f"{base_ms / e['min_ms']:.4f}"
+                    rows.append(
+                        dict(corpus=corpus, kernel=kernel, tag=tag, device=device_of_tag(tag),
+                             preset=tag.rsplit('_', 1)[-1], pipeline=pipeline, correct=e.get('correct'),
+                             min_ms='' if e.get('min_ms') is None else f"{e['min_ms']:.6f}",
+                             median_ms='' if e.get('median_ms') is None else f"{e['median_ms']:.6f}",
+                             speedup_vs_baseline=speedup))
+    os.makedirs(corpus_dir, exist_ok=True)
+    path = os.path.join(corpus_dir, 'summary.csv')
+    with open(path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    print(f'wrote {path} ({len(rows)} rows)')
+    return path
+
+
+def _read_kernel_compile(kdir):
+    """(pipeline -> {'codegen': med_ms, 'cxx': med_ms, 'total': med_ms}) for one kernel/tag dir."""
+    path = os.path.join(kdir, _COMPILE_CSV)
+    if not os.path.exists(path):
+        return {}
+    cg, cx, tot = {}, {}, {}
+    for row in csv.DictReader(open(path, newline='')):
+        p = row['pipeline']
+        cg.setdefault(p, []).append(float(row['codegen_ms']))
+        cx.setdefault(p, []).append(float(row['cxx_ms']))
+        tot.setdefault(p, []).append(float(row['total_ms']))
+    return {p: dict(codegen=_median(cg[p]), cxx=_median(cx[p]), total=_median(tot[p])) for p in cg}
+
+
+def write_compile_tables(results_root, corpus, lanes):
+    """Scan <results_root>/<corpus>/**/ and write compile_total.md + compile_codegen.md +
+    compile_cxx.md -- median compile time (ms) per pipeline per kernel. Compile time is a DaCe-codegen
+    metric, so only DaCe-tag folders ('<compiler>_<host>_<preset>', 2 underscores) are read; this is also
+    the cross-rank aggregation step, exactly like write_tables (every rank wrote into the same tree)."""
+    corpus_dir = os.path.join(results_root, corpus)
+    rows = []  # (label, {pipeline: {'codegen','cxx','total'}})
+    if os.path.isdir(corpus_dir):
+        for kernel in sorted(os.listdir(corpus_dir)):
+            kpath = os.path.join(corpus_dir, kernel)
+            if not os.path.isdir(kpath):
+                continue
+            for tag in sorted(t for t in os.listdir(kpath)
+                              if os.path.isdir(os.path.join(kpath, t)) and t.count('_') == 2):
+                entries = _read_kernel_compile(os.path.join(kpath, tag))
+                if entries:
+                    rows.append((f'{kernel} ({tag})', entries))
+
+    def _cell(entries, lane, key):
+        e = entries.get(lane)
+        if not e or e.get(key) is None:
+            return ''
+        return f'{e[key]:.1f}'
+
+    os.makedirs(corpus_dir, exist_ok=True)
+    for key, fname in (('total', 'compile_total.md'), ('codegen', 'compile_codegen.md'), ('cxx', 'compile_cxx.md')):
+        with open(os.path.join(corpus_dir, fname), 'w') as f:
+            f.write('| kernel | ' + ' | '.join(lanes) + ' |\n')
+            f.write('|---' * (len(lanes) + 1) + '|\n')
+            for label, entries in rows:
+                f.write(f'| {label} | ' + ' | '.join(_cell(entries, l, key) for l in lanes) + ' |\n')
+    print(f'wrote {corpus_dir}/compile_total.md + compile_codegen.md + compile_cxx.md '
+          f'({len(rows)} kernel/preset rows, ms)')
+
+
 # --------------------------------------------------------------------------
 # CLI flags shared by every entry-point script.
 # --------------------------------------------------------------------------
-def add_common_args(ap, default_timeout=1800.0):
+def add_common_args(ap, default_timeout=3600.0):
     ap.add_argument('--results-dir', default='results', help='results root (default: results)')
     ap.add_argument('--reps', type=int, default=100, help='target repetitions per pipeline (default: 100)')
     ap.add_argument('--only', default=None, help='substring filter on kernel name')
@@ -516,10 +778,14 @@ def add_common_args(ap, default_timeout=1800.0):
     ap.add_argument('--save-sdfg-only', action='store_true', help='save canon/fast-canon SDFGs, skip all timing')
     ap.add_argument('--list-kernels', action='store_true', help='print this corpus\'s kernel identifiers and exit')
     ap.add_argument('--tables-only', action='store_true', help='skip measurement, just rebuild the markdown tables')
-    ap.add_argument('--timeout', type=float, default=default_timeout, help='per-measurement subprocess timeout, seconds')
-    ap.add_argument('--cxx', default=None,
-                     help='C++ compiler for DaCe\'s own codegen only -- native lanes each find their own '
-                          'vendor compiler independently (default: clang++ on PATH, else g++)')
+    ap.add_argument('--timeout',
+                    type=float,
+                    default=default_timeout,
+                    help='per-measurement subprocess timeout, seconds')
+    ap.add_argument('--cxx',
+                    default=None,
+                    help='C++ compiler for DaCe\'s own codegen only -- native lanes each find their own '
+                    'vendor compiler independently (default: clang++ on PATH, else g++)')
     return ap
 
 

@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
-"""Performance regression: DaCe canonicalize/fast-canonicalize vs. two DaCe
-baselines (plain simplify+loop2map+mapfusion, and DaCe's own auto_optimize)
-vs. native C++ built with LLVM/clang (the default vendor -- see
-native_harness.LANES), in a plain-serial and Polly-autopar form, over the
-151-kernel TSVC2 corpus. Standalone (only needs dace+numpy importable);
-multi-rank via OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
+"""Performance regression (CPU only): the DaCe pipelines (dace_parallel and
+canonicalize / fast-canonicalize, each in a -par and a -seq schedule, plus
+dace_autoopt) vs. two native C baselines -- single-core (native-clang) and
+multi-core compiler auto-parallelization (native-clang-polly-autopar and gcc
+native-gcc-autopar -- see native_harness.LANES) -- over the 151-kernel TSVC2
+corpus. Standalone (only needs dace+numpy importable); multi-rank via
+OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
 
     python3 tsvc2_perf.py                       # this rank's slice, 100 reps
     python3 tsvc2_perf.py --only s000 --reps 3  # quick smoke test
     python3 tsvc2_perf.py --save-sdfg-only      # just dump canon/fast-canon SDFGs
     python3 tsvc2_perf.py --tables-only         # rebuild correctness.md/speedup.md
 """
+import os
+
+os.environ.setdefault('OMP_NUM_THREADS', '4')
+os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+os.environ.setdefault('OMPI_MCA_pml', 'ob1')
+os.environ.setdefault('OMPI_MCA_btl', 'self,vader')
+os.environ.setdefault('UCX_VFS_ENABLE', 'n')
+
 import argparse
 import math
-import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +37,9 @@ CORPUS = 'tsvc2'
 CPP_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tsvc2_core.cpp')
 DACE_LANES = [f'{p}-{v}' for p in engine.PIPELINES for v in ('par', 'seq')]
 ALL_LANES = DACE_LANES + list(nh.LANES)
-BASELINE_LANE = 'baseline-par'
+#: Speedups in speedup.md are reported vs. the single-core native C baseline
+#: (the boxplot additionally shows vs. the multi-core auto-par native lanes).
+BASELINE_LANE = nh.SINGLE_CORE_LANE
 
 _TARGET_BYTES = 2 * 1024**3
 _REF_1D, _REF_2D = 64, tsvc.LEN_2D_FIXED
@@ -131,7 +141,7 @@ def _inputs(kernel_name, l1, l2):
 # --------------------------------------------------------------------------
 def _check_dace_job(kernel_name, l1, l2, pipeline, seq):
     _, ref_arrays, ref_sym, ref_sparams = _inputs(kernel_name, l1, l2)
-    ref_sdfg = _build_sdfg(kernel_name, 'baseline', False)
+    ref_sdfg = _build_sdfg(kernel_name, 'dace_parallel', False)
     ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
     ref_sdfg.compile()(**ref_call)
 
@@ -140,7 +150,7 @@ def _check_dace_job(kernel_name, l1, l2, pipeline, seq):
     cand_call = {**{n: a.copy() for n, a in cand_arrays.items()}, **cand_sparams, **cand_sym}
     cand_sdfg.compile()(**cand_call)
 
-    return _compare(ref_call, cand_call)
+    return engine.arrays_close(ref_call, cand_call)
 
 
 def _time_dace_job(kernel_name, l1, l2, pipeline, seq, reps):
@@ -152,7 +162,7 @@ def _time_dace_job(kernel_name, l1, l2, pipeline, seq, reps):
 
 def _check_native_job(kernel_name, l1, l2, so_path, c_name, sig):
     _, ref_arrays, ref_sym, ref_sparams = _inputs(kernel_name, l1, l2)
-    ref_sdfg = _build_sdfg(kernel_name, 'baseline', False)
+    ref_sdfg = _build_sdfg(kernel_name, 'dace_parallel', False)
     ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
     ref_sdfg.compile()(**ref_call)
 
@@ -160,7 +170,7 @@ def _check_native_job(kernel_name, l1, l2, so_path, c_name, sig):
     lib = nh.load_library(so_path)
     nh.call_kernel(lib, c_name, sig, arrays=cand_arrays, len_1d=l1, len_2d=l2, scalar_params=cand_sparams,
                    symbols=cand_sym)
-    return _compare(ref_call, cand_arrays)
+    return engine.arrays_close(ref_call, cand_arrays)
 
 
 def _time_native_job(kernel_name, l1, l2, so_path, c_name, sig, reps, warmup=1):
@@ -175,12 +185,9 @@ def _time_native_job(kernel_name, l1, l2, so_path, c_name, sig, reps, warmup=1):
     return times
 
 
-_compare = engine.arrays_close
-
 # --------------------------------------------------------------------------
 # Per-kernel driver.
 # --------------------------------------------------------------------------
-_lane_kind = engine.lane_kind
 
 
 def _save_sdfg_job(kernel_name, pipeline, seq):
@@ -197,7 +204,7 @@ def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
     # docstring) since native lanes shouldn't be invalidated by a --cxx change.
     kdir_dace = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
     kdir_native = engine.native_kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
-    kdir = lambda lane: kdir_native if _lane_kind(lane) == 'native' else kdir_dace
+    kdir = lambda lane: kdir_native if engine.lane_kind(lane) == 'native' else kdir_dace
 
     # Every lane must already have a status entry, not just "some folder has
     # some results" -- else a fresh dace-tag folder (new --cxx against an
@@ -212,7 +219,7 @@ def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
         ldir = kdir(lane)
         status = None if args.force else engine.read_status(ldir, lane)
         if status is None:
-            if _lane_kind(lane) == 'dace':
+            if engine.lane_kind(lane) == 'dace':
                 pipeline, seq = lane.rsplit('-', 1)
                 ok, correct = engine.run_isolated(_check_dace_job, (kernel_name, l1, l2, pipeline, seq == 'seq'),
                                                   timeout=args.timeout)
@@ -224,7 +231,7 @@ def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
                     ok, correct = engine.run_isolated(_check_native_job, (kernel_name, l1, l2, so_path, c_name, sig),
                                                       timeout=args.timeout)
             engine.write_status(ldir, lane, bool(ok and correct), '' if ok and correct else str(correct))
-            if args.save_sdfg and ok and _lane_kind(lane) == 'dace':
+            if args.save_sdfg and ok and engine.lane_kind(lane) == 'dace':
                 pipeline, seq = lane.rsplit('-', 1)
                 ok2, sdfg_json = engine.run_isolated(_save_sdfg_job, (kernel_name, pipeline, seq == 'seq'),
                                                      timeout=args.timeout)
@@ -241,7 +248,7 @@ def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
         if remaining <= 0:
             continue
         print(f'[{kernel_name}] {lane}: measuring {remaining} more rep(s)')
-        if _lane_kind(lane) == 'dace':
+        if engine.lane_kind(lane) == 'dace':
             pipeline, seq = lane.rsplit('-', 1)
             ok, payload = engine.run_isolated(_time_dace_job, (kernel_name, l1, l2, pipeline, seq == 'seq', remaining),
                                               timeout=args.timeout)
@@ -314,6 +321,7 @@ def main():
         return
     if args.tables_only:
         engine.write_tables(args.results_dir, CORPUS, ALL_LANES, BASELINE_LANE)
+        engine.write_summary_csv(args.results_dir, CORPUS, BASELINE_LANE)
         return
 
     engine.export_cxx_override(args)
@@ -342,6 +350,7 @@ def main():
 
     if not args.save_sdfg_only:
         engine.write_tables(args.results_dir, CORPUS, ALL_LANES, BASELINE_LANE)
+        engine.write_summary_csv(args.results_dir, CORPUS, BASELINE_LANE)
 
 
 if __name__ == '__main__':

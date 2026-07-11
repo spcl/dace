@@ -1,11 +1,19 @@
-"""Native C++ reference harness: compile tsvc{2,2_5}_core.cpp with LLVM/clang
-(the default vendor, matching DaCe's own preferred compiler), in both a
-plain-serial and Polly-autopar form, and call each kernel's
-``<name>_run_timed`` function via ctypes -- it times itself (std::chrono) and
-writes the elapsed nanoseconds to its trailing ``time_ns`` output pointer.
+"""Native C++ reference harness: compile tsvc{2,2_5}_core.cpp and call each
+kernel's ``<name>_run_timed`` function via ctypes -- it times itself
+(std::chrono) and writes the elapsed nanoseconds to its trailing ``time_ns``
+output pointer.
 
-If clang++ isn't on PATH, both lanes are skipped (compile_lane returns an
-error for that lane) rather than falling back to a different vendor.
+Two native baselines the DaCe pipelines are compared against:
+  * SINGLE-CORE: ``native-clang`` -- plain serial clang.
+  * MULTI-CORE AUTO-PAR (compiler auto-parallelization): ``native-clang-polly-
+    autopar`` (clang + Polly ``-polly-parallel``) and ``native-gcc-autopar``
+    (gcc ``-ftree-parallelize-loops=<n> -floop-parallelize-all -fopenmp``).
+    Both are OpenMP/GOMP-threaded; either one supplies the multi-core baseline
+    (whichever this machine's toolchain can actually build).
+
+A lane whose compiler isn't on PATH (or whose auto-par flag isn't supported) is
+skipped for that lane -- compile_lane returns an error and the sweep moves on --
+never falling back to a different vendor.
 """
 import ctypes
 import os
@@ -13,11 +21,23 @@ import re
 import shutil
 import subprocess
 
-#: The one default vendor is LLVM/clang -- also DaCe's own preferred
-#: compiler (find_best_cpp_compiler()), so the native and DaCe-compiled
-#: sides of a comparison use the same toolchain. Serial and Polly-autopar
-#: forms of that vendor; skipped entirely if clang++ isn't on PATH.
-LANES = ('native-clang', 'native-clang-polly-autopar')
+#: Serial (single-core) and two multi-core auto-parallelizing forms. A lane is
+#: skipped entirely if its compiler isn't on PATH.
+LANES = ('native-clang', 'native-clang-polly-autopar', 'native-gcc-autopar')
+
+#: Roles used by the perf scripts / boxplot: the single-core native baseline and
+#: the multi-core auto-par native baselines (first one with data is preferred).
+SINGLE_CORE_LANE = 'native-clang'
+MULTICORE_LANES = ('native-clang-polly-autopar', 'native-gcc-autopar')
+
+
+def _autopar_threads():
+    """Thread count baked into gcc's ``-ftree-parallelize-loops=<n>`` -- take
+    OMP_NUM_THREADS (the same knob the runtime honors), default 4."""
+    try:
+        return max(1, int(os.environ.get('OMP_NUM_THREADS', '4')))
+    except ValueError:
+        return 4
 
 #: Optimization flags shared with DaCe's own compiler.cpu.args (see
 #: engine.configure_dace_process, which ensures these are present there too)
@@ -91,6 +111,10 @@ _LANE_SPEC = {
         '-mllvm', '-polly', '-mllvm', '-polly-parallel', '-mllvm', '-polly-parallel-force', '-mllvm',
         '-polly-process-unprofitable', '-lgomp'
     ]),
+    'native-gcc-autopar':
+    (lambda: find_compiler('g++'), lambda cc: [
+        f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
+    ]),
 }
 
 
@@ -103,7 +127,7 @@ _IGNORED_FLAG_RE = re.compile(
     r'unrecognized option|ignoring unknown option|unsupported option', re.IGNORECASE)
 
 
-def compile_lane(cpp_path, so_path, lane, timeout=180):
+def compile_lane(cpp_path, so_path, lane, timeout=1200):
     """Compile one lane's shared library. Returns (ok, error_message).
     Every lane finds its own vendor's compiler (see _LANE_SPEC) -- no
     cross-lane override, so a lane always measures its named vendor."""

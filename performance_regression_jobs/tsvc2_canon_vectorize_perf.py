@@ -6,8 +6,15 @@ machinery as tsvc2_perf.py, reused directly rather than duplicated).
     python3 tsvc2_canon_vectorize_perf.py --only s000 --reps 3
     python3 tsvc2_canon_vectorize_perf.py --tables-only
 """
-import argparse
 import os
+
+os.environ.setdefault('OMP_NUM_THREADS', '4')
+os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+os.environ.setdefault('OMPI_MCA_pml', 'ob1')
+os.environ.setdefault('OMPI_MCA_btl', 'self,vader')
+os.environ.setdefault('UCX_VFS_ENABLE', 'n')
+
+import argparse
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +45,7 @@ def _build_sdfg(kernel_name, pipeline):
     engine.configure_dace_process()
     kernel = base.tsvc.collect(name=kernel_name)[0]
     sdfg = base.tsvc.to_sdfg(kernel, f'{CORPUS}_{pipeline}', simplify=False)
-    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.PIPELINES['baseline'](sdfg)
+    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_dace_parallel(sdfg)
 
 
 def _check_dace_job(kernel_name, l1, l2, pipeline):
