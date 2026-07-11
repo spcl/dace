@@ -37,7 +37,19 @@ def test_numpy_integral_properties():
     assert desc.offset == (1, )
 
 
+@dace.program
+def numpy_integral_shape_program(A: dace.float64[np.int32(10)]):
+    A += 1
+
+
+def test_numpy_integral_shape_program():
+    A = np.ones((10, ))
+    numpy_integral_shape_program(A)
+    np.testing.assert_equal(A, 2)
+
+
 if __name__ == '__main__':
     test_strides()
     test_strides_alignment()
     test_numpy_integral_properties()
+    test_numpy_integral_shape_program()
