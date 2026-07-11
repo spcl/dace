@@ -175,6 +175,34 @@ def test_parallelize_peel_limit_zero_disables():
     assert _num_loops(sdfg) == before  # untouched
 
 
+def test_best_peel_gate_recognises_iter_var_guard():
+    """``_best_peel_for`` runs its (expensive) isolate-and-search only for loops whose body has
+    an iteration-variable guard -- the boundary special case a peel can strip. A positional
+    ``if i + 1 < mid`` guard is recognised (search proceeds); a recurrence with no iter-var branch
+    is not (search skipped, loop stays sequential -- the same outcome the old search reverted to)."""
+
+    def _loop(sdfg):
+        return next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
+
+    @dace.program
+    def positional(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        mid = N // 2
+        for i in range(N):
+            if i + 1 < mid:
+                a[i] = a[i] + b[i] * c[i]
+            else:
+                a[i] = a[i] + b[i] * d[i]
+
+    @dace.program
+    def recurrence(A: dace.float64[N], B: dace.float64[N]):
+        B[0] = A[0]
+        for i in range(1, N):
+            B[i] = B[i - 1] + A[i]
+
+    assert BestEffortLoopPeeling._has_iter_var_guard(_loop(positional.to_sdfg(simplify=True))) is True
+    assert BestEffortLoopPeeling._has_iter_var_guard(_loop(recurrence.to_sdfg(simplify=True))) is False
+
+
 if __name__ == '__main__':
     test_parallelize_independent_loop_maps_value_preserving()
     test_parallelize_rowsum_reduction_value_preserving()

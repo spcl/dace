@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 
 from dace import properties, symbolic
 from dace.sdfg import SDFG
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled.
@@ -254,13 +254,39 @@ class BestEffortLoopPeeling(ppl.Pass):
         except Exception:
             return None, None
 
+    @staticmethod
+    def _has_iter_var_guard(loop: LoopRegion) -> bool:
+        """True if any branch condition inside ``loop`` tests the iteration variable.
+
+        A best-effort BOUNDARY peel unblocks a loop only by stripping a boundary special case,
+        which always surfaces as an ``i <cmp> const`` guard on the iteration variable (the
+        equality ``i == x`` case is the split search's job; the wrapping-modulo case has its own
+        ``_has_wrapping_modulo`` gate). A loop with no iter-var-dependent branch has no boundary
+        special case a peel could remove -- a plain carried recurrence (``a[i] = a[i-1]``) is not
+        fixable by peeling and the search would only revert -- so the expensive isolate-and-search
+        (and even the ``can_be_applied`` probe) is skipped for it. On a stencil like channel_flow,
+        whose stuck loops carry array dependences with no iter-var branch at all, this turns the
+        whole peel stage from ~90s of fruitless search into a cheap syntactic scan.
+        """
+        ivar = loop.loop_variable
+        for cb in loop.all_control_flow_blocks():
+            if not isinstance(cb, ConditionalBlock):
+                continue
+            for cond, _ in cb.branches:
+                if cond is not None and ivar in cond.get_free_symbols():
+                    return True
+        return False
+
     def _best_peel_for(self, loop: LoopRegion, sdfg: SDFG):
         """Find the ``(count, direction)`` peel that unblocks the most maps for
         ``loop``, experimenting on an isolated mini-SDFG; ``None`` if no peel
         beats leaving it alone (or the loop already maps)."""
-        # Cheap pre-filter: a loop LoopToMap can already map needs no peel. This
-        # skips the (comparatively expensive) isolate-and-search for the common
-        # case, leaving the search only for genuinely stuck loops.
+        # Cheap structural gate FIRST: without an iter-var branch guard there is no boundary
+        # special case to peel, so neither the isolate-and-search nor the can_be_applied probe
+        # can turn up a beneficial peel -- skip both (see _has_iter_var_guard).
+        if not self._has_iter_var_guard(loop):
+            return None
+        # A loop LoopToMap can already map needs no peel either.
         from dace.transformation.interstate.loop_to_map import LoopToMap
         try:
             if LoopToMap.can_be_applied_to(sdfg, loop=loop):
@@ -302,7 +328,6 @@ class BestEffortLoopPeeling(ppl.Pass):
         end] (a boundary ``x`` simply drops the empty side -- see
         :meth:`_split_loop_at`). ``x`` must not depend on the loop variable."""
         import ast
-        from dace.sdfg.state import ConditionalBlock
         ivar_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
         values = []
         for cb in [b for b in loop.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]:
@@ -355,9 +380,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         keeps only one that raises the mappable-loop count, so a non-helping candidate
         is harmless.
         """
-        from dace.sdfg.state import SDFGState
         ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
-        reads: Dict[Any, list] = {}   # array -> loop-invariant single-point read subsets
+        reads: Dict[Any, list] = {}  # array -> loop-invariant single-point read subsets
         writes: Dict[Any, list] = {}  # array -> loop-var-dependent single-point write subsets
         for state in loop.all_states():
             if not isinstance(state, SDFGState):
@@ -503,17 +527,22 @@ class BestEffortLoopPeeling(ppl.Pass):
         for ``loop`` (probed on an isolated copy), or ``None`` if splitting does not
         help or the loop already maps."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
-        try:
-            if LoopToMap.can_be_applied_to(sdfg, loop=loop):
-                return None
-        except Exception:
-            pass
+        # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
+        # broadcast-conflict split point has no split candidate, so a split can never unblock it --
+        # skip the can_be_applied probe AND the isolate-and-search (behaviour-identical: both paths
+        # return None here). On a stencil like channel_flow this drops the whole split search to a
+        # cheap syntactic scan instead of a per-loop can_be_applied probe.
         candidates = self._equality_guard_values(loop)
         for x in self._broadcast_conflict_split_points(loop):
             if x not in candidates:
                 candidates.append(x)
         if not candidates:
             return None
+        try:
+            if LoopToMap.can_be_applied_to(sdfg, loop=loop):
+                return None
+        except Exception:
+            pass
         mini, _ = self._isolate_loop(loop, sdfg)
         if mini is None:
             return None
@@ -552,7 +581,6 @@ class BestEffortLoopPeeling(ppl.Pass):
         fixpoint -- the conditional count strictly decreases, so this terminates --
         and ``EmptyStateElimination`` then tidies the empty boundary states a lift
         leaves behind."""
-        from dace.sdfg.state import ConditionalBlock
         from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
         from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 
@@ -645,7 +673,6 @@ class BestEffortLoopPeeling(ppl.Pass):
         """``{loop_variable: (start, end)}`` for every ``LoopRegion`` enclosing
         ``block``, with inclusive bounds. Empty for a peeled iteration region (no
         enclosing loop), whose body holds a fixed, already-substituted index."""
-        from dace.sdfg.state import LoopRegion
         from dace.transformation.passes.analysis import loop_analysis
         ranges: Dict[Any, Any] = {}
         graph = block.parent_graph

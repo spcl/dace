@@ -86,11 +86,16 @@ def _parse_affine_update(rhs_str: str, lhs: str) -> Optional[Tuple[type, str]]:
     return type(expr.op), ast.unparse(c_node)
 
 
-def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
-    """Symbol exists in the SDFG and isn't reassigned inside the loop's body."""
+def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
+    """Symbol exists in the SDFG and isn't reassigned inside the loop's body.
+
+    ``sdfg_free_symbols`` is ``sdfg.free_symbols`` precomputed by the caller: that
+    property walks the whole SDFG on every access, so it is passed in rather than
+    recomputed per candidate symbol.
+    """
     if name == loop.loop_variable:
         return False
-    if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg.free_symbols:
+    if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg_free_symbols:
         return False
     for e in loop.edges():
         if e.data.assignments and name in e.data.assignments:
@@ -98,7 +103,8 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
     return True
 
 
-def _expr_is_loop_invariant(expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore: Set[str]) -> bool:
+def _expr_is_loop_invariant(expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore: Set[str],
+                            sdfg_free_symbols: Set[str]) -> bool:
     """Every ``ast.Name`` in ``expr_str`` is loop-invariant in ``loop`` (or in ``ignore``)."""
     try:
         expr = ast.parse(expr_str, mode='eval').body
@@ -110,14 +116,14 @@ def _expr_is_loop_invariant(expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore:
                 continue
             if n.id == loop.loop_variable:
                 return False
-            if not _is_loop_invariant_symbol(n.id, loop, sdfg):
+            if not _is_loop_invariant_symbol(n.id, loop, sdfg, sdfg_free_symbols):
                 # Allow numeric literal names like ``True`` / ``False`` to pass.
                 if not hasattr(__import__('builtins'), n.id):
                     return False
     return True
 
 
-def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG) -> Dict[str, Tuple[type, str]]:
+def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> Dict[str, Tuple[type, str]]:
     """Find symbols updated by ``sym = sym OP c`` on the loop body's interstate
     edges, where the update appears at most once per traversal and ``c`` is
     loop-invariant.
@@ -140,9 +146,9 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG) -> Dict[str, Tuple[type, st
                 continue
             op_type, c_expr = parsed
             # The seed value (pre-loop) must already be in scope.
-            if lhs not in sdfg.symbols and lhs not in sdfg.free_symbols and lhs not in sdfg.constants:
+            if lhs not in sdfg.symbols and lhs not in sdfg_free_symbols and lhs not in sdfg.constants:
                 continue
-            if not _expr_is_loop_invariant(c_expr, loop, sdfg, ignore=set()):
+            if not _expr_is_loop_invariant(c_expr, loop, sdfg, set(), sdfg_free_symbols):
                 continue
             found[lhs] = (op_type, c_expr)
     return found
@@ -171,10 +177,10 @@ def _closed_form(op_type: type, init: str, c: str, n: str) -> Optional[str]:
     return None
 
 
-def _next_post_id(sdfg: SDFG) -> int:
+def _next_post_id(sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
     """Lowest ``<N>`` not in use among existing ``_loop_exit_*_<N>`` symbols."""
     used: Set[int] = set()
-    for s in list(sdfg.symbols.keys()) + list(sdfg.free_symbols):
+    for s in list(sdfg.symbols.keys()) + list(sdfg_free_symbols):
         if s.startswith(_POST_PREFIX):
             tail = s.rsplit('_', 1)[-1]
             if tail.isdigit():
@@ -266,25 +272,33 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         or ``None`` if nothing matched."""
         materialised = 0
         for sd in sdfg.all_sdfgs_recursive():
+            # ``sd.free_symbols`` walks the entire SDFG on every access. It is
+            # invariant across the per-loop scan below -- only our own
+            # materialisations mutate ``sd`` -- so compute it once here and refresh
+            # it only after a loop is actually materialised (which is rare).
+            sd_free_symbols = sd.free_symbols
             for cfg in list(sd.all_control_flow_regions()):
                 if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
                     continue
-                materialised += self._try_materialise(cfg, sd)
+                count = self._try_materialise(cfg, sd, sd_free_symbols)
+                if count:
+                    materialised += count
+                    sd_free_symbols = sd.free_symbols
         return materialised or None
 
-    def _try_materialise(self, loop: LoopRegion, sdfg: SDFG) -> int:
+    def _try_materialise(self, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
         parent = loop.parent_graph
         if parent is None:
             return 0
 
         # IV symbols updated by body interstate-edge assignments (``k = k + step``).
-        iv_symbols = dict(_detect_iv_symbols(loop, sdfg))
+        iv_symbols = dict(_detect_iv_symbols(loop, sdfg, sdfg_free_symbols))
 
         # The loop iterator itself: ``_loop_it_<N> = _loop_it_<N> + stride`` is the
         # same affine recurrence, just emitted by ``loop.update_statement`` rather
         # than a body interstate edge. Treat it identically.
         loop_var = loop.loop_variable
-        if (loop_var and (loop_var in sdfg.symbols or loop_var in sdfg.free_symbols) and loop_var not in iv_symbols):
+        if (loop_var and (loop_var in sdfg.symbols or loop_var in sdfg_free_symbols) and loop_var not in iv_symbols):
             stride = loop_analysis.get_loop_stride(loop)
             if stride is not None:
                 iv_symbols[loop_var] = (ast.Add, str(symbolic.symstr(stride)))
@@ -300,7 +314,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             return 0
 
         count = 0
-        next_id = _next_post_id(sdfg)
+        next_id = _next_post_id(sdfg, sdfg_free_symbols)
         for sym_name, (op_type, c_expr) in iv_symbols.items():
             # Check this symbol is actually READ in the post-loop region.
             if not self._is_read_in(post_blocks, sym_name, parent):

@@ -342,7 +342,6 @@ class LoopToMap(xf.MultiStateTransformation):
         if range_syms & body_assigned_syms:
             return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
-        _, write_set = self.loop.read_and_write_sets()
         loop_states = set(self.loop.all_states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
@@ -351,38 +350,46 @@ class LoopToMap(xf.MultiStateTransformation):
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return refuse(f"loop body contains a StructureView in state {loop_state}")
 
-        # Collect symbol reads and writes from inter-state assignments
-        in_order_loop_blocks = list(
-            cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
+        # Collect symbol reads and writes from inter-state assignments. The read-before-assigned
+        # analysis needs the loop's blocks in topological order, but that (dominator-heavy) sort is
+        # only meaningful when the loop body actually has inter-state assignments. A loop whose
+        # interstate edges carry none -- the common single-statement post-MapToForLoop case, ~all of
+        # a stencil's probes -- has nothing to check, so skip the sort and leave
+        # ``symbols_that_may_be_used`` at its initial ``{itervar}`` (identical to what the loop below
+        # would produce with no assignments).
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
-        for block in in_order_loop_blocks:
-            for e in block.parent_graph.out_edges(block):
-                # Collect read-before-assigned symbols (states are in order; see
-                # blockorder_topological_sort above).
-                read_symbols = e.data.read_symbols()
-                read_symbols -= symbols_that_may_be_used
-                used_before_assignment |= read_symbols
-                # If symbol was read before it is assigned, the loop cannot be parallel
-                assigned_symbols = set()
-                for k, v in e.data.assignments.items():
-                    try:
-                        fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
-                    except AttributeError:
-                        fsyms = set()
-                    if k in fsyms:
-                        # Self-recurrent assignment (k = f(k), e.g. k = k + inc) is a loop-carried
-                        # recurrence: each iteration reads the previous value, so the loop cannot be
-                        # parallelized -- refuse REGARDLESS of how k is used. Affine induction
-                        # variables are substituted to a closed form upstream, so a self-recurrence
-                        # that survives to here is a genuine carried dependency.
-                        return refuse(f"self-recurrent carried symbol '{k}' (assignment {k} = {v})")
-                    assigned_symbols.add(k)
-                if assigned_symbols & used_before_assignment:
-                    return refuse("carried symbol dependency - "
-                                  f"{assigned_symbols & used_before_assignment} read before being assigned")
+        if any(e.data.assignments for block in self.loop.all_control_flow_blocks()
+               for e in block.parent_graph.out_edges(block)):
+            in_order_loop_blocks = list(
+                cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
+            for block in in_order_loop_blocks:
+                for e in block.parent_graph.out_edges(block):
+                    # Collect read-before-assigned symbols (states are in order; see
+                    # blockorder_topological_sort above).
+                    read_symbols = e.data.read_symbols()
+                    read_symbols -= symbols_that_may_be_used
+                    used_before_assignment |= read_symbols
+                    # If symbol was read before it is assigned, the loop cannot be parallel
+                    assigned_symbols = set()
+                    for k, v in e.data.assignments.items():
+                        try:
+                            fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
+                        except AttributeError:
+                            fsyms = set()
+                        if k in fsyms:
+                            # Self-recurrent assignment (k = f(k), e.g. k = k + inc) is a loop-carried
+                            # recurrence: each iteration reads the previous value, so the loop cannot be
+                            # parallelized -- refuse REGARDLESS of how k is used. Affine induction
+                            # variables are substituted to a closed form upstream, so a self-recurrence
+                            # that survives to here is a genuine carried dependency.
+                            return refuse(f"self-recurrent carried symbol '{k}' (assignment {k} = {v})")
+                        assigned_symbols.add(k)
+                    if assigned_symbols & used_before_assignment:
+                        return refuse("carried symbol dependency - "
+                                      f"{assigned_symbols & used_before_assignment} read before being assigned")
 
-                symbols_that_may_be_used |= e.data.assignments.keys()
+                    symbols_that_may_be_used |= e.data.assignments.keys()
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()
@@ -393,6 +400,12 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add non-transient nodes from loop state
         for state in loop_states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+
+        # read_and_write_sets() walks every state/edge of the loop and is only needed from here
+        # on (the per-array write analysis below). Computing it lazily -- after the cheaper
+        # bound/break/StructView/carried-symbol refusals above -- lets a loop refused by any of
+        # those return without paying for it (on channel_flow that is ~41k of ~44k probes).
+        _, write_set = self.loop.read_and_write_sets()
 
         write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
 

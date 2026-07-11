@@ -137,35 +137,47 @@ class BufferExpansion(ppl.Pass):
         """Expand beneficial buffers for the loops of a single SDFG (speculate, then verify).
 
         A loop ``LoopToMap`` already accepts needs no privatization; a loop it *refuses* is the
-        only place a buffer expansion can help. So probe mappability FIRST -- cheap, per-loop
-        (a ``LoopToMap`` match) -- and run the (expensive, ``arrays x states``) buffer analysis
-        only on the refused loops. On a big kernel most loops are already mappable or have no
-        privatizable buffer, so this skips the whole scan for them (channel_flow: ~34s -> ~2s).
+        only place a buffer expansion can help. So the (expensive, ``arrays x states``) buffer
+        analysis runs only on the refused loops -- probing mappability separates the two.
+
+        That mappability probe (``LoopToMap.can_be_applied_to``) is itself the pass's whole cost:
+        it topological-sorts the loop and computes its dominators/branch-merges, ~0.3s per loop, so
+        on a kernel with a few hundred post-MapToForLoop loops (channel_flow: 159) it dominates
+        everything else by orders of magnitude. It is therefore gated behind a *cheap* candidate
+        test (:meth:`_has_candidate_buffer`, pure set lookups against per-SDFG indices): a loop with
+        no transient buffer that is both written inside it and confined to it has nothing to
+        privatize and is never expanded, whatever ``LoopToMap`` would say -- so probing it only to
+        throw the answer away is wasted. Skipping the probe on those loops leaves the expanded set
+        identical while cutting almost all of the probe cost (channel_flow: 159 probes -> 1).
         """
         loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+        if not loops:
+            return {}
 
-        # Per-SDFG indices, built lazily on the first refused loop (an all-mappable SDFG pays
-        # nothing to build them). Expansion never moves an access between states nor touches an
-        # interstate edge, so both indices -- and the ambient storage order -- stay valid across
-        # the expansions applied below; build them once from the pristine SDFG.
-        access_states: Optional[Dict[str, Set[SDFGState]]] = None
-        interstate_syms: Optional[Set[str]] = None
-        order: Optional[str] = None
+        # Per-SDFG indices, built once from the pristine SDFG (the candidate gate consults all three
+        # on every loop). Expansion never moves an access between states nor touches an interstate
+        # edge, so the indices -- and the ambient storage order -- stay valid across the expansions
+        # applied below.
+        access_states = self._access_state_index(sdfg)
+        interstate_syms = self._interstate_symbols(sdfg)
+        write_index = self._write_state_index(sdfg)
+        order: Optional[str] = None  # ambient storage order: built lazily, only when actually expanding
 
         kept: Dict[str, List[str]] = {}
         for loop in loops:
             ix = self._loop_index(loop)
             if ix is None:
                 continue
+            loop_states = set(loop.all_states())
+            if not self._has_candidate_buffer(loop_states, write_index, access_states, interstate_syms):
+                continue  # no privatizable-buffer candidate -> never expanded, so skip the probe
             if self._loop_mappable(sdfg, loop):
                 continue  # already parallelizable -> expanding would only grow the SDFG
-            if access_states is None:
-                access_states = self._access_state_index(sdfg)
-                interstate_syms = self._interstate_symbols(sdfg)
-                order = self._ambient_order(sdfg)
-            buffers = self._privatizable_buffers(sdfg, loop, access_states, interstate_syms)
+            buffers = self._privatizable_buffers(sdfg, loop, access_states, interstate_syms, loop_states)
             if not buffers:
                 continue
+            if order is None:
+                order = self._ambient_order(sdfg)
             index, size = ix
             applied = [self._expand(sdfg, loop, arr, index, size, order) for arr in buffers]
             if self._loop_mappable(sdfg, loop):
@@ -174,6 +186,51 @@ class BufferExpansion(ppl.Pass):
                 for exp in applied:
                     exp.undo()
         return kept
+
+    @staticmethod
+    def _write_state_index(sdfg: SDFG) -> Dict[str, Set[SDFGState]]:
+        """Map each *privatizable-kind* transient array to the states that WRITE it (one pass).
+
+        A key is a transient, non-view, reindexable-lifetime Array of rank >= 1 -- exactly the
+        descriptor-level filters :meth:`_privatizable_buffers` applies -- with at least one
+        AccessNode fed by an incoming edge (a write). Read-only and never-accessed transients are
+        omitted so the candidate gate iterates a small key set. The plain "has an incoming edge"
+        test is a broad, sound stand-in for ``_defined_before_read``'s per-edge write check (it can
+        only over-include), keeping the gate a necessary precondition for privatizability.
+        """
+        reindexable = {
+            name
+            for name, desc in sdfg.arrays.items() if isinstance(desc, data.Array) and not isinstance(desc, data.View)
+            and desc.transient and desc.lifetime in _REINDEXABLE_LIFETIMES and len(desc.shape) >= 1
+        }
+        index: Dict[str, Set[SDFGState]] = {}
+        if not reindexable:
+            return index
+        for state in sdfg.all_states():
+            for n in state.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data in reindexable and state.in_edges(n):
+                    index.setdefault(n.data, set()).add(state)
+        return index
+
+    @staticmethod
+    def _has_candidate_buffer(loop_states: Set[SDFGState], write_index: Dict[str, Set[SDFGState]],
+                              access_states: Dict[str, Set[SDFGState]], interstate_syms: Set[str]) -> bool:
+        """Whether ``loop_states`` could hold a privatizable buffer -- the cheap gate on the probe.
+
+        True iff some reindexable transient is written inside the loop *and* used only inside it: the
+        two conditions a privatizable buffer must meet that need no dominator or ``LoopToMap``
+        analysis, so this is a pure set-lookup test against the precomputed indices.
+        :meth:`_privatizable_buffers` additionally verifies define-before-read (dominators) and the
+        library-node guard, but those run behind the mappability probe. Since every privatizable
+        buffer is a written, loop-local, reindexable transient, this is a *necessary* precondition
+        for a non-empty ``_privatizable_buffers`` -- a loop it rejects is never expanded, so gating
+        the probe on it changes only which loops are probed, never which are expanded.
+        """
+        for name, write_states in write_index.items():
+            if not write_states.isdisjoint(loop_states) \
+                    and BufferExpansion._is_loop_local(loop_states, name, access_states, interstate_syms):
+                return True
+        return False
 
     @staticmethod
     def _access_state_index(sdfg: SDFG) -> Dict[str, Set[SDFGState]]:
@@ -233,20 +290,23 @@ class BufferExpansion(ppl.Pass):
                               sdfg: SDFG,
                               loop: LoopRegion,
                               access_states: Optional[Dict[str, Set[SDFGState]]] = None,
-                              interstate_syms: Optional[Set[str]] = None) -> List[str]:
+                              interstate_syms: Optional[Set[str]] = None,
+                              loop_states: Optional[Set[SDFGState]] = None) -> List[str]:
         """Transient arrays in ``loop`` that are safe to privatize by expansion.
 
         A buffer qualifies when it is a transient array used only inside ``loop``, has no
         write-conflict (reduction) edge, and is *defined before read* on every iteration --
         i.e. never carries a value across iterations. ``access_states`` / ``interstate_syms``
-        are the per-SDFG indices from :meth:`_access_state_index` / :meth:`_interstate_symbols`;
-        they are built here when not supplied (so the helper is usable standalone).
+        are the per-SDFG indices from :meth:`_access_state_index` / :meth:`_interstate_symbols`
+        and ``loop_states`` is ``set(loop.all_states())``; each is built here when not supplied
+        (so the helper is usable standalone).
         """
         if access_states is None:
             access_states = self._access_state_index(sdfg)
         if interstate_syms is None:
             interstate_syms = self._interstate_symbols(sdfg)
-        loop_states = set(loop.all_states())
+        if loop_states is None:
+            loop_states = set(loop.all_states())
         candidates: List[str] = []
         for name, desc in sdfg.arrays.items():
             if not isinstance(desc, data.Array) or not desc.transient:
