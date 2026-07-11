@@ -592,7 +592,61 @@ def test_complex_product_declare_uses_identity_one():
     assert "initializer(omp_priv = dace::complex128(1))" in src
 
 
+def _build_wcr_array_sum_reads_target(dtype, flag: bool) -> dace.SDFG:
+    """Like :func:`_build_wcr_array_sum`, but the reducing tasklet ALSO READS ``A``
+    (input connector ``ain`` at ``A[i, j]``, nulled out of the value so numerics stay a
+    pure ``sum_k X``). Models polybench ``trisolv``, whose forward-substitution map
+    reduces into ``x[i]`` yet also reads ``x[j]``: a whole-buffer ``reduction(+:A[0:n])``
+    privatizes ``A`` (identity-initialized), so every read of ``A`` would see the private
+    zero copy instead of the shared values -- silently wrong. When the reduction array is
+    also read, codegen must NOT take the array-section clause and must fall back to the
+    (correct) atomic path, even with ``openmp_array_reductions`` on.
+    """
+    sd = dace.SDFG("wcr_arr_read_%s_%d" % (dtype.to_string(), int(flag)))
+    sd.add_array("X", [KK, NR, NM], dtype)
+    sd.add_array("A", [NR, NM], dtype)
+    st = sd.add_state()
+    oe, ox = st.add_map("outer", dict(k="0:%d" % KK), schedule=dace.ScheduleType.CPU_Multicore)
+    ie, ix = st.add_map("inner", dict(i="0:%d" % NR, j="0:%d" % NM))
+    t = st.add_tasklet("acc", {"xin", "ain"}, {"aout"}, "aout = xin + 0 * ain")
+    st.add_memlet_path(st.add_read("X"), oe, ie, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k, i, j"))
+    st.add_memlet_path(st.add_read("A"), oe, ie, t, dst_conn="ain", memlet=dace.Memlet(data="A", subset="i, j"))
+    st.add_memlet_path(t,
+                       ix,
+                       ox,
+                       st.add_write("A"),
+                       src_conn="aout",
+                       memlet=dace.Memlet(data="A", subset="i, j", wcr="lambda a, b: a + b"))
+    sd.validate()
+    sd.openmp_array_reductions = flag
+    return sd
+
+
+def test_array_wcr_read_target_falls_back_to_atomic():
+    """A map that WCR-reduces into ``A`` AND reads ``A`` must NOT take the array-section
+    ``reduction(+:A[0:n])`` clause even with the flag on: the clause privatizes the whole
+    buffer (identity-initialized), so the in-body reads of ``A`` would see zeros. Regression
+    for polybench ``trisolv`` (the ``-sum L[i,j]x[j]`` term was dropped, giving
+    ``x[i]=b[i]/L[i,i]``). Falls back to the atomic path; flag-on then equals flag-off and
+    the oracle."""
+    sd_on = _build_wcr_array_sum_reads_target(dace.float64, flag=True)
+    _, src = _compile_and_read_src(sd_on)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert not any("reduction(+:A[0:" in l for l in pragma), \
+        "reduction array is also READ -> must NOT emit the array-section clause; got:\n" + "\n".join(pragma)
+
+    rng = np.random.default_rng(0)
+    X = rng.random((KK, NR, NM))
+    A0 = rng.random((NR, NM))
+    ref = A0 + X.sum(axis=0)
+    got_on = _run_arr(sd_on, X, A0)
+    got_off = _run_arr(_build_wcr_array_sum_reads_target(dace.float64, flag=False), X, A0)
+    assert np.allclose(got_on, ref), "flag-on (atomic fallback) numerically wrong"
+    assert np.allclose(got_off, ref), "flag-off numerically wrong"
+
+
 if __name__ == "__main__":
+    test_array_wcr_read_target_falls_back_to_atomic()
     test_mixed_copy_and_reduce_map()
     test_mixed_copy_and_product_reduce_detects_star_op()
     test_persistent_scalar_target_falls_back_to_atomic()

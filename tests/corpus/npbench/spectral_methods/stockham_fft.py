@@ -35,14 +35,14 @@ def initialize(R, K, datatype=np.float64):
 def reference(R, K, x, y):
     N = R**K
     i_coord, j_coord = np.mgrid[0:R, 0:R]
-    dft_mat = np.empty((R, R), dtype=np.complex128)
+    dft_mat = np.zeros((R, R), dtype=np.complex128)
     dft_mat = np.exp(-2j * np.pi * i_coord * j_coord / R)
     y[:] = x[:]
     ii_coord, jj_coord = np.mgrid[0:R, 0:R**K]
     for i in range(K):
         yv = np.reshape(y, (R**i, R, R**(K - i - 1)))
         tmp_perm = np.transpose(yv, axes=(1, 0, 2))
-        D = np.empty((R, R**i, R**(K - i - 1)), dtype=np.complex128)
+        D = np.zeros((R, R**i, R**(K - i - 1)), dtype=np.complex128)
         tmp = np.exp(-2j * np.pi * ii_coord[:, :R**i] * jj_coord[:, :R**i] / R**(i + 1))
         D[:] = np.repeat(np.reshape(tmp, (R, R**i, 1)), R**(K - i - 1), axis=2)
         tmp_twid = np.reshape(tmp_perm, (N, )) * np.reshape(D, (N, ))
@@ -70,7 +70,7 @@ def kernel(x: dc_complex_float[R**K], y: dc_complex_float[R**K]):
     i_coord = np.ndarray((R, R), dtype=np.uint32)
     j_coord = np.ndarray((R, R), dtype=np.uint32)
     mgrid1(i_coord, j_coord)
-    dft_mat = np.empty((R, R), dtype=dc_complex_float)
+    dft_mat = np.zeros((R, R), dtype=dc_complex_float)
     dft_mat[:] = np.exp(-2j * np.pi * i_coord * j_coord / R)
     y[:] = x[:]
     ii_coord = np.ndarray((R, N), dtype=np.uint32)

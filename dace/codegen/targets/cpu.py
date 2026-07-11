@@ -1992,6 +1992,19 @@ class CPUCodeGen(TargetCodeGenerator):
             if is_scalar:
                 clause_target = var_name
             elif sdfg.openmp_array_reductions:
+                # An array-section reduction ``reduction(op:A[0:n])`` privatizes the WHOLE
+                # buffer per thread (identity-initialized) for the region. If the map body
+                # also READS ``A`` (a non-WCR input flowing through the map entry), those
+                # reads see the private identity copy instead of the shared values -- silently
+                # wrong. polybench ``trisolv``: the forward-substitution map reduces into
+                # ``x[i]`` but also reads ``x[j]`` (j < i); a whole-``x`` reduction makes every
+                # ``x[j]`` read ``0``, dropping the sum (``x[i]=b[i]/L[i,i]``). A sound array
+                # reduction must be a WRITE-ONLY accumulate; if the array is also read, fall
+                # through to the (correct, contended) atomic path.
+                if any(
+                        isinstance(e.src, nodes.AccessNode) and e.src.data == oedge.dst.data
+                        for e in state.in_edges(map_entry)):
+                    continue
                 count = _contiguous_element_count(desc)
                 if count is None:
                     continue

@@ -157,13 +157,25 @@ def _affine_coeffs(expr, itersym):
     return a, b
 
 
-def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
+def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     """ True iff ``idx1`` at any iteration can never equal ``idx2`` at any
-        iteration, for any integer iterations and any loop bounds.
+        iteration, for any pair of in-domain iterations and any loop bounds.
 
-        Uses the linear-Diophantine solvability criterion: ``a1*i1 + b1 ==
-        a2*i2 + b2`` has an integer solution iff ``gcd(a1, a2)`` divides
-        ``b2 - b1``. If it does not, the accesses never alias.
+        Uses the linear-Diophantine solvability criterion. The iteration
+        variable ``i`` only takes the strided values ``start + step * t``
+        (``t`` a non-negative integer), so the accesses are reparameterized
+        w.r.t. the iteration counter ``t``: ``a * i + b == (a*step)*t +
+        (a*start + b)``. Writing ``A_k = a_k*step`` and ``B_k = a_k*start +
+        b_k``, ``A1*t1 + B1 == A2*t2 + B2`` has an integer solution iff
+        ``gcd(A1, A2)`` divides ``B2 - B1``. If it does not, the accesses
+        never alias -- even accounting for the loop's stride (so a stride-2
+        ``a[i] = a[i-1] + ...`` writes odd indices / reads even indices and is
+        provably disjoint). The Diophantine ranges over ALL integers ``t``,
+        which is conservative w.r.t. the bounded iteration domain (a solution
+        only outside the domain still reports "may alias"), hence sound.
+
+        ``step``/``start`` default to ``1``/``0`` (identity reparameterization)
+        so callers that pass only the affine indices keep the classic behavior.
     """
     f1 = _affine_coeffs(idx1, itersym)
     f2 = _affine_coeffs(idx2, itersym)
@@ -171,12 +183,22 @@ def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
         return False
     a1, b1 = f1
     a2, b2 = f2
-    diff = sp.simplify(b2 - b1)
     if not (a1.is_Integer and a2.is_Integer):
         return False
-    if a1 == 0 and a2 == 0:
+    step_s = symbolic.pystr_to_symbolic(step)
+    start_s = symbolic.pystr_to_symbolic(start)
+    A1 = sp.simplify(a1 * step_s)
+    A2 = sp.simplify(a2 * step_s)
+    B1 = sp.simplify(a1 * start_s + b1)
+    B2 = sp.simplify(a2 * start_s + b2)
+    diff = sp.simplify(B2 - B1)
+    if A1 == 0 and A2 == 0:
         return diff.is_number and diff != 0
-    g = sp.igcd(int(a1), int(a2))
+    # A strided or offset loop yields symbolic ``A_k`` only when the step/start
+    # are symbolic; the gcd criterion then cannot be evaluated -- stay safe.
+    if not (A1.is_Integer and A2.is_Integer):
+        return False
+    g = sp.igcd(int(A1), int(A2))
     if g == 0:
         return diff.is_number and diff != 0
     if not diff.is_number:
@@ -184,6 +206,44 @@ def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
     if not diff.is_Integer:
         return True
     return sp.Integer(diff) % g != 0
+
+
+def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, itersym, step, start) -> bool:
+    """ True iff some dimension's read/write point-indices are provably disjoint
+        across every pair of in-domain iterations (step-aware
+        linear-Diophantine, see :func:`_dim_provably_disjoint`).
+
+        This is the read/write analog of the write/write per-dimension test in
+        :func:`_writes_may_overlap`. It additionally accounts for the loop STEP
+        (stride-2 write-odds/read-evens) and keeps CONSTANT disproving
+        dimensions (``aa[0, i]`` write vs ``aa[1, i-1]`` read -- row 0 can never
+        equal row 1), which the propagate+intersect fallback drops when it
+        restricts to iteration-dependent dimensions only.
+    """
+    rnd = list(read.ndrange())
+    wnd = list(write.ndrange())
+    if len(rnd) != len(wnd) or len(rnd) == 0:
+        return False
+    for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
+        if rb != re_ or wb != we_:  # non-point dimension: cannot decide here
+            continue
+        # SOUNDNESS: only a dimension indexed purely by ``itersym`` (plus
+        # literals) yields a valid cross-iteration disjointness verdict. A
+        # dimension that also contains an INNER loop variable (``a[i-1, j-1]``
+        # vs ``a[i, j]`` where ``j`` ranges) would be misjudged: ``j-1`` and
+        # ``j`` look like distinct constants w.r.t. ``i`` yet the sets overlap
+        # as ``j`` sweeps -- that is a genuine diagonal recurrence (TSVC s119).
+        # Requiring free symbols to be a subset of ``{itersym}`` is
+        # conservative (a loop-invariant symbol is also skipped) but sound.
+        allowed = {itersym}
+        # ``ndrange()`` yields plain ints as well as sympy exprs; ``sympify`` gives both a
+        # uniform ``.free_symbols`` (an int has none) without a ``getattr`` guard.
+        rw_syms = set(sp.sympify(rb).free_symbols) | set(sp.sympify(wb).free_symbols)
+        if not rw_syms <= allowed:
+            continue
+        if _dim_provably_disjoint(rb, wb, itersym, step, start):
+            return True
+    return False
 
 
 def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
@@ -243,13 +303,18 @@ def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, iters
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step=1, start=0) -> bool:
     """ Conservatively decide whether two write memlets to the same container
         can address the same element on different loop iterations. Returns
         ``False`` only if some subset dimension is provably disjoint (the
         multidimensional element can then never coincide), or if a collision
         provably forces the two iterations to coincide (see
         :func:`_collision_forces_same_iteration`).
+
+        ``step``/``start`` describe the loop's strided iteration domain and are
+        threaded into the per-dimension disjointness test, so a step-4 unrolled
+        body's writes ``a[i], a[i+1], a[i+2], a[i+3]`` (all distinct modulo 4)
+        are recognised as disjoint.
     """
     nd1 = list(m1.subset.ndrange())
     nd2 = list(m2.subset.ndrange())
@@ -264,7 +329,7 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
         coeffs = _affine_coeffs(b1, itersym)
         if coeffs is not None and coeffs[0] != 0 and sp.simplify(b1 - b2) == 0:
             return False
-        if _dim_provably_disjoint(b1, b2, itersym):
+        if _dim_provably_disjoint(b1, b2, itersym, step, start):
             return False
     # No single dimension settled it. Fall back to the whole-subset collision system: the iter var
     # may appear in different dimensions of the two writes (a transpose), yet a collision can still
@@ -495,7 +560,7 @@ class LoopToMap(xf.MultiStateTransformation):
             reps = list(distinct.values())
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
-                    if _writes_may_overlap(reps[x], reps[y], itersym) and not permissive:
+                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start) and not permissive:
                         return refuse(f"writes {reps[x].subset} and {reps[y].subset} to {data} "
                                       "may overlap across iterations")
 
@@ -617,6 +682,14 @@ class LoopToMap(xf.MultiStateTransformation):
             # doesn't crash on ``None.ndrange()``.
             write = candidate.dst_subset if candidate.dst_subset is not None else candidate.subset
             if read == write:
+                continue
+            # Step-aware per-dimension disjointness: if any dimension's read/write
+            # indices can never coincide for any pair of in-domain iterations
+            # (linear-Diophantine over the strided iteration counter), the accesses
+            # never alias -- no cross-iteration RAW. This is strictly more precise
+            # than the propagate+intersect fallback below, which drops constant
+            # disproving dims and ignores the loop stride.
+            if _read_write_dims_disjoint(read, write, itersym, step, start):
                 continue
             ridx = _dependent_indices(itervar, read)
             widx = _dependent_indices(itervar, write)

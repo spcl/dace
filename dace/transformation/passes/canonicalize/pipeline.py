@@ -28,6 +28,7 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
+from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
@@ -727,6 +728,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # downstream WCR codegen can lower to a clean OMP ``reduction(op:scalar)``
     # clause. Folded into one stage because the four steps (AugWCR, L2M,
     # inline+fuse, privatize) form an atomic logical transformation.
+    # FuseChainedScalarReductions FIRST: a loop that accumulates into the SAME scalar
+    # more than once per iteration (TSVC s319 ``sum_val += a[i]; sum_val += b[i]``) reaches
+    # here as a chained ``acc -> (+incA) -> acc -> (+incB) -> acc`` dataflow whose
+    # intermediate read-back defeats the single-accumulation matcher below, leaving the
+    # reduction loop sequential. Re-associating the chain into one ``acc += (incA + incB)``
+    # (sound by associativity of +/*) exposes the single accumulation that
+    # ``LoopToReduce(wcr-scalar)`` then lifts to a parallel WCR-map.
+    s += [('reduction_to_wcr_map', FuseChainedScalarReductions())]
     s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
     # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG

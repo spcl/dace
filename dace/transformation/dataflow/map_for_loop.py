@@ -16,6 +16,35 @@ from dace.transformation import transformation
 from typing import Tuple, Optional
 
 
+def _wcr_index_is_data_dependent(subset, containing_sdfg: SDFG) -> bool:
+    """A WCR write whose index references a symbol that is DYNAMICALLY ASSIGNED from data
+    within ``containing_sdfg`` (present in ``symbols`` but not ``free_symbols``, e.g. an
+    interstate-edge ``bin = min(compute_bin_ret[0], bins - 1)``) is an INDIRECT scatter --
+    a data-dependent gather/bincount index, not an iteration variable or a program
+    parameter. Iteration variables (map params / loop vars) and free program symbols
+    (``N``, ``npt``, ``bins``) index a structured reduction and are NOT data-dependent."""
+    internal = {str(s) for s in containing_sdfg.symbols} - {str(s) for s in containing_sdfg.free_symbols}
+    return bool({str(s) for s in subset.free_symbols} & internal)
+
+
+def _map_body_has_data_dependent_wcr(graph: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """True iff the map's body carries a surviving WCR write with a data-dependent (indirect)
+    index anywhere in its scope, including inside nested SDFGs (see
+    :meth:`MapToForLoop.can_be_applied`)."""
+    scope = graph.scope_subgraph(map_entry)
+    for node in scope.nodes():
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        for sub in node.sdfg.all_sdfgs_recursive():
+            for state in sub.states():
+                for e in state.edges():
+                    m = e.data
+                    if m is not None and m.data is not None and m.wcr is not None:
+                        if _wcr_index_is_data_dependent(m.subset, sub):
+                            return True
+    return False
+
+
 @properties.make_properties
 class MapToForLoop(transformation.SingleStateTransformation):
     """Implements the Map to for-loop transformation.
@@ -65,6 +94,19 @@ class MapToForLoop(transformation.SingleStateTransformation):
         for e in graph.out_edges(map_exit):
             if e.data is not None and e.data.wcr is not None:
                 return False
+
+        # Refuse a map whose body carries a DATA-DEPENDENT (indirect) scatter reduction,
+        # i.e. a surviving WCR write ``A[bin] (wcr)= ...`` whose index ``bin`` is computed
+        # from input data (a histogram / bincount ``np.add.at`` shape). The reduction WCR
+        # here is buried inside the body (a nested SDFG), so the map-exit scan above misses
+        # it. Such a scatter is a genuine parallel reduction that codegens soundly as an
+        # atomic-WCR parallel map, but -- unlike an affine/structured reduction (covariance,
+        # gemm) -- canon CANNOT re-parallelize it once serialized to a loop: LoopToReduce
+        # needs a scalar/affine accumulator and ScatterToGuardedMaps needs a precomputed
+        # index ARRAY, neither of which matches a computed index. Lowering it would strand
+        # the loop as sequential; keep it the parallel scatter map instead.
+        if _map_body_has_data_dependent_wcr(graph, self.map_entry):
+            return False
 
         return True
 

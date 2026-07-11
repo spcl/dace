@@ -40,13 +40,13 @@ _CPU = dict(target='cpu',
 
 # Kernels where the transformed build and the untransformed baseline are the SAME computation
 # but differ only in the C compiler's FMA-contraction placement, which the default ``-ffast-math``
-# leaves free. That ULP difference is harmless on a well-conditioned kernel, but gramschmidt is
-# rank-deficient at preset S -- column 13 collapses to ~3.66e-14 -- so it amplifies to 100%
-# relative error and trips the 1e-9 tolerance even though canonicalization is provably
-# value-preserving (bit-exact once FMA contraction is off). For ONLY these kernels the fixture
-# below pins ``-ffp-contract=off`` for both builds; every other kernel keeps FMA so the gate
-# still catches a genuine FMA-order divergence there.
-_FP_CONTRACT_OFF = {('poly', 'gramschmidt')}
+# leaves free. That ULP difference is harmless on a well-conditioned kernel but amplifies to a
+# large relative error on a rank-deficient one. The set is currently EMPTY: gramschmidt used to
+# need it (its polybench input was rank-deficient, so column 13 collapsed to ~3.66e-14 and the ULP
+# amplified to ~100% relative error), but its ``init_array`` now builds a well-conditioned matrix
+# (diagonal-dominance term, cond ~1.7), so canonicalization is value-preserving with FMA on. The
+# fixture below is kept as-is so any future FMA-sensitive kernel can be pinned by adding its key.
+_FP_CONTRACT_OFF = set()
 
 
 @pytest.fixture(autouse=True)

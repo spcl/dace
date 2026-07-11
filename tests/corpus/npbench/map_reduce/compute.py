@@ -23,7 +23,7 @@ def initialize(M, N, datatype=np.int64):
     a = np.int64(4)
     b = np.int64(3)
     c = np.int64(9)
-    out = np.empty((M, N), dtype=np.int64)
+    out = np.zeros((M, N), dtype=np.int64)
     return (array_1, array_2, a, b, c, out)
 
 

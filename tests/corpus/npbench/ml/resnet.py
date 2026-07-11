@@ -39,7 +39,7 @@ def conv2d_np(input, weights):
     H_out = input.shape[1] - K + 1
     W_out = input.shape[2] - K + 1
     C_out = weights.shape[3]
-    output = np.empty((N, H_out, W_out, C_out), dtype=input.dtype)
+    output = np.zeros((N, H_out, W_out, C_out), dtype=input.dtype)
     for i in range(H_out):
         for j in range(W_out):
             output[:, i, j, :] = np.sum(

@@ -41,7 +41,7 @@ def reference(A_data, A_indices, A_indptr, x, y):
 
 @dc.program
 def kernel(A_data: dc_float[nnz], A_indices: dc.uint32[nnz], A_indptr: dc.uint32[M + 1], x: dc_float[N]):
-    y = np.empty(M, A_data.dtype)
+    y = np.zeros(M, A_data.dtype)
     for i in range(M):
         start = dc.define_local_scalar(dc.uint32)
         stop = dc.define_local_scalar(dc.uint32)
