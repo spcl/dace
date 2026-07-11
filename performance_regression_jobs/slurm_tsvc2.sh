@@ -35,7 +35,7 @@
 # overall. 4/node is a safe default -- raise it if your nodes have enough
 # cores that --cpus-per-task would otherwise stay comfortably above 1.
 #
-# Submit with:  sbatch example_slurm_tsvc2.sh
+# Submit with:  sbatch slurm_tsvc2.sh
 # Adjust --nodes / --ntasks-per-node for however many ranks (X) you want.
 
 set -euo pipefail

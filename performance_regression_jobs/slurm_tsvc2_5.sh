@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=dace-tsvc2_5-compile-perf
+#SBATCH --job-name=dace-tsvc2-5-perf
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4      # 4 ranks/node by default -- see note below on sizing this
 #SBATCH --cpus-per-task=72       # cores-per-node / ntasks-per-node -- run `nproc --all` on a
@@ -7,23 +7,16 @@
 #SBATCH --time=06:00:00
 #SBATCH --partition=normal
 #SBATCH --account=g34
-#SBATCH --output=tsvc2_5_compile_%j.out
-#SBATCH --error=tsvc2_5_compile_%j.err
+#SBATCH --output=tsvc2_5_%j.out
+#SBATCH --error=tsvc2_5_%j.err
 #SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 #
-# Example SLURM job: the compile-speed + post-compile-performance comparison of
-# the 4 DaCe pipelines (baseline = simplify+loop2map+mapfusion, auto-opt, canon,
-# fast-canon) on TSVC2.5, distributed over nodes * ntasks-per-node ranks total.
+# Example SLURM job: TSVC2.5 canonicalize performance regression, distributed
+# over nodes * ntasks-per-node ranks total. Same isolation/timing/crash
+# handling as tsvc2 (see slurm_tsvc2.sh for the full rationale) --
+# this file only differs in which script it srun's.
 #
-# ONE job, TWO metrics into the SAME results tree:
-#   1. tsvc2_5_perf.py          -> post-compile RUNTIME  (speedup.md, correctness.md)
-#   2. tsvc2_5_compile_perf.py  -> COMPILE speed         (compile_total.md,
-#                                  compile_codegen.md, compile_cxx.md)
-# Both self-partition kernels by SLURM_PROCID/SLURM_NTASKS; the final
-# --tables-only passes aggregate across ranks (see engine.py). Drop the first
-# srun if you have already run the runtime sweep.
-#
-# Submit with:  sbatch example_slurm_tsvc2_5_compile.sh
+# Submit with:  sbatch slurm_tsvc2_5.sh
 # Adjust --nodes / --ntasks-per-node for however many ranks (X) you want.
 
 set -euo pipefail
@@ -42,8 +35,17 @@ alias python=python3.11
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 
+# --cxx <name-or-abs-path> pins a specific compiler for DaCe's own codegen
+# (default: clang++ on PATH, else g++ -- plain PATH lookup); DaCe-lane
+# results are namespaced by compiler+hostname automatically. The native
+# lanes (native-clang(-polly-autopar)) are unaffected by --cxx -- they find
+# their own clang++ independently, and are just skipped if it isn't on PATH
+# (see slurm_tsvc2.sh for the full rationale).
+#
+# --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
+# of letting the OS scheduler migrate/share them across ranks -- with many
+# ranks per node this avoids extra scheduling contention on top of whatever
+# the workload itself needs.
 srun --cpu-bind=cores python3 tsvc2_5_perf.py --reps 100 --cxx=clang++
-srun --cpu-bind=cores python3 tsvc2_5_compile_perf.py --compile-reps 5 --cxx=clang++
 
 python3 tsvc2_5_perf.py --tables-only
-python3 tsvc2_5_compile_perf.py --tables-only

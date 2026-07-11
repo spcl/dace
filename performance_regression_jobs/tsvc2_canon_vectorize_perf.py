@@ -45,7 +45,7 @@ def _build_sdfg(kernel_name, pipeline):
     engine.configure_dace_process()
     kernel = base.tsvc.collect(name=kernel_name)[0]
     sdfg = base.tsvc.to_sdfg(kernel, f'{CORPUS}_{pipeline}', simplify=False)
-    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_dace_parallel(sdfg)
+    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_parallel(sdfg)
 
 
 def _check_dace_job(kernel_name, l1, l2, pipeline):

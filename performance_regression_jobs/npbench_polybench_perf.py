@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Performance regression: DaCe canonicalize/fast-canonicalize and a light
-simplify+loop2map+mapfusion pipeline (dace_parallel), each vs. DaCe's own
-auto_optimize baseline (dace_autoopt), on BOTH cpu and gpu, over the combined
+simplify+loop2map+mapfusion pipeline (parallel), each vs. DaCe's own
+auto_optimize baseline (auto_opt), on BOTH cpu and gpu, over the combined
 NPBench+PolyBench corpus. A timed numpy run is kept as an extra CPU reference.
 Fully self-contained: the kernel definitions are copied from this dace repo's
 own tests/corpus/{npbench,polybench} (npbench_corpus/, polybench_corpus/), and
@@ -47,11 +47,11 @@ BENCH_INFO_DIR = os.path.join(_HERE, 'bench_info')
 PRESET = 'paper'
 DEVICES = ('cpu', 'gpu')
 
-DACE_LANES = tuple(engine.PIPELINES)  # dace_autoopt, dace_parallel, canon, fast-canon
+DACE_LANES = tuple(engine.PIPELINES)  # auto_opt, parallel, canon, fast-canon
 #: numpy is a CPU-only extra reference lane (see process_kernel); not a baseline.
-BASELINE_LANE = 'dace_autoopt'
-#: Candidates the grid plot shows, each as a speedup vs. dace_autoopt per device.
-CANDIDATES = ('dace_parallel', 'canon', 'fast-canon')
+BASELINE_LANE = 'auto_opt'
+#: Candidates the grid plot shows, each as a speedup vs. auto_opt per device.
+CANDIDATES = ('parallel', 'canon', 'fast-canon')
 
 
 def lanes_for_device(device):

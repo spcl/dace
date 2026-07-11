@@ -33,7 +33,7 @@ import tsvc2_5_perf as base
 
 CORPUS = base.CORPUS
 COMPILE_LANES = [f'{p}-par' for p in engine.PIPELINES]
-BASELINE_LANE = 'dace_autoopt-par'
+BASELINE_LANE = 'auto_opt-par'
 
 
 def _compile_job(kernel_name, pipeline, creps):

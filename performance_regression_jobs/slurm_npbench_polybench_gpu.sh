@@ -23,11 +23,11 @@
 #
 # GPU degrades gracefully: with no CUDA toolchain/device a one-time crash-isolated
 # probe skips the gpu device entirely, so this job never crashes on a CPU-only node
-# (it just measures nothing). Run the CPU sweep (example_slurm_npbench_polybench.sh)
+# (it just measures nothing). Run the CPU sweep (slurm_npbench_polybench.sh)
 # for the cpu-device numbers; the two write into the SAME results tree under
 # separate '<...>_paper-cpu' / '<...>_paper-gpu' folders.
 #
-# Submit with:  sbatch example_slurm_npbench_polybench_gpu.sh
+# Submit with:  sbatch slurm_npbench_polybench_gpu.sh
 
 set -euo pipefail
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs

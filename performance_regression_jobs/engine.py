@@ -314,14 +314,14 @@ def _device_type(device):
     return dace.DeviceType.GPU if device == 'gpu' else dace.DeviceType.CPU
 
 
-def pipeline_dace_autoopt(sdfg, device='cpu'):
+def pipeline_auto_opt(sdfg, device='cpu'):
     """DaCe's own auto_optimize for the target device -- the speedup baseline
     every other pipeline is reported against."""
     from dace.transformation.auto.auto_optimize import auto_optimize
     return auto_optimize(sdfg, _device_type(device))
 
 
-def pipeline_dace_parallel(sdfg, device='cpu'):
+def pipeline_parallel(sdfg, device='cpu'):
     """The light pipeline: simplify + LoopToMap + MapFusion + simplify. On GPU
     the non-transient (I/O) arrays are moved to GPU_Global storage FIRST via
     ``apply_gpu_storage`` (the same helper ``auto_optimize`` uses -- arrays and
@@ -364,12 +364,15 @@ def pipeline_fast_canon(sdfg, device='cpu'):
     return finalize_for_target(canonicalize(sdfg, validate=True, fast=True, target=device, **_CANON_KNOBS), device)
 
 
-#: The 4 DaCe-side comparison points. dace_autoopt is the BASELINE speedups are
-#: reported against; dace_parallel (light simplify+loop2map+mapfusion) and
-#: canonicalize / canonicalize(fast=True) are the candidates.
+#: The 4 DaCe-side comparison points. auto_opt is the BASELINE speedups are
+#: reported against; parallel (light simplify+loop2map+mapfusion) and
+#: canonicalize / canonicalize(fast=True) are the candidates. The key is also
+#: the SDFG-name suffix each variant is cache-keyed on (with a _cpu/_gpu device
+#: tail), so e.g. canon->'..._canon_cpu', parallel->'..._parallel_gpu',
+#: auto_opt->'..._auto_opt_cpu' -- distinct build folders, never colliding.
 PIPELINES = {
-    'dace_autoopt': pipeline_dace_autoopt,
-    'dace_parallel': pipeline_dace_parallel,
+    'auto_opt': pipeline_auto_opt,
+    'parallel': pipeline_parallel,
     'canon': pipeline_canon,
     'fast-canon': pipeline_fast_canon,
 }
@@ -394,7 +397,7 @@ def _probe_gpu():
         a[:] = a + 1.0
 
     sdfg = _probe.to_sdfg()
-    pipeline_dace_autoopt(sdfg, 'gpu')
+    pipeline_auto_opt(sdfg, 'gpu')
     a = np.ones(32, dtype=np.float64)
     sdfg(a=a)
     return bool(np.allclose(a, 2.0))

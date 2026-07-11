@@ -37,7 +37,7 @@ CORPUS = base.CORPUS
 #: sizes (the generated C++ is identical), so no sizing search is needed and the
 #: -par variant is enough -- the comparison is across pipelines, not schedules.
 COMPILE_LANES = [f'{p}-par' for p in engine.PIPELINES]
-BASELINE_LANE = 'dace_autoopt-par'
+BASELINE_LANE = 'auto_opt-par'
 
 
 def _compile_job(kernel_name, pipeline, creps):

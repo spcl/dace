@@ -1,23 +1,28 @@
 #!/bin/bash
-#SBATCH --job-name=dace-tsvc2-5-canon-vectorize-perf
+#SBATCH --job-name=dace-npbench-polybench-perf
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4      # 4 ranks/node by default -- see note below on sizing this
 #SBATCH --cpus-per-task=72       # cores-per-node / ntasks-per-node -- run `nproc --all` on a
                                  # compute node to check its core count first and adjust
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00          # paper-preset kernels (e.g. gemm) run real-world sized problems
 #SBATCH --partition=normal
 #SBATCH --account=g34
-#SBATCH --output=tsvc2_5_canon_vectorize_%j.out
-#SBATCH --error=tsvc2_5_canon_vectorize_%j.err
+#SBATCH --output=npbench_polybench_%j.out
+#SBATCH --error=npbench_polybench_%j.err
 #SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 #
-# Example SLURM job: the 6th job type -- canonicalize -> VectorizeCPU on
-# TSVC2.5, vs. the DaCe simplify+loop2map+mapfusion baseline, distributed over
+# Example SLURM job: NPBench+PolyBench (vendored corpus + paper-preset data +
+# vendored numpy reference) canonicalize performance regression -- 5 lanes
+# (baseline, auto-opt, canon, fast-canon, numpy), distributed over
 # nodes * ntasks-per-node ranks total. Same isolation/timing/crash handling
-# as tsvc2_5_perf.py (this script reuses its sizing/native/correctness
-# machinery directly -- see example_slurm_tsvc2.sh for the full rationale).
+# as the TSVC scripts (see slurm_tsvc2.sh for the full rationale).
 #
-# Submit with:  sbatch example_slurm_tsvc2_5_canon_vectorize.sh
+# The paper preset runs real-world problem sizes (e.g. gemm at its full
+# published size), so this is the slowest of the 4 job types per-kernel --
+# --time is set generously above; tune down for a smaller smoke test with
+# --reps.
+#
+# Submit with:  sbatch slurm_npbench_polybench.sh
 # Adjust --nodes / --ntasks-per-node for however many ranks (X) you want.
 
 set -euo pipefail
@@ -36,15 +41,12 @@ alias python=python3.11
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 
-# --cxx <name-or-abs-path> pins a specific compiler for DaCe's own codegen
-# (default: clang++ on PATH, else g++ -- plain PATH lookup); DaCe-lane
-# results are namespaced by compiler+hostname automatically. The native
-# lanes (native-clang(-polly-autopar)) are unaffected by --cxx -- they find
-# their own clang++ independently, and are just skipped if it isn't on PATH
-# (see example_slurm_tsvc2.sh for the full rationale).
+# --cxx <name-or-abs-path> pins a specific compiler for DaCe codegen
+# (default: clang++ on PATH, else g++ -- plain PATH lookup). Results are
+# namespaced by compiler+hostname automatically.
 #
 # --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
 # of letting the OS scheduler migrate/share them across ranks.
-srun --cpu-bind=cores python3 tsvc2_5_canon_vectorize_perf.py --reps 100 --cxx=clang++
+srun --cpu-bind=cores python3 npbench_polybench_perf.py --reps 100 --cxx=clang++
 
-python3 tsvc2_5_canon_vectorize_perf.py --tables-only
+python3 npbench_polybench_perf.py --tables-only

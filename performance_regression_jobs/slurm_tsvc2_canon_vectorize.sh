@@ -15,9 +15,9 @@
 # TSVC2, vs. the DaCe simplify+loop2map+mapfusion baseline, distributed over
 # nodes * ntasks-per-node ranks total. Same isolation/timing/crash handling
 # as tsvc2_perf.py (this script reuses its sizing/native/correctness
-# machinery directly -- see example_slurm_tsvc2.sh for the full rationale).
+# machinery directly -- see slurm_tsvc2.sh for the full rationale).
 #
-# Submit with:  sbatch example_slurm_tsvc2_canon_vectorize.sh
+# Submit with:  sbatch slurm_tsvc2_canon_vectorize.sh
 # Adjust --nodes / --ntasks-per-node for however many ranks (X) you want.
 
 set -euo pipefail
@@ -41,7 +41,7 @@ spack load llvm@22.1.5
 # results are namespaced by compiler+hostname automatically. The native
 # lanes (native-clang(-polly-autopar)) are unaffected by --cxx -- they find
 # their own clang++ independently, and are just skipped if it isn't on PATH
-# (see example_slurm_tsvc2.sh for the full rationale).
+# (see slurm_tsvc2.sh for the full rationale).
 #
 # --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
 # of letting the OS scheduler migrate/share them across ranks.

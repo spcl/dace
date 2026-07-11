@@ -46,7 +46,7 @@ def _build_sdfg(kernel_name, pipeline):
     program = base._program(kernel_name)
     sdfg = program.to_sdfg(simplify=False)
     sdfg.name = f"{CORPUS}_{sdfg.name}_{pipeline.replace('-', '_')}"
-    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_dace_parallel(sdfg)
+    return _canon_vectorize(sdfg) if pipeline == 'canon-vectorize' else engine.pipeline_parallel(sdfg)
 
 
 def _check_dace_job(kernel_name, sizes, pipeline):

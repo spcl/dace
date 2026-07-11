@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Grid plot: dace_parallel and canon (and fast-canon) speedup vs. the
-dace_autoopt baseline, one small cell per NPBench+PolyBench kernel, split by
+"""Grid plot: parallel and canon (and fast-canon) speedup vs. the
+auto_opt baseline, one small cell per NPBench+PolyBench kernel, split by
 device (cpu / gpu). Reads results/npbench_polybench/<kernel>/*_paper-<device>/
 (results.csv + status.csv, written by npbench_polybench_perf.py) -- run that
 script first.
@@ -29,13 +29,13 @@ import engine
 from npbench_polybench_perf import CORPUS, PRESET, CANDIDATES, DEVICES, BASELINE_LANE, preset_tag
 
 # Categorical palette (dataviz skill's validated default), fixed hue per candidate.
-_COLORS = {'dace_parallel': '#2a78d6', 'canon': '#1baf7a', 'fast-canon': '#eda100'}
+_COLORS = {'parallel': '#2a78d6', 'canon': '#1baf7a', 'fast-canon': '#eda100'}
 #: Device is encoded by hatch so the candidate hue stays readable.
 _HATCH = {'cpu': '', 'gpu': '///'}
 
 
 def collect_speedups(results_dir):
-    """kernel -> {(device, candidate): speedup vs dace_autoopt}. Globs every
+    """kernel -> {(device, candidate): speedup vs auto_opt}. Globs every
     '*_paper-<device>' folder (engine.result_tag namespaces each by
     compiler+hostname), computing the speedup within each folder so a
     per-compiler baseline is never mixed with another compiler's candidate."""

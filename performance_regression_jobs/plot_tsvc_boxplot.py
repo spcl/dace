@@ -2,7 +2,7 @@
 """Boxplot: the DaCe pipelines' speedup over the native C baselines, distributed
 over every TSVC2 / TSVC2.5 kernel. For each corpus the distribution of
     native_baseline_min / dace_min   (best-of-N; >1 == DaCe faster than that native)
-is drawn for the two DaCe candidates (dace_parallel, canon) against BOTH native
+is drawn for the two DaCe candidates (parallel, canon) against BOTH native
 baselines: single-core (native-clang) and multi-core compiler auto-parallelization
 (native-clang-polly-autopar, else native-gcc-autopar). Reads results/tsvc2/ and
 results/tsvc2_5/ (written by tsvc2_perf.py / tsvc2_5_perf.py) -- run those first.
@@ -34,7 +34,7 @@ CORPORA = ('tsvc2', 'tsvc2_5')
 #: (dace lane, palette colour). The par schedule is the one to pit against the
 #: multi-core native lanes; -seq is the fair single-core comparison but the
 #: distribution headline uses -par (multi-core DaCe vs multi-core native).
-_CANDIDATES = (('dace_parallel-par', '#2a78d6'), ('canon-par', '#1baf7a'))
+_CANDIDATES = (('parallel-par', '#2a78d6'), ('canon-par', '#1baf7a'))
 #: (native baseline lane-or-role, short label used in the legend).
 _SINGLE = nh.SINGLE_CORE_LANE
 _MULTI = 'multicore'  # resolved per-kernel to whichever MULTICORE_LANES has data

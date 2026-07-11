@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Performance regression (CPU only): the DaCe pipelines (dace_parallel and
+"""Performance regression (CPU only): the DaCe pipelines (parallel and
 canonicalize / fast-canonicalize, each in a -par and a -seq schedule, plus
-dace_autoopt) vs. two native C baselines -- single-core (native-clang) and
+auto_opt) vs. two native C baselines -- single-core (native-clang) and
 multi-core compiler auto-parallelization (native-clang-polly-autopar and gcc
 native-gcc-autopar -- see native_harness.LANES) -- over the 151-kernel TSVC2
 corpus. Standalone (only needs dace+numpy importable); multi-rank via
@@ -141,7 +141,7 @@ def _inputs(kernel_name, l1, l2):
 # --------------------------------------------------------------------------
 def _check_dace_job(kernel_name, l1, l2, pipeline, seq):
     _, ref_arrays, ref_sym, ref_sparams = _inputs(kernel_name, l1, l2)
-    ref_sdfg = _build_sdfg(kernel_name, 'dace_parallel', False)
+    ref_sdfg = _build_sdfg(kernel_name, 'parallel', False)
     ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
     ref_sdfg.compile()(**ref_call)
 
@@ -162,7 +162,7 @@ def _time_dace_job(kernel_name, l1, l2, pipeline, seq, reps):
 
 def _check_native_job(kernel_name, l1, l2, so_path, c_name, sig):
     _, ref_arrays, ref_sym, ref_sparams = _inputs(kernel_name, l1, l2)
-    ref_sdfg = _build_sdfg(kernel_name, 'dace_parallel', False)
+    ref_sdfg = _build_sdfg(kernel_name, 'parallel', False)
     ref_call = {**{n: a.copy() for n, a in ref_arrays.items()}, **ref_sparams, **ref_sym}
     ref_sdfg.compile()(**ref_call)
 
