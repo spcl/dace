@@ -40,3 +40,4 @@ def test_numpy_integral_properties():
 if __name__ == '__main__':
     test_strides()
     test_strides_alignment()
+    test_numpy_integral_properties()
