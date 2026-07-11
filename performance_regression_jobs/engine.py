@@ -211,19 +211,34 @@ def _flatten_durations(d):
 def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
     """Best-of-`reps` timing via sdfg.instrument + get_latest_report (ms per call).
 
+    The SAME argument buffers are reused for every call -- never reallocated between
+    reps (allocation cost stays out of the measurement, and buffer addresses/alignment
+    are held fixed so every rep sees identical cache/NUMA conditions). Each array
+    argument's INITIAL contents are snapshotted once and copied back in place
+    (``np.copyto`` into the existing buffer -- no new allocation) before every call, so
+    a kernel that overwrites or accumulates into its arguments (an in-place update, a
+    reduction accumulator) times each rep from identical inputs instead of drifting or
+    overflowing across reps. The reset is a plain Python-side copy between instrumented
+    calls, so it is outside the SDFG's own timed region and never counted.
+
     The first `warmup` call(s) are executed (and instrumented, same as any
     other call -- simplest way to keep one accumulated report) but sliced off
     before returning, so they never reach the CSV."""
     import dace
+    import numpy as np
     sdfg.instrument = dace.InstrumentationType.Timer
     # Instrumented codegen is different C++ than the plain correctness-check
     # build of the exact same variant -- needs its own cache-key (name) or
     # cache='name' mode would find and silently reuse the uninstrumented
     # binary, leaving get_latest_report() with nothing recorded.
     sdfg.name = f'{sdfg.name}_timed'
+    # Snapshot initial inputs once; reset each buffer IN PLACE before every call.
+    initial = {k: v.copy() for k, v in call_kwargs.items() if isinstance(v, np.ndarray)}
     with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
         csdfg = sdfg.compile()
         for _ in range(warmup + reps):
+            for k, v0 in initial.items():
+                np.copyto(call_kwargs[k], v0)  # reuse the same buffer -- no realloc between reps
             csdfg(**call_kwargs)
         csdfg.finalize()
     return _flatten_durations(sdfg.get_latest_report().durations)[warmup:]
@@ -799,7 +814,7 @@ def write_compile_tables(results_root, corpus, lanes):
 # --------------------------------------------------------------------------
 def add_common_args(ap, default_timeout=3600.0):
     ap.add_argument('--results-dir', default='results', help='results root (default: results)')
-    ap.add_argument('--reps', type=int, default=100, help='target repetitions per pipeline (default: 100)')
+    ap.add_argument('--reps', type=int, default=25, help='target repetitions per pipeline (default: 25)')
     ap.add_argument('--only', default=None, help='substring filter on kernel name')
     ap.add_argument('--kernels', default=None, help='comma-separated explicit kernel list (overrides rank slicing)')
     ap.add_argument('--kernels-file', default=None, help='file of kernel names, one per line (overrides rank slicing)')

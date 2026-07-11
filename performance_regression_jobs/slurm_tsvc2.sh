@@ -70,7 +70,7 @@ spack load llvm@22.1.5
 #
 # --cpu-bind=cores keeps each rank pinned to its own allocated cores instead
 # of letting the OS scheduler migrate/share them across ranks.
-srun --cpu-bind=cores python3 tsvc2_perf.py --reps 100 --cxx=clang++
+srun --cpu-bind=cores python3 tsvc2_perf.py --reps 25 --cxx=clang++
 
 # Runs once on the job's driver process, after every rank above has finished
 # writing its slice -- write_tables just re-scans the whole results tree.

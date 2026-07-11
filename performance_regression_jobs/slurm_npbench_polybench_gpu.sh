@@ -45,7 +45,7 @@ spack load llvm@22.1.5
 spack load cuda   # nvcc must be on PATH for DaCe's GPU codegen
 
 # --devices gpu restricts the sweep to the GPU device only.
-srun --cpu-bind=cores python3 npbench_polybench_perf.py --reps 100 --devices gpu --cxx=clang++
+srun --cpu-bind=cores python3 npbench_polybench_perf.py --reps 25 --devices gpu --cxx=clang++
 
 # Re-scan the whole results tree (cpu + gpu folders) and rebuild the tables + summary.csv.
 python3 npbench_polybench_perf.py --tables-only

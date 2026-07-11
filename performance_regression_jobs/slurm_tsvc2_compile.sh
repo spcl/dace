@@ -56,7 +56,7 @@ spack load llvm@22.1.5
 # Compilers to sweep. Default = single clang++ (plain single-compiler run);
 # override with more than one for the cross-compiler comparison.
 CXXES="${CXXES:-clang++}"
-REPS="${REPS:-100}"
+REPS="${REPS:-25}"
 COMPILE_REPS="${COMPILE_REPS:-5}"
 
 for CXX in $CXXES; do

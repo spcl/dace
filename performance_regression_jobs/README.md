@@ -20,19 +20,25 @@ On the cluster (each script already pins `--cxx=clang++`; edit its `#SBATCH`
 header for your account/partition/nodes):
 
 ```bash
+./submit_main.sh                     # EVERYTHING: runtime + compile-speed (all corpora), GPU, canon-vectorize
+./submit_all.sh                      # runtime ONLY (no compile timing)
+# or individually:
 sbatch slurm_npbench_polybench.sh    # CPU  (GPU is a separate job: slurm_npbench_polybench_gpu.sh)
 sbatch slurm_tsvc2.sh
 sbatch slurm_tsvc2_5.sh
-# or all runtime jobs at once:
-./submit_all.sh
 ```
 
-Without a scheduler — one rank:
+`submit_main.sh` submits the three `*_compile.sh` jobs (each runs the runtime sweep
+AND the compile-speed sweep), plus the GPU and canon-vectorize sweeps — one command,
+no double node allocation. For a cross-compiler run: `CXXES="g++ clang++" ./submit_main.sh`.
+
+Without a scheduler — one rank (timing uses 25 reps; buffers are reused across reps and
+reset in place, never reallocated):
 
 ```bash
-python3 npbench_polybench_perf.py --reps 100 --cxx=clang++ --devices cpu
-python3 tsvc2_perf.py             --reps 100 --cxx=clang++
-python3 tsvc2_5_perf.py           --reps 100 --cxx=clang++
+python3 npbench_polybench_perf.py --reps 25 --cxx=clang++ --devices cpu
+python3 tsvc2_perf.py             --reps 25 --cxx=clang++
+python3 tsvc2_5_perf.py           --reps 25 --cxx=clang++
 ```
 
 N local ranks (kernels self-partition by rank): `./run_distributed.sh tsvc2_perf.py 8 --cxx=clang++`.

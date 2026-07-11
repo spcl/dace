@@ -46,6 +46,6 @@ spack load llvm@22.1.5
 # of letting the OS scheduler migrate/share them across ranks -- with many
 # ranks per node this avoids extra scheduling contention on top of whatever
 # the workload itself needs.
-srun --cpu-bind=cores python3 tsvc2_5_perf.py --reps 100 --cxx=clang++
+srun --cpu-bind=cores python3 tsvc2_5_perf.py --reps 25 --cxx=clang++
 
 python3 tsvc2_5_perf.py --tables-only
