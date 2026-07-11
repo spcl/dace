@@ -1051,7 +1051,9 @@ class CanonicalizationPipeline(ppl.Pass):
     iteration iterate internally; the pipeline itself does not re-run.
 
     :param validate: Validate the SDFG once at the end.
-    :param validate_all: Validate the SDFG after each stage.
+    :param validate_all: Validate the SDFG after EVERY stage -- a debugging bisect aid, off by
+                         default (the final ``validate`` still catches an invalid result). Set True
+                         to pinpoint which stage produced an invalid SDFG.
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
                          iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize (0 disables;
@@ -1082,7 +1084,13 @@ class CanonicalizationPipeline(ppl.Pass):
     CATEGORY: str = 'Canonicalization'
 
     validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
-    validate_all = properties.Property(dtype=bool, default=True, desc='Validate the SDFG after each stage.')
+    validate_all = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Validate the SDFG after EVERY stage (a debugging bisect aid: it pinpoints which stage '
+        'produced an invalid SDFG). Off by default -- the final ``validate`` still catches an invalid '
+        'result, and re-validating the whole SDFG after each of ~140 stages is a large cost on a big '
+        'kernel (channel_flow: ~45s). Set True while debugging a pass regression.')
     unroll_limit = properties.Property(dtype=int,
                                        default=DEFAULT_UNROLL_LIMIT,
                                        desc='Unroll constant-trip loops <= this many iterations (0 disables).')
@@ -1129,7 +1137,7 @@ class CanonicalizationPipeline(ppl.Pass):
 
     def __init__(self,
                  validate: bool = False,
-                 validate_all: bool = True,
+                 validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
@@ -1216,7 +1224,7 @@ class CanonicalizationPipeline(ppl.Pass):
 
 def canonicalize(sdfg: SDFG,
                  validate: bool = True,
-                 validate_all: bool = True,
+                 validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
@@ -1235,7 +1243,9 @@ def canonicalize(sdfg: SDFG,
 
     :param sdfg: The SDFG to canonicalize.
     :param validate: Validate the SDFG after canonicalization.
-    :param validate_all: Validate the SDFG after each stage.
+    :param validate_all: Validate the SDFG after EVERY stage -- a debugging bisect aid, off by
+                         default (the final ``validate`` still catches an invalid result). Set True
+                         to pinpoint which stage produced an invalid SDFG.
     :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize; ``None``
                        (default) -> per-target preset (CPU=4, GPU=4).
