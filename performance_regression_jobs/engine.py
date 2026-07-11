@@ -323,17 +323,22 @@ def pipeline_dace_autoopt(sdfg, device='cpu'):
 
 def pipeline_dace_parallel(sdfg, device='cpu'):
     """The light pipeline: simplify + LoopToMap + MapFusion + simplify. On GPU
-    the parallel maps are additionally moved onto the device
-    (apply_gpu_transformations, exactly as auto_optimize does) so the result is
-    a runnable GPU program rather than CPU maps merely measured on a GPU run."""
+    the non-transient (I/O) arrays are moved to GPU_Global storage FIRST via
+    ``apply_gpu_storage`` (the same helper ``auto_optimize`` uses -- arrays and
+    written scalars go on-device, read-only scalar args stay host kernel args),
+    then ``apply_gpu_transformations`` moves the parallel maps onto the device.
+    So the measured program keeps its data resident on the GPU rather than
+    round-tripping every buffer host<->device per call."""
     from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+    from dace.transformation.auto.auto_optimize import apply_gpu_storage
     sdfg.simplify(validate=True)
     sdfg.apply_transformations_repeated(LoopToMap())
     PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]).apply_pass(sdfg, {})
     sdfg.simplify(validate=True)
     if device == 'gpu':
+        apply_gpu_storage(sdfg)  # non-transient arrays -> GPU_Global (data resident on device)
         sdfg.apply_gpu_transformations()
         sdfg.simplify(validate=True)
     return sdfg
