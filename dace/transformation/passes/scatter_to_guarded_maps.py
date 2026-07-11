@@ -448,7 +448,7 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop
     sequential_clone.pinned_sequential = True
 
     cb = ConditionalBlock(loop.label + '_dispatch')
-    parent.add_node(cb, is_start_block=was_start)
+    parent.add_node(cb, is_start_block=was_start, ensure_unique_name=True)  # derived label; wired by object ref
 
     seq_branch = ControlFlowRegion(loop.label + '_seq_branch', sdfg=parent.sdfg)
     seq_branch.add_node(sequential_clone, is_start_block=True)

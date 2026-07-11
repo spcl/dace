@@ -229,7 +229,7 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> Non
         # the caller will add an empty hull state. The setter takes a node ID.
         loop.start_block = loop.node_id(loop.nodes()[0])
 
-    parent.add_node(child)
+    parent.add_node(child, ensure_unique_name=True)  # reparented into shared CFG; wired by object ref
     # Reroute parent's incoming edges into loop through child.
     for e in list(parent.in_edges(loop)):
         parent.remove_edge(e)

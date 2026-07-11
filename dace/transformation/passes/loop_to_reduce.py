@@ -871,7 +871,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         initialize_expr=loop.init_statement.as_string,
         update_expr=loop.update_statement.as_string,
     )
-    parent.add_node(new_loop)
+    parent.add_node(new_loop, ensure_unique_name=True)  # derived label; wired below by object ref
 
     body = new_loop.add_state(loop.label + "_body", is_start_block=True)
     arr_an = body.add_read(info.array)

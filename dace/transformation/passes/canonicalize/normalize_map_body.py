@@ -72,7 +72,7 @@ def _append_cfg(base: SDFG, tail: SDFG) -> None:
     edges = list(tail.edges())
     for b in blocks:
         tail.remove_node(b)
-        base.add_node(b)
+        base.add_node(b, ensure_unique_name=True)  # deepcopy siblings share labels; wired by object ref
     for e in edges:
         base.add_edge(e.src, e.dst, e.data)
     tail_start.is_start_block = False

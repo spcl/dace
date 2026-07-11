@@ -403,7 +403,7 @@ class LoopFission(ppl.Pass):
         for gi, idxs in enumerate(keep_idx):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"
-            parent.add_node(clone)
+            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             corder = _linear_blocks(clone)
             keep = [corder[i] for i in idxs]
             for b in [b for b in clone.nodes() if b not in keep]:
@@ -448,7 +448,7 @@ class LoopFission(ppl.Pass):
         for gi in range(ngroups):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"
-            parent.add_node(clone)
+            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             cstate = list(clone.nodes())[cidx]
             keep = set(_independent_groups(cstate, loop_var)[gi])
             for n in [n for n in cstate.nodes() if n not in keep]:

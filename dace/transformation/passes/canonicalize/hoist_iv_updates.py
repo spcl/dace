@@ -172,7 +172,7 @@ def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, comp
     """
     iv_loop = copy.deepcopy(loop)
     iv_loop.label = f"_iv_split_{loop.label}"
-    parent.add_node(iv_loop)
+    parent.add_node(iv_loop, ensure_unique_name=True)  # derived label; wired below by object ref
     # Wire the new IV loop where ``loop`` is wired today: every edge that points
     # at ``loop`` now points at ``iv_loop``; an unconditional edge connects
     # ``iv_loop`` -> ``loop`` so the original loop runs after the IV pre-pass.

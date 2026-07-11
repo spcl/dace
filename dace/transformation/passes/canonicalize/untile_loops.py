@@ -705,7 +705,7 @@ class UntileLoops(ppl.Pass):
         for child in child_blocks:
             inner.remove_node(child)
             child_is_start = inner_was_start and (child is inner_start_block)
-            parent_of_inner.add_node(child, is_start_block=child_is_start)
+            parent_of_inner.add_node(child, is_start_block=child_is_start, ensure_unique_name=True)
         # Re-attach the inner's own body interstate edges.
         for ie in inner_edges:
             parent_of_inner.add_edge(ie.src, ie.dst, ie.data)

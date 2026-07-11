@@ -738,7 +738,11 @@ class EarlyExitToFindIndex(ppl.Pass):
                                loop_var=loop_var,
                                initialize_expr=f'{loop_var} = {start_str}',
                                update_expr=f'{loop_var} = {loop_var} + 1')
-        parent.add_node(body_loop)
+        # Uniquify: two early-exit loops in the same parent CFG (or a pre-existing
+        # ``*_body`` block) would otherwise collide on this derived label and trip the
+        # "multiple blocks with the same name" validator. All wiring below is by object
+        # reference, so a rename is safe.
+        parent.add_node(body_loop, ensure_unique_name=True)
         body_state = body_loop.add_state('body', is_start_block=True)
         # Clone the body's nodes + edges verbatim: the per-iteration ``a[i]``
         # dataflow is already ``LoopToMap``-eligible (it was the original loop's
@@ -781,7 +785,9 @@ class EarlyExitToFindIndex(ppl.Pass):
         cond_block = ConditionalBlock(m.loop.label + '_rebind_cond')
         cond_block.sdfg = sdfg
         cond_block.parent_graph = parent
-        parent.add_node(cond_block)
+        # Uniquify: a second rebind in the same parent CFG would collide on this derived
+        # label. The branch/edge wiring below is by object reference, so a rename is safe.
+        parent.add_node(cond_block, ensure_unique_name=True)
         cond_block.add_branch(CodeBlock(f'{exit_sym} < ({N_str})'), branch_copy)
         parent.add_edge(after_state, cond_block, dace.InterstateEdge())
         self._propagate_sdfg(branch_copy, sdfg)

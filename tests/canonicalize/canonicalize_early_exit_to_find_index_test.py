@@ -153,6 +153,29 @@ def test_body_pre_and_body_post_combo_lifts():
     assert np.allclose(e, e_ref), f'body_pre write diverged: max diff {np.abs(e - e_ref).max()}'
 
 
+def test_body_pre_and_body_post_get_unique_block_names():
+    """Regression: ``body_pre`` and ``body_post`` are both emitted as
+    ``LoopRegion(label=f'{loop.label}_body')`` into the SAME parent CFG. They must be
+    added with a unique name (``ensure_unique_name=True``); otherwise the second collides
+    with the first and ``validate()`` raises ``Found multiple blocks with the same name``.
+    Guards the whole class of "constructed CFG block added without the unique-name API"."""
+
+    @dace.program
+    def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+        for i in range(N):
+            e[i] = a[i] + b[i]  # body_pre  -> LoopRegion '<loop>_body'
+            if d[i] < 0.0:
+                break
+            a[i] = a[i] + b[i] * c[i]  # body_post -> LoopRegion '<loop>_body' (must be uniquified)
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    EarlyExitToFindIndex().apply_pass(sdfg, {})
+    sdfg.validate()  # must NOT raise the duplicate-block-name error
+    for cfg in sdfg.all_control_flow_regions():
+        labels = [b.label for b in cfg.nodes()]
+        assert len(labels) == len(set(labels)), f'{cfg.name}: duplicate block labels {labels}'
+
+
 def test_refuses_break_cond_array_modified_pre_and_post():
     """The break check reads ``d[i]`` and the body writes ``d[i]`` both
     BEFORE and AFTER the check. The body's writes invalidate the
