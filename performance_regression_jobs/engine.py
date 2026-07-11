@@ -314,10 +314,29 @@ def _device_type(device):
     return dace.DeviceType.GPU if device == 'gpu' else dace.DeviceType.CPU
 
 
+def _set_tree_reduction(enabled):
+    """Set the codegen ``compiler.tree_reduction`` flag for THIS process.
+
+    ON  -> a parallel WCR reduction lowers to privatize-and-tree-reduce (CPU OpenMP
+           ``reduction(op:var)`` clause / GPU per-block ``cub::BlockReduce``).
+    OFF -> the same reduction lowers to a plain atomic WCR (CPU per-iteration atomic /
+           GPU ``atomicAdd`` per thread) -- correct but contended.
+
+    Only the canonicalize pipelines turn it on; auto_opt and parallel turn it off, so
+    their reductions emit plain atomic WCR and canon is the only lane that tree-reduces.
+    Each pipeline runs in its own measurement subprocess right before that subprocess
+    generates code (see the drivers' _check_job / _time_dace_job), so this process-global
+    Config set reaches codegen and never leaks across lanes."""
+    import dace
+    dace.Config.set('compiler', 'tree_reduction', value=bool(enabled))
+
+
 def pipeline_auto_opt(sdfg, device='cpu'):
     """DaCe's own auto_optimize for the target device -- the speedup baseline
-    every other pipeline is reported against."""
+    every other pipeline is reported against. Emits atomic WCR reductions (no
+    tree reduction -- that is the canonicalize lanes' distinguishing lowering)."""
     from dace.transformation.auto.auto_optimize import auto_optimize
+    _set_tree_reduction(False)
     return auto_optimize(sdfg, _device_type(device))
 
 
@@ -333,6 +352,7 @@ def pipeline_parallel(sdfg, device='cpu'):
     from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
     from dace.transformation.auto.auto_optimize import apply_gpu_storage
+    _set_tree_reduction(False)  # atomic WCR, like auto_opt -- only canon tree-reduces
     sdfg.simplify(validate=True)
     sdfg.apply_transformations_repeated(LoopToMap())
     PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]).apply_pass(sdfg, {})
@@ -355,12 +375,14 @@ _CANON_KNOBS = dict(peel_limit=4,
 def pipeline_canon(sdfg, device='cpu'):
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    _set_tree_reduction(True)  # canon is the only lane that tree-reduces its WCR
     return finalize_for_target(canonicalize(sdfg, validate=True, target=device, **_CANON_KNOBS), device)
 
 
 def pipeline_fast_canon(sdfg, device='cpu'):
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    _set_tree_reduction(True)  # canon is the only lane that tree-reduces its WCR
     return finalize_for_target(canonicalize(sdfg, validate=True, fast=True, target=device, **_CANON_KNOBS), device)
 
 
