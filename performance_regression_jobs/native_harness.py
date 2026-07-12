@@ -107,6 +107,32 @@ def _gcc_install_dir_flag(cc):
     return [f'--gcc-install-dir={gcc_dir}'] if gcc_dir else []
 
 
+def _perf_phase_cxx():
+    """The compiler for THIS phase -- DACE_PERF_CXX, set by run_perf from ``--cxx``. Both the
+    DaCe codegen AND the native experiment lanes (compiler-seq, compiler-autopar) use it, so a
+    phase is FULLY-LLVM or FULLY-GCC, never mixed. Falls back to clang++ else g++."""
+    cxx = os.environ.get('DACE_PERF_CXX')
+    if cxx and shutil.which(cxx):
+        return shutil.which(cxx)
+    return find_compiler('clang++') or find_compiler('g++')
+
+
+def _is_clang(cc):
+    return cc is not None and 'clang' in os.path.basename(cc).lower()
+
+
+def _autopar_flags(cc):
+    """Auto-parallelization flags matching the compiler family (user: cxx=clang -> clang+Polly,
+    cxx=gcc -> gcc+Graphite). clang uses Polly (``-mllvm -polly -polly-parallel``); gcc uses the
+    tree parallelizer + Graphite ``-floop-parallelize-all`` (needs a gcc built with isl)."""
+    if _is_clang(cc):
+        return _gcc_install_dir_flag(cc) + [
+            '-mllvm', '-polly', '-mllvm', '-polly-parallel', '-mllvm', '-polly-parallel-force', '-mllvm',
+            '-polly-process-unprofitable', '-lgomp'
+        ]
+    return [f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp']
+
+
 #: lane -> (finder() -> compiler path or None, cc -> extra flags beyond
 #: '-O3 ... -shared -fPIC <src> -o <so>').
 _LANE_SPEC = {
@@ -120,15 +146,13 @@ _LANE_SPEC = {
     (lambda: find_compiler('g++'), lambda cc: [
         f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
     ]),
-    # -- experiment-facing lanes (run_perf.py). Same OPT_FLAGS as every lane
-    #    (-O3 -march=native -ffast-math), so 'seq' is a single-core autovectorized
-    #    build (the sequential C++ baseline == the native-clang spec, with a g++
-    #    fallback) and 'autopar' reuses the gcc auto-par recipe verbatim.
-    'compiler-seq': (lambda: find_compiler('clang++') or find_compiler('g++'), lambda cc: _gcc_install_dir_flag(cc)),
-    'compiler-autopar':
-    (lambda: find_compiler('g++'), lambda cc: [
-        f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
-    ]),
+    # -- experiment-facing lanes (run_perf.py). Both follow the PHASE compiler
+    #    (_perf_phase_cxx == DACE_PERF_CXX == run_perf --cxx) so a phase is fully
+    #    LLVM or fully GCC, never mixed: 'seq' is a single-core autovectorized build
+    #    (OPT_FLAGS: -O3 -march=native -ffast-math) and 'autopar' adds the matching
+    #    auto-parallelizer (clang -> Polly, gcc -> Graphite; see _autopar_flags).
+    'compiler-seq': (_perf_phase_cxx, _gcc_install_dir_flag),
+    'compiler-autopar': (_perf_phase_cxx, _autopar_flags),
 }
 
 
