@@ -463,6 +463,69 @@ def make_sequential(sdfg):
 
 
 # --------------------------------------------------------------------------
+# Multi-dim tile-op CPU vectorizer pipelines. Two front ends -- canonicalize or
+# the light simplify+loop2map+mapfusion "parallel" pipeline -- each followed by
+# VectorizeCPUMultiDim. Both feed the SAME correctness/timing harness as the
+# non-vectorized pipelines above; the '-seq' variant is just make_sequential()
+# applied to the vectorized SDFG (SIMD-in-tile, no OpenMP over tiles), so a lane
+# isolates the SIMD gain from the thread-parallel gain.
+# --------------------------------------------------------------------------
+#: Canonicalize knobs used by the vectorize front end -- the exact set the green
+#: tsvc canon+vectorize corpus gate runs, so a perf build matches a tested build.
+_VECTORIZE_CANON_KNOBS = dict(peel_limit=4, break_anti_dependence=True)
+
+#: Uniform K=1 tile width (8,) for the perf sweep. K=1 tiles the innermost dim of
+#: any map, so no kernel hits the mixed-K refusal a K=2 (8, 8) request would on a
+#: 1-D map -- one config vectorizes the whole corpus.
+_VECTORIZE_WIDTHS = (8, )
+
+
+def _apply_multidim_vectorizer(sdfg):
+    """Run VectorizeCPUMultiDim (new multi-dim tile path -- NOT the removed legacy 1-D
+    VectorizeCPU) in place at width (8,). ``target_isa='AUTO'`` resolves to the host's best
+    ISA at expansion (AVX512/AVX2 on x86, SVE/NEON on aarch64), so the same driver is correct
+    on either cluster. ``expand_tile_nodes=True`` lowers the tile lib nodes up front so the
+    returned SDFG compiles directly."""
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+    from dace.transformation.passes.vectorization.config import VectorizeConfig
+    cfg = VectorizeConfig(widths=_VECTORIZE_WIDTHS,
+                          target_isa='AUTO',
+                          remainder_strategy='masked_tail',
+                          branch_mode='merge',
+                          expand_tile_nodes=True)
+    VectorizeCPUMultiDim(cfg).apply_pass(sdfg, {})
+    return sdfg
+
+
+def pipeline_canon_vectorize(sdfg, device='cpu'):
+    """canonicalize -> VectorizeCPUMultiDim."""
+    from dace.transformation.passes.canonicalize import canonicalize
+    _set_tree_reduction(True)  # canon tree-reduces its WCR, like the plain canon lane
+    canonicalize(sdfg, validate=True, **_VECTORIZE_CANON_KNOBS)
+    return _apply_multidim_vectorizer(sdfg)
+
+
+def pipeline_parallel_vectorize(sdfg, device='cpu'):
+    """simplify+LoopToMap+MapFusion (the light "parallel" pipeline) -> VectorizeCPUMultiDim."""
+    pipeline_parallel(sdfg, device)
+    return _apply_multidim_vectorizer(sdfg)
+
+
+#: The two vectorize front ends. Each is timed twice by the vectorize drivers --
+#: '-par' (OpenMP over tiles) and '-seq' (make_sequential: SIMD only).
+VECTORIZE_PIPELINES = {
+    'canon-vec': pipeline_canon_vectorize,
+    'parallel-vec': pipeline_parallel_vectorize,
+}
+
+
+#: The unvectorized dace build used as the correctness ground truth for a vectorize
+#: lane (a vectorized result must match its own non-vectorized parallel build).
+def pipeline_vectorize_reference(sdfg, device='cpu'):
+    return pipeline_parallel(sdfg, device)
+
+
+# --------------------------------------------------------------------------
 # Per-kernel results: one CSV row per timing sample (resumable), one row per
 # pipeline for correctness (checked once, never re-checked on resume).
 # --------------------------------------------------------------------------
@@ -528,12 +591,21 @@ def native_kernel_dir(results_root, corpus, kernel, preset):
     return os.path.join(results_root, corpus, kernel, native_result_tag(preset))
 
 
-def native_build_dir(results_root, rank):
+def native_build_dir(results_root, rank, corpus=None):
     """Per-rank native .so build directory, namespaced by hostname (see
     host_tag()): two runs sharing one --results-dir from different hosts
     must not race on or clobber the same compiled library -- see
-    native_harness.compile_lane's non-atomic `-o so_path` write."""
-    return os.path.join(results_root, 'native_build', host_tag(), f'rank{rank}')
+    native_harness.compile_lane's non-atomic `-o so_path` write.
+
+    `corpus` (when given) inserts a corpus segment so two jobs that share one
+    --results-dir but sweep DIFFERENT corpora (e.g. results/canon_vs across
+    tsvc2 and tsvc2_5) never write the same lib_<lane>.so from different C
+    sources -- one lane name, one .so path, but distinct C per corpus."""
+    parts = [results_root]
+    if corpus is not None:
+        parts.append(corpus)
+    parts += ['native_build', host_tag(), f'rank{rank}']
+    return os.path.join(*parts)
 
 
 def existing_reps(kdir, pipeline):

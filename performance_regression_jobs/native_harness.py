@@ -21,9 +21,14 @@ import re
 import shutil
 import subprocess
 
-#: Serial (single-core) and two multi-core auto-parallelizing forms. A lane is
-#: skipped entirely if its compiler isn't on PATH.
-LANES = ('native-clang', 'native-clang-polly-autopar', 'native-gcc-autopar')
+#: Serial (single-core) and two multi-core auto-parallelizing forms, plus the
+#: two experiment-facing lanes the unified run_perf.py sweeps:
+#:   compiler-seq      single-core -O3 -march=native -ffast-math (autovectorized,
+#:                     single thread) -- the sequential C++ baseline
+#:   compiler-autopar  multi-core auto-parallel (gcc -ftree-parallelize-loops=N
+#:                     -floop-parallelize-all -fopenmp); at -O3 this also autovecs
+#: A lane is skipped entirely if its compiler isn't on PATH.
+LANES = ('native-clang', 'native-clang-polly-autopar', 'native-gcc-autopar', 'compiler-seq', 'compiler-autopar')
 
 #: Roles used by the perf scripts / boxplot: the single-core native baseline and
 #: the multi-core auto-par native baselines (first one with data is preferred).
@@ -112,6 +117,15 @@ _LANE_SPEC = {
         '-polly-process-unprofitable', '-lgomp'
     ]),
     'native-gcc-autopar':
+    (lambda: find_compiler('g++'), lambda cc: [
+        f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
+    ]),
+    # -- experiment-facing lanes (run_perf.py). Same OPT_FLAGS as every lane
+    #    (-O3 -march=native -ffast-math), so 'seq' is a single-core autovectorized
+    #    build (the sequential C++ baseline == the native-clang spec, with a g++
+    #    fallback) and 'autopar' reuses the gcc auto-par recipe verbatim.
+    'compiler-seq': (lambda: find_compiler('clang++') or find_compiler('g++'), lambda cc: _gcc_install_dir_flag(cc)),
+    'compiler-autopar':
     (lambda: find_compiler('g++'), lambda cc: [
         f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
     ]),
