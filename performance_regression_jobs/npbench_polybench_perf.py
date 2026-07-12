@@ -92,7 +92,13 @@ def _is_polybench(name, info):
 
 
 def _numpy_ref(info):
-    mod_path = 'npbench_numpy_refs.' + info['relative_path'].replace('/', '.') + f".{info['module_name']}_numpy"
+    rel = info['relative_path']
+    if rel.startswith('polybench/'):
+        # polybench numpy oracles live in their own top-level polybench_numpy_refs/
+        # dir (grouped with the polybench corpus), NOT nested under npbench_numpy_refs.
+        mod_path = f"polybench_numpy_refs.{info['module_name']}.{info['module_name']}_numpy"
+    else:
+        mod_path = 'npbench_numpy_refs.' + rel.replace('/', '.') + f".{info['module_name']}_numpy"
     return getattr(importlib.import_module(mod_path), info['func_name'])
 
 
