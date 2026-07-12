@@ -56,6 +56,46 @@ alias python=python3.11
 
 spack load gcc@16.1.0
 spack load llvm@22.1.5
+spack load cmake
+spack load openblas
+
+# Runtime library paths so every compiled .so loads at ctypes time: `spack load` sets PATH
+# but NOT LD_LIBRARY_PATH. A -fopenmp kernel needs libomp/libgomp (spack llvm), and the
+# clang/gcc codegen links spack-gcc's libstdc++/libgcc_s -- without these, loading a kernel
+# fails with e.g. 'libomp.so: cannot open shared object file'. Each dir is asked of the
+# compiler itself (-print-file-name) so only real toolchain dirs are added, de-duplicated.
+# (native_harness.openmp_rpath_flags also rpaths the OpenMP dir into the native .so; this is
+# the fallback that additionally covers the DaCe CMake lanes.)
+_add_ldpath() {
+    case ":${LD_LIBRARY_PATH:-}:" in
+        *":$1:"*) ;;
+        *) [ -d "$1" ] && export LD_LIBRARY_PATH="$1:${LD_LIBRARY_PATH:-}" ;;
+    esac
+}
+_ldpath_for() {  # $1=compiler, rest=libs; add each resolved lib's dir
+    command -v "$1" >/dev/null 2>&1 || return 0
+    local _cc="$1"; shift
+    for _lib in "$@"; do
+        _p="$("$_cc" -print-file-name="$_lib" 2>/dev/null)"
+        [ -f "$_p" ] && _add_ldpath "$(dirname "$_p")"
+    done
+}
+# OpenMP runtime: clang -> libomp, gcc -> libgomp.
+_ldpath_for clang++ libomp.so libgomp.so
+_ldpath_for g++    libgomp.so
+# spack-gcc C++ runtime (libstdc++/libgcc_s): ask g++/gcc -- clang -print-file-name points at
+# the SYSTEM gcc, but the codegen links spack gcc via --gcc-install-dir.
+_ldpath_for g++ libstdc++.so.6 libgcc_s.so.1
+_ldpath_for gcc libstdc++.so.6 libgcc_s.so.1
+unset -f _add_ldpath _ldpath_for
+
+# HPTT (High-Performance Tensor Transpose) is an EXTERNAL dependency -- built out-of-tree and
+# not vendored/committed (see performance_regression_jobs/.gitignore). Point DaCe's HPTT
+# library environment at the local build so TensorTranspose nodes find its headers
+# (<HPTT_ROOT>/include) and link+load its lib (<HPTT_ROOT>/lib/libhptt.so). Build per
+# https://github.com/springer13/hptt; here it lives next to this script.
+export HPTT_ROOT="$PWD/hptt"
+[ -f "$HPTT_ROOT/lib/libhptt.so" ] && export LD_LIBRARY_PATH="$HPTT_ROOT/lib:${LD_LIBRARY_PATH:-}"
 # For icpx add:  source /opt/intel/oneapi/setvars.sh
 # For nvc++ add: add the nvhpc compilers/bin to PATH (or load its modulefile)
 

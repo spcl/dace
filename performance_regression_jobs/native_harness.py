@@ -49,7 +49,35 @@ def _autopar_threads():
 #: so a native lane and a DaCe lane are compiled at the same optimization
 #: level -- otherwise a "canon is faster than native" or vice versa result
 #: could just be reflecting a flags mismatch, not a real difference.
-OPT_FLAGS = ('-O3', '-march=native', '-ffast-math')
+#: `-fopenmp` is always on so every lane honors OpenMP pragmas (DaCe's parallel
+#: maps need it; the serial native cores have no `#pragma omp`, so it only links
+#: the runtime there and stays single-threaded) and links against the same
+#: OpenMP runtime across lanes -- see openmp_rpath_flags for making that runtime
+#: loadable at ctypes time.
+OPT_FLAGS = ('-O3', '-march=native', '-ffast-math', '-fopenmp')
+
+
+def openmp_rpath_flags(cc):
+    """Linker ``-rpath`` entries so a compiled ``.so`` can find the OpenMP runtime it
+    links (``libomp`` for clang, ``libgomp`` for gcc) when it is loaded via ctypes.
+
+    ``spack load`` does not put these lib dirs on ``LD_LIBRARY_PATH`` and the compilers
+    bake no ``RUNPATH`` of their own, so a ``-fopenmp`` library otherwise fails to load
+    with ``libomp.so: cannot open shared object file``. The dirs are asked of the compiler
+    itself (``-print-file-name``), so this follows whatever toolchain is on PATH and adds
+    an rpath only for a runtime that actually resolves to a real file."""
+    dirs = []
+    for lib in ('libomp.so', 'libgomp.so'):
+        try:
+            out = subprocess.run([cc, f'-print-file-name={lib}'], capture_output=True, text=True,
+                                 timeout=10).stdout.strip()
+        except Exception:
+            continue
+        if out and out != lib and os.path.isfile(out):
+            d = os.path.dirname(os.path.realpath(out))
+            if d not in dirs:
+                dirs.append(d)
+    return [f'-Wl,-rpath,{d}' for d in dirs]
 
 _CTYPE = {'double': ctypes.c_double, 'float': ctypes.c_float, 'int': ctypes.c_int, 'int64': ctypes.c_int64}
 
@@ -177,7 +205,9 @@ def compile_lane(cpp_path, so_path, lane, timeout=1200):
     if not cc:
         return False, f'{lane}: compiler not found'
 
-    cmd = [cc, *OPT_FLAGS] + extra_flags(cc) + ['-shared', '-fPIC', cpp_path, '-o', so_path]
+    cmd = [cc, *OPT_FLAGS] + extra_flags(cc) + openmp_rpath_flags(cc) + [
+        '-shared', '-fPIC', cpp_path, '-o', so_path
+    ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

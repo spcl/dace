@@ -9,3 +9,13 @@ results/
 native_build/
 __pycache__/
 _dacegraphs/
+
+# Slurm job stdout/stderr + crash core dumps (disposable / regenerable)
+core_*
+core.*
+perf_*.out
+perf_*.err
+slurm-*.out
+# ad-hoc debugging scratch
+debug_cmake/
+hptt/
