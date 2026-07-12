@@ -109,7 +109,10 @@ def configure_dace_process():
       normally sub-second compile take minutes (observed: kernels that
       compile in under a second standalone timed out at 300s under a real
       multi-rank sweep). /dev/shm (RAM-backed, node-local) is the same fix
-      dace/optimization/utils.py already uses for exactly this reason.
+      dace/optimization/utils.py already uses for exactly this reason. The
+      root is made rank-unique (..._rank<procid>) so concurrent ranks never
+      share a build tree -- otherwise CMake's FindMPI probe can deadlock on
+      the shared dir (the daint cmake hang).
     - compiler.cpu.args is guaranteed to contain native_harness.OPT_FLAGS
       (-O3 -march=native -ffast-math) -- see that constant's docstring for
       why a DaCe lane and a native lane must be compiled at the same
@@ -135,7 +138,16 @@ def configure_dace_process():
     dace.Config.set('compiler', 'use_cache', value=True)
     shm_root = '/dev/shm'
     if os.path.isdir(shm_root) and os.access(shm_root, os.W_OK):
-        dace.Config.set('default_build_folder', value=os.path.join(shm_root, f'dace_perf_jobs_{os.getuid()}'))
+        # Per-RANK build root, not just per-uid: every rank on a node shares the same
+        # uid, so a single dace_perf_jobs_<uid> folder is ONE build tree that all ranks'
+        # CMake configures hammer concurrently -- on Cray/daint that shared-build-dir
+        # contention deadlocks CMake's FindMPI probe (the classic daint cmake hang).
+        # A rank-unique root keeps each rank's configure in its own tree; cache='name'
+        # + use_cache stay on so intra-rank binary reuse is preserved (a rank owns its
+        # kernels exclusively via my_slice, so there is nothing cross-rank to reuse).
+        rank = get_world_rank()
+        dace.Config.set('default_build_folder',
+                        value=os.path.join(shm_root, f'dace_perf_jobs_{os.getuid()}_rank{rank}'))
 
     # Set explicitly rather than trusting DaCe's own schema default (which
     # already happens to match): a stray ~/.dace.conf on some machine could
@@ -884,7 +896,7 @@ def write_compile_tables(results_root, corpus, lanes):
 # --------------------------------------------------------------------------
 # CLI flags shared by every entry-point script.
 # --------------------------------------------------------------------------
-def add_common_args(ap, default_timeout=3600.0):
+def add_common_args(ap, default_timeout=900.0):
     ap.add_argument('--results-dir', default='results', help='results root (default: results)')
     ap.add_argument('--reps', type=int, default=25, help='target repetitions per pipeline (default: 25)')
     ap.add_argument('--only', default=None, help='substring filter on kernel name')

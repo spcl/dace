@@ -73,7 +73,7 @@ def process_kernel(name, args, rank):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    engine.add_common_args(ap, default_timeout=10800.0)  # paper-preset SDFGs can be large to build
+    engine.add_common_args(ap, default_timeout=900.0)  # 15 min/kernel; bump --timeout for the largest paper builds
     ap.add_argument('--compile-reps', type=int, default=3, help='cold-compile samples per pipeline (default: 3)')
     args = ap.parse_args()
 

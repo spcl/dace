@@ -368,7 +368,7 @@ def resolve_devices(requested):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    engine.add_common_args(ap, default_timeout=10800.0)  # paper-preset kernels can be genuinely slow to compile/run
+    engine.add_common_args(ap, default_timeout=900.0)  # 15 min/kernel; bump --timeout for the largest paper builds
     ap.add_argument('--devices', default=','.join(DEVICES),
                     help=f'comma-separated devices to sweep (default: {",".join(DEVICES)}); gpu auto-skips if no CUDA')
     args = ap.parse_args()

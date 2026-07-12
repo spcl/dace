@@ -162,6 +162,37 @@ def generate_program_folder(
     return out_path
 
 
+#: Environment-variable prefixes an MPI/PMI launcher (srun, mpirun) exports to mark a
+#: process as a rank of its job. A child that inherits these and links a PMI/PMIx client
+#: (directly, or transitively through an MPI-wrapper compiler) treats itself as that rank
+#: and blocks in MPI_Init/PMIx_Init awaiting a rendezvous that never comes.
+_MPI_RANK_ENV_PREFIXES = (
+    'PMI_',  # MPICH / Cray / Slurm PMI: PMI_RANK, PMI_SIZE, PMI_FD, PMI_JOBID, ...
+    'PMIX_',  # PMIx (OpenMPI 4+): PMIX_RANK, PMIX_NAMESPACE, PMIX_SERVER_URI*, ...
+    'OMPI_COMM_WORLD_',  # OpenMPI: OMPI_COMM_WORLD_RANK/SIZE/LOCAL_RANK, ...
+    'OMPI_UNIVERSE_',
+    'MV2_COMM_WORLD_',  # MVAPICH2
+    'MPI_LOCALRANKID',
+    'MPI_LOCALNRANKS',
+    'SLURM_PROCID',  # Slurm's PMI plugins derive rank from these
+    'SLURM_LOCALID',
+)
+
+
+def _build_subprocess_env():
+    """`os.environ` with this process's MPI-rank identity stripped, for the CMake
+    configure/build subprocesses.
+
+    When DaCe compiles from inside a process launched by an MPI/PMI launcher, CMake --
+    and the try_compile test binaries, make/ninja, and the compiler driver it spawns --
+    inherit the launcher's rank-identity variables (``_MPI_RANK_ENV_PREFIXES``). Any of
+    those children that touches a PMI/PMIx client library then hangs in its init call
+    forever (leaving defunct/zombie children), which manifests as a stuck ``cmake``.
+    Compilation never needs an MPI identity, so drop those variables from the build
+    environment; everything else (PATH, compiler flags, MCA tuning, ...) is preserved."""
+    return {k: v for k, v in os.environ.items() if not k.startswith(_MPI_RANK_ENV_PREFIXES)}
+
+
 def configure_and_compile(
     program_folder,
     program_name=None,
@@ -285,11 +316,15 @@ def configure_and_compile(
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
 
+    # Strip this process's MPI-rank identity from the build subprocesses so CMake and the
+    # children it spawns never hang joining the outer MPI/PMI job (see _build_subprocess_env).
+    build_env = _build_subprocess_env()
+
     ##############################################
     # Configure
     try:
         if not identical_file_exists(cmake_filename, cmake_command):
-            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -297,7 +332,7 @@ def configure_and_compile(
         shutil.rmtree(build_folder, ignore_errors=True)
         os.makedirs(build_folder)
         try:
-            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
@@ -313,7 +348,8 @@ def configure_and_compile(
         _run_liveoutput("cmake --build . --config %s" % (Config.get('compiler', 'build_type')),
                         shell=True,
                         cwd=build_folder,
-                        output_stream=output_stream)
+                        output_stream=output_stream,
+                        env=build_env)
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
