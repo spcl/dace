@@ -4,8 +4,8 @@
 The spmv row reduction ``for idx: acc = acc + data[idx] * x[indices[idx]]`` is an
 innermost map whose body (an indirect-access NestedSDFG that cannot be inlined)
 reads scalar ``acc[0]`` at map entry and writes it at map exit -- a loop-carried
-RMW. Legacy 1-D ``VectorizeCPU`` mis-vectorizes this once the reduced trip exceeds
-the vector width (partial sums never folded), so express it as the canonical
+RMW. The tile vectorizer cannot widen a loop-carried scalar RMW directly (the
+partial sums would never fold across lanes), so express it as the canonical
 product-map + ``Reduce`` the vectorizer lowers correctly.
 
 Feed-identity lift, WITHOUT touching the opaque body:
@@ -241,8 +241,9 @@ class LiftMapReductionToReduce(ppl.Pass):
         #: map-exit WCR for codegen to lower directly (CPU ``reduction(op:var)`` /
         #: GPU thread-block reduce + one atomic per block). The multi-dim tile
         #: vectorizer sets this so it never materialises a scalar reduction to a
-        #: product buffer; opt-in :class:`LiftWCRMapToBufferAndReduce` still gives
-        #: the buffer + ``Reduce`` form. Mutually exclusive with ``pure_wcr_only``.
+        #: product buffer (the buffer + ``Reduce`` form is reachable by constructing
+        #: this pass with ``pure_wcr_only=True``). Mutually exclusive with
+        #: ``pure_wcr_only``.
         self._rmw_only = rmw_only
         #: Lift ONLY reductions whose map lives INSIDE a nested SDFG (``state.sdfg``
         #: is a body NSDFG). A top-level ``acc = sum(A)`` keeps its map-exit WCR (the
@@ -532,7 +533,6 @@ class LiftMapReductionToReduce(ppl.Pass):
         # dynamic-range connector rides a data edge and does.
         self._scope_dynamic_range_symbols(state, me, mx, buf_node, red)
 
-        sdfg.validate()
         return True
 
     @staticmethod
@@ -600,22 +600,3 @@ class LiftMapReductionToReduce(ppl.Pass):
         # The buffer's symbolic shape is only valid inside the wrap scope where
         # the symbols are defined; allocate it there.
         sdfg.arrays[buf_node.data].lifetime = dace.dtypes.AllocationLifetime.Scope
-
-
-class LiftWCRMapToBufferAndReduce(LiftMapReductionToReduce):
-    """Opt-in: lift a pure-WCR boundary reduction to a product buffer + ``Reduce``.
-
-    Canonical ``acc = sum(A)`` (scalar ``CR:op`` WCR at a MapExit, no carry-in) is
-    by default left AS a map-exit WCR for direct codegen (CPU ``reduction(op:var)``
-    OpenMP clause; GPU thread-block reduce + one atomic per block). This pass is the
-    alternative: redirect the per-iteration result to a fresh 1-D buffer + fold with
-    a ``Reduce`` libnode (product-fill map the tiler strides + device/vectorized
-    ``Reduce``). Run explicitly by callers who want the buffer + libnode form (e.g.
-    to pick a specific ``Reduce`` expansion); NOT in the default multi-dim
-    vectorization pipeline.
-
-    Thin alias of :class:`LiftMapReductionToReduce` restricted to the pure-WCR lift.
-    """
-
-    def __init__(self, vectorized: bool = True):
-        super().__init__(vectorized=vectorized, pure_wcr_only=True)

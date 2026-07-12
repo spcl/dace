@@ -538,3 +538,35 @@ def test_symbol_has_external_consumer_when_interstate_condition_reads_it():
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, exit_state, dace.InterstateEdge(condition=CodeBlock("flag")))
     assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+
+
+def test_promote_gather_indices_rewrites_nested_subscript():
+    """A gather cond value ``w[idx[i], k]`` (nested subscript no plain memlet can express)
+    is rewritten to ``w[_gidx_0, k]`` by promoting the inner index read ``idx[i]`` to a
+    fresh interstate INTEGER symbol assigned on the defining edge -- the body-gather
+    representation the tile machinery vectorizes (TSVC ``loop_to_map_threshold_gather``)."""
+    n = dace.symbol("n")
+    sdfg = dace.SDFG("gather_cond")
+    sdfg.add_array("w", [n, n], dace.float64)
+    sdfg.add_array("idx", [n], dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    edge = sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"w_index": "w[idx[i], k]"}))
+
+    p = SameWriteSetIfElseToITECFG()
+    new_rhs = p._promote_gather_indices(sdfg, edge, "w[idx[i], k]")
+    assert new_rhs == "w[_gidx_0, k]", new_rhs
+    # The nested index was promoted to a fresh int symbol defined on the edge.
+    assert edge.data.assignments.get("_gidx_0") == "idx[i]"
+    assert "_gidx_0" in sdfg.symbols and sdfg.symbols["_gidx_0"] == dace.int64
+    # No-op on an affine (non-gather) read -- the subset has no nested subscript.
+    assert p._promote_gather_indices(sdfg, edge, "w[i, k]") == "w[i, k]"
+
+
+def test_promote_gather_indices_noop_without_edge():
+    """No defining edge (dominance target) -> the rewrite is a safe no-op."""
+    sdfg = dace.SDFG("no_edge")
+    sdfg.add_array("w", [dace.symbol("n")], dace.float64)
+    sdfg.add_array("idx", [dace.symbol("n")], dace.int64)
+    p = SameWriteSetIfElseToITECFG()
+    assert p._promote_gather_indices(sdfg, None, "w[idx[i]]") == "w[idx[i]]"

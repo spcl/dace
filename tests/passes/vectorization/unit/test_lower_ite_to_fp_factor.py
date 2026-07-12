@@ -69,9 +69,10 @@ def test_handles_multiple_ites_in_one_tasklet():
 
 
 def test_handles_symbol_cond_in_ite_call():
-    """When M3.1b/M3.2 cannot resolve the cond to an array they emit the
-    cond as inline text inside the ITE call, e.g. ``ITE(c0 == 1, ...)``.
-    The pass should rewrite this just like the in-connector form."""
+    """When the upstream branch-normalization passes cannot resolve the cond
+    to an array they emit the cond as inline text inside the ITE call, e.g.
+    ``ITE(c0 == 1, ...)``. The pass should rewrite this just like the
+    in-connector form."""
     sdfg = dace.SDFG("lower_ite_sym_cond")
     sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
     sdfg.add_array("T", shape=(1, ), dtype=dace.float64)

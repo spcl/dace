@@ -1,108 +1,82 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tasklet creation / classification / vectorized-code-emission helpers.
 
-Core ``instantiate_tasklet_from_info`` picks per-template C++ from the
-``TaskletType`` classification in ``dace.sdfg.tasklet_utils``; falls back to a
-scalar lane loop when no template applies.
+``materialise_lane_id_index_tile`` mints per-lane index tiles for the tile-op
+path; the ``EmitCtx`` / ``_generate_code`` helpers pick per-template C++ from an
+operator classification, falling back to a scalar lane loop.
 """
-import copy
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import dace
 from dace.memlet import Memlet
-from dace.properties import CodeBlock
-from dace.sdfg.graph import Edge
 from dace import typeclass
-import dace.sdfg.tasklet_utils as tutil
-
-from dace.transformation.passes.vectorization.utils.code_rewrite import (
-    offset_symbol_in_expression,
-    use_laneid_symbol_in_expression,
-)
-from dace.transformation.passes.vectorization.utils.name_schemes import (LaneIdScheme, PackedNameScheme, VecNameScheme)
 
 
-def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
-    """True iff tasklet is a one-in one-out assignment (``a = b`` or ``a = b;``).
+def materialise_lane_id_index_tile(inner_state, expr: str, iter_vars: Tuple[str, ...], widths: Tuple[int, ...],
+                                   name_hint: str = "_sym_tile") -> "dace.nodes.AccessNode":
+    """Mint a per-lane int64 tile = ``expr`` evaluated at ``(iter_var_k -> iter_var_k + __l_k)``
+    for each tile dim ``k`` -- i.e. the function is EXPANDED INSIDE per lane, not widened as if
+    contiguous.
 
-    :param node: Tasklet to check.
-    :returns: True iff single-assignment tasklet.
+    K=1, expr ``"ii"``         -> ``_tile[l] = (ii) + l``.
+    K=1, expr ``"py_mod(ii,K)"`` -> ``_tile[l] = py_mod((ii + l), K)``  (cyclic per-lane index).
+    K=2, expr ``"2 * ii + jj"`` -> ``_tile[l0, l1] = 2*(ii+l0) + (jj+l1)``.
+
+    The lane loop is a ``constexpr``-bounded ``DACE_UNROLL`` (compiler lowers to SIMD), NOT a
+    data-dependent CPP gather loop -- the sanctioned tile-op index materialisation. Shared by
+    :meth:`ConvertTaskletsToTileOps._materialise_lane_id_tile` (lane-id symbol operands) and
+    :meth:`InsertTileLoadStore._stage_index_via_tileops` (modular / non-affine gather indices).
+
+    :returns: the ``AccessNode`` (wired as the fill tasklet's output) holding the
+        ``(W_0, .., W_{K-1})`` index tile. Consumers MUST read THIS node so the scheduler orders
+        the fill before the gather -- a fresh ``add_access`` of the same array is an unproduced
+        orphan the gather may read before it is populated (uninitialised index -> OOB).
     """
-    if (len(node.in_connectors) == 1 and len(node.out_connectors) == 1):
-        in_conn = next(iter(node.in_connectors.keys()))
-        out_conn = next(iter(node.out_connectors.keys()))
-        body = node.code.as_string.strip().rstrip(";").rstrip()
-        return body == f"{out_conn} = {in_conn}"
-    return False
+    from dace import dtypes, symbolic
+    from dace.codegen.common import sym2cpp
+    sdfg = inner_state.sdfg
+    widths = tuple(int(w) for w in widths)
+    K = len(widths)
+    # Substitute each tile iter-var ``v -> (v + __l<k>)`` INSIDE the (possibly non-affine)
+    # expression, then render to C++ via ``sym2cpp`` so ``**`` becomes multiplication, ``py_mod``
+    # stays ``py_mod`` etc. -- a raw string keeps Python ``**`` which is invalid C++.
+    parsed = symbolic.pystr_to_symbolic(expr)
+    subs = {symbolic.symbol(v): symbolic.symbol(v) + symbolic.symbol(f"__l{k}") for k, v in enumerate(iter_vars)}
+    body_expr = sym2cpp(parsed.subs(subs))
+    arr_name, _ = sdfg.add_array(name_hint,
+                                 shape=widths,
+                                 dtype=dace.int64,
+                                 transient=True,
+                                 storage=dtypes.StorageType.Register,
+                                 find_new_name=True)
+    parts = []
+    for i in range(K):
+        inner = 1
+        for q in range(i + 1, K):
+            inner *= widths[q]
+        parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
+    flat = " + ".join(parts) if parts else "0"
+    code_lines = []
+    for d in range(K):
+        code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
+        code_lines.append(f"{'    ' * d}DACE_UNROLL")
+        code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
+    code_lines.append(f"{'    ' * K}_out[{flat}] = (int64_t)({body_expr});")
+    for d in reversed(range(K)):
+        code_lines.append(f"{'    ' * d}}}")
+    tasklet = inner_state.add_tasklet(name=f"lane_id_mat_{arr_name}",
+                                      inputs=set(),
+                                      outputs={"_out"},
+                                      code="\n".join(code_lines),
+                                      language=dtypes.Language.CPP)
+    out_an = inner_state.add_access(arr_name)
+    out_subset = ", ".join(f"0:{w}" for w in widths)
+    inner_state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
+    return out_an
 
 
-def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
-    """ONE-aware classify: ``desc`` is a tile (full ``widths``) or broadcast-tile
-    (each dim = tile width ``w_d`` or broadcast marker ``dace.symbolic.ONE`` /
-    literal ``1``), with >=1 real (non-broadcast) width dim.
-
-    CLASSIFY ONLY, never reshapes a memlet. ``(W, ONE)`` / ``(ONE, W)`` broadcast
-    shapes live only on ``TileLoad`` / ``TileStore`` index connectors; collapsing
-    to ``(W,)`` in a memlet trips DaCe's subset-dimensionality validator (user
-    2026-06-15: such shapes only passed to tile load/store). Treats the ``ONE``
-    marker as the int ``1`` it stands for without touching the memlet.
-
-    Rank gate: a scalar ``(1,)`` bridge in a K=1 ``__tile_k1_tail`` body is rank
-    1, so vs a rank-2 ``widths`` it is correctly NOT a tile (scalar-load -> scalar
-    chains stay python tasklets). Strict-output sibling = ``tile_binop._is_tile_shape``.
-
-    :param desc: Data descriptor (``dace.data.Array`` / ``Scalar`` / ...).
-    :param widths: Per-tile-dim widths, innermost-last.
-    :returns: True iff ``desc`` is a tile or broadcast-tile of rank ``len(widths)``.
-    """
-    import sympy
-    from dace.symbolic import ONE
-    if not isinstance(desc, dace.data.Array):
-        return False
-    shape = tuple(desc.shape)
-    if len(shape) != len(widths):
-        return False
-    n_real = 0
-    for s, w in zip(shape, widths):
-        try:
-            is_w = bool(dace.symbolic.simplify(s - w) == 0)
-        except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
-            is_w = (s == w)
-        is_one_marker = isinstance(s, sympy.Basic) and ONE in s.free_symbols
-        try:
-            is_lit_one = bool(dace.symbolic.simplify(s - 1) == 0)
-        except Exception:  # noqa: BLE001
-            is_lit_one = (s == 1)
-        if is_w:
-            n_real += 1
-        elif is_one_marker or is_lit_one:
-            continue  # broadcast dim -- the ``ONE`` marker, i.e. width 1
-        else:
-            return False
-    return n_real >= 1
-
-
-def tasklet_reads_or_writes_tile(state: dace.SDFGState, tasklet: dace.nodes.Tasklet, widths: Tuple[int, ...]) -> bool:
-    """True iff any in/out edge of ``tasklet`` carries a tile / broadcast-tile
-    descriptor (see :func:`descriptor_is_tile_or_broadcast`).
-
-    K-dim tile-only invariant: tile-shaped values flow ONLY through tile lib
-    nodes, never raw tasklets. A raw tasklet touching a tile = unlowered residue
-    (real failure); a pure-scalar tasklet (e.g. the scalar ``__tile_k1_tail``
-    remainder) is legit, NOT counted.
-    """
-    sdfg = state.sdfg
-    for edge in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
-        if edge.data is None or edge.data.data is None:
-            continue
-        desc = sdfg.arrays.get(edge.data.data)
-        if desc is not None and descriptor_is_tile_or_broadcast(desc, widths):
-            return True
-    return False
-
-
-# Operator tables for ``instantiate_tasklet_from_info``; module-level so
+# Operator tables for the CPP emit helpers (``_generate_code``); module-level so
 # callers / tests can inspect them.
 PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
 BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
@@ -606,439 +580,3 @@ def _scalar_operand_expr(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: 
         if shape_is_one and ne_is_one:
             return conn
         return f"{conn}[0]"
-    return conn
-
-
-def instantiate_tasklet_from_info(state: dace.SDFGState,
-                                  node: dace.nodes.Tasklet,
-                                  info: dict,
-                                  vector_width: int,
-                                  templates: Dict[str, str],
-                                  vector_map_param: str,
-                                  vector_dtype: typeclass,
-                                  mask_connector: Optional[str] = None) -> None:
-    """Rewrite ``node.code`` into vectorized C++ from ``classify_tasklet`` info.
-
-    Dispatches on the classified ``TaskletType`` (array-array, array-scalar,
-    scalar-symbol, ...) + substitutes the matching ``templates`` entry, else a
-    scalar lane loop.
-
-    :param state: State containing the tasklet.
-    :param node: Tasklet to rewrite.
-    :param info: ``classify_tasklet`` dict — ``type`` (``TaskletType``),
-        ``lhs``, ``rhs1``/``rhs2`` (optional), ``constant1``/``constant2``
-        (optional), ``op``.
-    :param vector_width: Lane count.
-    :param templates: Op-string to C++ template-string mapping.
-    :param vector_map_param: Map param used for lane indexing.
-    :param vector_dtype: Fallback dtype when an edge carries no data.
-    :param mask_connector: ``_iter_mask`` connector name, or ``None`` for the
-        unmasked path.
-    """
-    # Extract classification info
-    ttype: tutil.TaskletType = info.get("type")
-    lhs, rhs1, rhs2 = info.get("lhs"), info.get("rhs1"), info.get("rhs2")
-    c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
-    # Semantic operands for ``TERNARY_ARRAY`` (ITE), populated only for that case.
-    cond_arg, then_arm, else_arm = info.get("cond"), info.get("then_arm"), info.get("else_arm")
-    vw = vector_width
-    is_commutative = op in {"+", "*", "==", "!="}
-
-    # Cast boolean constants to C-compatible names
-    op = PYTHON_TO_CPP_OPERATORS.get(op, op)
-
-    ies = state.in_edges(node)
-    oes = state.out_edges(node)
-    in_dtypes = {state.sdfg.arrays[ie.data.data].dtype for ie in ies if ie.data.data is not None}
-    out_dtypes = {state.sdfg.arrays[oe.data.data].dtype for oe in oes if oe.data.data is not None}
-    all_dtypes = in_dtypes.union(out_dtypes)
-
-    # C.2-b ``_iter_mask`` (``bool[W]``) connector makes ``all_dtypes``
-    # non-homogeneous, so masked tasklets take the fallback lane-loop below rather
-    # than the ``vector_*_av_masked`` templates. That fallback is now mask-gated
-    # (``_generate_code`` fallback: ``if (mask[_vi]) ...``) = correct. Deliberately
-    # do NOT exclude the mask from this check: the ``vector_*_av_masked``
-    # scalar-variant templates have inconsistent arg order vs their runtime macros
-    # (separate bug), so routing masked-scalar ops through the template path
-    # mis-compiles. The gated fallback is correct for all ops.
-    fallbackcode_due_to_types = len(all_dtypes) != 1
-
-    ctx = EmitCtx(state=state,
-                  node=node,
-                  templates=templates,
-                  vector_dtype=vector_dtype,
-                  vector_width=vw,
-                  vector_map_param=vector_map_param,
-                  is_commutative=is_commutative,
-                  fallbackcode_due_to_types=fallbackcode_due_to_types,
-                  mask_connector=mask_connector)
-
-    # Cast python boolean to C++ compatible string
-    if c1 == "False":
-        c1 = "0"
-    if c1 == "True":
-        c1 = "1"
-    if c2 == "False":
-        c2 = "0"
-    if c2 == "True":
-        c2 = "1"
-
-    # Dispatch based on tasklet type
-    if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
-        # Loop-invariant scalar read into a W-wide vector buffer (s176 ``c[j]``,
-        # ``j`` = outer-loop param): RHS edge subset is a single element, so
-        # codegen types ``_in`` as ``T``, not ``T*``. Route to the broadcast
-        # template ``=c`` (``vector_copy_w_scalar``) by placing the scalar input
-        # name in the constant slot -> dispatcher picks ``op_ + "c"`` (``"=c"``).
-        # Else the ``=`` template emits ``vector_copy<T,W>(_out, _in)`` + compile
-        # fails (``cannot convert 'double' to 'const double*'`` for ``_in``).
-        # A length-1 invariant read (s176 ``c[j]``) is typed by-value -> connector
-        # name goes straight into the broadcast slot. A WIDENED invariant read
-        # (s113 ``a[0]`` inflated to ``a[0:W]``) is typed as a pointer -> deref via
-        # ``_scalar_operand_expr`` first, else the ``=`` template emits a per-lane
-        # ``vector_copy`` reading ``a[0:W]`` instead of broadcasting ``a[0]``.
-        in_scalar_rhs = None
-        in_widened_rhs = None
-        for ie in ies:
-            try:
-                ne_one = int(ie.data.subset.num_elements()) == 1
-            except Exception:
-                ne_one = False
-            if ne_one:
-                in_scalar_rhs = ie.dst_conn
-                break
-            if _connector_reads_invariant_scalar(state, node, ie.dst_conn, vector_map_param):
-                in_widened_rhs = ie.dst_conn
-                break
-        if in_scalar_rhs is not None:
-            _set_template(ctx, None, None, in_scalar_rhs, None, lhs, "=")
-        elif in_widened_rhs is not None:
-            _set_template(ctx, None, None, _scalar_operand_expr(state, node, in_widened_rhs), None, lhs, "=")
-        else:
-            _set_template(ctx, rhs1, rhs2, c1, c2, lhs, "=")
-    elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
-        val = None
-        if c1 is not None:
-            val = c1
-            assert c2 is None
-            assert rhs1 is None
-            assert rhs2 is None
-        elif c2 is not None:
-            val = c2
-            assert rhs1 is None
-            assert rhs2 is None
-        elif rhs1 is not None:
-            val = rhs1
-            assert rhs2 is None
-        elif rhs2 is not None:
-            val = rhs2
-        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {val};" for i in range(vw)]) + "\n",
-                                              language=dace.Language.CPP)
-    elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
-        # It is either a symbol or a constant
-        if _is_number(str(c1)):
-            _set_template(ctx, None, None, c1, None, lhs, "=")
-        else:
-            # Per-lane materialisation of a laneid index (``_idx[i] =
-            # base_laneid_i``). No SIMD intrinsic, so keep a Python tasklet:
-            # emitting CPP hides the ``base_laneid_i`` symbols from
-            # ``free_symbols``, so ``resolve_missing_laneid_symbols`` never binds
-            # ``base_laneid_i = base + i`` + codegen references an undeclared
-            # symbol. CPP lowering reserved for intrinsic ops; the matching
-            # ``SCALAR_SYMBOL`` / ``SYMBOL_SYMBOL`` / ``SCALAR_SCALAR`` per-lane
-            # assignments stay Python for the same reason.
-            node.code = dace.properties.CodeBlock(
-                code="\n".join([f"{lhs}[{i}] = {LaneIdScheme.make_dim(c1, 0, i)}" for i in range(vw)]) + "\n",
-                language=dace.Language.Python)
-    elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
-        # A binop operand whose connector reads a single (non-vectorized) element
-        # is a scalar value at the C level, not a vector pointer. Route it through
-        # the constant slot so the ``*c`` / ``c*`` ``vector_*_w_scalar`` template
-        # is picked instead of the vector-vector one (TSVC s176 ``b[i+m-j-1] *
-        # c[j]`` with ``c[j]`` invariant in the vectorized param).
-        rhs1_is_scalar = rhs2_is_scalar = False
-        if rhs1 is not None and rhs2 is not None:
-            rhs1_is_scalar = _connector_reads_invariant_scalar(state, node, rhs1, vector_map_param)
-            rhs2_is_scalar = _connector_reads_invariant_scalar(state, node, rhs2, vector_map_param)
-        if rhs2_is_scalar and not rhs1_is_scalar:
-            # rhs2 = lane-invariant operand; route through the const2 slot,
-            # dereferenced if its connector is a pointer (Array).
-            _set_template(ctx, rhs1, None, None, _scalar_operand_expr(state, node, rhs2), lhs, op)
-        elif rhs1_is_scalar and not rhs2_is_scalar:
-            _set_template(ctx, None, rhs2, _scalar_operand_expr(state, node, rhs1), None, lhs, op)
-        else:
-            _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
-    elif ttype == tutil.TaskletType.TERNARY_ARRAY:
-        # ``_o = ITE(_c, _t, _e)`` -> ``vector_select<{dtype}, {W}>``. All three
-        # operands are arrays; the classifier carries them as semantic ``cond`` /
-        # ``then_arm`` / ``else_arm`` names.
-        out_edges = state.out_edges(node)
-        assert len(out_edges) == 1
-        out_data = state.sdfg.arrays[out_edges[0].data.data]
-        dtype_ = dace.dtypes.TYPECLASS_TO_STRING[out_data.dtype]
-        # Masked remainder: the ITE must be iter-mask-gated -- an active lane
-        # selects, an INACTIVE lane keeps ``else_arm`` (branch-normalization always
-        # sets it to the ITE destination), so the W-wide writeback over R<W lanes
-        # is a no-op on the trailing inactive lanes instead of OOB read/write past
-        # the array with an unfilled ``cond`` (the TSVC s1161 masked-ITE-65 bug).
-        sel_op = "ITE"
-        if ctx.mask_connector is not None and "ITE_masked" in templates:
-            sel_op = "ITE_masked"
-        code = templates[sel_op].format(lhs=lhs,
-                                        cond=cond_arg,
-                                        then_arm=then_arm,
-                                        else_arm=else_arm,
-                                        vector_width=vw,
-                                        dtype=dtype_,
-                                        mask=ctx.mask_connector or "")
-        node.code = dace.properties.CodeBlock(code=code, language=dace.Language.CPP)
-    elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
-        # ``ITE`` / ``merge`` with 1 connector + 2 symbol arms (TSVC s481's
-        # ``EarlyExitToFindIndex`` phi tasklet: ``__out = ITE(__t0, _loop_it_0,
-        # LEN_1D)``). The classifier sees 1 array input + a function call ->
-        # ``UNARY_ARRAY`` with ``op='ITE'``; the standard unary template would emit
-        # ``ITE(_t0[_vi])`` + drop the arms. Lower via ``_emit_ite_with_symbol_arms``.
-        if op in ('ITE', 'merge'):
-            node.code = dace.properties.CodeBlock(code=_emit_ite_with_symbol_arms(ctx), language=dace.Language.CPP)
-            return
-        arr_name = rhs1 if rhs1 is not None else rhs2
-        occurrences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)
-        assert occurrences == 1
-        if op == "-":
-            # Implement (-A) as (0 - A)
-            _set_template(ctx, None, arr_name, "0.0", None, lhs, op)
-        elif op == "+":
-            raise Exception("Unary + operator is not supported")
-        else:
-            _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
-    elif ttype in {
-            tutil.TaskletType.SCALAR_ARRAY,
-    }:
-        # tasklet-info treats scalars as arrays, only symbols as constants; for
-        # vector-code a scalar == a constant.
-        _set_template(ctx, None, rhs2, rhs1, None, lhs, op)
-    elif ttype in {
-            tutil.TaskletType.ARRAY_SCALAR,
-    }:
-        # tasklet-info treats scalars as arrays, only symbols as constants; for
-        # vector-code a scalar == a constant.
-        _set_template(ctx, rhs1, None, None, rhs2, lhs, op)
-    elif ttype == tutil.TaskletType.SCALAR_SYMBOL:
-        code_lines = []
-        symbols = state.symbols_defined_at(node)
-        l_op = rhs1 if rhs1 is not None else c1
-        r_op = rhs2 if rhs2 is not None else c2
-        c = c1 if c1 is not None else c2
-        for i in range(vw):
-            expr = _binary_expr(l_op, op, r_op)
-            if str(c) in symbols:
-                expr = offset_symbol_in_expression(expr, vector_map_param, i, arrays=set(state.sdfg.arrays.keys()))
-            else:
-                if l_op == c:
-                    expr = _binary_expr(l_op, op, r_op)
-                elif r_op == c:
-                    expr = _binary_expr(l_op, op, r_op)
-                else:
-                    expr = _binary_expr(l_op, op, LaneIdScheme.make_dim(r_op, 0, i))
-            code_lines.append(f"{lhs}[{i}] = {expr}")
-        node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.Python)
-    elif ttype == tutil.TaskletType.SCALAR_SCALAR:
-        out_edges = list(state.out_edges_by_connector(node, lhs))
-        assert len(out_edges) == 1
-        lhs_data = state.sdfg.arrays[out_edges[0].data.data]
-        l_op = rhs1 if rhs1 is not None else c1
-        r_op = rhs2 if rhs2 is not None else c2
-        expr = _binary_expr(l_op, op, r_op)
-        if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
-                                                  language=dace.Language.Python)
-        else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}", language=dace.Language.Python)
-    elif ttype == tutil.TaskletType.SYMBOL_SYMBOL:
-        out_edges = list(state.out_edges_by_connector(node, lhs))
-        assert len(out_edges) == 1
-        lhs_data = state.sdfg.arrays[out_edges[0].data.data]
-        l_op = rhs1 if rhs1 is not None else c1
-        r_op = rhs2 if rhs2 is not None else c2
-        c = c1 if c1 is not None else c2
-        expr = _binary_expr(l_op, op, r_op)
-        if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(code="\n".join([
-                f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param, arrays=set(state.sdfg.arrays.keys()))}"
-                for i in range(vw)
-            ]) + "\n",
-                                                  language=dace.Language.Python)
-        else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
-    elif ttype == tutil.TaskletType.UNARY_SCALAR or ttype == tutil.TaskletType.UNARY_SYMBOL:
-        out_edges = list(state.out_edges_by_connector(node, lhs))
-        assert len(out_edges) == 1
-        lhs_data = state.sdfg.arrays[out_edges[0].data.data]
-        l_op = rhs1 if rhs1 is not None else c1
-        if op == "!=":
-            raise Exception(lhs, rhs1, rhs2, c1, c2)
-        # Distinguish a prefix operator (``-x`` / ``!x``) from a unary FUNCTION
-        # (``sqrt``/``exp``/``cos``/... and dtype casts ``float64``/``int32``/...):
-        # a function -> call syntax ``op(x)``, not the prefix form ``f"{op}{l_op}"``
-        # (which fuses e.g. ``float64`` and ``S`` into a bogus symbol ``float64S``).
-        # PYTHON tasklet, so bare call (cppunparse lowers ``float64(x)`` ->
-        # ``dace::float64(x)``, ``sqrt(x)`` -> ``std::sqrt(x)``).
-        expr = f"{op}{l_op}" if op in UNARY_OPERATORS else f"{op}({l_op})"
-        if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
-                                                  language=dace.Language.Python)
-        else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
-    else:
-        raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
-
-
-def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_width: int,
-                     vector_map_param: str) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
-    """Duplicate an access node into a packed vector buffer of width ``vector_width``.
-
-    Writes packed storage via per-lane (laneid-offset) symbols; updates the
-    feeding tasklet / memlets.
-
-    :param state: SDFG state containing the node.
-    :param node: AccessNode to duplicate.
-    :param vector_width: Number of elements to pack.
-    :param vector_map_param: Map param used for per-lane symbol offsetting.
-    :returns: ``(touched_nodes, touched_edges)`` created during duplication.
-    """
-    # ``repl_subset_to_use_laneid_offset`` lives in ``utils.subsets`` (S6d-b);
-    # imported lazily to keep the top-level import surface narrow.
-    from dace.transformation.passes.vectorization.utils.subsets import repl_subset_to_use_laneid_offset
-
-    touched_nodes = set()
-    touched_edges = set()
-
-    ies = state.in_edges(node)
-    assert len(ies) == 1
-    ie = ies[0]
-    src = ie.src
-    assert isinstance(src, dace.nodes.Tasklet), f"Writes to sink nodes need to go through assignment tasklets, do it"
-    inc = next(iter(src.in_connectors))
-    outc = next(iter(src.out_connectors))
-    if src.code.as_string != f"{outc} = {inc}":
-        # If prev tasklet is not assignment then add an intermediate scalar
-        scl_name, scl = state.sdfg.add_scalar("tmp",
-                                              dtype=state.sdfg.arrays[node.data].dtype,
-                                              storage=dace.dtypes.StorageType.Register,
-                                              transient=True,
-                                              find_new_name=True)
-        scl_an = state.add_access(scl_name)
-        scl_an.setzero = True
-        e = state.add_edge(src, ie.src_conn, scl_an, None, dace.memlet.Memlet(scl_name))
-        state.remove_edge(ie)
-        assign_tasklet = state.add_tasklet("assign_t", {"_in"}, {"_out"}, "_out = _in")
-        e2 = state.add_edge(scl_an, None, assign_tasklet, "_in", dace.memlet.Memlet(scl_name))
-        e3 = state.add_edge(assign_tasklet, "_out", ie.dst, ie.dst_conn,
-                            dace.memlet.Memlet(data=ie.data.data, subset=copy.deepcopy(ie.data.subset)))
-        # Update ndoes/edges
-        src = assign_tasklet
-        ie = e3
-        inc = next(iter(src.in_connectors))
-        outc = next(iter(src.out_connectors))
-
-    assert src.code.as_string == f"{outc} = {inc}", f"{src.code.as_string} != {outc} = {inc}"
-
-    src.code = CodeBlock(code="\n".join([f"{outc}[{_i}] = {inc}[{_i}]" for _i in range(vector_width)]))
-    touched_nodes.add(src)
-    packed_dataname = PackedNameScheme.make(node.data)
-    packed_access = state.add_access(packed_dataname)
-    packed_access.setzero = True
-    touched_nodes.add(packed_access)
-    state.remove_edge(ie)
-    touched_edges.add(ie)
-    if packed_dataname not in state.sdfg.arrays:
-        dst_arr = state.sdfg.arrays[node.data]
-        state.sdfg.add_array(name=packed_dataname,
-                             shape=(vector_width, ),
-                             storage=dst_arr.storage,
-                             dtype=dst_arr.dtype,
-                             location=dst_arr.location,
-                             transient=True,
-                             lifetime=dst_arr.lifetime,
-                             debuginfo=dst_arr.debuginfo,
-                             allow_conflicts=dst_arr.allow_conflicts,
-                             find_new_name=False,
-                             alignment=dst_arr.alignment,
-                             may_alias=False)
-    e = state.add_edge(ie.src, ie.src_conn, packed_access, None,
-                       dace.memlet.Memlet(f"{packed_dataname}[0:{vector_width}]"))
-    touched_edges.add(e)
-
-    for i in range(vector_width):
-        t = state.add_tasklet(name=f"a_{i}", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
-        touched_nodes.add(t)
-        t.add_in_connector("_in")
-        t.add_out_connector("_out")
-        e1 = state.add_edge(packed_access, None, t, "_in",
-                            dace.memlet.Memlet(data=packed_dataname, subset=dace.subsets.Range([(str(i), str(i), 1)])))
-        touched_edges.add(e1)
-
-        new_subset = repl_subset_to_use_laneid_offset(state.sdfg, ie.data.subset, str(i), vector_map_param)
-
-        e2 = state.add_edge(t, "_out", ie.dst, None, dace.memlet.Memlet(data=node.data, subset=new_subset))
-        touched_edges.add(e2)
-
-    return touched_nodes, touched_edges
-
-
-def _insert_vector_copy_around_edge(state: dace.SDFGState, edge: Edge[Memlet],
-                                    vector_storage_type: dace.dtypes.StorageType, vector_width: int, *,
-                                    direction: str) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """Splice a ``vector_copy`` tasklet + transient vector access node onto ``edge``.
-
-    ``"from_src"``: ``src -> tasklet -> vec -> dst``.
-    ``"to_dst"``: ``src -> vec -> tasklet -> dst``.
-
-    :param state: The SDFG state containing the edge.
-    :param edge: The edge to splice around.
-    :param vector_storage_type: Storage type for the vector transient.
-    :param vector_width: Lane count.
-    :param direction: ``"from_src"`` or ``"to_dst"``.
-    :returns: The three new edges in source-to-destination order.
-    """
-    assert direction in ("from_src", "to_dst"), direction
-    src, src_conn = edge.src, edge.src_conn
-    dst, dst_conn = edge.dst, edge.dst_conn
-
-    vector_dataname = VecNameScheme.make(edge.data.data)
-    if vector_dataname not in state.sdfg.arrays:
-        orig_arr = state.sdfg.arrays[edge.data.data]
-        _, vector_data = state.sdfg.add_array(name=vector_dataname,
-                                              shape=(vector_width, ),
-                                              dtype=orig_arr.dtype,
-                                              location=orig_arr.location,
-                                              transient=True,
-                                              find_new_name=False,
-                                              storage=vector_storage_type)
-    else:
-        vector_data = state.sdfg.arrays[vector_dataname]
-
-    tasklet_name = "_assign_vector_from_src" if direction == "from_src" else "_assign_vector_to_dst"
-    t = state.add_tasklet(
-        name=tasklet_name,
-        inputs={"_in"},
-        outputs={"_out"},
-        code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
-        language=dace.dtypes.Language.CPP)
-
-    an = state.add_access(vector_dataname)
-    an.setzero = True
-
-    def _new_vec_memlet():
-        return dace.memlet.Memlet.from_array(vector_dataname, vector_data)
-
-    if direction == "from_src":
-        e1 = state.add_edge(src, src_conn, t, "_in", copy.deepcopy(edge.data))
-        e2 = state.add_edge(t, "_out", an, None, _new_vec_memlet())
-        e3 = state.add_edge(an, None, dst, dst_conn, _new_vec_memlet())
-    else:
-        e1 = state.add_edge(src, src_conn, an, None, _new_vec_memlet())
-        e2 = state.add_edge(an, None, t, "_in", _new_vec_memlet())
-        e3 = state.add_edge(t, "_out", dst, dst_conn, copy.deepcopy(edge.data))
-    state.remove_edge(edge)
-    return (e1, e2, e3)

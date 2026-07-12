@@ -21,6 +21,8 @@ import pytest
 import dace
 from dace.libraries.tileops import TileBinop
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 
 
 def _build_add_symbol_kernel(N):
@@ -88,7 +90,7 @@ def test_symbol_invariant_addition_matches_reference(N):
     ref.name = f"sym_ref_{N}"
     vec = _build_add_symbol_kernel(N)
     vec.name = f"sym_vec_{N}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     ref.compile()(A=a.copy(), B=b_ref, SHIFT=SHIFT)
     vec.compile()(A=a.copy(), B=b_vec, SHIFT=SHIFT)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -105,7 +107,7 @@ def test_symbol_lane_id_addition_matches_reference(N):
     ref.name = f"lid_ref_{N}"
     vec = _build_lane_id_kernel(N)
     vec.name = f"lid_vec_{N}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     ref.compile()(A=a.copy(), B=b_ref)
     vec.compile()(A=a.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -121,7 +123,7 @@ def test_two_symbol_broadcast_matches_reference(N):
     ref.name = f"two_sym_ref_{N}"
     vec = _build_two_symbol_kernel(N)
     vec.name = f"two_sym_vec_{N}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     ref.compile()(B=b_ref, SHIFT=SHIFT, SCALE=SCALE)
     vec.compile()(B=b_vec, SHIFT=SHIFT, SCALE=SCALE)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -134,7 +136,7 @@ def test_symbol_invariant_does_not_materialise_a_tile():
     """The data-independent symbol path emits a TileBinop with kind=Symbol on the
     Symbol operand AND no per-lane materialised tile transient appears in the body."""
     sdfg = _build_add_symbol_kernel(8)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR", expand_tile_nodes=False).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(sdfg, {})
     # Walk the body NSDFG and check no `_sym_tile`-prefixed transient appears.
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     assert len(body_nsdfgs) >= 1
@@ -152,7 +154,7 @@ def test_symbol_lane_id_materialises_a_tile():
     """The lane-id-dependent path materialises a per-lane tile and the lib node
     reads from it as a Tile operand."""
     sdfg = _build_lane_id_kernel(8)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR", expand_tile_nodes=False).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     sym_tile_arrays = [n for n in inner.arrays if n.startswith("_sym_tile") or n.startswith("_idx_")]

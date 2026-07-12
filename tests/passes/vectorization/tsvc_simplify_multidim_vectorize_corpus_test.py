@@ -12,8 +12,7 @@ Base is the numerically-checkable root: a recurrence that does not parallelize u
 the tile vectorizer no-ops, ``base`` == config. Configs only tile the maps that formed -- a strictly *easier* surface
 than the canonicalize path (which forms more maps), so this corpus is the floor the multi-dim CPU vectorizer must hold.
 
-Known gaps: ``xfail`` via ``_XFAIL[(kernel, phase)]``; removed as fixed. Scope: multi-dim CPU tile path only (legacy
-``VectorizeCPU`` out of scope).
+Scope: multi-dim CPU tile path only.
 """
 import os
 
@@ -32,9 +31,6 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipeline, make_pass, select_widths
 
 _KERNELS = [k.name for k in tsvc.collect()]
-
-# Known gaps keyed by (kernel, phase) -> tracking reason; removed as fixed.
-_XFAIL: dict = {}
 
 _BASE: dict = {}
 
@@ -74,8 +70,6 @@ def _assert_matches(name: str, got: dict, ref: dict, phase: str):
 @pytest.mark.parametrize("phase", PHASES)
 def test_tsvc_corpus(name, phase):
     """base(simplify+loop2map+mapfusion) [+ multidim vectorize] -> verify vs numpy."""
-    if (name, phase) in _XFAIL:
-        pytest.xfail(_XFAIL[(name, phase)])
     base, arrays, ck, ref, widths = _base(name)
     sdfg = copy.deepcopy(base)
     # Per-(kernel, phase) name so two phases building concurrently under -n xdist don't collide on shared .dacecache.

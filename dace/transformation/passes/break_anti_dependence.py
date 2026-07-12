@@ -400,21 +400,36 @@ class BreakAntiDependence(ppl.Pass):
         rhs = tree.body[0].value
         if not isinstance(rhs, ast.BinOp) or not isinstance(rhs.op, ast.Add):
             return None
-        # One operand must be ``isym``, the other is ``Y``.
+
+        # One operand must be ``isym``, the other is ``Y``. Either may be wrapped in an
+        # INTEGER-CAST call (the frontend emits ``dace.int32(i) + idx_index``, so the iterator
+        # side is ``dace.int32(i)``, NOT a bare ``ast.Name``); strip ONLY recognised int casts.
+        # A non-cast single-arg call (``min(i, C)``, ``abs(i)``, any intrinsic) must NOT be
+        # unwrapped: doing so mis-reads its argument as the bare iterator and would unsoundly
+        # break an unrelated anti-dependence guarded on the wrong offset.
+        int_cast_callees = frozenset({
+            'int', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'intc', 'intp'
+        })
+
+        def _strip_casts(node):
+            while isinstance(node, ast.Call):
+                fn = node.func
+                name = fn.id if isinstance(fn, ast.Name) else (fn.attr if isinstance(fn, ast.Attribute) else None)
+                if name not in int_cast_callees or len(node.args) != 1:
+                    return node  # not a recognised int cast -> leave as-is (won't match the iterator)
+                node = node.args[0]
+            return node
+
         y_node = None
         has_i = False
         for side in (rhs.left, rhs.right):
-            if isinstance(side, ast.Name) and side.id == isym_name:
+            stripped = _strip_casts(side)
+            if isinstance(stripped, ast.Name) and stripped.id == isym_name:
                 has_i = True
             else:
-                y_node = side
+                y_node = stripped
         if not (has_i and y_node is not None):
             return None
-        # Strip leading type casts: ``dace.int64(idx_index)`` -> ``idx_index``.
-        while isinstance(y_node, ast.Call):
-            if not y_node.args:
-                return None
-            y_node = y_node.args[0]
         if not isinstance(y_node, ast.Name):
             return None
         y_name = y_node.id

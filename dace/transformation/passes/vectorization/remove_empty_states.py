@@ -114,4 +114,3 @@ class RemoveEmptyStates(ppl.Pass):
         :param pipeline_results: Results from previously run passes (unused).
         """
         self._apply(sdfg)
-        sdfg.validate()

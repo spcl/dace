@@ -18,6 +18,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 
 
 def _build_k1_copy_sdfg(N):
@@ -84,7 +86,7 @@ def test_k1_copy_matches_reference(N):
     ref.name = f"copy_ref_{N}"
     vec = _build_k1_copy_sdfg(N)
     vec.name = f"copy_vec_{N}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     _run(ref, A=a.copy(), B=b_ref)
     _run(vec, A=a.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -102,7 +104,7 @@ def test_k1_axpy_matches_reference(N):
     ref.name = f"axpy_ref_{N}"
     vec = _build_k1_axpy_sdfg(N)
     vec.name = f"axpy_vec_{N}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     _run(ref, A=a.copy(), B=b.copy(), C=c_ref)
     _run(vec, A=a.copy(), B=b.copy(), C=c_vec)
     np.testing.assert_allclose(c_vec, c_ref, rtol=1e-12, atol=1e-12)
@@ -119,7 +121,7 @@ def test_k1_unop_matches_reference(N):
     ref.name = f"unop_ref_{N}"
     vec = _build_k1_unop_sdfg(N)
     vec.name = f"unop_vec_{N}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     _run(ref, A=a.copy(), C=c_ref)
     _run(vec, A=a.copy(), C=c_vec)
     np.testing.assert_allclose(c_vec, c_ref, rtol=1e-12, atol=1e-12)

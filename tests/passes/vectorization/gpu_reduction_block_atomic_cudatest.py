@@ -35,6 +35,7 @@ from dace import dtypes
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.libraries.tileops import TileReduce
 
 _HAS_NVCC = shutil.which("nvcc") is not None
@@ -76,7 +77,7 @@ def _vectorized(prog):
     sdfg.apply_transformations_repeated(AugAssignToWCR)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     return sdfg
 
 

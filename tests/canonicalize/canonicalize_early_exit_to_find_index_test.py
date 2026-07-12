@@ -14,6 +14,7 @@ from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
+from dace.transformation.interstate import LoopToMap
 
 N = dace.symbol('N')
 
@@ -37,8 +38,9 @@ def _num_maps(sdfg):
 
 def test_tsvc_s481_break_then_body_post():
     """``for i: if d[i] < 0: break; a[i] += b[i] * c[i]``.
-    Lifts to Phase-1 indicator+Reduce(Min) + Phase-2b body_post Map.
-    No body_pre; no true-branch rebind. Output: 0 loops, 1 Reduce, 2 Maps
+    Lifts to Phase-1 indicator+Reduce(Min) + a Phase-2b body_post LoopRegion.
+    The pass emits the body as a LoopRegion for a downstream ``LoopToMap`` to
+    parallelize; after that lift the shape is 0 loops, 1 Reduce, 2 Maps
     (phi build + body_post).
     """
 
@@ -53,6 +55,10 @@ def test_tsvc_s481_break_then_body_post():
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
+    # The pass emits the body as a LoopRegion; the downstream LoopToMap lifts it
+    # to the parallel body_post Map (part of the normal canonicalize pipeline).
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 1
     assert _num_maps(sdfg) == 2
@@ -75,9 +81,10 @@ def test_tsvc_s481_break_then_body_post():
 
 def test_tsvc_s482_body_pre_then_break():
     """``for i: a[i] += b[i] * c[i]; if c[i] > b[i]: break``.
-    Lifts to Phase-1 + Phase-2a body_pre Map. The body_pre upper bound is
-    ``min(exit_i + 1, N)`` so the last iteration before the break still runs
-    its pre-check work.
+    Lifts to Phase-1 + a Phase-2a body_pre LoopRegion. The body_pre upper bound
+    is ``min(exit_i + 1, N)`` so the last iteration before the break still runs
+    its pre-check work. The downstream ``LoopToMap`` lifts the body_pre LoopRegion
+    to a Map (0 loops, 1 Reduce, 2 Maps).
     """
 
     @dace.program
@@ -91,6 +98,8 @@ def test_tsvc_s482_body_pre_then_break():
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 1
     assert _num_maps(sdfg) == 2
@@ -115,8 +124,9 @@ def test_body_pre_and_body_post_combo_lifts():
     AND a body_post (write ``a`` after the break check). The break
     condition reads ``d`` and the body never writes ``d``, so the
     disjointness check accepts. Both halves must lift: ``body_pre``
-    Map over ``[0, min(exit_i+1, N))`` and ``body_post`` Map over
-    ``[0, exit_i)``."""
+    over ``[0, min(exit_i+1, N))`` and ``body_post`` over ``[0, exit_i)``.
+    The pass emits each as a LoopRegion; the downstream ``LoopToMap`` lifts both
+    to Maps (0 loops, 1 Reduce, 3 Maps: indicator + pre + post)."""
 
     @dace.program
     def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
@@ -130,6 +140,9 @@ def test_body_pre_and_body_post_combo_lifts():
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1, 'body_pre + body_post combo must lift'
+    # Two body LoopRegions (pre + post); the downstream LoopToMap lifts both.
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 1  # one Reduce(Min) for the argmin
     # phi/indicator + body_pre + body_post = 3 maps total

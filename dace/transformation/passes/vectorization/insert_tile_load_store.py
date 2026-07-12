@@ -946,21 +946,40 @@ class InsertTileLoadStore(ppl.Pass):
         import re as _re
         import dace.symbolic as _sym
         widths = tuple(int(w) for w in self.widths)
+        parsed = _sym.pystr_to_symbolic(begin_str)
+        # A bare array read IS the index (``A[idx[ii]]`` -> Range begin ``idx[ii]``), not a hoisted
+        # symbol: stage it directly (also covers the unit fixtures that skip frontend hoisting).
+        if isinstance(parsed, _sym.Subscript):
+            return self._stage_array_read_tile(inner_state,
+                                               inner_sdfg,
+                                               iter_vars,
+                                               parsed,
+                                               name_hint=name_hint,
+                                               mask_an=mask_an)
         sym_subs = self._index_symbol_subscripts(inner_sdfg, inner_state, begin_str)
+        # Fold INLINE array subscripts of a COMPOUND index (``LEN_1D - ip[i] - 1``, s4114) into the
+        # same ``{name: Subscript}`` machinery as frontend-promoted gather-index symbols:
+        # substitute each distinct inline subscript with a fresh symbol so the arithmetic-combine
+        # tasklet below treats an inline read identically to a hoisted one.
+        inline_subs = sorted(set(parsed.atoms(_sym.Subscript)), key=str)
+        if inline_subs:
+            for i, sub in enumerate(inline_subs):
+                fresh = f"__gidx_inl{i}"
+                parsed = parsed.xreplace({sub: _sym.symbol(fresh)})
+                sym_subs[fresh] = sub
+            begin_str = str(parsed)
         if not sym_subs:
-            # Inline-subscript form: gather index IS a direct array read in the memlet
-            # (``A[idx[ii]]`` -> Range begin ``idx[ii]``), not a hoisted symbol. Frontend
-            # hoists gather indices to symbols (above), but accept a direct subscript too so
-            # this stands alone (unit fixtures).
-            parsed = _sym.pystr_to_symbolic(begin_str)
-            if isinstance(parsed, _sym.Subscript):
-                return self._stage_array_read_tile(inner_state,
-                                                   inner_sdfg,
-                                                   iter_vars,
-                                                   parsed,
-                                                   name_hint=name_hint,
-                                                   mask_an=mask_an)
-            return None  # no data-dependent symbol / not an inline array read
+            # Expression gather: a tile iter-var nested inside a function (``py_mod(i, K)``,
+            # ``i**2``) with NO array read -- classified GATHER (tile_access Stop 3b / AFFINE-None).
+            # The per-lane index is COMPUTED by expanding the function inside per lane
+            # (``py_mod(i + l, K)``); build it as a constexpr-unrolled int64 tile (SIMD, not a
+            # data-dependent CPP loop) via the shared lane-id materialiser.
+            free = {str(s) for s in parsed.free_symbols}
+            if any(v in free for v in iter_vars):
+                from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile
+                return materialise_lane_id_index_tile(inner_state, begin_str, iter_vars, tuple(self.widths),
+                                                      name_hint=name_hint)
+            return None  # no data-dependent symbol / not a lane expr
         sym_to_conn: Dict[str, Tuple[str, AccessNode]] = {}
         for i, (sname, sub) in enumerate(sorted(sym_subs.items())):
             tile_an = self._stage_array_read_tile(inner_state,

@@ -12,6 +12,8 @@ import copy
 import re
 from typing import Dict, Optional, Tuple
 
+import sympy
+
 import dace
 from dace import properties, symbolic
 from dace.properties import CodeBlock
@@ -105,8 +107,10 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for e in cfg.edges():
             for lhs, rhs in (e.data.assignments or {}).items():
-                # Skip the about-to-be-deleted assignment of sym_name itself.
-                if e is defining_edge and lhs == sym_name:
+                # Skip the symbol's OWN definitions (a definition is not a consumption, and every
+                # def is being deleted). Covers ALL defining edges, not just one -- a symbol
+                # assigned on several edges would otherwise flag its own siblings as consumers.
+                if lhs == sym_name:
                     continue
                 if symbolic.symbols_in_code(str(rhs), potential_symbols=only):
                     return True
@@ -141,6 +145,12 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
                 if symbolic.symbols_in_code(code, potential_symbols=only):
                     return True
+            elif isinstance(n, dace.nodes.NestedSDFG):
+                # A child nested SDFG consumes the symbol iff it binds an inner symbol to an
+                # expression over it (``symbol_mapping`` VALUES live in this SDFG's scope).
+                for _k, v in n.symbol_mapping.items():
+                    if symbolic.symbols_in_code(str(v), potential_symbols=only):
+                        return True
 
     if sdfg.parent_nsdfg_node is not None:
         for k, v in sdfg.parent_nsdfg_node.symbol_mapping.items():
@@ -724,6 +734,151 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access
 
+    def _promote_gather_indices(self, sdfg: dace.SDFG, def_edge, rhs: str) -> str:
+        """Rewrite gather reads ``w[idx[i], k]`` in ``rhs`` to ``w[_gidx, k]`` by promoting each
+        NESTED array-read index ``idx[i]`` to a fresh interstate integer symbol assigned on
+        ``def_edge`` -- the pre-existing interstate edge that defined the cond value (``w_index =
+        w[idx[i], k]``), which dominates the ITE states the lift is building. The staged read
+        then carries a symbolic-indexed subset -- the representation a body gather uses and the
+        tile machinery vectorizes -- instead of a nested subscript no plain memlet can express.
+
+        Returns ``rhs`` unchanged when it contains no nested (indirect) array subscript.
+        """
+        if def_edge is None:
+            return rhs
+        arrays = set(sdfg.arrays.keys())
+        try:
+            expr = symbolic.SymExpr(rhs)
+            base = expr.expr if isinstance(expr, symbolic.SymExpr) else expr
+        except Exception:
+            return rhs
+        printer = symbolic.DaceSympyPrinter(arrays)
+        # A NESTED array read -- an ``arr[...]`` subscript sitting inside another array
+        # subscript's index (``w[idx[i], k]`` -> the ``idx[i]`` under ``w``) -- is a gather
+        # index. Collect the unique ones structurally (sympy ``Subscript`` nodes), dedup by
+        # their printed form so a repeated ``idx[i]`` promotes to a single symbol.
+        nested: Dict[str, sympy.Basic] = {}
+        for node in sympy.preorder_traversal(base):
+            if isinstance(node, symbolic.Subscript) and str(node.args[0]) in arrays:
+                for index_arg in node.args[1:]:
+                    for sub in sympy.preorder_traversal(index_arg):
+                        if isinstance(sub, symbolic.Subscript) and str(sub.args[0]) in arrays:
+                            nested.setdefault(printer.doprint(sub), sub)
+        if not nested:
+            return rhs
+        replace: Dict[sympy.Basic, sympy.Symbol] = {}
+        for index_text, sub in nested.items():
+            index_array = str(sub.args[0])
+            gidx = 0
+            while f'_gidx_{gidx}' in sdfg.symbols or f'_gidx_{gidx}' in sdfg.arrays:
+                gidx += 1
+            gsym = f'_gidx_{gidx}'
+            sdfg.add_symbol(gsym, sdfg.arrays[index_array].dtype)
+            def_edge.data.assignments[gsym] = index_text
+            replace[sub] = sympy.Symbol(gsym)
+        return printer.doprint(base.xreplace(replace))
+
+    def _inline_interstate_scalar_symbols(self, sdfg: dace.SDFG, rhs_text: str, exclude: set) -> Tuple[str, dict]:
+        """Substitute interstate-defined scalar symbols in ``rhs_text`` with their
+        definitions, recursively, so a lifted cond tasklet references only SDFG arrays
+        (staged through connectors) and mapped symbols (loop iterators / kernel params).
+
+        A cond RHS such as ``(b_index_0 > a_index_0)`` may mix an array transient
+        (``b_index_0``, materialised because the arm rewrote ``b[i]``) with a bare
+        interstate symbol (``a_index_0 = a[_loop_it_1]``, a staged element read that was
+        only loaded). Left as free-symbol text, ``a_index_0`` becomes a free symbol of the
+        (nested) SDFG whose interstate definition no longer dominates the relocated
+        apply-ITE state -> validation error ("Missing symbols on nested SDFG"); it is also
+        a per-lane value that must vectorise. Inlining it into ``a[_loop_it_1]`` lets the
+        downstream array-read staging turn it into a connector like any other operand.
+
+        Only names that (a) are assigned on some interstate edge, (b) are NOT SDFG arrays
+        (arrays stage through connectors, never inline), and (c) are not in ``exclude`` (the
+        symbol currently being lifted) are substituted.
+
+        :param sdfg: SDFG whose interstate edges hold the scalar-symbol definitions.
+        :param rhs_text: cond RHS expression to expand.
+        :param exclude: symbol names to leave untouched (the lifted cond symbol itself).
+        :returns: ``(expanded_text, inlined)`` where ``inlined`` maps each substituted symbol name
+            to the LIST of interstate edges that assign it (caller prunes all of them together).
+        """
+        # Collect EVERY interstate definition of each symbol. A symbol is safe to inline only if
+        # it has exactly ONE distinct RHS across all its assigning edges (a single, path-independent
+        # reaching value) and is NOT self-referential (``k = k + 1`` is a loop-carried recurrence,
+        # not a staged read -- inlining it would re-fire the fixpoint and grow the text). Protected
+        # symbols (free / parent-bound / loop variables) are never inlined or pruned.
+        all_defs: Dict[str, list] = {}
+        for cfg in sdfg.all_control_flow_regions(recursive=True):
+            for e in cfg.edges():
+                for lhs, rhs in (e.data.assignments or {}).items():
+                    all_defs.setdefault(lhs, []).append((str(rhs), e))
+        protected = self._protected_symbols(sdfg)
+        defs: Dict[str, Tuple[str, list]] = {}
+        for lhs, deflist in all_defs.items():
+            if lhs in protected:
+                continue
+            if len({r for r, _ in deflist}) != 1:
+                continue  # path-dependent reaching value -- inlining an arbitrary one is unsound
+            rhs_i = deflist[0][0]
+            try:
+                if lhs in set(symbolic.free_symbols_and_functions(rhs_i)):
+                    continue  # self-referential recurrence, not a staged read
+            except Exception:
+                pass
+            defs[lhs] = (rhs_i, [e for _, e in deflist])
+        arrays = set(sdfg.arrays.keys())
+        inlined: dict = {}  # sym -> [edges assigning it]; all pruned together by the caller
+        text = rhs_text
+        # Fixpoint with an iteration cap guarding against pathological (mutually-recursive) cycles;
+        # single-def non-self-referential staged reads are acyclic so this converges in one/two passes.
+        for _ in range(64):
+            try:
+                names = set(symbolic.free_symbols_and_functions(text))
+            except Exception:
+                break
+            targets = sorted(n for n in names if n in defs and n not in arrays and n not in exclude)
+            if not targets:
+                break
+            for name in targets:
+                def_rhs, def_edges = defs[name]
+                text = re.sub(rf"\b{re.escape(name)}\b", f"({def_rhs})", text)
+                inlined[name] = def_edges
+        return text, inlined
+
+    def _protected_symbols(self, sdfg: dace.SDFG) -> set:
+        """Symbols that must never be inlined or dropped: externally-required free symbols,
+        parameters bound by the parent nested-SDFG mapping, and loop variables (whose updates live
+        in loop metadata, not interstate edges). Mirrors ``SymbolDedup._protected_symbols``."""
+        from dace.sdfg.state import LoopRegion
+        protected = set(map(str, sdfg.free_symbols))
+        if sdfg.parent_nsdfg_node is not None:
+            protected |= set(sdfg.parent_nsdfg_node.symbol_mapping.keys())
+        for cfg in sdfg.all_control_flow_regions(recursive=False):
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable:
+                protected.add(str(cfg.loop_variable))
+        return protected
+
+    def _drop_interstate_symbol(self, sdfg: dace.SDFG, sym: str, edges, *, skip_cb=None) -> None:
+        """Delete ``sym``'s assignment from EVERY edge in ``edges``, then drop it from the symbol
+        registry + parent mapping ONLY once no interstate edge still assigns it. Deleting from every
+        assigning edge (not just one) avoids leaving a dangling assignment to a removed symbol; the
+        protected-symbol and external-consumer guards keep a still-needed symbol in place."""
+        if sym in self._protected_symbols(sdfg):
+            return
+        if _symbol_has_external_consumer(sdfg, sym, None, skip_cb=skip_cb):
+            return
+        for e in edges:
+            if e is not None and sym in (e.data.assignments or {}):
+                del e.data.assignments[sym]
+        still_assigned = any(sym in (e.data.assignments or {})
+                             for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges())
+        if still_assigned:
+            return
+        if sym in sdfg.symbols:
+            sdfg.remove_symbol(sym)
+        if sdfg.parent_nsdfg_node is not None and sym in sdfg.parent_nsdfg_node.symbol_mapping:
+            del sdfg.parent_nsdfg_node.symbol_mapping[sym]
+
     def _lift_interstate_cond_to_tasklet(self,
                                          sdfg: dace.SDFG,
                                          state: dace.SDFGState,
@@ -735,27 +890,42 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         a tasklet in ``state`` computing RHS via array-read in-connectors, writing a fresh
         transient. Returns transient name, or ``None`` if no assignment found."""
         rhs = None
-        defining_edge = None
+        def_edge = None
         for cfg in sdfg.all_control_flow_regions(recursive=True):
             for e in cfg.edges():
                 assigns = e.data.assignments
                 if cond_sym in assigns:
                     rhs = assigns[cond_sym]
-                    defining_edge = e
+                    def_edge = e
                     break
             if rhs is not None:
                 break
         if rhs is None:
             return None
-        # Delete upstream assignment + drop symbol only when no other consumer. With
-        # consumers, kept assignment serves them while per-lane lift tasklet supplies the
-        # vector form for the ITE.
-        if not _symbol_has_external_consumer(sdfg, cond_sym, defining_edge, skip_cb=skip_cb):
-            del defining_edge.data.assignments[cond_sym]
-            if cond_sym in sdfg.symbols:
-                sdfg.remove_symbol(cond_sym)
-            if sdfg.parent_nsdfg_node is not None and cond_sym in sdfg.parent_nsdfg_node.symbol_mapping:
-                del sdfg.parent_nsdfg_node.symbol_mapping[cond_sym]
+        # Cond RHS may reference OTHER interstate-defined scalar symbols (staged element
+        # reads like ``a_index_0 = a[_loop_it_1]``). Inline them into their array-read
+        # definitions so the lifted tasklet stages them through connectors instead of
+        # leaving orphaned free symbols on the (nested) SDFG.
+        rhs, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, str(rhs), exclude={cond_sym})
+        # Delete the cond symbol's assignment(s) + drop it only when no other consumer. With
+        # consumers, the kept assignment serves them while the per-lane lift tasklet supplies the
+        # vector form for the ITE. Collect ALL edges assigning cond_sym (not just ``defining_edge``)
+        # so a multi-edge symbol is not left dangling by removing it globally after deleting one.
+        cond_edges = [e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
+                      if cond_sym in (e.data.assignments or {})]
+        self._drop_interstate_symbol(sdfg, cond_sym, cond_edges, skip_cb=skip_cb)
+        # Prune each inlined scalar symbol's definitions once it has no remaining consumer (its only
+        # use was the now-inlined cond RHS). A still-consumed symbol keeps its def -- the inlined
+        # tasklet form is an equivalent per-lane duplicate.
+        for sym, def_edges in inlined_syms.items():
+            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
+
+        # A GATHER read in the cond value (``w[idx[i], k]``) is an un-representable nested
+        # subscript for a plain memlet. Promote each nested index read ``idx[i]`` to a fresh
+        # interstate INTEGER symbol (``_gidx = idx[i]`` on the edge feeding this state), so the
+        # staged read becomes a symbolic-indexed memlet ``w[_gidx, k]`` -- the same shape a body
+        # gather carries, which the tile machinery vectorizes. No-op when the RHS is not indirect.
+        rhs = self._promote_gather_indices(sdfg, def_edge, rhs)
 
         # Collect arrays the RHS reads. Subscript ``c[i]``'s ``free_symbols`` = indices
         # only, so ``free_symbols_and_functions`` misses the array head —

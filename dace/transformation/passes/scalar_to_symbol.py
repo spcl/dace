@@ -328,21 +328,37 @@ def find_promotable_scalars(sdfg: sd.SDFG,
     for reg in sdfg.all_control_flow_regions():
         interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
 
-    # Promotion targets only INTEGER-LIKE scalars (bool + the integer types --
-    # exactly ``dtypes.INTEGER_TYPES``). A non-integer scalar (float or complex)
-    # must never become a symbol: code generation has no float/complex symbol
-    # type. The former design also promoted a non-integer scalar that appeared in
-    # an inter-state CONDITION (contour_integral's ``abs(z) < 1`` makes the complex
-    # ``z = int_pts[idx]`` an interstate symbol), but promoting it inlines the
-    # array read ``int_pts[idx]`` into the consuming tasklet's code, leaking the
-    # array ``int_pts`` into the symbol namespace -- a later ``LoopToMap`` that
-    # nests the scope then registers ``int_pts`` as an ``int`` symbol and passes
-    # the array pointer where an ``int`` is declared (``int int_pts`` <-
-    # ``&int_pts[0]``, a type error). Apply the integer-only rule to EVERY
-    # candidate, dropping that non-integer interstate exemption.
-    for candidate in list(candidates):
+    # The ``integers_only`` filter targets INTEGER-LIKE scalars (bool + the
+    # integer types -- exactly ``dtypes.INTEGER_TYPES``) on the ordinary in-state
+    # promotion path: a non-integer transient scalar there gains nothing from
+    # becoming a symbol. Scalars that feed an inter-state CONDITION are EXEMPT --
+    # an upstream canon pass has already symbolicized the condition to reference
+    # the scalar, so it MUST be promoted (float included) or codegen emits an
+    # undeclared-symbol error (tsvc_2_5 ``ext_break_*`` / ``move_if_data_dep_nest``:
+    # ``a_index = a[i]; if a_index > b_index``). A complex condition scalar --
+    # mandelbrot's ``abs(Z[i]) < 2.0`` -- promotes safely because ``Abs`` of a
+    # complex value yields a real in codegen (``dace/runtime/include/dace/pyinterop.h``
+    # deduces ``Abs``'s return type via ``decltype(abs(val))``), so the guard is a
+    # ``double < double`` comparison: no complex symbol type, no array leak.
+    for candidate in (candidates - interstate_symbols):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
+
+    # A COMPLEX scalar can never be a symbol: codegen has no complex symbol type,
+    # and promoting one whose value is an array-element read ``z = arr[idx]`` turns
+    # that read into an interstate assignment that leaks the complex array ``arr``
+    # into the (nested) SDFG's symbols as a bogus INTEGER symbol -- codegen then
+    # emits ``arr[idx]`` subscripting an ``int`` (npbench ``contour_integral``:
+    # ``z = int_pts[idx]`` with complex ``int_pts`` -> ``int_pts`` demoted to an
+    # ``int`` symbol -> ``invalid types 'int[int]' for array subscript``). This
+    # drops complex candidates EVEN on the interstate-condition path that the
+    # ``integers_only`` filter above exempts: an ``abs(z) < 1`` guard over a complex
+    # ``z`` must read ``z`` as data, never symbolicize the complex value. (Real
+    # ``abs``/mask condition scalars stay promotable -- their descriptor is bool /
+    # real, not complex.)
+    for candidate in set(candidates):
+        if sdfg.arrays[candidate].dtype.as_numpy_dtype().kind == 'c':
+            candidates.discard(candidate)
 
     # Only keep candidates that were found in SDFG. Read-only input scalars
     # (``readonly_inputs``) are read but never written / used in an interstate

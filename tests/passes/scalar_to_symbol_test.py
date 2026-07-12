@@ -176,14 +176,15 @@ def test_promote_copy():
 
 
 def test_promote_array_assignment():
-    """ A FLOAT scalar read from an array is NOT promotable: promotion targets
-    integer/bool scalars only (code generation has no float/complex symbol type).
-    A non-integer scalar used in an inter-state condition (``if j >= 0.0``) is no
-    longer exempted -- promoting it would inline the array read ``A[1, 1]`` into
-    the consuming tasklet's code and leak the array ``A`` into the symbol
-    namespace (the contour_integral ``int_pts`` bug: a later ``LoopToMap`` then
-    registers the array as an ``int`` symbol). The int64 variant
-    (:func:`test_promote_array_assignment_tasklet`) still promotes. """
+    """ A FLOAT scalar read from an array and used in an inter-state condition
+    (``if j >= 0.0``) IS promotable. Scalars that feed an inter-state condition
+    are exempt from the integer-only filter: an upstream canon pass symbolicizes
+    the condition to reference the scalar, so it must be promoted (float included)
+    or code generation emits an undeclared-symbol error. Promotion is
+    value-preserving and does not leak the source array into the symbol namespace
+    (the interstate assignment ``j = A[1, 1]`` reads a fixed index; ``A`` stays an
+    array). The int64 variant (:func:`test_promote_array_assignment_tasklet`) also
+    promotes. """
 
     @dace.program
     def testprog6(A: dace.float64[20, 20]):
@@ -192,9 +193,9 @@ def test_promote_array_assignment():
             A[:] += j
 
     sdfg: dace.SDFG = testprog6.to_sdfg(simplify=False)
-    assert scalar_to_symbol.find_promotable_scalars(sdfg) == set()
-    # Promotion is a no-op here (nothing promotable); the program still runs.
+    assert 'j' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert 'A' not in sdfg.symbols, "the source array must not leak into the symbol namespace"
     A = np.random.rand(20, 20)
     expected = A + A[1, 1]
     sdfg(A=A)
@@ -895,13 +896,15 @@ def test_promotion_rejects_orphan_condition_scalar():
 
 
 def test_complex_scalar_from_array_not_promotable():
-    """A COMPLEX scalar read from a complex array and used in an inter-state
-    condition (``abs(z) < 1``) must NOT be promoted. Code generation has no
-    complex symbol type; promoting ``z`` would inline the complex array read
-    ``a[i]`` into consuming tasklet code and leak the array ``a`` into the symbol
-    namespace, where a later ``LoopToMap`` registers it as an ``int`` symbol
-    (the contour_integral / mandelbrot2 ``int_pts`` codegen bug). Promotion is
-    integer/bool-only; the non-integer inter-state-condition exemption is gone. """
+    """A COMPLEX scalar read from a complex array that is NOT itself an
+    inter-state condition scalar stays data. Here the guard ``abs(z) < 1`` is
+    computed into a bool ``__tmp0`` (the actual condition scalar), so ``z`` is an
+    ordinary in-state complex transient: the integer-only filter drops it and it
+    is never promoted. (A complex scalar that IS the direct condition scalar --
+    e.g. mandelbrot's ``abs(Z[i]) < 2`` guard, exercised in
+    :func:`test_abs_complex_guard_compiles_and_runs` -- promotes safely because
+    ``Abs`` of a complex yields a real in codegen.) End-to-end: no complex symbol,
+    no array-as-symbol leak, bit-exact through canonicalization. """
     Nsym = dace.symbol('Nsym')
 
     @dace.program
@@ -970,7 +973,50 @@ def test_mandelbrot2_complex_escape_pattern():
     assert np.allclose(Zout, Zr), f"Z mismatch: {np.abs(Zout - Zr).max():.2e}"
 
 
+def test_abs_complex_guard_compiles_and_runs():
+    """ Regression for the ``Abs`` return type: ``abs`` of a COMPLEX value used in
+    a guard (``abs(a[i]) < 2``) is a REAL comparison. Promotion folds the guard
+    into a data-dependent condition whose generated C++ is
+    ``if (Abs(<complex>) < 2.0)``. The runtime ``Abs`` must return the real
+    magnitude -- its return type is ``decltype(abs(val))``
+    (``dace/runtime/include/dace/pyinterop.h``) -- otherwise the guard is
+    ``complex < double`` and g++ rejects it with 'no match for operator<'.
+    Canonicalizes, confirms the guard survives as an ``Abs`` comparison, compiles
+    (the crux: fails if ``Abs`` returns complex) and runs bit-exact. """
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.codegen import codegen
+    N = dace.symbol('N')
+
+    @dace.program
+    def absguard(a: dace.complex128[N], out: dace.complex128[N]):
+        for i in dace.map[0:N]:
+            if np.absolute(a[i]) < 2.0:
+                out[i] = a[i] * a[i]
+            else:
+                out[i] = a[i]
+
+    sdfg = absguard.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    # The complex-magnitude guard must survive as an ``Abs(...) < ...`` comparison
+    # in generated code -- this is exactly the shape that regresses if ``Abs``
+    # returns complex instead of the real magnitude.
+    assert any('Abs(' in line and '<' in line for c in codegen.generate_code(sdfg)
+               for line in c.clean_code.splitlines()), "expected an ``Abs(...) < ...`` guard in codegen"
+    csdfg = sdfg.compile()  # fails to compile if Abs(complex) returns complex
+
+    n = 16
+    rng = np.random.default_rng(2)
+    a = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex128)
+    ref = np.array([av * av if abs(av) < 2.0 else av for av in a], dtype=np.complex128)
+    got = np.zeros(n, np.complex128)
+    csdfg(a=a.copy(), out=got, N=n)
+    assert np.allclose(got, ref), f"mismatch: {np.abs(got - ref).max():.2e}"
+
+
 if __name__ == '__main__':
+    test_abs_complex_guard_compiles_and_runs()
+    test_complex_scalar_from_array_not_promotable()
+    test_mandelbrot2_complex_escape_pattern()
     test_promotion_rejects_orphan_condition_scalar()
     test_find_promotable()
     test_promote_simple()

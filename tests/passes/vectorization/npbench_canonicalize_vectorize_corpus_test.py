@@ -11,7 +11,7 @@ reference:
 
 The canonicalized SDFG + inputs + reference are computed once per kernel and shared
 (phase 2 deep-copies the canon base). Phases are parametrized so pytest reports the
-``x/N`` per kernel. Known gaps are marked ``xfail`` via ``_XFAIL[(kernel, phase)]``.
+``x/N`` per kernel.
 (``auto_optimize`` phases are intentionally omitted -- canon+vectorize is the
 must-pass path here.)
 """
@@ -32,6 +32,7 @@ pytestmark = pytest.mark.skip(
 )
 
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.npbench import npbench
 
@@ -48,17 +49,12 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
-# Known gaps keyed by (kernel, phase) -> reason; removed as each is fixed.
-_XFAIL: dict = {
-    ("go_fast", "canon_vec"): "vectorizer gap: mixed fp32/fp64 tile copy (float32 array + fp64 `trace` accumulator)",
-}
-
 _BASE: dict = {}
 
 
 def _multidim_pass(name):
     knobs = _MULTIDIM_KNOBS[_KERNELS.index(name) % len(_MULTIDIM_KNOBS)]
-    return VectorizeCPUMultiDim(widths=(8, ), **knobs)
+    return VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), **knobs))
 
 
 def _base(name):
@@ -76,8 +72,6 @@ def _base(name):
 @pytest.mark.parametrize("name", _KERNELS)
 @pytest.mark.parametrize("phase", _PHASES)
 def test_npbench_corpus(name, phase):
-    if (name, phase) in _XFAIL:
-        pytest.xfail(_XFAIL[(name, phase)])
     canon, arrays, params, ref = _base(name)
     sdfg = copy.deepcopy(canon)
     if phase == "canon_vec":

@@ -6,16 +6,9 @@ name and another parses it differently:
 
 - ``LaneIdScheme`` — per-tile-lane symbols. Canonical (Option B) form = chain of per-dim chunks
   ``<base>_lane<d>id_<n>`` (one chunk per tile dim, source order); legacy 1D form
-  ``<base>_laneid_<n>`` (no dim index) parsed for back-compat as ``<base>_lane0id_<n>``. Covers 1D
-  ``VectorizeCPU`` AND v2 K-dim ``VectorizeCPUMultiDim`` paths.
-- ``VecNameScheme`` — vector buffers ``<base>_vec`` / ``<base>_vec_<i>`` / ``<base>_vec_k``.
-- ``PackedNameScheme`` — scatter / gather buffers ``<base>_packed``.
-- ``TileNameScheme`` — v2 tile-transient names (``<base>_tile``, ``<base>_tile_idx``,
+  ``<base>_laneid_<n>`` (no dim index) parsed for back-compat as ``<base>_lane0id_<n>``.
+- ``TileNameScheme`` — K-dim tile-transient names (``<base>_tile``, ``<base>_tile_idx``,
   ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
-
-Suffix ownership so both pipelines coexist in one SDFG without collisions: ``_packed`` = scatter/
-gather; ``_vec`` = everything else in 1D path; ``_tile`` = v2 multi-dim path. Inout connectors use
-the same suffix on both directions, so callers classify by access kind, not direction.
 """
 import re
 from typing import Iterable, Iterator, List, Optional, Tuple
@@ -221,92 +214,6 @@ class LaneIdScheme:
         if parsed is None:
             return False
         return any(d == dim for d, _ in parsed[1])
-
-
-class VecNameScheme:
-    """Owner of the ``_vec``-family vector-buffer name scheme.
-
-    Three shapes share the ``_vec`` root:
-
-    - ``<base>_vec`` — default contiguous vector buffer.
-    - ``<base>_vec_<i>`` — per-subset variant when one base array sees multiple distinct subsets
-      inside a NestedSDFG.
-    - ``<base>_vec_k`` — per-NSDFG ``(vector_width,)`` transient minted by
-      ``prepare_vectorized_array``.
-
-    Inout connectors route through ``make`` on both directions so names agree.
-    """
-
-    SUFFIX = "_vec"
-    K_SUFFIX = "_vec_k"
-    _INDEXED_RE = re.compile(r"^(.*)_vec_(\d+)$")
-
-    @staticmethod
-    def make(base: str) -> str:
-        """Build the plain vector name ``<base>_vec``.
-
-        :param base: Buffer base name.
-        :returns: The plain vector name.
-        """
-        return f"{base}{VecNameScheme.SUFFIX}"
-
-    @staticmethod
-    def make_indexed(base: str, index: int) -> str:
-        """Build the per-subset variant ``<base>_vec_<index>``.
-
-        :param base: Buffer base name.
-        :param index: Subset disambiguation index.
-        :returns: The indexed vector name.
-        """
-        return f"{base}_vec_{index}"
-
-    @staticmethod
-    def make_k(base: str) -> str:
-        """Build the per-NSDFG ``(vector_width,)`` name ``<base>_vec_k``.
-
-        :param base: Buffer base name.
-        :returns: The ``_vec_k`` name.
-        """
-        return f"{base}{VecNameScheme.K_SUFFIX}"
-
-    @staticmethod
-    def is_vec(name: str) -> bool:
-        """Check whether ``name`` belongs to the ``_vec`` family.
-
-        :param name: Name to test.
-        :returns: True iff ``name`` ends with ``_vec``, ``_vec_<digits>``, or
-            ``_vec_k``. Does not match ``_packed``.
-        """
-        if name.endswith(VecNameScheme.SUFFIX):
-            return True
-        if name.endswith(VecNameScheme.K_SUFFIX):
-            return True
-        return VecNameScheme._INDEXED_RE.match(name) is not None
-
-
-class PackedNameScheme:
-    """Owner of the ``<base>_packed`` scheme for scatter / gather paths. Classifier and producer both
-    route through it so they agree."""
-
-    SUFFIX = "_packed"
-
-    @staticmethod
-    def make(base: str) -> str:
-        """Build the packed name ``<base>_packed``.
-
-        :param base: Buffer base name.
-        :returns: The packed name.
-        """
-        return f"{base}{PackedNameScheme.SUFFIX}"
-
-    @staticmethod
-    def is_packed(name: str) -> bool:
-        """Check whether ``name`` is a packed buffer name.
-
-        :param name: Name to test.
-        :returns: True iff ``name`` ends with ``_packed``.
-        """
-        return name.endswith(PackedNameScheme.SUFFIX)
 
 
 class TileNameScheme:

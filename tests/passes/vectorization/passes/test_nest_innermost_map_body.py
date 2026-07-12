@@ -15,6 +15,8 @@ import numpy as np
 
 import dace
 from dace.memlet import Memlet
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
 from dace.transformation.passes.vectorization.utils.map_predicates import (
@@ -134,11 +136,12 @@ def test_k2_broadcast_tile_k1_tail_stays_valid_through_nest():
     # tile_k1 tail is the configuration that exposes the bug. expand_tile_nodes=False keeps
     # it a transform-only check (no compile -> no UCX flake); the per-subpass validate gate
     # inside the orchestrator is what asserts each preprocessing pass left the SDFG valid.
-    VectorizeCPUMultiDim(widths=(8, 8),
-                         target_isa="SCALAR",
-                         remainder_strategy="scalar_postamble",
-                         scalar_remainder_emit="tile_k1",
-                         expand_tile_nodes=False).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, 8),
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+                        scalar_remainder_emit="tile_k1",
+                        expand_tile_nodes=False)).apply_pass(sdfg, {})
     sdfg.validate()
 
 

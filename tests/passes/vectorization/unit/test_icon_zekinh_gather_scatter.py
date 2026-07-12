@@ -20,7 +20,9 @@ import pytest
 
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
-from dace.transformation.passes.vectorization.utils.tasklets import tasklet_reads_or_writes_tile
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
+from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NB = dace.symbol("NB")
@@ -79,15 +81,15 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
     sdfg.validate()
 
     VectorizeCPUMultiDim(
-        widths=(8, 8),
-        target_isa="SCALAR",
-        remainder_strategy="scalar_postamble",
-        branch_mode="merge",
-        loop_to_map_permissive=True,
-        nest_map_bodies=True,
-        scalar_remainder_emit="tile_k1",
-        expand_tile_nodes=False,
-    ).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8, 8),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+            branch_mode=BranchMode.MERGE,
+            loop_to_map_permissive=True,
+            scalar_remainder_emit="tile_k1",
+            expand_tile_nodes=False,
+        )).apply_pass(sdfg, {})
     sdfg.validate()
 
     n_tasklet = _count_tasklets(sdfg)

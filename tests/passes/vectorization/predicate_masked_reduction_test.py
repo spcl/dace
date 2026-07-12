@@ -83,6 +83,118 @@ def test_gather_masked_reduction_is_refused():
     assert _num_conditionals(sdfg) == 1, 'the guard must be preserved (branch kept)'
 
 
+def _make_compound_masked_reduction() -> dace.SDFG:
+    """``if (a[j] > K): acc += a[j]`` -- a COMPOUND-predicate masked SUM reduction. The
+    guard is a comparison reading an array + a symbol, NOT a pre-materialized scalar mask
+    (recipe 2)."""
+    sdfg = dace.SDFG('compound_masked')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    sdfg.add_symbol('K', dace.float64)
+    j = dace.symbol('j')
+
+    cb = ConditionalBlock('mask_if')
+    body = ControlFlowRegion('mask_true', sdfg=sdfg)
+    cb.add_branch(CodeBlock('(a[j] > K)'), body)
+    st = body.add_state('reduce', is_start_block=True)
+    an_a = st.add_access('a')
+    tk = st.add_tasklet('addend', {'_i'}, {'_o'}, '_o = _i')
+    an_acc = st.add_access('acc')
+    st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=subsets.Range([(j, j, 1)])))
+    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
+                                               wcr='lambda x, y: x + y'))
+    init = sdfg.add_state('init', is_start_block=True)
+    sdfg.add_node(cb)
+    sdfg.add_edge(init, cb, dace.InterstateEdge())
+    return sdfg
+
+
+def test_compound_predicate_masked_reduction_is_predicated():
+    """Recipe 2: a compound predicate ``(a[j] > K)`` (comparison reading an array, not a
+    materialized scalar mask) is lowered into a bool mask scalar, then predicated -- the
+    guard dissolves. This is what unblocks TSVC ``cond_reduce_sym`` / ``cond_reduce_sum``."""
+    sdfg = _make_compound_masked_reduction()
+    assert _num_conditionals(sdfg) == 1
+    applied = PredicateMaskedReduction().apply_pass(sdfg, {})
+    assert applied == 1, 'compound-predicate masked reduction should be predicated (recipe 2)'
+    assert _num_conditionals(sdfg) == 0, 'the guard must be dissolved'
+    assert any(name.startswith('_pmr_mask') for name in sdfg.arrays), \
+        'recipe 2 must materialize a bool mask scalar'
+
+
+def _make_wcr_priv_masked_reduction() -> dace.SDFG:
+    """The canonicalize-normalized addend shape ``a -> _Add_ -> _wcr_priv (plain) ->
+    acc (wcr)``: after ``NormalizeWCRSource`` the reduction addend arrives through a
+    transient ``_wcr_priv`` buffer, so the reduction WCR edge's source is an AccessNode
+    (not the addend tasklet) and there is a PLAIN write into that transient."""
+    sdfg = dace.SDFG('wcr_priv_masked')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_scalar('c', dace.int64)  # materialized per-lane mask
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    sdfg.add_scalar('_wcr_priv_addend', dace.float64, transient=True)
+    j = dace.symbol('j')
+
+    cb = ConditionalBlock('mask_if')
+    body = ControlFlowRegion('mask_true', sdfg=sdfg)
+    cb.add_branch(CodeBlock('c'), body)
+    st = body.add_state('reduce', is_start_block=True)
+    an_a = st.add_access('a')
+    tk = st.add_tasklet('addend', {'_i'}, {'_o'}, '_o = _i')
+    an_priv = st.add_access('_wcr_priv_addend')
+    an_acc = st.add_access('acc')
+    st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=subsets.Range([(j, j, 1)])))
+    st.add_edge(tk, '_o', an_priv, None, Memlet(data='_wcr_priv_addend', subset=subsets.Range([(0, 0, 1)])))
+    st.add_edge(an_priv, None, an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
+                                                    wcr='lambda x, y: x + y'))
+    init = sdfg.add_state('init', is_start_block=True)
+    sdfg.add_node(cb)
+    sdfg.add_edge(init, cb, dace.InterstateEdge())
+    return sdfg
+
+
+def test_normalized_wcr_priv_addend_is_predicated():
+    """A plain write into the reduction's transient addend buffer (``_wcr_priv``, from
+    canonicalize's NormalizeWCRSource) is part of the reduction, not an escaping side
+    effect -- the matcher must accept this normalized shape and predicate it, not refuse
+    on the intermediate AccessNode write."""
+    sdfg = _make_wcr_priv_masked_reduction()
+    assert _num_conditionals(sdfg) == 1
+    applied = PredicateMaskedReduction().apply_pass(sdfg, {})
+    assert applied == 1, 'normalized _wcr_priv addend-buffer masked reduction should be predicated'
+    assert _num_conditionals(sdfg) == 0, 'the guard must be dissolved'
+
+
+def test_escaping_plain_write_is_refused():
+    """A PLAIN (non-WCR) write into a NON-transient array is a real side effect, not a
+    reduction addend buffer -- the branch is not a pure masked reduction, so the pass
+    must refuse (guards the relaxed addend-buffer acceptance from over-matching)."""
+    sdfg = dace.SDFG('escaping_write')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('b', [N], dace.float64)  # non-transient escape target
+    sdfg.add_scalar('c', dace.int64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    j = dace.symbol('j')
+    cb = ConditionalBlock('mask_if')
+    body = ControlFlowRegion('mask_true', sdfg=sdfg)
+    cb.add_branch(CodeBlock('c'), body)
+    st = body.add_state('reduce', is_start_block=True)
+    an_a = st.add_access('a')
+    tk = st.add_tasklet('addend', {'_i'}, {'_o', '_e'}, '_o = _i\n_e = _i')
+    an_acc = st.add_access('acc')
+    an_b = st.add_access('b')  # escaping plain write
+    st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=subsets.Range([(j, j, 1)])))
+    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
+                                               wcr='lambda x, y: x + y'))
+    st.add_edge(tk, '_e', an_b, None, Memlet(data='b', subset=subsets.Range([(j, j, 1)])))
+    init = sdfg.add_state('init', is_start_block=True)
+    sdfg.add_node(cb)
+    sdfg.add_edge(init, cb, dace.InterstateEdge())
+
+    applied = PredicateMaskedReduction().apply_pass(sdfg, {})
+    assert applied is None, 'a branch with an escaping plain write must not be predicated'
+    assert _num_conditionals(sdfg) == 1
+
+
 if __name__ == '__main__':
     import pytest
     import sys

@@ -20,12 +20,6 @@ kernel the test:
 inputs and skipped. Inner constant-tile loops (e.g. ``heat3d``'s tile size 8)
 would unroll 512x, so ``unroll_limit`` is capped, matching the canonicalize
 sibling :mod:`tests.canonicalize.tsvc_2_5_corpus_test`.
-
-Known multidim vectorize gaps are marked ``xfail`` with the tracking reason --
-see ``_MULTIDIM_XFAIL`` / ``_multidim_xfail_reason``. The ``xfail`` is imperative
-and fires before canonicalize/compile, so a kernel whose vectorized codegen
-aborts cannot crash the run. Canon-stage divergences are filed upstream (canon is
-fixed elsewhere), not treated as vectorizer bugs.
 """
 import contextlib
 import inspect
@@ -47,6 +41,8 @@ import pytest
 import dace
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
@@ -66,48 +62,6 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="AVX512", remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
-
-# Multidim vectorize gaps, keyed by the SHORT kernel name (``program.name`` is
-# ``tests_corpus_tsvc_2_5_tsvc_2_5_<kernel>`` -- doubled module segment -- so the
-# lookup de-doubles to the trailing kernel name; see ``_multidim_xfail_reason``).
-# Each entry is the tracked reason; entries are removed as the vectorizer gap is
-# fixed. Canon-stage divergences are NOT vectorizer bugs (canon is fixed
-# elsewhere) -- they are filed upstream and kept here only so the corpus is green.
-_MULTIDIM_XFAIL: dict = {
-    # Masked reduction ``if A[i] <op> K: acc += x`` -- the guard now stages
-    # correctly (data-dependent-guard fix), but the masked accumulation diverges.
-    'cond_reduce_sum': 'vectorizer: masked-reduction accumulation diverges from numpy reference',
-    # Strided reduction FIXED (spcl/dace#2428): the vectorizer entry now folds a non-unit
-    # map step into the index (``NormalizeStridedMaps``: ``0:N:2`` -> ``0:int_floor(N-1,2)+1:1``,
-    # ``a[i]`` -> ``a[2*k]``) so the tiler's existing strided-index (``dim_strides``) machinery
-    # vectorizes it with NO step != 1 handling in the tile lowering. quasi_affine_reduce_even /
-    # _odd now pass across all knobs and are no longer xfailed. quasi_affine_floor_div_scatter
-    # was the contrived floor-div form of a pair accumulate; rewritten to the value-identical
-    # ``b[i] += a[2*i] + a[2*i+1]`` (a unit-step map with two strided reads) it vectorizes
-    # directly -- no scatter / reduction stripe -- and is no longer xfailed either.
-    # Gather / scatter (A[B[i]]) FIXED (spcl/dace#2429): ExpandNestedSDFGInputs now threads
-    # the index array into the body NSDFG -- a scalar-connector index keeps its [i] subscript
-    # (re-subscripted to the outer array before the boundary rename) and a direct array index
-    # is added as a full-array read boundary through the enclosing map -- so the per-lane index
-    # TileLoad builds. ext_gather_load / ext_scatter_store / fission_gather_2body /
-    # fission_scatter_2body / reroll_gather / vas_ssym now pass and are no longer xfailed.
-    # Numerical divergence.
-    'reduce_inner_carry': 'vectorizer: vectorized output diverges from numpy reference',
-    'scan_strided_2': 'vectorizer: vectorized output diverges from numpy reference',
-    # Canon-stage divergence (NOT a vectorizer bug -- filed upstream; canon fixed elsewhere).
-    'heat3d_tiled_const': 'canon-stage: canonicalized output diverges (upstream canon issue, not vectorizer)',
-}
-
-
-def _multidim_xfail_reason(program) -> str:
-    """Return the tracked xfail reason for ``program``, or ``""`` if none.
-
-    ``program.name`` is ``tests_corpus_tsvc_2_5_tsvc_2_5_<kernel>``; the xfail dict
-    keys are the short ``<kernel>`` names, so de-double to the trailing kernel name.
-    """
-    short = program.name.rsplit("tsvc_2_5_", 1)[-1]
-    return _MULTIDIM_XFAIL.get(short, "")
-
 
 def _oracle(program):
     """The numpy oracle for a kernel: ``ref_`` + name with any ``ext_`` dropped."""
@@ -195,9 +149,6 @@ def test_tsvc_2_5_canonicalize(idx, program):
 def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
-    reason = _multidim_xfail_reason(program)
-    if reason:
-        pytest.xfail(reason)
     arrays, scalars, ref = _reference(program)
     sdfg = _canonicalized(program)
     # The ``name`` cache policy keys the .dacecache folder on sdfg.name; suffix the
@@ -209,12 +160,15 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     # K=2 only when EVERY inner map is a genuine collapsed 2-D map (mixed-K within
     # one SDFG aborts the tile pipeline), else fall back to K=1.
     if map_param_counts and min(map_param_counts) >= 2:
-        vec = VectorizeCPUMultiDim(widths=(8, 8),
-                                   target_isa="SCALAR",
-                                   remainder_strategy="masked_tail",
-                                   branch_mode="merge")
+        vec = VectorizeCPUMultiDim(
+            VectorizeConfig(widths=(8, 8),
+                            target_isa=ISA.SCALAR,
+                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                            branch_mode=BranchMode.MERGE,
+                            validate_all=True))
     else:
-        vec = VectorizeCPUMultiDim(widths=(8, ), **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)])
+        vec = VectorizeCPUMultiDim(
+            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
     vec.apply_pass(sdfg, {})
     sdfg.validate()
     _run_and_check(program, sdfg, arrays, scalars, ref, "multidim vectorization")

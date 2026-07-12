@@ -4,6 +4,8 @@ import pytest
 import dace
 import numpy
 import pytest
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
     N,
@@ -284,7 +286,6 @@ def test_strided_store_stride_3(emission_style):
         vector_width=8,
         insert_copies=True,
         emission_style=emission_style,
-        fuse_overlapping_loads=True,
         sdfg_name="strided_store_stride_3",
     )
 
@@ -755,7 +756,6 @@ def test_gather_load_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"gather_load_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
@@ -779,7 +779,6 @@ def test_scatter_store_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"scatter_store_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
@@ -801,7 +800,6 @@ def test_strided_load_stride_2_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"strided_load_stride_2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
@@ -823,7 +821,6 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"strided_store_stride_2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
@@ -854,7 +851,6 @@ def test_strided_load_fp32_stride_2_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"sl_fp32_s2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
@@ -880,7 +876,6 @@ def test_diagonal_gather_load_masked(remainder_strategy):
         vector_width=8,
         sdfg_name=f"diag_gather_masked_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=True,
     )
 
 
@@ -902,7 +897,6 @@ def test_diagonal_scatter_store_masked(remainder_strategy):
         vector_width=8,
         sdfg_name=f"diag_scatter_masked_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=True,
     )
 
 
@@ -960,119 +954,10 @@ def _assert_laneid_fan_collapsed(vec_sdfg):
                                 f"{t.code.as_string!r}")
 
 
-def test_gather_load_collapse_laneid_structural():
-    N_val = 64
-    src = numpy.random.random(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="gather_load_collapse_laneid",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
 @dace.program
 def gather_load_i32(src: dace.float64[N], idx: dace.int32[N], dst: dace.float64[N]):
     for i in dace.map[0:N]:
         dst[i] = src[idx[i]] + 1.0
-
-
-def test_gather_collapse_laneid_noncontig_values():
-    # Non-contiguous gather: the index *values* hit every 2nd source
-    # element (a strided access pattern). The index table itself is read
-    # as a contiguous slice, so the laneid fan still collapses; the
-    # gather intrinsic does the non-contiguous source access.
-    N_val = 64
-    src = numpy.random.random(N_val)
-    idx = ((numpy.arange(N_val) * 2) % N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="gather_collapse_laneid_noncontig",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
-def test_gather_collapse_laneid_int32_idx():
-    # int32 index array exercises the conversion variant: a local int64
-    # buffer is filled from _idx (element-width conversion the runtime
-    # signature requires), still no laneid symbols.
-    N_val = 64
-    src = numpy.random.random(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int32)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_load_i32,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={"N": N_val},
-        vector_width=8,
-        sdfg_name="gather_collapse_laneid_i32",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-    conv = [
-        n for n, _ in vec_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and "gather" in n.label and "__vec_lane_idx" in n.code.as_string
-    ]
-    assert conv, "int32 idx must use the int64-conversion gather variant"
-
-
-@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-def test_gather_load_collapse_laneid_nondiv(remainder_strategy):
-    # Non-divisible N (R=6): main + masked-remainder gather under the knob.
-    N_val = 22
-    src = numpy.random.rand(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name=f"gather_load_collapse_laneid_nondiv_{remainder_strategy}",
-        remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
 
 
 # Scatter side. For-loop scatter needs loop_to_map_permissive=True
@@ -1083,80 +968,6 @@ def test_gather_load_collapse_laneid_nondiv(remainder_strategy):
 def scatter_loop_stencil(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N]):
     for i in range(N):
         dst[idx[i]] = src[i] + 1.0
-
-
-def test_scatter_store_collapse_laneid_structural():
-    N_val = 64
-    src = numpy.random.random(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=scatter_store,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="scatter_store_collapse_laneid",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
-@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-def test_scatter_store_collapse_laneid_nondiv(remainder_strategy):
-    N_val = 22
-    src = numpy.random.rand(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=scatter_store,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name=f"scatter_store_collapse_laneid_nondiv_{remainder_strategy}",
-        remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
-def test_scatter_loop_stencil_collapse_laneid():
-    # for-loop scatter: laneid fan over a symbolic slice idx[tile_i:+W].
-    N_val = 64
-    src = numpy.random.random(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=scatter_loop_stencil,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={"N": N_val},
-        vector_width=8,
-        sdfg_name="scatter_loop_stencil_collapse_laneid",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-        loop_to_map_permissive=True,
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
 
 
 @pytest.mark.parametrize("n", [64, 17])
@@ -1177,11 +988,12 @@ def test_scatter_loop_permissive_tile(n):
     ref.name = f"scatter_loop_ref_{n}"
     vec = scatter_loop_stencil.to_sdfg(simplify=True)
     vec.name = f"scatter_loop_vec_{n}"
-    VectorizeCPUMultiDim(widths=(8, ),
-                         target_isa="SCALAR",
-                         remainder_strategy="scalar_postamble",
-                         branch_mode="merge",
-                         loop_to_map_permissive=True).apply_pass(vec, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ),
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+                        branch_mode=BranchMode.MERGE,
+                        loop_to_map_permissive=True)).apply_pass(vec, {})
     vec.validate()
     d_ref, d_vec = numpy.zeros(n), numpy.zeros(n)
     ref.compile()(src=src.copy(), idx=idx.copy(), dst=d_ref, N=n)
@@ -1210,49 +1022,17 @@ def no_indirection(src: dace.float64[N], dst: dace.float64[N], scale: dace.float
         dst[i] = src[i] * scale
 
 
-def test_gather_collapse_laneid_vw4():
-    # vector_width != 8: recognition lane range 0..W-1, W=4.
-    N_val = 64
-    src = numpy.random.random(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=4,
-        sdfg_name="gather_collapse_laneid_vw4",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
 def test_gather_collapse_laneid_fp32_data(vectorize_config):
     """fp32 data array + int64 idx: direct-pass gather<float>.
 
-    fp32 is limited to the multidim backend, where this runs and is checked for
-    correctness. The legacy ``VectorizeCPU`` arm is fp64-only (the ``float32``
-    cast op in the vectorized body -> 'Found unsupported op float32'), so it is
-    xfail-ed. ``collapse_laneid`` is a legacy structural rewrite (a no-op on the
-    tile path), so the laneid-fan-collapse assertion applies only to legacy --
-    which is xfail here -- and the multidim arm relies on the harness's
-    vectorized-vs-reference correctness comparison.
+    fp32 runs on the multidim backend, where correctness is checked.
+    ``collapse_laneid`` is a no-op on the tile path, so the multidim arm relies
+    on the harness's vectorized-vs-reference correctness comparison.
     """
     N_val = 64
     src = numpy.random.rand(N_val).astype(numpy.float32)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
     dst = numpy.zeros(N_val, dtype=numpy.float32)
-    if vectorize_config == "legacy_cpu":
-        pytest.xfail("legacy VectorizeCPU is fp64-only ('Found unsupported op float32'); "
-                     "fp32 is limited to the multidim backend")
     run_vectorization_test(
         dace_func=gather_fp32_data,
         arrays={
@@ -1263,85 +1043,7 @@ def test_gather_collapse_laneid_fp32_data(vectorize_config):
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_collapse_laneid_fp32data",
-        collapse_laneid_index_loads=True,
         vectorize_config=vectorize_config,
-    )
-
-
-def test_collapse_laneid_two_independent_gathers():
-    # Two index tables in one map: each laneid fan collapses on its own.
-    N_val = 64
-    a = numpy.random.rand(N_val)
-    b = numpy.random.rand(N_val)
-    ia = numpy.random.permutation(N_val).astype(numpy.int64)
-    ib = numpy.random.permutation(N_val).astype(numpy.int64)
-    c = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=two_gathers,
-        arrays={
-            "a": a,
-            "ia": ia,
-            "b": b,
-            "ib": ib,
-            "c": c
-        },
-        params={"N": N_val},
-        vector_width=8,
-        sdfg_name="collapse_laneid_two_gathers",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
-def test_collapse_laneid_noop_without_indirection():
-    # Knob ON but no gather/scatter: must be inert and still correct.
-    N_val = 64
-    src = numpy.random.random(N_val)
-    dst = numpy.zeros(N_val)
-    vec_sdfg = run_vectorization_test(
-        dace_func=no_indirection,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="collapse_laneid_noop",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    fan = [
-        n for n, _ in vec_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and ("gather" in n.label or "scatter" in n.label)
-    ]
-    assert not fan, f"knob must be inert without indirection, found {[t.label for t in fan]}"
-
-
-def test_gather_collapse_laneid_small_n():
-    # N < W: no main vector gather, only the scalar remainder path.
-    N_val = 5
-    src = numpy.random.random(N_val)
-    idx = numpy.random.permutation(N_val).astype(numpy.int64)
-    dst = numpy.zeros(N_val)
-    run_vectorization_test(
-        dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="gather_collapse_laneid_smalln",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
     )
 
 
@@ -1362,48 +1064,6 @@ def gather_strided_index_2(a: dace.float64[N], b: dace.float64[2 * N], idx: dace
 def gather_strided_index_3(a: dace.float64[N], b: dace.float64[3 * N], idx: dace.int64[3 * N]):
     for i in dace.map[0:N]:
         a[i] = b[idx[3 * i]] + 1.0
-
-
-def test_gather_collapse_laneid_strided_index_2():
-    N_val = 64
-    a = numpy.zeros(N_val)
-    b = numpy.random.rand(2 * N_val)
-    idx = numpy.random.permutation(2 * N_val).astype(numpy.int64)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_strided_index_2,
-        arrays={
-            "a": a,
-            "b": b,
-            "idx": idx
-        },
-        params={"N": N_val},
-        vector_width=8,
-        sdfg_name="gather_collapse_laneid_stridedidx2",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
-
-
-def test_gather_collapse_laneid_strided_index_3():
-    N_val = 48
-    a = numpy.zeros(N_val)
-    b = numpy.random.rand(3 * N_val)
-    idx = numpy.random.permutation(3 * N_val).astype(numpy.int64)
-    vec_sdfg = run_vectorization_test(
-        dace_func=gather_strided_index_3,
-        arrays={
-            "a": a,
-            "b": b,
-            "idx": idx
-        },
-        params={"N": N_val},
-        vector_width=8,
-        sdfg_name="gather_collapse_laneid_stridedidx3",
-        collapse_laneid_index_loads=True,
-        vectorize_config="legacy_cpu",
-    )
-    _assert_laneid_fan_collapsed(vec_sdfg)
 
 
 # Knob-OFF (no collapse): the per-lane laneid fan must itself read
@@ -1429,7 +1089,6 @@ def test_gather_strided_index_2_knob_off():
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_strided_index_2_knoboff",
-        collapse_laneid_index_loads=False,
     )
 
 
@@ -1450,5 +1109,4 @@ def test_gather_strided_index_3_knob_off():
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_strided_index_3_knoboff",
-        collapse_laneid_index_loads=False,
     )

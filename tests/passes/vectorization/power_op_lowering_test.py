@@ -27,6 +27,8 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import StripPowerExponentCast
 from dace.transformation.passes.relax_integer_powers import exponent_relaxes_to_ipow
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import set_symbol_nonnegative_assumptions
@@ -83,7 +85,8 @@ def test_float_power_emits_stdpow():
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
     sdfg = symbolic_power.to_sdfg(simplify=True)
     sdfg.name = "symbolic_power_stdpow"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR", remainder_strategy="scalar_postamble").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
+                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     code = sdfg.generate_code()[0].clean_code
     assert "std::pow" in code, "float base ** must lower to std::pow"
     assert "dace::math::ipow" not in code, "float base ** must NOT lower to ipow (not bit-exact with numpy)"

@@ -90,7 +90,7 @@ static DACE_HDFI typename std::common_type<U, T...>::type Max(U val,
   return max(val, vals...);
 }
 template <typename T>
-static DACE_HDFI T Abs(T val) {
+static DACE_HDFI auto Abs(T val) -> decltype(abs(val)) {
   return abs(val);
 }
 template <typename T, typename U>

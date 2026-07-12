@@ -19,6 +19,7 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.utils.tile_access import propagate_subset
 
 N = dace.symbol('N')
@@ -127,8 +128,16 @@ def test_iplusoffset_kernel_emits_no_gather():
     DENSE load — no gather. Asserts the multi-dim pipeline emits no TileLoad/TileStore
     with gather_dims and mints no per-lane index tile (`_idx_*`)."""
     import copy
-    from tests.passes.vectorization.kernels.test_nested import tasklet_in_nested_sdfg
-    from tests.passes.vectorization.helpers.harness import _auto_tile_widths
+    from tests.passes.vectorization.helpers.harness import _auto_tile_widths, S, S1, S2
+
+    @dace.program
+    def tasklet_in_nested_sdfg(a: dace.float64[S, S], b: dace.float64[S, S], offset1: dace.int64, offset2: dace.int64):
+        # ``a[i+offset1, j+offset2]`` contiguous stencil in a nested map body -- the
+        # dense-load-vs-gather test subject (was in the removed legacy ``test_nested.py``).
+        for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
+            a[i + offset1,
+              j + offset2] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
+
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
     from dace.libraries.tileops import TileLoad, TileStore
 
@@ -136,7 +145,7 @@ def test_iplusoffset_kernel_emits_no_gather():
     widths = _auto_tile_widths(sdfg, 8)
     cs = copy.deepcopy(sdfg)
     cs.name = "iplusoffset_nogather"
-    VectorizeCPUMultiDim(widths=widths, expand_tile_nodes=False).apply_pass(cs, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=widths, expand_tile_nodes=False)).apply_pass(cs, {})
 
     gather_nodes = []
     idx_tiles = []

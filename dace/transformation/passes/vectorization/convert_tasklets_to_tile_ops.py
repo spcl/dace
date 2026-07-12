@@ -193,59 +193,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return "Tile", None, an_name
 
     def _materialise_lane_id_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...]) -> str:
-        """Mint a per-lane int64 tile = ``expr`` evaluated at
-        ``(iter_var_k → iter_var_k + __l_k)`` for each tile dim ``k``.
+        """Mint a per-lane int64 tile = ``expr`` at ``(iter_var_k -> iter_var_k + __l_k)``.
 
-        K=1, expr ``"ii"`` → ``_lane_tile[l] = (ii) + l``.
-        K=2, expr ``"2 * ii + jj"`` → ``_lane_tile[l0, l1] = 2*(ii+l0) + (jj+l1)``.
+        Thin wrapper over the shared :func:`materialise_lane_id_index_tile` (also used by
+        :meth:`InsertTileLoadStore._stage_index_via_tileops` for modular / non-affine gather
+        indices), so the per-lane materialisation lives in one place.
         """
-        import dace.dtypes as _dtypes
-        from dace.memlet import Memlet as _Memlet
-        sdfg = inner_state.sdfg
-        widths = tuple(int(w) for w in self.widths)
-        K = len(widths)
-        # Rewrite each iter_var ``v`` in ``expr`` to ``(v + __l<k>)``.
-        body_expr = expr
-        for k, v in enumerate(iter_vars):
-            # Word-boundary aware replacement to avoid clobbering substring matches.
-            import re
-            body_expr = re.sub(rf"\b{re.escape(v)}\b", f"({v} + __l{k})", body_expr)
-        arr_name, _ = sdfg.add_array(
-            "_sym_tile",
-            shape=widths,
-            dtype=dace.int64,
-            transient=True,
-            storage=_dtypes.StorageType.Register,
-            find_new_name=True,
-        )
-        # Compute the row-major flat offset string.
-        parts = []
-        for i in range(K):
-            inner = 1
-            for q in range(i + 1, K):
-                inner *= widths[q]
-            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
-        flat = " + ".join(parts) if parts else "0"
-        code_lines = []
-        for d in range(K):
-            # constexpr width + DACE_UNROLL → lane loop lowers to SIMD.
-            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-            code_lines.append(f"{'    ' * d}DACE_UNROLL")
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-        code_lines.append(f"{'    ' * K}_out[{flat}] = (int64_t)({body_expr});")
-        for d in reversed(range(K)):
-            code_lines.append(f"{'    ' * d}}}")
-        tasklet = inner_state.add_tasklet(
-            name=f"lane_id_mat_{arr_name}",
-            inputs=set(),
-            outputs={"_out"},
-            code="\n".join(code_lines),
-            language=_dtypes.Language.CPP,
-        )
-        out_an = inner_state.add_access(arr_name)
-        out_subset = ", ".join(f"0:{w}" for w in widths)
-        inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
-        return arr_name
+        from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile
+        return materialise_lane_id_index_tile(inner_state, expr, iter_vars, tuple(self.widths)).data
 
     def _find_mask_an(self, inner_state: SDFGState):
         """Find the AccessNode that :class:`TileMaskGen` WRITES to (its ``_o`` target).

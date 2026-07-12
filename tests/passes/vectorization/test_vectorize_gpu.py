@@ -20,6 +20,7 @@ from dace.transformation.interstate import LoopToMap
 from dace.libraries.tileops import TileMaskGen, TileBinop
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _TILE_NODE_TYPES
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.config import VectorizeConfig
 
 _HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
@@ -84,7 +85,7 @@ def test_assume_even_single_strided_gpu_map_no_mask():
     original map -- no remainder split, no ``TileMaskGen`` (so no mismatched
     thread-block sizes on GPU)."""
     sdfg = _prep(_add16)
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even must not split the map; got {len(maps)} maps"
     m = maps[0]
@@ -101,7 +102,7 @@ def test_deferred_tile_nodes_are_cuda_stamped():
     ``CUDA`` ISA + ``cuda`` implementation, ready for a later
     ``expand_library_nodes()`` (or ``compile()``)."""
     sdfg = _prep(_add16)
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     tiles = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, _TILE_NODE_TYPES)]
     assert tiles, "expected tile lib nodes to remain (deferred expansion)"
     for n in tiles:
@@ -114,7 +115,7 @@ def test_scalar_cast_constant_broadcasts():
     scalar cast feeding a binop -- vectorizes to a single ``TileBinop`` (the scalar
     is cast to the tile precision and broadcast into the tile), and compiles."""
     sdfg = _prep(_scale_const16)
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
     assert len(binops) == 1, f"expected one TileBinop for A*const; got {len(binops)}"
     sdfg.expand_library_nodes()
@@ -130,7 +131,7 @@ def test_gpu_half2_emits_tile_ops_in_device_tu():
     ``dace::float16`` tiles of width 2, and pulls in the cuda.h header (the
     ``'cuda'`` env key), so the half2 intrinsics are in scope on device."""
     sdfg = _prep(_add16)
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()  # default defers expansion; lower for codegen
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
     assert "dace/tile_ops/cuda.h" in cu, "cuda.h not included in the device TU"
@@ -144,7 +145,7 @@ def test_gpu_half2_compiles(name, prog):
     """The half2 GPU vectorization of an elementwise / stencil fp16 kernel
     compiles end-to-end with nvcc (deferred expand -> compile)."""
     sdfg = _prep(prog)
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     sdfg.compile()  # raises CompilationError on failure
@@ -160,7 +161,7 @@ def test_gpu_reduction_uses_gpu_expansion():
     reduction on the device rather than a CPU horizontal fold; it compiles with nvcc."""
     from dace.sdfg.nodes import MapExit
     sdfg = _prep(_vsum16)
-    VectorizeGPU().apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     # The reduction stays a map-exit WCR (an in-edge to a MapExit carrying a CR).
     wcr_exits = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
                  if isinstance(n, MapExit) and any(e.data is not None and e.data.wcr is not None

@@ -13,16 +13,12 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
     build_dim_index_map,
     classify_tile_access,
 )
-# NOTE: this test file exercises the LEGACY ``classify_tile_access`` in
-# ``tile_dims.py`` directly. Production code (emit_tile_ops.py /
-# promote_nsdfg_body_to_tiles.py) routes through
-# :func:`tile_access_compat.classify_tile_access_compat` which drives
-# the per-dim classifier in :mod:`tile_access`. The two implementations
-# diverge on a few edge cases (``int_floor``/``int_ceil`` -> the new
-# classifier reports GATHER vs legacy STRUCTURED; K>=2 diagonal -> new
-# GATHER vs legacy UNRECOGNIZED; partial binding broadcast lanes).
-# Reconciling those divergences is its own slice; until then the legacy
-# stays alive for THIS test file only.
+# NOTE: this test file exercises the ``classify_tile_access`` in
+# ``tile_dims.py`` directly. Production code routes through the per-dim
+# classifier in :mod:`tile_access`. The two implementations diverge on a
+# few edge cases (``int_floor``/``int_ceil`` -> the new classifier reports
+# GATHER vs legacy STRUCTURED; K>=2 diagonal -> new GATHER vs legacy
+# UNRECOGNIZED; partial binding broadcast lanes).
 
 
 def _range(*begins):

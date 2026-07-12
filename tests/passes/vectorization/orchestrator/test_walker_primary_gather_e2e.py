@@ -12,6 +12,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 
 N_SYM = dace.symbol("N_GATHER")
 
@@ -37,7 +39,7 @@ def test_k1_gather_matches_reference(N):
     vec_sdfg = k1_gather.to_sdfg(simplify=True)
     vec_sdfg.name = f"k1_gather_vec_{N}"
     try:
-        VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001 - the walker may still refuse some gather shapes.
         pytest.xfail(f"gather walker path refused: {exc}")
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_GATHER=N)
@@ -73,7 +75,7 @@ def test_k1_scatter_matches_reference():
     vec_sdfg = k1_scatter.to_sdfg(simplify=True)
     vec_sdfg.name = f"k1_scatter_vec_{n}"
     try:
-        VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001
         pytest.xfail(f"scatter walker path refused: {exc}")
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_SCATTER=n)
@@ -107,7 +109,7 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     vec_sdfg = k2_partial_kdep_gather.to_sdfg(simplify=True)
     vec_sdfg.name = "k2_partial_kdep_shape_audit"
     try:
-        VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR").apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001 -- K=2 walker may still refuse some shapes.
         pytest.xfail(f"K=2 walker path refused: {exc}")
     # Inspect every nested SDFG for ``_idx_*`` tiles produced by the gather

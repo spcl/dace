@@ -7,8 +7,7 @@ For every TSVC kernel the test:
 2. **Verifies post-canonicalization correctness** end-to-end against the numpy
    reference -- canonicalization alone must preserve semantics.
 3. **Vectorizes** the canonicalized SDFG with ONE config drawn round-robin (by
-   kernel index) from the legacy ``VectorizeCPU`` knob set (``test_..._legacy``)
-   and ONE from the multi-dim tile-op ``VectorizeCPUMultiDim`` set
+   kernel index) from the multi-dim tile-op ``VectorizeCPUMultiDim`` knob set
    (``test_..._multidim``), then re-checks the output against numpy.
 
 Round-robin (rather than the full knob cross-product) keeps the corpus-wide run
@@ -16,7 +15,7 @@ tractable while still exercising every knob across the suite. A kernel that
 canonicalization renders as a 2-D nested map additionally gets a ``K=2`` multidim
 config.
 
-Known multidim gaps (legacy passes them) are marked ``xfail`` with the tracking
+Known multidim vectorize gaps are marked ``xfail`` with the tracking
 reason -- see ``_MULTIDIM_XFAIL``.
 """
 import os
@@ -37,7 +36,8 @@ import pytest
 
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
@@ -46,73 +46,12 @@ _KERNELS = [k.name for k in tsvc.collect()]
 
 # Round-robin knob sets (valid combinations only; see VectorizeCPU /
 # VectorizeCPUMultiDim constructors).
-_LEGACY_KNOBS = [
-    dict(remainder_strategy="scalar", branch_normalization=True, use_fp_factor=False),
-    dict(remainder_strategy="masked", branch_normalization=True, use_fp_factor=False),
-    dict(remainder_strategy="scalar", branch_normalization=False, use_fp_factor=True),
-]
 _MULTIDIM_KNOBS = [
     dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
     dict(target_isa="AVX512", remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
-
-# Known vectorize gaps per arm; each entry is the tracking reason. Populated from
-# the corpus matrix run (see the module docstring / the project memory). The
-# ``xfail`` is imperative and fires before canonicalize/compile, so a kernel whose
-# vectorized codegen aborts cannot crash the run. Entries are removed as the
-# underlying gap is fixed (Group A miscompiles, Group B loop2map recurrences, and
-# the structural ``codegen gap`` / ``tile gap`` lowerings).
-_LEGACY_XFAIL: dict = {
-    's1112_d_single': 'canon/shape gap: negative shape in data descriptor',
-    's112_d_single': 'canon/shape gap: negative shape in data descriptor',
-    's115_d_single': 'legacy Min-rebasing breaks invariant a[j] (s173 family); WCR lowered, multidim green',
-    's118_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's1221_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's123_d_single': 'codegen gap: BranchNormalization IF-arm carries an unsupported body',
-    's124_d_single': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
-    's126_d_single': "pass gap: KeyError 'pop from an empty set'",
-    's162_d_single': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
-    's171_d_single': 'legacy: cannot widen symbolic-strided write a[i*inc] (multidim ok via trap-guard)',
-    's2101_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
-    's2275_d_single': 'codegen gap: memlet subset/descriptor dimensionality mismatch',
-    's233_d_single': 'codegen gap: non-contiguous strided edge unsupported',
-    's235_d_single': "pass gap: KeyError 'pop from an empty set'",
-    's2710_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's272_d_single': 'codegen gap: missing symbol on nested SDFG',
-    's275_d_single': "pass gap: KeyError 'pop from an empty set'",
-    's3111_d_single': 'numerical (flaky): masked-sum diverges nondeterministically (uninit-mask remainder)',
-    's315_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's318_d_single': 'codegen gap: missing symbol on nested SDFG',
-    's331_d_single': 'codegen gap: BranchNormalization leaves a ConditionalBlock',
-    's332_d_single': 'Group B (loop2map): race condition on interstate edge (recurrence over-parallelized)',
-    's4115_d_single': 'codegen gap: reduction lift inside nested SDFG unsupported',
-    's4116_d_single': 'codegen gap: reduction lift inside nested SDFG unsupported',
-    's442_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's482_d_single': 'tile gap: GenerateIterationMask requires a uniform innermost map',
-}
-
-_MULTIDIM_XFAIL: dict = {
-    's118_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's1221_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's122_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's124_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's128_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's232_d_single': 'numerical: vectorized output diverges from numpy reference',
-    # scalar-cond ``tile_unop<bool,'!'>`` scalar-output codegen now fixed (compiles);
-    # residual is a numerical divergence on ``a`` (uninitialized ``a_index`` gather /
-    # masked predicated-write), a separate gap.
-    's274_d_single': 'numerical: vectorized output diverges from numpy reference (masked predicated write / gather)',
-    's3111_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's332_d_single': 'Group B (loop2map): race condition on interstate edge (recurrence over-parallelized)',
-    's341_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's342_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's343_d_single': 'numerical: vectorized output diverges from numpy reference',
-    's4115_d_single': 'codegen gap: augassign_binop output-kind rule violated',
-    's4116_d_single': 'codegen gap: augassign_binop output-kind rule violated',
-}
-
 
 def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     """Assert every float output matches the reference, ``nan``/``inf`` equal.
@@ -167,21 +106,9 @@ def test_tsvc_canonicalize(idx, name):
 
 
 @pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
-def test_tsvc_canonicalize_then_legacy_vectorize(idx, name):
-    """Canonicalize -> verify -> legacy VectorizeCPU (round-robin knob) -> verify."""
-    if name in _LEGACY_XFAIL:
-        pytest.xfail(_LEGACY_XFAIL[name])
-    kernel, sdfg, arrays, ck, ref = _canonicalized(name)
-    knobs = _LEGACY_KNOBS[idx % len(_LEGACY_KNOBS)]
-    _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, VectorizeCPU(8, fail_on_unvectorizable=False, **knobs))
-
-
-@pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
 def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
-    if name in _MULTIDIM_XFAIL:
-        pytest.xfail(_MULTIDIM_XFAIL[name])
     kernel, sdfg, arrays, ck, ref = _canonicalized(name, tag="cvc_multidim")
     map_param_counts = [len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
     # K=2 only when EVERY inner map is a genuine collapsed 2-D map. A kernel with
@@ -190,10 +117,13 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # tile pipeline (it aborts) -- so such kernels fall back to K=1.
     if map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
-        vec = VectorizeCPUMultiDim(widths=(8, 8),
-                                   target_isa="SCALAR",
-                                   remainder_strategy="masked_tail",
-                                   branch_mode="merge")
+        vec = VectorizeCPUMultiDim(
+            VectorizeConfig(widths=(8, 8),
+                            target_isa=ISA.SCALAR,
+                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                            branch_mode=BranchMode.MERGE,
+                            validate_all=True))
     else:
-        vec = VectorizeCPUMultiDim(widths=(8, ), **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)])
+        vec = VectorizeCPUMultiDim(
+            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
     _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec)

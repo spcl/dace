@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -114,8 +116,9 @@ def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
             a[i] = b[i] * 2.0 + c[i]
 
     sdfg = k.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa=isa, remainder_strategy=strat,
-                         branch_mode="merge").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=strat,
+                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(n)
     b = rng.standard_normal(n)

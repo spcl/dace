@@ -32,7 +32,7 @@ from typing import List, Optional, Set, Tuple
 
 import numpy
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -111,12 +111,16 @@ class PredicateMaskedReduction(ppl.Pass):
                             applied += 1
         if applied:
             sdfg.reset_cfg_list()
-            sdfg.validate()
         return applied or None
 
     def _match(self, sd: SDFG, cb: ConditionalBlock):
-        """Return ``(cond_text, body_state, [(edge, op)])`` if ``cb`` is a predicable
-        masked reduction, else None (leaving the graph untouched)."""
+        """Return ``(cond_text, body_state, [(edge, op)], cond_materialize)`` if ``cb``
+        is a predicable masked reduction, else None (leaving the graph untouched).
+
+        ``cond_materialize`` is ``None`` when the condition is already a materialized
+        scalar mask (recipe 1); otherwise it is the ``(cleaned, connectors, subsets)``
+        staging info for a compound predicate ``(a[i] > K)`` that :meth:`_apply_one`
+        first lowers into a bool mask scalar (recipe 2)."""
         # Shape: one if-true branch, optionally an EMPTY else.
         true_branches = [(c, b) for c, b in cb.branches if c is not None]
         else_branches = [(c, b) for c, b in cb.branches if c is None]
@@ -132,42 +136,61 @@ class PredicateMaskedReduction(ppl.Pass):
         if len(states) != 1 or len(body.nodes()) != 1:
             return None
         state = states[0]
-        # Condition must name an existing scalar data container (recipe 1: a per-lane
-        # mask value already materialized). More complex conditions are left un-touched.
-        cond_text = cond.as_string.strip()
-        cond_desc = sd.arrays.get(cond_text)
-        if cond_desc is None or cond_desc.total_size != 1:
-            return None
 
+        # Reduction WCR edges: an associative op into a scalar target we can predicate.
         reductions: List[Tuple] = []
         for edge in state.edges():
             m = edge.data
-            if m is None or m.data is None:
+            if m is None or m.data is None or m.wcr is None:
                 continue
-            if m.wcr is not None:
-                # Reduction WCR: associative op into a scalar target we can predicate.
-                op = _REDTYPE_OP.get(detect_reduction_type(m.wcr))
-                if op is None:
-                    return None
-                if not isinstance(edge.dst, nodes.AccessNode):
-                    return None
-                if m.subset is None or m.subset.num_elements() != 1:
-                    return None
-                acc_desc = sd.arrays.get(edge.dst.data)
-                if acc_desc is None or acc_desc.total_size != 1:
-                    return None
-                reductions.append((edge, op))
-            elif isinstance(edge.dst, nodes.AccessNode):
-                # A plain (non-WCR) write into an access node is not a reduction -- the
-                # branch is not a pure masked reduction; refuse.
+            op = _REDTYPE_OP.get(detect_reduction_type(m.wcr))
+            if op is None:
                 return None
-        # The condition must not be produced inside the branch (else unconditional
-        # evaluation changes semantics).
-        if any(isinstance(n, nodes.AccessNode) and n.data == cond_text and state.in_degree(n) > 0
-               for n in state.nodes()):
-            return None
+            if not isinstance(edge.dst, nodes.AccessNode):
+                return None
+            if m.subset is None or m.subset.num_elements() != 1:
+                return None
+            acc_desc = sd.arrays.get(edge.dst.data)
+            if acc_desc is None or acc_desc.total_size != 1:
+                return None
+            reductions.append((edge, op))
         if not reductions:
             return None
+        # The source of each reduction WCR edge is a legitimate addend buffer -- a plain
+        # write into it is part of the reduction, not an escaping side effect. After
+        # canonicalize's ``NormalizeWCRSource`` the addend arrives through a transient
+        # ``_wcr_priv`` intermediate (``a -> _Add_ -> _wcr_priv -[wcr]-> acc``), not a
+        # direct WCR edge; recognise that shape too.
+        red_src_nodes = {e.src for e, _ in reductions}
+        for edge in state.edges():
+            m = edge.data
+            if m is None or m.data is None or m.wcr is not None:
+                continue
+            if isinstance(edge.dst, nodes.AccessNode):
+                desc = sd.arrays.get(edge.dst.data)
+                # Allow only a plain write into a transient buffer that feeds a reduction
+                # WCR; a plain write into any other access node is a real side effect ->
+                # not a pure masked reduction -> refuse.
+                if not (edge.dst in red_src_nodes and desc is not None and desc.transient):
+                    return None
+
+        cond_text = cond.as_string.strip()
+        cond_desc = sd.arrays.get(cond_text)
+        cond_materialize = None
+        if cond_desc is not None and cond_desc.total_size == 1:
+            # Recipe 1: the condition already names a materialized per-lane scalar mask.
+            # It must not be produced inside the branch (else unconditional evaluation
+            # changes semantics).
+            if any(isinstance(n, nodes.AccessNode) and n.data == cond_text and state.in_degree(n) > 0
+                   for n in state.nodes()):
+                return None
+        else:
+            # Recipe 2: a compound predicate ``(a[i] > K)`` reading arrays. Materialize
+            # it into a bool mask scalar, then predicate as in recipe 1. Refuse if the
+            # predicate is not materialisable (loop-invariant / gather-indexed).
+            cond_materialize = self._materializable_predicate(sd, cond_text)
+            if cond_materialize is None:
+                return None
         # Fault gate: dissolving the ConditionalBlock makes the ENTIRE body run on
         # every lane, including the mask-false lanes. That is only sound when
         # evaluating the addend cannot fault -- a data-dependent (gather) load
@@ -178,10 +201,53 @@ class PredicateMaskedReduction(ppl.Pass):
         # (``a[j]``, ``a[j+1]``) are always in-bounds regardless of the mask and pass.
         if _body_has_data_dependent_read(sd, state):
             return None
-        return cond_text, state, reductions
+        return cond_text, state, reductions, cond_materialize
 
-    def _apply_one(self, sd: SDFG, cb: ConditionalBlock, cond_text: str, state: SDFGState, reductions: List[Tuple]):
+    def _materializable_predicate(self, sd: SDFG, cond_text: str):
+        """Return ``(cleaned, connectors, subsets)`` to stage a compound predicate
+        ``(a[i] > K)`` into a bool mask scalar, or ``None`` if it is not a per-element
+        array predicate we can eagerly evaluate on every lane.
+
+        ``cleaned`` is the predicate with each ``arr[...]`` read replaced by a bare
+        connector; ``connectors`` maps array name -> in-connector; ``subsets`` maps
+        array name -> the ``[i]`` subset string. A predicate reading a GATHER index
+        (``w[idx[i]]``) is refused -- eager evaluation on the would-be-masked lanes
+        could fault, and its nested subscript is not a plain memlet (that indirect
+        masked reduction is a separate feature)."""
+        arrays = set(sd.arrays.keys())
+        try:
+            names = set(symbolic.arrays(cond_text)) | set(symbolic.free_symbols_and_functions(cond_text))
+        except Exception:
+            return None
+        arr_reads = sorted(a for a in names if a in arrays)
+        if not arr_reads:
+            return None  # loop-invariant predicate -- not the per-element masked-reduction target
+        connectors = {a: f'_pmr_in_{i}' for i, a in enumerate(arr_reads)}
+        try:
+            cleaned, subsets = symbolic.replace_array_accesses_with_connectors(cond_text, connectors, arrays)
+        except Exception:
+            return None
+        for sub in subsets.values():
+            if '[' in sub.strip('[]'):  # nested subscript = gather -> refuse (fault + not a plain memlet)
+                return None
+        return cleaned, connectors, subsets
+
+    def _apply_one(self, sd: SDFG, cb: ConditionalBlock, cond_text: str, state: SDFGState, reductions: List[Tuple],
+                   cond_materialize=None):
         """Mutate the branch body in place (predicate each addend), then dissolve ``cb``."""
+        if cond_materialize is not None:
+            # Recipe 2: lower the compound predicate into a bool mask scalar the ITE reads.
+            # The mask runs unconditionally on every lane (affine reads are in-bounds), then
+            # the ITE selects the identity on the false lanes -- bit-exact with the branch.
+            cleaned, connectors, subsets = cond_materialize
+            mask_name, _ = sd.add_scalar('_pmr_mask', dtypes.bool_, transient=True, find_new_name=True)
+            mask_node = state.add_access(mask_name)
+            mask_t = state.add_tasklet('pmr_mask', set(connectors.values()), {'_m'}, f'_m = ({cleaned})')
+            for arr, conn in connectors.items():
+                sub = subsets.get(arr, '[0]')
+                state.add_edge(state.add_access(arr), None, mask_t, conn, Memlet(expr=f'{arr}{sub}'))
+            state.add_edge(mask_t, '_m', mask_node, None, Memlet(expr=f'{mask_name}[0]'))
+            cond_text = mask_name
         for edge, op in reductions:
             acc = edge.dst.data
             acc_desc = sd.arrays[acc]

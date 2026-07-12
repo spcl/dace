@@ -3,8 +3,9 @@
 
 The test fixture is parametrized over the two paths the v2 plan locks:
 
-* ``scalar_postamble`` — the existing 1D ``VectorizeCPU`` (vector_width 8).
-* ``tile_nodes_8x8`` — the new K-dim ``VectorizeCPUMultiDim`` (widths
+* ``scalar_postamble`` — ``VectorizeCPUMultiDim`` with
+  ``remainder_strategy=scalar_postamble`` (vector_width 8).
+* ``tile_nodes_8x8`` — ``VectorizeCPUMultiDim`` with a K-dim tile (widths
   ``(8,)`` for K=1 kernels; widths ``(8, 8)`` for K=2 kernels).
 
 Both arms must match the unvectorized scalar reference bit-equally
@@ -19,6 +20,8 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 
 def _k1_axpy_sdfg(name="e2e_k1_axpy"):
@@ -81,7 +84,7 @@ def test_k1_axpy_aligned_trip_matches_numpy():
     """K=1 axpy under ``VectorizeCPUMultiDim(widths=(8,))`` matches numpy
     on a trip aligned to ``W=8``."""
     sdfg = _k1_axpy_sdfg("e2e_k1_axpy_aligned_trip")
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(seed=101)
     n = 64
@@ -96,7 +99,7 @@ def test_k1_axpy_aligned_trip_matches_numpy():
 def test_k1_axpy_aligned_sizes(n):
     """K=1 axpy across several aligned sizes."""
     sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_aligned_{n}")
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     rng = np.random.default_rng(seed=n)
     A = rng.random(n)
     B = rng.random(n)
@@ -109,7 +112,7 @@ def test_k2_axpy_aligned_trip_matches_numpy():
     """K=2 axpy under ``VectorizeCPUMultiDim(widths=(8, 8))`` matches
     numpy on aligned ``M x N``."""
     sdfg = _k2_axpy_sdfg("e2e_k2_axpy_aligned_trip")
-    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(seed=202)
     m, n = 16, 32
@@ -128,7 +131,7 @@ def test_k2_axpy_scalar_postamble_matches_numpy(m, n):
     (W-strided tiles) off from step-1 scalar boundary slabs, so a non-divisible
     K>=2 trip vectorizes the interior and runs the boundary scalar."""
     sdfg = _k2_axpy_sdfg(f"e2e_k2_axpy_scalar_{m}_{n}")
-    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR", remainder_strategy="scalar_postamble").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(seed=m * 100 + n)
     A = rng.random((m, n))
@@ -147,7 +150,7 @@ def test_k1_axpy_unaligned_trip_matches_numpy():
     against numpy validates the mask path.
     """
     sdfg = _k1_axpy_sdfg("e2e_k1_axpy_unaligned_trip")
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     rng = np.random.default_rng(seed=303)
     n = 17  # 17 // 8 = 2 full tiles + 1 tail
     A = rng.random(n)

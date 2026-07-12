@@ -295,6 +295,39 @@ def test_spmv_bypass_keeps_sdfg_valid():
     assert _scope_passthrough_consistent(sdfg)
 
 
+def test_bypass_dead_dst_resolves_to_copy_not_isolated():
+    """A trivial assign whose transient ``dst`` has NO in-state consumer must not
+    be folded by orphaning its ``src``: the tasklet's incoming edge is ``src``'s
+    only edge, so dropping the tasklet strands ``src`` as an isolated node (invalid
+    SDFG). The bypass instead resolves the assign to a DIRECT ``src -> dst`` copy
+    memlet -- both AccessNodes stay connected and the SDFG stays valid (a later
+    dead-copy elimination drops the copy if ``dst`` is genuinely unused)."""
+    outer, body, state, _ = _build_outer_with_body_nsdfg()
+    body.add_array("S", (8, ), dace.float64, transient=True)
+    body.add_array("D", (8, ), dace.float64, transient=True)
+    s = state.add_access("S")
+    d = state.add_access("D")
+    cp = state.add_tasklet("cp", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(s, None, cp, "_in", Memlet("S[0:8]"))
+    state.add_edge(cp, "_out", d, None, Memlet("D[0:8]"))
+
+    assert _count_assign_tasklets(outer) == 1
+    assert _bypass_count(outer) == 1  # the trivial assign is folded
+    assert _count_assign_tasklets(outer) == 0  # tasklet gone
+
+    # No isolated node anywhere -- the src -> dst value survives as a direct copy.
+    for sd in outer.all_sdfgs_recursive():
+        for st in sd.states():
+            for n in st.nodes():
+                assert not (isinstance(n, dace.nodes.AccessNode) and st.degree(n) == 0), \
+                    f"bypass left an isolated node {n.data}"
+    # Both S and D remain, joined by exactly one direct AN -> AN copy edge.
+    assert {n.data for n in state.data_nodes()} == {"S", "D"}
+    edges = list(state.edges())
+    assert len(edges) == 1 and edges[0].src.data == "S" and edges[0].dst.data == "D"
+    outer.validate()  # valid after bypass
+
+
 def test_does_not_collapse_cross_state_transient():
     """Regression (cloudsc_one ``zqx`` Isolated-node crash): a transient staged in
     state A and read in state B is a CROSS-STATE value. In state A its

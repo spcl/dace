@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Unit tests for the ``_iter_mask`` consumer side of ``instantiate_tasklet_from_info``
-(C.2b sub-slice — emitter routing).
+Unit tests for the ``_iter_mask`` consumer side of the CPP emit helpers
+(``_generate_code`` — emitter routing).
 
 Verifies that when a per-op tasklet has an ``_iter_mask`` input connector and
 ``EmitCtx.mask_connector`` is set, the emitter selects the ``op + "_masked"``

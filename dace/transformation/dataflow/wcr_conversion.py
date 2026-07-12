@@ -26,6 +26,36 @@ def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> List[str]:
     return params
 
 
+def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
+    """Every symbol NAME the write index depends on, in ``sdfg``'s namespace AND in each
+    enclosing parent SDFG's namespace, following the nested-SDFG ``symbol_mapping`` chain
+    outward.
+
+    A body NSDFG renames the enclosing map's iterator through ``symbol_mapping`` (an inner
+    ``_loop_it_2`` bound to the parent map param ``_loop_it_1``). The parent-map injectivity
+    guard collects the outer map params in their OWN (parent) namespace, so a raw name
+    comparison against the inner write subset (``b[_loop_it_2]``) misses that the write DOES
+    vary with the parent param -- and wrongly keeps a conflict-free per-element WCR. Expanding
+    each inner index symbol to the outer name(s) it aliases (accumulating both) lets the guard
+    match the outer param regardless of which nesting level named it.
+
+    :param sdfg: The SDFG whose namespace ``write_subset`` is expressed in (an inner body NSDFG).
+    :param write_subset: The WCR write's subset.
+    :returns: The set of symbol names the write index depends on across the nesting chain.
+    """
+    syms = {str(s) for s in write_subset.free_symbols}
+    cur = sdfg
+    while cur.parent_nsdfg_node is not None:
+        mapping = cur.parent_nsdfg_node.symbol_mapping
+        outer = set()
+        for name in syms:
+            if name in mapping and mapping[name] is not None:
+                outer |= {str(s) for s in symbolic.pystr_to_symbolic(str(mapping[name])).free_symbols}
+        syms |= outer
+        cur = cur.parent_sdfg
+    return syms
+
+
 def _wcr_write_is_injective(write_subset, params: List[str]) -> bool:
     """Write at ``write_subset`` hits a DISTINCT element per distinct enclosing-map ``params``
     value → conflict-free → WCR droppable for explicit RMW without cross-lane race.
@@ -888,7 +918,12 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 if isinstance(scope, nodes.MapEntry):
                     outer_map_params |= set(scope.map.params)
             outer_map_params -= set(params)
-            index_syms = {str(s) for s in edge.data.subset.free_symbols}
+            # Compare against the write index's symbols expanded across the nested-SDFG
+            # ``symbol_mapping`` chain, so an outer map param aliased to an inner iterator
+            # (``_loop_it_1`` -> body ``_loop_it_2``) is still recognised as varying the write
+            # (an injective per-element in-place RMW like s212 ``b[i] += a[i+1]*d[i]``), not a
+            # cross-iteration reduction that must keep its WCR.
+            index_syms = _index_syms_across_nesting(sdfg, edge.data.subset)
             if any(str(it) not in index_syms for it in outer_map_params):
                 return False
 

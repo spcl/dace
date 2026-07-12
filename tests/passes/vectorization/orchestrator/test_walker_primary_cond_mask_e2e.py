@@ -18,6 +18,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileBinop, TileLoad
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.config import VectorizeConfig
 
 
 def _build_k2_cond_subset_of_dims(M, N):
@@ -74,7 +75,7 @@ def test_k2_cond_subset_of_dims_matches_reference(M, N):
     ref.name = f"cond_subset_ref_{M}x{N}"
     vec = _build_k2_cond_subset_of_dims(M, N)
     vec.name = f"cond_subset_vec_{M}x{N}"
-    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR")).apply_pass(vec, {})
     ref.compile()(A=a.copy(), C=c.copy(), B=b_ref)
     vec.compile()(A=a.copy(), C=c.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -92,7 +93,7 @@ def test_k2_cond_invariant_symbol_matches_reference(M, N):
     ref.name = f"cond_invsym_ref_{M}x{N}"
     vec = _build_k2_cond_invariant_symbol(M, N)
     vec.name = f"cond_invsym_vec_{M}x{N}"
-    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR")).apply_pass(vec, {})
     ref.compile()(C=c.copy(), B=b_ref, FLAG=FLAG)
     vec.compile()(C=c.copy(), B=b_vec, FLAG=FLAG)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -106,7 +107,7 @@ def test_k2_cond_subset_loads_with_replicate_factor():
     (W_1 copies). Equivalently: the loaded ``A_tile`` is full-tile shape ``(W_0, W_1)``
     with the same value along ``W_1`` per ``W_0``."""
     sdfg = _build_k2_cond_subset_of_dims(16, 16)
-    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR", expand_tile_nodes=False).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR", expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     # Find the TileLoad that reads A.
@@ -135,7 +136,7 @@ def test_k2_cond_invariant_symbol_is_scalar_broadcast():
     produces a Scalar bool output -- the TileITE then broadcasts at expansion time
     via kind_cond=Scalar / Symbol."""
     sdfg = _build_k2_cond_invariant_symbol(16, 16)
-    VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR", expand_tile_nodes=False).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR", expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     body_state = list(inner.states())[0]

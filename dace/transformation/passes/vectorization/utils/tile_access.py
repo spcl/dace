@@ -899,18 +899,22 @@ def classify_tile_access(subset: Range,
                 iter_var_in_dim[tvar].append(d)
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
-            # Stop 3b: ``(c * tvar + c0) % N`` -> MODULAR. Codegen falls back to GATHER for the
-            # general case; tile-aligned reduction to LINEAR is future work (design section 4.2).
+            # Stop 3b: ``(c * tvar + c0) % N`` (a tile iter-var nested inside ``mod``) -> GATHER.
+            # The value ``a[(c*l+c0) mod N]`` is single-element but NOT contiguous across lanes
+            # (it wraps), so it cannot be a structured contiguous-widened tile. The emitter builds
+            # a per-lane index tile ``[f(l+0), .., f(l+W-1)]`` (expand the modulus per lane, then
+            # gather), exactly as VECTORIZATION_MODEL.md documents for ``MODULAR`` ("per-lane index
+            # + gather"). Recorded as GATHER so the shared emit dispatch routes it to the gather
+            # path; the per-lane expression is recovered from the subset-begin text.
             modular_N = _detect_modular_factor(lo_sym, tvar)
             if modular_N is not None:
-                per_dim_kind.append(PerDimKind.MODULAR)
+                per_dim_kind.append(PerDimKind.GATHER)
                 dim_strides.append(None)
-                dim_iter_var.append(tvar)
+                dim_iter_var.append(None)
                 gather_index_per_dim.append(None)
                 dim_offset.append(None)
                 replicate_factor_per_dim.append(None)
-                iter_var_in_dim[tvar].append(d)
-                dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
+                dim_to_canonical_iter_var.append(None)
                 continue
             coeff = _affine_coeff_for(lo_sym, tvar)
             offset = _affine_offset_for(lo_sym, tvar)
@@ -960,16 +964,19 @@ def classify_tile_access(subset: Range,
                 iter_var_in_dim[tvar].append(d)
                 dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
                 continue
-            # Non-affine, not int_floor/int_ceil (e.g. ``i**2``): AFFINE without an int stride;
-            # emitter degrades to GATHER with the per-lane expression.
-            per_dim_kind.append(PerDimKind.AFFINE)
+            # Non-affine, not int_floor/int_ceil (e.g. ``i**2`` or ``py_mod(i, K)`` whose modulus
+            # is symbolic / whose name ``_detect_modular_factor`` doesn't match): a tile iter-var
+            # nested inside a function with no resolvable integer stride. NOT contiguous across
+            # lanes -> GATHER with the per-lane expression, evaluated ``f(l+0), .., f(l+W-1)`` and
+            # gathered (matches the Stop-3b modular case; the emitter recovers the expression from
+            # the subset-begin text).
+            per_dim_kind.append(PerDimKind.GATHER)
             dim_strides.append(None)
-            dim_iter_var.append(tvar)
+            dim_iter_var.append(None)
             gather_index_per_dim.append(None)
             dim_offset.append(None)
             replicate_factor_per_dim.append(None)
-            iter_var_in_dim[tvar].append(d)
-            dim_to_canonical_iter_var.append(list(iter_vars).index(tvar))
+            dim_to_canonical_iter_var.append(None)
             continue
 
         # Stop 4: multiple tile iter-vars in the dim. AFFINE only if JOINTLY affine -- each tile
@@ -1010,6 +1017,27 @@ def classify_tile_access(subset: Range,
             iter_var_in_dim[tv].append(d)
         dim_to_canonical_iter_var.append(list(iter_vars).index(rep))
 
+    # Diagonal: any tile iter-var that DIRECTLY drives >= 2 subset dims (``a[i, i]``, ``a[2i, i]``).
+    diagonal = {v: tuple(dims) for v, dims in iter_var_in_dim.items() if len(dims) >= 2}
+    # A coupled access like this is NOT per-dim contiguously widenable: widening each dim to
+    # ``[beg : beg + W]`` reads a W×W block, not the W diagonal elements ``a[f(i+l), g(i+l)]``.
+    # Route the coupled dims to GATHER so the emitter builds a per-lane index per dim (from the
+    # subset-begin expression) and gathers / scatters the coupled position -- the same treatment as
+    # a modular / non-affine single-dim index. Only DIRECT-index dims reach ``diagonal`` (a GATHER /
+    # BROADCAST dim never appends to ``iter_var_in_dim``), so this only re-marks structured dims.
+    for _coupled_dims in diagonal.values():
+        for d in _coupled_dims:
+            # Clear ALL per-dim fields (matching every other GATHER site) so a re-marked diagonal
+            # dim carries no stale STRUCTURED/AFFINE ``dim_offset`` / ``replicate_factor`` that a
+            # gather-emit consumer could later read for a GATHER dim.
+            per_dim_kind[d] = PerDimKind.GATHER
+            dim_strides[d] = None
+            dim_iter_var[d] = None
+            gather_index_per_dim[d] = None
+            dim_offset[d] = None
+            replicate_factor_per_dim[d] = None
+            dim_to_canonical_iter_var[d] = None
+
     # Whole-subset kind: strongest per-dim kind. MODULAR / REPLICATE share the STRUCTURED bucket
     # (both perfectly regular; codegen picks the intrinsic from the per-dim records).
     kinds = set(per_dim_kind)
@@ -1022,9 +1050,6 @@ def classify_tile_access(subset: Range,
         kind = TileAccessKind.STRUCTURED
     else:
         kind = TileAccessKind.BROADCAST
-
-    # Diagonal: any iter-var spans >= 2 dims.
-    diagonal = {v: tuple(dims) for v, dims in iter_var_in_dim.items() if len(dims) >= 2}
 
     # Transpose: STRUCTURED with iter-vars in non-canonical order (canonical: dim ``d`` carries
     # ``iter_vars[d]``).

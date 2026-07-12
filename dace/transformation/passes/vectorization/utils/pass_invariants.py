@@ -245,10 +245,10 @@ def logical_binops_are_bool(scope) -> Optional[str]:
 def no_wcr_in_map_body(scope) -> Optional[str]:
     """No edge inside a map scope may carry a write-conflict resolution.
 
-    **Legacy vectorization precondition.** ``VectorizeCPU`` vectorizes a free map's tasklets in
-    place; a surviving body WCR = loop-carried reduction it does NOT lower (widening the body
-    without resolving the conflict races the lanes). ``WCRToAugAssign`` must first convert each such
-    WCR to an explicit read-modify-write tasklet -- its post-condition / vectorizer entry pre-condition.
+    **Tile-vectorizer precondition.** A surviving body WCR is a loop-carried reduction the tile
+    widener does NOT lower (widening the body without resolving the conflict races the lanes).
+    ``WCRToAugAssign`` must first convert each such WCR to an explicit read-modify-write tasklet --
+    its post-condition / the vectorizer's entry pre-condition.
 
     Map body = nodes strictly between ``MapEntry`` and its ``MapExit``
     (:meth:`~dace.sdfg.state.SDFGState.all_nodes_between`); every incident edge is a body edge. The

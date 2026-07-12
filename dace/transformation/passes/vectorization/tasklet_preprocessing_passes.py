@@ -439,7 +439,6 @@ class _BodyRewritePass(ppl.Pass):
         :returns: None.
         """
         _rewrite_python_tasklet_bodies(sdfg, self._rewrite)
-        sdfg.validate()
         return None
 
 
@@ -567,7 +566,6 @@ class RewriteModuloToPyMod(_BodyRewritePass):
             self._rewrite_control_flow(g)
             self._rewrite_interstate_edges(g)
             self._rewrite_memlets_and_ranges(g)
-        sdfg.validate()
         return None
 
 
@@ -613,5 +611,4 @@ class RemoveMathCall(ppl.Pass):
                 node.code = CodeBlock(ast_left + " = " + new_ast_right, language=dace.Language.Python)
             assert "math." not in new_ast_right
             assert "math." not in node.code.as_string
-        sdfg.validate()
         return None

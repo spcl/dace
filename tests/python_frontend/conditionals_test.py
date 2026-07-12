@@ -174,6 +174,32 @@ def test_if_test_call():
     assert if_test_call(1, 2)[0] == if_test_call.f(1, 2)
 
 
+_K = dace.symbol("guard_flag")
+
+
+@dace.program
+def guard_only_symbol(a: dace.float64[10]):
+    if _K > 0:
+        for i in range(10):
+            a[i] = a[i] + 1.0
+
+
+def test_guard_only_symbol_is_registered():
+    """A symbol used ONLY in an if-guard (``if K > 0``) -- never in an array shape or a
+    loop condition -- must still be registered as an SDFG symbol so ``arglist`` / codegen
+    do not raise ``KeyError`` on it (TSVC ``fuse_move_ifs`` / ``config_select_branch``)."""
+    sdfg = guard_only_symbol.to_sdfg(simplify=True)
+    assert "guard_flag" in sdfg.symbols
+    sdfg.arglist()  # must not raise KeyError('guard_flag')
+
+    a = np.ones(10, np.float64)
+    sdfg(a=a, guard_flag=1)
+    assert np.allclose(a, 2.0), "guard true -> body runs"
+    b = np.ones(10, np.float64)
+    sdfg(a=b, guard_flag=0)
+    assert np.allclose(b, 1.0), "guard false -> body skipped"
+
+
 if __name__ == "__main__":
     test_simple_if()
     test_call_if()
@@ -183,3 +209,4 @@ if __name__ == "__main__":
     test_if_return_both()
     test_if_return_chain()
     test_if_test_call()
+    test_guard_only_symbol_is_registered()

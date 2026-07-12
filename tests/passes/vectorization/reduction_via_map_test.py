@@ -26,6 +26,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol('N')
@@ -52,7 +54,8 @@ def masked_reduce(data: dace.float64[N], mask: dace.int64[N], res: dace.float64[
 
 def _run(prog, kwargs, ref, isa):
     sdfg = prog.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa=isa, remainder_strategy='scalar_postamble').apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
+                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in kwargs.items()}
     sdfg(**work)

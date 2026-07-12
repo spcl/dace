@@ -1,28 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``VectorizeCPUMultiDim(expand_tile_nodes=...)`` knob coverage.
 
-The orchestrator's default is to call ``sdfg.expand_library_nodes()``
-after the pipeline finishes so every emitted ``Tile*`` library node is
-lowered to its per-ISA body (the SDFG is ready to compile). Some
-callers want the SDFG with the tile lib nodes still present (for
-inspection, saving, or further transformations); ``expand_tile_nodes=
-False`` defers expansion to the caller.
+The orchestrator's default (``expand_tile_nodes=False``) leaves every emitted
+``Tile*`` library node present so the caller can inspect / save / further-transform
+the lib-node shape and lower it later (``sdfg.expand_library_nodes()`` / ``compile()``).
+``expand_tile_nodes=True`` instead lowers every tile node to its per-ISA body before
+returning, so the SDFG is ready to compile immediately.
 
 This test pins both modes on a 2-D axpy kernel:
 
-- ``expand_tile_nodes=True`` (default): no ``Tile*`` lib node survives.
-- ``expand_tile_nodes=False``: at least one ``Tile*`` lib node remains.
+- ``expand_tile_nodes=False`` (default): at least one ``Tile*`` lib node remains.
+- ``expand_tile_nodes=True``: no ``Tile*`` lib node survives.
 
 The kernel exercises a divisible 2-D map so the run finishes cleanly
 in both modes (no postamble interaction needed for this knob).
 """
 
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
 import pytest
 
 from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
@@ -53,18 +52,18 @@ def _count_tile_lib_nodes(sdfg: dace.SDFG) -> int:
 
 def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:
     VectorizeCPUMultiDim(
-        widths=(8, 8),
-        target_isa="SCALAR",
-        remainder_strategy="full_mask",
-        branch_mode="merge",
-        nest_map_bodies=True,
-        expand_tile_nodes=expand_tile_nodes,
-    ).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8, 8),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.FULL_MASK,
+            branch_mode=BranchMode.MERGE,
+            expand_tile_nodes=expand_tile_nodes,
+        )).apply_pass(sdfg, {})
 
 
-def test_expand_tile_nodes_default_leaves_no_tile_lib_nodes():
-    """``expand_tile_nodes=True`` (the default) lowers every ``Tile*``
-    lib node so the returned SDFG is ready to compile."""
+def test_expand_tile_nodes_true_leaves_no_tile_lib_nodes():
+    """``expand_tile_nodes=True`` lowers every ``Tile*`` lib node so the
+    returned SDFG is ready to compile (the default leaves them present)."""
     sdfg = _axpy_2d.to_sdfg()
     sdfg.name = "axpy_2d_expanded"
     sdfg.validate()

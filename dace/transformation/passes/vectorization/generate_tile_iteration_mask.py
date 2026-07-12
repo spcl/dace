@@ -4,7 +4,7 @@ transient and the producing :class:`TileMaskGen` lib node inside every
 K-dim eligible inner-map outer scope.
 
 The mask lives directly in the parent state (between ``MapEntry`` and
-the body) as a register transient, so downstream :class:`EmitTileOps`
+the body) as a register transient, so downstream :class:`ConvertTaskletsToTileOps`
 can wire it into every lib node without crossing a NestedSDFG boundary.
 """
 from typing import Dict, Optional, Tuple
@@ -30,7 +30,7 @@ def _mask_array_name_for(parent_sdfg: dace.SDFG) -> str:
 
     Several inner maps can coexist in one state (e.g. jacobi2d's B-update and
     A-update); each needs its OWN mask transient + access node in its OWN scope,
-    else EmitTileOps would wire one map's mask into another's (disjoint) scope.
+    else ConvertTaskletsToTileOps would wire one map's mask into another's (disjoint) scope.
 
     :param parent_sdfg: SDFG the mask array is added to.
     :returns: ``"_tile_iter_mask"`` for the first map, then

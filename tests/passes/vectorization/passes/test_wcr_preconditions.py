@@ -230,7 +230,7 @@ def test_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out():
 
 
 # ---------------------------------------------------------------------------
-# e2e: in-place RMW survives both vectorizers (legacy + tile-node).
+# e2e: in-place RMW survives the tile-node vectorizer.
 # ---------------------------------------------------------------------------
 
 
@@ -259,10 +259,6 @@ def _run_inplace_rmw(config: str):
                            remainder_strategy="scalar")
 
 
-def test_inplace_rmw_e2e_legacy():
-    _run_inplace_rmw("legacy_cpu")
-
-
 def test_inplace_rmw_e2e_tile_nodes():
     _run_inplace_rmw("tile_nodes")
 
@@ -274,6 +270,5 @@ if __name__ == "__main__":
     test_no_wcr_in_map_body_allows_boundary_reduction()
     test_no_wcr_inside_nested_sdfgs_detects_inner_wcr()
     test_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out()
-    test_inplace_rmw_e2e_legacy()
     test_inplace_rmw_e2e_tile_nodes()
     print("all WCR precondition tests passed")

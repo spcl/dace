@@ -400,6 +400,79 @@ def test_break_anti_dependence_alpha_minus_one_with_larger_offset():
     assert np.allclose(out, ref)
 
 
+def test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain():
+    """Regression: the frontend emits the index tasklet as ``__out = dace.int32(i) + idx_index``
+    -- the iterator ``i`` is wrapped in a type-cast CALL, not a bare ``Name``. The indirected
+    recogniser (:meth:`_try_recognize_indirected`) must STRIP the cast to match ``i``; otherwise
+    ``a[i + idx[i]]`` mis-classifies as ``complex`` and the WAR is never broken (the loop stays
+    sequential). This asserts the whole chain resolves through the cast to the ``idx`` array."""
+
+    @dace.program
+    def cast_indirect(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+        for i in range(N - 1):
+            a[i] = a[i + idx[i]] + b[i]
+
+    sdfg = cast_indirect.to_sdfg(simplify=True)
+    # Must recognise the indirection (renamed == 1) despite the ``dace.int32(i)`` cast.
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    assert any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    # A per-element array guard over ``idx`` must be planted (idx[i] > 0 soundness).
+    guards = [
+        n for st in sdfg.all_states() for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_array_guard_')
+    ]
+    assert len(guards) == 1 and 'idx' in guards[0].code.as_string
+    _l2m(sdfg)
+    sdfg.validate()
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
+
+    n = 16
+    rng = np.random.default_rng(2)
+    a, b = rng.random(n), rng.random(n)
+    idx = np.ones(n, dtype=np.int32)  # idx[i] == 1 > 0, in range for i < n-1
+    ref = a.copy()
+    for i in range(n - 1):
+        ref[i] = a[i + idx[i]] + b[i]
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), idx=idx.copy(), N=n)
+    assert np.allclose(out, ref)
+
+
+def test_break_anti_dependence_loop_invariant_array_offset_refused():
+    """``a[i + idx[0]]`` -- a LOOP-INVARIANT offset read from an ARRAY (``idx[0]``, not the
+    iterator). The value is not known at compile time and, being array-sourced, is NOT assumed
+    nonnegative (only pure symbols get that assumption); it also is not the ``idx[i]`` per-element
+    indirection shape. So the pass conservatively REFUSES it (leaves the loop sequential) rather
+    than renaming under an unchecked assumption -- ``idx[0] < 0`` would be a read-behind RAW
+    recurrence. (An opt-in guarded rename -- trap unless ``idx[0] > 0`` -- is a possible future
+    enhancement; today's contract is safe-refuse.)"""
+
+    @dace.program
+    def inv_array(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+        for i in range(N - 1):
+            a[i] = a[i + idx[0]] + b[i]
+
+    sdfg = inv_array.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None  # refused, no rename
+    assert not any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    _l2m(sdfg)
+    assert _nloops(sdfg) >= 1 and _nmaps(sdfg) == 0  # stays a sequential loop
+
+    # Numerical correctness with idx[0] = 1 (an in-bounds read-ahead the pass STILL refuses,
+    # because it cannot prove the array-sourced offset is nonnegative). The refused loop runs
+    # sequentially and reads the ORIGINAL a[i+1] (not yet written at iteration i).
+    n = 12
+    rng = np.random.default_rng(5)
+    a, b = rng.random(n), rng.random(n)
+    idx = np.ones(n, dtype=np.int32)  # idx[0] = 1 -> a[i+1], in-bounds read-ahead
+    ref = a.copy()
+    for i in range(n - 1):
+        ref[i] = a[i + 1] + b[i]  # sequential reads ORIGINAL a[i+1]
+    out = a.copy()
+    sdfg(a=out, b=b.copy(), idx=idx.copy(), N=n)
+    assert np.allclose(out, ref), f'max-diff {np.abs(out - ref).max()}'
+
+
 def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
     """Regression for the iedge-substitution fix. The indirected-gather case
     (``a[i + idx[i]] = ...``) MUST still be recognised as ``WAR_indirected``

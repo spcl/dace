@@ -38,6 +38,8 @@ import pytest
 from dace.libraries.tileops import TileLoad, TileLoad, TileStore
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NK = dace.symbol("NK")
@@ -70,15 +72,15 @@ def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:
 def _vectorize_k2(sdfg: dace.SDFG) -> None:
     """Run the K=2 (8, 8) orchestrator, leaving tile lib nodes intact."""
     VectorizeCPUMultiDim(
-        widths=(8, 8),
-        target_isa="SCALAR",
-        remainder_strategy="scalar_postamble",
-        branch_mode="merge",
-        loop_to_map_permissive=False,
-        nest_map_bodies=True,
-        scalar_remainder_emit="tile_k1",
-        expand_tile_nodes=False,
-    ).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8, 8),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+            branch_mode=BranchMode.MERGE,
+            loop_to_map_permissive=False,
+            scalar_remainder_emit="tile_k1",
+            expand_tile_nodes=False,
+        )).apply_pass(sdfg, {})
 
 
 # ---------------------------------------------------------------- shapes

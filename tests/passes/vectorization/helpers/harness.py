@@ -26,7 +26,10 @@ from dace.sdfg import ControlFlowRegion
 
 from dace.sdfg.state import ConditionalBlock
 
-from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+
+from dace.transformation.passes.vectorization.enums import ISA
+
 
 N = dace.symbol('N')
 S1 = dace.symbol("S1")
@@ -103,7 +106,18 @@ def _collapsible_innermost_K(sdfg: dace.SDFG):
         ``None`` when no map is present.
     """
     from dace.transformation.dataflow import MapCollapse
+    from dace.sdfg import infer_types
     probe = copy.deepcopy(sdfg)
+    # Mirror the orchestrator's front-of-pipeline schedule assignment BEFORE probing the
+    # collapse (VectorizeMultiDim runs ``set_default_schedule_and_storage_types`` ahead of
+    # ``normalize_loop_nests``). It stamps the outer map ``CPU_Multicore`` and nested maps
+    # ``Sequential``, and ``MapCollapse(permissive=False)`` refuses a schedule-mismatched pair.
+    # Probing on the raw ``Default``==``Default`` SDFG over-reports K -- a collapse the real
+    # pipeline cannot perform -- so the tile arm would request a K the orchestrator can't tile.
+    # Assigning schedules first reports the K the orchestrator actually reaches (e.g. a 2-D
+    # ``for i: for j:`` nest with a parallel outer + sequential inner reports K=1, matching the
+    # tiler; a 4-D nest whose 3 inner maps are all Sequential still collapses to K=3).
+    infer_types.set_default_schedule_and_storage_types(probe, None)
     probe.apply_transformations_repeated(MapCollapse(), permissive=False, validate=False)
     return _innermost_map_K(probe)
 
@@ -171,8 +185,7 @@ def _outer_tiled_dim_fits(sdfg: dace.SDFG, outer_tile_width: int) -> bool:
 
 
 def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strategy: str, emission_style: str,
-                            fuse_overlapping_loads: bool, lower_to_intrinsics: bool, collapse_laneid_index_loads: bool,
-                            loop_to_map_permissive: bool, filter_map):
+                            loop_to_map_permissive: bool):
     """Return a non-empty skip reason for the ``tile_nodes`` arm when
     the test's knob combination is outside the v2 locked-knob shape.
 
@@ -184,32 +197,9 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
         return f"remainder_strategy={remainder_strategy!r} (tile path supports scalar/masked)"
     if emission_style != "default":
         return f"emission_style={emission_style!r} (tile path supports default)"
-    # ``insert_copies`` is accepted as a no-op on the tile orchestrator (the
-    # lib nodes already make NSDFG-boundary memlets explicit), so the harness
-    # no longer skips on it. ``fuse_overlapping_loads`` IS accepted by the
-    # orchestrator (also no-op), but several legacy-arm structural tests
-    # assert the *presence* of a fused union-window buffer in the post-vec
-    # SDFG — the tile path does not yet emit such a buffer (overlap fusion is
-    # a future TileLoad optimisation), so those assertions fire. Until the
-    # tile path grows an overlap-fusion expansion, keep the harness skip so
-    # the assertion-based tests stay green; the knob itself is forwarded for
-    # callers that just want a perf hint.
-    # ``lower_to_intrinsics`` and ``collapse_laneid_index_loads`` are
-    # implicit-always-on on the tile path: the K-dim lib nodes (TileLoad (gather) /
-    # TileStore (scatter) / TileLoad strided) ARE the K-dim equivalent of the legacy
-    # per-arch C++ intrinsics, and the descent never fans out per-lane index
-    # symbols — so both knobs are accepted as no-ops here (already implied
-    # by the tile lowering). ``fuse_overlapping_loads`` is accepted on the
-    # tile path for harness parity with the legacy 1D VectorizeCPU but is a
-    # no-op there: ExpandNestedSDFGInputs widens every body-NSDFG boundary
-    # memlet to the full source-array subset (section 2.4), so every inner
-    # TileLoad reads the same full-array connector and there are no per-tile
-    # windows to fuse.
     # ``loop_to_map_permissive`` IS supported on the tile path now (threaded into
     # the orchestrator's LoopToMap call) — scatter benchmarks set it True so the
     # scatter loop parallelises and the tile path can vectorise it. No skip.
-    if filter_map is not None and filter_map != -1:
-        return "filter_map (v2 orchestrator targets every innermost map)"
     if _innermost_map_K(sdfg) is None:
         return "no innermost map (v2 has nothing to tile)"
     return ""
@@ -222,9 +212,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            simplify=True,
                            skip_simplify=None,
                            sdfg_name=None,
-                           fuse_overlapping_loads=False,
                            insert_copies=True,
-                           filter_map=-1,
                            cleanup=False,
                            from_sdfg=False,
                            no_inline=False,
@@ -232,12 +220,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            branch_mode: str = "merge",
                            remainder_strategy: str = "scalar",
                            param_tag: str = None,
-                           lower_to_intrinsics: bool = False,
-                           collapse_laneid_index_loads: bool = False,
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
                            vectorize_config: str = "tile_nodes",
-                           nest_map_bodies: bool = False,
                            scalar_remainder_emit: str = "scalar"):
 
     import pytest as _pytest
@@ -274,7 +259,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         _default_branch_mode = "merge"
         _default_remainder = "scalar"
         _default_emission = "default"
-        _default_nest = False
         _default_copies = True  # ``insert_copies`` default in the signature
         if branch_mode == _default_branch_mode and "branch_mode" in request.fixturenames:
             try:
@@ -293,23 +277,11 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                 pass
         if "tile_emit_mode" in request.fixturenames:
             try:
-                _tem = request.getfixturevalue("tile_emit_mode")
-                if isinstance(_tem, tuple) and len(_tem) == 2:
-                    _nest, _copies = _tem
-                    if nest_map_bodies == _default_nest:
-                        nest_map_bodies = _nest
-                    if insert_copies == _default_copies:
-                        insert_copies = _copies
+                _copies = request.getfixturevalue("tile_emit_mode")
+                if insert_copies == _default_copies:
+                    insert_copies = _copies
             except Exception:
                 pass
-    # Legacy ``VectorizeCPU`` rejects a knob combo the tile orchestrator
-    # accepts: ``use_fp_factor=True`` (a.k.a. ``branch_mode='fp_factor'``)
-    # cannot ride a masked remainder. Skip on the legacy_cpu arm rather than
-    # propagate the ``ValueError`` the ``VectorizeCPU`` constructor raises.
-    if vectorize_config == "legacy_cpu":
-        if branch_mode == "fp_factor" and remainder_strategy == "masked":
-            _pytest.skip("legacy_cpu: use_fp_factor=True is incompatible with remainder_strategy='masked'")
-
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -340,13 +312,13 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         else:
             base = getattr(dace_func, "name", None) or getattr(dace_func, "__name__", "kernel")
         sdfg_name = re.sub(r"\W+", "_", base).strip("_")
-    # Include ``nest_map_bodies`` + ``insert_copies`` in the suffix so the
-    # three ``tile_emit_mode`` variants (flat / nested / nested_copies) each
-    # get their own ``.dacecache/<name>/`` build dir; without this they
-    # collide under ``-n``-parallel xdist on the same combo of (branch_mode,
-    # remainder_strategy, emission_style, vectorize_config) and CMake races
-    # mid-configure ("file too short" / "Configuring incomplete").
-    tile_tag = f"_n{int(nest_map_bodies)}c{int(insert_copies)}"
+    # Include ``insert_copies`` in the suffix so the two ``tile_emit_mode``
+    # variants (no_copies / copies) each get their own ``.dacecache/<name>/``
+    # build dir; without this they collide under ``-n``-parallel xdist on the
+    # same combo of (branch_mode, remainder_strategy, emission_style,
+    # vectorize_config) and CMake races mid-configure ("file too short" /
+    # "Configuring incomplete").
+    tile_tag = f"_c{int(insert_copies)}"
     sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
     if param_tag is not None:
         sdfg_name = f"{sdfg_name}_{param_tag}"
@@ -397,52 +369,37 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                dace.memlet.Memlet(data=dst_data, subset=copy.deepcopy(dst_subset)))
         copy_sdfg.validate()
 
-    if filter_map != -1:
-        map_labels = [n.map.label for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
-        filter_map_labels = map_labels[0:filter_map]
-        filter_map = filter_map_labels
-    else:
-        filter_map = None
-
+    if vectorize_config != "tile_nodes":
+        raise ValueError(f"legacy vectorize_config {vectorize_config!r} was removed; only the multi-dim "
+                         f"tile-op path ('tile_nodes') is supported")
     if vectorize_config == "tile_nodes":
         # Tile-op path (``VectorizeCPUMultiDim``), hybrid emit:
         # flat body -> ``EmitTileOps``; already-NSDFG body -> descent
-        # (``PromoteNSDFGBodyToTiles``). The ``nest_map_bodies`` kwarg
-        # forces nesting of every innermost body so the descent is the
-        # single emit path. Both arms must match the scalar reference.
-        # ``nest_map_bodies`` is now passed through directly from tests
-        # (typically via the ``tile_emit_mode`` fixture).
+        # (``PromoteNSDFGBodyToTiles``). Both arms must match the scalar reference.
         # v2 tile-op path (VectorizeCPUMultiDim), unified for K=1 and K>=2: the
         # tile lib nodes (TileBinop / TileLoad / TileStore / TileITE / ...)
         # are emitted for every K and then expanded to tasklets (the ``pure``
-        # expansion). K=1 is the degenerate single-tile-dim case — it is NOT
-        # routed to the legacy 1D ``VectorizeCPU`` here; that mature
-        # scalar-tasklet path is exercised by the ``scalar_postamble`` config.
+        # expansion). K=1 is the degenerate single-tile-dim case, handled by
+        # the same tile lib nodes — there is no separate 1-D path (the deleted
+        # legacy ``VectorizeCPU`` was the only such path and is gone).
         # The locked single-knob shape rejects fixture combinations outside
         # (branch_mode=merge, remainder in {scalar, masked}, emission_style=
-        # default, no fuse / intrinsics / filter_map); skip per-arm rather than
-        # propagate.
+        # default); skip per-arm rather than propagate.
         _skip_reason = _tile_nodes_skip_reason(
             copy_sdfg,
             branch_mode,
             remainder_strategy,
             emission_style,
-            fuse_overlapping_loads,
-            lower_to_intrinsics,
-            collapse_laneid_index_loads,
             loop_to_map_permissive,
-            filter_map,
         )
-        # ``no innermost map`` and ``filter_map`` are legitimate no-ops: the
-        # SDFG has nothing to tile (no map; or filter_map selected only outer
-        # maps the v2 orchestrator wouldn't touch anyway). The test's
-        # numerical-equivalence assertion still holds trivially because the
-        # un-vectorized SDFG equals the reference. Set a flag so we skip the
-        # orchestrator call but still run the comparison below; SKIP only
-        # the genuine knob-incompatibility cases.
+        # ``no innermost map`` is a legitimate no-op: the SDFG has nothing to
+        # tile. The test's numerical-equivalence assertion still holds
+        # trivially because the un-vectorized SDFG equals the reference. Set a
+        # flag so we skip the orchestrator call but still run the comparison
+        # below; SKIP only the genuine knob-incompatibility cases.
         _tile_nodes_noop = False
         if _skip_reason:
-            if "no innermost map" in _skip_reason or "filter_map" in _skip_reason:
+            if "no innermost map" in _skip_reason:
                 _tile_nodes_noop = True
             else:
                 _pytest.skip(f"tile_nodes arm: {_skip_reason}")
@@ -466,33 +423,13 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         else:  # remainder == "scalar"
             tile_remainder = "scalar_postamble"
         if not _tile_nodes_noop:
-            VectorizeCPUMultiDim(widths=widths,
-                                 target_isa="SCALAR",
-                                 remainder_strategy=tile_remainder,
-                                 branch_mode=branch_mode,
-                                 loop_to_map_permissive=loop_to_map_permissive,
-                                 nest_map_bodies=nest_map_bodies,
-                                 scalar_remainder_emit=scalar_remainder_emit).apply_pass(copy_sdfg, {})
-        copy_sdfg.validate()
-    else:
-        if branch_mode == "fp_factor":
-            branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
-        elif branch_mode == "merge":
-            branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
-        else:
-            raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
-
-        VectorizeCPU(vector_width=vector_width,
-                     fuse_overlapping_loads=fuse_overlapping_loads,
-                     insert_copies=insert_copies,
-                     apply_on_maps=filter_map,
-                     no_inline=no_inline,
-                     fail_on_unvectorizable=True,
-                     remainder_strategy=remainder_strategy,
-                     lower_to_intrinsics=lower_to_intrinsics,
-                     collapse_laneid_index_loads=collapse_laneid_index_loads,
-                     loop_to_map_permissive=loop_to_map_permissive,
-                     **branch_kwargs).apply_pass(copy_sdfg, {})
+            VectorizeCPUMultiDim(
+                VectorizeConfig(widths=widths,
+                                target_isa=ISA.SCALAR,
+                                remainder_strategy=tile_remainder,
+                                branch_mode=branch_mode,
+                                loop_to_map_permissive=loop_to_map_permissive,
+                                scalar_remainder_emit=scalar_remainder_emit)).apply_pass(copy_sdfg, {})
         copy_sdfg.validate()
 
     c_copy_sdfg = copy_sdfg.compile()
@@ -511,67 +448,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             assert numpy.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300), \
                 f"{name} Diff: max abs diff = {numpy.max(numpy.abs(diff))}"
     return copy_sdfg
-
-
-def assert_fused_nsdfg_structure(sdfg: dace.SDFG, bases):
-    """Verify the baked ``fuse_overlapping_loads`` collapsed the staging buffers.
-
-    Two invariants are checked per fused array base name:
-
-    1. **Collapse**: no legacy per-subset ``<base>_vec_0 .. <base>_vec_n``
-       buffer survives anywhere — the knob must have replaced the N
-       independent ``vector_copy`` staging buffers with a single shared
-       union-window buffer ``<base>_vec``.
-    2. **Wiring**: at least one body NSDFG holds a ``<base>_vec`` access
-       node that is *both* produced (the union staging copy-in writes it)
-       *and* consumed (the inner map body reads it). This is the genuine
-       fused-read buffer; it proves the union copy is connected to the map
-       body and did not orphan it.
-
-    The shared name ``<base>_vec`` is also used for unrelated *movable*
-    boundary buffers (e.g. a written output) which are produced-only inside
-    their NSDFG — those are not fusion products, so the wiring check is
-    satisfied by *any* NSDFG (existential), not all. Graph well-formedness
-    and numerical correctness are already covered by ``sdfg.validate()`` and
-    the e2e compare inside :func:`run_vectorization_test`; this adds the
-    fusion-specific structural guarantee on top so a test cannot silently
-    pass e2e while the fusion is structurally broken.
-
-    :param sdfg: The vectorized SDFG returned by :func:`run_vectorization_test`.
-    :param bases: Array base names expected to be load-fused (e.g. ``("A",)``).
-    """
-    for base in bases:
-        prefix = f"{base}_vec_"
-        fully_wired = False
-        # A connector with a non-tiled multi-slice dim (heat3d-style stencil
-        # where only ``j, k`` are tiled and ``i`` carries 3-point adjacent
-        # reads) gets split into per-slice connectors ``<base>_slice_<n>`` by
-        # :class:`SplitMultiSliceBoundaryConnectors`; each per-slice connector
-        # then fuses into its own ``<base>_slice_<n>_vec`` buffer. The fusion
-        # contract still holds — one shared fused buffer per slice, no per-
-        # subset copies — so accept either the unified ``<base>_vec`` name or
-        # any of the per-slice ``<base>_slice_<n>_vec`` names.
-        slice_prefix = f"{base}_slice_"
-        for nsdfg in (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)):
-            inner = nsdfg.sdfg
-            indexed = [a for a in inner.arrays if a.startswith(prefix) and a[len(prefix):].isdigit()]
-            assert not indexed, (f"fuse_overlapping_loads on, but per-subset buffers {indexed} survived for "
-                                 f"{base!r} in NSDFG {inner.label}: fusion did not collapse them")
-            shared_candidates = [f"{base}_vec"
-                                 ] + [a for a in inner.arrays if a.startswith(slice_prefix) and a.endswith("_vec")]
-            for shared in shared_candidates:
-                if shared not in inner.arrays:
-                    continue
-                produced = any(
-                    st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
-                consumed = any(
-                    st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
-                if produced and consumed:
-                    fully_wired = True
-                    break
-        assert fully_wired, (f"no NSDFG holds a fully-wired shared fused buffer {base}_vec or {base}_slice_*_vec "
-                             f"(produced by the union staging copy-in and consumed by the map body) — fusion "
-                             f"did not connect the buffer")
 
 
 def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> dace.SDFG:

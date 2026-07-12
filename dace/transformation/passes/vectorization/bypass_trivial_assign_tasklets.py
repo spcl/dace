@@ -7,10 +7,8 @@ each connects to an :class:`~dace.sdfg.nodes.AccessNode` is a pure copy.
 DaCe's tasklet codegen for a Python-language ``_out = _in`` body with
 tile-pointer connectors emits ``_out = _in;`` — a *pointer* reassignment
 of the local variable; the destination transient is never actually
-written. The descent has historically worked around this with two helpers
-on :class:`PromoteNSDFGBodyToTiles`; this pass exposes the same rewrite
-as a standalone pipeline step so the multi-dim K=1 / K=2 paths can call
-it directly without going through the full body-tile descent.
+written. This pass exposes the rewrite as a standalone pipeline step so the
+multi-dim K=1 / K=2 paths can call it directly.
 
 Two rewrites, in order:
 
@@ -28,8 +26,8 @@ Two rewrites, in order:
    AccessNode and pick up the wrong value).
 
 The pass is body-NSDFG-scoped: the outer SDFG's ``AN -> AN`` edges may
-be scatter / gather staging that the legacy 1D detect passes consume,
-so they stay untouched. Mirrors :class:`EliminateDeadCopies`'s scoping.
+be scatter / gather staging, so they stay untouched. Mirrors
+:class:`EliminateDeadCopies`'s scoping.
 """
 from typing import Any, Dict, Optional, Tuple
 
@@ -280,7 +278,36 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 # AN(src) -> [_out=_in] -> AN(dst) -> C becomes AN(src) -> C.
                 # Symmetric to the src-transient branch -- pick ``data``
                 # endpoint based on whether C is an AccessNode or a Tasklet.
-                for de in list(istate.out_edges(dst_an)):
+                consumers = list(istate.out_edges(dst_an))
+                if not consumers:
+                    # No downstream consumer to reroute the source into. Dropping the
+                    # tasklet here would strand ``src_an`` as an ISOLATED node (invalid
+                    # SDFG) -- the tasklet's incoming edge was ``src_an``'s only edge.
+                    # Resolve the trivial assign to a DIRECT AN -> AN copy instead so
+                    # ``src_an``'s value still reaches ``dst_an`` and neither node is
+                    # orphaned; a later dead-copy elimination drops it if ``dst_an`` is
+                    # genuinely unused. If input and output resolve to the SAME access,
+                    # the assign is a self-copy: just drop the tasklet (and the node if
+                    # it is then dead) rather than emit a nonsensical self-loop edge.
+                    for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
+                        istate.remove_edge(te)
+                    istate.remove_node(t)
+                    removed += 1
+                    if src_an is dst_an:
+                        if istate.degree(dst_an) == 0:
+                            istate.remove_node(dst_an)
+                        continue
+                    in_subset = subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None
+                    out_subset = subsets.Range(list(
+                        out_e.data.subset.ranges)) if out_e.data.subset is not None else None
+                    copy_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=out_subset)
+                    _wcr = out_e.data.wcr if out_e.data.wcr is not None else in_e.data.wcr
+                    if _wcr is not None:
+                        copy_memlet.wcr = _wcr
+                        copy_memlet.wcr_nonatomic = bool(out_e.data.wcr_nonatomic or in_e.data.wcr_nonatomic)
+                    istate.add_edge(src_an, in_e.src_conn, dst_an, out_e.dst_conn, copy_memlet)
+                    continue
+                for de in consumers:
                     in_subset = subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None
                     de_subset = subsets.Range(list(de.data.subset.ranges)) if de.data.subset is not None else None
                     if isinstance(de.dst, dace.nodes.AccessNode):

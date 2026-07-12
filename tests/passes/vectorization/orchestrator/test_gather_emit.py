@@ -15,8 +15,10 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.interstate import LoopToMap
 
 N = dace.symbol("N")
 
@@ -59,7 +61,7 @@ def test_data_gather_with_elementwise_input_matches_reference(n):
     ref.name = f"dgb_ref{n}"
     vec = _data_gather_binop_kernel.to_sdfg(simplify=True)
     vec.name = f"dgb_vec{n}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(a=a_ref, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
@@ -81,7 +83,7 @@ def test_structured_int_floor_replication_matches_reference(n):
     ref.simplify()
     vec = copy.deepcopy(ref)
     vec.name = f"sk_vec{n}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
     vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
     np.testing.assert_allclose(vo, ro, rtol=1e-12, atol=1e-12)
@@ -108,7 +110,7 @@ def test_diagonal_gather_numerically_matches_reference(n):
 
     ref = _prepped(f"ref{n}")
     vec = _prepped(f"vec{n}")
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(aa=ref_aa, bb=bb.copy(), cc=cc.copy(), N=n)
     vec.compile()(aa=vec_aa, bb=bb.copy(), cc=cc.copy(), N=n)

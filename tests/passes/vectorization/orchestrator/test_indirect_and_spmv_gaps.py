@@ -32,6 +32,8 @@ import numpy as np
 
 import dace
 from dace.libraries.tileops import TileLoad
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     classify_tile_access,
@@ -114,7 +116,7 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
     ref.name = f"ind1d_ref{n}"
     vec = _build_1d_indirect_stencil()
     vec.name = f"ind1d_vec{n}"
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(a=a_ref, b=b.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), idx=idx.copy(), N=n)
@@ -164,7 +166,7 @@ def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
     ref.name = f"ind2d_ref{m}_{n}"
     vec = _build_2d_indirect_stencil()
     vec.name = f"ind2d_vec{m}_{n}"
-    VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(a=a.copy(), c=c_ref, idx=idx.copy(), M=m, N=n)
     vec.compile()(a=a.copy(), c=c_vec, idx=idx.copy(), M=m, N=n)
@@ -179,7 +181,7 @@ def test_vectorize_cpu_multi_dim_accepts_spmv():
     end-to-end — numerical equivalence is covered by the broader
     matches_reference tests in this file."""
     sdfg = _build_spmv()
-    VectorizeCPUMultiDim(widths=(4, 8), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
 
 @pytest.mark.parametrize("widths", [(8, ), (4, 8)])
@@ -216,4 +218,4 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
             {"_s": dace.Memlet("s[0]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
-    VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR)).apply_pass(sdfg, {})

@@ -20,8 +20,7 @@ _G2D = tsvc.collect(regime="2d")
 #: K6 hard-canonicals — 9 TSVC kernels exercised under the full knob
 #: matrix on top of the existing ``test_tsvc_vectorization`` parametrisation.
 #: Every canonical was verified to produce a vector-width-strided map on
-#: BOTH orchestrator arms (``VectorizeCPU`` legacy AND
-#: ``VectorizeCPUMultiDim`` tile). Pattern coverage:
+#: the ``VectorizeCPUMultiDim`` tile path. Pattern coverage:
 #:
 #: - 2D stencil: ``s1119``
 #: - 1D stencil ``a[i] = (b[i] + b[i-1]) * 0.5``: ``s291``
@@ -65,12 +64,12 @@ def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, rem
     ``test_tsvc_vectorization`` keeps the kernel + ``(remainder, branch,
     LEN)`` coverage for the rest of the corpus.
 
-    The harness routes ``vectorize_config="legacy_cpu"`` to ``VectorizeCPU``
-    and ``"tile_nodes"`` to ``VectorizeCPUMultiDim``; per-arm skip
-    predicates filter combos the orchestrator does not support.
+    The harness routes ``vectorize_config="tile_nodes"`` to
+    ``VectorizeCPUMultiDim``; per-arm skip predicates filter combos the
+    orchestrator does not support.
     """
     from tests.passes.vectorization.helpers.harness import run_vectorization_test
-    nest_map_bodies, insert_copies = tile_emit_mode
+    insert_copies = tile_emit_mode
     kernel = _resolve_canonical(kernel_name)
     # Use the divisible LEN per regime (the non-divisible variant is
     # already exercised in ``test_tsvc_vectorization``; here we focus on
@@ -95,7 +94,6 @@ def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, rem
         branch_mode=branch_mode,
         remainder_strategy=remainder_strategy,
         emission_style=emission_style,
-        nest_map_bodies=nest_map_bodies,
         insert_copies=insert_copies,
         vectorize_config=vectorize_config,
     )

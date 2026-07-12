@@ -17,6 +17,8 @@ import sympy
 
 from dace.symbolic import ONE
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars)
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 
 
 def test_identity_across_imports():
@@ -129,7 +131,7 @@ def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
             B[i] = A[idx[i]]
 
     sdfg = k1_gather_audit.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa="SCALAR").apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
     offenders = []
     for sd in sdfg.all_sdfgs_recursive():

@@ -283,7 +283,6 @@ def test_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            params={'N': N},
                            vector_width=8,
                            sdfg_name="memset_with_fuse_and_copy_in_enabled",
-                           fuse_overlapping_loads=True,
                            insert_copies=True,
                            exact=0.0,
                            remainder_strategy=remainder_strategy)
@@ -300,7 +299,6 @@ def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            params={'N': N},
                            vector_width=8,
                            sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
-                           fuse_overlapping_loads=True,
                            insert_copies=True,
                            simplify=False,
                            exact=0.0,

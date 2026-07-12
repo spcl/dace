@@ -9,8 +9,6 @@ e2e vs oracle (:mod:`tests.corpus.tsvc_2_5.tsvc_2_5_numpy`, ``ref_<kernel>``).
 
 A recurrence that does not parallelize under plain ``LoopToMap`` stays a loop and the tile vectorizer no-ops, so
 ``base`` == config there. Scope: multi-dim CPU tile path only.
-
-Known gaps: ``xfail`` via ``_XFAIL[(kernel, phase)]``; removed as fixed.
 """
 import contextlib
 import inspect
@@ -33,10 +31,6 @@ from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipe
 
 _CORPUS = tsvc_2_5.collect()
 _TOL = 1e-9
-
-# Known gaps keyed by (kernel_short_name, phase) -> tracking reason; kernel name = trailing ``<kernel>`` (see
-# ``_short``). Removed as fixed.
-_XFAIL: dict = {}
 
 _BASE: dict = {}
 
@@ -106,8 +100,6 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
 @pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
 def test_tsvc_2_5_corpus(idx, program, phase):
     """base(simplify+loop2map+mapfusion) [+ multidim vectorize] -> verify vs oracle."""
-    if (_short(program), phase) in _XFAIL:
-        pytest.xfail(_XFAIL[(_short(program), phase)])
     base, arrays, scalars, ref, widths = _base(program)
     sdfg = copy.deepcopy(base)
     # Per-(kernel, phase) name so concurrent phase builds don't collide on shared .dacecache under the parallel sweep.

@@ -49,9 +49,9 @@ TILE_MAIN_MARKER = "__tile_main"
 
 # Label suffix: boundary region runs as a plain step-1 scalar loop
 # (scalar_postamble tail). Every tile prep pass (MarkTileDims /
-# GenerateTileIterationMask / StrideMapByTileWidths / PromoteNSDFGBodyToTiles /
-# EmitTileOps) skips this suffix -> tail keeps its original scalar body: not
-# tiled, strided, or masked.
+# GenerateTileIterationMask / StrideMapByTileWidths / InsertTileLoadStore /
+# ConvertTaskletsToTileOps) skips this suffix -> tail keeps its original scalar
+# body: not tiled, strided, or masked.
 SCALAR_TAIL_MARKER = "__scalar_tail"
 
 # Label suffix: boundary region flows through the tile-op pipeline at K=1

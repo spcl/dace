@@ -19,7 +19,6 @@ from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
@@ -2166,6 +2165,12 @@ class BranchElimination(transformation.MultiStateTransformation):
                         src_edge.data.assignments.pop(k, None)
                         assert k not in graph.sdfg.symbols
                     RemoveUnusedSymbols().apply_pass(graph.sdfg, {})
+                    # Lazy import: ``interstate`` is a lower layer than ``vectorization``; importing a
+                    # vectorization pass at module load makes ``interstate.__init__`` pull in the whole
+                    # vectorization package, which imports back into the partially-initialised
+                    # ``interstate`` -> circular import. Deferring it here keeps every other import
+                    # (incl. vectorize_multi_dim's interstate block) top-level.
+                    from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
                     RemoveEmptyStates().apply_pass(graph.sdfg, {})
                     src_nodes = {e.src for e in graph.in_edges(new_state)}
                     src_edges = {e for e in graph.in_edges(new_state)}
@@ -2178,6 +2183,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                         if src_edge.data.assignments == dict():
                             if not isinstance(src_node, ConditionalBlock):
                                 self._force_fuse(src_node, new_state)
+                                from dace.transformation.passes.vectorization.remove_empty_states import (
+                                    RemoveEmptyStates, )  # lazy: break interstate<->vectorization cycle (see above)
                                 RemoveEmptyStates().apply_pass(graph.sdfg, {})
 
                     graph.sdfg.validate()

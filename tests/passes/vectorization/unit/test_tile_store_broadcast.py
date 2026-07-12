@@ -29,7 +29,9 @@ import dace
 import pytest
 
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
-from dace.transformation.passes.vectorization.utils.tasklets import tasklet_reads_or_writes_tile
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
@@ -120,15 +122,15 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
     sdfg.validate()
 
     VectorizeCPUMultiDim(
-        widths=(8, 8),
-        target_isa="SCALAR",
-        remainder_strategy="scalar_postamble",
-        branch_mode="merge",
-        loop_to_map_permissive=False,
-        nest_map_bodies=True,
-        scalar_remainder_emit="tile_k1",
-        expand_tile_nodes=False,
-    ).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8, 8),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+            branch_mode=BranchMode.MERGE,
+            loop_to_map_permissive=False,
+            scalar_remainder_emit="tile_k1",
+            expand_tile_nodes=False,
+        )).apply_pass(sdfg, {})
     sdfg.validate()
 
     n_tasklets = _tasklet_count(sdfg)

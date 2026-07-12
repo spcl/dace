@@ -26,6 +26,8 @@ import dace
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -102,8 +104,9 @@ def test_masked_const_write_matches_numpy(isa, remainder):
     """``A[A > thresh] = 0`` lowers through the tile pipeline (interior masked store +
     scalar/masked tail) bit-exact vs NumPy, at a non-tile-divisible size."""
     sdfg = _base(masked_zero)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa=isa, remainder_strategy=remainder, branch_mode="merge",
-                         validate_all=True).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=remainder, branch_mode=BranchMode.MERGE,
+                        validate_all=True)).apply_pass(sdfg, {})
     rng = np.random.default_rng(0)
     Nval = 37
     A = rng.random(Nval)
@@ -122,8 +125,9 @@ def test_masked_value_write_matches_numpy(isa, remainder):
     ``masked_tail`` config exercises the AND-combine of ``cond`` with the tile
     iteration mask on the remainder store."""
     sdfg = _base(masked_val)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa=isa, remainder_strategy=remainder, branch_mode="merge",
-                         validate_all=True).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=remainder, branch_mode=BranchMode.MERGE,
+                        validate_all=True)).apply_pass(sdfg, {})
     rng = np.random.default_rng(1)
     Nval = 37
     A = rng.random(Nval)

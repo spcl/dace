@@ -8,8 +8,6 @@ base SDFG + inputs + baseline reference memoized per kernel; each phase deep-cop
 * ``base``          -- base pipeline only (value-preserving).
 * ``<isa>_<mode>``  -- base then :class:`VectorizeCPUMultiDim` at config ISA / branch mode (``scalar_postamble``
   remainder; widths per-kernel).
-
-Known gaps: ``xfail`` via ``_XFAIL[(kernel, phase)]`` with tracking reason; removed as fixed.
 """
 import os
 
@@ -26,9 +24,6 @@ from tests.corpus.polybench import polybench
 from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipeline, make_pass, select_widths
 
 _KERNELS = [k.name for k in polybench.collect()]
-
-# Known gaps keyed by (kernel, phase) -> tracking reason; removed as fixed.
-_XFAIL: dict = {}
 
 _BASE: dict = {}
 
@@ -48,8 +43,6 @@ def _base(name):
 @pytest.mark.parametrize("name", _KERNELS)
 @pytest.mark.parametrize("phase", PHASES)
 def test_polybench_corpus(name, phase):
-    if (name, phase) in _XFAIL:
-        pytest.xfail(_XFAIL[(name, phase)])
     base, call_arrays, psize, ref, widths = _base(name)
     sdfg = copy.deepcopy(base)
     # Per-(kernel, phase) name: concurrent xdist builds must not share .dacecache (race -> spurious CompilationError).

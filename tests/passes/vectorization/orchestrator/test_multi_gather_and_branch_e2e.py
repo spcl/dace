@@ -29,6 +29,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 
 NB = dace.symbol("NB")
@@ -48,10 +50,11 @@ def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode="merge", s
     ref_sdfg.simplify()
     vec_sdfg = copy.deepcopy(ref_sdfg)
     vec_sdfg.name = ref_sdfg.name + "_vec"
-    VectorizeCPUMultiDim(widths=widths,
-                         target_isa="SCALAR",
-                         remainder_strategy="scalar_postamble",
-                         branch_mode=branch_mode).apply_pass(vec_sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=widths,
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+                        branch_mode=branch_mode)).apply_pass(vec_sdfg, {})
     vec_sdfg.validate()
     c_ref = ref_sdfg.compile()
     c_vec = vec_sdfg.compile()

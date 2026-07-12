@@ -26,6 +26,8 @@ from typing import Dict, Tuple
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 #: The 4 vectorize configs. All use ``remainder_strategy="scalar_postamble"``
@@ -88,7 +90,8 @@ def make_pass(widths: Tuple[int, ...], config: str) -> VectorizeCPUMultiDim:
     ``validate_all=True`` (the corpus spec); the config name selects the ISA
     and branch mode.
     """
-    return VectorizeCPUMultiDim(widths=widths,
-                                remainder_strategy="scalar_postamble",
-                                validate_all=True,
-                                **CONFIGS[config])
+    return VectorizeCPUMultiDim(
+        VectorizeConfig(widths=widths,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+                        validate_all=True,
+                        **CONFIGS[config]))

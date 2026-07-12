@@ -96,7 +96,6 @@ def test_k0_remainder_tsvc(kernel_name: str):
         branch_mode="merge",
         remainder_strategy="scalar",
         emission_style="default",
-        nest_map_bodies=False,
         insert_copies=False,
         vectorize_config="tile_nodes",
         scalar_remainder_emit="tile_k1",

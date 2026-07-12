@@ -189,6 +189,5 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         #self._setzero_true_for_all_transient_scalars(sdfg)
         has_applied = self._apply(sdfg)
         # self._apply_extended_state_fusion(sdfg)
-        sdfg.validate()
 
         return has_applied

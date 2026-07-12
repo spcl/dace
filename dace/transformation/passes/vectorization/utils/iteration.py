@@ -52,9 +52,8 @@ def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
                 raise RuntimeError(f"assert_no_lane_memlet_reads: map with _iter_mask in scope "
                                    f"({state.label}) still has a per-lane memlet on '{e.data.data}' "
                                    f"with subset {subset_str}. Lane fanout failed to collapse to "
-                                   f"an intrinsic — would fault on inactive lanes. Set "
-                                   f"`lower_to_intrinsics=True` on VectorizeCPU, or use "
-                                   f"`remainder_strategy='scalar'` for this kernel.")
+                                   f"an intrinsic — would fault on inactive lanes. Use "
+                                   f"`remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE` for this kernel.")
 
     for s in sdfg.all_sdfgs_recursive():
         if s is sdfg:

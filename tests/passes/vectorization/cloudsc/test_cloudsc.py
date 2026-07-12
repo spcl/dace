@@ -70,7 +70,7 @@ def cloudsc_snippet_two(
 
 
 def test_snippet_from_cloudsc_two(tile_emit_mode, branch_mode, remainder_strategy, emission_style, vectorize_config):
-    nest_map_bodies, insert_copies = tile_emit_mode
+    insert_copies = tile_emit_mode
     _S = 64
     A = numpy.random.random((2, _S, _S))
     B = numpy.random.random((_S, _S))
@@ -95,7 +95,6 @@ def test_snippet_from_cloudsc_two(tile_emit_mode, branch_mode, remainder_strateg
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style,
                            insert_copies=insert_copies,
-                           nest_map_bodies=nest_map_bodies,
                            vectorize_config=vectorize_config)
 
 
@@ -126,7 +125,6 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                                                  'N': _S
                                              },
                                              vector_width=8,
-                                             fuse_overlapping_loads=True,
                                              sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
                                              branch_mode=branch_mode,
                                              remainder_strategy=remainder_strategy)
@@ -157,7 +155,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
 
 
 def test_snippet_from_cloudsc_one(tile_emit_mode, branch_mode, remainder_strategy, emission_style, vectorize_config):
-    nest_map_bodies, insert_copies = tile_emit_mode
+    insert_copies = tile_emit_mode
     klev = 64
     kfdia = 32
 
@@ -192,13 +190,12 @@ def test_snippet_from_cloudsc_one(tile_emit_mode, branch_mode, remainder_strateg
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style,
                            insert_copies=insert_copies,
-                           nest_map_bodies=nest_map_bodies,
                            vectorize_config=vectorize_config)
 
 
 def test_snippet_from_cloudsc_four(tile_emit_mode, remainder_strategy, emission_style, vectorize_config):
     """T1-restricted (drops branch_mode for axis distribution)."""
-    nest_map_bodies, insert_copies = tile_emit_mode
+    insert_copies = tile_emit_mode
     sdfg = _get_cloudsc_snippet_four()
     sdfg.name = f"cloudsc_snippet_four"
     sdfg.validate()
@@ -237,17 +234,15 @@ def test_snippet_from_cloudsc_four(tile_emit_mode, remainder_strategy, emission_
                            params=scalars,
                            vector_width=8,
                            sdfg_name=sdfg.name,
-                           fuse_overlapping_loads=False,
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style,
                            insert_copies=insert_copies,
-                           nest_map_bodies=nest_map_bodies,
                            vectorize_config=vectorize_config)
 
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
-    fuse_overlapping_loads, insert_copies = opt_parameters
+    _, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)
     sdfg.name = "cloudsc_snippet_three"
@@ -292,7 +287,6 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strat
                            params=scalars,
                            vector_width=8,
                            sdfg_name=sdfg.name,
-                           fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
@@ -303,7 +297,7 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strat
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_mode, remainder_strategy,
                                                         vectorize_config):
-    fuse_overlapping_loads, insert_copies = opt_parameters
+    _, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
     sdfg.name = "cloudsc_snippet_three_with_partial_subset"
@@ -348,7 +342,6 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
                            params=scalars,
                            vector_width=8,
                            sdfg_name=sdfg.name,
-                           fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
                            branch_mode=branch_mode,
@@ -360,7 +353,7 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_parameters, branch_mode, remainder_strategy,
                                                                        vectorize_config):
-    fuse_overlapping_loads, insert_copies = opt_parameters
+    _, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
     sdfg.name = "cloudsc_snippet_three_with_partial_subset_without_inline"
@@ -405,7 +398,6 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
                            params=scalars,
                            vector_width=8,
                            sdfg_name=sdfg.name,
-                           fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
                            branch_mode=branch_mode,
@@ -417,7 +409,7 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_mode, remainder_strategy,
                                                          vectorize_config):
-    fuse_overlapping_loads, insert_copies = opt_parameters
+    _, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)
     sdfg.name = "cloudsc_snippet_three_without_inline_sdfgs"
@@ -462,7 +454,6 @@ def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_
                            params=scalars,
                            vector_width=8,
                            sdfg_name=sdfg.name,
-                           fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
                            branch_mode=branch_mode,
@@ -473,7 +464,7 @@ def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
-    fuse_overlapping_loads, insert_copies = opt_parameters
+    _, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=True)
     sdfg.name = "cloudsc_snippet_three_with_scalar_use"
@@ -519,7 +510,6 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode,
                            params=scalars,
                            vector_width=8,
                            sdfg_name=sdfg.name,
-                           fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,

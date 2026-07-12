@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import _expand_pow
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -58,7 +60,8 @@ def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     ref = np.sin(x)**2
 
     sdfg = sin_squared.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(widths=(8, ), target_isa=isa, remainder_strategy='scalar_postamble').apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
+                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     y = np.zeros(n)
     sdfg(x=x.copy(), y=y, N=n)

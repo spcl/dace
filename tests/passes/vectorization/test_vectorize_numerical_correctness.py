@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 M = 64  # exact multiple of every tested width (2 / 4)
@@ -25,7 +26,8 @@ M = 64  # exact multiple of every tested width (2 / 4)
 
 def _vectorize(prog, isa="SCALAR", width=4, assume_even=False):
     sdfg = prog.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(widths=(width, ), target_isa=isa, assume_even=assume_even).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(width, ), target_isa=isa,
+                                         assume_even=assume_even)).apply_pass(sdfg, {})
     return sdfg
 
 

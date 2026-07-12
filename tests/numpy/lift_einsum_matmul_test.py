@@ -18,6 +18,8 @@ import pytest
 import dace
 import dace.libraries.blas as blas
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
@@ -328,7 +330,8 @@ def test_vectorize_on_prelifted(name):
     # Pre-lift: the contractions are Einsum nodes BEFORE the vectorizer runs.
     sdfg.apply_transformations_repeated(LiftEinsum)
     assert sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum)) == n_contractions
-    VectorizeCPUMultiDim(widths=(8, ), target_isa='SCALAR', remainder_strategy='scalar_postamble').apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
+                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     _run(sdfg, inp, syms, out_name, expected)
 
