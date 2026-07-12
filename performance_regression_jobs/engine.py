@@ -25,6 +25,7 @@ import json
 import multiprocessing as mp
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -125,7 +126,13 @@ def configure_dace_process():
       several GCC versions it can pick one with mismatched libstdc++ headers
       and fail to link. Idempotent (checks the flag isn't already present):
       this can run more than once per process (e.g. _check_dace_job builds
-      both a reference and a candidate SDFG)."""
+      both a reference and a candidate SDFG).
+    - the OpenMP runtime dir is baked into every DaCe .so as an -Wl,-rpath via
+      compiler.cpu.args (native_harness.openmp_rpath_flags). These flags reach
+      DaCe's CMake link line through -DCMAKE_CXX_FLAGS, so the DaCe *CMake* lanes
+      become self-locating too -- otherwise, since `spack load` puts neither
+      libomp nor libgomp on LD_LIBRARY_PATH, loading a -fopenmp kernel via ctypes
+      fails with 'libomp.so: cannot open shared object file'."""
     import dace
     import native_harness as nh
     # Warm the transformation import graph before any to_sdfg() runs in this
@@ -171,6 +178,15 @@ def configure_dace_process():
                 args = dace.Config.get('compiler', 'cpu', 'args')
                 if flag not in args:
                     dace.Config.set('compiler', 'cpu', 'args', value=f'{args} {flag}')
+        # Bake the OpenMP runtime dir into the .so as an rpath so it loads via ctypes even
+        # though `spack load` puts libomp/libgomp on neither LD_LIBRARY_PATH nor a RUNPATH.
+        # In compiler.cpu.args so it reaches DaCe's CMake link line (-DCMAKE_CXX_FLAGS), i.e.
+        # the DaCe CMake lanes -- not just the native/direct-compile ones.
+        args = dace.Config.get('compiler', 'cpu', 'args')
+        for flag in nh.openmp_rpath_flags(cxx):
+            if flag not in args:
+                args = f'{args} {flag}'
+        dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
 # --------------------------------------------------------------------------
@@ -179,10 +195,32 @@ def configure_dace_process():
 # explicitly in addition to a normal Python exception.
 # --------------------------------------------------------------------------
 def _run_and_queue(fn, args, q):
+    # Become a session/process-group leader so that on a timeout the parent can kill this
+    # worker AND every process it spawned (cmake -> make -> compiler) in one killpg. A bare
+    # p.terminate() only signals this Python process, orphaning a slow/stuck build subtree
+    # (observed: cmake trees reparented to PID 1, each holding a <defunct> child) that then
+    # piles up and starves the node. setsid() makes pgid == this pid; best-effort.
+    try:
+        os.setsid()
+    except OSError:
+        pass
     try:
         q.put(('ok', fn(*args)))
     except Exception as e:
         q.put(('error', f'{type(e).__name__}: {e}'))
+
+
+def _kill_process_group(p):
+    """SIGKILL the worker's whole process group (the worker setsid()'d, so its pid is the
+    group id), reaping any cmake/make/compiler descendants. Falls back to killing just the
+    worker if the group can't be addressed."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            p.kill()
+        except Exception:
+            pass
 
 
 def run_isolated(fn, args=(), timeout=120):
@@ -193,7 +231,7 @@ def run_isolated(fn, args=(), timeout=120):
     p.start()
     p.join(timeout)
     if p.is_alive():
-        p.terminate()
+        _kill_process_group(p)  # kill the worker AND its build subtree, not just the worker
         p.join()
         return False, f'timeout after {timeout}s'
     if p.exitcode != 0:
@@ -271,7 +309,11 @@ def _direct_compile_cmd(sdfg, folder):
     so = os.path.join(folder, f'lib{sdfg.name}.so')
     # Don't pin a low standard (DaCe codegen may use newer C++); assume the toolchain supports >=23.
     std = os.environ.get('DACE_PERF_CXX_STD', 'c++23')
-    return [cxx, *args, f'-std={std}', '-fPIC', '-shared', '-fopenmp', *inc, *srcs, '-o', so], srcs
+    # rpath the OpenMP runtime dir so the built .so loads via ctypes (spack load doesn't put
+    # libomp/libgomp on LD_LIBRARY_PATH; see native_harness.openmp_rpath_flags).
+    import native_harness as nh
+    return [cxx, *args, f'-std={std}', '-fPIC', '-shared', '-fopenmp', *nh.openmp_rpath_flags(cxx),
+            *inc, *srcs, '-o', so], srcs
 
 
 def compile_sdfg_timed(sdfg):

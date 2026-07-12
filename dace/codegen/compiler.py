@@ -4,12 +4,14 @@
     returns the corresponding CompiledSDFG object. """
 
 import collections
+import contextlib
 import io
 import os
 import pathlib
 import re
 import shutil
 import shlex
+import signal
 import subprocess
 from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
@@ -191,6 +193,39 @@ def _build_subprocess_env():
     Compilation never needs an MPI identity, so drop those variables from the build
     environment; everything else (PATH, compiler flags, MCA tuning, ...) is preserved."""
     return {k: v for k, v in os.environ.items() if not k.startswith(_MPI_RANK_ENV_PREFIXES)}
+
+
+@contextlib.contextmanager
+def _build_subprocess_sigmask():
+    """Temporarily unblock ``SIGCHLD`` on the calling thread so a subprocess forked
+    inside this context inherits an unblocked ``SIGCHLD``.
+
+    MPI/Slurm launchers (``srun``, ``mpirun``) start their tasks with ``SIGCHLD`` *blocked*
+    in the signal mask, and every child inherits that mask. CMake (KWSys) learns that the
+    helper processes it spawns during *configure* -- ``uname`` for system introspection,
+    the compiler-id / ABI test binaries, ``make``/``ninja`` -- have finished by receiving
+    ``SIGCHLD``; with ``SIGCHLD`` blocked it is never woken to reap them, so ``cmake`` spins
+    forever in ``select()`` leaving ``<defunct>`` children. That is the daint compile hang:
+    it looks like a stuck ``cmake`` even though nothing is compiling. (Confirmed under srun:
+    every task's ``/proc/self/status`` shows ``SigBlk`` with the ``SIGCHLD`` bit set, and a
+    trivial ``project()`` configure hangs until the child mask is cleared.)
+
+    A child inherits the *forking thread's* mask, and ``subprocess.Popen`` forks from the
+    calling thread without resetting it, so unblocking here -- immediately around the
+    ``Popen`` -- is enough. ``pthread_sigmask`` is per-thread, so this never disturbs other
+    threads or the process's steady-state mask, and it is restored right after the fork.
+    No-op where ``pthread_sigmask``/``SIGCHLD`` are unavailable (e.g. Windows)."""
+    if not hasattr(signal, 'pthread_sigmask') or not hasattr(signal, 'SIGCHLD'):
+        yield
+        return
+    if signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, []):
+        yield  # SIGCHLD already deliverable -- nothing to do (the common, non-launcher case)
+        return
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
 
 
 def configure_and_compile(
@@ -688,7 +723,12 @@ def identical_file_exists(filename: str, file_contents: str):
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+    # Fork the build subprocess (CMake) with SIGCHLD unblocked so it can reap the helper
+    # processes it spawns during configure; an MPI/Slurm launcher blocks SIGCHLD in the
+    # inherited mask, which otherwise deadlocks cmake in select() (see
+    # _build_subprocess_sigmask). Only the fork needs to happen inside the context.
+    with _build_subprocess_sigmask():
+        process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
