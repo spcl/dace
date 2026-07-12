@@ -838,7 +838,12 @@ class VectorizeMultiDim(ppl.Pipeline):
         # (``to_sdfg(simplify=False)``) with FunctionCallRegions / redundant states / un-inlined
         # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;
         # already-simplified inputs are a near no-op.
-        sdfg.simplify(validate_all=self._validate_all)
+        # Skip ``ArrayElimination`` (mirrors canonicalize's terminal SimplifyPass): it eliminates
+        # an anti-dependence SNAPSHOT copy (``a_split_snap = a``, read as ``a_split_snap[i+1]`` while
+        # ``a`` is updated in place) as a "redundant" array, redirecting the read back to ``a`` --
+        # which destroys the anti-dep break and miscompiles (e.g. s212 ``b[i]+=a[i+1]*d[i]``). The
+        # only cost of skipping it is a dead transient left uncleaned, which the tiler ignores.
+        sdfg.simplify(validate_all=self._validate_all, skip={'ArrayElimination'})
         # Infer connector types + assign default schedules/storage at the START of vectorization
         # (user 2026-07-10). This gives every map a concrete schedule -- ``Sequential`` vs
         # ``CPU_Multicore`` vs ``GPU_Device`` -- BEFORE the tile pipeline, so a downstream pass that
@@ -1238,5 +1243,5 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         """
         if self._gpu_schedule_if_needed and not _has_gpu_device_map(sdfg):
             sdfg.apply_gpu_transformations()
-            sdfg.simplify()
+            sdfg.simplify(skip={'ArrayElimination'})  # preserve anti-dep snapshots (see apply_pass)
         return super().apply_pass(sdfg, pipeline_results)
