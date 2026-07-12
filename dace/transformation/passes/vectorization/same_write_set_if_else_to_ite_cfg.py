@@ -404,6 +404,31 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         if else_state is not None:
             self._clone_with_redirect(else_state, ce_state, temp_else)
 
+        # Stitch ConditionalBlock in/out edges onto ct_state -> ce_state -> am_state and
+        # drop the original block *before* resolving the cond. Resolving on a still
+        # disconnected graph leaves the freshly-added states as a separate CFG component,
+        # so a staged-read symbol defined on an edge ahead of ``cb`` (``a_index_0 =
+        # a[_loop_it_1]`` guarding TSVC s279's nested ``if b[i] > a[i]``) no longer appears
+        # to dominate ``am_state`` and gets spuriously reported as a free symbol of the
+        # (nested) SDFG. ``_protected_symbols`` then refuses to inline/drop it, leaving an
+        # orphaned free symbol -> "Missing symbols on nested SDFG". Wiring the states in
+        # first keeps the definition dominating the merge state so the lift stages + prunes
+        # it correctly.
+        in_edges = list(parent.in_edges(cb))
+        out_edges = list(parent.out_edges(cb))
+        was_start = (parent.start_block is cb)
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(cb)
+        for e in in_edges:
+            parent.add_edge(e.src, ct_state, e.data)
+        parent.add_edge(ct_state, ce_state, dace.InterstateEdge())
+        parent.add_edge(ce_state, am_state, dace.InterstateEdge())
+        for e in out_edges:
+            parent.add_edge(am_state, e.dst, e.data)
+        if was_start:
+            parent.start_block = parent.node_id(ct_state)
+
         # ITE tasklets. Non-writing arm contributes pre-cb value (reads original ``arr``,
         # intact because writing arm targets its private temp). Resolve cond once so the
         # symbol-lift side effect (deleting upstream assignment) fires once even when
@@ -427,23 +452,6 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                                    cond_text,
                                    cond_array_name=cond_array_name,
                                    cond_producer=cond_producer)
-
-        # Stitch ConditionalBlock in/out edges onto ct_state -> ce_state -> am_state, drop
-        # original block.
-        in_edges = list(parent.in_edges(cb))
-        out_edges = list(parent.out_edges(cb))
-        was_start = (parent.start_block is cb)
-        for e in in_edges + out_edges:
-            parent.remove_edge(e)
-        parent.remove_node(cb)
-        for e in in_edges:
-            parent.add_edge(e.src, ct_state, e.data)
-        parent.add_edge(ct_state, ce_state, dace.InterstateEdge())
-        parent.add_edge(ce_state, am_state, dace.InterstateEdge())
-        for e in out_edges:
-            parent.add_edge(am_state, e.dst, e.data)
-        if was_start:
-            parent.start_block = parent.node_id(ct_state)
 
         # End-of-pass invariant: every emitted state has well-formed connectors.
         for s in (ct_state, ce_state, am_state):
@@ -640,7 +648,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # head as scalar -> tile-op converter emits ``(int)(A)`` pointer cast. Runs before
         # compound recipe (boolean combination of interstate-defined symbols, not array
         # reads).
-        array_pred = self._lift_array_predicate_cond(sdfg, state, cond_text, subset_str)
+        array_pred = self._lift_array_predicate_cond(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if array_pred is not None:
             return array_pred
         return self._lift_compound_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
@@ -1024,8 +1032,13 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access
 
-    def _lift_array_predicate_cond(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
-                                   subset_str: str) -> Optional[Tuple[str, dace.nodes.AccessNode]]:
+    def _lift_array_predicate_cond(self,
+                                   sdfg: dace.SDFG,
+                                   state: dace.SDFGState,
+                                   cond_text: str,
+                                   subset_str: str,
+                                   *,
+                                   skip_cb=None) -> Optional[Tuple[str, dace.nodes.AccessNode]]:
         """Stage a guard that DIRECTLY reads array subscripts (``A[i] > K``) into a
         per-lane bool transient, each element read through an in-connector.
 
@@ -1037,22 +1050,42 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         operand becomes a tile; genuine symbols (kernel args like ``K``) stay free-symbol
         text.
 
+        A guard can MIX a directly-read array transient (``b_index_0``, materialised
+        because an arm rewrote ``b[i]``) with an interstate-defined scalar symbol
+        (``a_index_0 = a[_loop_it_1]``, a staged element read that was only loaded) --
+        TSVC s279's nested ``if b[i] > a[i]``. Left as free-symbol text, ``a_index_0``
+        becomes a free symbol of the (nested) SDFG whose interstate definition no longer
+        dominates the relocated apply-ITE state -> "Missing symbols on nested SDFG". Inline
+        such symbols into their array-read definitions first (mirrors the interstate
+        recipe) so every operand stages through a connector; genuine free symbols (kernel
+        args like ``K``, loop iterators) are protected and stay.
+
         :returns: ``(cond_name, cond_access)`` for the lifted bool transient, or ``None``
             when cond reads no SDFG array or can't be parsed (caller keeps free-symbol
             text).
         """
+        # Expand interstate staged-read symbols (no mutation yet -- the prune below only
+        # fires once the recipe has committed to producing a lift, so a fall-through return
+        # leaves the SDFG pristine for the caller's next recipe).
+        expanded, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, cond_text, exclude=set())
         # Union both accessors: ``symbolic.arrays`` catches a bracketed read (``A[i]``)
         # array-head ``free_symbols`` misses; ``free_symbols_and_functions`` catches a
         # BARE array ref (``A`` as current-lane element, the shape the ConditionalBlock
         # cond carries here -- ``threshold_data > K``). Bare read has no captured subset ->
         # wired at ``subset_str`` (write's per-lane subset).
         try:
-            free_vars = set(symbolic.arrays(cond_text)) | set(symbolic.free_symbols_and_functions(cond_text))
+            free_vars = set(symbolic.arrays(expanded)) | set(symbolic.free_symbols_and_functions(expanded))
         except Exception:  # noqa: BLE001 -- unparsable expr: let the caller fall back
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)
         if not arr_reads:
             return None
+        # Recipe commits: the inlined symbols now live inside the lifted tasklet body, so
+        # prune each interstate definition whose only remaining consumer was this guard
+        # (``_drop_interstate_symbol`` keeps a still-consumed / protected symbol in place).
+        cond_text = expanded
+        for sym, def_edges in inlined_syms.items():
+            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
         # Guard is a predicate -> one bool per lane; size transient to cond range (flat
         # 1-D extent, as interstate recipe).
         try:

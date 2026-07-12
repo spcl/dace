@@ -94,6 +94,20 @@ def _wcr_targets(sdfg: dace.SDFG):
     return arr_elem, scalar
 
 
+def _tiled_map_steps(sdfg: dace.SDFG):
+    """The set of constant map-range step sizes ``> 1`` across the SDFG (recursively).
+
+    A nonempty set means the widener strided some map by a tile width -- it TILED the kernel; an
+    empty set means every map is still unit-step, i.e. the kernel was left un-tiled (a refusal)."""
+    steps = set()
+    for node, _parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            for _, _, step in node.map.range:
+                if str(step) != "1":
+                    steps.add(str(step))
+    return steps
+
+
 # ---------------------------------------------------------------------------
 # Structural: the pass rewrites the array-slot WCR into a scalar accumulator.
 # ---------------------------------------------------------------------------
@@ -176,15 +190,30 @@ def _vectorize(prog, name):
 
 
 def test_array_slot_dot_bails_without_prep_and_widens_with_it():
-    """The dot-into-slot reduction BAILS through the vectorizer with the prep disabled, and widens
-    to a correct result with it on -- the "no-widen before, correct after" case."""
-    # BEFORE: with the prep patched to a no-op, the array-slot WCR reaches the tiler as a loose
-    # in-body WCR and the pipeline's precondition fires.
-    with mock.patch.object(PrepareReductionForWidening, "apply_pass", lambda self, sdfg, res: None):
-        with pytest.raises((AssertionError, dace.sdfg.validation.InvalidSDFGError)):
-            _vectorize(dot_into_slot, "dot_into_slot_noprep")
+    """The dot-into-slot reduction GRACEFULLY REFUSES through the vectorizer with the prep disabled
+    -- left correct + un-tiled with a warning, never a crash -- and widens to a correct result with
+    the prep on: the "no-widen before, correct after" case.
 
-    # AFTER: the wired-in prep scalar-localizes it and the widened result matches numpy.
+    The vectorizer must NEVER assert-crash on an un-tileable body (maintainer direction): a loose
+    in-body WCR it cannot soundly lower raises ``VectorizeUnsupported`` from the ``_AssertNoBodyWCR``
+    precondition, which the orchestrator catches, restoring the pristine SDFG and returning un-tiled.
+    """
+    # BEFORE: with the prep patched to a no-op, the array-slot WCR ``s[3] += a[i]*b[i]`` reaches the
+    # tiler as a loose in-body WCR the widener cannot lower without racing the lanes. Rather than
+    # crash, the pipeline refuses THIS kernel: it warns "refusing to vectorize", restores the
+    # pristine SDFG, and leaves it un-tiled. Assert the refusal is clean AND real -- it warns, the
+    # original array-slot WCR reduction survives un-privatized, and no map was strided to a tile
+    # width (nothing was tiled).
+    with mock.patch.object(PrepareReductionForWidening, "apply_pass", lambda self, sdfg, res: None):
+        with pytest.warns(UserWarning, match="refusing to vectorize"):
+            refused = _vectorize(dot_into_slot, "dot_into_slot_noprep")
+    assert _wcr_targets(refused) == (1, 0), "a refusal must leave the original array-slot WCR reduction in place"
+    assert not _tiled_map_steps(refused), "a refused kernel must stay un-tiled (every map still unit-step)"
+
+    # AFTER: the wired-in prep scalar-localizes it, the widener strides the map to the tile width
+    # and folds the reduction (the array-slot WCR becomes a scalar-accumulator ``TileReduce``), and
+    # the widened result matches numpy. The structural checks make "widens" non-vacuous: without
+    # real widening the array-slot WCR would survive and no map would be strided to width 8.
     n = 60
     a = np.random.random(n)
     b = np.random.random(n)
@@ -192,6 +221,8 @@ def test_array_slot_dot_bails_without_prep_and_widens_with_it():
     ref = np.zeros(8)
     ref[3] = float((a * b).sum())
     sdfg = _vectorize(dot_into_slot, "dot_into_slot_prep")
+    assert _wcr_targets(sdfg)[0] == 0, "prep+widen must fold the array-slot WCR -- none may survive"
+    assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"
     sdfg.compile()(a=a.copy(), b=b.copy(), s=s, N=n)
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 

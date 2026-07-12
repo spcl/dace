@@ -165,6 +165,38 @@ def _expandable_during_vectorization(node) -> bool:
     return isinstance(node, _TILE_NODE_TYPES)
 
 
+def _wcr_output_is_injective_rmw(graph, map_exit, array: str, params) -> bool:
+    """True iff every inner per-element write of ``array`` into ``map_exit`` indexes with
+    EVERY enclosing map param -- an injective per-element read-modify-write (s212
+    ``a[i] *= c[i]``) that writes each element exactly once, NOT a cross-iteration reduction.
+
+    A genuine reduction / contraction (gesummv ``tmp[i] += A[i,j]*x[j]``) omits a reduced param
+    (``j``) from the write index, so many iterations write the same element -- that is what
+    :class:`_MultiOutputReductionMapFission` must separate into one contraction per output for
+    ``LiftEinsum`` / the reduction lift. An injective RMW is plain elementwise dataflow the tiler
+    widens as an ordinary ``TileStore``; fissioning it is unnecessary AND unsound here: the split
+    detaches the in-place ``a`` write from the anti-dependence snapshot that ordered it
+    (``a_split_snap = a`` upstream of the fused map), so codegen then overwrites ``a`` before the
+    snapshot reads it -- miscompiling ``b[i] += a_snap[i+1]*d[i]``. So such maps stay fused.
+
+    Conservative: an unresolvable inner write (no matching in-edge / no subset) counts as a
+    reduction (fission-eligible), never masking a genuine one.
+    """
+    param_syms = {str(p) for p in params}
+    inner = [
+        e for e in graph.in_edges(map_exit)
+        if e.data is not None and e.data.data == array and e.data.subset is not None
+    ]
+    if not inner:
+        return False
+    for e in inner:
+        idx_syms = {str(s) for s in e.data.subset.free_symbols}
+        if not param_syms.issubset(idx_syms):
+            # A map param is reduced over (absent from this write) → cross-iteration reduction.
+            return False
+    return True
+
+
 class _MultiOutputReductionMapFission(MapFission):
     """:class:`MapFission` restricted to maps separating ≥2 distinct WCR (reduction/contraction) outputs.
 
@@ -186,10 +218,19 @@ class _MultiOutputReductionMapFission(MapFission):
         except Exception:
             return False
         map_exit = graph.exit_node(self.map_entry)
+        # Count only GENUINE reduction / contraction outputs. An INJECTIVE per-element RMW WCR
+        # (write indexed by every map param, each element written once — s212 ``a[i] *= c[i]`` /
+        # ``b[i] += a_snap[i+1]*d[i]``) is elementwise, not a cross-iteration reduction, so it needs
+        # no fissioning; and fissioning it detaches the in-place ``a`` write from its anti-dependence
+        # snapshot, miscompiling s212 (see ``_wcr_output_is_injective_rmw``). Only a write that
+        # reduces over some map param (gesummv ``tmp[i] += A[i,j]*x[j]``: ``j`` absent) is a
+        # contraction ``LiftEinsum`` needs separated.
+        params = self.map_entry.map.params
         wcr_arrays = {
             e.data.data
             for e in graph.out_edges(map_exit)
             if e.data is not None and e.data.data is not None and e.data.wcr is not None
+            and not _wcr_output_is_injective_rmw(graph, map_exit, e.data.data, params)
         }
         if len(wcr_arrays) < 2:
             return False

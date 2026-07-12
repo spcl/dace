@@ -1,14 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end NUMERICAL corpus test: ``canonicalize`` (and its ``fast=True``
-variant) must be value-preserving on every kernel of the COMBINED polybench +
-npbench corpus.
+"""End-to-end NUMERICAL corpus test: ``canonicalize`` must be value-preserving on
+every kernel of the COMBINED polybench + npbench corpus.
 
 For each kernel a fresh SDFG is canonicalized + ``finalize_for_target('cpu')`` and
 run; its output must match the suite's reference (polybench: the untransformed
 SDFG; npbench: the numpy reference). Every kernel in the corpus must pass -- there
 is no xfail list, so a canon gap is a hard failure rather than a tracked backlog item.
 
-Run as a script for the full canon / fast-canon / auto-opt comparison tables:
+Run as a script for the full canon / auto-opt comparison tables:
     python -m tests.passes.canonicalize.canonicalize_numerical_corpus_test
 """
 import os
@@ -67,10 +66,6 @@ def _canon(s):
     return finalize_for_target(canonicalize(s, validate=True, **_CPU), 'cpu')
 
 
-def _fast_canon(s):
-    return finalize_for_target(canonicalize(s, validate=True, fast=True, **_CPU), 'cpu')
-
-
 def _preserves(suite, name, transform, tag):
     ctx = CS.make(suite, name, 'S')  # small/fast preset for a quick correctness check
     sdfg = CS.build(ctx, transform, tag)
@@ -83,23 +78,16 @@ def test_canon_preserves_semantics(suite, name):
     assert _preserves(suite, name, _canon, 'canon'), f"canon changed {suite}:{name} output vs reference"
 
 
-@pytest.mark.parametrize("suite,name", CS.kernels())
-def test_fast_canon_preserves_semantics(suite, name):
-    """``canonicalize(target='cpu', fast=True)`` is value-preserving across the corpus."""
-    assert _preserves(suite, name, _fast_canon, 'fastcanon'), f"fast-canon changed {suite}:{name} output vs reference"
-
-
 # ---------------------------------------------------------------------------
-# Script entry point: print the canon / fast-canon / auto-opt comparison tables.
+# Script entry point: print the canon / auto-opt comparison tables.
 # ---------------------------------------------------------------------------
 def _generate_tables():
     from dace.transformation.auto.auto_optimize import auto_optimize
     pipelines = {
         'canon': _canon,
-        'fast-canon': _fast_canon,
         'auto-opt': lambda s: auto_optimize(s, dace.DeviceType.CPU),
     }
-    print(f"{'suite':5} {'kernel':18} {'canon':>10} {'fast-canon':>12} {'auto-opt':>10}", flush=True)
+    print(f"{'suite':5} {'kernel':18} {'canon':>10} {'auto-opt':>10}", flush=True)
     tally = {lbl: 0 for lbl in pipelines}
     for suite, name in CS.kernels():
         row = {}
@@ -112,7 +100,7 @@ def _generate_tables():
                 row[lbl] = f'ERR:{type(e).__name__}'
             if row[lbl] == 'PASS':
                 tally[lbl] += 1
-        print(f"{suite:5} {name:18} {row['canon']:>10} {row['fast-canon']:>12} {row['auto-opt']:>10}", flush=True)
+        print(f"{suite:5} {name:18} {row['canon']:>10} {row['auto-opt']:>10}", flush=True)
     n = len(CS.kernels())
     print(f"\n# SUMMARY ({n} kernels): " + "  ".join(f"{lbl}={tally[lbl]}/{n}" for lbl in pipelines), flush=True)
 

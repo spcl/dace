@@ -55,7 +55,13 @@ def _simplify_conjunction(cond_str: str) -> str:
             uniq.append(c)
     if len(uniq) == len(conjuncts):
         return cond_str
-    return ' and '.join(f'({u})' for u in uniq)
+    # Reconstruct via ``symstr`` rather than ``str``: a subscripted guard read
+    # (``g[i]``) prints under sympy ``str`` as the internal ``Subscript(g, i)``
+    # function form, which the codegen cannot compile. ``symstr`` with the
+    # accessed container names renders it back to ``g[i]``. ``symstr`` already
+    # parenthesizes each non-atomic conjunct.
+    arrnames = frozenset().union(*(symbolic.arrays(u) for u in uniq))
+    return ' and '.join(symbolic.symstr(u, arrnames) for u in uniq)
 
 
 @properties.make_properties

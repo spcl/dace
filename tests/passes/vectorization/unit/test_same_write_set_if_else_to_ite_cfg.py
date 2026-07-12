@@ -265,3 +265,107 @@ def test_lift_array_predicate_cond_skips_pure_symbol_condition():
     sdfg.add_symbol("K", dace.float64)
     state = sdfg.add_state("s", is_start_block=True)
     assert SameWriteSetIfElseToITECFG()._lift_array_predicate_cond(sdfg, state, "K > 0", "i") is None
+
+
+# ---------------------------------------------------------------------------
+# s279-shaped mixed cond: array transient vs interstate staged array read
+# ---------------------------------------------------------------------------
+
+
+def build_s279_shaped_guard_sdfg():
+    """Single-arm guard whose condition MIXES a directly-read array transient
+    (``b_index_0``) with an interstate-defined staged read of an array
+    (``a_index_0 = a[0]``) -- the shape TSVC s279's nested ``if b[i] > a[i]`` takes
+    after canonicalization::
+
+        b_index_0 = b[0]              (staged in entry)
+        a_index_0 = a[0]              (interstate assignment)
+        if b_index_0 > a_index_0:
+            c[0] = c[0] + 1.0
+
+    The array-predicate recipe fires (``b_index_0`` is an array) but must also inline
+    the interstate staged read ``a_index_0`` into ``a[0]`` and stage it through a
+    connector -- else ``a_index_0`` is left as free-symbol text and orphaned when the
+    apply-ITE state is relocated ("Missing symbols on nested SDFG").
+    """
+    sdfg = dace.SDFG("s279_shaped_guard")
+    sdfg.add_array("a", (1, ), dace.float64)
+    sdfg.add_array("b", (1, ), dace.float64)
+    sdfg.add_array("c", (1, ), dace.float64)
+    sdfg.add_array("b_index_0", (1, ), dace.float64, transient=True)
+    sdfg.add_symbol("a_index_0", dace.float64)
+
+    entry = sdfg.add_state("entry", is_start_block=True)
+    rb = entry.add_access("b")
+    wbi = entry.add_access("b_index_0")
+    tb = entry.add_tasklet("stage_b", {"_b"}, {"_bi"}, "_bi = _b")
+    entry.add_edge(rb, None, tb, "_b", dace.Memlet("b[0]"))
+    entry.add_edge(tb, "_bi", wbi, None, dace.Memlet("b_index_0[0]"))
+
+    mid = sdfg.add_state("mid")
+    sdfg.add_edge(entry, mid, dace.InterstateEdge(assignments={"a_index_0": "a[0]"}))
+
+    cb = ConditionalBlock("guard")
+    sdfg.add_node(cb)
+    sdfg.add_edge(mid, cb, dace.InterstateEdge())
+    exit_s = sdfg.add_state("exit")
+    sdfg.add_edge(cb, exit_s, dace.InterstateEdge())
+
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    s = arm.add_state("arm_s", is_start_block=True)
+    rc = s.add_access("c")
+    wc = s.add_access("c")
+    t = s.add_tasklet("body", {"_c"}, {"_o"}, "_o = _c + 1.0")
+    s.add_edge(rc, None, t, "_c", dace.Memlet("c[0]"))
+    s.add_edge(t, "_o", wc, None, dace.Memlet("c[0]"))
+    cb.add_branch(CodeBlock("(b_index_0 > a_index_0)"), arm)
+    return sdfg
+
+
+def test_pass_converts_mixed_array_and_interstate_staged_read_cond():
+    """s279's nested guard: conversion fires and the interstate staged read
+    ``a_index_0 = a[0]`` is inlined + dropped (no orphaned free symbol)."""
+    sdfg = build_s279_shaped_guard_sdfg()
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+    assert rewritten == 1, "the s279-shaped guard must be converted, not refused"
+
+    # No ConditionalBlock remains; the three ITE states are in place.
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+
+    # The staged-read symbol is fully eliminated -- not a symbol, not free, and no
+    # interstate edge still assigns it (that is what caused the missing-symbol error).
+    assert "a_index_0" not in sdfg.symbols
+    assert "a_index_0" not in set(map(str, sdfg.free_symbols))
+    assert not [
+        e for cfg in sdfg.all_control_flow_regions(recursive=True)
+        for e in cfg.edges() if "a_index_0" in (e.data.assignments or {})
+    ], "the dead a_index_0 assignment must be pruned"
+
+    # The lifted guard stages BOTH operands through in-connectors (never the bare
+    # symbol / array head) so both become per-lane tiles downstream.
+    lift = [
+        n for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.Tasklet) and "lift_cond" in n.label
+    ]
+    assert len(lift) == 1, "exactly one lifted cond tasklet expected"
+    lift_state = next(st for st in sdfg.states() if lift[0] in st.nodes())
+    assert "a_index_0" not in lift[0].code.as_string
+    staged = {e.data.data for e in lift_state.in_edges(lift[0])}
+    assert staged == {"a", "b_index_0"}, f"both operands must be staged reads, got {staged}"
+
+    sdfg.validate()
+
+
+def test_pass_mixed_cond_numerical_correctness():
+    """End-to-end compile-run of the s279-shaped guard; reference = scalar branch."""
+    sdfg = build_s279_shaped_guard_sdfg()
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+    csdfg = sdfg.compile()
+    for av in (-1.0, 0.5, 3.0):
+        for bv in (-2.0, 1.0, 5.0):
+            for cv in (7.0, -4.0):
+                a = np.array([av], dtype=np.float64)
+                b = np.array([bv], dtype=np.float64)
+                c = np.array([cv], dtype=np.float64)
+                csdfg(a=a, b=b, c=c)
+                expected = cv + 1.0 if bv > av else cv
+                np.testing.assert_allclose(c[0], expected, err_msg=f"a={av} b={bv} c={cv}")

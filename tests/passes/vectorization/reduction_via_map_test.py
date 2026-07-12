@@ -53,9 +53,17 @@ def masked_reduce(data: dace.float64[N], mask: dace.int64[N], res: dace.float64[
 
 
 def _run(prog, kwargs, ref, isa):
+    from dace.libraries.tileops import TileReduce
     sdfg = prog.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
-                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+    cfg = VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+                          expand_tile_nodes=False)
+    VectorizeCPUMultiDim(cfg).apply_pass(sdfg, {})
+    # The scalar accumulation must have been LOWERED to a horizontal TileReduce -- i.e. actually
+    # vectorized, not silently refused (a refuse would leave a plain per-lane scalar reduction and
+    # still run bit-exact, hiding a no-op). Assert the tile fold is present before expanding.
+    assert any(isinstance(n, TileReduce) for n, _ in sdfg.all_nodes_recursive()), \
+        f"{prog.name}/{isa}: no TileReduce -- reduction was not vectorized (silent refuse?)"
+    sdfg.expand_library_nodes()
     sdfg.validate()
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in kwargs.items()}
     sdfg(**work)
@@ -71,17 +79,16 @@ def test_scalar_reduce_via_map(isa):
     _run(scalar_reduce, dict(data=data, res=np.zeros(1), N=n), data.sum(), isa)
 
 
-@pytest.mark.xfail(reason="masked-reduction fold: LiftMapReductionToReduce runs BEFORE branch lowering, so a "
-                   "conditional accumulation ``if mask[j]: acc += x[j]`` is not recognized as a reduction and "
-                   "the per-lane fold miscompiles (scalar accumulator emitted as a tile). Needs predicated-"
-                   "reduction lift (normalize ``if c: acc op= x`` -> ``acc op= select(c, x, identity)`` before "
-                   "the reduction lift). Two upstream pass-bugs already fixed (transient connector, const-assign "
-                   "Tasklet.data). Tracked.",
-                   strict=False)
 @pytest.mark.parametrize("isa", ["SCALAR", "AVX512"])
 def test_masked_reduce_via_map(isa):
     """Masked WCR sum + count (``azimint_naive`` shape): conditional accumulation
-    inside a ``dace.map``."""
+    inside a ``dace.map``.
+
+    The frontend lowers ``if mask[j]: acc += x[j]`` to a masked in-nsdfg WCR that
+    ``NormalizeWCR`` turns into a seeded body-local accumulator + a plain copyback into a
+    scalar sink. ``WidenAccesses`` (Step 0) rewrites that copyback into a ``reduce_accum`` fold
+    -- read off the boundary WCR op -- so it lowers to a horizontal ``TileReduce`` and the scalar
+    sink is NOT over-widened. Bit-exact at K=1 SCALAR and AVX512."""
     rng = np.random.default_rng(1)
     n = 20
     data = rng.random(n)

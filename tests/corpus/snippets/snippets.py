@@ -1,14 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CloudSC / ICON loopnest snippets for the canonicalization sweep.
 
-The full CloudSC SDFG is far too large for a fast canonicalization check, so this
+The full CloudSC SDFG is far too large for a quick canonicalization check, so this
 loader reuses the *characteristic loopnest snippets* already maintained as faithful
 ``@dace.program`` ports under ``tests/passes/vectorization/cloudsc/`` (the same ones
 the vectorization tests exercise). Each snippet is a self-contained ``@dace.program``;
 its argument shapes/dtypes are introspected from the function annotations.
 
 Like polybench, these snippets carry no numpy oracle -- correctness here is
-*value-preserving*: a canonicalized (or fast-canonicalized) SDFG is compared against
+*value-preserving*: a canonicalized SDFG is compared against
 the untransformed baseline SDFG run on identical inputs.
 """
 import importlib

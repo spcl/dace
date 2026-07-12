@@ -1622,12 +1622,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # If the single-use-data cache is present AND covers this SDFG, use it. A
         # cached ``Dict[SDFG]`` can legitimately miss an SDFG created after the cache
-        # was built -- fast canonicalization's residual ``LoopToMap`` mints
+        # was built -- canonicalization's residual ``LoopToMap`` mints
         # ``SDFG('loop_body')`` NestedSDFGs downstream of the ``FindSingelUseData``
         # analysis -- so a missing key means "not yet analyzed", not an invariant
         # violation. Fall back to a fresh scan rather than asserting (a stale-cache
-        # ``KeyError`` was the durbin/channel_flow fast-canon flake) -- the scan is the
-        # same computation the no-cache path performs.
+        # ``KeyError`` was the durbin/channel_flow canonicalization flake) -- the scan
+        # is the same computation the no-cache path performs.
         if single_use_data is not None and sdfg in single_use_data:
             return data.data not in single_use_data[sdfg]
 

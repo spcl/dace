@@ -23,11 +23,13 @@ Algorithm (5 steps, per tile-tagged body NSDFG):
 Downstream chain ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``GatherLift`` ->
 ``ConvertTaskletsToTileOps`` then emits gather/scatter.
 """
+import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import data as dd
 from dace import properties, subsets
+from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -557,10 +559,13 @@ class WidenAccesses(ppl.Pass):
                             seeded += 1
         return seeded
 
-    def _widen_transient(self, inner_sdfg: SDFG, name: str) -> bool:
+    def _widen_transient(self, inner_sdfg: SDFG, name: str, to_widen: Set[str]) -> bool:
         """Swap descriptor to ``Array(widths)`` + rewrite touching memlets.
 
         Returns True on rewrite, False if not eligible.
+
+        ``to_widen`` is the full set of transients being widened this sweep; it tells the
+        ``other_subset`` rewrite which endpoints become tiles versus which stay scalar.
         """
         desc = inner_sdfg.arrays.get(name)
         if desc is None or not desc.transient or not self._is_widenable(desc):
@@ -585,10 +590,123 @@ class WidenAccesses(ppl.Pass):
                 # only 1 element of the W-element tile.
                 edge.data.volume = new_sub.num_elements()
                 # Widen ``other_subset`` symmetrically (AN -> AN copy ``a[i] -> b[0]``); else
-                # validator trips ``Dimensionality mismatch between src/dst subsets``.
-                if edge.data.other_subset is not None:
+                # validator trips ``Dimensionality mismatch between src/dst subsets``. But a WCR
+                # SCALAR / single-element reduction target (a scalar accumulator ``_nnr_out``, or a
+                # broadcast SOURCE scalar read into a tile) stays single-element -- the tile folds
+                # INTO it (TileReduce) or broadcasts FROM it, never a per-lane copy. Over-widening
+                # its ``other_subset`` to ``[0:W]`` on a shape-``(1,)`` array is out-of-bounds. Keep
+                # ``other_subset`` un-widened when the OTHER endpoint stays single-element (not
+                # itself a tile being widened this sweep).
+                if edge.data.other_subset is not None and self._other_endpoint_widens(
+                        edge, name, inner_sdfg, to_widen):
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
         return True
+
+    @staticmethod
+    def _other_endpoint_widens(edge, name: str, inner_sdfg: SDFG, to_widen: Set[str]) -> bool:
+        """True if the endpoint of ``edge`` OPPOSITE the ``name`` side becomes a tile -- so its
+        ``other_subset`` must widen too. False for a single-element endpoint that stays scalar (a
+        WCR reduction accumulator / broadcast source), whose ``other_subset`` must remain ``[0]``.
+        """
+        if isinstance(edge.src, AccessNode) and edge.src.data == name:
+            other = edge.dst
+        else:
+            other = edge.src
+        if not isinstance(other, AccessNode):
+            return True  # non-AN endpoint (tasklet/lib node): keep symmetric widening
+        other_desc = inner_sdfg.arrays.get(other.data)
+        if other_desc is None:
+            return True
+        if other.data in to_widen:
+            return True  # the other endpoint is itself being widened to a tile
+        try:
+            return int(other_desc.total_size) != 1
+        except (TypeError, ValueError):
+            return True
+
+    # --- Step 0: lower seeded reduction copybacks to a fold tasklet ----------
+    def _boundary_reduction_wcr(self, state: SDFGState, nsdfg_node: NestedSDFG, oc: str) -> Optional[str]:
+        """The reduction WCR lambda on the OUTER boundary of output connector ``oc``, else ``None``.
+
+        ``NormalizeWCR`` routes a map reduction as ``NSDFG[oc] -> _nnr_out -[wcr:op]-> MapExit ->
+        acc``; the op rides an edge just past the connector -- directly on the connector out-edge,
+        or one hop later through the interposed ``_nnr_out`` AccessNode.
+        """
+        for oe in state.out_edges(nsdfg_node):
+            if oe.src_conn != oc:
+                continue
+            if oe.data is not None and oe.data.wcr is not None:
+                return oe.data.wcr
+            cur = oe.dst
+            seen: Set[int] = set()
+            while isinstance(cur, AccessNode) and id(cur) not in seen:
+                seen.add(id(cur))
+                nxt = None
+                for e2 in state.out_edges(cur):
+                    if e2.data is not None and e2.data.wcr is not None:
+                        return e2.data.wcr
+                    nxt = e2.dst
+                cur = nxt
+        return None
+
+    def _lower_reduction_copybacks(self, state: SDFGState, nsdfg_node: NestedSDFG, inner_sdfg: SDFG) -> int:
+        """Rewrite each seeded reduction copyback ``priv[0] -> oc[0]`` (plain body-local copy into a
+        write-only output connector whose boundary carries a reduction WCR) into a ``reduce_accum``
+        fold tasklet ``oc = oc <op> priv``. Returns the number rewritten.
+
+        The op is read off the OUTER boundary WCR (only WidenAccesses sees both the body and its
+        enclosing state). After ``priv`` widens to a tile, :class:`ConvertTaskletsToTileOps` folds
+        the tile-in scalar-out tasklet to a ``TileReduce`` -- the same shape the unmasked reduction
+        (``lower_reduction_wcr_in_body``'s ``reduce_accum``) already takes.
+        """
+        from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
+        rewritten = 0
+        for oc in list(nsdfg_node.out_connectors):
+            wcr = self._boundary_reduction_wcr(state, nsdfg_node, oc)
+            if wcr is None:
+                continue
+            try:
+                body_expr = _wcr_augassign_body(wcr)
+            except Exception:  # noqa: BLE001 -- non-augmentable WCR: leave the copyback untouched
+                continue
+            oc_desc = inner_sdfg.arrays.get(oc)
+            if oc_desc is None or int(oc_desc.total_size) != 1:
+                continue
+            for ist in inner_sdfg.states():
+                for edge in list(ist.edges()):
+                    m = edge.data
+                    if m is None or m.wcr is not None or m.subset is None:
+                        continue
+                    if not (isinstance(edge.dst, AccessNode) and edge.dst.data == oc
+                            and ist.out_degree(edge.dst) == 0):
+                        continue
+                    if not isinstance(edge.src, AccessNode):
+                        continue
+                    src_desc = inner_sdfg.arrays.get(edge.src.data)
+                    if src_desc is None or not src_desc.transient:
+                        continue
+                    if int(m.subset.num_elements()) != 1:  # single-element accumulator copy only
+                        continue
+                    self._rewrite_copyback_to_fold(ist, edge, oc, body_expr)
+                    rewritten += 1
+        return rewritten
+
+    def _rewrite_copyback_to_fold(self, ist: SDFGState, edge, oc: str, body_expr: str) -> None:
+        """Replace one ``priv[0] -> oc[0]`` copyback edge with ``oc = oc <op> priv``.
+
+        ``__in1`` reads the accumulator sink back (the standard aug-assign shape); the downstream
+        ``TileReduce`` conversion DANGLES this read (it folds the whole tile in one shot), so the
+        pre-fold value never contributes -- matching ``lower_reduction_wcr_in_body``.
+        """
+        priv_node = edge.src
+        priv_sub = copy.deepcopy(edge.data.subset)
+        oc_sub = (copy.deepcopy(edge.data.other_subset)
+                  if edge.data.other_subset is not None else subsets.Range([(0, 0, 1)]))
+        tasklet = ist.add_tasklet('reduce_accum', {'__in1', '__in2'}, {'__out'}, f'__out = {body_expr}')
+        ist.add_edge(ist.add_access(oc), None, tasklet, '__in1', Memlet(data=oc, subset=copy.deepcopy(oc_sub)))
+        ist.add_edge(priv_node, None, tasklet, '__in2', Memlet(data=priv_node.data, subset=priv_sub))
+        ist.add_edge(tasklet, '__out', edge.dst, None, Memlet(data=oc, subset=copy.deepcopy(oc_sub)))
+        ist.remove_edge(edge)
 
     # --- Driver --------------------------------------------------------------
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
@@ -611,6 +729,14 @@ class WidenAccesses(ppl.Pass):
                     iter_var_ubs[iter_vars[d]] = map_entry.map.range[full_d][1]
             except Exception:  # noqa: BLE001
                 iter_var_ubs = {}
+            # Step 0: lower a seeded reduction COPYBACK (``priv[0] -> oc[0]`` plain copy into a
+            # write-only output connector whose boundary edge carries a reduction WCR) into an
+            # explicit ``reduce_accum`` tasklet, BEFORE widening. Once ``priv`` widens to a tile,
+            # ``ConvertTaskletsToTileOps`` folds the tile-in scalar-out tasklet to a ``TileReduce``.
+            # A masked map reduction (``if c: acc op= x``) reaches here as ``NormalizeWCR``'s
+            # seeded body-local accumulator + plain copyback, which -- left as a plain copy --
+            # over-widens the scalar sink instead of folding. No-op on non-reduction bodies.
+            total += self._lower_reduction_copybacks(_state, nsdfg_node, inner_sdfg)
             # Step 1: classify non-transients (which need lane-dep treatment).
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)
             # Step 2: widen non-transient boundary memlets. SYMMETRIC over
@@ -622,7 +748,7 @@ class WidenAccesses(ppl.Pass):
             to_widen = self._propagate_lane_dep(inner_sdfg, iter_vars, nt_lane_dep)
             # Step 4: widen lane-dep transient descriptors.
             for name in to_widen:
-                if self._widen_transient(inner_sdfg, name):
+                if self._widen_transient(inner_sdfg, name, to_widen):
                     total += 1
             # Step 5: seed per-lane symbols for Bypass-form gathers. Idempotent;
             # InsertTileLoadStore/materialiser consume them. Pass per-iter-var ub

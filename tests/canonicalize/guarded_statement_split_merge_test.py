@@ -24,7 +24,7 @@ must canonicalize through the full split -> fuse -> merge -> hoist chain:
 The canonical form is therefore always ONE parallel map carrying BOTH
 statements under ONE conditional block -- never two split maps or two
 un-merged guards. Each test asserts that structure and numerical equality to a
-numpy oracle (guard taken and not taken), for both full and fast canonicalize.
+numpy oracle (guard taken and not taken).
 """
 
 import numpy as np
@@ -105,11 +105,11 @@ def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     return False
 
 
-def _canon(fast: bool):
-    return lambda s: canonicalize(s, validate=True, fast=fast)
+def _canon():
+    return lambda s: canonicalize(s, validate=True)
 
 
-CANON = [pytest.param(_canon(False), id='full'), pytest.param(_canon(True), id='fast')]
+CANON = [pytest.param(_canon(), id='full')]
 
 
 # --------------------------------------------------------------------------

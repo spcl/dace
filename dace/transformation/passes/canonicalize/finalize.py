@@ -23,6 +23,7 @@ from dace import SDFG, dtypes
 from dace.sdfg import infer_types, nodes
 from dace.transformation.auto.auto_optimize import (make_transients_persistent, move_small_arrays_to_stack,
                                                     set_fast_implementations)
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 #: Map the canonicalize target string to the codegen device type.
 _TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
@@ -83,6 +84,49 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
                 node.implementation = 'pure'
 
 
+def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
+    """Finalize the storage of a canonicalized (or vectorized) SDFG's transients, in place.
+
+    The single home for transient storage finalization -- a value-preserving perf tail that any
+    downstream producer (canonicalize's ``finalize_for_target``, or a caller that has additionally
+    vectorized the SDFG) runs to allocate temporaries well. Three steps, mirroring
+    ``auto_optimize``'s storage tail:
+
+    1. **Length-1 transient arrays -> scalars** (:class:`ConvertLengthOneArraysToScalars`,
+       ``transient_only=True``): a single internal value belongs in a scalar, not a heap array.
+       Non-transient length-1 arrays (SDFG-external returns / opaque handles) are left as arrays.
+    2. **Small constant-size scratch -> registers** (:func:`move_small_arrays_to_stack`).
+    3. **Independent top-level transients -> ``Persistent`` lifetime**
+       (:func:`make_transients_persistent`, ``toplevel_only=True``): a state-struct member
+       allocated once in ``__dace_init`` / freed in ``__dace_exit`` instead of a per-call
+       ``malloc``/``free``. ``toplevel_only`` + ``get_parent_map``'s walk up across every
+       nested-SDFG boundary excludes any per-thread buffer inside a parallel map body, so it is
+       never collapsed to one shared copy; on GPU it also resets non-atomic WCR edges.
+
+    A persistent size-1 WCR accumulator would land as ``__state->x`` -- not a valid OpenMP
+    ``reduction(op:var)`` lvalue, so the parallel reduction fails to compile. Revert each promoted
+    size-1 transient to a scope-lifetime register (a stack scalar).
+
+    :param sdfg: SDFG whose transient storage is finalized in place.
+    :param device: codegen device type (selects GPU WCR-reset / storage rules).
+    """
+    ConvertLengthOneArraysToScalars(recursive=True, transient_only=True).apply_pass(sdfg, {})
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    move_small_arrays_to_stack(sdfg)
+    made_persistent = make_transients_persistent(sdfg, device)
+    cfg_by_id = {sd.cfg_id: sd for sd in sdfg.all_sdfgs_recursive()}
+    for cfg_id, names in made_persistent.items():
+        sd = cfg_by_id.get(cfg_id)
+        if sd is None:
+            continue
+        for name in names:
+            desc = sd.arrays.get(name)
+            if desc is not None and desc.total_size == 1:
+                desc.lifetime = dtypes.AllocationLifetime.Scope
+                desc.storage = dtypes.StorageType.Register
+    sdfg.reset_cfg_list()
+
+
 def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
@@ -107,31 +151,8 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     # rest of the toolchain must then re-canonicalize; keeping one shape per computation
     # until codegen is the invariant every downstream pass relies on.
     infer_types.infer_connector_types(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    finalize_transient_storage(sdfg, device)
 
-    move_small_arrays_to_stack(sdfg)
-    made_persistent = make_transients_persistent(sdfg, device)
-
-    # Canonicalization must not leave any scalar / length-1 array in persistent
-    # storage. A size-1 transient gains nothing from being state-resident, and when
-    # it is a WCR-reduction accumulator persistence forces it into the state struct
-    # (``__state->x``) -- not a valid OpenMP ``reduction(op:var)`` lvalue, so the
-    # parallel reduction fails to compile. Revert each promoted size-1 transient to a
-    # scope-lifetime register (a stack scalar) -- the form ``move_small_arrays_to_stack``
-    # would have produced had ``set_default_schedule_and_storage_types`` not already
-    # resolved its Default storage to the heap.
-    cfg_by_id = {sd.cfg_id: sd for sd in sdfg.all_sdfgs_recursive()}
-    for cfg_id, names in made_persistent.items():
-        sd = cfg_by_id.get(cfg_id)
-        if sd is None:
-            continue
-        for name in names:
-            desc = sd.arrays.get(name)
-            if desc is not None and desc.total_size == 1:
-                desc.lifetime = dtypes.AllocationLifetime.Scope
-                desc.storage = dtypes.StorageType.Register
-
-    sdfg.reset_cfg_list()
     if validate:
         sdfg.validate()
     return sdfg

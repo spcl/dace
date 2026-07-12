@@ -99,3 +99,36 @@ def test_finalize_does_not_persist_reduction_scalar():
     rng = np.random.default_rng(0)
     a = rng.random(n)
     assert np.allclose(csdfg(a=a, N=n), a + a.sum())
+
+
+def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
+    """``finalize_transient_storage`` converts every length-1 *transient* array to a Scalar
+    (a single internal value belongs in a scalar, not a heap array), while leaving a
+    length-1 *non-transient* array (an SDFG-external return / handle) as an Array."""
+    from dace import data as ddata
+    from dace.transformation.passes.canonicalize.finalize import finalize_transient_storage
+
+    sdfg = dace.SDFG("fin_len1")
+    sdfg.add_array("A", [4], dace.float64)                     # non-transient input
+    sdfg.add_array("keep", [1], dace.float64)                  # non-transient len-1 -> stays an Array
+    sdfg.add_array("acc", [1], dace.float64, transient=True)   # transient len-1 -> becomes a Scalar
+    st = sdfg.add_state()
+    a, acc, keep = st.add_access("A"), st.add_access("acc"), st.add_access("keep")
+    t = st.add_tasklet("t", {"x"}, {"y"}, "y = x")
+    st.add_edge(a, None, t, "x", dace.Memlet("A[0]"))
+    st.add_edge(t, "y", acc, None, dace.Memlet("acc[0]"))
+    t2 = st.add_tasklet("t2", {"x"}, {"y"}, "y = x")
+    st.add_edge(acc, None, t2, "x", dace.Memlet("acc[0]"))
+    st.add_edge(t2, "y", keep, None, dace.Memlet("keep[0]"))
+    sdfg.validate()
+
+    finalize_transient_storage(sdfg, dace.dtypes.DeviceType.CPU)
+
+    assert isinstance(sdfg.arrays["acc"], ddata.Scalar), "len-1 transient array must become a Scalar"
+    assert isinstance(sdfg.arrays["keep"], ddata.Array), "non-transient len-1 array must stay an Array"
+    leftover = [
+        f"{sd.label}:{n}" for sd in sdfg.all_sdfgs_recursive() for n, d in sd.arrays.items()
+        if d.transient and isinstance(d, ddata.Array) and d.total_size == 1
+    ]
+    assert not leftover, f"len-1 transient arrays left unconverted: {leftover}"
+    sdfg.validate()

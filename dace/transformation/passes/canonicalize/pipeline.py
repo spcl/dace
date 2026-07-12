@@ -32,7 +32,6 @@ from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions impo
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
-from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
@@ -254,7 +253,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   scatter_to_guarded_maps: bool = True,
                   assume_parallel_guards: bool = False,
                   target: str = 'cpu',
-                  fast: bool = False,
                   lift: bool = True,
                   lift_copy: bool = True,
                   semantic_lifting: bool = True) -> List[Tuple[str, ppl.Pass]]:
@@ -571,13 +569,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # a loop into siblings that keep the same ``_loop_it_<N>`` name; re-running
     # UniqueLoopIterators disambiguates those duplicates so the later LoopToMap is
     # not blocked by a sibling appearing to read the shared iterator.
-    #
-    # FAST MODE skips the up-front broad fission: fissioning every loop (then fusing
-    # most of them back) is too costly on large programs (cloudsc / icon). Instead
-    # fast mode parallelizes first and fissions only the residual loops AFTER the
-    # first LoopToMap (see the ``fast`` block after the 'parallelize' stage) -- the
-    # already-lifted maps are no longer loops, so fission naturally touches only the
-    # loops that resisted parallelization.
     # break_antidep (before fission): a forward-read anti-dependence -- a body that
     # reads ``a[i+1]`` off the same array a sibling statement writes at ``a[i]`` (s1244
     # ``d[i] = a[i] + a[i+1]``) -- is a cross-iteration bridge LoopFission cannot sever,
@@ -589,10 +580,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # on the now single-compute-state body, in addition to the earlier 'break_antidep'
     # stage (which sees the loop before its slice states fuse and so only breaks the
     # whole-array pure-WAR loops). Gated on the same knob as that stage.
-    if not fast:
-        if break_anti_dependence:
-            s += [('fission', BreakAntiDependence())]
-        s += [('fission', PerfectLoopNesting()), ('fission', _uniq_fis)]
+    if break_anti_dependence:
+        s += [('fission', BreakAntiDependence())]
+    s += [('fission', PerfectLoopNesting()), ('fission', _uniq_fis)]
 
     # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
     # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
@@ -681,27 +671,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
-
-    # FAST MODE fission-on-demand: in fast mode the up-front broad fission was
-    # skipped, so the loops that survived the first LoopToX/LoopToMap above are
-    # exactly the ones that resisted parallelization (a loop carrying both a parallel
-    # and a sequential statement, etc.). Fission ONLY those now -- the loops that did
-    # become maps are no longer LoopRegions, so LoopFission cannot touch them -- then
-    # re-permute and retry the LoopToX/LoopToMap lift on the fragments. A fragment
-    # that became independent now parallelizes; the truly-sequential remainder stays a
-    # loop. This is the parallelize-first / fission-residual / retry shape: it pays
-    # the fission (+ fuse-back) cost only where it can unlock parallelism, instead of
-    # on every loop in the program.
-    if fast:
-        _uniq_fast_fis = UniqueLoopIterators(assign_loop_iterator_post_value=False)
-        _uniq_fast_ssa = UniqueLoopIterators(assign_loop_iterator_post_value=False)
-        s += [('fission', LoopFission()), ('fission', _uniq_fast_fis)]
-        s += [('loop_stride_permutation', LoopStridePermutation())]
-        s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
-              ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)),
-              ('loop_to_x', ArgMaxLift()), ('loop_to_x', LoopToConditionalReduce())]
-        s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', _uniq_fast_ssa)]
-        s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
     # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
     # permissively, where the blocker is an algebraic side condition (TSVC s171's
@@ -1126,10 +1095,6 @@ class CanonicalizationPipeline(ppl.Pass):
         desc='Assume every parallel-guard condition holds: ParallelizeUnderConstraint + '
         'ScatterToGuardedMaps emit only the parallel Map (no if-else fallback, no sort/trap). '
         'Unsound if a condition is violated at runtime; default keeps the sound guards.')
-    fast = properties.Property(
-        dtype=bool,
-        default=False,
-        desc='Fast mode: parallelize first and fission only the residual loops (skip the up-front broad fission).')
     lift = properties.Property(
         dtype=bool,
         default=True,
@@ -1155,7 +1120,6 @@ class CanonicalizationPipeline(ppl.Pass):
                  scatter_to_guarded_maps: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
-                 fast: bool = False,
                  lift: bool = True,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True):
@@ -1180,7 +1144,6 @@ class CanonicalizationPipeline(ppl.Pass):
                                                                scatter_to_guarded_maps,
                                                                fallback=True)
         self.assume_parallel_guards = assume_parallel_guards
-        self.fast = fast
         self.lift = lift
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
@@ -1217,7 +1180,6 @@ class CanonicalizationPipeline(ppl.Pass):
                                scatter_to_guarded_maps=self.scatter_to_guarded_maps,
                                assume_parallel_guards=self.assume_parallel_guards,
                                target=self.target,
-                               fast=self.fast,
                                lift=self.lift,
                                lift_copy=self.lift_copy,
                                semantic_lifting=self.semantic_lifting)
@@ -1242,7 +1204,6 @@ def canonicalize(sdfg: SDFG,
                  scatter_to_guarded_maps: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
-                 fast: bool = False,
                  lift: bool = True,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True) -> SDFG:
@@ -1280,10 +1241,6 @@ def canonicalize(sdfg: SDFG,
                              SDFGs) before canonicalization, so symbolic trip counts
                              unroll (e.g. ``{'nclv': 5}``) and concrete matmul extents
                              (e.g. ``{'Norb': 3}``) enable the small-GEMM ``'pure'`` path.
-    :param fast: Fast mode -- parallelize first and fission only the residual loops
-                 (skip the up-front broad fission). Cheaper on large programs
-                 (cloudsc / icon) where most loops are directly mappable; the few
-                 loops that resist parallelization are fissioned and re-lifted.
     :param lift: Lift tensor-contraction maps (matmul chains) to ``Einsum`` library
                  nodes for BLAS lowering (default ``True``). Set ``False`` to skip
                  that optimization and keep matmuls as plain WCR loop nests -- a
@@ -1307,7 +1264,6 @@ def canonicalize(sdfg: SDFG,
                              scatter_to_guarded_maps=scatter_to_guarded_maps,
                              assume_parallel_guards=assume_parallel_guards,
                              specialize_constants=specialize_constants,
-                             fast=fast,
                              lift=lift,
                              lift_copy=lift_copy,
                              semantic_lifting=semantic_lifting).apply_pass(sdfg, {})

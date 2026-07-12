@@ -16,7 +16,7 @@ target form is ``map_consists_of_single_nsdfg_or_no_nsdfg``: a map body is eithe
 all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
 """
 import copy
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from dace import SDFG, data, nodes, properties
 from dace.memlet import Memlet
@@ -77,6 +77,73 @@ def _append_cfg(base: SDFG, tail: SDFG) -> None:
         base.add_edge(e.src, e.dst, e.data)
     tail_start.is_start_block = False
     base.add_edge(sink, tail_start, InterstateEdge())
+
+
+def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
+    """Fold the redundant boundary plumbing that sibling consolidation created.
+
+    ``MapFusion`` co-locates independent computations that read the SAME outer
+    array (``g``) at the SAME iterator; the sibling merge renamed the second copy
+    to a fresh connector (``g_0``) and kept its own iterator symbol
+    (``_loop_it_1``, bound to the same outer value as ``_loop_it_0``). The two
+    now-consecutive guards then read ``g[_loop_it_0]`` vs ``g_0[_loop_it_1]`` --
+    the same predicate, but syntactically distinct, so the follow-up
+    ``ConditionFusion`` builds a cartesian product instead of folding them.
+
+    This collapses each duplicate onto its canonical name so the guards become
+    syntactically identical:
+
+    * an in-connector whose incoming memlet is identical (same source node +
+      source connector + data + subset) to an earlier one is redundant -- rename
+      its inner descriptor to the earlier connector and drop the extra edge;
+    * two symbol-mapping keys bound to the identical outer value collapse to one.
+
+    Value-preserving: the merged names denote the same data / same value. Only
+    reads (in-connectors) are deduplicated; writes are left untouched.
+    """
+    base = keep.sdfg
+
+    # Symbol-mapping dedup: group keys by the outer value they bind to, and
+    # collapse each >=2 group onto one canonical key (prefer the key whose name
+    # already IS the bound value, e.g. the map parameter).
+    groups: Dict[str, List[str]] = {}
+    for k, v in keep.symbol_mapping.items():
+        groups.setdefault(str(v), []).append(k)
+    sym_repl: Dict[str, str] = {}
+    for value_str, keys in groups.items():
+        if len(keys) < 2:
+            continue
+        canon = next((k for k in keys if k == value_str), sorted(keys)[0])
+        for k in keys:
+            if k != canon:
+                sym_repl[k] = canon
+    if sym_repl:
+        # replace_keys=False: rewrite symbol USES (memlets, conditions, ranges)
+        # but not the descriptor/symbol dict keys -- the redundant keys are
+        # dropped explicitly below.
+        base.replace_dict(sym_repl, replace_keys=False)
+        for old in sym_repl:
+            keep.symbol_mapping.pop(old, None)
+            base.symbols.pop(old, None)
+
+    # In-connector dedup: an in-edge whose outer memlet matches an earlier one
+    # reads identical data; rename its inner descriptor onto the earlier
+    # connector and drop the duplicate edge + connector.
+    seen: Dict[Tuple, str] = {}
+    data_repl: Dict[str, str] = {}
+    for e in list(state.in_edges(keep)):
+        if e.dst_conn is None:
+            continue
+        sig = (id(e.src), e.src_conn, e.data.data, str(e.data.subset))
+        canon = seen.get(sig)
+        if canon is None:
+            seen[sig] = e.dst_conn
+            continue
+        data_repl[e.dst_conn] = canon
+        state.remove_edge(e)
+        keep.remove_in_connector(e.dst_conn)
+    if data_repl:
+        replace_datadesc_names(base, data_repl)
 
 
 @properties.make_properties
@@ -169,6 +236,13 @@ class NormalizeMapBody(ppl.Pass):
             for k, v in drop.symbol_mapping.items():
                 keep.symbol_mapping.setdefault(k, v)
             state.remove_node(drop)
+
+        # Fold redundant boundary connectors / symbol-mapping aliases the merge
+        # introduced, so same-condition guards from independent-but-identical
+        # reads (``g[i]`` in both siblings) become syntactically identical and
+        # the follow-up ConditionFusion folds them instead of building a
+        # cartesian product.
+        _dedup_boundary_aliases(state, keep)
 
         sdutil.set_nested_sdfg_parent_references(base)
         for blk in base.all_control_flow_blocks(recursive=True):

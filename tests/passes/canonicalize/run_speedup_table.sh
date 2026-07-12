@@ -3,7 +3,7 @@
 #
 # Single-click numerical-verification + speedup table for the canonicalize corpus.
 #
-# Times auto-opt (baseline), canon and fast-canon on EVERY polybench+npbench kernel,
+# Times auto-opt (baseline) and canon on EVERY polybench+npbench kernel,
 # checks each against its numpy reference, and writes a human-readable Markdown table
 # of speedups (plus a CSV and one JSON per kernel). Built for a dedicated benchmark
 # box: run it once and read perf_results/speedup_table.md.

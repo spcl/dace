@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """End-to-end PERFORMANCE / speedup harness over the combined polybench + npbench
-corpus: time ``auto_optimize`` (baseline), ``canonicalize`` and fast-``canonicalize``
-on the same machine and report the canon-vs-auto-opt speedup.
+corpus: time ``auto_optimize`` (baseline) and ``canonicalize`` on the same machine
+and report the canon-vs-auto-opt speedup.
 
 Design (resumable, one result file per kernel)
 ----------------------------------------------
@@ -72,17 +72,13 @@ def _canon(s):
     return finalize_for_target(canonicalize(s, validate=True, **_CPU), 'cpu')
 
 
-def _fast_canon(s):
-    return finalize_for_target(canonicalize(s, validate=True, fast=True, **_CPU), 'cpu')
-
-
 def _autoopt(s):
     return auto_optimize(s, dace.DeviceType.CPU)
 
 
 #: Pipelines to time. The first is the BASELINE that speedups are reported against.
 _BASELINE = 'auto-opt'
-_PIPELINES = {'auto-opt': _autoopt, 'canon': _canon, 'fast-canon': _fast_canon}
+_PIPELINES = {'auto-opt': _autoopt, 'canon': _canon}
 
 #: A candidate pipeline is a "regression" only past this multiple of the baseline
 #: (best-of-N). Generous so timing noise never flakes CI; catches gross regressions.
@@ -104,13 +100,12 @@ _FORCE = os.environ.get('CANON_PERF_FORCE', '') not in ('', '0', 'false', 'False
 _SAVE_SDFG = os.environ.get('CANON_PERF_SAVE_SDFG', '') not in ('', '0', 'false', 'False')
 
 #: Structural-only builders -- the SDFG each pipeline produces BEFORE library-node
-#: expansion (Reduce/MatMul/Einsum nodes still present). canon/fast-canon stop at the
+#: expansion (Reduce/MatMul/Einsum nodes still present). canon stops at the
 #: ``canonicalize`` output (``finalize_for_target`` would expand it); auto-opt uses
 #: ``auto_optimize(..., expand=False)``.
 _PRE_EXPANSION = {
     'auto-opt': lambda s: auto_optimize(s, dace.DeviceType.CPU, expand=False),
     'canon': lambda s: canonicalize(s, validate=True, **_CPU),
-    'fast-canon': lambda s: canonicalize(s, validate=True, fast=True, **_CPU),
 }
 
 _HOST = socket.gethostname()
@@ -378,12 +373,11 @@ def export_markdown(md_path, results_dir=None):
             "",
             f"## preset `{preset}`",
             "",
-            "| suite | kernel | shape | auto-opt ms | canon ms | ✓ | canon× | fast-canon ms | ✓ | fast-canon× |",
-            "|:--|:--|:--|--:|--:|:-:|--:|--:|:-:|--:|",
+            "| suite | kernel | shape | auto-opt ms | canon ms | ✓ | canon× |",
+            "|:--|:--|:--|--:|--:|:-:|--:|",
         ]
-        cspeed, fspeed = [], []
+        cspeed = []
         cstat = dict(ok=0, wrong=0, na=0)
-        fstat = dict(ok=0, wrong=0, na=0)
         for suite, name in CS.kernels():
             r = records.get((suite, name))
             pres = r.get('presets', {}).get(preset) if r else None
@@ -393,20 +387,16 @@ def export_markdown(md_path, results_dir=None):
             sp = pres.get('speedup_vs_baseline', {})
             shape = pres.get('shape') or {}
             shape_s = ' '.join(f"{k}={v}" for k, v in shape.items()) if isinstance(shape, dict) else str(shape)
-            ao, cn, fc = pp.get('auto-opt', {}), pp.get('canon', {}), pp.get('fast-canon', {})
+            ao, cn = pp.get('auto-opt', {}), pp.get('canon', {})
             out.append(f"| {suite} | {name} | {shape_s} | {_md_time(ao)} | {_md_time(cn)} | "
-                       f"{_md_correct(cn)} | {_md_speed(sp, 'canon')} | {_md_time(fc)} | "
-                       f"{_md_correct(fc)} | {_md_speed(sp, 'fast-canon')} |")
-            for entry, st, speeds, lbl in ((cn, cstat, cspeed, 'canon'), (fc, fstat, fspeed, 'fast-canon')):
-                st['ok' if entry.get('correct') is True else 'wrong' if entry.get('correct') is False else 'na'] += 1
-                if sp.get(lbl):
-                    speeds.append(sp[lbl])
+                       f"{_md_correct(cn)} | {_md_speed(sp, 'canon')} |")
+            cstat['ok' if cn.get('correct') is True else 'wrong' if cn.get('correct') is False else 'na'] += 1
+            if sp.get('canon'):
+                cspeed.append(sp['canon'])
         out += [
             "",
-            f"**geomean speedup** — canon `{_geomean(cspeed):.3f}×` (n={len(cspeed)}), "
-            f"fast-canon `{_geomean(fspeed):.3f}×` (n={len(fspeed)}) · "
-            f"**correctness** — canon {cstat['ok']}✓ {cstat['wrong']}✗ {cstat['na']}·, "
-            f"fast-canon {fstat['ok']}✓ {fstat['wrong']}✗ {fstat['na']}·",
+            f"**geomean speedup** — canon `{_geomean(cspeed):.3f}×` (n={len(cspeed)}) · "
+            f"**correctness** — canon {cstat['ok']}✓ {cstat['wrong']}✗ {cstat['na']}·",
         ]
     out.append("")
     os.makedirs(os.path.dirname(os.path.abspath(md_path)) or '.', exist_ok=True)
@@ -424,11 +414,8 @@ def _print_tables():
             f"\n### preset={preset}  (best-of-{_REPS}, warmup={_WARMUP}, "
             f"OMP={os.environ.get('OMP_NUM_THREADS')})",
             flush=True)
-        print(
-            f"{'suite':5} {'kernel':18} {'auto-opt':>11} | {'canon':>11} {'speedup':>8} | "
-            f"{'fast-canon':>11} {'speedup':>8}",
-            flush=True)
-        cspeed, fspeed = [], []
+        print(f"{'suite':5} {'kernel':18} {'auto-opt':>11} | {'canon':>11} {'speedup':>8}", flush=True)
+        cspeed = []
         for suite, name in CS.kernels():
             path = _result_path(suite, name)
             if not os.path.exists(path):
@@ -447,19 +434,11 @@ def _print_tables():
                 v = sp.get(label)
                 return f"{v:.2f}x" if v else '  -  '
 
-            print(
-                f"{suite:5} {name:18} {_t('auto-opt'):>11} | {_t('canon'):>11} {_s('canon'):>8} | "
-                f"{_t('fast-canon'):>11} {_s('fast-canon'):>8}",
-                flush=True)
+            print(f"{suite:5} {name:18} {_t('auto-opt'):>11} | {_t('canon'):>11} {_s('canon'):>8}", flush=True)
             if sp.get('canon'):
                 cspeed.append(sp['canon'])
-            if sp.get('fast-canon'):
-                fspeed.append(sp['fast-canon'])
 
-        print(
-            f"# geomean speedup vs {_BASELINE}: canon={_geomean(cspeed):.3f}x (n={len(cspeed)})  "
-            f"fast-canon={_geomean(fspeed):.3f}x (n={len(fspeed)})",
-            flush=True)
+        print(f"# geomean speedup vs {_BASELINE}: canon={_geomean(cspeed):.3f}x (n={len(cspeed)})", flush=True)
 
 
 def _run_sweep(only=None, force=False):

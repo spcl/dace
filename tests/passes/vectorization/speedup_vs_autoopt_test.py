@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Speedup guard: ``canonicalize`` / ``fast_canon`` must be <= 1.2x ``auto_optimize``.
+"""Speedup guard: ``canonicalize`` must be <= 1.2x ``auto_optimize``.
 
 Per kernel (npbench + polybench), median of ``_REPS`` runs (``dace.profile``) of a
 fresh auto-opt SDFG vs a fresh canon SDFG. Each variant's output is validated against
@@ -60,10 +60,9 @@ def _median_ms(sdfg: dace.SDFG, call: dict) -> float:
     return float(np.median(np.asarray(times)))
 
 
-#: The two canon pipelines compared against auto_optimize, each must be <= 1.2x.
+#: The canon pipeline compared against auto_optimize, must be <= 1.2x.
 _MODES = {
     "canon": lambda s: canonicalize(s, validate=True),
-    "fast_canon": lambda s: canonicalize(s, validate=True, fast=True)
 }
 
 
