@@ -18,3 +18,4 @@ perf_*.err
 slurm-*.out
 # ad-hoc debugging scratch
 debug_cmake/
+hptt/

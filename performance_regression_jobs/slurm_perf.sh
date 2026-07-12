@@ -81,6 +81,14 @@ _ldpath_for g++ libstdc++.so.6 libgcc_s.so.1
 _ldpath_for gcc libstdc++.so.6 libgcc_s.so.1
 unset -f _add_ldpath _ldpath_for
 
+# HPTT (High-Performance Tensor Transpose) is an EXTERNAL dependency -- built out-of-tree and
+# not vendored/committed (see performance_regression_jobs/.gitignore). Point DaCe's HPTT
+# library environment at the local build so TensorTranspose nodes find its headers
+# (<HPTT_ROOT>/include) and link+load its lib (<HPTT_ROOT>/lib/libhptt.so). Build per
+# https://github.com/springer13/hptt; here it lives next to this script.
+export HPTT_ROOT="$PWD/hptt"
+[ -f "$HPTT_ROOT/lib/libhptt.so" ] && export LD_LIBRARY_PATH="$HPTT_ROOT/lib:${LD_LIBRARY_PATH:-}"
+
 echo "EXPERIMENT=$EXPERIMENT CORPUS=$CORPUS CXX=$CXX RESULTS_DIR=$RESULTS_DIR"
 
 # --cpu-bind=cores keeps each rank pinned to its own allocated cores.
