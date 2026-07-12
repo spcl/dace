@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -21,49 +22,14 @@ def init_array(data, cov, mean, n, m):
 
 @dace.program
 def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
-    mean[:] = 0.0
-
-    @dace.map
-    def comp_mean(j: _[0:M], i: _[0:N]):
-        inp << data[i, j]
-        out >> mean(1, lambda x, y: x + y)[j]
-        out = inp
-
-    @dace.map
-    def comp_mean2(j: _[0:M]):
-        inp << mean[j]
-        out >> mean[j]
-        out = inp / N
-
-    @dace.map
-    def sub_mean(i: _[0:N], j: _[0:M]):
-        ind << data[i, j]
-        m << mean[j]
-        oud >> data[i, j]
-        oud = ind - m
-
-    @dace.mapscope
-    def comp_cov_row(i: _[0:M]):
-
-        @dace.mapscope
-        def comp_cov_col(j: _[i:M]):
-            with dace.tasklet:
-                cov_ij >> cov[i, j]
-                cov_ij = 0.0
-
-            @dace.map
-            def comp_cov_k(k: _[0:N]):
-                indi << data[k, i]
-                indj << data[k, j]
-                cov_ij >> cov(1, lambda x, y: x + y)[i, j]
-                cov_ij = (indi * indj)
-
-            with dace.tasklet:
-                cov_ij_in << cov[i, j]
-                cov_ij_out >> cov[i, j]
-                cov_ji_out >> cov[j, i]
-                cov_ij_out = cov_ij_in / (N - 1)
-                cov_ji_out = cov_ij_out
+    # npbench formulation: column-mean centering (a Reduce library node), then one
+    # matrix-vector inner product ``data[:, i] @ data[:, i:M]`` (Gemv) per column, mirrored
+    # across the diagonal. ``float_n`` in npbench is the row count ``N``.
+    mean[:] = np.mean(data, axis=0)
+    np.subtract(data, mean, out=data)
+    for i in range(M):
+        cov[i, i:M] = data[:, i] @ data[:, i:M] / (datatype(N) - 1.0)
+        cov[i:M, i] = cov[i, i:M]
 
 
 if __name__ == '__main__':

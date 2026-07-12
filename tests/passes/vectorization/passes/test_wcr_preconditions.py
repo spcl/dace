@@ -13,7 +13,7 @@ Covers the three pass extensions made for in-place ``a[i] = a[i] + b[i]``:
   :func:`no_wcr_inside_nested_sdfgs` (multi-dim), incl. the allowed
   scalar-reduction-out form that must NOT trip them.
 
-Plus an e2e in-place RMW through both vectorizers (legacy + tile-node).
+Plus an e2e in-place RMW through the tile-node vectorizer.
 """
 import numpy as np
 

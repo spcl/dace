@@ -101,6 +101,176 @@ def test_finalize_does_not_persist_reduction_scalar():
     assert np.allclose(csdfg(a=a, N=n), a + a.sum())
 
 
+def test_finalize_selects_openmp_for_reduce():
+    """``finalize_for_target`` must select the ``OpenMP`` implementation for a lifted ``Reduce``
+    library node on CPU -- never the default ``pure`` (which builds a single-scalar WCR map that
+    lowers to a serialized ``omp critical`` for min/max or a contended ``omp atomic`` for sum,
+    100-3000x slower). The generated code must carry a real ``reduction(op:var)`` clause and no
+    ``omp atomic`` / ``omp critical`` on the accumulator, and stay bit-exact vs numpy."""
+    import numpy as np
+    from dace.libraries.standard.nodes.reduce import Reduce
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    Nsym = dace.symbol("N", dtype=dace.int64)
+
+    for op, npfn, clause in (("sum", np.sum, "reduction(+:"), ("max", np.max, "reduction(max:")):
+
+        @dace.program
+        def reducer(a: dace.float64[Nsym]):
+            return npfn(a)
+
+        sdfg = reducer.to_sdfg(simplify=False)
+        sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
+                            interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+        finalize_for_target(sdfg, "cpu")
+
+        reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+        assert reduces, f"{op}: canonicalize should lift the loop-reduction to a Reduce library node"
+        assert all(n.implementation == "OpenMP" for n in reduces), \
+            f"{op}: Reduce must be OpenMP, got {[n.implementation for n in reduces]}"
+
+        code = sdfg.generate_code()[0].clean_code
+        assert clause.replace(" ", "") in code.replace(" ", ""), f"{op}: missing {clause}...) clause"
+        assert "#pragma omp atomic" not in code, f"{op}: reduction must not fall back to omp atomic"
+        assert "#pragma omp critical" not in code, f"{op}: reduction must not fall back to omp critical"
+
+        rng = np.random.default_rng(0)
+        a = rng.random(4096)
+        got = np.asarray(sdfg.compile()(a=a, N=4096)).reshape(())
+        assert np.allclose(got, npfn(a)), f"{op}: reduction not bit-exact vs numpy"
+
+
+def test_finalize_selects_openmp_scan_for_prefix_scan():
+    """``finalize_for_target`` must lower a lifted prefix ``Scan`` to the parallel ``CPU``
+    expansion (OpenMP 5.0 ``reduction(inscan, ...)`` + ``#pragma omp scan``), never the serial
+    ``pure`` loop. Bit-exact vs ``np.cumsum``."""
+    import numpy as np
+    from dace.libraries.standard.nodes.scan import Scan
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    Nsym = dace.symbol("N", dtype=dace.int64)
+
+    @dace.program
+    def prefix_sum(a: dace.float64[Nsym], out: dace.float64[Nsym]):
+        out[0] = a[0]
+        for i in range(1, Nsym):
+            out[i] = out[i - 1] + a[i]
+
+    sdfg = prefix_sum.to_sdfg(simplify=False)
+    sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
+                        interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+    finalize_for_target(sdfg, "cpu")
+
+    scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+    assert scans, "canonicalize should lift the prefix-sum loop to a Scan library node"
+    assert all(n.implementation == "CPU" for n in scans), \
+        f"Scan must use the parallel CPU (OpenMP-scan) expansion, got {[n.implementation for n in scans]}"
+
+    rng = np.random.default_rng(0)
+    a = rng.random(4096)
+    out = np.zeros(4096)
+    sdfg.compile()(a=a, out=out, N=4096)
+    assert np.allclose(out, np.cumsum(a)), "prefix scan not bit-exact vs np.cumsum"
+
+
+def test_finalize_nested_reduction_stays_sequential():
+    """A reduction NESTED inside a parallel map (per-row sum) must lower to the sequential ``pure``
+    accumulate -- adhering to its ``Sequential`` schedule -- NOT ``OpenMP``. An ``OpenMP`` reduction
+    here would open a nested ``#pragma omp parallel`` per outer iteration (the "constant parallel
+    reductions" slowdown). The generated code must contain exactly one parallel region (the outer
+    map), and the result stays bit-exact."""
+    import numpy as np
+    from dace.libraries.standard.nodes.reduce import Reduce
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    Nsym = dace.symbol("N", dtype=dace.int64)
+
+    @dace.program
+    def rowsum(A: dace.float64[Nsym, Nsym], y: dace.float64[Nsym]):
+        for i in range(Nsym):
+            acc = 0.0
+            for j in range(Nsym):
+                acc += A[i, j]
+            y[i] = acc
+
+    sdfg = rowsum.to_sdfg(simplify=False)
+    sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
+                        interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+    finalize_for_target(sdfg, "cpu")
+
+    reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert all(n.implementation != "OpenMP" for n in reduces), \
+        f"a nested (Sequential-scheduled) Reduce must not be OpenMP, got {[n.implementation for n in reduces]}"
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count("#pragma omp parallel") == 1, \
+        f"expected one parallel region (outer map), got {code.count('#pragma omp parallel')} (nested reduction?)"
+
+    rng = np.random.default_rng(0)
+    A = rng.random((256, 256))
+    y = np.zeros(256)
+    sdfg.compile()(A=A, y=y, N=256)
+    assert np.allclose(y, A.sum(axis=1)), "nested row-sum not bit-exact"
+
+
+def test_finalize_never_selects_mkl_prefers_openblas():
+    """The canonicalize perf tail must never pick ``MKL`` -- it prefers OpenBLAS (and OpenMP /
+    HPTT / cuBLAS). A large matmul lowers to OpenBLAS, and no library node is left on ``MKL``."""
+    from dace.sdfg import nodes
+    from dace.transformation.passes.canonicalize.finalize import (finalize_for_target,
+                                                                  canonicalize_fast_library_priority)
+
+    assert 'MKL' not in canonicalize_fast_library_priority(dace.dtypes.DeviceType.CPU)
+
+    Nsym = dace.symbol("N")
+
+    @dace.program
+    def gemm(a: dace.float64[Nsym, Nsym], b: dace.float64[Nsym, Nsym], c: dace.float64[Nsym, Nsym]):
+        c[:] = a @ b
+
+    sdfg = gemm.to_sdfg(simplify=True)
+    finalize_for_target(sdfg, "cpu", validate=False)
+    lib_impls = [n.implementation for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
+    assert 'MKL' not in lib_impls, f"MKL must never be selected, got {lib_impls}"
+    assert 'OpenBLAS' in lib_impls, f"large matmul should lower to OpenBLAS, got {lib_impls}"
+
+
+def test_finalize_gpu_offloads_and_sets_domain_matched_block():
+    """``finalize_for_target(sdfg, 'gpu')`` must offload to the device and choose a thread-block
+    matching the iteration domain (an ``N x N`` map -> a ``16x16`` block, not the ``32,1,1``
+    default), then generate CUDA. Codegen-only (no device needed); the offload is idempotent."""
+    from dace.sdfg import nodes
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    Nsym = dace.symbol("N", dtype=dace.int64)
+
+    @dace.program
+    def madd(a: dace.float64[Nsym, Nsym], b: dace.float64[Nsym, Nsym], c: dace.float64[Nsym, Nsym]):
+        for i in range(Nsym):
+            for j in range(Nsym):
+                c[i, j] = a[i, j] + b[i, j]
+
+    sdfg = madd.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True, target="gpu")
+    finalize_for_target(sdfg, "gpu", validate=True)
+
+    gpu_maps = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+    ]
+    assert gpu_maps, "finalize(gpu) should offload the loop nest to a GPU_Device map"
+    assert any(n.map.gpu_block_size == [16, 16, 1] for n in gpu_maps), \
+        f"N x N map should get a 16x16 block, got {[n.map.gpu_block_size for n in gpu_maps]}"
+    titles = [c.title for c in sdfg.generate_code()]
+    assert any("cuda" in t.lower() for t in titles), f"expected CUDA codegen, got {titles}"
+
+    # Idempotent: a second finalize (already offloaded) does not double-offload / crash.
+    finalize_for_target(sdfg, "gpu", validate=True)
+
+
 def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
     """``finalize_transient_storage`` converts every length-1 *transient* array to a Scalar
     (a single internal value belongs in a scalar, not a heap array), while leaving a

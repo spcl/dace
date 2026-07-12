@@ -6,7 +6,8 @@ from typing import List, Optional
 import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
+                                            is_parallel_cpu_transfer_size, make_parallel_cpu_transfer_sdfg)
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.transformation import ExpandTransformation
@@ -43,6 +44,36 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     or both Fortran)."""
     return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
+
+
+def _is_flat_cpu_contiguous_copy(inp: data.Data, in_subset: dace.subsets.Range, out: data.Data,
+                                 out_subset: dace.subsets.Range) -> bool:
+    """True when the copy is a same-side CPU main-memory transfer for which a flat
+    ``std::memcpy`` is byte-identical to the element-wise copy.
+
+    Requires: identical CPU main-memory storage on both sides (``Register`` excluded --
+    its thread-level Sequential map belongs to ``MappedTasklet``), both subsets contiguous
+    in their arrays, the same packed major order (both C or both Fortran -- a mixed order
+    is a memory transpose), and matching per-dim subset sizes (dropping singletons). The
+    size check keeps transposes (``(3,4) -> (4,3)``) and rank-mismatch reshapes
+    (``(2,3,4) -> (24,)``) on the ``MappedTasklet`` path, whose 1-D walker handles them.
+
+    :param inp: source descriptor.
+    :param in_subset: source memlet subset.
+    :param out: destination descriptor.
+    :param out_subset: destination memlet subset.
+    :returns: True iff a single ``std::memcpy`` (serial or OpenMP-chunked) is valid.
+    """
+    allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
+    if inp.storage != out.storage or inp.storage not in allowed:
+        return False
+    if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+        return False
+    if not _both_packed_same_layout(inp, out):
+        return False
+    in_sizes = [s for s in in_subset.size() if s != 1]
+    out_sizes = [s for s in out_subset.size() if s != 1]
+    return list(in_sizes) == list(out_sizes)
 
 
 def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], layout: str) -> List[symbolic.SymExpr]:
@@ -114,6 +145,16 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # inside the existing kernel scope.
     if is_devicelevel_gpu(parent_sdfg, parent_state, node):
         return 'MappedTasklet'
+
+    # 3b. Same-side CPU main-memory contiguous copy for which a flat byte copy is
+    # exact: route to ``std::memcpy``. Above ``PARALLEL_COPY_MIN_BYTES`` (or when the
+    # size is symbolic) take the OpenMP-chunked expansion, which saturates memory
+    # bandwidth on a many-core NUMA domain; below it a single ``std::memcpy`` wins
+    # (no fork/join). Non-contiguous, mixed-layout, rank-mismatch, and Register copies
+    # fall through to ``MappedTasklet`` below.
+    if _is_flat_cpu_contiguous_copy(inp, in_subset, out, out_subset):
+        num_bytes = in_subset.num_elements() * inp.dtype.bytes
+        return 'MemcpyParallelCPU' if is_parallel_cpu_transfer_size(num_bytes) else 'MemcpyCPU'
 
     # 4. Coarse pick by storage pair: any copy touching GPU memory goes
     # through the cudaMemcpy family; everything else falls through to
@@ -521,6 +562,37 @@ class ExpandMemcpyCPU(ExpandTransformation):
 
 
 @library.expansion
+class ExpandMemcpyParallelCPU(ExpandTransformation):
+    """OpenMP-parallel ``std::memcpy`` for a large contiguous CPU<->CPU copy.
+
+    Expands to a wrapper SDFG whose ``CPU_Multicore`` map (lowered by codegen to
+    ``#pragma omp parallel for``) iterates ``ceil(N / chunk)`` chunks, each running one
+    contiguous ``std::memcpy`` over its slice of up to
+    :data:`~dace.libraries.standard.helper.PARALLEL_COPY_CHUNK_BYTES` bytes. Selected by
+    the auto path for contiguous same-layout CPU copies whose size is symbolic or
+    statically ``>= PARALLEL_COPY_MIN_BYTES``. The OpenMP parallelism comes from the map
+    schedule; small symbolic sizes degrade to a single chunk (one thread)."""
+    environments = [environments.CPU]
+
+    @staticmethod
+    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                            parent_state,
+                                                                            allow_cross_storage=False)
+        if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+            raise ValueError(f"MemcpyParallelCPU requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
+                             f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
+                             f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
+
+        return make_parallel_cpu_transfer_sdfg(node.label,
+                                               inp.dtype,
+                                               inp.storage,
+                                               in_subset.num_elements(),
+                                               out_array=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                                               in_array=CopyLibraryNode.INPUT_CONNECTOR_NAME)
+
+
+@library.expansion
 class ExpandMemcpyCUDA2D(ExpandTransformation):
     """2D strided copy via ``cudaMemcpy2DAsync`` between any combination of GPU_Global and host storage.
 
@@ -789,7 +861,8 @@ class CopyLibraryNode(nodes.LibraryNode):
     (element-wise tasklet, schedule from storages; also handles rank-mismatch
     reshapes via a 1-D walker when both endpoints are packed-same-layout with
     contiguous subsets), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU``
-    (``std::memcpy``), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
+    (``std::memcpy``), ``MemcpyParallelCPU`` (OpenMP-chunked ``std::memcpy`` for
+    large contiguous CPU copies), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
     ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of
     ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (``dace::CopyND`` +
     ``__syncthreads()``; the only remaining ``dace::CopyND`` user).
@@ -805,6 +878,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         "MappedTasklet": ExpandMappedTasklet,
         "Tasklet": ExpandTasklet,
         "MemcpyCPU": ExpandMemcpyCPU,
+        "MemcpyParallelCPU": ExpandMemcpyParallelCPU,
         "MemcpyCUDA1D": ExpandMemcpyCUDA1D,
         "MemcpyCUDA2D": ExpandMemcpyCUDA2D,
         "MemcpyCUDANDStrided": ExpandMemcpyCUDANDStrided,

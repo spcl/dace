@@ -50,6 +50,7 @@ from dace.subsets import Range
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import unsqueeze_memlet
+from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 #: Reduction op -> the augassign op it normalizes to (``-`` accumulates like ``+``).
 _WCR_OP = {'+': '+', '-': '+', '*': '*', 'min': 'min', 'max': 'max'}
@@ -179,6 +180,22 @@ class NormalizeWCR(ppl.Pass):
         inner = nsdfg.sdfg
         oc_desc = inner.arrays.get(oc)
         if oc_desc is None:
+            return False
+
+        # Fail-safe refuse: never apply the drop-WCR / whole-buffer ``_nnr_out`` rewrite to a
+        # DATA-DEPENDENT MULTI-ELEMENT scatter sink (``hist[bin[i]] (op)= w``). That rewrite
+        # assumes the write covers all of ``oc`` and a write-only ``oc`` starts at the op
+        # identity -- true for a scalar accumulator, but a scatter writes exactly ONE element
+        # of a bounded ``oc`` per iteration, so materializing a per-iteration whole-array
+        # buffer reads its other n-1 elements back uninitialised (garbage histogram). This
+        # holds REGARDLESS of op (``+ - * / min max`` ...) and device: an un-privatised
+        # scatter -- GPU (where ``privatize_scatter_reductions`` is off), or a non-reducible
+        # op like ``-`` that ``PrivatizeScatterReduction`` refuses -- falls back to the
+        # correct per-element ``reduce_atomic`` / atomicAdd instead of a broken whole-buffer
+        # reduction. On CPU with a reducible op, ``PrivatizeScatterReduction`` runs first and
+        # surfaces the WCR (making the outer edge non-plain), so this method already no-ops
+        # there; the guard is the backstop for every path that pass does not cover.
+        if is_data_dependent_scatter_sink(nsdfg, oc):
             return False
 
         # (a) A scalar WCR edge inside the body writing `oc` into a pure-sink AccessNode.

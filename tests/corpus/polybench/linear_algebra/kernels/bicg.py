@@ -40,28 +40,9 @@ def init_array(A, s, q, p, r, n, m):
 @dace.program
 def bicg(A: datatype[N, M], s: datatype[M], q: datatype[N], p: datatype[M], r: datatype[N]):
 
-    @dace.map
-    def reset_s(i: _[0:M]):
-        out >> s[i]
-        out = 0.0
-
-    # ``q`` is WCR-accumulated below just like ``s``; the frontend drops the
-    # ``,0`` WCR identity, so it must be explicitly zeroed or it accumulates
-    # onto uninitialised memory (mirrors ``reset_s``).
-    @dace.map
-    def reset_q(i: _[0:N]):
-        out >> q[i]
-        out = 0.0
-
-    @dace.map
-    def compute(i: _[0:N], j: _[0:M]):
-        inA << A[i, j]
-        inr << r[i]
-        inp << p[j]
-        outs >> s(1, lambda a, b: a + b)[j]
-        outq >> q(1, lambda a, b: a + b)[i]
-        outs = inr * inA
-        outq = inA * inp
+    # npbench formulation: ``s = r @ A`` and ``q = A @ p`` (two Gemv library nodes).
+    s[:] = r @ A
+    q[:] = A @ p
 
 
 if __name__ == '__main__':

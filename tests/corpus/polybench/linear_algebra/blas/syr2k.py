@@ -29,29 +29,12 @@ def init_array(C, A, B, alpha, beta, n, m):
 
 @dace.program
 def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: datatype[1], beta: datatype[1]):
-
-    @dace.mapscope
-    def mult_c_rows(i: _[0:N]):
-
-        @dace.map
-        def mult_c_cols(j: _[0:i + 1]):
-            ic << C[i, j]
-            ib << beta
-            oc >> C[i, j]
-            oc = ic * ib
-
-    @dace.mapscope
-    def compute(i: _[0:N], k: _[0:M]):
-
-        @dace.map
-        def compute_elem(j: _[0:i + 1]):
-            ialpha << alpha
-            ia << A[i, k]
-            iat << A[j, k]
-            ib << B[i, k]
-            ibt << B[j, k]
-            oc >> C(1, lambda a, b: a + b)[i, j]
-            oc = ialpha * iat * ib + ialpha * ibt * ia
+    # npbench formulation: symmetric rank-2k update via slice-vectorized outer products.
+    # ``alpha``/``beta`` are 1-element arrays in the corpus signature.
+    for i in range(N):
+        C[i, :i + 1] *= beta[0]
+        for k in range(M):
+            C[i, :i + 1] += (A[:i + 1, k] * alpha[0] * B[i, k] + B[:i + 1, k] * alpha[0] * A[i, k])
 
 
 if __name__ == '__main__':

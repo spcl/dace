@@ -259,5 +259,25 @@ def test_inner_carried_outer_parallel_2d():
     _canon_vs_raw(_inner_carried_2d, ins, N=n, M=m)
 
 
+LEN_2D = dace.symbol('LEN_2D')
+
+
+@dace.program
+def _forward_read_big_array(a: dace.float64[N], flat: dace.float64[LEN_2D * LEN_2D]):
+    for i in range(N):
+        flat[4 + i] = flat[8 + i] + a[i]
+
+
+def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
+    """s422 shape: a forward-read anti-dependence (``flat[4 + i]`` written, ``flat[8 + i]``
+    read-ahead). Anti-dependence is allowed by default -- the array is snapshotted before
+    the loop and the read-ahead is redirected to the snapshot -- and the result stays
+    value-preserving regardless of how the read window relates to the container size."""
+    n, l2 = 500, 64  # flat has l2*l2 = 4096 >= n + 8, so flat[8 + i] stays in bounds
+    ins = {'a': _rand(n, seed=3), 'flat': _rand(l2 * l2, seed=4)}
+    cand = _canon_vs_raw(_forward_read_big_array, ins, N=n, LEN_2D=l2)
+    assert any('snap' in nm for nm in cand.arrays), "forward-read anti-dependence should snapshot the array"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-q'])

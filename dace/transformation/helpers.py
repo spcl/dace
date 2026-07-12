@@ -2251,7 +2251,12 @@ def get_parent_map_and_loop_scopes(root_sdfg: SDFG, node: Union[nodes.MapEntry, 
     cur_node = node
     parent_scopes = list()
 
-    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet)):
+    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet, nodes.LibraryNode)):
+        # A LibraryNode is a scope child like a Tasklet (a "special tasklet"): its enclosing
+        # MapEntry scopes are read from the same ``scope_dict``. Without it, a caller asking for
+        # the parent maps of a library node (e.g. the SharedMemoryCollective GPU_ThreadBlock
+        # rejection, or the libnode-schedule decision in canonicalize's finalize) would miss every
+        # map in the node's own state.
         while scope_dict[cur_node] is not None:
             if isinstance(scope_dict[cur_node], nodes.MapEntry):
                 parent_scopes.append(scope_dict[cur_node])

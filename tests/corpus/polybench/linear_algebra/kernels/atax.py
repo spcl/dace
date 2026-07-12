@@ -40,39 +40,9 @@ def init_array(A, x, y, n, m):
 
 @dace.program
 def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
-    tmp = dace.define_local([M], dtype=datatype)
-
-    @dace.map
-    def reset_y(i: _[0:N]):
-        out >> y[i]
-        out = 0.0
-
-    # Zero ``tmp`` before the accumulation (polybench sets ``tmp[i] = 0`` inside the
-    # i-loop). The source expressed this via the WCR identity ``tmp(1, ..., 0)``, but
-    # the Python frontend drops the identity third argument, so the accumulation would
-    # otherwise read uninitialised memory -- making even the untransformed reference
-    # process-dependent. ``tmp[i]`` is produced and consumed within the same i, so a
-    # single up-front zero is equivalent to per-iteration reset.
-    @dace.map
-    def reset_tmp(i: _[0:M]):
-        out >> tmp[i]
-        out = 0.0
-
-    for i in range(M):
-
-        @dace.map
-        def compute_tmp(j: _[0:N]):
-            inA << A[i, j]
-            inx << x[j]
-            out >> tmp(1, lambda a, b: a + b, 0)[i]
-            out = inA * inx
-
-        @dace.map
-        def compute_y(j: _[0:N]):
-            inA << A[i, j]
-            intmp << tmp[i]
-            outy >> y(1, lambda a, b: a + b)[j]
-            outy = inA * intmp
+    # npbench formulation: ``y = (A @ x) @ A`` (two Gemv library nodes), replacing the
+    # hand-written ``tmp`` accumulation.
+    y[:] = (A @ x) @ A
 
 
 if __name__ == '__main__':

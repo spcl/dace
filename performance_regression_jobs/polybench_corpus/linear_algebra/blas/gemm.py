@@ -51,22 +51,10 @@ def init_array(C, A, B, alpha, beta, ni, nj, nk):
 
 @dace.program
 def gemm(C: datatype[NI, NJ], A: datatype[NI, NK], B: datatype[NK, NJ], alpha: datatype[1], beta: datatype[1]):
-
-    @dace.map
-    def mult_c(i: _[0:NI], j: _[0:NJ]):
-        inp << C[i, j]
-        in_beta << beta
-        out >> C[i, j]
-
-        out = inp * in_beta
-
-    @dace.map
-    def comp(i: _[0:NI], k: _[0:NK], j: _[0:NJ]):
-        in_a << A[i, k]
-        in_b << B[k, j]
-        in_alpha << alpha
-        out >> C(1, lambda x, y: x + y)[i, j]
-        out = in_alpha * in_a * in_b
+    # npbench formulation: ``C[:] = alpha * A @ B + beta * C`` (the ``@`` lowers to a
+    # Gemm/MatMul library node instead of the scalar triple-loop). ``alpha``/``beta`` are
+    # 1-element arrays in the corpus signature, so index the scalar out.
+    C[:] = alpha[0] * A @ B + beta[0] * C
 
 
 if __name__ == '__main__':

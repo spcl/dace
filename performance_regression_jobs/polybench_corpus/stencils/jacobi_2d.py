@@ -32,29 +32,10 @@ args = [
 
 @dace.program
 def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  #, N, tsteps):
-    for t in range(tsteps):
-
-        @dace.map
-        def a(i: _[1:N - 1], j: _[1:N - 1]):
-            a1 << A[i, j]
-            a2 << A[i, j - 1]
-            a3 << A[i, j + 1]
-            a4 << A[i + 1, j]
-            a5 << A[i - 1, j]
-            b >> B[i, j]
-
-            b = 0.2 * (a1 + a2 + a3 + a4 + a5)
-
-        @dace.map
-        def b(i: _[1:N - 1], j: _[1:N - 1]):
-            a1 << B[i, j]
-            a2 << B[i, j - 1]
-            a3 << B[i, j + 1]
-            a4 << B[i + 1, j]
-            a5 << B[i - 1, j]
-            b >> A[i, j]
-
-            b = 0.2 * (a1 + a2 + a3 + a4 + a5)
+    # npbench formulation: slice-vectorized 5-point Jacobi sweeps.
+    for t in range(1, tsteps):
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
+        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
 
 
 def init_array(A, B, n, tsteps):

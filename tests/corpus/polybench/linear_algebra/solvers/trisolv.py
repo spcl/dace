@@ -25,27 +25,10 @@ def init_array(L, x, b, n):
 
 @dace.program
 def trisolv(L: datatype[N, N], x: datatype[N], b: datatype[N]):
-    for i in range(0, N, 1):
-
-        @dace.tasklet
-        def init_x():
-            in_b << b[i]
-            out >> x[i]
-            out = in_b
-
-        @dace.map
-        def set_x(j: _[0:i]):
-            in_L << L[i, j]
-            in_x << x[j]
-            out >> x(1, lambda x, y: x + y)[i]
-            out = -in_L * in_x
-
-        @dace.tasklet
-        def div():
-            in_x << x[i]
-            in_L << L[i, i]
-            out >> x[i]
-            out = in_x / in_L
+    # npbench formulation: forward substitution with a ``@`` inner product (Dot library node)
+    # instead of a scalar ``j`` reduction loop.
+    for i in range(N):
+        x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]
 
 
 if __name__ == '__main__':

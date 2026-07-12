@@ -29,24 +29,15 @@ args = [([N, N], datatype)]
 
 @dace.program
 def seidel2d(A: datatype[N, N], tsteps: dace.int32):
-    for t in range(tsteps):
+    # npbench formulation: slice-vectorized neighbor sum over each row, then a sequential
+    # in-row Gauss-Seidel scan (``A[i, j] += A[i, j-1]``) that is inherently serial.
+    for t in range(0, tsteps - 1):
         for i in range(1, N - 1):
+            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] +
+                           A[i + 1, 1:-1] + A[i + 1, 2:])
             for j in range(1, N - 1):
-
-                @dace.tasklet
-                def a():
-                    a1 << A[i - 1, j - 1]
-                    a2 << A[i - 1, j]
-                    a3 << A[i - 1, j + 1]
-                    a4 << A[i, j - 1]
-                    a5 << A[i, j]
-                    a6 << A[i, j + 1]
-                    a7 << A[i + 1, j - 1]
-                    a8 << A[i + 1, j]
-                    a9 << A[i + 1, j + 1]
-                    out >> A[i, j]
-
-                    out = (a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9) / datatype(9.0)
+                A[i, j] += A[i, j - 1]
+                A[i, j] /= 9.0
 
 
 def init_array(A, tsteps, n):

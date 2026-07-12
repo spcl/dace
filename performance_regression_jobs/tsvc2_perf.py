@@ -43,7 +43,7 @@ BASELINE_LANE = nh.SINGLE_CORE_LANE
 
 _TARGET_BYTES = 2 * 1024**3
 _REF_1D, _REF_2D = 64, tsvc.LEN_2D_FIXED
-_MAX_LEN_1D, _MAX_LEN_2D = 2_000_000, 20_000
+_MAX_LEN_1D, _MAX_LEN_2D = 64_000_000, 20_000
 _MAX_ACCEPTABLE_BYTES = 4 * _TARGET_BYTES  # hard ceiling regardless of what the search proposes
 
 

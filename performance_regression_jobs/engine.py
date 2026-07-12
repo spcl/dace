@@ -434,13 +434,70 @@ def _set_tree_reduction(enabled):
     dace.Config.set('compiler', 'tree_reduction', value=bool(enabled))
 
 
+def perf_library_prio(device_type):
+    """Library-implementation priority for the perf sweep, handed to
+    ``set_fast_implementations`` as its ``find_fast_library_fn`` so the stock
+    walker -- and its GPU device-level-reduce scope guards -- is reused verbatim
+    rather than reimplemented. Two deliberate deviations from the stock
+    ``find_fast_library`` matter here:
+
+    - CPU lists ``OpenBLAS`` FIRST (ahead of any ``MKL``): MKL is x86-only and the
+      perf target is aarch64/daint, and even on an x86 box we want the OpenBLAS
+      lane actually measured, never a silent MKL substitution. It also adds
+      ``OpenMP`` so a ``Reduce`` library node lowers to the OpenMP privatized
+      reduction instead of the stock serial ``pure`` loop (``find_fast_library``'s
+      CPU list omits ``OpenMP``), and ``CPU`` so the sort / scan / scatter-conflict
+      / memset nodes take their native CPU expansion.
+    - GPU lists ``cuBLAS`` / ``cuSolverDn`` / ``cuTENSOR`` / ``CUB`` / ``GPUAuto``
+      (device BLAS + LAPACK and CUB reductions) then ``CUDA`` for the sort / scan /
+      scatter-conflict / memset nodes whose device-impl key is literally ``CUDA``.
+
+    Only impls a node actually offers are ever assigned (the walker checks
+    ``impl in node.implementations``), so listing a key a given node lacks -- e.g.
+    ``CUDA`` against a GEMM -- is a harmless no-op for that node."""
+    import dace
+    if device_type == dace.DeviceType.GPU:
+        return ['cuBLAS', 'cuSolverDn', 'cuTENSOR', 'CUB', 'GPUAuto', 'CUDA']
+    return ['OpenBLAS', 'OpenMP', 'CPU']
+
+
+def set_fastest_library_impls(sdfg, device):
+    """Force every BLAS / LAPACK / sort / reduce library node in `sdfg` onto the
+    fastest backend available for `device` and nothing slower:
+
+      CPU -> OpenBLAS for gemm/gemv AND for the LAPACK potrf/getrf/getrs/getri
+             nodes (each lists an ``OpenBLAS`` expansion that emits ``LAPACKE_*``
+             calls), OpenMP for ``Reduce``, native ``CPU`` for sort/scan/memset.
+      GPU -> cuBLAS, cuSolverDn, cuTENSOR, CUB / GPUAuto (device-level reduce),
+             ``CUDA`` (CUB) sort/scan/memset.
+
+    Delegates to ``set_fast_implementations`` with ``perf_library_prio`` so the
+    existing walker's guards are reused -- notably the GPU rule that never puts a
+    device-level reduce impl on a reduce living inside a GPU kernel scope, and the
+    "sequential-scheduled libnode on GPU -> pure" safety fallback. Idempotent and
+    consistent with canon's ``finalize`` (which already forces OpenBLAS + OpenMP on
+    CPU); the canon lane deliberately leaves selection to that main-thread-owned
+    finalize and never calls this, so finalize's tiny-matmul ``rowwise``/``pure``
+    override is preserved rather than reverted to a BLAS call."""
+    from dace.transformation.auto.auto_optimize import set_fast_implementations
+    set_fast_implementations(sdfg, _device_type(device), find_fast_library_fn=perf_library_prio)
+    return sdfg
+
+
 def pipeline_auto_opt(sdfg, device='cpu'):
     """DaCe's own auto_optimize for the target device -- the speedup baseline
     every other pipeline is reported against. Emits atomic WCR reductions (no
-    tree reduction -- that is the canonicalize lanes' distinguishing lowering)."""
+    tree reduction -- that is the canonicalize lanes' distinguishing lowering).
+
+    ``auto_optimize`` selects library-node impls AND expands them internally
+    (``set_fast_implementations`` then ``expand_library_nodes``), so a trailing
+    ``set_fastest_library_impls`` would see nothing left to re-select. The perf
+    priority (OpenBLAS over MKL, OpenMP reduce, cuBLAS/cuSolverDn/CUB on GPU) is
+    therefore threaded IN as ``find_fast_library_fn`` so it drives the selection
+    before expansion -- the same ``perf_library_prio`` the other lanes force."""
     from dace.transformation.auto.auto_optimize import auto_optimize
     _set_tree_reduction(False)
-    return auto_optimize(sdfg, _device_type(device))
+    return auto_optimize(sdfg, _device_type(device), find_fast_library_fn=perf_library_prio)
 
 
 def pipeline_parallel(sdfg, device='cpu'):
@@ -454,7 +511,7 @@ def pipeline_parallel(sdfg, device='cpu'):
     from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-    from dace.transformation.auto.auto_optimize import apply_gpu_storage, set_fast_implementations
+    from dace.transformation.auto.auto_optimize import apply_gpu_storage
     _set_tree_reduction(False)  # atomic WCR, like auto_opt -- only canon tree-reduces
     sdfg.simplify(validate=True)
     sdfg.apply_transformations_repeated(LoopToMap())
@@ -466,10 +523,10 @@ def pipeline_parallel(sdfg, device='cpu'):
         sdfg.simplify(validate=True)
     # Without this, library nodes stay implementation=None and a GEMM lowers to a
     # naive `pure` triple loop (e.g. mlp 12,443ms vs ~200ms). auto_opt/canon pick
-    # fast impls in their own finalize; this is the parallel lane's equivalent:
-    # BLAS->OpenBLAS, sort->the provided header (cub on GPU), reductions->fast.
-    set_fast_implementations(sdfg, _device_type(device))
-    return sdfg
+    # fast impls in their own finalize; this is the parallel lane's equivalent,
+    # forcing the perf priority: CPU BLAS/LAPACK->OpenBLAS + Reduce->OpenMP,
+    # GPU->cuBLAS/cuSolverDn + CUB/GPUAuto reduce + CUB sort.
+    return set_fastest_library_impls(sdfg, device)
 
 
 #: The canonicalize knobs used everywhere (mirrors the sibling gate's _CPU
@@ -498,14 +555,16 @@ def pipeline_canon_gpu(sdfg, device='gpu'):
     never touches it. `device` is accepted for a uniform pipeline signature but the
     target is always the GPU."""
     from dace.transformation.passes.canonicalize import canonicalize
-    from dace.transformation.auto.auto_optimize import apply_gpu_storage, set_fast_implementations
+    from dace.transformation.auto.auto_optimize import apply_gpu_storage
     _set_tree_reduction(True)  # match the canon lane: tree-reduce the WCR
     sdfg = canonicalize(sdfg, validate=True, target='cpu', **_CANON_KNOBS)
     apply_gpu_storage(sdfg)  # non-transient arrays -> GPU_Global (data resident on device)
     sdfg.apply_gpu_transformations()
     sdfg.simplify(validate=True)
-    set_fast_implementations(sdfg, _device_type('gpu'))
-    return sdfg
+    # Force the perf GPU priority on every library node: cuBLAS/cuSolverDn +
+    # CUB/GPUAuto device reduce + CUB sort (this lane offloads to GPU explicitly,
+    # so canon's CPU finalize never ran the impl selection here).
+    return set_fastest_library_impls(sdfg, 'gpu')
 
 
 #: The 3 DaCe-side comparison points. auto_opt is the BASELINE speedups are

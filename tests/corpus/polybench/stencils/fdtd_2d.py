@@ -53,39 +53,12 @@ def init_array(ex, ey, hz, _fict_, nx, ny, tmax):
 
 @dace.program
 def fdtd2d(ex: datatype[NX, NY], ey: datatype[NX, NY], hz: datatype[NX, NY], _fict_: datatype[TMAX]):
+    # npbench formulation: slice-vectorized FDTD field updates.
     for t in range(TMAX):
-
-        @dace.map
-        def col0(j: _[0:NY]):
-            fict << _fict_[t]
-            out >> ey[0, j]
-            out = fict
-
-        @dace.map
-        def update_ey(i: _[1:NX], j: _[0:NY]):
-            eyin << ey[i, j]
-            hz1 << hz[i, j]
-            hz2 << hz[i - 1, j]
-            eyout >> ey[i, j]
-            eyout = eyin - datatype(0.5) * (hz1 - hz2)
-
-        @dace.map
-        def update_ex(i: _[0:NX], j: _[1:NY]):
-            exin << ex[i, j]
-            hz1 << hz[i, j]
-            hz2 << hz[i, j - 1]
-            exout >> ex[i, j]
-            exout = exin - datatype(0.5) * (hz1 - hz2)
-
-        @dace.map
-        def update_hz(i: _[0:NX - 1], j: _[0:NY - 1]):
-            hzin << hz[i, j]
-            ex1 << ex[i, j + 1]
-            ex2 << ex[i, j]
-            ey1 << ey[i + 1, j]
-            ey2 << ey[i, j]
-            hzout >> hz[i, j]
-            hzout = hzin - datatype(0.7) * (ex1 - ex2 + ey1 - ey2)
+        ey[0, :] = _fict_[t]
+        ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:-1, :])
+        ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :-1])
+        hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] + ey[1:, :-1] - ey[:-1, :-1])
 
 
 if __name__ == '__main__':

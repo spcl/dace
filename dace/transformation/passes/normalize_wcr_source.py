@@ -68,6 +68,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 
 @transformation.explicit_cf_compatible
@@ -203,6 +204,18 @@ class NormalizeWCRSource(ppl.Pass):
             # such edges -- the WCR stays on the direct NestedSDFG-output edge
             # and codegen falls back to its atomic-add path.
             if isinstance(src, nodes.NestedSDFG) and src_conn in src.in_connectors:
+                continue
+            # Data-dependent scatter reduction (azimint histogram): the accumulation runs
+            # on the inner single-element WCR straight into the accumulator, and any WCR on
+            # this NestedSDFG->MapExit edge is only the reduction-clause marker. Wrapping it
+            # in a per-iteration whole-array ``_wcr_priv`` buffer would (a) undo that and
+            # (b) be unsound -- only one element of the buffer is written per iteration, the
+            # rest read back uninitialised. Skip ANY such scatter sink, REGARDLESS of op:
+            # ``PrivatizeScatterReduction`` owns the OpenMP-reducible ones (leaving the WCR
+            # on the direct edge, codegen emits nothing for it), and a non-reducible op
+            # (``-`` / ``/``) that neither that pass nor ``NormalizeWCR`` rewrote must fall
+            # back to the correct per-element atomic rather than a broken whole-buffer copy.
+            if isinstance(src, nodes.NestedSDFG) and is_data_dependent_scatter_sink(src, src_conn):
                 continue
             target_desc = sdfg.arrays.get(e.data.data) if e.data.data else None
             inner = self._output_descriptor(src, src_conn, target_desc)

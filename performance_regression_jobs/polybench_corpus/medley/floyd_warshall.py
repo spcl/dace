@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 N = dace.symbol('N')
 
@@ -22,16 +23,10 @@ def init_array(path, n):
 
 @dace.program
 def floyd_warshall(path: datatype[N, N]):
-
-    @dace.mapscope
-    def k_map(k: _[0:N]):
-
-        @dace.map
-        def ij_map(i: _[0:N], j: _[0:N]):
-            ik_dist << path[i, k]
-            kj_dist << path[k, j]
-            out >> path(1, lambda x, y: min(x, y))[i, j]
-            out = ik_dist + kj_dist
+    # npbench formulation: each k-step is a vectorized ``np.minimum`` against the outer-sum
+    # ``np.add.outer(path[:, k], path[k, :])`` (elementwise maps, no scalar min-reduction loop).
+    for k in range(N):
+        path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))
 
 
 if __name__ == '__main__':

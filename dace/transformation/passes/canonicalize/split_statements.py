@@ -233,6 +233,10 @@ class SplitStatements(ppl.Pass):
             if not fwd_edges:
                 continue
 
+            # Anti-dependence is allowed by default: snapshot the FULL array before the loop
+            # and redirect only the read-ahead edges to the snapshot. With the swept sizes the
+            # array already tracks the loop, and the snapshot copy lowers to a parallel memcpy,
+            # so a whole-array copy is simple and cheap -- no footprint bookkeeping needed.
             desc = sdfg.arrays[arr]
             snap, _ = sdfg.add_transient(f'{arr}_split_snap',
                                          desc.shape,

@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
 
 NI = dace.symbol('NI')
 NJ = dace.symbol('NJ')
@@ -64,39 +63,8 @@ def init_array(A, B, C, D, G, ni, nj, nk, nl, nm):
 
 @dace.program
 def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datatype[NM, NL], G: datatype[NI, NL]):
-    # Zero-initialise the accumulators. The matmuls accumulate via a WCR whose
-    # identity third argument (``E(1, ..., 0)``) is dropped by the Python frontend,
-    # so without an explicit zero the reduction reads uninitialised memory -- a latent
-    # bug masked only by fresh (zeroed) pages. polybench zeroes E/F/G before each dot
-    # product; do the same. ``G`` is the output parameter, reset with a map below.
-    E = np.zeros([NI, NJ], dtype=datatype)
-    F = np.zeros([NJ, NL], dtype=datatype)
-
-    @dace.map
-    def reset_G(i: _[0:NI], j: _[0:NL]):
-        out >> G[i, j]
-        out = 0.0
-
-    @dace.map
-    def mult_E(i: _[0:NI], j: _[0:NJ], k: _[0:NK]):
-        in_a << A[i, k]
-        in_b << B[k, j]
-        out >> E(1, lambda x, y: x + y, 0)[i, j]
-        out = in_a * in_b
-
-    @dace.map
-    def mult_F(i: _[0:NJ], j: _[0:NL], k: _[0:NM]):
-        in_a << C[i, k]
-        in_b << D[k, j]
-        out >> F(1, lambda x, y: x + y, 0)[i, j]
-        out = in_a * in_b
-
-    @dace.map
-    def mult_G(i: _[0:NI], j: _[0:NL], k: _[0:NJ]):
-        in_a << E[i, k]
-        in_b << F[k, j]
-        out >> G(1, lambda x, y: x + y, 0)[i, j]
-        out = in_a * in_b
+    # npbench formulation: ``G = A @ B @ C @ D`` (chained MatMul library nodes).
+    G[:] = A @ B @ C @ D
 
 
 if __name__ == '__main__':

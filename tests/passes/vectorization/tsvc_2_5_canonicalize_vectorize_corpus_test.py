@@ -135,8 +135,8 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
 @pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
 def test_tsvc_2_5_canonicalize(idx, program):
     """Canonicalize -> verify against the numpy oracle. Canonicalization alone is
-    value-preserving; this is the first of the three corpus paths (this, then
-    ``+legacy`` / ``+multidim`` vectorize)."""
+    value-preserving; this is the first of the two corpus paths (this, then
+    ``+multidim`` vectorize)."""
     arrays, scalars, ref = _reference(program)
     sdfg = _canonicalized(program)
     # Distinct sdfg.name so the canon-only build never shares a .dacecache dir with

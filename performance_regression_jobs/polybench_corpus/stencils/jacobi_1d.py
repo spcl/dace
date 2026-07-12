@@ -29,23 +29,11 @@ args = [([N], datatype), ([N], datatype)]  #, N, tsteps]
 
 @dace.program
 def jacobi1d(A: datatype[N], B: datatype[N]):  #, N, tsteps):
-    for t in range(tsteps):
-
-        @dace.map
-        def a(i: _[1:N - 1]):
-            a1 << A[i - 1]
-            a2 << A[i]
-            a3 << A[i + 1]
-            b >> B[i]
-            b = 0.33333 * (a1 + a2 + a3)
-
-        @dace.map
-        def b(i: _[1:N - 1]):
-            a1 << B[i - 1]
-            a2 << B[i]
-            a3 << B[i + 1]
-            b >> A[i]
-            b = 0.33333 * (a1 + a2 + a3)
+    # npbench formulation: slice-vectorized Jacobi sweeps (each ``[1:-1]`` assignment is a
+    # single vectorizable map).
+    for t in range(1, tsteps):
+        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
+        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
 
 
 def init_array(A, B, n, tsteps):

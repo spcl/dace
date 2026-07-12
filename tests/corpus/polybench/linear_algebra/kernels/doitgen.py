@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 NQ = dace.symbol('NQ')
 NR = dace.symbol('NR')
@@ -46,24 +47,12 @@ def init_array(A, C4, nr, nq, np):
 
 @dace.program
 def doitgen(A: datatype[NR, NQ, NP], C4: datatype[NP, NP]):
-
-    @dace.mapscope
-    def doit(r: _[0:NR], q: _[0:NQ]):
-        sum = dace.define_local([NP], dtype=datatype)
-        sum[:] = 0
-
-        @dace.map
-        def compute_sum(p: _[0:NP], s: _[0:NP]):
-            inA << A[r, q, s]
-            inC4 << C4[s, p]
-            outs >> sum(1, lambda a, b: a + b, 0)[p]
-            outs = inA * inC4
-
-        @dace.map
-        def compute_A(p: _[0:NP]):
-            insum << sum[p]
-            out >> A[r, q, p]
-            out = insum
+    # npbench formulation: per-``r`` matmul ``A[r] @ C4`` (a Gemm/MatMul library node). This is
+    # the (NQ, NP) @ (NP, NP) contraction npbench expresses as ``reshape(A[r], (NQ,1,NP)) @ C4``;
+    # the plain 2-D matmul is equivalent (per-row ``A[r, q, :] @ C4``) and avoids the unsupported
+    # 4-D matmul.
+    for r in range(NR):
+        A[r, :, :] = A[r] @ C4
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -33,38 +34,16 @@ def init_array(C, A, B, alpha, beta, n, m):
 
 @dace.program
 def symm(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]):
-
-    @dace.mapscope
-    def comp_all(j: _[0:N], i: _[0:M]):
-        temp2 = dace.define_local_scalar(datatype)
-
-        @dace.tasklet
-        def reset_tmp():
-            tmp >> temp2
-            tmp = 0
-
-        @dace.map
-        def comp_t2(k: _[0:i]):
-            ialpha << alpha
-            ia << A[i, k]
-            ibi << B[i, j]
-            ibk << B[k, j]
-            oc >> C(1, lambda a, b: a + b)[k, j]
-            ot2 >> temp2(1, lambda a, b: a + b)
-
-            oc = ialpha * ibi * ia
-            ot2 = ibk * ia
-
-        @dace.tasklet
-        def comp_rest():
-            ibeta << beta
-            ib << B[i, j]
-            iadiag << A[i, i]
-            ialpha << alpha
-            it2 << temp2
-            ic << C[i, j]
-            oc >> C[i, j]
-            oc = ibeta * ic + ialpha * ib * iadiag + ialpha * it2
+    # npbench formulation: symmetric-matrix multiply expressed with column slices + a
+    # ``B[:i, j] @ A[i, :i]`` inner product (Dot library node). ``alpha``/``beta`` are 1-element
+    # arrays in the corpus signature.
+    temp2 = np.zeros((N, ), dtype=C.dtype)
+    C *= beta[0]
+    for i in range(M):
+        for j in range(N):
+            C[:i, j] += alpha[0] * B[i, j] * A[i, :i]
+            temp2[j] = B[:i, j] @ A[i, :i]
+        C[i, :] += alpha[0] * B[i, :] * A[i, i] + alpha[0] * temp2
 
 
 if __name__ == '__main__':

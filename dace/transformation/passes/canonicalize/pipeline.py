@@ -68,6 +68,7 @@ from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseC
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
+from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.buffer_expansion import BufferExpansion
@@ -174,6 +175,12 @@ class _PrivatizeScalarsStage(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        # ``PrivatizeScalars`` resolves a ``FindAccessNodes`` analysis (keyed by
+        # ``cfg_id``) and a reachability analysis that calls ``reset_cfg_list`` mid-
+        # pipeline; a stale control-flow-region list (left by a prior stage's inliner)
+        # then lets that reset reassign ``cfg_id`` under the cached ``FindAccessNodes``
+        # result -> ``KeyError``. Refresh the list up front so both analyses agree.
+        sdfg.reset_cfg_list()
         return PrivatizeScalars().apply_pass(sdfg, {})
 
 
@@ -223,17 +230,26 @@ class _PrivatizeScalarsStage(ppl.Pass):
 #   - GPU: B (guarded) ~1.03x A. Same reasoning. On.
 # Both targets default to True; the knob exists so the AB harness can
 # measure off-vs-on without resorting to pre-canonicalize hand-wiring.
+# ``privatize_scatter_reductions`` (PrivatizeScatterReduction): surface a
+# data-dependent scatter reduction (``hist[bin[i]] (+)= w[i]``) to a whole-buffer
+# map WCR so CPU codegen privatises the accumulator with an OpenMP array-section
+# ``reduction(op:hist[0:n])`` clause instead of a contended per-element atomic
+# (azimint_hist: ~200x -> ~1x vs numpy). CPU-only: the clause path is gated on
+# ``openmp_array_reductions`` (an OpenMP feature); on GPU a scatter accumulate stays
+# an ``atomicAdd`` and this privatisation does not apply, so the knob defaults off.
 _CPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': True,
     'peel_limit': 4,
     'break_anti_dependence': True,
     'scatter_to_guarded_maps': True,
+    'privatize_scatter_reductions': True,
 }
 _GPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': False,
     'peel_limit': 4,
     'break_anti_dependence': True,
     'scatter_to_guarded_maps': True,
+    'privatize_scatter_reductions': False,
 }
 _TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': _CPU_DEFAULTS, 'gpu': _GPU_DEFAULTS}
 
@@ -251,6 +267,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   break_anti_dependence: bool = True,
                   interchange_carry_with_map: bool = True,
                   scatter_to_guarded_maps: bool = True,
+                  privatize_scatter_reductions: bool = True,
                   assume_parallel_guards: bool = False,
                   target: str = 'cpu',
                   lift: bool = True,
@@ -351,6 +368,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # plain reduction nest.
     if semantic_lifting and lift:
         s += [('loop_to_symm', LoopToSymm())]
+
+    # privatize_scatter (BEFORE normalize_reduction): surface a data-dependent scatter
+    # reduction (``hist[bin[i]] (+)= w[i]`` -- the azimint histogram) onto the whole-buffer
+    # ``NestedSDFG -> MapExit -> accumulator`` WCR edge chain, so CPU codegen privatises the
+    # accumulator with an OpenMP array-section ``reduction(op:hist[0:n])`` clause (each thread
+    # a private copy, uncontended accumulate, runtime tree-merge) instead of the contended
+    # per-element atomic (~200x on azimint_hist). Must run BEFORE ``NormalizeWCR``: surfacing
+    # the WCR here makes the outer edge non-plain, so ``NormalizeWCR`` skips the scatter and
+    # its unsound drop-WCR shortcut (which turns ``oc[bin] (+)= w`` into a partial plain
+    # ``oc[bin] = w`` over a per-iteration whole-array buffer, reading the rest uninitialised)
+    # never fires. CPU-only (the clause path needs OpenMP array reductions); off for GPU.
+    if privatize_scatter_reductions:
+        s += [('privatize_scatter', PrivatizeScatterReduction())]
 
     # normalize_reduction (FIRST, on the frontend shape): a masked reduction emitted as an
     # in-nsdfg WCR into a write-only output connector (plain map-exit edge) is rewritten to
@@ -614,6 +644,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # correctly. Runs after re-roll has already collapsed the tiled main body to
     # a unit-stride single-accumulator loop, and before ``loop_to_x`` lifts it.
     s += [('fuse_consecutive_loops', FuseConsecutiveLoops())]
+
+    # lift_copy_loops (BEFORE loop_to_x / LoopToReduce): a plain contiguous copy /
+    # zero loop -- ``for i: dst[i] = src[i]`` / ``for i: dst[i] = 0`` -- is lifted to a
+    # Copy / Memset library node here, before the reduction/scan detection runs, so it is
+    # recognised as pure data movement instead of being mis-analysed as a (degenerate)
+    # reduction or left as a naive loop. The earlier structural cleanup has already folded
+    # the frontend ``AccessNode -> scalar-slice -> Tasklet`` bridge into the ``_out = _in``
+    # form the detector matches. Gated on the same ``lift_copy`` knob as the post-parallelize
+    # map lift below; the vectorizer (``semantic_lifting=False``) skips it so copy loops stay
+    # raw loops it can lower. Structural cleanup tidies the spliced-in states afterwards.
+    if semantic_lifting and lift_copy:
+        s += [('lift_copy_loops', AssignmentAndCopyKernelToMemsetAndMemcpy())]
+        s += _structural_cleanup('lift_copy_loops')
 
     # loop_to_x (moved here from the 'reduce' stage so the order is
     # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap): lift the
@@ -1089,6 +1132,11 @@ class CanonicalizationPipeline(ppl.Pass):
         dtype=bool,
         default=True,
         desc='Run ScatterToGuardedMaps in the scatter stage to lift scatter loops with a sort-based guard.')
+    privatize_scatter_reductions = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Run PrivatizeScatterReduction to surface a data-dependent scatter reduction '
+        '(azimint histogram) to an OpenMP array-section reduction clause (CPU-only; off for GPU).')
     assume_parallel_guards = properties.Property(
         dtype=bool,
         default=False,
@@ -1118,6 +1166,7 @@ class CanonicalizationPipeline(ppl.Pass):
                  target: str = 'cpu',
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
+                 privatize_scatter_reductions: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
@@ -1143,6 +1192,10 @@ class CanonicalizationPipeline(ppl.Pass):
                                                                'scatter_to_guarded_maps',
                                                                scatter_to_guarded_maps,
                                                                fallback=True)
+        self.privatize_scatter_reductions = _resolve_target_default(target,
+                                                                    'privatize_scatter_reductions',
+                                                                    privatize_scatter_reductions,
+                                                                    fallback=(target == 'cpu'))
         self.assume_parallel_guards = assume_parallel_guards
         self.lift = lift
         self.lift_copy = lift_copy
@@ -1178,6 +1231,7 @@ class CanonicalizationPipeline(ppl.Pass):
                                break_anti_dependence=self.break_anti_dependence,
                                interchange_carry_with_map=self.interchange_carry_with_map,
                                scatter_to_guarded_maps=self.scatter_to_guarded_maps,
+                               privatize_scatter_reductions=self.privatize_scatter_reductions,
                                assume_parallel_guards=self.assume_parallel_guards,
                                target=self.target,
                                lift=self.lift,
@@ -1202,6 +1256,7 @@ def canonicalize(sdfg: SDFG,
                  target: str = 'cpu',
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
+                 privatize_scatter_reductions: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
@@ -1229,6 +1284,12 @@ def canonicalize(sdfg: SDFG,
                    knob args override the preset.
     :param interchange_carry_with_map: ``LoopToScan`` knob; ``None`` (default) ->
                                        per-target preset (CPU=True, GPU=False).
+    :param privatize_scatter_reductions: Surface a data-dependent scatter reduction
+                                   (``hist[bin[i]] (+)= w[i]`` -- the azimint histogram)
+                                   to an OpenMP array-section ``reduction(op:hist[0:n])``
+                                   clause so the accumulator is thread-privatised instead
+                                   of hammered with a contended atomic; ``None`` (default)
+                                   -> per-target preset (CPU=True, GPU=False).
     :param assume_parallel_guards: Assume every parallel-guard condition holds --
                                    ``ParallelizeUnderConstraint`` and
                                    ``ScatterToGuardedMaps`` emit only the parallel
@@ -1262,6 +1323,7 @@ def canonicalize(sdfg: SDFG,
                              target=target,
                              interchange_carry_with_map=interchange_carry_with_map,
                              scatter_to_guarded_maps=scatter_to_guarded_maps,
+                             privatize_scatter_reductions=privatize_scatter_reductions,
                              assume_parallel_guards=assume_parallel_guards,
                              specialize_constants=specialize_constants,
                              lift=lift,

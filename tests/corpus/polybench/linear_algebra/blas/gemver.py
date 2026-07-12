@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 N = dace.symbol('N')
 
@@ -36,40 +37,12 @@ def init_array(A, u1, v1, u2, v2, w, x, y, z, alpha, beta, n):
 def gemver(A: datatype[N, N], u1: datatype[N], v1: datatype[N], u2: datatype[N], v2: datatype[N], w: datatype[N],
            x: datatype[N], y: datatype[N], z: datatype[N], alpha: datatype[1], beta: datatype[1]):
 
-    @dace.map
-    def add_uv(i: _[0:N], j: _[0:N]):
-        iu1 << u1[i]
-        iv1 << v1[j]
-        iu2 << u2[i]
-        iv2 << v2[j]
-        ia << A[i, j]
-        oa >> A[i, j]
-
-        oa = ia + iu1 * iv1 + iu2 * iv2
-
-    @dace.map
-    def comp_y(i: _[0:N], j: _[0:N]):
-        ib << beta
-        ia << A[j, i]
-        iy << y[j]
-        ox >> x(1, lambda a, b: a + b)[i]
-
-        ox = ib * ia * iy
-
-    @dace.map
-    def comp_xz(i: _[0:N]):
-        ix << x[i]
-        iz << z[i]
-        ox >> x[i]
-        ox = ix + iz
-
-    @dace.map
-    def comp_w(i: _[0:N], j: _[0:N]):
-        ialpha << alpha
-        ia << A[i, j]
-        ix << x[j]
-        ow >> w(1, lambda a, b: a + b)[i]
-        ow = ialpha * ia * ix
+    # npbench formulation: rank-2 update of ``A`` (two outer products), then two Gemv sweeps.
+    # ``@`` lowers to Gemv library nodes; ``np.multiply.outer`` to an outer-product map.
+    # ``alpha``/``beta`` are 1-element arrays in the corpus signature, so index the scalar out.
+    A += np.multiply.outer(u1, v1) + np.multiply.outer(u2, v2)
+    x += beta[0] * y @ A + z
+    w += alpha[0] * A @ x
 
 
 if __name__ == '__main__':

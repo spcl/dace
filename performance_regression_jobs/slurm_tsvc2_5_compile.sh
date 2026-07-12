@@ -54,6 +54,27 @@ spack load gcc@16.1.0
 spack load llvm@22.1.5
 spack load cmake
 spack load openblas
+spack load cuda
+spack load cutensor
+
+# CUDA + cuTENSOR paths: `spack load` sets PATH but not LD_LIBRARY_PATH / CPATH / LIBRARY_PATH, so
+# point DaCe's nvcc discovery (CUDA_HOME) and the cuTENSOR library environment (links -lcutensor,
+# includes cutensor.h) at the spack installs. OpenBLAS + LAPACK (LAPACKE) come from `spack load
+# openblas`; all four (openblas, lapack, cuda, cutensor) are assumed present on the node.
+export CUDA_HOME="$(spack location -i cuda 2>/dev/null || echo "${CUDA_HOME:-}")"
+if [ -n "$CUDA_HOME" ]; then
+    export PATH="$CUDA_HOME/bin:$PATH"
+    export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+    export CPATH="$CUDA_HOME/include:${CPATH:-}"
+fi
+_CUTENSOR_ROOT="$(spack location -i cutensor 2>/dev/null || true)"
+if [ -n "$_CUTENSOR_ROOT" ]; then
+    for _d in "$_CUTENSOR_ROOT"/lib "$_CUTENSOR_ROOT"/lib64; do
+        [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"
+    done
+    [ -d "$_CUTENSOR_ROOT/include" ] && export CPATH="$_CUTENSOR_ROOT/include:${CPATH:-}"
+    unset _CUTENSOR_ROOT
+fi
 
 # Runtime library paths so every compiled .so loads at ctypes time: `spack load` sets PATH
 # but NOT LD_LIBRARY_PATH. A -fopenmp kernel needs libomp/libgomp (spack llvm), and the

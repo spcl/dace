@@ -1607,14 +1607,14 @@ def s421_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D]):
 
 @tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'FL2'}, params={}, regime='1d')
 @dace.program
-def s422_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D * LEN_1D]):
+def s422_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     for i in range(LEN_1D):
         flat_2d_array[4 + i] = flat_2d_array[8 + i] + a[i]
 
 
 @tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'FL2'}, params={}, regime='1d')
 @dace.program
-def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D * LEN_1D]):
+def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     vl = 64
     for i in range(LEN_1D - 1):
         flat_2d_array[i + 1] = flat_2d_array[vl + i] + a[i]

@@ -6,6 +6,8 @@ v1 refusal contract (``s332`` true-branch scalar rebind unsupported; cond-body
 overlap; multiple breaks; etc.). Also cross-pass non-interference: the
 break-loop pass must not fire on argmax / reduce / scan shapes.
 """
+import ast
+
 import numpy as np
 import pytest
 
@@ -13,7 +15,9 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes as nd
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
+from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.interstate import LoopToMap
 
 N = dace.symbol('N')
@@ -596,6 +600,176 @@ def test_arg_max_lift_doesnt_lift_break_loop():
 
     res = ArgMaxLift().apply_pass(s481.to_sdfg(simplify=True), {})
     assert res is None
+
+
+# -----------------------------------------------------------------------------
+# simplify=False: the break predicate is a body-local transient scalar
+# (``if __tmp0:`` where ``__tmp0 = a[i] > K`` is written by a body tasklet) and
+# the arithmetic body spans several slice/binop states. The corpus gate runs
+# simplify=True which collapses both shapes and hides this; these tests exercise
+# the raw frontend shape directly.
+# -----------------------------------------------------------------------------
+
+
+def test_simplify_false_transient_predicate_resolves():
+    """The resolver must inline the body tasklet ``__tmp0 = d_index < 0`` and
+    the gather copy ``d_index = d[i]`` so a bare ``__tmp0`` predicate resolves
+    to the array subscript ``d[i]`` the phi Map can read directly."""
+
+    @dace.program
+    def s481(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            a[i] = a[i] + b[i] * c[i]
+
+    sdfg = s481.to_sdfg(simplify=False)
+    p = EarlyExitToFindIndex()
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
+    cb = p._find_unique_break_conditional(loop)
+    assert cb is not None
+    bp, bpo = p._partition_body(loop, cb)
+    _bindings, expr = p._resolve_cond_expression(loop, cb, bp + bpo, sdfg)
+    # Predicate names ``d`` as a subscript and no bare transient survives.
+    assert p._read_arrays_from_expr(expr, sdfg) == {'d'}
+    assert p._cond_is_fully_resolved(expr, sdfg), f'predicate still unresolved: {expr!r}'
+
+
+def assert_explicit_dataflow(sdfg):
+    """HARD INVARIANT: every Tasklet reads each ``sdfg.arrays`` container through
+    an in-connector -- no data container (array or scalar) is referenced by bare
+    name in a tasklet body. A bare, unconnected ``__tmp0`` / ``threshold`` was
+    the original miscompile."""
+    for node, state in sdfg.all_nodes_recursive():
+        if not isinstance(node, nd.Tasklet):
+            continue
+        try:
+            tree = ast.parse(node.code.as_string)
+        except SyntaxError:
+            continue  # non-Python tasklet body -- not emitted by this pass
+        owner = state.sdfg
+        subscript_bases = {
+            id(n.value)
+            for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+        }
+        conns = set(node.in_connectors) | set(node.out_connectors)
+        for name_node in ast.walk(tree):
+            if not isinstance(name_node, ast.Name) or id(name_node) in subscript_bases:
+                continue
+            assert not (name_node.id in owner.arrays and name_node.id not in conns), (
+                f'{node.label}: reads data container {name_node.id!r} by bare name without an '
+                f'in-connector -- explicit-dataflow invariant violated: {node.code.as_string!r}')
+
+
+# Matrix kernels: each is a break loop that MUST lift under BOTH simplify modes
+# (s481 guard-before-body, s482 body-before-guard, s332 find-first + scalar
+# capture). These are the ``ext_break_find_first`` / ``ext_break_post_body`` /
+# ``ext_break_capture`` corpus shapes.
+
+
+@dace.program
+def ee_s481(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i in range(N):
+        if d[i] < 0.0:
+            break
+        a[i] = a[i] + b[i] * c[i]
+
+
+@dace.program
+def ee_s482(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in range(N):
+        a[i] = a[i] + b[i] * c[i]
+        if c[i] > b[i]:
+            break
+
+
+@dace.program
+def ee_s332(a: dace.float64[N], result: dace.float64[1], threshold: dace.float64):
+    index = -2
+    value = -1.0
+    for i in range(N):
+        if a[i] > threshold:
+            index = i
+            value = a[i]
+            break
+    result[0] = value + float(index)
+
+
+def drive_s481(sdfg):
+    n = 12
+    for tag, d in (('fire', np.linspace(1.0, -1.0, n)), ('nofire', np.ones(n))):
+        rng = np.random.default_rng(481)
+        a = rng.standard_normal(n)
+        b = rng.standard_normal(n)
+        c = rng.standard_normal(n)
+        ref = a.copy()
+        for i in range(n):
+            if d[i] < 0.0:
+                break
+            ref[i] = ref[i] + b[i] * c[i]
+        got = a.copy()
+        sdfg(a=got, b=b.copy(), c=c.copy(), d=d.copy(), N=n)
+        assert np.allclose(got, ref), f's481 {tag}: max diff {np.abs(got - ref).max()}'
+
+
+def drive_s482(sdfg):
+    n = 12
+    rng = np.random.default_rng(482)
+    b = rng.standard_normal(n)
+    for tag, c in (('fire', b + np.linspace(-1.0, 1.0, n)), ('nofire', b - 1.0)):
+        a = rng.standard_normal(n)
+        ref = a.copy()
+        for i in range(n):
+            ref[i] = ref[i] + b[i] * c[i]
+            if c[i] > b[i]:
+                break
+        got = a.copy()
+        sdfg(a=got, b=b.copy(), c=c.copy(), N=n)
+        assert np.allclose(got, ref), f's482 {tag}: max diff {np.abs(got - ref).max()}'
+
+
+def drive_s332(sdfg):
+    a = np.array([1.0, 2.0, 3.0, 50.0, 5.0, 6.0, 7.0, 8.0])
+    result = np.zeros(1)
+    sdfg(a=a, result=result, threshold=10.0, N=8)
+    assert np.isclose(result[0], 53.0), f's332 fire: got {result[0]}, expected 53.0'  # index 3, value 50
+    a = np.array([1.0, 2.0, 3.0, 4.0])
+    result = np.zeros(1)
+    sdfg(a=a, result=result, threshold=100.0, N=4)
+    assert np.isclose(result[0], -3.0), f's332 no-fire: got {result[0]}, expected -3.0'  # index -2, value -1
+
+
+_EE_MATRIX = {'s481': (ee_s481, drive_s481), 's482': (ee_s482, drive_s482), 's332': (ee_s332, drive_s332)}
+
+
+@pytest.mark.parametrize('simplify', [True, False], ids=['sTrue', 'sFalse'])
+@pytest.mark.parametrize('kernel', ['s481', 's482', 's332'])
+def test_early_exit_lifts_both_simplify_modes(kernel, simplify):
+    """Each early-exit kernel MUST lift (accelerate) under BOTH simplify=True and
+    simplify=False -- the multi-state arithmetic body and the transient-scalar
+    predicate are now emitted/inlined, not refused. Asserts: the pass lifts
+    (res==1), the explicit-dataflow invariant holds on the lifted output, the
+    residual body parallelizes to 0 loops, and the result is bit-exact (fire +
+    no-fire)."""
+    program, driver = _EE_MATRIX[kernel]
+    sdfg = program.to_sdfg(simplify=simplify)
+
+    res = EarlyExitToFindIndex().apply_pass(sdfg, {})
+    assert res == 1, f'{kernel} (simplify={simplify}) must lift, not refuse'
+    sdfg.validate()
+    # HARD INVARIANT on the lifted output: no dangling bare data read in any tasklet.
+    assert_explicit_dataflow(sdfg)
+
+    # Finish parallelization (the pipeline's SimplifyPass + LoopToMap): the
+    # find-first body loop must collapse and lift to a Map -- 0 residual loops.
+    SimplifyPass().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0, f'{kernel} (simplify={simplify}): break-loop + body must fully parallelize'
+    assert _num_reduces(sdfg) == 1, f'{kernel} (simplify={simplify}): exactly one find-first Reduce(Min)'
+    assert_explicit_dataflow(sdfg)  # invariant still holds after the full lift
+
+    driver(sdfg)
 
 
 if __name__ == '__main__':

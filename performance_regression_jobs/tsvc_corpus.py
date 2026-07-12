@@ -23,6 +23,7 @@ are derived at registration (``branch``/``reduction``/``gather``/``2d``) for
 import copy
 import dataclasses
 import inspect
+import math
 import re
 import textwrap
 import ast
@@ -41,8 +42,11 @@ LEN_2D = dace.symbol("LEN_2D")
 S = dace.symbol("S")
 VLEN = 8
 
-#: Fixed ``LEN_2D`` for the 2D scratch arrays of an otherwise 1D-swept kernel.
-LEN_2D_FIXED = 16
+#: Small floor for ``LEN_2D`` (the 2D scratch dim of an otherwise 1D-swept kernel).
+#: For s422/s423 ``LEN_2D`` is coupled to ``sqrt(LEN_1D)`` in :func:`regime_sizes` so the
+#: ``LEN_2D * LEN_2D`` scratch tracks the swept loop; this floor only applies for tiny
+#: sweeps. 256 is the real TSVC ``LEN_2D``.
+LEN_2D_FIXED = 256
 #: Value bound to ``S`` when a kernel uses it. Irrelevant to a reference-vs-candidate
 #: comparison (both sides see the same ``S``); just must be concrete.
 S_VALUE = 2
@@ -1604,14 +1608,14 @@ def s421_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D]):
 
 @tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'FL2'}, params={}, regime='1d')
 @dace.program
-def s422_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D * LEN_1D]):
+def s422_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     for i in range(LEN_1D):
         flat_2d_array[4 + i] = flat_2d_array[8 + i] + a[i]
 
 
 @tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'FL2'}, params={}, regime='1d')
 @dace.program
-def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D * LEN_1D]):
+def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     vl = 64
     for i in range(LEN_1D - 1):
         flat_2d_array[i + 1] = flat_2d_array[vl + i] + a[i]
@@ -1947,13 +1951,21 @@ def regime_sizes(regime: str, swept: int) -> Tuple[int, int]:
     runs off the end (the s4116 bug, where the 2d regime set ``LEN_1D=16 <
     LEN_2D=17``). The ``+ 8`` margin absorbs the ``inc`` / ``N4`` shift.
 
-    :param regime: ``"1d"`` (sweep ``LEN_1D``; ``LEN_2D`` small/fixed) or ``"2d"``
-        (sweep ``LEN_2D``; ``LEN_1D`` kept ``>= LEN_2D`` + margin).
+    For a 1D-regime kernel whose only 2D-sized array is a ``LEN_2D * LEN_2D`` scratch
+    (``flat_2d_array`` in s422/s423), ``LEN_2D`` is coupled to ``sqrt(LEN_1D)`` so the
+    scratch tracks the swept loop: ``LEN_2D**2 ~ LEN_1D`` (always ``>= LEN_1D`` + margin,
+    so the forward read ``flat[8 + i]`` stays in bounds) instead of a fixed giant constant
+    that would dominate the byte budget and starve ``LEN_1D`` down to a few iterations.
+    ``LEN_2D_FIXED`` is the small floor for tiny sweeps; kernels without a ``LEN_2D`` array
+    ignore the value entirely.
+
+    :param regime: ``"1d"`` (sweep ``LEN_1D``; ``LEN_2D`` tracks ``sqrt(LEN_1D)``) or
+        ``"2d"`` (sweep ``LEN_2D``; ``LEN_1D`` kept ``>= LEN_2D`` + margin).
     :param swept: the swept (non-divisible) extent for the regime.
     :returns: ``(LEN_1D, LEN_2D)``.
     """
     if regime == "1d":
-        return swept, LEN_2D_FIXED
+        return swept, max(LEN_2D_FIXED, math.isqrt(int(swept)) + 2)
     return max(LEN_2D_FIXED, swept) + 8, swept
 
 

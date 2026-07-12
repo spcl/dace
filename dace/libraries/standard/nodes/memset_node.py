@@ -14,7 +14,8 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
+                                            is_parallel_cpu_transfer_size, make_parallel_cpu_transfer_sdfg)
 
 
 def _make_memset_skeleton(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
@@ -83,12 +84,14 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     ``cudaMemsetAsync`` cannot be issued from a kernel, and for non-contiguous
     subsets where the single-call memset forms would zero outside the region;
     ``'CUDA'`` (``cudaMemsetAsync``) for host-issued GPU-destination contiguous
-    memsets; otherwise ``'CPU'`` (``std::memset``).
+    memsets; ``'ParallelCPU'`` (OpenMP-chunked ``std::memset``) for a contiguous
+    CPU main-memory zero whose size is symbolic or statically ``>=
+    PARALLEL_COPY_MIN_BYTES``; otherwise ``'CPU'`` (single ``std::memset``).
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node``.
     :param parent_sdfg: The SDFG containing ``parent_state``.
-    :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
+    :returns: One of ``'pure'``, ``'CUDA'``, ``'ParallelCPU'``, or ``'CPU'``.
     """
     _out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
 
@@ -100,6 +103,13 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
 
     if out.storage == dace.dtypes.StorageType.GPU_Global:
         return 'CUDA'
+
+    # Same-side CPU main-memory contiguous zero: parallelize above the byte
+    # threshold (or when the size is symbolic), else a single ``std::memset``.
+    # ``Register`` and other non-main-memory storages keep the serial call.
+    allowed = dace.dtypes.CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
+    if out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements() * out.dtype.bytes):
+        return 'ParallelCPU'
     return 'CPU'
 
 
@@ -160,6 +170,34 @@ class ExpandCPU(ExpandTransformation):
         return _make_memset_tasklet(node, parent_state, parent_sdfg, cuda=False)
 
 
+@library.expansion
+class ExpandParallelCPU(ExpandTransformation):
+    """OpenMP-parallel ``std::memset`` for a large contiguous CPU zero.
+
+    Expands to a wrapper SDFG whose ``CPU_Multicore`` map (lowered by codegen to
+    ``#pragma omp parallel for``) iterates ``ceil(N / chunk)`` chunks, each running one
+    contiguous ``std::memset`` over its slice of up to
+    :data:`~dace.libraries.standard.helper.PARALLEL_COPY_CHUNK_BYTES` bytes. Selected by
+    the auto path for contiguous CPU memsets whose size is symbolic or statically
+    ``>= PARALLEL_COPY_MIN_BYTES``. The OpenMP parallelism comes from the map schedule."""
+    environments = [environments.CPU]
+
+    @staticmethod
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
+        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        if not out_subset.is_contiguous_subset(out):
+            raise ValueError(
+                f"MemsetLibraryNode ParallelCPU expansion requires a contiguous subset; got '{out_name}' subset "
+                f"{out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
+                f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions.")
+
+        return make_parallel_cpu_transfer_sdfg(node.label,
+                                               out.dtype,
+                                               out.storage,
+                                               out_subset.num_elements(),
+                                               out_array=MemsetLibraryNode.OUTPUT_CONNECTOR_NAME)
+
+
 @library.node
 class MemsetLibraryNode(nodes.LibraryNode):
     """Library node representing a 0-memset over a contiguous output subset.
@@ -170,7 +208,13 @@ class MemsetLibraryNode(nodes.LibraryNode):
     selector reason purely from the static memlet subset.
     """
 
-    implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
+    implementations = {
+        "Auto": ExpandAuto,
+        "pure": ExpandPure,
+        "CUDA": ExpandCUDA,
+        "CPU": ExpandCPU,
+        "ParallelCPU": ExpandParallelCPU,
+    }
     default_implementation = 'Auto'
 
     # Connector name exposed for library node builders.

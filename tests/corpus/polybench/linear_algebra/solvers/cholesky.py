@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import numpy as np
 
@@ -28,34 +27,15 @@ def init_array(A, n):
 
 @dace.program
 def cholesky(A: datatype[N, N]):
-    for i in range(0, N, 1):
-        for j in range(0, i, 1):
-
-            @dace.map
-            def k_loop1(k: _[0:j]):
-                i_in << A[i, k]
-                j_in << A[j, k]
-                out >> A(1, lambda x, y: x + y)[i, j]
-                out = -i_in * j_in
-
-            @dace.tasklet
-            def div():
-                ij_in << A[i, j]
-                jj_in << A[j, j]
-                out >> A[i, j]
-                out = ij_in / jj_in
-
-        @dace.map
-        def k_loop2(k: _[0:i]):
-            k_in << A[i, k]
-            out >> A(1, lambda x, y: x + y)[i, i]
-            out = -k_in * k_in
-
-        @dace.tasklet
-        def sqrt():
-            inp << A[i, i]
-            out >> A[i, i]
-            out = math.sqrt(inp)
+    # ``numpy.linalg.cholesky`` returns the lower-triangular factor ``L`` (``A = L @ L.T``),
+    # which the DaCe frontend lowers to the LAPACK-backed ``Cholesky`` (POTRF) library node
+    # instead of a hand-written Crout loop nest. The original in-place kernel wrote ``L`` into
+    # ``A``'s lower triangle + diagonal and left the strictly-upper triangle (the symmetric
+    # input) untouched, so copy back only the lower triangle to preserve that exact convention.
+    L = np.linalg.cholesky(A)
+    for i in dace.map[0:N]:
+        for j in dace.map[0:i + 1]:
+            A[i, j] = L[i, j]
 
 
 def print_result(filename, *args, n=None, **kwargs):

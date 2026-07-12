@@ -99,8 +99,8 @@ def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
 @pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
 def test_tsvc_canonicalize(idx, name):
     """Canonicalize -> verify e2e against numpy. Canonicalization alone is
-    value-preserving; this is the first of the three corpus paths (this, then
-    ``+legacy`` / ``+multidim`` vectorize). ``_canonicalized`` asserts the
+    value-preserving; this is the first of the two corpus paths (this, then
+    ``+multidim`` vectorize). ``_canonicalized`` asserts the
     post-canon output matches the reference."""
     _canonicalized(name, tag="canon")
 

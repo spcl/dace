@@ -118,6 +118,63 @@ def interleave(inter, f, seq, **kwargs):
             f(x, **kwargs)
 
 
+def numeric_power_value(node: ast.AST):
+    """Constexpr-evaluate the ``**`` exponent to its numeric value, or ``None`` if it is not a
+    compile-time constant.
+
+    Used by the ``**`` code generator so a constant exponent lowers to an ``ipow`` product (integral
+    result) or a ``sqrt`` (a +/-0.5 result) instead of a libm ``pow`` call. Each operand is evaluated
+    recursively; the recognized forms are:
+
+    * a bare numeric literal (``2`` / ``2.0``) and its unary negation (``-3``);
+    * ``abs(...)`` and ``sqrt(...)`` of a constant (a perfect square folds to an integer, e.g.
+      ``sqrt(4)`` -> ``2`` -> ``ipow(x, 2)``);
+    * a dtype cast ``TYPE(...)``, applied with C ``static_cast`` semantics so the folded exponent
+      MATCHES the runtime value: a float cast rounds to that precision (``float64(2)`` -> ``2``); an
+      integer cast wraps two's-complement (``int8(300)`` -> ``44``, ``uint32(-1)`` -> ``4294967295``),
+      which are valid ``ipow`` exponents.
+
+    A ``bool`` literal, or any non-numeric / non-constant / unrecognized operand, returns ``None`` and
+    stays on the general ``pow`` path.
+    """
+    if isinstance(node, ast.Constant):
+        # ``bool`` is an ``int`` subclass; treat only real int/float literals as powers.
+        if isinstance(node.value, bool):
+            return None
+        return node.value if isinstance(node.value, (int, float)) else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = numeric_power_value(node.operand)
+        return None if inner is None else -inner
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            leaf = func.attr
+        elif isinstance(func, ast.Name):
+            leaf = func.id
+        else:
+            return None
+        inner = numeric_power_value(node.args[0])
+        if inner is None:
+            return None
+        if leaf in ('abs', 'fabs'):
+            return abs(inner)
+        if leaf in ('sqrt', 'sqrtf') and inner >= 0:
+            return inner**0.5  # a perfect square yields an exact integer-valued float (ipow); else pow
+        # A dtype cast: apply C ``static_cast`` semantics so the folded exponent equals the runtime one.
+        typeclass = vars(dtypes).get(leaf) if leaf in _typecast_func_to_cpp else None
+        if typeclass is not None:
+            if np.issubdtype(typeclass.type, np.floating):
+                return float(typeclass.type(inner))  # round to the cast precision (exact for tiny exponents)
+            if np.issubdtype(typeclass.type, np.integer):
+                bits = typeclass.bytes * 8
+                wrapped = int(inner) & ((1 << bits) - 1)  # two's-complement wrap (matches static_cast)
+                if np.issubdtype(typeclass.type, np.signedinteger) and wrapped >= (1 << (bits - 1)):
+                    wrapped -= (1 << bits)
+                return wrapped
+        return None
+    return None
+
+
 class LocalScheme(object):
 
     def is_defined(self, local_name, current_depth):
@@ -884,39 +941,38 @@ class CPPUnparser:
             self.write(")")
         # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if isinstance(t.right, (ast.Constant, ast.UnaryOp)):
-                power = None
-                if isinstance(t.right, ast.Constant):
-                    power = t.right.value
-                elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
-                    if isinstance(t.right.operand, ast.Constant):
-                        power = -(t.right.operand.value)
-
-                if power is not None and int(power) == power:
-                    negative = power < 0
-                    power = int(-power if negative else power)
-                    if negative:
-                        self.write("reciprocal(")
-                    else:
-                        self.write("(")
-                    if power == 0:
-                        self.write("1")
-                    else:
-                        self.write("dace::math::ipow(")
-                        self.dispatch(t.left)
-                        self.write(f", {power})")
-                    self.write(")")
-                    return
-                elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
-                    if float(power) == -0.5:
-                        # rsqrt
-                        self.write("reciprocal(")
-                    self.write("dace::math::sqrt(")
+            # A compile-time numeric exponent -- a plain literal, a float that is an exact
+            # integer (``x ** 2.0``), or a dtype-cast-wrapped constant (``x ** dace.float64(2)``)
+            # -- lowers to an ``ipow`` product or a ``sqrt``, never a libm ``pow`` call.
+            # ``numeric_power_value`` unwraps those forms; a non-integer or non-constant
+            # exponent (``0.5`` stays a ``sqrt``, ``2.5`` / a symbolic exponent) falls through
+            # to the general ``pow`` path below.
+            power = numeric_power_value(t.right)
+            if power is not None and int(power) == power:
+                negative = power < 0
+                power = int(-power if negative else power)
+                if negative:
+                    self.write("reciprocal(")
+                else:
+                    self.write("(")
+                if power == 0:
+                    self.write("1")
+                else:
+                    self.write("dace::math::ipow(")
                     self.dispatch(t.left)
+                    self.write(f", {power})")
+                self.write(")")
+                return
+            elif power is not None and (float(power) == 0.5 or float(power) == -0.5):  # Square root
+                if float(power) == -0.5:
+                    # rsqrt
+                    self.write("reciprocal(")
+                self.write("dace::math::sqrt(")
+                self.dispatch(t.left)
+                self.write(")")
+                if float(power) == -0.5:
                     self.write(")")
-                    if float(power) == -0.5:
-                        self.write(")")
-                    return
+                return
 
             # General pow operator
             self.write("dace::math::pow(")

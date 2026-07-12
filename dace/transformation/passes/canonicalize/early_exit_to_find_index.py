@@ -61,6 +61,14 @@ Targets TSVC ``s481``, ``s482``, ``s332``. Refusals (with explicit messages):
 * True-branch writes a non-trivial slice.
 * Body fails ``LoopToMap.can_be_applied`` modulo break.
 * Cond not a single iedge-bound predicate.
+* Predicate reads an array at anything other than exactly ``name[loop_var]`` --
+  an offset ``a[i-1]`` / ``a[i+1]``, a coefficient ``a[2*i]``, a gather
+  ``a[idx[i]]``, or a multi-dim ``a[i, j]``. The phi Map can only reproduce the
+  per-iteration point read ``name[loop_var]``; any other subscript would be
+  silently collapsed to it (miscompile) or emit a dangling read (crash).
+* A body half whose faithful re-emit would drop a live nested-region effect (a
+  non-transient write, an interstate symbol binding, or a transient a kept state
+  reads).
 """
 import ast
 import re
@@ -68,8 +76,9 @@ import copy as _copy
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import dace
-from dace import SDFG, data, properties, subsets, symbolic
+from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
+from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import (LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock, BreakBlock)
@@ -198,9 +207,42 @@ class EarlyExitToFindIndex(ppl.Pass):
         if true_pre_break_states is None:
             return None
 
-        # Resolve the condition's textual expression by walking iedges.
-        cond_iedge_bindings, cond_expr_str = self._resolve_cond_expression(loop, cond_block)
+        # ``_emit_body_loop`` reproduces each body half by cloning its top-level
+        # SDFGStates and the interstate edges among them; it DROPS every nested
+        # region (a ``cond_prep`` predicate-gather CFR) together with the region's
+        # interstate assignments and transients. That is sound only when the
+        # dropped content is dead relative to what is kept -- otherwise the emit
+        # would silently lose a body write / symbol binding. Refuse rather than
+        # miscompile -- the loop stays sequential.
+        if not (self._body_emittable(body_pre_blocks, loop, sdfg)
+                and self._body_emittable(body_post_blocks, loop, sdfg)):
+            return None
+
+        # Resolve the condition's textual expression by walking iedges and
+        # inlining body-local transient scalar definitions.
+        cond_iedge_bindings, cond_expr_str = self._resolve_cond_expression(loop, cond_block,
+                                                                           body_pre_blocks + body_post_blocks, sdfg)
         if cond_expr_str is None:
+            return None
+
+        # Refuse-lift guard (correctness): if the predicate still names an
+        # unresolved body-local transient (a data container the frontend
+        # produced for ``__tmp0 = a[i] > K`` that the resolver could not inline
+        # down to array subscripts + symbols + constants), the phi Map would
+        # emit a dangling read with no producer. Keep the loop sequential.
+        if not self._cond_is_fully_resolved(cond_expr_str, sdfg):
+            return None
+
+        # Refuse-lift guard (correctness): the phi Map (``_wire_expr_reads``)
+        # reproduces every predicate array read at exactly ``name[loop_var]`` --
+        # the per-iteration point read. If the predicate reads an array at any
+        # other subscript (an offset ``a[i-1]`` / ``a[i+1]``, a coefficient
+        # ``a[2*i]``, a gather ``a[idx[i]]``, or a multi-dim ``a[i, j]``) the
+        # wiring would silently collapse the two reads to one ``name[loop_var]``
+        # (a miscompiled exit index), emit a dangling ``__r_a]`` (a SyntaxError),
+        # or attach a 1-D memlet to an N-D array (a validate error). Refuse so the
+        # loop stays a correct sequential LoopRegion.
+        if not self._predicate_reads_are_point_at_loop_var(cond_expr_str, sdfg, loop.loop_variable):
             return None
 
         # Soundness gates (Tier-Cheap whole-array disjointness).
@@ -326,13 +368,16 @@ class EarlyExitToFindIndex(ppl.Pass):
                 return None
         return [b for b in pre if len(b.nodes()) > 0]
 
-    def _resolve_cond_expression(self, loop: LoopRegion,
-                                 cond_block: ConditionalBlock) -> Tuple[Dict[str, str], Optional[str]]:
-        """Resolve the condition predicate by walking iedges. Returns
-        ``(bindings, expr_str)`` where ``bindings`` maps gather-symbol names
-        to their RHS expressions, and ``expr_str`` is the cond expression
-        with bindings inlined (e.g. ``a_index > threshold`` ->
-        ``a[i] > threshold``)."""
+    def _resolve_cond_expression(self, loop: LoopRegion, cond_block: ConditionalBlock, body_blocks: List,
+                                 sdfg: SDFG) -> Tuple[Dict[str, str], Optional[str]]:
+        """Resolve the condition predicate. Returns ``(bindings, expr_str)``
+        where ``bindings`` maps gather-symbol names to their RHS expressions,
+        and ``expr_str`` is the cond expression with those bindings AND any
+        body-local transient scalar definitions inlined (e.g. ``a_index >
+        threshold`` -> ``a[i] > threshold``, or -- under ``simplify=False`` --
+        a bare ``__tmp0`` -> ``a[i] > threshold`` by inlining the body tasklet
+        ``__tmp0 = a_index > threshold`` and the gather copy ``a_index =
+        a[i]``)."""
         # The conditional's break-branch condition is what we want.
         break_cond = None
         for cond, branch in cond_block.branches:
@@ -363,18 +408,305 @@ class EarlyExitToFindIndex(ppl.Pass):
                     if lhs not in bindings:
                         bindings[lhs] = str(rhs)
 
-        # Inline the bindings into the cond expression.
+        # Body-local transient scalar definitions (the ``simplify=False`` path):
+        # ``__tmp0 = a[i] > K`` is a body tasklet, not an iedge assignment, so
+        # inline it (and any gather copy chain it reads) into the predicate.
+        # Interstate bindings win where a name is defined both ways.
+        substitutions: Dict[str, str] = dict(self._collect_scalar_definitions(body_blocks, loop.loop_variable, sdfg))
+        substitutions.update(bindings)
+
+        # Inline the substitutions into the cond expression to a fixed point
+        # (each RHS may itself reference another definition).
         expr = break_cond
-        # Apply substitutions iteratively until fixed point (each binding may
-        # itself reference another binding).
-        for _ in range(10):
+        for _ in range(20):
             new_expr = expr
-            for sym, rhs in bindings.items():
+            for sym, rhs in substitutions.items():
                 new_expr = re.sub(rf'\b{re.escape(sym)}\b', f'({rhs})', new_expr)
             if new_expr == expr:
                 break
             expr = new_expr
         return bindings, expr
+
+    def _collect_scalar_definitions(self, body_blocks: List, loop_var: str, sdfg: SDFG) -> Dict[str, str]:
+        """Map each uniquely-defined body-local transient scalar to the
+        expression that produces it, by inlining single-assignment tasklets and
+        access-to-access copies found in the straight-line body (recursively,
+        through nested regions like the ``simplify=False`` ``cond_prep`` CFR).
+
+        Only side-effect-free single-assignment producers whose inputs are
+        point-at-loop-var array subscripts, other scalars, or constants are
+        recorded. A scalar written by more than one producer (or one that can
+        not be characterised) is treated as ambiguous and dropped, so the
+        predicate stays unresolved and the refuse-lift guard fires."""
+        defs: Dict[str, str] = {}
+        ambiguous: Set[str] = set()
+        for state in self._all_states_in_blocks(body_blocks):
+            for dn in state.data_nodes():
+                if state.in_degree(dn) == 0:
+                    continue
+                desc = sdfg.arrays.get(dn.data)
+                if not isinstance(desc, data.Scalar) or not desc.transient:
+                    continue
+                rhs = self._scalar_definition_expr(state, dn, loop_var, sdfg)
+                if rhs is None:
+                    ambiguous.add(dn.data)
+                elif dn.data in defs and defs[dn.data] != rhs:
+                    ambiguous.add(dn.data)
+                else:
+                    defs[dn.data] = rhs
+        for name in ambiguous:
+            defs.pop(name, None)
+        return defs
+
+    def _scalar_definition_expr(self, state: SDFGState, dn: nodes.AccessNode, loop_var: str,
+                                sdfg: SDFG) -> Optional[str]:
+        """RHS expression that writes transient scalar ``dn`` in ``state`` via a
+        single producer edge (a copy or a single-assignment tasklet), or
+        ``None`` if the writer is not a simple inlinable producer."""
+        if state.in_degree(dn) != 1:
+            return None
+        ie = next(iter(state.in_edges(dn)))
+        src = ie.src
+        if isinstance(src, nodes.AccessNode):
+            return self._render_access_read(src, ie.data, loop_var, sdfg)
+        if isinstance(src, nodes.Tasklet):
+            return self._render_tasklet_expr(state, src, ie.src_conn, loop_var, sdfg)
+        return None
+
+    def _render_access_read(self, access: nodes.AccessNode, memlet: mm.Memlet, loop_var: str,
+                            sdfg: SDFG) -> Optional[str]:
+        """Render the value read from ``access``. A scalar reads as its name
+        (resolved recursively); a NON-transient array reads as the
+        ``name[loop_var]`` subscript the phi Map can reproduce -- any other
+        subset, or a transient (loop-body-local) array the parent phi Map cannot
+        see, is refused (``None``)."""
+        name = access.data
+        desc = sdfg.arrays.get(name)
+        if desc is None:
+            return None
+        if isinstance(desc, data.Scalar):
+            return name
+        if isinstance(desc, data.Array):
+            if desc.transient or memlet.data != name:
+                return None
+            sub = memlet.subset
+            if not isinstance(sub, subsets.Range) or len(sub) != 1:
+                return None
+            begin, end, _step = sub.ranges[0]
+            if begin != end or symbolic.symstr(begin) != loop_var:
+                return None
+            return f'{name}[{loop_var}]'
+        return None
+
+    def _render_tasklet_expr(self, state: SDFGState, tasklet: nodes.Tasklet, out_conn: str, loop_var: str,
+                             sdfg: SDFG) -> Optional[str]:
+        """Render a single-assignment Python tasklet ``out_conn = <expr>`` as an
+        expression string with every input connector replaced by its source
+        read. Refuses anything that is not exactly one pure assignment to
+        ``out_conn`` whose inputs are all inlinable access reads."""
+        code = tasklet.code
+        if code.language != dtypes.Language.Python:
+            return None
+        try:
+            tree = ast.parse(code.as_string)
+        except SyntaxError:
+            return None
+        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+            return None
+        assign = tree.body[0]
+        if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+            return None
+        if assign.targets[0].id != out_conn:
+            return None
+        conn_exprs: Dict[str, str] = {}
+        for ie in state.in_edges(tasklet):
+            if ie.dst_conn is None:
+                continue
+            if not isinstance(ie.src, nodes.AccessNode):
+                return None
+            rendered = self._render_access_read(ie.src, ie.data, loop_var, sdfg)
+            if rendered is None:
+                return None
+            conn_exprs[ie.dst_conn] = rendered
+        rhs = astutils.unparse(assign.value)
+        for conn, rendered in conn_exprs.items():
+            rhs = re.sub(rf'\b{re.escape(conn)}\b', f'({rendered})', rhs)
+        return f'({rhs})'
+
+    def _cond_is_fully_resolved(self, cond_expr_str: str, sdfg: SDFG) -> bool:
+        """Whether every data reference in the resolved predicate is wireable as
+        an explicit phi-Map in-connector (see :meth:`_wire_expr_reads`): an array
+        under a subscript, or a bare loop-invariant (non-transient) scalar. A
+        bare transient (an unresolved ``__tmp0``) or a bare array has no wireable
+        per-iteration producer, so the lift would dangle -- refuse instead."""
+        try:
+            tree = ast.parse(cond_expr_str, mode='eval').body
+        except SyntaxError:
+            return False
+        subscript_bases = {
+            id(n.value)
+            for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Name) or id(node) in subscript_bases:
+                continue
+            desc = sdfg.arrays.get(node.id)
+            if desc is None:
+                continue  # symbol / constant -- fine
+            if isinstance(desc, data.Scalar) and not desc.transient:
+                continue  # loop-invariant scalar param -- wired via a [0] connector
+            return False  # bare transient, or bare array -- not wireable
+        return True
+
+    def _predicate_reads_are_point_at_loop_var(self, cond_expr_str: str, sdfg: SDFG, loop_var: str) -> bool:
+        """Whether every array the resolved predicate reads is subscripted by
+        exactly ``name[loop_var]`` -- a single dimension whose index is the loop
+        variable. This is the ONLY read shape the phi Map can reproduce (see
+        :meth:`_wire_expr_reads`, which wires each array at the per-iteration
+        point ``[loop_var]``).
+
+        Returns ``False`` (refuse the lift) for any other subscript, because the
+        wiring would then be wrong or crash:
+
+        * an offset ``a[i-1]`` / ``a[i+1]`` or coefficient ``a[2*i]`` -- collapsed
+          to a single ``a[loop_var]`` read (a silent miscompile of the exit index);
+        * a gather / nested subscript ``a[idx[i]]`` -- the read rewrite emits a
+          dangling ``__r_a]`` (a SyntaxError at ``add_mapped_tasklet``);
+        * a multi-dim ``a[i, j]`` -- a 1-D point memlet on an N-D array (a
+          dimensionality / validate error).
+
+        The index test mirrors :meth:`_render_access_read`'s point check
+        (``symbolic.symstr(begin) != loop_var``), applied to the raw predicate
+        subscripts."""
+        try:
+            tree = ast.parse(cond_expr_str, mode='eval').body
+        except SyntaxError:
+            return False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Subscript):
+                continue
+            if not (isinstance(node.value, ast.Name) and node.value.id in sdfg.arrays):
+                continue
+            index = node.slice
+            # Multi-dim ``a[i, j]`` -- a Tuple index the phi Map cannot point-read.
+            if isinstance(index, ast.Tuple):
+                return False
+            # Gather / nested subscript ``a[idx[i]]`` -- a Subscript within the index.
+            if any(isinstance(inner, ast.Subscript) for inner in ast.walk(index)):
+                return False
+            # Any offset / coefficient: the index must resolve to exactly the loop
+            # variable (reusing ``_render_access_read``'s ``symstr == loop_var`` test).
+            try:
+                index_sym = symbolic.pystr_to_symbolic(astutils.unparse(index))
+            except Exception:
+                return False
+            if symbolic.symstr(index_sym) != loop_var:
+                return False
+        return True
+
+    def _all_states_in_blocks(self, blocks: List) -> List[SDFGState]:
+        """Every SDFGState reachable within ``blocks`` (recursively)."""
+        out: List[SDFGState] = []
+        for b in blocks:
+            out.extend(self._all_states(b))
+        return out
+
+    def _all_states(self, region) -> List[SDFGState]:
+        """Every SDFGState within ``region``, recursing through nested control
+        flow regions and conditional-block branches."""
+        if isinstance(region, SDFGState):
+            return [region]
+        out: List[SDFGState] = []
+        if isinstance(region, ConditionalBlock):
+            for _cond, branch in region.branches:
+                out.extend(self._all_states(branch))
+        elif isinstance(region, ControlFlowRegion):
+            for n in region.nodes():
+                out.extend(self._all_states(n))
+        return out
+
+    def _region_interstate_edges(self, region) -> List:
+        """Every interstate edge nested within ``region`` (recursively through
+        sub-regions and conditional-block branches). Empty for an SDFGState."""
+        out: List = []
+        if isinstance(region, SDFGState):
+            return out
+        if isinstance(region, ConditionalBlock):
+            for _cond, branch in region.branches:
+                out.extend(self._region_interstate_edges(branch))
+            return out
+        if isinstance(region, ControlFlowRegion):
+            out.extend(region.edges())
+            for n in region.nodes():
+                out.extend(self._region_interstate_edges(n))
+        return out
+
+    def _body_emittable(self, body_blocks: List, loop: LoopRegion, sdfg: SDFG) -> bool:
+        """Whether :meth:`_emit_body_loop` can faithfully reproduce this body
+        half. It clones every top-level body SDFGState and the interstate edges
+        *between two such top-level states*, so multi-state bodies are fine; but
+        it DROPS every nested region (a ``cond_prep`` predicate-gather CFR), the
+        interstate assignments carried inside (or on the loop-level edges within
+        this half that touch) that region, and any transient the region produces.
+
+        Refuse (so the loop stays a correct sequential LoopRegion) if a dropped
+        block has a live effect the clone would silently lose:
+
+        * a dropped state writes a live (non-transient) array;
+        * a dropped interstate edge binds a symbol (``assignments``) -- the clone
+          reproduces only edges between two kept top-level states;
+        * a dropped nested region writes a transient a kept top-level state reads
+          (the clone keeps the consumer but drops the producer -> a dangling read).
+        """
+        top_level = {id(b) for b in body_blocks if isinstance(b, SDFGState)}
+        block_ids = {id(b) for b in body_blocks}
+        dropped_blocks = [b for b in body_blocks if id(b) not in top_level]
+
+        # A dropped state must not write a live (non-transient) array.
+        for state in self._all_states_in_blocks(dropped_blocks):
+            if self._collect_array_writes([state], sdfg):
+                return False
+
+        # A dropped interstate edge must not carry a symbol assignment: edges
+        # nested inside a dropped region, plus loop-level edges *within this half*
+        # that touch a nested region, are not replicated by the clone. Edges
+        # leaving the half (into the cond block) carry the predicate gather and
+        # are reproduced by the phi Map, so they are deliberately ignored here.
+        dropped_edges = []
+        for b in dropped_blocks:
+            dropped_edges.extend(self._region_interstate_edges(b))
+        for b in body_blocks:
+            for e in loop.out_edges(b):
+                if id(e.dst) not in block_ids:
+                    continue  # edge leaves this body half -- not body work
+                if id(e.src) in top_level and id(e.dst) in top_level:
+                    continue  # replicated faithfully by the clone
+                dropped_edges.append(e)
+        for e in dropped_edges:
+            if e.data is not None and e.data.assignments:
+                return False
+
+        # A dropped nested region must not produce a transient a kept top-level
+        # state consumes.
+        dropped_transients: Set[str] = set()
+        for state in self._all_states_in_blocks(dropped_blocks):
+            for n in state.data_nodes():
+                if state.in_degree(n) == 0:
+                    continue
+                desc = sdfg.arrays.get(n.data)
+                if desc is not None and desc.transient:
+                    dropped_transients.add(n.data)
+        if dropped_transients:
+            kept_reads: Set[str] = set()
+            for b in body_blocks:
+                if not isinstance(b, SDFGState):
+                    continue
+                for n in b.data_nodes():
+                    if b.out_degree(n) > 0:
+                        kept_reads.add(n.data)
+            if dropped_transients & kept_reads:
+                return False
+        return True
 
     # ----------------------- soundness gates --------------------------
 
@@ -395,8 +727,16 @@ class EarlyExitToFindIndex(ppl.Pass):
         # transient through the gather chain in body_pre to recover
         # the underlying non-transient arrays.
         for name in self._expr_names(cond_expr_str):
-            if name in sdfg.arrays and sdfg.arrays[name].transient:
+            desc = sdfg.arrays.get(name)
+            if desc is None:
+                continue
+            if desc.transient:
                 cond_reads |= self._trace_transient_to_source_arrays(name, body_pre_blocks, sdfg)
+            elif isinstance(desc, data.Scalar):
+                # A bare loop-invariant scalar the cond reads (wired as a phi-Map
+                # ``[0]`` connector): count it as a read so a body write to the
+                # same scalar trips the disjointness gate below.
+                cond_reads.add(name)
         # 2) Body write-sets.
         pre_writes = self._collect_array_writes(body_pre_blocks, sdfg)
         post_writes = self._collect_array_writes(body_post_blocks, sdfg)
@@ -649,27 +989,18 @@ class EarlyExitToFindIndex(ppl.Pass):
         sdfg.reset_cfg_list()
 
     def _emit_phi_map(self, state: SDFGState, sdfg: SDFG, phi_name: str, m: _Match):
-        """Map: for i in [start, end+1): phi[i - start] = i if cond(i) else N."""
+        """Map: for i in [start, end+1): phi[i - start] = ITE(cond(i), i, N).
+
+        Every data container the predicate reads is wired as an explicit
+        in-connector with a memlet edge -- arrays through their ``[i]`` subscript
+        and loop-invariant scalars (e.g. ``threshold``) through a ``[0]`` memlet.
+        No sdfg.arrays name is left bare in the tasklet body; the
+        :meth:`_assert_explicit_dataflow` invariant enforces this (a bare,
+        unconnected ``__tmp0`` / ``threshold`` was the original miscompile)."""
         N_expr = symbolic.symstr(m.iter_end + 1)
-        # Compile the cond expression into a Python tasklet that produces the
-        # boolean. Then a downstream tasklet selects ``i`` or ``N``.
-        # Single tasklet form: emit ``__out = i if (cond_expr) else N``.
-        cond_expr = m.cond_expr_str
-        # The cond_expr currently uses ``i`` (the loop var) referencing the
-        # loop's original loop_variable name; we keep that name in the Map.
+        # The cond_expr uses ``i`` (the loop var); we keep that name in the Map.
         loop_var = m.loop.loop_variable
-        # Collect arrays the cond reads -- map them into the tasklet's inputs.
-        cond_reads = self._read_arrays_from_expr(cond_expr, sdfg)
-        inputs_map: Dict[str, mm.Memlet] = {}
-        rename_map: Dict[str, str] = {}
-        new_expr = cond_expr
-        for arr_name in sorted(cond_reads):
-            in_conn = f'__r_{arr_name}'
-            inputs_map[in_conn] = mm.Memlet(data=arr_name,
-                                            subset=subsets.Range([(symbolic.pystr_to_symbolic(loop_var),
-                                                                   symbolic.pystr_to_symbolic(loop_var), 1)]))
-            new_expr = re.sub(rf'\b{re.escape(arr_name)}\b\[[^\]]*\]', in_conn, new_expr)
-            rename_map[arr_name] = in_conn
+        inputs_map, new_expr = self._wire_expr_reads(m.cond_expr_str, sdfg, loop_var)
 
         # phi[i] = i if cond else N -- the GLOBAL index (i) or the
         # sentinel ``N``. Post-Reduce min then gives exit_i directly in
@@ -678,6 +1009,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         # to ``c * t + (1 - c) * e`` at canonicalize time, so codegen
         # never emits ``c ? t : e``.
         tasklet_code = f'__out = ITE(({new_expr}), {loop_var}, ({N_expr}))'
+        self._assert_explicit_dataflow(tasklet_code, set(inputs_map), sdfg)
 
         outputs_map = {
             '__out':
@@ -694,6 +1026,60 @@ class EarlyExitToFindIndex(ppl.Pass):
             outputs=outputs_map,
             external_edges=True,
         )
+
+    def _wire_expr_reads(self, expr_str: str, sdfg: SDFG, loop_var: str) -> Tuple[Dict[str, mm.Memlet], str]:
+        """Rewrite ``expr_str`` so every data container it reads is referenced by
+        an ``__r_<name>`` in-connector, returning ``(inputs, rewritten_expr)``.
+        Arrays are read at ``[loop_var]`` (their per-iteration subscript);
+        scalars are read at ``[0]``. Symbols and constants are left untouched."""
+        # Fail loud, never silent: the matcher's
+        # ``_predicate_reads_are_point_at_loop_var`` guard proves every array read
+        # is exactly ``name[loop_var]`` before emit. If a non-point read reached
+        # here the per-array rewrite below would collapse an offset/gather to a
+        # single ``name[loop_var]`` read -- exactly the miscompile the guard
+        # forbids -- so refuse loudly rather than emit wrong dataflow.
+        if not self._predicate_reads_are_point_at_loop_var(expr_str, sdfg, loop_var):
+            raise RuntimeError('EarlyExitToFindIndex: predicate reads an array at a subset other than '
+                               f'``[{loop_var}]`` -- refuse-lift guard bypassed: {expr_str!r}')
+        inputs: Dict[str, mm.Memlet] = {}
+        new_expr = expr_str
+        point = subsets.Range([(symbolic.pystr_to_symbolic(loop_var), symbolic.pystr_to_symbolic(loop_var), 1)])
+        for arr_name in sorted(self._read_arrays_from_expr(expr_str, sdfg)):
+            in_conn = f'__r_{arr_name}'
+            inputs[in_conn] = mm.Memlet(data=arr_name, subset=_copy.deepcopy(point))
+            new_expr = re.sub(rf'\b{re.escape(arr_name)}\b\[[^\]]*\]', in_conn, new_expr)
+        for name in sorted(self._expr_names(new_expr)):
+            desc = sdfg.arrays.get(name)
+            if not isinstance(desc, data.Scalar):
+                continue
+            in_conn = f'__r_{name}'
+            if in_conn in inputs:
+                continue
+            inputs[in_conn] = mm.Memlet(data=name, subset=subsets.Range([(0, 0, 1)]))
+            new_expr = re.sub(rf'\b{re.escape(name)}\b', in_conn, new_expr)
+        return inputs, new_expr
+
+    def _assert_explicit_dataflow(self, code_str: str, in_connectors: Set[str], sdfg: SDFG):
+        """HARD INVARIANT: a tasklet may only read a data container through an
+        in-connector. Raise if any bare name in ``code_str`` names an
+        sdfg.arrays container that is not one of ``in_connectors`` -- exactly the
+        original dangling-read miscompile."""
+        try:
+            tree = ast.parse(code_str)
+        except SyntaxError:
+            return
+        subscript_bases = {
+            id(n.value)
+            for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+        }
+        offenders = sorted({
+            node.id
+            for node in ast.walk(tree) if isinstance(node, ast.Name) and id(node) not in subscript_bases
+            and node.id not in in_connectors and node.id in sdfg.arrays
+        })
+        if offenders:
+            raise RuntimeError(f'EarlyExitToFindIndex: tasklet reads data container(s) {offenders} by bare name '
+                               f'without an in-connector -- explicit-dataflow invariant violated: {code_str!r}')
 
     def _emit_reduce_min(self, state: SDFGState, sdfg: SDFG, phi_name: str, exit_buf_name: str, m: _Match):
         N_expr = symbolic.symstr(m.iter_end + 1)
@@ -714,7 +1100,7 @@ class EarlyExitToFindIndex(ppl.Pass):
                         upper_str: str) -> Optional[LoopRegion]:
         """Emit the body work as a clipped ``for loop_var in [start, upper)``
         LoopRegion reusing the body's per-iteration dataflow; return it (or
-        ``None`` if there is no single content state to wrap).
+        ``None`` if the body half has no live content state to wrap).
 
         We deliberately emit a LoopRegion, NOT a hand-built Map: the canonicalize
         pipeline lowers every Map to a LoopRegion immediately after this pass, and a
@@ -724,14 +1110,22 @@ class EarlyExitToFindIndex(ppl.Pass):
         state instead carries the raw ``a[i]`` accesses -- exactly the shape the
         ``parallelize`` stage's ``LoopToMap`` lifts -- so the body parallelizes on
         its own with no special boundary handling.
-        """
+
+        Multi-state bodies (the ``simplify=False`` frontend shape, where ``a[i] =
+        a[i] + b[i] * c[i]`` spans several slice/binop states) are reproduced in
+        full: every top-level body SDFGState -- and the interstate edges among
+        them -- is cloned into the body loop, then the loop's states are fused so
+        the downstream ``LoopToMap`` sees the single-state per-iteration shape.
+        Nested regions (a ``cond_prep`` predicate-gather CFR) carry only dead
+        transient writes after the lift and are dropped (the matcher's
+        :meth:`_body_emittable` guard already proved they write no live array)."""
         loop_var = m.loop.loop_variable
         start_str = symbolic.symstr(m.iter_start)
-        # Single-content-state bodies only (multi-state needs NSDFG; refused in the matcher).
-        content_states = [b for b in body_blocks if isinstance(b, SDFGState) and len(b.nodes()) > 0]
-        if len(content_states) != 1:
-            return None
-        src_state = content_states[0]
+        # All top-level body states, in topological (partition) order. Empty
+        # wrapper states are kept so their interstate assignments/topology survive.
+        state_blocks = [b for b in body_blocks if isinstance(b, SDFGState)]
+        if not any(len(b.nodes()) > 0 for b in state_blocks):
+            return None  # no live body work to emit
 
         body_loop = LoopRegion(label=f'{m.loop.label}_body',
                                condition_expr=f'{loop_var} < ({upper_str})',
@@ -743,20 +1137,53 @@ class EarlyExitToFindIndex(ppl.Pass):
         # "multiple blocks with the same name" validator. All wiring below is by object
         # reference, so a rename is safe.
         parent.add_node(body_loop, ensure_unique_name=True)
-        body_state = body_loop.add_state('body', is_start_block=True)
-        # Clone the body's nodes + edges verbatim: the per-iteration ``a[i]``
-        # dataflow is already ``LoopToMap``-eligible (it was the original loop's
-        # body, minus the break conditional).
-        node_map: Dict[Any, Any] = {}
-        for n in src_state.nodes():
-            cn = _copy.deepcopy(n)
-            body_state.add_node(cn)
-            node_map[n] = cn
-        for e in src_state.edges():
-            if e.data is None or e.data.is_empty():
-                continue
-            body_state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, _copy.deepcopy(e.data))
+
+        # Clone each body state (nodes + intra-state edges) and record the mapping
+        # so the interstate edges among them can be replicated with the same topology.
+        state_map: Dict[SDFGState, SDFGState] = {}
+        for i, src_state in enumerate(state_blocks):
+            cloned = body_loop.add_state(src_state.label, is_start_block=(i == 0))
+            node_map: Dict[Any, Any] = {}
+            for n in src_state.nodes():
+                cn = _copy.deepcopy(n)
+                cloned.add_node(cn)
+                node_map[n] = cn
+            for e in src_state.edges():
+                if e.data is None or e.data.is_empty():
+                    continue
+                cloned.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, _copy.deepcopy(e.data))
+            state_map[src_state] = cloned
+        # Replicate the interstate edges that connect two cloned body states.
+        for src_state in state_blocks:
+            for e in m.loop.out_edges(src_state):
+                if e.dst in state_map:
+                    body_loop.add_edge(state_map[src_state], state_map[e.dst], _copy.deepcopy(e.data))
+
+        # Fuse the cloned states so the per-iteration dataflow is a single state
+        # (the shape ``LoopToMap`` lifts); a no-op when there was only one.
+        self._fuse_region_states(body_loop, sdfg)
         return body_loop
+
+    def _fuse_region_states(self, region: ControlFlowRegion, sdfg: SDFG):
+        """Repeatedly fuse adjacent SDFGStates within ``region`` (only) via
+        :class:`StateFusionExtended`, so a multi-state body collapses to the
+        single-state per-iteration shape the parallelizer expects. Scoped to
+        ``region`` -- the phi/reduce states in the parent CFG are untouched."""
+        from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+        changed = True
+        while changed:
+            changed = False
+            for e in list(region.edges()):
+                if not (isinstance(e.src, SDFGState) and isinstance(e.dst, SDFGState)):
+                    continue
+                xform = StateFusionExtended()
+                xform.first_state = e.src
+                xform.second_state = e.dst
+                if not xform.can_be_applied(region, expr_index=0, sdfg=sdfg, permissive=False):
+                    continue
+                xform.apply(region, sdfg)
+                changed = True
+                break
 
     def _emit_rebind(self, after_state: SDFGState, sdfg: SDFG, m: _Match, exit_sym: str):
         """Emit Phase 3: ``if exit_sym < N: <duplicated true-branch content>``.

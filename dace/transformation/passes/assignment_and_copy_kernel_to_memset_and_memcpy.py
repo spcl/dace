@@ -7,7 +7,9 @@ import dace
 from dace import properties
 from dace.memlet import Memlet
 from dace.sdfg import graph, utils as sdutils
+from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes import copy_node, memset_node
 
 
@@ -284,28 +286,62 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         }
         in_edge = state.in_edges(tasklet)[0]
         out_edge = state.out_edges(tasklet)[0]
-        has_in = in_edge.data.data is not None
+        in_subset = in_edge.data.subset if in_edge.data.data is not None else None
 
-        new_out = self._subst_and_overapprox([(b, e, s) for (b, e, s) in out_edge.data.subset], range_list,
-                                             out_edge.data.data, state.sdfg)
+        return self._begin_and_length_from_ranges(state.sdfg, range_list, in_subset, in_edge.data.data,
+                                                  out_edge.data.subset, out_edge.data.data)
+
+    def _begin_and_length_from_ranges(
+            self, sdfg: dace.SDFG, range_list: Dict, in_subset, in_data: Optional[str], out_subset,
+            out_data: Optional[str]) -> Tuple[Optional[List], Optional[List], Optional[dace.symbolic.SymExpr]]:
+        """Substitute ``range_list`` into the in/out subsets, reject non-contiguous or
+        length-mismatched transfers, and return the source begin range, destination begin
+        range, and collapsed transfer length. Shared by the map and loop lift paths;
+        ``in_subset`` / ``in_data`` are ``None`` for a memset (no source).
+
+        :param sdfg: SDFG owning the addressed arrays.
+        :param range_list: iterator symbol -> ``(begin, end, step)`` to substitute.
+        :param in_subset: source memlet subset, or ``None`` for a memset.
+        :param in_data: source array name, or ``None`` for a memset.
+        :param out_subset: destination memlet subset.
+        :param out_data: destination array name.
+        :returns: ``(begin_subset, exit_subset, copy_length)`` or all-``None`` on bail.
+        """
+        has_in = in_data is not None
+
+        new_out = self._subst_and_overapprox([(b, e, s) for (b, e, s) in out_subset], range_list, out_data, sdfg)
         if new_out is None:
             return None, None, None
         new_in = []
         if has_in:
-            new_in = self._subst_and_overapprox([(b, e, s) for (b, e, s) in in_edge.data.subset], range_list,
-                                                in_edge.data.data, state.sdfg)
+            new_in = self._subst_and_overapprox([(b, e, s) for (b, e, s) in in_subset], range_list, in_data, sdfg)
             if new_in is None:
                 return None, None, None
 
-        if has_in and not self._reject_if_not_contiguous(new_in, in_edge.data.data, state.sdfg, is_input=True):
+        if has_in and not self._reject_if_not_contiguous(new_in, in_data, sdfg, is_input=True):
             return None, None, None
-        if out_edge.data.data is not None and not self._reject_if_not_contiguous(
-                new_out, out_edge.data.data, state.sdfg, is_input=False):
+        if out_data is not None and not self._reject_if_not_contiguous(new_out, out_data, sdfg, is_input=False):
             return None, None, None
 
         out_length_collapsed = self._collapsed_length(new_out)
         # Reject when the inner access spans a non-unit-stride dimension.
         if has_in and self._collapsed_length(new_in) != out_length_collapsed:
+            return None, None, None
+
+        # EXACTNESS guard: the lifted contiguous transfer must cover EXACTLY the set the loop / map
+        # wrote -- its collapsed element count must equal the total trip count (the body writes one
+        # contiguous element per iteration). A correlated multi-dim index (``A[i, i]``) or a non-unit
+        # coefficient (``A[2*i]``) substitutes each dimension independently into a dense box / range
+        # STRICTLY LARGER than the swept set (both endpoints widen to the axis extent), so a memcpy /
+        # memset would touch elements the loop never wrote -- silently zeroing / copying the whole
+        # array. Refuse: the loop stays a loop (and ``LoopToMap`` parallelizes it as a map of element
+        # assignments -- the correct lowering for a non-contiguous / strided write), never a Copy /
+        # Memset library node. The ``has_in`` cross-check above does NOT catch this: for a copy both
+        # subsets widen identically, so their collapsed lengths still match (both wrong).
+        trip_count = dace.symbolic.SymExpr(1)
+        for (b2, e2, _s2) in range_list.values():
+            trip_count *= (e2 + 1) - b2
+        if dace.symbolic.simplify(out_length_collapsed - trip_count) != 0:
             return None, None, None
 
         return new_in, new_out, out_length_collapsed
@@ -650,6 +686,203 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             parent_tuple = helpers.get_parent_map(parent_state, parent_map)
         return False
 
+    def _detect_loop_transfer(self, loop: LoopRegion, is_memset: bool):
+        """Match a ``LoopRegion`` whose body is a single contiguous copy / zero statement.
+
+        Accepts ``for i: dst[...] = src[...]`` (``is_memset=False``) or ``for i: dst[...] = 0``
+        (``is_memset=True``) with a single, stride-1, closed-form iteration variable and a body
+        that is exactly one SDFGState holding the transfer tasklet and its access node(s) --
+        nothing else. Rejects while-loops / non-unit strides (no closed-form bounds), WCR writes,
+        and self-referential copies (same source and destination array -- a carried dependence,
+        not a pure copy).
+
+        :param loop: the loop region to inspect.
+        :param is_memset: match a constant-zero write when True, an element-wise copy when False.
+        :returns: ``(body_state, tasklet, src_access_or_None, dst_access, start, end, stride)`` or ``None``.
+        """
+        if not loop.loop_variable:
+            return None
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if start is None or end is None or stride is None:
+            return None
+        # The contiguity helpers assume a unit step; only lift stride-1 loops.
+        try:
+            if int(dace.symbolic.simplify(stride)) != 1:
+                return None
+        except (TypeError, ValueError):
+            return None
+
+        # Body must be a single SDFGState with no internal interstate edges.
+        blocks = list(loop.nodes())
+        if len(blocks) != 1 or not isinstance(blocks[0], dace.SDFGState) or len(loop.edges()) != 0:
+            return None
+        body = blocks[0]
+
+        tasklets = [n for n in body.nodes() if isinstance(n, dace.nodes.Tasklet)]
+        if len(tasklets) != 1:
+            return None
+        tasklet = tasklets[0]
+        if tasklet.language not in (dace.Language.Python, dace.Language.CPP):
+            return None
+        if len(tasklet.out_connectors) != 1:
+            return None
+        suffix = ";" if tasklet.language == dace.Language.CPP else ""
+
+        out_edges = body.out_edges(tasklet)
+        if len(out_edges) != 1 or not isinstance(out_edges[0].dst, dace.nodes.AccessNode):
+            return None
+        oe = out_edges[0]
+        if oe.data.wcr is not None:
+            return None
+        dst_access = oe.dst
+        out_conn = next(iter(tasklet.out_connectors))
+
+        if is_memset:
+            if len(tasklet.in_connectors) != 0 or body.in_degree(tasklet) != 0:
+                return None
+            if tasklet.code.as_string not in {f"{out_conn} = 0{suffix}", f"{out_conn} = 0.0{suffix}"}:
+                return None
+            src_access = None
+        else:
+            if len(tasklet.in_connectors) != 1:
+                return None
+            in_edges = body.in_edges(tasklet)
+            if len(in_edges) != 1 or not isinstance(in_edges[0].src, dace.nodes.AccessNode):
+                return None
+            in_conn = next(iter(tasklet.in_connectors))
+            if tasklet.code.as_string != f"{out_conn} = {in_conn}{suffix}":
+                return None
+            src_access = in_edges[0].src
+            # A same-array copy is a shift / carried dependence, not a pure copy.
+            if src_access.data == dst_access.data:
+                return None
+
+        # The body must hold ONLY the transfer nodes -- any extra compute means it is not a
+        # pure data-movement loop.
+        expected = {tasklet, dst_access} | ({src_access} if src_access is not None else set())
+        if set(body.nodes()) != expected:
+            return None
+
+        return body, tasklet, src_access, dst_access, start, end, stride
+
+    def _lift_loop_transfer(self, loop: LoopRegion, detected, is_memset: bool, verbose: bool) -> bool:
+        """Replace a detected single-statement copy / zero ``LoopRegion`` with a library node.
+
+        The loop is swapped in place (its interstate in/out edges are rewired to a fresh state
+        holding the ``CopyLibraryNode`` / ``MemsetLibraryNode``), preserving control-flow ordering,
+        and the now-unused loop-iterator symbol is dropped.
+
+        :param loop: the loop region to lift.
+        :param detected: the tuple returned by :meth:`_detect_loop_transfer`.
+        :param is_memset: lift a memset when True, a copy when False.
+        :param verbose: emit a warning on each skip.
+        :returns: True iff the loop was lifted.
+        """
+        body, tasklet, src_access, dst_access, start, end, stride = detected
+        sdfg = loop.sdfg
+
+        range_list = {dace.symbolic.symbol(loop.loop_variable): (start, end, stride)}
+        out_edge = body.out_edges(tasklet)[0]
+        in_edge = body.in_edges(tasklet)[0] if not is_memset else None
+        in_subset = in_edge.data.subset if in_edge is not None else None
+        in_data = in_edge.data.data if in_edge is not None else None
+        begin_subset, exit_subset, copy_length = self._begin_and_length_from_ranges(sdfg, range_list, in_subset,
+                                                                                    in_data, out_edge.data.subset,
+                                                                                    out_edge.data.data)
+        if copy_length is None:
+            if verbose:
+                warnings.warn(
+                    f"Skipping {'memset' if is_memset else 'memcpy'} loop lift in {loop.label}: subset or "
+                    "length could not be determined or is non-contiguous.", UserWarning)
+            return False
+        if self._is_single_element_copy(copy_length):
+            return False
+
+        if is_memset:
+            libnode_conn_names = {memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}
+        else:
+            libnode_conn_names = {
+                copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+            }
+        if libnode_conn_names & set(sdfg.arrays):
+            if verbose:
+                warnings.warn(
+                    f"Skipping loop lift in {loop.label}: library node connector names clash with "
+                    "existing array names.", UserWarning)
+            return False
+
+        # A memcpy lowers to a byte copy: source and destination must agree on dtype and storage.
+        if not is_memset:
+            src_desc, dst_desc = sdfg.arrays[src_access.data], sdfg.arrays[dst_access.data]
+            if src_desc.dtype != dst_desc.dtype or src_desc.storage != dst_desc.storage:
+                return False
+
+        parent = loop.parent_graph
+        is_start = parent.start_block is loop
+        new_state = parent.add_state(f"{loop.label}_lifted", is_start_block=is_start)
+        if is_memset:
+            libnode = memset_node.MemsetLibraryNode(name=f"memsetLib_{dst_access.data}_{self.rmid}")
+            new_state.add_node(libnode)
+            new_state.add_edge(libnode, memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME,
+                               new_state.add_access(dst_access.data), None,
+                               Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access.data))
+        else:
+            libnode = copy_node.CopyLibraryNode(name=f"copyLib_{src_access.data}_{dst_access.data}_{self.rmid}")
+            new_state.add_node(libnode)
+            new_state.add_edge(new_state.add_access(src_access.data), None, libnode,
+                               copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                               Memlet(subset=dace.subsets.Range(begin_subset), data=src_access.data))
+            new_state.add_edge(libnode, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                               new_state.add_access(dst_access.data), None,
+                               Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access.data))
+        self.rmid += 1
+
+        for e in list(parent.in_edges(loop)):
+            parent.add_edge(e.src, new_state, e.data)
+        for e in list(parent.out_edges(loop)):
+            parent.add_edge(new_state, e.dst, e.data)
+        parent.remove_node(loop)
+
+        itervar = loop.loop_variable
+        if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
+            sdfg.remove_symbol(itervar)
+        return True
+
+    def _lift_loops(self, sdfg: dace.SDFG, verbose: bool = True) -> int:
+        """Lift every single-statement contiguous copy / zero ``LoopRegion`` in ``sdfg`` (and its
+        nested SDFGs) to a library node. Runs to a fixpoint: lifting rewrites the CFG, so the
+        loop set is re-collected after each successful lift.
+
+        :param sdfg: SDFG to mutate in place.
+        :param verbose: emit warnings for skipped lift opportunities.
+        :returns: number of loops lifted.
+        """
+        from dace.sdfg.scope import is_devicelevel_gpu
+        count = 0
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            changed = True
+            while changed:
+                changed = False
+                for loop in [r for r in nsdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]:
+                    for is_memset in (False, True):
+                        detected = self._detect_loop_transfer(loop, is_memset)
+                        if detected is None:
+                            continue
+                        body = detected[0]
+                        # An in-kernel lift would expand to cudaMemcpyAsync / cudaMemsetAsync,
+                        # which are host-only; skip loops nested in device-level GPU code.
+                        if is_devicelevel_gpu(nsdfg, body, detected[1]):
+                            continue
+                        if self._lift_loop_transfer(loop, detected, is_memset, verbose):
+                            count += 1
+                            changed = True
+                            break
+                    if changed:
+                        break
+        return count
+
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> int:
         """Walk every map in ``sdfg`` and lift its element-wise-copy / constant-zero paths.
 
@@ -708,4 +941,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
 
-        return num_rmed_memcpies + num_rmed_memsets
+        # Also lift single-statement contiguous copy / zero LoopRegions (the loop analog of the
+        # map paths above), so a plain ``for i: dst[i] = src[i]`` / ``for i: dst[i] = 0`` becomes a
+        # Copy / Memset library node instead of surviving as a naive loop.
+        num_lifted_loops = self._lift_loops(sdfg)
+
+        return num_rmed_memcpies + num_rmed_memsets + num_lifted_loops
