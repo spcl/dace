@@ -17,4 +17,6 @@ def kernel(A, b):
     for i in range(A.shape[0] - 1, -1, -1):
         x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
 
-    return x, y
+    # The harness's only compared output is the in-place LU factorization A
+    # (output_args=['A']); returning (x, y) would make _collect_outputs mis-map x
+    # onto 'A', so return nothing.

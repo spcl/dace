@@ -18,7 +18,9 @@ def kernel(TSTEPS, N, u):
     mul2 = B2 * DT / (DY * DY)
 
     a = -mul1 / 2.0
-    b = 1.0 + mul2
+    # polybench C / the DaCe corpus kernel use `1 + mul1` here (upstream npbench's
+    # `1 + mul2` is an off-by-mul discrepancy); match the DaCe kernel we validate against.
+    b = 1.0 + mul1
     c = a
     d = -mul2 / 2.0
     e = 1.0 + mul2

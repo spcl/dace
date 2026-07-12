@@ -3,8 +3,10 @@ import numpy as np
 
 def kernel(alpha, imgIn):
 
+    # polybench C / the DaCe corpus kernel use `2.0 * alpha` in this denominator
+    # (upstream npbench dropped the factor of 2); match the DaCe kernel.
     k = (1.0 - np.exp(-alpha)) * (1.0 - np.exp(-alpha)) / (
-        1.0 + alpha * np.exp(-alpha) - np.exp(2.0 * alpha))
+        1.0 + 2.0 * alpha * np.exp(-alpha) - np.exp(2.0 * alpha))
     a1 = a5 = k
     a2 = a6 = k * np.exp(-alpha) * (alpha - 1.0)
     a3 = a7 = k * np.exp(-alpha) * (alpha + 1.0)
