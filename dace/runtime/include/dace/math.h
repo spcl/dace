@@ -682,6 +682,94 @@ template <typename T>
 DACE_CONSTEXPR DACE_HDFI T log10(const T& a) {
   return std::log10(a);
 }
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T log1p(const T& a) {
+  return std::log1p(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T log2(const T& a) {
+  return std::log2(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T exp2(const T& a) {
+  return (T)std::exp2(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T expm1(const T& a) {
+  return (T)std::expm1(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T asin(const T& a) {
+  return std::asin(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T asinh(const T& a) {
+  return std::asinh(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T acos(const T& a) {
+  return std::acos(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T acosh(const T& a) {
+  return std::acosh(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T atan(const T& a) {
+  return std::atan(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T atan2(const T& a, const T& b) {
+  return std::atan2(a, b);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T atanh(const T& a) {
+  return std::atanh(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T cbrt(const T& a) {
+  return std::cbrt(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T fmod(const T& a, const T& b) {
+  return std::fmod(a, b);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T lgamma(const T& a) {
+  return std::lgamma(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T tgamma(const T& a) {
+  return std::tgamma(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T ceil(const T& a) {
+  return std::ceil(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T trunc(const T& a) {
+  return std::trunc(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T erf(const T& a) {
+  return std::erf(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T erfc(const T& a) {
+  return std::erfc(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T nearbyint(const T& a) {
+  return std::nearbyint(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T round(const T& a) {
+  return std::round(a);
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI T hypot(const T& a, const T& b) {
+  return std::hypot(a, b);
+}
 }  // namespace math
 
 namespace cmath {
