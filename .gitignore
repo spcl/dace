@@ -273,3 +273,15 @@ _jacstruct.txt
 
 # canonicalize perf harness per-kernel result files
 perf_results/
+
+# Never commit key / secret material anywhere in this repo.
+*.pem
+*.key
+*_key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.ppk
+.ssh/
+*.p12
+*.pfx
