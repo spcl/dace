@@ -15,21 +15,28 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
 
-def _state_has_read_write_sibling_transient(state: SDFGState, exclude_data: str) -> bool:
-    """Return whether ``state`` contains a TRANSIENT container (other than
-    ``exclude_data``) with both a read-only source AccessNode (``in_degree
-    == 0`` and ``out_degree > 0``) AND a write-only sink AccessNode
-    (``in_degree > 0`` and ``out_degree == 0``). Such a container is a
-    per-iteration carrier whose read-before-write ordering is enforced
-    implicitly by the dataflow surrounding it; folding sibling AccessNodes
+def _state_has_read_write_sibling_carrier(state: SDFGState, exclude_data: str) -> bool:
+    """Return whether ``state`` contains a container (other than ``exclude_data``)
+    with both a read-only source AccessNode (``in_degree == 0`` and
+    ``out_degree > 0``) AND a write-only sink AccessNode (``in_degree > 0`` and
+    ``out_degree == 0``). Such a container is read AND written in the same state
+    -- a write-after-read (WAR) carrier whose read-before-write ordering is
+    enforced implicitly by the surrounding dataflow; folding sibling AccessNodes
     of other containers can break that ordering.
+
+    Both TRANSIENT (per-iteration scalar carriers, e.g. s254/s255's ``x``) and
+    NON-TRANSIENT (an argument read then updated in place -- e.g. the anti-dep
+    snapshot of s212 ``a[i]=a[i]*c[i]; b[i]+=a[i+1]*d[i]``, where ``a`` is a
+    read-only source into the snapshot copy + the b-read AND a write-only sink
+    of the in-place update) carriers are checked: eliminating ``a``'s snapshot
+    because it looks like a redundant copy would redirect the b-read back to the
+    updated ``a`` and miscompile.
 
     :param state: The state to scan.
     :param exclude_data: The data name currently being considered for merge
                          -- skipped because we want to check OTHER containers.
     :returns: ``True`` if such a sibling carrier exists.
     """
-    # Group AccessNodes by data; only consider transients.
     by_name: Dict[str, List[nodes.AccessNode]] = defaultdict(list)
     for n in state.nodes():
         if not isinstance(n, nodes.AccessNode):
@@ -37,7 +44,7 @@ def _state_has_read_write_sibling_transient(state: SDFGState, exclude_data: str)
         if n.data == exclude_data:
             continue
         desc = state.sdfg.arrays.get(n.data)
-        if desc is None or not desc.transient:
+        if desc is None:
             continue
         by_name[n.data].append(n)
     for ans in by_name.values():
@@ -46,6 +53,21 @@ def _state_has_read_write_sibling_transient(state: SDFGState, exclude_data: str)
         if has_read_only and has_write_only:
             return True
     return False
+
+
+def _is_war_carrier(state: SDFGState, data_name: str) -> bool:
+    """True iff ``data_name`` is READ and WRITTEN in ``state`` through distinct AccessNodes:
+    a read-only source (``in_degree == 0`` and ``out_degree > 0``) AND a write-only sink
+    (``in_degree > 0`` and ``out_degree == 0``). Removing a redundant COPY of such a container
+    -- redirecting the copy's readers back to it -- is UNSOUND: it exposes those reads to the
+    in-place write, a write-after-read on the copy's source. This is the anti-dependence
+    snapshot of s212 (``a[i]=a[i]*c[i]; b[i]+=a[i+1]*d[i]``): ``a`` is a read-only source (into
+    the ``a->a_split_snap`` copy and the ``b`` read) AND a write-only sink (the in-place update),
+    so folding ``a_split_snap`` back onto ``a`` would make ``b`` read the updated ``a``."""
+    anodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data_name]
+    has_read_only = any(state.in_degree(n) == 0 and state.out_degree(n) > 0 for n in anodes)
+    has_write_only = any(state.in_degree(n) > 0 and state.out_degree(n) == 0 for n in anodes)
+    return has_read_only and has_write_only
 
 
 @properties.make_properties
@@ -196,10 +218,10 @@ class ArrayElimination(ppl.Pass):
                 # (``acc[c]`` in s243); this guard catches the orthogonal
                 # case where the carrier is a DIFFERENT transient.
                 if state.in_degree(first_node) == 0 and len(nodeset) >= 2:
-                    if _state_has_read_write_sibling_transient(state, data_container):
+                    if _state_has_read_write_sibling_carrier(state, data_container):
                         continue
                 if state.out_degree(first_node) == 0 and len(nodeset) >= 2:
-                    if _state_has_read_write_sibling_transient(state, data_container):
+                    if _state_has_read_write_sibling_carrier(state, data_container):
                         continue
 
                 for node in nodeset[first_node_idx + 1:]:
@@ -298,6 +320,8 @@ class ArrayElimination(ppl.Pass):
                     if state.out_degree(anode) == 1:
                         succ = state.successors(anode)[0]
                         if isinstance(succ, nodes.AccessNode):
+                            if _is_war_carrier(state, succ.data):
+                                continue  # folding anode's read onto a WAR carrier is unsound
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
@@ -323,6 +347,8 @@ class ArrayElimination(ppl.Pass):
                     if state.in_degree(anode) == 1:
                         pred = state.predecessors(anode)[0]
                         if isinstance(pred, nodes.AccessNode):
+                            if _is_war_carrier(state, pred.data):
+                                continue  # folding anode's readers onto a WAR carrier is unsound
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}

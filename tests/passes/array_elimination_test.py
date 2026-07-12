@@ -140,6 +140,53 @@ def test_sink_merge_refuses_when_data_is_also_read():
                                      'that keeps the read between the two writes')
 
 
+def test_redundant_copy_refuses_when_source_is_a_war_carrier():
+    """A redundant COPY (``a -> a_snap`` with ``a_snap`` read downstream) must NOT be
+    folded back onto its source when that source ``a`` is a WAR carrier -- read (into the
+    copy) AND written in place in the same state via distinct AccessNodes. This is the
+    anti-dependence snapshot of TSVC s212 (``a[i]=a[i]*c[i]; b[i]+=a[i+1]*d[i]``): folding
+    ``a_snap`` onto ``a`` would redirect the read to the in-place-updated ``a`` and
+    miscompile. The redundant-copy removal (RedundantArray/RedundantSecondArray) must skip it.
+    """
+    from dace.sdfg import nodes
+
+    sdfg = dace.SDFG('redundant_copy_war_carrier')
+    sdfg.add_array('a', [10], dace.float64)
+    sdfg.add_array('b', [10], dace.float64)
+    sdfg.add_array('c', [10], dace.float64)
+    sdfg.add_transient('a_snap', [10], dace.float64)
+    state = sdfg.add_state()
+
+    # a (read-only source) -> a_snap : a full-array copy that LOOKS redundant.
+    src_a = state.add_read('a')
+    a_snap = state.add_access('a_snap')
+    state.add_nedge(src_a, a_snap, dace.Memlet('a[0:10]'))
+
+    # a_snap is read downstream (b[0] = a_snap[1]) -- so it is genuinely used.
+    t_r = state.add_tasklet('read_snap', {'x'}, {'y'}, 'y = x')
+    sink_b = state.add_write('b')
+    state.add_edge(a_snap, None, t_r, 'x', dace.Memlet('a_snap[1]'))
+    state.add_edge(t_r, 'y', sink_b, None, dace.Memlet('b[0]'))
+
+    # a is written IN PLACE (write-only sink) -> `a` is a read-and-written WAR carrier.
+    src_c = state.add_read('c')
+    sink_a = state.add_write('a')
+    t_w = state.add_tasklet('update_a', {'x'}, {'y'}, 'y = x * 2.0')
+    state.add_edge(src_c, None, t_w, 'x', dace.Memlet('c[0]'))
+    state.add_edge(t_w, 'y', sink_a, None, dace.Memlet('a[0]'))
+
+    sdfg.validate()
+    assert 'a_snap' in sdfg.arrays
+
+    Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
+
+    assert 'a_snap' in sdfg.arrays, ('ArrayElimination folded a redundant-copy snapshot back onto its source '
+                                     '`a`, which is also written in place in the same state (a WAR carrier) -- '
+                                     'this breaks the anti-dependence break and miscompiles (TSVC s212)')
+    snap_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'a_snap']
+    assert len(snap_nodes) == 1, 'the a_snap snapshot AccessNode must survive (its read still routes through it)'
+
+
 def test_source_merge_allowed_when_write_is_in_another_state():
     """Cross-state case: state S1 holds two source AccessNodes for ``b`` and
     no write; a separate state S2 (successor in the control-flow graph)
