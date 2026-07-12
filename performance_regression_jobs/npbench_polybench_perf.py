@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Performance regression: DaCe canonicalize/fast-canonicalize and a light
+"""Performance regression: DaCe canonicalize and a light
 simplify+loop2map+mapfusion pipeline (parallel), each vs. DaCe's own
 auto_optimize baseline (auto_opt), on BOTH cpu and gpu, over the combined
 NPBench+PolyBench corpus. A timed numpy run is kept as an extra CPU reference.
@@ -15,7 +15,7 @@ skipped entirely (a one-time crash-isolated probe), never crashing the sweep.
 
     python3 npbench_polybench_perf.py                    # this rank's slice, 100 reps, cpu+gpu
     python3 npbench_polybench_perf.py --only gemm --reps 3 --devices cpu
-    python3 npbench_polybench_perf.py --save-sdfg-only   # just dump canon/fast-canon SDFGs
+    python3 npbench_polybench_perf.py --save-sdfg-only   # just dump canon SDFGs
     python3 npbench_polybench_perf.py --tables-only      # rebuild correctness.md/speedup.md
 """
 import os
@@ -28,6 +28,7 @@ os.environ.setdefault('UCX_VFS_ENABLE', 'n')
 
 import argparse
 import importlib
+import inspect
 import json
 import sys
 import time
@@ -47,16 +48,26 @@ BENCH_INFO_DIR = os.path.join(_HERE, 'bench_info')
 PRESET = 'paper'
 DEVICES = ('cpu', 'gpu')
 
-DACE_LANES = tuple(engine.PIPELINES)  # auto_opt, parallel, canon, fast-canon
+DACE_LANES = tuple(engine.PIPELINES)  # auto_opt, parallel, canon
 #: numpy is a CPU-only extra reference lane (see process_kernel); not a baseline.
 BASELINE_LANE = 'auto_opt'
 #: Candidates the grid plot shows, each as a speedup vs. auto_opt per device.
-CANDIDATES = ('parallel', 'canon', 'fast-canon')
+#: auto_opt is included as its own bar (a constant 1.0 reference line) so every
+#: run visibly reports dace-autoopt alongside dace-parallel and dace-canon.
+CANDIDATES = ('auto_opt', 'parallel', 'canon')
+
+#: GPU-only lanes (e.g. 'canon-gpu' = canonicalize -> apply_gpu_transformations ->
+#: compile). They run solely on the gpu device; resolve_devices() already drops the
+#: gpu device entirely on a CPU-only box, so these never build there.
+GPU_ONLY_LANES = tuple(engine.GPU_ONLY_PIPELINES)
 
 
 def lanes_for_device(device):
-    """Every pipeline on either device, plus a timed numpy run on cpu only."""
-    return DACE_LANES + (('numpy', ) if device == 'cpu' else ())
+    """The standard pipelines on either device; plus a timed numpy run on cpu only,
+    and the gpu-only lanes (canon-gpu) on gpu only."""
+    if device == 'cpu':
+        return DACE_LANES + ('numpy', )
+    return DACE_LANES + GPU_ONLY_LANES
 
 
 def preset_tag(device):
@@ -132,18 +143,36 @@ def _poly_data(kernel, params):
     return program, call_arrays
 
 
-def _np_data(c, params):
+def _np_data(c, info, params):
+    """Initialize the npbench kernel's inputs and split the returned values into
+    call arrays and derived scalar params. ``initialize`` returns a mix of arrays
+    and derived scalars the kernel/reference/SDFG need but that live in no dataset
+    preset -- nbody's step count ``Nt = ceil(tEnd/dt)``, vadv's ``dtr_stage``,
+    cavity/channel's grid spacings ``dx/dy/dt``. The dace corpus's own
+    ``array_args`` names those returns positionally when the counts line up (it
+    lists the inline scalars too, e.g. cavity's dx/dy/dt); when it drops a scalar
+    it omitted (nbody's trailing ``Nt``, vadv's leading ``dtr_stage``) the counts
+    differ, so fall back to bench_info's canonical ``init.output_args`` list. Each
+    value is classed array-vs-scalar by its runtime type, never by position."""
     args = [params[a] for a in c['input_args']]
     rets = c['initialize'](*args)
     rets = rets if isinstance(rets, tuple) else (rets, )
-    arrays = dict(zip(c['array_args'], rets))
-    return c['program'], arrays
+    names = list(c['array_args']) if len(rets) == len(c['array_args']) else info['init']['output_args']
+    arrays, scalars = {}, {}
+    for nm, val in zip(names, rets):
+        (arrays if isinstance(val, np.ndarray) else scalars)[nm] = val
+    return c['program'], arrays, scalars
 
 
 def build_program_and_data(name, info, params):
+    """Return ``(program, arrays, params)`` where ``params`` is augmented with any
+    derived scalars the initializer produced (npbench); polybench initializers
+    mutate their arrays in place and add no scalars, so ``params`` is unchanged."""
     if _is_polybench(name, info):
-        return _poly_data(_poly_kernel(name), params)
-    return _np_data(_np_kernel(name), params)
+        program, arrays = _poly_data(_poly_kernel(name), params)
+        return program, arrays, params
+    program, arrays, scalars = _np_data(_np_kernel(name), info, params)
+    return program, arrays, {**params, **scalars}
 
 
 def _collect_outputs(output_args, ret, kwargs):
@@ -151,51 +180,88 @@ def _collect_outputs(output_args, ret, kwargs):
     out = {}
     for i, oname in enumerate(output_args):
         out[oname] = np.asarray(rets[i]) if i < len(rets) and rets[i] is not None else kwargs[oname]
+    # Many "returning" kernels declare output_args=[] in bench_info (resnet, mlp,
+    # nbody, k3mm, ...): without this, _compare({}, {}) is vacuously True and a
+    # miscompile (all-zeros) would pass. Capture the returned value(s) so numpy's
+    # oracle and DaCe's output land under the same key and _compare runs a real
+    # allclose. (Kernels whose numpy ref instead mutates a workspace arg and
+    # returns None still need output_args populated in bench_info -- a separate
+    # pre-existing gap: for those this adds nothing and the check stays weak.)
+    if not output_args:
+        for i, r in enumerate(rets):
+            if r is not None:
+                out[f'__return_{i}'] = np.asarray(r)
     return out
 
 
-def _resolve_args(names, arrays, params):
-    """Each name in `names` (info['input_args']) is an actual array (present
-    in `arrays`, copied so repeated calls never mutate the shared input), a
-    scalar/symbol value that only lives in `params` (e.g. a grid size like
-    'nx' or a loop bound like 'TMAX'), or -- a handful of PolyBench kernels'
-    upstream convention -- a float-cast dimension like 'float_n' that's
-    never itself in bench_info, only its integer counterpart 'N' is. Any
-    other name not covered by these three (e.g. a real algorithm coefficient
-    like deriche's 'alpha') is intentionally left to raise KeyError rather
-    than guess a numeric value with no authoritative source."""
+def lookup_scalar(name, params):
+    """Resolve one scalar/symbol value the SDFG or numpy reference asks for by
+    name. Matches `params` (dataset preset + derived scalars) exactly first, then
+    case-insensitively -- bench_info spells timestep/size scalars upper-case
+    (TSTEPS, TMAX) while several DaCe kernels declare the symbol lower-case
+    (tsteps). Falls back to the PolyBench `float_n` convention (a float-cast of the
+    integer dimension `N`). Any name still unresolved (e.g. deriche's real
+    coefficient `alpha`, which has no authoritative dataset value) raises KeyError
+    rather than guessing."""
+    if name in params:
+        return params[name]
+    lowered = name.lower()
+    for k, v in params.items():
+        if k.lower() == lowered:
+            return v
+    if name.startswith('float_') and name[len('float_'):].upper() in params:
+        return float(params[name[len('float_'):].upper()])
+    raise KeyError(f'no scalar/symbol value for {name!r}; have {sorted(params)}')
+
+
+def _bind_array(name, arrays):
+    v = arrays[name]
+    return v.copy() if isinstance(v, np.ndarray) else v  # never mutate the shared input
+
+
+def _dace_call_kwargs(sdfg, arrays, params):
+    """Bind exactly what the compiled SDFG asks for. Its `arglist()` (data args +
+    the free symbols it was parametrized over) is the ground truth for both the
+    set of names AND their spelling: bench_info lists some scalars the SDFG derives
+    itself and must NOT receive (stockham's `N = R**K`), and spells others in a
+    different case than the kernel's symbol (`TSTEPS` vs `tsteps`). Arrays bind by
+    exact name; scalars/symbols resolve from the param pool (case-insensitively).
+    `__return*` entries are SDFG-allocated outputs, not inputs to pass."""
+    required = set(sdfg.arglist()) | {str(s) for s in sdfg.free_symbols}
     out = {}
-    for n in names:
-        if n in arrays:
-            v = arrays[n]
-            out[n] = v.copy() if isinstance(v, np.ndarray) else v
-        elif n in params:
-            out[n] = params[n]
-        elif n.startswith('float_') and n[len('float_'):].upper() in params:
-            out[n] = float(params[n[len('float_'):].upper()])
-        else:
-            out[n] = params[n]
+    for name in required:
+        if name.startswith('__return'):
+            continue
+        if name in arrays:
+            out[name] = _bind_array(name, arrays)
+            continue
+        try:
+            out[name] = lookup_scalar(name, params)
+        except KeyError:
+            # A required symbol with no dataset value is one DaCe infers from an
+            # array argument's shape at call time (lenet's C_before_fc1 =
+            # fc1w.shape[0]); leave it unbound. A genuinely un-inferable one
+            # (deriche's coefficient alpha) then surfaces at the compiled call.
+            pass
     return out
 
 
-def _dace_call_kwargs(info, arrays, params):
-    # The compiled SDFG's call signature needs every array `arrays` actually
-    # holds -- _poly_data/_np_data key `arrays` by the program's real
-    # argnames, so its keys ARE the ground truth -- plus whatever
-    # scalar/symbol names info['input_args'] lists that aren't arrays.
-    # info['output_args'] isn't a reliable source for the array names: some
-    # kernels (e.g. correlation) declare it empty even though the DaCe
-    # program needs pre-allocated workspace arrays ('corr', 'mean',
-    # 'stddev') that the numpy reference allocates/returns internally
-    # instead of taking as parameters.
-    names = set(info['input_args']) | set(arrays)
-    kwargs = _resolve_args(names, arrays, params)
-    symbols = {k: v for k, v in params.items() if k not in kwargs}
-    return {**kwargs, **symbols}
-
-
-def _numpy_call_kwargs(info, arrays, params):
-    return _resolve_args(info['input_args'], arrays, params)
+def _numpy_call_kwargs(fn, arrays, params):
+    """Bind what the numpy reference's own signature asks for (not bench_info's
+    input_args, which for some kernels lists derived quantities the reference
+    computes internally). Parameters with a default that we can't resolve are left
+    to the reference's default (e.g. an optional `datatype`)."""
+    out = {}
+    for name, param in inspect.signature(fn).parameters.items():
+        if name in arrays:
+            out[name] = _bind_array(name, arrays)
+            continue
+        try:
+            out[name] = lookup_scalar(name, params)
+        except KeyError:
+            if param.default is inspect.Parameter.empty:
+                raise
+    return out
 
 
 def _compare(ref, got, rtol=1e-3, atol=1e-4):
@@ -213,13 +279,13 @@ def _compare(ref, got, rtol=1e-3, atol=1e-4):
 # --------------------------------------------------------------------------
 def _run_numpy(info, arrays, params):
     fn = _numpy_ref(info)
-    kwargs = _numpy_call_kwargs(info, arrays, params)
+    kwargs = _numpy_call_kwargs(fn, arrays, params)
     ret = fn(**kwargs)
     return _collect_outputs(info['output_args'], ret, kwargs)
 
 
 def _run_dace(sdfg, info, arrays, params):
-    kwargs = _dace_call_kwargs(info, arrays, params)
+    kwargs = _dace_call_kwargs(sdfg, arrays, params)
     ret = sdfg.compile()(**kwargs)
     return _collect_outputs(info['output_args'], ret, kwargs)
 
@@ -238,40 +304,50 @@ def _check_job(name, pipeline, device):
     engine.configure_dace_process()
     info = load_bench_info(name)
     params = info['parameters'][PRESET]
-    program, arrays = build_program_and_data(name, info, params)
+    program, arrays, params = build_program_and_data(name, info, params)
     ref = _run_numpy(info, arrays, params)  # numpy oracle is host-side on either device
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = _dace_name(sdfg.name, pipeline, device)
-    sdfg = engine.PIPELINES[pipeline](sdfg, device)
+    sdfg = engine.ALL_PIPELINES[pipeline](sdfg, device)
     got = _run_dace(sdfg, info, arrays, params)  # host arrays; DaCe inserts device copies on gpu
     return _compare(ref, got)
 
 
-def _time_dace_job(name, pipeline, device, reps):
+def _time_dace_job(name, pipeline, device, reps, timeout):
     engine.configure_dace_process()
     info = load_bench_info(name)
     params = info['parameters'][PRESET]
-    program, arrays = build_program_and_data(name, info, params)
+    program, arrays, params = build_program_and_data(name, info, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = _dace_name(sdfg.name, pipeline, device)
-    sdfg = engine.PIPELINES[pipeline](sdfg, device)
-    call_kwargs = _dace_call_kwargs(info, arrays, params)
-    return engine.time_sdfg(sdfg, call_kwargs, reps)
+    sdfg = engine.ALL_PIPELINES[pipeline](sdfg, device)
+    call_kwargs = _dace_call_kwargs(sdfg, arrays, params)
+    # Budget the rep loop under the subprocess timeout so a slow paper-size kernel
+    # (cholesky/lu/gemm) yields fewer reps instead of a hard-killed total loss.
+    return engine.time_sdfg(sdfg, call_kwargs, reps, time_budget_s=0.8 * timeout)
 
 
-def _time_numpy_job(name, reps, warmup=1):
+def _time_numpy_job(name, reps, warmup=1, timeout=None):
     info = load_bench_info(name)
     params = info['parameters'][PRESET]
-    _, arrays = build_program_and_data(name, info, params)
+    _, arrays, params = build_program_and_data(name, info, params)
     fn = _numpy_ref(info)
+    # Same wall-clock budget as the dace lanes: a slow numpy oracle at paper size
+    # yields fewer reps rather than hard-timing-out the whole measurement.
+    budget = 0.8 * timeout if timeout is not None else None
     times = []
+    start = None
     for i in range(warmup + reps):
-        kwargs = _numpy_call_kwargs(info, arrays, params)
+        kwargs = _numpy_call_kwargs(fn, arrays, params)
         t0 = time.perf_counter()
         fn(**kwargs)
         dt = (time.perf_counter() - t0) * 1000.0
         if i >= warmup:
             times.append(dt)
+            if start is None:
+                start = t0
+            if budget is not None and time.perf_counter() - start >= budget:
+                break
     return times
 
 
@@ -279,10 +355,10 @@ def _save_sdfg_job(name, pipeline, device):
     engine.configure_dace_process()
     info = load_bench_info(name)
     params = info['parameters'][PRESET]
-    program, _ = build_program_and_data(name, info, params)
+    program, _, _ = build_program_and_data(name, info, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = _dace_name(sdfg.name, pipeline, device)
-    sdfg = engine.PIPELINES[pipeline](sdfg, device)
+    sdfg = engine.ALL_PIPELINES[pipeline](sdfg, device)
     sdfg.validate()
     return sdfg.to_json()
 
@@ -318,9 +394,10 @@ def process_kernel(name, args, rank, devices):
                 continue
             print(f'[{name}/{tag}] {lane}: measuring {remaining} more rep(s)')
             if lane == 'numpy':
-                ok, payload = engine.run_isolated(_time_numpy_job, (name, remaining), timeout=args.timeout)
+                ok, payload = engine.run_isolated(_time_numpy_job, (name, remaining, 1, args.timeout), timeout=args.timeout)
             else:
-                ok, payload = engine.run_isolated(_time_dace_job, (name, lane, device, remaining), timeout=args.timeout)
+                ok, payload = engine.run_isolated(_time_dace_job, (name, lane, device, remaining, args.timeout),
+                                                  timeout=args.timeout)
             if ok:
                 engine.append_results(kdir, lane, payload, have)
             else:
@@ -331,10 +408,10 @@ def process_kernel(name, args, rank, devices):
 def save_sdfg_only(name, args, devices):
     for device in devices:
         kdir = engine.kernel_dir(args.results_dir, CORPUS, name, preset_tag(device))
-        if not args.force and all(os.path.exists(os.path.join(kdir, f'{p}.sdfg')) for p in ('canon', 'fast-canon')):
+        if not args.force and all(os.path.exists(os.path.join(kdir, f'{p}.sdfg')) for p in ('canon', )):
             print(f'[{name}/{preset_tag(device)}] SDFGs already saved, skip')
             continue
-        for pipeline in ('canon', 'fast-canon'):
+        for pipeline in ('canon', ):
             ok, payload = engine.run_isolated(_save_sdfg_job, (name, pipeline, device), timeout=args.timeout)
             if not ok:
                 print(f'[{name}/{device}] {pipeline}: {payload}')
@@ -349,8 +426,10 @@ def kernel_list(args):
     return names
 
 
-#: All lanes that can appear in any device folder (cpu adds numpy), for the tables.
-TABLE_LANES = list(DACE_LANES) + ['numpy']
+#: All lanes that can appear in any device folder (cpu adds numpy; gpu adds the
+#: gpu-only lanes like canon-gpu), for the tables. A lane with no results in a
+#: given device folder simply shows blank there.
+TABLE_LANES = list(DACE_LANES) + ['numpy'] + list(GPU_ONLY_LANES)
 
 
 def resolve_devices(requested):
@@ -368,7 +447,10 @@ def resolve_devices(requested):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    engine.add_common_args(ap, default_timeout=900.0)  # 15 min/kernel; bump --timeout for the largest paper builds
+    # 1h/kernel: the largest paper builds (cholesky/lu/gemm at N=2000) exceed the
+    # old 900s. The rep loop is also wall-clock-budgeted to ~0.8x this (time_sdfg),
+    # so a slow kernel yields fewer reps well before the hard kill.
+    engine.add_common_args(ap, default_timeout=3600.0)
     ap.add_argument('--devices', default=','.join(DEVICES),
                     help=f'comma-separated devices to sweep (default: {",".join(DEVICES)}); gpu auto-skips if no CUDA')
     args = ap.parse_args()

@@ -31,8 +31,8 @@ CORPORA = ('npbench', 'polybench', 'tsvc2', 'tsvc2_5')
 
 #: (lane, colour) shown per panel -- the baseline lane is dropped per corpus.
 #: Categorical hues from the dataviz skill's validated default palette.
-LANE_COLORS = [('dace-canon', '#1baf7a'), ('dace-parallel', '#2a78d6'), ('compiler-autopar', '#eda100'),
-               ('compiler-seq', '#d9534f')]
+LANE_COLORS = [('dace-canon', '#1baf7a'), ('dace-parallel', '#2a78d6'), ('dace-autoopt', '#e07a2b'),
+               ('compiler-autopar', '#eda100'), ('compiler-seq', '#d9534f')]
 
 
 def baseline_lane(corpus):

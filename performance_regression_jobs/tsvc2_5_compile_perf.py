@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile-speed regression over TSVC2.5: DaCe codegen time + C++ compile time
-for the 4 DaCe pipelines -- baseline (plain simplify+loop2map+mapfusion),
-auto-opt, canon, fast-canon.
+for the 3 DaCe pipelines -- baseline (plain simplify+loop2map+mapfusion),
+auto-opt, canon.
 
 Companion to tsvc2_5_perf.py (post-compile RUNTIME of the same lanes); writes
 compile_total.md / compile_codegen.md / compile_cxx.md into the SAME results

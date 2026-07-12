@@ -35,6 +35,7 @@ import npbench_polybench_perf as npp
 
 #: experiment-facing dace lane -> engine pipeline callable (all take (sdfg, device)).
 DACE_PIPELINE = {
+    'dace-autoopt': engine.pipeline_auto_opt,
     'dace-canon': engine.pipeline_canon,
     'dace-parallel': engine.pipeline_parallel,
     'dace-canon-vec': engine.pipeline_canon_vectorize,

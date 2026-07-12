@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile-speed regression over NPBench+PolyBench: DaCe codegen time + C++
-compile time for the 4 DaCe pipelines -- baseline (plain simplify+loop2map+
-mapfusion), auto-opt, canon, fast-canon -- at the paper-preset problem sizes.
+compile time for the 3 DaCe pipelines -- baseline (plain simplify+loop2map+
+mapfusion), auto-opt, canon -- at the paper-preset problem sizes.
 
 Companion to npbench_polybench_perf.py (post-compile RUNTIME of the same lanes,
 plus a numpy reference); writes compile_total.md / compile_codegen.md /
@@ -34,7 +34,7 @@ import npbench_polybench_perf as base
 
 CORPUS = base.CORPUS
 PRESET = base.PRESET
-#: The 4 DaCe pipelines (numpy is not compiled). No par/seq split in this corpus.
+#: The 3 DaCe pipelines (numpy is not compiled). No par/seq split in this corpus.
 COMPILE_LANES = list(engine.PIPELINES)
 BASELINE_LANE = base.BASELINE_LANE
 

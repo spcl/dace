@@ -172,6 +172,20 @@ def configure_dace_process():
                 if flag not in args:
                     dace.Config.set('compiler', 'cpu', 'args', value=f'{args} {flag}')
 
+    # LAPACK link injection for the LAPACK-library-node kernels (cholesky2 ->
+    # LAPACKE_spotrf, contour_integral -> LAPACKE_zgetrf/zgetrs). DaCe's LAPACK
+    # nodes need LAPACKE on the link line; on a cluster where LAPACK is a
+    # spack/module install off the default search path the link fails with
+    # `undefined reference to LAPACKE_*`. Point DACE_PERF_LAPACK_LIBDIR at that lib
+    # dir (the SLURM job sets it) to force-link LAPACKE/LAPACK with a matching
+    # rpath. Unset (a workstation with system LAPACK on the default path) this is a
+    # no-op, so nothing else's link is disturbed.
+    lapack_dir = os.environ.get('DACE_PERF_LAPACK_LIBDIR')
+    if lapack_dir and '-llapacke' not in dace.Config.get('compiler', 'cpu', 'args'):
+        args = dace.Config.get('compiler', 'cpu', 'args')
+        link = f'-L{lapack_dir} -Wl,-rpath,{lapack_dir} -llapacke -llapack'
+        dace.Config.set('compiler', 'cpu', 'args', value=f'{args} {link}')
+
 
 # --------------------------------------------------------------------------
 # Crash isolation: run fn(*args) in a spawned subprocess. A segfault leaves
@@ -220,7 +234,7 @@ def _flatten_durations(d):
     return times
 
 
-def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
+def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
     """Best-of-`reps` timing via sdfg.instrument + get_latest_report (ms per call).
 
     The SAME argument buffers are reused for every call -- never reallocated between
@@ -235,7 +249,14 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
 
     The first `warmup` call(s) are executed (and instrumented, same as any
     other call -- simplest way to keep one accumulated report) but sliced off
-    before returning, so they never reach the CSV."""
+    before returning, so they never reach the CSV.
+
+    `time_budget_s` (typically ~0.8x the subprocess timeout) caps the wall-clock
+    the measured reps may consume: once cumulative measured time passes it the loop
+    stops early, so a slow kernel at a realistic dataset size (cholesky/lu/gemm at
+    paper N) yields FEWER measured reps instead of a total-loss timeout. At least
+    one rep is always measured; None means run all `reps` (the historical behavior)."""
+    import time
     import dace
     import numpy as np
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -246,14 +267,27 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1):
     sdfg.name = f'{sdfg.name}_timed'
     # Snapshot initial inputs once; reset each buffer IN PLACE before every call.
     initial = {k: v.copy() for k, v in call_kwargs.items() if isinstance(v, np.ndarray)}
+
+    def one_call():
+        for k, v0 in initial.items():
+            np.copyto(call_kwargs[k], v0)  # reuse the same buffer -- no realloc between reps
+        csdfg(**call_kwargs)
+
+    measured = 0
     with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
         csdfg = sdfg.compile()
-        for _ in range(warmup + reps):
-            for k, v0 in initial.items():
-                np.copyto(call_kwargs[k], v0)  # reuse the same buffer -- no realloc between reps
-            csdfg(**call_kwargs)
+        for _ in range(warmup):
+            one_call()
+        start = time.perf_counter()
+        for _ in range(reps):
+            one_call()
+            measured += 1
+            if time_budget_s is not None and time.perf_counter() - start >= time_budget_s:
+                break  # keep the >=1 reps already measured rather than risk a hard timeout
         csdfg.finalize()
-    return _flatten_durations(sdfg.get_latest_report().durations)[warmup:]
+    # The report accumulates every call in order (warmup first); drop the warmups
+    # and any measured reps that never ran when the budget cut the loop short.
+    return _flatten_durations(sdfg.get_latest_report().durations)[warmup:warmup + measured]
 
 
 def _direct_compile_cmd(sdfg, folder):
@@ -378,7 +412,7 @@ def pipeline_parallel(sdfg, device='cpu'):
     from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-    from dace.transformation.auto.auto_optimize import apply_gpu_storage
+    from dace.transformation.auto.auto_optimize import apply_gpu_storage, set_fast_implementations
     _set_tree_reduction(False)  # atomic WCR, like auto_opt -- only canon tree-reduces
     sdfg.simplify(validate=True)
     sdfg.apply_transformations_repeated(LoopToMap())
@@ -388,6 +422,11 @@ def pipeline_parallel(sdfg, device='cpu'):
         apply_gpu_storage(sdfg)  # non-transient arrays -> GPU_Global (data resident on device)
         sdfg.apply_gpu_transformations()
         sdfg.simplify(validate=True)
+    # Without this, library nodes stay implementation=None and a GEMM lowers to a
+    # naive `pure` triple loop (e.g. mlp 12,443ms vs ~200ms). auto_opt/canon pick
+    # fast impls in their own finalize; this is the parallel lane's equivalent:
+    # BLAS->OpenBLAS, sort->the provided header (cub on GPU), reductions->fast.
+    set_fast_implementations(sdfg, _device_type(device))
     return sdfg
 
 
@@ -406,25 +445,48 @@ def pipeline_canon(sdfg, device='cpu'):
     return finalize_for_target(canonicalize(sdfg, validate=True, target=device, **_CANON_KNOBS), device)
 
 
-def pipeline_fast_canon(sdfg, device='cpu'):
+def pipeline_canon_gpu(sdfg, device='gpu'):
+    """Canonicalize, then offload to the GPU EXPLICITLY: canonicalize(target=cpu)
+    -> apply_gpu_storage (non-transient I/O arrays -> GPU_Global, data resident)
+    -> apply_gpu_transformations (maps onto the device) -> fast impls (cub
+    reductions / device BLAS). Distinct from the `canon` lane's device='gpu' path:
+    canon's own GPU offloading inside finalize is a separate upcoming change, so
+    this lane is how canon reaches the GPU today. GPU-only -- the driver runs it
+    solely on the gpu device and gates it on gpu_supported(), so a CPU-only box
+    never touches it. `device` is accepted for a uniform pipeline signature but the
+    target is always the GPU."""
     from dace.transformation.passes.canonicalize import canonicalize
-    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-    _set_tree_reduction(True)  # canon is the only lane that tree-reduces its WCR
-    return finalize_for_target(canonicalize(sdfg, validate=True, fast=True, target=device, **_CANON_KNOBS), device)
+    from dace.transformation.auto.auto_optimize import apply_gpu_storage, set_fast_implementations
+    _set_tree_reduction(True)  # match the canon lane: tree-reduce the WCR
+    sdfg = canonicalize(sdfg, validate=True, target='cpu', **_CANON_KNOBS)
+    apply_gpu_storage(sdfg)  # non-transient arrays -> GPU_Global (data resident on device)
+    sdfg.apply_gpu_transformations()
+    sdfg.simplify(validate=True)
+    set_fast_implementations(sdfg, _device_type('gpu'))
+    return sdfg
 
 
-#: The 4 DaCe-side comparison points. auto_opt is the BASELINE speedups are
+#: The 3 DaCe-side comparison points. auto_opt is the BASELINE speedups are
 #: reported against; parallel (light simplify+loop2map+mapfusion) and
-#: canonicalize / canonicalize(fast=True) are the candidates. The key is also
-#: the SDFG-name suffix each variant is cache-keyed on (with a _cpu/_gpu device
-#: tail), so e.g. canon->'..._canon_cpu', parallel->'..._parallel_gpu',
+#: canonicalize are the candidates. The key is also the SDFG-name suffix each
+#: variant is cache-keyed on (with a _cpu/_gpu device tail), so e.g.
+#: canon->'..._canon_cpu', parallel->'..._parallel_gpu',
 #: auto_opt->'..._auto_opt_cpu' -- distinct build folders, never colliding.
 PIPELINES = {
     'auto_opt': pipeline_auto_opt,
     'parallel': pipeline_parallel,
     'canon': pipeline_canon,
-    'fast-canon': pipeline_fast_canon,
 }
+
+#: GPU-only lanes: run solely on the gpu device (gated on gpu_supported()), never
+#: on cpu. Kept out of PIPELINES so DACE_LANES (the cpu+gpu-capable standard set)
+#: excludes them; dispatch a lane name through ALL_PIPELINES.
+GPU_ONLY_PIPELINES = {
+    'canon-gpu': pipeline_canon_gpu,
+}
+
+#: Every dispatchable pipeline (standard + gpu-only), keyed by lane name.
+ALL_PIPELINES = {**PIPELINES, **GPU_ONLY_PIPELINES}
 
 
 # --------------------------------------------------------------------------
@@ -550,7 +612,7 @@ def _slug(s):
 
 def compiler_host_tag():
     """`<compiler>_<hostname>` -- namespace for DaCe-lane results (baseline/
-    auto-opt/canon/fast-canon): a different --cxx (or a different node's
+    auto-opt/canon): a different --cxx (or a different node's
     autodetected default) produces timings that aren't comparable, so this
     keeps them in separate result folders instead of corrupting one shared
     results.csv/status.csv. Native lanes use host_tag() instead -- they pick
@@ -904,7 +966,7 @@ def add_common_args(ap, default_timeout=900.0):
     ap.add_argument('--kernels-file', default=None, help='file of kernel names, one per line (overrides rank slicing)')
     ap.add_argument('--force', action='store_true', help='ignore existing results, re-measure from scratch')
     ap.add_argument('--save-sdfg', action='store_true', help='save each pipeline\'s SDFG into the kernel folder')
-    ap.add_argument('--save-sdfg-only', action='store_true', help='save canon/fast-canon SDFGs, skip all timing')
+    ap.add_argument('--save-sdfg-only', action='store_true', help='save canon SDFGs, skip all timing')
     ap.add_argument('--list-kernels', action='store_true', help='print this corpus\'s kernel identifiers and exit')
     ap.add_argument('--tables-only', action='store_true', help='skip measurement, just rebuild the markdown tables')
     ap.add_argument('--timeout',

@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=dace-perf
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4      # 4 ranks/node -- kernels self-partition across ranks (engine.my_slice)
-#SBATCH --cpus-per-task=72       # cores-per-node / ntasks-per-node -- run `nproc --all` on a
-                                 # compute node to check its core count first and adjust
+#SBATCH --ntasks-per-node=4      # 4 ranks/node = one per Grace CPU (GH200 node = 4 Grace sockets);
+                                 # kernels self-partition across ranks (engine.my_slice)
+#SBATCH --cpus-per-task=72       # 72 cores per Grace CPU -> 4 x 72 = 288 cores = the whole node
+#SBATCH --hint=nomultithread     # Grace Neoverse-V2 has no SMT (1 thread/core); keep it explicit
 #SBATCH --time=08:00:00          # 8h: a compile-heavy 4-lane sweep needs the headroom
 #SBATCH --partition=normal
 #SBATCH --account=g34
@@ -32,7 +33,9 @@ RESULTS_DIR="${RESULTS_DIR:-results/$EXPERIMENT}"
 
 # MPI anti-hang (must match run_perf.py's own os.environ.setdefault block) +
 # threading. Exported so every rank / spawned subprocess inherits them.
-export OMP_NUM_THREADS="72"
+export OMP_NUM_THREADS="72"        # one Grace CPU's worth of cores per rank
+export OMP_PROC_BIND="close"       # pin OpenMP threads, packed within the rank's socket
+export OMP_PLACES="cores"          # one OpenMP place per physical core
 export MPI4PY_RC_INITIALIZE="0"
 export OMPI_MCA_pml="ob1"
 export OMPI_MCA_btl="self,vader"
@@ -51,8 +54,10 @@ spack load llvm@22.1.5
 
 echo "EXPERIMENT=$EXPERIMENT CORPUS=$CORPUS CXX=$CXX RESULTS_DIR=$RESULTS_DIR"
 
-# --cpu-bind=cores keeps each rank pinned to its own allocated cores.
-srun --cpu-bind=cores python3 run_perf.py \
+# --distribution=block:block hands rank i a contiguous 72-core block = Grace socket i, so the 4
+# ranks split 72-72-72-72 across the node's 4 Grace CPUs; --cpu-bind=cores then pins each rank's
+# threads to its own cores (verbose = log the CPU mask to the job output to confirm the split).
+srun --cpu-bind=verbose,cores --distribution=block:block python3 run_perf.py \
     --experiment "$EXPERIMENT" --corpus "$CORPUS" --reps 25 --cxx="$CXX" --results-dir="$RESULTS_DIR"
 
 # One single-rank pass to (re)build the aggregate tables across every rank's output.

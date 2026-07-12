@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compile-speed regression over TSVC2: DaCe codegen time + C++ compile time for
-the 4 DaCe pipelines -- baseline (plain simplify+loop2map+mapfusion), auto-opt,
-canon, fast-canon -- so the simplify+loop2map+mapfusion SDFG's build cost is
-compared head-to-head against the others.
+the 3 DaCe pipelines -- baseline (plain simplify+loop2map+mapfusion), auto-opt,
+canon -- so the simplify+loop2map+mapfusion SDFG's build cost is compared
+head-to-head against the others.
 
 Companion to tsvc2_perf.py (which measures the post-compile RUNTIME of the same
 lanes). This writes compile_total.md / compile_codegen.md / compile_cxx.md into

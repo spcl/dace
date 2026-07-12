@@ -41,7 +41,14 @@ def maxpool2d(x):
 
 # LeNet-5 Convolutional Neural Network (inference mode)
 def lenet5(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b,
-           fc3w, fc3b, N, C_before_fc1):
+           fc3w, fc3b):
+    # N (batch) and C_before_fc1 (flattened conv features) are derived, not
+    # independent dataset params: N is the batch dimension of the input and
+    # C_before_fc1 is fc1w's first dimension (the dace kernel likewise infers the
+    # symbol from fc1w.shape[0]). Recompute them here instead of taking them as
+    # arguments the harness has no authoritative dataset value for.
+    N = input.shape[0]
+    C_before_fc1 = fc1w.shape[0]
     x = relu(conv2d(input, conv1) + conv1bias)
     x = maxpool2d(x)
     x = relu(conv2d(x, conv2) + conv2bias)

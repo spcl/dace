@@ -7,7 +7,7 @@
 import numpy as np
 
 
-def mandelbrot(xmin, xmax, ymin, ymax, xn, yn, itermax, horizon=2.0):
+def mandelbrot(xmin, xmax, ymin, ymax, xn, yn, maxiter, horizon=2.0):
     # Adapted from
     # https://thesamovar.wordpress.com/2009/03/22/fast-fractals-with-python-and-numpy/
     Xi, Yi = np.mgrid[0:xn, 0:yn]
@@ -19,7 +19,7 @@ def mandelbrot(xmin, xmax, ymin, ymax, xn, yn, itermax, horizon=2.0):
     Xi.shape = Yi.shape = C.shape = xn * yn
 
     Z = np.zeros(C.shape, np.complex128)
-    for i in range(itermax):
+    for i in range(maxiter):
         if not len(Z):
             break
 

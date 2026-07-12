@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Performance regression (CPU only): the DaCe pipelines (parallel and
-canonicalize / fast-canonicalize, each in a -par and a -seq schedule, plus
-auto_opt) vs. two native C baselines -- single-core (native-clang) and
+canonicalize, each in a -par and a -seq schedule, plus auto_opt) vs. two
+native C baselines -- single-core (native-clang) and
 multi-core compiler auto-parallelization (native-clang-polly-autopar and gcc
 native-gcc-autopar -- see native_harness.LANES) -- over the 151-kernel TSVC2
 corpus. Standalone (only needs dace+numpy importable); multi-rank via
@@ -9,7 +9,7 @@ OMPI_COMM_WORLD_RANK/SLURM_PROCID (see engine.py).
 
     python3 tsvc2_perf.py                       # this rank's slice, 100 reps
     python3 tsvc2_perf.py --only s000 --reps 3  # quick smoke test
-    python3 tsvc2_perf.py --save-sdfg-only      # just dump canon/fast-canon SDFGs
+    python3 tsvc2_perf.py --save-sdfg-only      # just dump canon SDFGs
     python3 tsvc2_perf.py --tables-only         # rebuild correctness.md/speedup.md
 """
 import os
@@ -266,10 +266,10 @@ def process_kernel(kernel_name, l1, l2, args, rank, native_libs):
 
 def save_sdfg_only(kernel_name, args):
     kdir = engine.kernel_dir(args.results_dir, CORPUS, kernel_name, 'default')
-    if not args.force and all(os.path.exists(os.path.join(kdir, f'{p}-par.sdfg')) for p in ('canon', 'fast-canon')):
+    if not args.force and all(os.path.exists(os.path.join(kdir, f'{p}-par.sdfg')) for p in ('canon', )):
         print(f'[{kernel_name}] SDFGs already saved, skip')
         return
-    for pipeline in ('canon', 'fast-canon'):
+    for pipeline in ('canon', ):
         ok, payload = engine.run_isolated(_save_sdfg_job, (kernel_name, pipeline, False), timeout=args.timeout)
         if not ok:
             print(f'[{kernel_name}] {pipeline}: {payload}')

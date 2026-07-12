@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Counts loops (LoopRegion) and maps (MapEntry) before vs. after canonicalize
-and fast-canonicalize, across all 3 corpora. Purely structural (canonicalize
-needs no input data, no compilation, no execution), so this is much lighter
-than the *_perf.py scripts -- just build the SDFG, count, transform, count again.
+"""Counts loops (LoopRegion) and maps (MapEntry) before vs. after canonicalize,
+across all 3 corpora. Purely structural (canonicalize needs no input data, no
+compilation, no execution), so this is much lighter than the *_perf.py scripts
+-- just build the SDFG, count, transform, count again.
 
     python3 loop_map_counts.py                       # all 3 corpora
     python3 loop_map_counts.py --corpus tsvc2 --only s000
@@ -30,7 +30,7 @@ import tsvc_corpus as tsvc
 import tsvc_2_5_corpus as tsvc25
 import npbench_polybench_perf as npbp
 
-PIPELINES = ('canon', 'fast-canon')
+PIPELINES = ('canon', )
 
 
 def count_loops_and_maps(sdfg):
@@ -39,23 +39,23 @@ def count_loops_and_maps(sdfg):
     return loops, maps
 
 
-def _canonicalize(sdfg, fast):
+def _canonicalize(sdfg):
     from dace.transformation.passes.canonicalize import canonicalize
-    return canonicalize(sdfg, validate=True, fast=fast)
+    return canonicalize(sdfg, validate=True)
 
 
 def _row(corpus, name, sdfg_before, build_after):
     loops_before, maps_before = count_loops_and_maps(sdfg_before)
     row = dict(corpus=corpus, kernel=name, loops_before=loops_before, maps_before=maps_before)
-    for label, fast in (('canon', False), ('fast-canon', True)):
-        try:
-            after = build_after(fast)
-            loops_after, maps_after = count_loops_and_maps(after)
-            row[f'loops_{label}'] = loops_after
-            row[f'maps_{label}'] = maps_after
-        except Exception as e:
-            row[f'loops_{label}'] = row[f'maps_{label}'] = ''
-            row[f'error_{label}'] = f'{type(e).__name__}: {str(e)[:120]}'
+    label = 'canon'
+    try:
+        after = build_after()
+        loops_after, maps_after = count_loops_and_maps(after)
+        row[f'loops_{label}'] = loops_after
+        row[f'maps_{label}'] = maps_after
+    except Exception as e:
+        row[f'loops_{label}'] = row[f'maps_{label}'] = ''
+        row[f'error_{label}'] = f'{type(e).__name__}: {str(e)[:120]}'
     return row
 
 
@@ -68,9 +68,9 @@ def tsvc2_rows(only):
             continue
         before = tsvc.to_sdfg(kernel, f'{kernel.name}_before', simplify=True)
 
-        def build(fast, kernel=kernel):
-            sdfg = tsvc.to_sdfg(kernel, f"{kernel.name}_{'fast' if fast else 'canon'}", simplify=False)
-            return _canonicalize(sdfg, fast)
+        def build(kernel=kernel):
+            sdfg = tsvc.to_sdfg(kernel, f'{kernel.name}_canon', simplify=False)
+            return _canonicalize(sdfg)
 
         yield _row('tsvc2', kernel.name, before, build)
 
@@ -82,9 +82,9 @@ def tsvc2_5_rows(only):
             continue
         before = program.to_sdfg(simplify=True)
 
-        def build(fast, program=program):
+        def build(program=program):
             sdfg = program.to_sdfg(simplify=False)
-            return _canonicalize(sdfg, fast)
+            return _canonicalize(sdfg)
 
         yield _row('tsvc2_5', name, before, build)
 
@@ -105,9 +105,9 @@ def npbench_polybench_rows(only):
         program, _arrays = npbp.build_program_and_data(name, info, params)
         before = program.to_sdfg(simplify=True)
 
-        def build(fast, program=program):
+        def build(program=program):
             sdfg = program.to_sdfg(simplify=False)
-            return _canonicalize(sdfg, fast)
+            return _canonicalize(sdfg)
 
         yield _row('npbench_polybench', name, before, build)
 

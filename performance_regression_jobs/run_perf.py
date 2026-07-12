@@ -7,7 +7,8 @@ NTASKS via engine.my_slice), so 1 node / 4 ranks distributes the corpus.
 Experiments (both CPU; vector_vs runs its dace lanes through the multi-dim
 vectorizer, native lanes are compiled fast-math either way):
 
-  canon_vs   dace-canon        engine.pipeline_canon
+  canon_vs   dace-autoopt      engine.pipeline_auto_opt
+             dace-canon        engine.pipeline_canon
              dace-parallel     engine.pipeline_parallel
              compiler-seq      native single-core -O3 -march=native -ffast-math
              compiler-autopar  native gcc auto-parallelized C
@@ -52,7 +53,7 @@ import native_harness as nh
 
 #: experiment -> its dace + native lane sets (numpy is added per-corpus below).
 EXPERIMENTS = {
-    'canon_vs': dict(dace=['dace-canon', 'dace-parallel'], native=['compiler-seq', 'compiler-autopar']),
+    'canon_vs': dict(dace=['dace-autoopt', 'dace-canon', 'dace-parallel'], native=['compiler-seq', 'compiler-autopar']),
     'vector_vs': dict(dace=['dace-canon-vec', 'dace-parallel-vec'], native=['compiler-seq', 'compiler-autopar']),
 }
 

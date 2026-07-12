@@ -1,7 +1,12 @@
 import numpy as np
 
 
-def stockham_fft(N, R, K, x, y):
+def stockham_fft(R, K, x, y):
+
+    # N = R**K is the transform length, derived from the radix R and depth K
+    # (the dace kernel derives it as a free symbol too); it is not an independent
+    # dataset parameter, so recompute it here rather than take it as an argument.
+    N = R**K
 
     # Generate DFT matrix for radix R.
     # Define transient variable for matrix.

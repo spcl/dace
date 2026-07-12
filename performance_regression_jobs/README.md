@@ -1,6 +1,6 @@
 # performance_regression_jobs
 
-Times four DaCe pipelines per kernel and reports their speedups. The three
+Times three DaCe pipelines per kernel and reports their speedups. The three
 canonicalize corpora are NPBench+PolyBench, TSVC2 and TSVC2.5.
 
 ## Pipelines
@@ -10,7 +10,6 @@ canonicalize corpora are NPBench+PolyBench, TSVC2 and TSVC2.5.
 | `auto_opt`  | DaCe `auto_optimize` (auto-parallelization) — **baseline** |
 | `parallel`  | light `simplify + LoopToMap + MapFusion` (dace-par) |
 | `canon`     | `canonicalize`                               |
-| `fast-canon`| `canonicalize(fast=True)`                    |
 
 Speedup = `auto_opt_min / pipeline_min` (best-of-N). `>1` = faster than auto-par.
 
@@ -66,7 +65,7 @@ results/<corpus>/summary.csv      one row per kernel x pipeline, speedup_vs_base
 ## Getting canon vs. dace-par vs. auto-par speedups
 
 - **NPBench+PolyBench**: baseline is `auto_opt`, so `speedup.md` / `summary.csv`
-  give `parallel`, `canon`, `fast-canon` speedups over auto-par directly.
+  give `parallel`, `canon` speedups over auto-par directly.
 - **TSVC2 / TSVC2.5**: `speedup.md` is vs. the native-C baseline; for the
   DaCe-vs-DaCe numbers read `min_ms` per lane in `summary.csv`
   (`auto_opt-par`, `parallel-par`, `canon-par`).
@@ -74,6 +73,6 @@ results/<corpus>/summary.csv      one row per kernel x pipeline, speedup_vs_base
 ## Plot
 
 ```bash
-python3 plot_npbench_speedup_grid.py --results-dir results --out npbench_speedup_grid.png   # canon/parallel/fast-canon vs auto_opt, cpu+gpu
+python3 plot_npbench_speedup_grid.py --results-dir results --out npbench_speedup_grid.png   # canon/parallel vs auto_opt, cpu+gpu
 python3 plot_tsvc_boxplot.py         --results-dir results --out tsvc_boxplot.png           # DaCe vs native single/multi-core
 ```

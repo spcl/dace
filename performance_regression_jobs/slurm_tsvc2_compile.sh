@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=dace-tsvc2-compile-perf
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4      # 4 ranks/node by default -- see note below on sizing this
-#SBATCH --cpus-per-task=72       # cores-per-node / ntasks-per-node -- run `nproc --all` on a
-                                 # compute node to check its core count first and adjust
+#SBATCH --ntasks-per-node=4      # 4 ranks/node = one per Grace CPU (GH200 node = 4 Grace sockets)
+#SBATCH --cpus-per-task=72       # 72 cores per Grace CPU -> 4 x 72 = 288 cores = the whole node
+#SBATCH --hint=nomultithread     # Grace Neoverse-V2 has no SMT (1 thread/core); keep it explicit
 #SBATCH --time=06:00:00          # single-compiler default; cross-compiler = this x len(CXXES)
 #SBATCH --partition=normal
 #SBATCH --account=g34
@@ -11,8 +11,8 @@
 #SBATCH --error=tsvc2_compile_%j.err
 #SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 #
-# Compile-speed + post-compile-performance comparison of the 4 DaCe pipelines
-# (auto_opt, parallel = simplify+loop2map+mapfusion, canon, fast-canon) on TSVC2,
+# Compile-speed + post-compile-performance comparison of the 3 DaCe pipelines
+# (auto_opt, parallel = simplify+loop2map+mapfusion, canon) on TSVC2,
 # distributed over nodes * ntasks-per-node ranks total.
 #
 # ONE job, TWO metrics into the SAME results tree:
@@ -38,7 +38,9 @@
 set -euo pipefail
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
-export OMP_NUM_THREADS="72"
+export OMP_NUM_THREADS="72"        # one Grace CPU's worth of cores per rank
+export OMP_PROC_BIND="close"       # pin OpenMP threads, packed within the rank's socket
+export OMP_PLACES="cores"          # one OpenMP place per physical core
 export PYTHONUNBUFFERED=1  # otherwise stdout is fully buffered (not a tty), so progress prints
                            # don't show up in the log until a buffer fills -- looks like a hang
 
@@ -59,14 +61,17 @@ CXXES="${CXXES:-clang++}"
 REPS="${REPS:-25}"
 COMPILE_REPS="${COMPILE_REPS:-5}"
 
+# srun pinning: --distribution=block:block gives rank i a contiguous 72-core block = Grace socket i
+# (72-72-72-72 across the node's 4 Grace CPUs); --cpu-bind=cores pins each rank to its cores
+# (verbose logs the CPU mask so you can confirm the split in the job output).
 for CXX in $CXXES; do
   if ! command -v "$CXX" >/dev/null 2>&1; then
     echo "[compile] skip '$CXX' (not on PATH)"; continue
   fi
   echo "[compile] === $CXX ==="
   # || echo so one compiler's failure never aborts the rest or the table passes.
-  srun --cpu-bind=cores python3 tsvc2_perf.py --reps "$REPS" --cxx="$CXX" || echo "[compile] runtime sweep failed for $CXX"
-  srun --cpu-bind=cores python3 tsvc2_compile_perf.py --compile-reps "$COMPILE_REPS" --cxx="$CXX" || echo "[compile] compile sweep failed for $CXX"
+  srun --cpu-bind=verbose,cores --distribution=block:block python3 tsvc2_perf.py --reps "$REPS" --cxx="$CXX" || echo "[compile] runtime sweep failed for $CXX"
+  srun --cpu-bind=verbose,cores --distribution=block:block python3 tsvc2_compile_perf.py --compile-reps "$COMPILE_REPS" --cxx="$CXX" || echo "[compile] compile sweep failed for $CXX"
 done
 
 # Cross-rank (and cross-compiler) aggregation: re-scans the whole results tree.

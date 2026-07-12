@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grid plot: parallel and canon (and fast-canon) speedup vs. the
+"""Grid plot: parallel and canon speedup vs. the
 auto_opt baseline, one small cell per NPBench+PolyBench kernel, split by
 device (cpu / gpu). Reads results/npbench_polybench/<kernel>/*_paper-<device>/
 (results.csv + status.csv, written by npbench_polybench_perf.py) -- run that
@@ -29,7 +29,7 @@ import engine
 from npbench_polybench_perf import CORPUS, PRESET, CANDIDATES, DEVICES, BASELINE_LANE, preset_tag
 
 # Categorical palette (dataviz skill's validated default), fixed hue per candidate.
-_COLORS = {'parallel': '#2a78d6', 'canon': '#1baf7a', 'fast-canon': '#eda100'}
+_COLORS = {'auto_opt': '#e07a2b', 'parallel': '#2a78d6', 'canon': '#1baf7a'}
 #: Device is encoded by hatch so the candidate hue stays readable.
 _HATCH = {'cpu': '', 'gpu': '///'}
 
