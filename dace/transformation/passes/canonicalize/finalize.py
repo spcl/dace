@@ -294,6 +294,70 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     select_gpu_device_block_size(sdfg)
 
 
+def sequentialize_nested_parallel_scopes(sdfg: SDFG, device: dtypes.DeviceType) -> None:
+    """Enforce 'only top-level maps parallelize' by SETTING schedules (the fixer that :func:`assert_no
+    _nested_parallel_maps` only checks). Any map, library node, or **nested SDFG** that still carries the
+    device-parallel schedule (``CPU_Multicore`` on CPU, ``GPU_Device`` on GPU) while re-entered inside a
+    parallel map of that schedule is pinned to ``Sequential``.
+
+    TRANSITIVE across nested-SDFG boundaries: a ``NestedSDFG`` node carries no ``schedule`` of its own,
+    so an nsdfg is made single-core by sequentializing its BODY -- ``all_nodes_recursive`` descends into
+    the nsdfg and visits its maps/libnodes directly, and ``get_parent_map_and_loop_scopes`` walks OUT
+    across the nsdfg boundary to find the enclosing parallel map, so a ``CPU_Multicore`` reduce/map
+    buried in an nsdfg inside a parallel map is caught and pinned. Otherwise it would fork a parallel
+    team per outer iteration (the "constant parallel reductions" catastrophe). Must run AFTER
+    ``set_default_schedule_and_storage_types`` (which derives schedules from storage, unaware of scope
+    parallelism) so the outer maps already carry their final ``CPU_Multicore``. A map nested in a plain
+    (sequential) LOOP is left parallel -- a parallel map inside a sequential loop is legal and desirable;
+    only nesting inside a *parallel map* is forbidden.
+
+    Efficient and rigorous: ONE top-down pass over the control-flow hierarchy threading two flags --
+    ``in_loop`` (set on entering a ``LoopRegion``) and ``in_parallel`` (inside a device-parallel map,
+    from an outer scope across an nsdfg boundary). Within a state a per-state ``scope_dict`` (built once)
+    is walked up for the in-state parallel-map ancestor. So the expensive per-node
+    ``get_parent_map_and_loop_scopes`` (which re-walks every enclosing scope across nsdfg boundaries) is
+    never called. A MAP is pinned only when nested in a parallel MAP (a parallel map inside a loop is
+    fine); a LIBRARY NODE is pinned when nested in a parallel map OR re-entered by a loop (a libnode must
+    never fork a parallel region per iteration)."""
+    from dace.sdfg.state import LoopRegion, ControlFlowRegion, SDFGState
+    parallel = (dtypes.ScheduleType.GPU_Device
+                if device == dtypes.DeviceType.GPU else dtypes.ScheduleType.CPU_Multicore)
+
+    def _process_state(state: SDFGState, in_loop: bool, in_parallel: bool) -> None:
+        scope_dict = state.scope_dict()
+
+        def under_parallel_map(node) -> bool:
+            if in_parallel:  # the whole (nested-SDFG) body already runs inside an outer parallel map
+                return True
+            s = scope_dict[node]
+            while s is not None:
+                if isinstance(s, nodes.MapEntry) and s.map.schedule == parallel:
+                    return True
+                s = scope_dict[s]
+            return False
+
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                if node.map.schedule == parallel and under_parallel_map(node):
+                    node.map.schedule = dtypes.ScheduleType.Sequential
+            elif isinstance(node, nodes.LibraryNode):
+                if node.schedule == parallel and (in_loop or under_parallel_map(node)):
+                    node.schedule = dtypes.ScheduleType.Sequential
+            elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
+                _process_region(node.sdfg, in_loop, in_parallel or under_parallel_map(node))
+
+    def _process_region(region: ControlFlowRegion, in_loop: bool, in_parallel: bool) -> None:
+        for block in region.nodes():
+            if isinstance(block, SDFGState):
+                _process_state(block, in_loop, in_parallel)
+            elif isinstance(block, LoopRegion):
+                _process_region(block, True, in_parallel)
+            elif isinstance(block, ControlFlowRegion):  # conditional / generic region: loop flag unchanged
+                _process_region(block, in_loop, in_parallel)
+
+    _process_region(sdfg, False, False)
+
+
 def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """Post-pipeline invariant: a parallel scope of the target's device schedule must NEVER be
     nested inside another parallel scope of the same schedule.
@@ -365,6 +429,11 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     # Reduce/Scan/Copy/Memset must lower to its efficient single-core expansion, NOT open its own
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    # Storage-derived scheduling can leave a map/libnode/nested-SDFG on the device-parallel schedule
+    # while it is re-entered inside a parallel map -> pin all such nested scopes Sequential (transitively
+    # into nested SDFGs) BEFORE library selection, so libnode_is_sequential sees the corrected schedules.
+    sequentialize_nested_parallel_scopes(sdfg, device)
 
     canonicalize_set_fast_implementations(sdfg, device)
     # Select the fast implementation per library node but DO NOT expand here: a library
