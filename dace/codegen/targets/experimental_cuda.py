@@ -871,8 +871,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             assert self._gpu_stream_manager.num_gpu_streams == 1
             assert self._gpu_stream_manager.num_gpu_events == 0
         else:
-            stream_alloc_call = "DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking))"
-            stream_free_call = "DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
+            stream_alloc_call = f"DACE_GPU_CHECK({self.backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {self.backend}StreamNonBlocking))"
+            stream_free_call = f"DACE_GPU_CHECK({self.backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
 
         self._codeobject.code = """
 #include <{backend_header}>
