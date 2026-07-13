@@ -23,6 +23,42 @@ from dace.libraries.standard.environments.cuda import CUDA
 
 from dace.libraries.standard import reduction_planner as red_planner
 
+#: Output storage locations a GPU device reduction (a CUB ``DeviceReduce`` launch or a device-map
+#: reduction schedule) can write into directly. ``GPU_Global`` is device memory; ``CPU_Pinned`` is
+#: page-locked host memory that is device-addressable. Any other storage
+#: (``Register`` / ``CPU_Heap`` / ``Default`` / ...) is host-only: a device reduction must then write
+#: a ``GPU_Global`` scratch and copy the result out at the storage boundary (see
+#: :func:`route_gpu_reduce_result_to_host_output`).
+GPU_REDUCE_DEVICE_WRITABLE_STORAGE = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
+
+
+def route_gpu_reduce_result_to_host_output(nsdfg: SDFG, last_state: SDFGState, dtype, out_shape, out_strides,
+                                           host_storage: dtypes.StorageType) -> None:
+    """Rewire a GPU-reduction nested SDFG whose result was written into a device array named ``_out``
+    so that ``_out`` becomes the real (host) output connector, fed by a device->host copy.
+
+    The reduction body built ``_out`` as ``GPU_Global`` device memory (a device kernel cannot write
+    host memory). This renames that device buffer to a ``GPU_Global`` transient scratch, adds a fresh
+    non-transient ``_out`` in the real output's (host) storage, and appends a state copying the
+    scratch to it -- the device->host copy DaCe emits at the storage boundary. Value-exact: the whole
+    reduced result is copied, and any WCR the reduction applied is already folded into the scratch.
+
+    :param nsdfg: the reduction nested SDFG whose current ``_out`` array holds the device result.
+    :param last_state: the terminal state that wrote the device result (the copy is appended after it).
+    :param dtype: the output element type.
+    :param out_shape: the reduced-output shape (the scratch and host ``_out`` share it).
+    :param out_strides: the host output's strides.
+    :param host_storage: the real output's (host) storage type.
+    """
+    nsdfg.replace('_out', '_out_gpu')
+    scratch = nsdfg.arrays['_out_gpu']
+    scratch.transient = True
+    scratch.storage = dtypes.StorageType.GPU_Global
+    nsdfg.add_array('_out', out_shape, dtype, strides=out_strides, storage=host_storage)
+    copy_state = nsdfg.add_state_after(last_state)
+    copy_state.add_nedge(copy_state.add_read('_out_gpu'), copy_state.add_write('_out'),
+                         dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
+
 
 @dace.library.expansion
 class ExpandReducePure(pm.ExpandTransformation):
@@ -513,16 +549,18 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                           'Falling back to the pure expansion.')
             return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
 
-        # Verify that data is on the GPU
-        if input_data.storage not in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]:
+        # Verify that the INPUT is on the GPU (CUB DeviceReduce reads a device/pinned pointer). A
+        # host input cannot feed a device reduce, so fall back to the pure expansion.
+        if input_data.storage not in GPU_REDUCE_DEVICE_WRITABLE_STORAGE:
             warnings.warn('Input of GPU reduction must either reside '
                           ' in global GPU memory or pinned CPU memory')
             return ExpandReducePure.expansion(node, state, sdfg)
 
-        if output_data.storage not in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]:
-            warnings.warn('Output of GPU reduction must either reside '
-                          ' in global GPU memory or pinned CPU memory')
-            return ExpandReducePure.expansion(node, state, sdfg)
+        # Storage-aware OUTPUT: CUB writes a raw device pointer. A device-writable output
+        # (GPU_Global / CPU_Pinned) is written directly (the tasklet is returned as-is). A host output
+        # is NOT a reason to fall back to the slow pure loop -- instead CUB writes a GPU_Global len-1
+        # scratch and a trailing device->host copy moves the result to the real output (built below).
+        output_on_device = output_data.storage in GPU_REDUCE_DEVICE_WRITABLE_STORAGE
 
         # Determine reduction type
         kname = (ExpandReduceCUDADevice._SPECIAL_RTYPES[redtype]
@@ -588,13 +626,23 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                    intype=input_data.dtype.ctype,
                    outtype=output_data.dtype.ctype), state.parent_graph, state_id, node)
 
+        # Storage-aware tasklet connector names. A device-writable output returns the tasklet
+        # directly, so its connectors must be the outer ``_in`` / ``_out`` the node exposes. A host
+        # output wraps the tasklet in a nested SDFG whose boundary arrays are named ``_in`` / ``_out``;
+        # the tasklet's connectors must therefore NOT collide with those array names, so use
+        # ``_cub_in`` / ``_cub_out`` and wire the output to the GPU scratch.
+        if output_on_device:
+            tin, tout = '_in', '_out'
+        else:
+            tin, tout = '_cub_in', '_cub_out'
+
         # Call reduction function where necessary
-        host_localcode.write('__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream);'.format(
-            id=idstr, reduce_range_call=reduce_range_call))
+        host_localcode.write('__dace_reduce_{id}({tin}, {tout}, {reduce_range_call}, __dace_current_stream);'.format(
+            id=idstr, tin=tin, tout=tout, reduce_range_call=reduce_range_call))
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
-                                   {'_out': dace.pointer(output_data.dtype)},
+        tnode = dace.nodes.Tasklet('reduce', {tin: dace.pointer(input_data.dtype)},
+                                   {tout: dace.pointer(output_data.dtype)},
                                    host_localcode.getvalue(),
                                    language=dace.Language.CPP)
 
@@ -608,7 +656,42 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
-        return tnode
+        # Device-writable output: CUB writes the output pointer directly.
+        if output_on_device:
+            return tnode
+
+        # Host output: wrap the CUB tasklet in a nested SDFG that reduces into a GPU_Global scratch
+        # and copies it to the real (host) ``_out`` -- a device->host copy at the storage boundary.
+        # The tasklet's ``_cub_out`` connector is wired to the scratch, never to host memory.
+        outsubset = dcpy(output_edge.data.subset)
+        osqdim = outsubset.squeeze()
+        if len(osqdim) == 0:  # scalar output
+            osqdim = [0]
+
+        nsdfg = SDFG('reduce_cub')
+        nsdfg.add_array('_in',
+                        insubset.size(),
+                        input_data.dtype,
+                        strides=[input_data.strides[orig] * insubset[j][2] for j, orig in enumerate(isqdim)],
+                        storage=input_data.storage)
+        nsdfg.add_transient('_out_gpu', outsubset.size(), output_data.dtype, storage=dtypes.StorageType.GPU_Global)
+        nsdfg.add_array('_out',
+                        outsubset.size(),
+                        output_data.dtype,
+                        strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
+                        storage=output_data.storage)
+
+        nstate = nsdfg.add_state()
+        rin = nstate.add_read('_in')
+        nstate.add_node(tnode)
+        nstate.add_edge(rin, None, tnode, tin, dace.Memlet.from_array('_in', nsdfg.arrays['_in']))
+        scratch_write = nstate.add_write('_out_gpu')
+        nstate.add_edge(tnode, tout, scratch_write, None, dace.Memlet.from_array('_out_gpu', nsdfg.arrays['_out_gpu']))
+
+        copy_state = nsdfg.add_state_after(nstate)
+        copy_state.add_nedge(copy_state.add_read('_out_gpu'), copy_state.add_write('_out'),
+                             dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
+        return nsdfg
 
 
 @dace.library.expansion
@@ -991,6 +1074,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         """
         from dace.codegen import common
 
+        # This expansion emits inline device code needing no external environment. Reset here so a
+        # previous Custom-WCR delegation (which sets the CUB scratch environments below) does not leak
+        # its 128 MB scratch-pool environment onto this non-Custom expansion. ``ExpandTransformation``
+        # attaches ``type(self).environments`` to the expanded node, so the value at the end of this
+        # method call is the one that takes effect.
+        ExpandReduceGPUAuto.environments = []
+
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -1019,6 +1109,21 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             warnings.warn('Cannot use GPUAuto expansion: node.identity is None. Falling back to Pure expansion')
             return ExpandReducePure.expansion(node, state, sdfg)
 
+        # A Custom WCR (e.g. an ITE ``a if a > b else b`` -- argmax/argmin-style tiebreak) cannot be
+        # expressed through the ``dace::warpReduce<ReductionType, T>`` primitive this expansion uses
+        # (that primitive is templated on a FIXED reduction type, with no Custom variant). Rather than
+        # raise or fall back to the slow pure loop, delegate to the CUB ``DeviceReduce`` expansion,
+        # which lowers a Custom op as a device functor (``struct __reduce_{id}``) -- an efficient
+        # device reduction that is storage-aware (host output via a GPU scratch + copy). Identity is
+        # guaranteed set here (checked above), which CUB device requires.
+        if detect_reduction_type(node.wcr) == dtypes.ReductionType.Custom:
+            # The CUB DeviceReduce functor path emits ``::dace::cub::get_scratch<ReduceTag>`` and needs
+            # the per-stream scratch-pool environment (ReduceScratch). ``ExpandTransformation.apply``
+            # attaches THIS transformation's ``environments`` to the delegated expansion, so carry the
+            # CUB scratch environments here (reset to ``[]`` for the non-Custom path above).
+            ExpandReduceGPUAuto.environments = list(ExpandReduceCUDADevice._resolve_environments())
+            return ExpandReduceCUDADevice.expansion(node, state, sdfg)
+
         # Standardize and squeeze axes
         axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         # this removes reduction of size 1 axes from the list
@@ -1043,11 +1148,18 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
+        # The reduction body writes ``_out`` from GPU device maps, so ``_out`` must be device-writable.
+        # If the real output already lives in device memory, ``_out`` IS that output (written directly).
+        # If it lives on the host (Register / CPU_Heap / Default / ...), ``_out`` is built as a
+        # GPU_Global scratch here and, once the reduction body is complete, renamed to a transient and
+        # copied to the real host output by :func:`route_gpu_reduce_result_to_host_output` -- so the GPU
+        # kernels never write host memory (and no slow pure fallback is taken).
+        output_on_device = raw_output_data.storage in GPU_REDUCE_DEVICE_WRITABLE_STORAGE
         nsdfg.add_array('_out',
                         schedule.out_shape,
                         output_data.dtype,
                         strides=schedule.out_strides,
-                        storage=output_data.storage)
+                        storage=(output_data.storage if output_on_device else dtypes.StorageType.GPU_Global))
 
         nstate = nsdfg.add_state()
 
@@ -1192,7 +1304,10 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             ctype = output_data.dtype
             redtype = detect_reduction_type(node.wcr)
             if redtype == dtypes.ReductionType.Custom:
-                raise NotImplementedError
+                # Unreachable: a Custom WCR is delegated to the CUB DeviceReduce functor path at the
+                # top of this expansion (``dace::warpReduce`` has no Custom variant).
+                raise NotImplementedError('Custom WCR must be delegated to ExpandReduceCUDADevice; '
+                                          'reached the warpReduce path unexpectedly')
             credtype = ('dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:])
             wr = nstate.add_tasklet('warp_reduce', {'__a'}, {'__out'},
                                     f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);', dtypes.Language.CPP)
@@ -1420,6 +1535,12 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 nstate.add_memlet_path(cond_tasklet, bmx3, omx, add_mx, w, src_conn='_output', memlet=outm_wcr)
             else:
                 nstate.add_memlet_path(cond_tasklet, bmx3, omx, w, src_conn='_output', memlet=outm)
+
+        # Host output: the reduction wrote a GPU_Global ``_out`` scratch; route it to the real
+        # (host) output via a device->host copy so a device kernel never writes host memory.
+        if not output_on_device:
+            route_gpu_reduce_result_to_host_output(nsdfg, nstate, output_data.dtype, schedule.out_shape,
+                                                   schedule.out_strides, raw_output_data.storage)
 
         # Rename outer connectors and add to node
         inedge._dst_conn = '_in'
