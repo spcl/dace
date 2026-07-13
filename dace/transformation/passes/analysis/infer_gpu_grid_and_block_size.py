@@ -105,7 +105,11 @@ class InferGPUGridAndBlockSize(ppl.Pass):
             else:
                 block_size = [sympy.Max(sz1, sz2) for sz1, sz2 in zip(block_size, tb_size)]
 
-            if block_size != tb_size or len(detected_block_sizes) == 0:
+            # Collect the DISTINCT thread-block sizes seen (a user-set ``gpu_block_size`` seeds
+            # ``detected_block_sizes``). Comparing against the running elementwise max ``block_size``
+            # instead would miss a size that only grows the max -- e.g. [64,1,1] after a declared
+            # [32,1,1] -- silently accepting the conflict and overriding the user's block size.
+            if tb_size not in detected_block_sizes:
                 detected_block_sizes.append(tb_size)
 
         # Check for conflicting or multiple thread-block sizes
