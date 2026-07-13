@@ -30,7 +30,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 out = 6 + inp
 
     Is implement through special codegen features for nested GPU Device maps
-    This should become and IfCheck though
     """
 
     CATEGORY: str = 'Simplification'

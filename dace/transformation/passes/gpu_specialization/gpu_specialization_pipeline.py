@@ -27,8 +27,8 @@ class GPUStreamPipeline(Pipeline):
 
     The scheduling pass is idempotent (gpu_stream_id is persisted per node);
     the wiring pass is single-shot, gated by
-    :func:`is_stream_wiring_applied`. Pipeline-level guards are no longer
-    needed -- each pass owns its own re-entry semantics.
+    :func:`is_stream_wiring_applied`. Each pass owns its own re-entry
+    semantics, so no pipeline-level guard is needed.
     """
 
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):

@@ -70,7 +70,7 @@ def _collect_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
     """Dict view of every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy.
 
     Used by the wiring helpers + the strategy's sync-tasklet inserter. The
-    per-node property is the durable source; this is just a transient view.
+    per-node property is the durable source; this is a transient view.
     """
     out: Dict[nodes.Node, int] = {}
     for sub_sdfg in sdfg.all_sdfgs_recursive():

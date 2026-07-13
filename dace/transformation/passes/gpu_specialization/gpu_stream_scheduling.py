@@ -579,7 +579,7 @@ def _sink_writes_host_visible_output(state) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
-    """Smart default GPU stream strategy: stream 0 everywhere, syncs only at CPU/GPU
+    """Default GPU stream strategy: stream 0 everywhere, syncs only at CPU/GPU
     state-machine boundaries.
 
     Classifies every top-level node in the SDFG hierarchy (recursively descending into

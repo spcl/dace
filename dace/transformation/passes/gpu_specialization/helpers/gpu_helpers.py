@@ -29,8 +29,7 @@ def get_gpu_stream_array_name() -> str:
 
 
 def dependency_edge():
-    """Return a fresh empty ``Memlet`` used as a control-dependency edge (centralised for a
-    single future migration point)."""
+    """Return a fresh empty ``Memlet`` used as a control-dependency edge."""
     from dace.memlet import Memlet
     return Memlet()
 
@@ -203,9 +202,10 @@ def is_stream_typed_connector(node, conn_name: str) -> bool:
 
 
 def has_stream_connector(node) -> bool:
-    """Return True if ``node`` already carries any GPU-stream in-connector
-    -- i.e. any in-connector typed ``gpuStream_t``. Type-based, so it
-    accepts whatever name the libnode expansion chose."""
+    """Return True if ``node`` carries any in-connector typed ``gpuStream_t``.
+
+    Type-based, so it accepts whatever name the libnode expansion chose.
+    """
     return any(t is not None and t == dtypes.gpuStream_t for t in node.in_connectors.values())
 
 
