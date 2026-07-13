@@ -204,7 +204,6 @@ class MoveArrayOutOfKernel(Pass):
         :param kernel_entry: Innermost GPU kernel MapEntry.
         :param sdfg_hierarchy: Nested SDFGs ordered inner->outer.
         """
-        # Lift the array through each nested SDFG up to the kernel boundary
         outer_sdfg = sdfg_hierarchy.pop(0)
         while sdfg_hierarchy:
             inner_sdfg = outer_sdfg
@@ -263,7 +262,6 @@ class MoveArrayOutOfKernel(Pass):
                 # 2. Add the edge using the connector names determined in Step 1.
                 nsdfg_parent_state.add_edge(src, src_conn, dst, dst_conn, Memlet.from_array(array_name, new_desc))
 
-                # Continue by setting the dst as source
                 src = dst
 
             # After processing all scopes, the last src (which is either the last MapExit or the intial nsdfg if there are no parent scope)
@@ -448,7 +446,6 @@ class MoveArrayOutOfKernel(Pass):
             sdfg.add_datadesc(new_name, array_desc)
             sdfg.replace(old_name, new_name)
 
-            # Find all states
             for state in sdfg.states():
                 for edge in state.edges():
 
@@ -576,10 +573,8 @@ class MoveArrayOutOfKernel(Pass):
                         if isinstance(node, nodes.AccessNode) and node.data == array_name:
                             access_nodes_set.add(node)
 
-            # Update all visited sdfgs
             visited_sdfgs.update(sdfg_set)
 
-            # Finally add information to the result
             result.add((array_desc, outermost_sdfg, frozenset(sdfg_set), frozenset(access_nodes_set)))
 
         return result

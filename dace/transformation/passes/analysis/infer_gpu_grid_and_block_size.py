@@ -84,7 +84,6 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         # Identify nested threadblock maps
         threadblock_maps = self._get_internal_threadblock_maps(state, kernel_map_entry)
 
-        # guard check
         if not threadblock_maps:
             raise ValueError(f"{self.__class__.__name__} expects at least one explicit nested GPU_ThreadBlock map, "
                              "as it assumes AddThreadBlockMap was applied beforehand.\n"

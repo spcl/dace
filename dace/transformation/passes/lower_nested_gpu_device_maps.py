@@ -46,10 +46,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         map_exit = state.exit_node(map_entry)
         map_inner_nodes = {n for n in state.all_nodes_between(map_entry, map_exit)}
         map_inner_edges = state.all_edges(*map_inner_nodes)
-        # Rm all edges
         for e in map_inner_edges:
             state.remove_edge(e)
-        # Rm body nodes
         for n in map_inner_nodes:
             state.remove_node(n)
 
@@ -69,10 +67,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         map_out_edges = state.out_edges(map_exit)
         inputs = {ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None}
         outputs = {oe.data.data for oe in state.out_edges(state.exit_node(map_entry)) if oe.data.data is not None}
-        #assert all({isinstance(ie.src, dace.nodes.AccessNode) for ie in map_in_edges if ie.data is not None}), f"{[ie.src for ie in map_in_edges if ie.data is not None]}"
-        #assert all({isinstance(oe.dst, dace.nodes.AccessNode) for oe in map_out_edges if oe.data is not None}), f"{[oe.dst for oe in map_out_edges if ot.data is not None]}"
 
-        # Inputs -> Map (range)[MapNodes] -> Outputs need to become
         inner_sdfg = SDFG(name=f"if_of_nested_{map_entry.label}")
 
         if_bound_check = ConditionalBlock(label=f"bound_check_{map_entry.label}", sdfg=inner_sdfg, parent=inner_sdfg)
@@ -109,7 +104,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             outputs=outputs,
         )
 
-        # Connect nsdfg
         for ie in map_in_edges:
             if ie.data.data is not None:
                 state.add_edge(ie.src, ie.src_conn, nsdfg, ie.data.data,
@@ -167,7 +161,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             else:
                 assert False
 
-        # Rm map from the state
         self._rm_map(state, map_entry)
 
         sdutil.set_nested_sdfg_parent_references(state.sdfg)
@@ -177,8 +170,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                    # Nested GPU Device map move the map to an If
-                    # Move the body of the map to an If
                     self._move_map_to_if(state, node)
 
     def _get_device_map_parents(self, state: SDFGState, cur_map: dace.nodes.MapEntry, gpu_dev_map: dace.nodes.MapEntry):
@@ -201,7 +192,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         return num_dev_maps
 
     def _get_next_level_maps(self, state: SDFGState, gpu_dev_map: dace.nodes.MapEntry):
-        # Gets all the maps of the next depth
         # If inside same nsdfg, then it means no parent
         gpu_maps_between = {
             (state, n)
@@ -238,7 +228,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             while len(next_level_map_candidates) == 0:
                 all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
 
-                # If we exchaust all nsdfgs it is time to stop
                 if len(all_nsdfgs) == 0:
                     break
 

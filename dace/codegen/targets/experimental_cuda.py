@@ -205,8 +205,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                             terminator = an1
                             break
 
-                    # Release at end of the last memlet path out of the terminator access node;
-                    # if the terminator sits inside a scope, defer release to the end of state.
                     # If the terminator sits inside a scope, defer release to the
                     # end of state (empty set); otherwise release at the common
                     # descendant following the ends of all memlet paths
@@ -514,7 +512,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             for key in handled_keys:
                 del self.pool_release[key]
 
-        # Invoke all instrumentation providers
         for instr in self._frame._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_state_end(sdfg, cfg, state, callsite_stream, function_stream)

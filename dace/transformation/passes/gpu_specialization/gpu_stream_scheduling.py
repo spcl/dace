@@ -782,7 +782,6 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         for state in list(sdfg.states()):
             scope_dict = state.scope_dict()
 
-            # Descend into nested SDFGs if needed (I think it should be before the `continue`).
             for node in state.nodes():
                 if not isinstance(node, nodes.NestedSDFG):
                     continue

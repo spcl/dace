@@ -195,7 +195,6 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         sdfg.remove_data(name, validate=False)
         sdfg.add_datadesc(name, array_desc)
 
-        # The rewrite patten we need to apply.
         compiled_pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
         pattern = lambda s: compiled_pattern.sub(rf'\1[0]', s)
 

@@ -71,7 +71,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
             return False
 
-        # 2. To my knowledge, it is not a collaborative write if the result comes from a ThreadBlock map.
+        # 2. It is not a collaborative write if the result comes from a ThreadBlock map.
         if all(
                 isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
                 for pred in state.predecessors(node)):
@@ -99,7 +99,6 @@ class DefaultSharedMemorySync(ppl.Pass):
 
         for map_exit, state in tb_map_exits.items():
 
-            # process
             map_entry = state.entry_node(map_exit)
             writes_to_smem, race_cond_danger, has_tb_parent = self.tb_exits_analysis(map_entry, map_exit, state)
 
@@ -138,7 +137,6 @@ class DefaultSharedMemorySync(ppl.Pass):
             ``has_parent_tb_map`` is True if another TB map sits between the
             enclosing GPU_Device map and this one.
         """
-        # Initially, the flags are all set to False
         writes_to_shared_memory = False
         race_cond_danger = False
         has_parent_tb_map = False
@@ -158,7 +156,6 @@ class DefaultSharedMemorySync(ppl.Pass):
 
         for node in state.all_nodes_between(map_entry, map_exit):
             if not writes_to_shared_memory and isinstance(node, AccessNode):
-                # Check if this AccessNode writes to shared memory
                 if (node.desc(state).storage == dtypes.StorageType.GPU_Shared
                         and any(not edge.data.is_empty() for edge in state.in_edges(node))):
                     writes_to_shared_memory = True
@@ -196,7 +193,6 @@ class DefaultSharedMemorySync(ppl.Pass):
                 break
             parent = helpers.get_parent_map(parent_state, parent_map)
 
-        # 6. Return the results
         return writes_to_shared_memory, race_cond_danger, has_parent_tb_map
 
     def writes_to_smem_inside_loopregion(self, sdfg: SDFG) -> bool:
@@ -204,7 +200,6 @@ class DefaultSharedMemorySync(ppl.Pass):
         (recursive, including nested SDFGs)."""
         for node in sdfg.nodes():
             if isinstance(node, LoopRegion):
-                # Traverse all nodes inside the loop region
                 for subnode, parent in node.all_nodes_recursive():
                     if (isinstance(subnode, AccessNode)
                             and subnode.desc(parent).storage == dtypes.StorageType.GPU_Shared
@@ -212,7 +207,6 @@ class DefaultSharedMemorySync(ppl.Pass):
                         return True
 
             elif isinstance(node, NestedSDFG):
-                # Recurse into nested SDFGs
                 if self.writes_to_smem_inside_loopregion(node.sdfg):
                     return True
 
@@ -248,7 +242,6 @@ class DefaultSharedMemorySync(ppl.Pass):
             if isinstance(node, NestedSDFG) and self.sdfg_writes_to_smem(node.sdfg):
                 return True
 
-        # No writes to shared memory found
         return False
 
     def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):

@@ -269,7 +269,6 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                           callsite_stream=callsite_stream,
                           comment=self.SCOPE_COMMENT) as scope_manager:
 
-            # Get kernel specifications
             kernel_spec = self._current_kernel_spec
             block_dims = kernel_spec.block_dims
             warpSize = kernel_spec.warpSize
@@ -359,7 +358,6 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                                       warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
                                       scope_manager: 'ScopeManager'):
 
-        # Get warpSize from the kernel specification
         warpSize = self._current_kernel_spec.warpSize
 
         parent_map, _ = helpers.get_parent_map(state_dfg, node)
