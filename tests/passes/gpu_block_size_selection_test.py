@@ -45,6 +45,48 @@ def test_pick_block_size_2d_skewed_outer_dim_wide():
     assert pick_gpu_block_size(m) == [16, 32, 1]
 
 
+def make_wcr_reduction_sdfg():
+    """A one-state SDFG with a 1-D ``GPU_Device`` map that accumulates into ``s`` via a WCR
+    out of the map exit -- the tree-reduction shape."""
+    sdfg = dace.SDFG('wcrred')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('s', [1], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_access('a')
+    s = state.add_access('s')
+    me, mx = state.add_map('kernel', {'i': '0:N'}, schedule=dtypes.ScheduleType.GPU_Device)
+    t = state.add_tasklet('acc', {'inp'}, {'out'}, 'out = inp')
+    state.add_memlet_path(a, me, t, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(t, mx, s, src_conn='out', memlet=dace.Memlet('s[0]', wcr='lambda x, y: x + y'))
+    return sdfg, me.map
+
+
+def test_tree_reduction_wcr_map_gets_deep_block():
+    # A WCR-reduction device map (tree_reduction on) takes the deep 512-thread block, not the
+    # 1-D 128 default, so the block-reduce folds more of the reduction per block.
+    sdfg, m = make_wcr_reduction_sdfg()
+    prev = dace.Config.get_bool('compiler', 'tree_reduction')
+    dace.Config.set('compiler', 'tree_reduction', value=True)
+    try:
+        select_gpu_device_block_size(sdfg)
+        assert m.gpu_block_size == [512, 1, 1]
+    finally:
+        dace.Config.set('compiler', 'tree_reduction', value=prev)
+
+
+def test_wcr_map_uses_default_block_when_tree_reduction_off():
+    # With tree_reduction off the WCR write is a plain atomic, not a block tree-reduce, so the
+    # map keeps the ordinary 1-D default block.
+    sdfg, m = make_wcr_reduction_sdfg()
+    prev = dace.Config.get_bool('compiler', 'tree_reduction')
+    dace.Config.set('compiler', 'tree_reduction', value=False)
+    try:
+        select_gpu_device_block_size(sdfg)
+        assert m.gpu_block_size == [128, 1, 1]
+    finally:
+        dace.Config.set('compiler', 'tree_reduction', value=prev)
+
+
 def test_pick_block_size_2d_mild_ratio_stays_square():
     # Ratio below the skew threshold (2x) stays square.
     m = make_device_map(['i', 'j'], [(0, 599, 1), (0, 1023, 1)])

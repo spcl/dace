@@ -22,6 +22,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 import os
 
 from dace import SDFG, dtypes
+from dace.config import Config
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import LoopRegion
 from dace.libraries.blas.environments import openblas
@@ -286,9 +287,21 @@ def offload_to_gpu(sdfg: SDFG) -> None:
        ``simplify`` is run here (the canonicalized SDFG is already simplified; ``apply_gpu_storage`` +
        ``apply_gpu_transformations`` are the only offload steps needed).
     2. **Block size** (:func:`select_gpu_device_block_size`): pick a thread-block matching the
-       iteration domain (``N x N`` -> ``16x16`` / ``32x16``; 1-D -> the ``128,1,1`` default) on every
-       ``GPU_Device`` map, run AFTER offload so each kernel map's final dimensionality is known.
+       iteration domain (``N x N`` -> ``16x16`` / ``32x16``; 1-D -> the ``128,1,1`` default, and a
+       tree-reduction map a deep ``512,1,1``) on every ``GPU_Device`` map, run AFTER offload so
+       each kernel map's final dimensionality is known.
+
+    Streams: the canonicalized SDFG is offloaded onto the **single default stream**
+    (``compiler.cuda.max_concurrent_streams = -1``). Canon produces many small device maps +
+    host<->device copies with fine-grained dependences; DaCe's default (``0`` = a fresh stream
+    per concurrent branch) then interleaves kernels and async copies across streams whose
+    cross-stream events must be exactly right, and a single missed dependence is an illegal
+    memory access. Serialising onto stream 0 (all work ordered, host-synchronous copies)
+    removes that failure mode -- the correctness floor canon-GPU needs before any stream
+    concurrency is layered back in. Set on the process Config here so the subsequent codegen
+    (which reads the value) emits the single-stream form.
     """
+    Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
     apply_gpu_storage(sdfg)
     sdfg.apply_gpu_transformations()
     select_gpu_device_block_size(sdfg)

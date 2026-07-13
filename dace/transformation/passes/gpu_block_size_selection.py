@@ -33,6 +33,7 @@ map -- those derive the block size from the thread-block map, and a preset
 from typing import Any, Dict, List, Optional
 
 from dace import SDFG, dtypes
+from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -43,6 +44,13 @@ THREADBLOCK_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleTyp
 
 #: Default 1-D thread-block (matches ``compiler.cuda.default_block_size``).
 DEFAULT_1D_BLOCK_SIZE = [128, 1, 1]
+
+#: A device map whose reduction is lowered as a block tree-reduce (``compiler.tree_reduction``
+#: on + a WCR map output) wants a DEEP block: more lanes per block-reduce means more of the
+#: reduction is folded inside the block (one shared-memory tree) and fewer partial results
+#: race through the cross-block atomic. 512 (vs the 128/256 a plain elementwise map takes)
+#: keeps well under the 1024 thread/block limit while roughly halving the atomic traffic.
+TREE_REDUCTION_BLOCK_SIZE = [512, 1, 1]
 
 #: Per-dimension block extents for a 2-D device map (CUDA ``x, y`` order).
 SQUARE_2D_BLOCK_EXTENT = 16
@@ -102,6 +110,44 @@ def pick_gpu_block_size(gpu_map: nodes.Map) -> Optional[List[int]]:
     return None
 
 
+def is_block_reduce(node) -> bool:
+    """True iff ``node`` is a ``Reduce`` library node whose reduction folds ACROSS the thread
+    block (``cub::BlockReduce``, sized by the block) rather than sequentially per thread. A
+    ``Sequential`` Reduce is a per-thread loop -- its block size does not deepen any tree."""
+    from dace.libraries.standard.nodes.reduce import Reduce
+    return isinstance(node, Reduce) and node.schedule != dtypes.ScheduleType.Sequential
+
+
+def scope_contains_block_reduce(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """True iff ``map_entry``'s scope (incl. nested SDFGs) holds a block-level ``Reduce`` (see
+    :func:`is_block_reduce`), which the CUDA-block expansion lowers to a ``cub::BlockReduce<T,
+    N>`` whose ``N`` is this map's flattened block size (via :func:`devicelevel_block_size`) --
+    so a bigger block deepens the block-reduce directly."""
+    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+        if is_block_reduce(node):
+            return True
+        if isinstance(node, nodes.NestedSDFG):
+            for inner, _ in node.sdfg.all_nodes_recursive():
+                if is_block_reduce(inner):
+                    return True
+    return False
+
+
+def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """True iff this device map's reduction is lowered as an in-block tree-reduce whose depth
+    is this map's thread-block size -- either a WCR accumulator write out of the map exit (with
+    ``compiler.tree_reduction`` on, codegen emits the inline warp/block reduce) or a ``Reduce``
+    library node in the map's scope (``cub::BlockReduce`` sized by the block, see
+    :func:`scope_contains_block_reduce`). Such a map benefits from a larger thread block (see
+    :data:`TREE_REDUCTION_BLOCK_SIZE`); a plain elementwise / scatter map does not."""
+    if Config.get_bool('compiler', 'tree_reduction'):
+        map_exit = state.exit_node(map_entry)
+        for edge in state.out_edges(map_exit):
+            if edge.data is not None and edge.data.wcr is not None:
+                return True
+    return scope_contains_block_reduce(state, map_entry)
+
+
 def scope_contains_threadblock_map(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True iff ``map_entry``'s scope (including nested SDFGs) contains a thread-block map."""
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
@@ -145,9 +191,15 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
                 continue
             if scope_contains_threadblock_map(state, node):
                 continue
-            block_size = pick_gpu_block_size(gpu_map)
-            if block_size is None:
-                continue
+            # A tree-reduction map wants a deep block regardless of its domain rank -- the
+            # block-reduce folds along the flattened block, so more threads = more reduction
+            # per block. A plain map falls back to the domain-matched shape.
+            if map_is_tree_reduction(state, node):
+                block_size = list(TREE_REDUCTION_BLOCK_SIZE)
+            else:
+                block_size = pick_gpu_block_size(gpu_map)
+                if block_size is None:
+                    continue
             gpu_map.gpu_block_size = block_size
             assigned[gpu_map.label] = block_size
         return assigned or None
