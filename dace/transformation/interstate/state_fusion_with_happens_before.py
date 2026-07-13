@@ -191,11 +191,38 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 return False
         return True
 
+    @staticmethod
+    def state_has_side_effect_node(state: SDFGState, sdfg) -> bool:
+        """Whether ``state`` carries a node whose execution has side effects (a Tasklet with
+        ``side_effects`` / a callback call, a side-effecting library node, or a nested SDFG that
+        contains one). Such a node relies on the ORDER the interstate edge imposes between the two
+        states; fusing collapses that to intra-state dataflow order, under which a side-effect node
+        with no data dependence tying it to its neighbours could execute in any order (or
+        concurrently in a parallel scope), reordering or dropping the effect."""
+        for node in state.nodes():
+            if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
+                return True
+            if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
+                return True
+            if isinstance(node, nodes.NestedSDFG):
+                for nested_state in node.sdfg.states():
+                    if StateFusionExtended.state_has_side_effect_node(nested_state, node.sdfg):
+                        return True
+        return False
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
         # We keep it alive, such that `apply()` can use it later.
         self.connections_to_make.clear()
+
+        # Do not fuse states that carry a side-effect node: state fusion preserves only dataflow
+        # order, so a side effect (I/O, a trap guard, a stateful library / MPI call) whose order
+        # is guaranteed by the interstate edge -- not by a data dependence -- would be reordered
+        # or run concurrently once the two states become one.
+        if (StateFusionExtended.state_has_side_effect_node(first_state, sdfg)
+                or StateFusionExtended.state_has_side_effect_node(second_state, sdfg)):
+            return False
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
