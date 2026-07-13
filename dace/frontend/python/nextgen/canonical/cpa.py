@@ -169,6 +169,9 @@ def is_flat(node: ast.AST) -> bool:
     """Check whether an expression is a canonical assignment right-hand side."""
     if is_atomexpr(node):
         return True
+    if isinstance(node, (ast.List, ast.Tuple)) and not isinstance(getattr(node, 'ctx', ast.Load()), ast.Store):
+        # Sequence literals of atoms are compile-time values in the semantic layer
+        return all(is_atom(element) for element in node.elts)
     if isinstance(node, ast.Call):
         callable_ok = is_atom(node.func)
         args_ok = all(is_atom(a) for a in node.args)

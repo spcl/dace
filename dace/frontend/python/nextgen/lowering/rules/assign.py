@@ -1,15 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Lowering rules for canonical assignments.
+Lowering rule for canonical assignments.
 
-Handles the canonical ``Assign`` forms produced by the ANF pass:
+The rule owns *binding semantics* — the decisions that follow Python and NumPy
+assignment rules rather than computation:
 
-- whole-array aliasing (``b = A``) as binding updates,
-- slice reads (``b = A[1:4]``) as :class:`ViewNode`,
-- subset-to-subset copies (``B[2:4] = A[0:2]``) as :class:`CopyNode`,
-- everything else (scalar loads/stores, flat operator expressions) as
-  :class:`TaskletNode`, wrapped in a :class:`MapScope` for array-shaped
-  results.
+- compile-time Python sequences (``a = [1, 2, x]``, concatenation, repetition,
+  static indexing/slicing) stay in the value domain and emit no nodes,
+- whole-array aliasing (``b = A``) is a binding update (arrays are mutable),
+- slice reads (``b = A[1:4]``) bind as :class:`ViewNode` (NumPy basic-indexing
+  view semantics),
+- subset-to-subset copies (``B[2:4] = A[0:2]``) become :class:`CopyNode`.
+
+Everything computational is delegated to the type-directed dispatch seam
+(:mod:`~dace.frontend.python.nextgen.lowering.dispatch`), which selects a
+mechanism by operand types (elementwise, materialization, callback).
 
 Scalar Python names are deliberately materialized as scalar containers with
 in-place writes (not interstate symbols), which keeps loop-carried updates
@@ -17,16 +22,15 @@ correct without SSA φ-resolution. Symbol promotion of compile-time scalars is
 a planned optimization pass, not a correctness requirement.
 """
 import ast
-from typing import List
 
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets
 from dace.memlet import Memlet
-from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import (DataAccess, indexed_subset, resolve_access,
-                                                          substitute_data_operands)
+from dace.frontend.python.nextgen.lowering import dispatch
+from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
+from dace.frontend.python.nextgen.lowering.mechanisms import static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred
 
@@ -41,8 +45,23 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         calls.lower_call_assign(statement, state)
         return
 
+    # Value-domain handling: sequence literals and operations on them that
+    # fold at compile time bind statically without emitting nodes.
+    try:
+        inferred = state.inference.infer(value)
+    except UnsupportedFeatureError as reason:
+        dispatch.fallback_to_callback(statement, state, str(reason))
+        return
+    if inferred.kind == 'static':
+        if isinstance(target, ast.Name):
+            state.context.bind_static(target.id, inferred.value)
+            return
+        # Static value written into a container subset: materialize first
+        access = static_values.materialize(inferred.value, state)
+        value = ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), value)
+
     if isinstance(target, ast.Name):
-        _lower_name_assign(target, value, statement, state)
+        _lower_name_assign(target, value, inferred, statement, state)
     elif isinstance(target, ast.Subscript):
         _lower_subscript_assign(target, value, statement, state)
     else:
@@ -50,7 +69,8 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
                                       state.context.filename, statement)
 
 
-def _lower_name_assign(target: ast.Name, value: ast.expr, statement: ast.Assign, state: LoweringState) -> None:
+def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, statement: ast.Assign,
+                       state: LoweringState) -> None:
     # Whole-array aliasing: rebind the name. Arrays are mutable in Python, so
     # both names must observe subsequent writes; a binding update models that.
     if isinstance(value, ast.Name):
@@ -67,14 +87,17 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, statement: ast.Assign,
             _lower_view_binding(target, access, state)
             return
 
-    inferred = state.inference.infer(value)
     target_access = _prepare_name_target(target, inferred, state, statement)
-    _emit_computation(target_access, value, statement, state)
+    dispatch.lower_computation(target_access, value, statement, state)
 
 
 def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: ast.Assign,
                             state: LoweringState) -> None:
-    target_access = resolve_access(target, state)
+    try:
+        target_access = resolve_access(target, state)
+    except UnsupportedFeatureError as reason:
+        dispatch.fallback_to_callback(statement, state, str(reason))
+        return
     if target_access is None:
         raise UnsupportedFeatureError(f'Assignment to unknown container "{astutils.unparse(target)}"',
                                       state.context.filename, statement)
@@ -83,7 +106,7 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
     if isinstance(value, (ast.Name, ast.Subscript)):
         source_access = resolve_access(value, state)
         if (source_access is not None and not source_access.is_scalar_access and not target_access.is_scalar_access
-                and _nondegenerate_shape(source_access.subset) == _nondegenerate_shape(target_access.subset)):
+                and nondegenerate_shape(source_access.subset) == nondegenerate_shape(target_access.subset)):
             state.emitter.emit(
                 tn.CopyNode(target=target_access.container,
                             memlet=Memlet(data=source_access.container,
@@ -91,12 +114,12 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
                                           other_subset=target_access.subset)))
             return
 
-    _emit_computation(target_access, value, statement, state)
+    dispatch.lower_computation(target_access, value, statement, state)
 
 
 def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringState) -> None:
     """Bind a slice read as a view container."""
-    shape = _nondegenerate_shape(access.subset)
+    shape = nondegenerate_shape(access.subset)
     strides = [
         access.descriptor.strides[i] * step
         for i, (size, (_, _, step)) in enumerate(zip(access.subset.size(), access.subset.ranges)) if size != 1
@@ -133,6 +156,8 @@ def _prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringSt
 
 
 def _result_descriptor(inferred: Inferred, state: LoweringState, statement: ast.Assign) -> data.Data:
+    if inferred.kind == 'static':
+        return state.inference.sequence_descriptor(inferred.value)
     if inferred.is_data:
         descriptor = inferred.descriptor
         if isinstance(descriptor, data.Array):
@@ -153,60 +178,3 @@ def _compatible(existing: data.Data, new: data.Data) -> bool:
     if isinstance(existing, data.Array) and isinstance(new, data.Array):
         return tuple(existing.shape) == tuple(new.shape) and not isinstance(existing, data.View)
     return False
-
-
-def _nondegenerate_shape(subset: subsets.Range) -> List:
-    return [s for s in subset.size() if s != 1]
-
-
-def _emit_computation(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> None:
-    """
-    Emit a tasklet (scalar result) or map-with-tasklet (array result) that
-    computes a canonical flat expression into the target access.
-    """
-    code, operands = substitute_data_operands(value, state)
-    line = getattr(statement, 'lineno', 0)
-    result_shape = _nondegenerate_shape(target.subset)
-
-    if not result_shape:
-        # Scalar result: single tasklet
-        tasklet = nodes.Tasklet(f'assign_{line}', {connector
-                                                   for connector, _ in operands}, {'__out'}, f'__out = {code}')
-        in_memlets = {connector: Memlet(data=access.container, subset=access.subset) for connector, access in operands}
-        out_memlets = {'__out': Memlet(data=target.container, subset=target.subset)}
-        state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
-        return
-
-    # Array result: elementwise map
-    params = [f'__i{i}' for i in range(len(result_shape))]
-    map_range = subsets.Range([(0, size - 1, 1) for size in result_shape])
-    map_node = nodes.MapEntry(nodes.Map(f'map_{line}', params, map_range))
-    tasklet = nodes.Tasklet(f'assign_{line}', {connector for connector, _ in operands}, {'__out'}, f'__out = {code}')
-
-    in_memlets = {}
-    for connector, access in operands:
-        if access.is_scalar_access:
-            in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
-        else:
-            in_memlets[connector] = Memlet(data=access.container, subset=indexed_subset(access, params, result_shape))
-    out_memlets = {'__out': Memlet(data=target.container, subset=_target_indexed_subset(target.subset, params))}
-
-    with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
-        state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
-
-
-def _target_indexed_subset(subset: subsets.Range, params: List[str]) -> subsets.Range:
-    """
-    Index the non-degenerate dimensions of a write subset with map parameters,
-    keeping degenerate dimensions pinned to their start.
-    """
-    ranges = []
-    param_iterator = iter(params)
-    for size, (start, _, step) in zip(subset.size(), subset.ranges):
-        if size == 1:
-            ranges.append((start, start, 1))
-        else:
-            param = symbolic.pystr_to_symbolic(next(param_iterator))
-            index = start + param * step
-            ranges.append((index, index, 1))
-    return subsets.Range(ranges)

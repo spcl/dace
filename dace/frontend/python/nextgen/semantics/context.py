@@ -9,10 +9,11 @@ never cloned), the name-binding table, and the demand-driven inference service.
 """
 import ast
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.frontend.python.nextgen.common import FrontendError
+from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
 
 @dataclass
@@ -21,7 +22,7 @@ class Binding:
     Associates a source-level name with its current meaning.
 
     :param kind: One of ``'container'``, ``'symbol'``, ``'constant'``,
-                 ``'callback'``.
+                 ``'static'`` (compile-time Python value), ``'callback'``.
     :param container: For container bindings, the repository name the source
                       name currently refers to (may differ from the source
                       name after rebinding).
@@ -45,7 +46,7 @@ class ProgramContext:
     """
 
     def __init__(self, name: str, filename: str, argtypes: Dict[str, data.Data], global_vars: Dict[str, Any],
-                 constants: Dict[str, Any]):
+                 constants: Dict[str, Tuple[data.Data, Any]]):
         self.name = name
         self.filename = filename
         self.globals = global_vars
@@ -53,10 +54,14 @@ class ProgramContext:
         #: Descriptor repository (attached directly to the tree root).
         self.containers: Dict[str, data.Data] = {}
         self.symbols: Dict[str, Any] = {}
-        self.constants: Dict[str, Any] = dict(constants)
+        #: Compile-time constants as (descriptor, value) tuples, shared with the tree root.
+        self.constants: Dict[str, Tuple[data.Data, Any]] = dict(constants)
 
         #: Source-name binding table.
         self.bindings: Dict[str, Binding] = {}
+
+        #: Compile-time Python sequence values for 'static' bindings.
+        self.static_values: Dict[str, StaticSequence] = {}
 
         #: Names of generated return containers, in return-value order.
         self.return_names: List[str] = []
@@ -112,6 +117,31 @@ class ProgramContext:
         self.symbols[source_name] = symbol_value
         self.bindings[source_name] = Binding(kind='symbol')
         return symbol_value
+
+    def bind_static(self, source_name: str, value: StaticSequence) -> None:
+        """Bind a source-level name to a compile-time Python sequence value."""
+        existing = self.bindings.get(source_name)
+        version = existing.version + 1 if existing is not None else 0
+        self.bindings[source_name] = Binding(kind='static', version=version)
+        self.static_values[source_name] = value
+
+    def static_value_of(self, source_name: str) -> Optional[StaticSequence]:
+        """Return the static value a name is bound to, if any."""
+        binding = self.bindings.get(source_name)
+        if binding is None or binding.kind != 'static':
+            return None
+        return self.static_values.get(source_name)
+
+    def add_constant_container(self, name: str, descriptor: data.Data, value: Any) -> str:
+        """
+        Register a compile-time constant with an accompanying (transient)
+        container descriptor, for materialized static values.
+
+        :return: The actual repository name used.
+        """
+        actual_name = self.add_container(name, descriptor, transient=True)
+        self.constants[actual_name] = (descriptor, value)
+        return actual_name
 
     def resolve(self, source_name: str) -> Optional[Binding]:
         """Look up the current binding of a source-level name."""

@@ -259,6 +259,114 @@ def test_repository_is_shared_not_cloned():
     assert 'N' in tree.symbols
 
 
+# ---------------------------------------------------------------------- #
+# Native Python sequences (value domain) and type-directed dispatch
+# ---------------------------------------------------------------------- #
+
+
+def test_static_list_binding_emits_no_nodes():
+
+    @dace.program
+    def static_list(A: dace.float64[3]):
+        sizes = [1, 2, 3]
+        A[0] = 0.0
+
+    tree = nextgen.parse_program(static_list)
+    # The list stays in the value domain: no container, no nodes for it
+    assert 'sizes' not in tree.containers
+    assert len(_nodes_of_type(tree, tn.TaskletNode)) == 1  # only A[0] = 0.0
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_static_list_indexing_folds():
+
+    @dace.program
+    def fold_index(A: dace.float64[3]):
+        sizes = [10.0, 20.0, 30.0]
+        A[0] = sizes[1]
+        A[1] = sizes[-1]
+
+    tree = nextgen.parse_program(fold_index)
+    tasklets = _nodes_of_type(tree, tn.TaskletNode)
+    assert len(tasklets) == 2
+    codes = [t.node.code.as_string for t in tasklets]
+    assert any('20.0' in code for code in codes)
+    assert any('30.0' in code for code in codes)  # Negative index follows Python semantics
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_static_list_concat_and_repeat():
+
+    @dace.program
+    def concat_repeat(A: dace.float64[5]):
+        left = [1.0, 2.0]
+        combined = left + [3.0] * 3
+        A[4] = combined[4]
+
+    tree = nextgen.parse_program(concat_repeat)
+    tasklets = _nodes_of_type(tree, tn.TaskletNode)
+    assert len(tasklets) == 1
+    assert '3.0' in tasklets[0].node.code.as_string
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_static_list_materializes_for_array_operation():
+
+    @dace.program
+    def mixed(A: dace.float64[3], B: dace.float64[3]):
+        B[:] = A * [1.0, 2.0, 3.0]
+
+    tree = nextgen.parse_program(mixed)
+    maps = _nodes_of_type(tree, tn.MapScope)
+    assert len(maps) == 1
+    # The list materialized as a constant container in the repository
+    constant_names = [name for name in tree.constants if name.startswith('__const')]
+    assert len(constant_names) == 1
+    assert constant_names[0] in tree.containers
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_static_slice_assignment_materializes():
+
+    @dace.program
+    def fill(A: dace.float64[3]):
+        A[:] = [1.0, 2.0, 3.0]
+
+    tree = nextgen.parse_program(fill)
+    copies = _nodes_of_type(tree, tn.CopyNode)
+    assert len(copies) == 1
+    assert copies[0].target == 'A'
+    assert copies[0].memlet.data in tree.constants
+
+
+def test_pyobject_consumption_becomes_callback():
+
+    @dace.program
+    def pyobject_flow(A: dace.float64[N]):
+        box = open('/dev/null')  # Unresolvable call: produces a pyobject
+        A[0] = box + 1.0  # Consuming a pyobject must go through the interpreter
+
+    tree = nextgen.parse_program(pyobject_flow)
+    callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(callbacks) == 2
+    # The consuming statement is a callback, not a tasklet on an opaque object
+    tasklets = _nodes_of_type(tree, tn.TaskletNode)
+    assert not any('box' in t.node.code.as_string for t in tasklets)
+
+
+def test_static_return_materializes():
+
+    @dace.program
+    def return_list():
+        values = [1, 2, 3]
+        return values
+
+    tree = nextgen.parse_program(return_list)
+    returns = _nodes_of_type(tree, tn.ReturnNode)
+    assert len(returns) == 1
+    assert '__return' in tree.containers
+
+
 if __name__ == '__main__':
     import sys
     pytest.main([__file__, '-v'] + sys.argv[1:])

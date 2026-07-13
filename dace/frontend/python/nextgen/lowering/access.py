@@ -26,6 +26,11 @@ class DataAccess:
         return self.subset.num_elements() == 1
 
 
+def nondegenerate_shape(subset: subsets.Range) -> List:
+    """The shape of a subset with size-1 dimensions squeezed out."""
+    return [s for s in subset.size() if s != 1]
+
+
 def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]:
     """
     Resolve a canonical ``Name`` or ``Subscript(Name, ...)`` expression to a

@@ -10,9 +10,7 @@ opaque statement.
 """
 import ast
 
-from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
-from dace.frontend.python.nextgen.lowering.rules.callbacks import lower_opaque
 
 
 def lower_call_assign(statement: ast.Assign, state: LoweringState) -> None:
@@ -24,5 +22,5 @@ def lower_call_assign(statement: ast.Assign, state: LoweringState) -> None:
     pipeline invocation with a shared repository), and SDFG convertibles.
     Unresolvable callables fall back to callbacks below.
     """
-    reads, writes = statement_io_sets(statement)
-    lower_opaque(OpaqueStmt(statement, 'unresolved call', reads, writes), state)
+    from dace.frontend.python.nextgen.lowering.dispatch import fallback_to_callback
+    fallback_to_callback(statement, state, 'unresolved call')

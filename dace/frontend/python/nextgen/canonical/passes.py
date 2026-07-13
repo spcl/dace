@@ -292,6 +292,12 @@ class ANFTransform(_BodyTransformer):
                     raise _ShortCircuitHazard
                 keyword.value = self._flatten(keyword.value, hoisted, level='atom')
             return expr if level == 'flat' else self._hoist(expr, hoisted)
+        if isinstance(expr, (ast.List, ast.Tuple)) and isinstance(getattr(expr, 'ctx', ast.Load()), ast.Load):
+            # Sequence literals: flatten elements to atoms; the literal itself
+            # is a compile-time value, so it may stay in assignment position
+            # ('flat') and is hoisted to a named temporary elsewhere.
+            expr.elts = [self._flatten(element, hoisted, level='atom') for element in expr.elts]
+            return expr if level == 'flat' else self._hoist(expr, hoisted)
         if cpa.is_atom(expr):
             return expr
         raise _ShortCircuitHazard

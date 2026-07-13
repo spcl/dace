@@ -34,6 +34,14 @@ def lower_return(statement: ast.Return, state: LoweringState) -> None:
 
 
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:
+    # Compile-time Python sequences materialize as constant containers first
+    if isinstance(value, ast.Name):
+        sequence = state.context.static_value_of(value.id)
+        if sequence is not None:
+            from dace.frontend.python.nextgen.lowering.mechanisms import static_values
+            access = static_values.materialize(sequence, state)
+            value = ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), value)
+
     access = resolve_access(value, state) if isinstance(value, (ast.Name, ast.Subscript)) else None
     if access is not None:
         shape = [s for s in access.subset.size() if s != 1] or [1]

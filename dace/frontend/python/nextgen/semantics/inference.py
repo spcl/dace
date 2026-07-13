@@ -15,15 +15,28 @@ the operator core.
 import ast
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence, Tuple, Union
-
+import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
+from dace.frontend.python.nextgen.semantics import values
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
+from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
 #: Comparison and boolean operators always produce booleans.
 _BOOLEAN_OPS = (ast.Compare, ast.BoolOp)
+
+
+def _apply_unary_operator(operator: ast.unaryop, value: Any) -> Any:
+    """Apply a unary AST operator to a compile-time constant."""
+    if isinstance(operator, ast.USub):
+        return -value
+    if isinstance(operator, ast.UAdd):
+        return +value
+    if isinstance(operator, ast.Invert):
+        return ~value
+    raise TypeError(f'Cannot constant-fold unary operator {type(operator).__name__}')
 
 
 @dataclass
@@ -32,9 +45,11 @@ class Inferred:
     Classification of a canonical expression.
 
     :param kind: ``'data'`` (container access), ``'symbolic'`` (symbol
-                 expression), or ``'constant'`` (compile-time value).
+                 expression), ``'constant'`` (compile-time value), or
+                 ``'static'`` (compile-time Python sequence, see
+                 :class:`~dace.frontend.python.nextgen.semantics.values.StaticSequence`).
     :param descriptor: Result data descriptor for ``'data'`` expressions.
-    :param value: The symbolic expression or constant value otherwise.
+    :param value: The symbolic expression, constant, or static sequence otherwise.
     """
     kind: str
     descriptor: Optional[data.Data] = None
@@ -43,6 +58,10 @@ class Inferred:
     @property
     def is_data(self) -> bool:
         return self.kind == 'data'
+
+    @property
+    def is_pyobject(self) -> bool:
+        return self.kind == 'data' and isinstance(self.descriptor.dtype, dtypes.pyobject)
 
     @property
     def dtype(self) -> Optional[dtypes.typeclass]:
@@ -106,12 +125,23 @@ class InferenceService:
         """
         if isinstance(node, ast.Constant):
             return Inferred(kind='constant', value=node.value)
+        if isinstance(node, (ast.List, ast.Tuple)):
+            sequence_kind = 'list' if isinstance(node, ast.List) else 'tuple'
+            return Inferred(kind='static', value=StaticSequence(elements=list(node.elts), kind=sequence_kind))
         if isinstance(node, ast.Name):
             return self._infer_name(node)
         if isinstance(node, ast.UnaryOp):
             operand = self.infer(node.operand)
             if isinstance(node.op, ast.Not):
                 return self._demote_to_bool(operand)
+            if operand.kind == 'constant':
+                try:
+                    return Inferred(kind='constant', value=_apply_unary_operator(node.op, operand.value))
+                except TypeError:
+                    pass
+            if operand.kind == 'symbolic':
+                return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(astutils.unparse(node)))
+            # Data operands: sign/inversion preserves descriptor shape and dtype
             return operand
         if isinstance(node, ast.Subscript):
             return self._infer_subscript(node)
@@ -128,6 +158,45 @@ class InferenceService:
         """
         return ParseMemlet(self._shim, self.context.defined_view(), node)
 
+    def constant_int(self, node: ast.expr) -> Optional[int]:
+        """Resolve a canonical atom to a compile-time integer, or None."""
+        value = self.constant_value(node)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return None
+
+    def constant_value(self, node: ast.expr) -> Any:
+        """Resolve a canonical atom to a compile-time value, or None."""
+        try:
+            inferred = self.infer(node)
+        except UnsupportedFeatureError:
+            return None
+        if inferred.kind == 'constant':
+            return inferred.value
+        return None
+
+    def sequence_constants(self, sequence: StaticSequence) -> List[Any]:
+        """
+        Resolve all elements of a static sequence to compile-time values.
+
+        :raises UnsupportedFeatureError: If any element is not a compile-time
+            constant (e.g., references runtime data).
+        """
+        result = []
+        for element in sequence.elements:
+            value = self.constant_value(element)
+            if value is None:
+                raise UnsupportedFeatureError(
+                    f'Python sequence element "{astutils.unparse(element)}" is not a compile-time constant',
+                    self.context.filename, element)
+            result.append(value)
+        return result
+
+    def sequence_descriptor(self, sequence: StaticSequence) -> data.Array:
+        """The constant-array descriptor a static sequence materializes to."""
+        array = numpy.array(self.sequence_constants(sequence))
+        return data.Array(dtypes.dtype_to_typeclass(array.dtype.type), list(array.shape))
+
     # ------------------------------------------------------------------ #
 
     def _infer_name(self, node: ast.Name) -> Inferred:
@@ -137,10 +206,12 @@ class InferenceService:
                 return Inferred(kind='data', descriptor=self.context.containers[binding.container])
             if binding.kind == 'symbol':
                 return Inferred(kind='symbolic', value=self.context.symbols[node.id])
+            if binding.kind == 'static':
+                return Inferred(kind='static', value=self.context.static_values[node.id])
         if node.id in self.context.symbols:
             return Inferred(kind='symbolic', value=self.context.symbols[node.id])
         if node.id in self.context.constants:
-            return Inferred(kind='constant', value=self.context.constants[node.id])
+            return Inferred(kind='constant', value=self.context.constants[node.id][1])
         if node.id in self.context.globals:
             value = self.context.globals[node.id]
             if isinstance(value, symbolic.symbol):
@@ -150,6 +221,11 @@ class InferenceService:
 
     def _infer_subscript(self, node: ast.Subscript) -> Inferred:
         base = self.infer(node.value)
+        if base.kind == 'static':
+            element = values.fold_subscript(base.value, node, self.constant_int)
+            if isinstance(element, ast.expr):
+                return self.infer(element)
+            return Inferred(kind='static', value=element)
         if not base.is_data:
             raise UnsupportedFeatureError('Subscript of a non-container value', self.context.filename, node)
         expr = self.parse_access(node)
@@ -165,6 +241,25 @@ class InferenceService:
             operands = [self.infer(node.left)] + [self.infer(c) for c in node.comparators]
         else:  # BoolOp
             operands = [self.infer(v) for v in node.values]
+
+        # Operators over Python sequences follow Python semantics at compile
+        # time; sequences mixed with data operands materialize as constant
+        # arrays and participate in broadcasting instead.
+        if isinstance(node, ast.BinOp) and any(op.kind == 'static' for op in operands):
+            if not any(op.is_data for op in operands):
+                left_sequence = operands[0].value if operands[0].kind == 'static' else None
+                right_sequence = operands[1].value if operands[1].kind == 'static' else None
+                return Inferred(kind='static',
+                                value=values.fold_binop(node, left_sequence, right_sequence, self.constant_int))
+            operands = [
+                Inferred(kind='data', descriptor=self.sequence_descriptor(op.value)) if op.kind == 'static' else op
+                for op in operands
+            ]
+
+        # Opaque Python objects poison the expression: consuming them requires
+        # the interpreter, which the dispatch seam turns into a callback.
+        if any(op.is_pyobject for op in operands):
+            return Inferred(kind='data', descriptor=data.Scalar(dtypes.pyobject()))
 
         boolean_result = isinstance(node, _BOOLEAN_OPS)
         data_operands = [op for op in operands if op.is_data]

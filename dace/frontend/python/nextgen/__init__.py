@@ -56,21 +56,13 @@ def build_schedule_tree(name: str,
     program = pipeline.run(program, pipeline_context)
 
     # Stage 2: semantic context (single repository, shared with the tree root)
-    constants = constants or {}
-    context = ProgramContext(name,
-                             parsed_ast.filename,
-                             argtypes,
-                             parsed_ast.program_globals,
-                             constants={
-                                 key: value
-                                 for key, (_, value) in constants.items()
-                             })
+    context = ProgramContext(name, parsed_ast.filename, argtypes, parsed_ast.program_globals, constants or {})
 
     root = tn.ScheduleTreeRoot(name=name,
                                children=[],
                                containers=context.containers,
                                symbols=context.symbols,
-                               constants=dict(constants),
+                               constants=context.constants,
                                callback_mapping=dict(callback_mapping or {}),
                                arg_names=list(arg_names or argtypes.keys()))
 
