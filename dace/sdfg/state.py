@@ -141,7 +141,7 @@ class BlockGraphView(object):
         Iterate over all edges in this graph or subgraph.
         This includes dataflow edges, inter-state edges, and recursive edges within nested SDFGs. It returns tuples of
         the form (edge, parent), where the edge is either a dataflow edge, in which case the parent is an SDFG state, or
-        an inter-stte edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
+        an inter-state edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
         """
         return []
 
@@ -161,7 +161,7 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
         """ Returns the exit node leaving the context opened by the given entry node. """
-        raise None
+        return None
 
     ###################################################################
     # Memlet-tracking methods
