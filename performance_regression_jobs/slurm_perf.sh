@@ -75,6 +75,19 @@ if [ -n "$_CUTENSOR_ROOT" ]; then
     unset _CUTENSOR_ROOT
 fi
 
+# OpenBLAS (one libopenblas = BLAS + CBLAS + LAPACK + LAPACKE): `spack load openblas` sets PATH but
+# NOT LD_LIBRARY_PATH, and the install sits off the ldconfig cache, so DaCe's detection
+# (dace/libraries/blas/environments/openblas.py) needs BOTH the OPENBLAS_DIR env var it now checks
+# AND the lib dir on LD_LIBRARY_PATH. Without them MatMul/potrf report "OpenBLAS not installed" and
+# expand to a naive pure loop (~25x slower); with them gemm/k2mm/k3mm/cholesky route to cblas_dgemm.
+export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+if [ -n "$OPENBLAS_DIR" ]; then
+    for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
+        [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"
+    done
+    [ -d "$OPENBLAS_DIR/include" ] && export CPATH="$OPENBLAS_DIR/include:${CPATH:-}"
+fi
+
 # Runtime library paths so every compiled .so loads at ctypes time: `spack load` sets PATH
 # but NOT LD_LIBRARY_PATH. A -fopenmp kernel needs libomp/libgomp (spack llvm), and the
 # clang/gcc codegen links spack-gcc's libstdc++/libgcc_s -- without these, loading a kernel
