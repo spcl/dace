@@ -29,6 +29,7 @@ cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 EXPERIMENT="${EXPERIMENT:-canon_vs}"
 CORPUS="${CORPUS:-tsvc2}"
 CXX="${CXX:-clang++}"
+DEVICE="${DEVICE:-cpu}"                       # cpu | gpu -- the dace lanes' target (native/numpy stay cpu)
 RESULTS_DIR="${RESULTS_DIR:-results/$EXPERIMENT}"
 
 # MPI anti-hang (must match run_perf.py's own os.environ.setdefault block) +
@@ -126,13 +127,30 @@ unset -f _add_ldpath _ldpath_for
 export HPTT_ROOT="$PWD/hptt"
 [ -f "$HPTT_ROOT/lib/libhptt.so" ] && export LD_LIBRARY_PATH="$HPTT_ROOT/lib:${LD_LIBRARY_PATH:-}"
 
-echo "EXPERIMENT=$EXPERIMENT CORPUS=$CORPUS CXX=$CXX RESULTS_DIR=$RESULTS_DIR"
+# GPU device: the dace lanes run on the GH200. Set the env the CPU sweep never needs -- Hopper arch
+# (sm_90); nvcc host compiler g++-14, because CUDA 13.3 rejects host gcc>15 (the spack gcc 16 used for
+# CPU); all kernels on stream 0 (DaCe still schedules streams; single default stream for now); and the
+# always-on -O3 (-Xptxas/-Xcompiler) + fast-math device/host flags. Each rank binds ONE GPU via
+# --gpus-per-task=1. Result folders carry a '-gpu' preset tag so gpu rows sit beside the cpu ones in the
+# SAME results tree. (Validated on a debug node: canon_vs --device gpu, arc_distance dace-parallel 2376x.)
+SRUN_GPU=""
+if [ "$DEVICE" = "gpu" ]; then
+    export DACE_compiler_cuda_cuda_arch=90
+    export DACE_compiler_cuda_max_concurrent_streams=0
+    export DACE_compiler_cuda_args="-Xptxas -O3 -Xcompiler -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter"
+    export CUDAHOSTCXX=/usr/bin/g++-14
+    CXX=/usr/bin/g++-14
+    SRUN_GPU="--gpus-per-task=1"
+fi
+
+echo "EXPERIMENT=$EXPERIMENT CORPUS=$CORPUS DEVICE=$DEVICE CXX=$CXX RESULTS_DIR=$RESULTS_DIR"
 
 # --distribution=block:block hands rank i a contiguous 72-core block = Grace socket i, so the 4
 # ranks split 72-72-72-72 across the node's 4 Grace CPUs; --cpu-bind=cores then pins each rank's
 # threads to its own cores (verbose = log the CPU mask to the job output to confirm the split).
-srun --cpu-bind=verbose,cores --distribution=block:block python3 run_perf.py \
-    --experiment "$EXPERIMENT" --corpus "$CORPUS" --reps 25 --cxx="$CXX" --results-dir="$RESULTS_DIR"
+srun --cpu-bind=verbose,cores --distribution=block:block $SRUN_GPU python3 run_perf.py \
+    --experiment "$EXPERIMENT" --corpus "$CORPUS" --device "$DEVICE" --reps 25 --cxx="$CXX" --results-dir="$RESULTS_DIR"
 
-# One single-rank pass to (re)build the aggregate tables across every rank's output.
+# One single-rank pass to (re)build the aggregate tables across every rank's output (device-agnostic:
+# it scans the tree, so a shared cpu+gpu results dir yields one summary.csv with both device rows).
 python3 run_perf.py --experiment "$EXPERIMENT" --corpus "$CORPUS" --tables-only --results-dir="$RESULTS_DIR"
