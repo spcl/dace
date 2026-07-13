@@ -73,6 +73,9 @@ setup(
     ] + cmake_requires,
     extras_require={
         'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
+        # Optional: exact-integer polyhedral engine for the WavefrontSkew canonicalization pass
+        # (schedule legality + skewed loop bounds). Absent => the pass degrades to a no-op.
+        'polyhedral': ['islpy'],
         'testing': [
             'coverage',
             'pytest-cov',
