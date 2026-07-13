@@ -28,7 +28,10 @@ never-slower-than-auto_optimize guarantee).
 """
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import sympy
+
 from dace import symbolic
+from dace.symbolic import int_ceil, int_floor
 
 try:
     import islpy as isl
@@ -69,26 +72,71 @@ def subs_by_name(expr, mapping):
     return symbolic.simplify(e.subs(sub))
 
 
-def render_affine(expr, name_map: Dict[str, str]) -> str:
-    """Render an affine expression into ISL syntax under ``name_map``.
+def isl_divisor(b) -> str:
+    """Render a ``floor`` / ``ceil`` / ``mod`` divisor. ISL only admits integer
+    division, so the divisor must be a positive integer constant; a symbolic or
+    non-positive divisor is refused (``ValueError``)."""
+    if b.is_Integer and int(b) > 0:
+        return str(int(b))
+    raise ValueError(f"non-constant / non-positive divisor {b}")
 
-    Rejects non-affine / non-integer forms by raising ``ValueError`` -- the
-    caller treats that as "cannot reason, refuse the skew" rather than risking
-    an unsound bound.
-    """
+
+def to_isl(e) -> str:
+    """Render a quasi-affine expression -- affine plus integer ``floor`` / ``ceil``
+    / ``mod`` -- over already-ISL-safe symbol names into an ISL constraint string.
+
+    ``int_floor`` / ``int_ceil`` (DaCe's integer-division functions) and ``Mod`` map
+    to ISL's native ``floor(x/d)`` / ``ceil(x/d)`` / ``(x mod d)``, which are exact in
+    Presburger arithmetic -- so ISL reasons about tiled / strided domains (a tile
+    bound like ``int_floor(N, 8)``) directly rather than the query being rejected.
+
+    Raises ``ValueError`` on anything ISL cannot represent exactly -- a nonlinear
+    term (variable*variable, a power), a non-integer coefficient, or a symbolic
+    div/mod divisor -- so the caller refuses the query rather than emitting an
+    unsound (or unparseable) one."""
+    if e.is_Integer:
+        return str(int(e))
+    if e.is_Symbol:
+        return e.name
+    if isinstance(e, int_floor):
+        return f"floor(({to_isl(e.args[0])})/{isl_divisor(e.args[1])})"
+    if isinstance(e, int_ceil):
+        return f"ceil(({to_isl(e.args[0])})/{isl_divisor(e.args[1])})"
+    if isinstance(e, sympy.Mod):
+        return f"(({to_isl(e.args[0])}) mod {isl_divisor(e.args[1])})"
+    if e.is_Add:
+        return "(" + " + ".join(to_isl(t) for t in e.args) + ")"
+    if e.is_Mul:
+        coeff, rest = e.as_coeff_Mul()
+        if not coeff.is_Integer:
+            raise ValueError(f"non-integer coefficient {coeff} in {e}")
+        if rest == sympy.Integer(1):
+            return str(int(coeff))
+        # ``rest`` is the product of the non-constant factors. Affine => it is a single
+        # atomic factor (symbol / floor / ceil / mod) or a parenthesised sum to
+        # distribute over; a residual product (var*var) or a power is nonlinear.
+        if not (rest.is_Symbol or rest.is_Add or isinstance(rest, (int_floor, int_ceil, sympy.Mod))):
+            raise ValueError(f"nonlinear term {rest} in {e}")
+        inner = to_isl(rest)
+        c = int(coeff)
+        if c == 1:
+            return inner
+        if c == -1:
+            return f"-({inner})"
+        return f"{c}*({inner})"
+    raise ValueError(f"non-affine / unsupported term {e}")
+
+
+def render_affine(expr, name_map: Dict[str, str]) -> str:
+    """Render a quasi-affine expression into an ISL constraint string under
+    ``name_map`` (see :func:`to_isl`). Raises ``ValueError`` on a form ISL cannot
+    represent exactly, which the caller treats as "cannot reason, refuse" rather
+    than risking an unsound query."""
     e = subs_by_name(expr, {orig: symbolic.pystr_to_symbolic(safe) for orig, safe in name_map.items()})
     safe_syms = {symbolic.pystr_to_symbolic(s) for s in name_map.values()}
     if not e.free_symbols <= safe_syms:
         raise ValueError(f"unmapped symbol in {expr} (free={e.free_symbols - safe_syms})")
-    if safe_syms:
-        poly = e.as_poly(*sorted(safe_syms, key=str))
-        if poly is not None:
-            if poly.total_degree() > 1:
-                raise ValueError(f"non-affine expression {expr}")
-            for c in poly.coeffs():
-                if not (c.is_integer or c.is_Integer):
-                    raise ValueError(f"non-integer coefficient in {expr}")
-    return symbolic.symstr(e)
+    return to_isl(e)
 
 
 def constraints_str(constraints, name_map: Dict[str, str]) -> str:
