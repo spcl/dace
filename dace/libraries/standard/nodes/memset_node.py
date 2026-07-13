@@ -155,16 +155,19 @@ class ExpandTasklet(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp, out, out_subset = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
         out_volume = out_subset.num_elements_exact()
         if out_volume != 1:
             raise ValueError(f"Tasklet expansion requires single-element subsets "
                              f"(got output volume {out_volume}). "
                              f"Use MappedTasklet for multi-element copies.")
 
-        if (is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and out.storage in GPU_RESIDENT_STORAGES):
-            raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
-                             f"got {inp.storage} -> {out.storage}. Use a Memset variant instead.")
+        # The tasklet emits ``_out = 0`` in its own scope. Inside a GPU kernel that is a valid
+        # device-side store to GPU-resident memory; from host scope it is not (a scalar assignment
+        # cannot write device memory) -- route that to the ``CUDA`` (cudaMemsetAsync) expansion.
+        if (not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and out.storage in GPU_RESIDENT_STORAGES):
+            raise ValueError(f"Tasklet expansion cannot zero GPU-resident storage ({out.storage}) for "
+                             f"'{out_name}' from host scope; use the 'CUDA' Memset expansion instead.")
 
         return nodes.Tasklet(node.name,
                              inputs={},
