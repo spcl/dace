@@ -404,7 +404,6 @@ class MoveArrayOutOfKernel(Pass):
         :returns: ``(new_shape, new_strides, new_total_size, new_offsets)``.
         """
         extended_size = []
-        new_strides = list(array_desc.strides)
         new_offsets = list(array_desc.offset)
         for next_map in map_exit_chain:
             if not next_map.map.schedule in [dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock]:
@@ -415,19 +414,20 @@ class MoveArrayOutOfKernel(Pass):
             min_elements = map_range.min_element()
             range_size = [_tile_extent(mx, mn) for mx, mn in zip(max_elements, min_elements)]
 
-            # Strides assume a packed C layout; packed-Fortran support would
-            # need a separate stride order here.
-            old_total_size = array_desc.total_size
-            accumulator = old_total_size
-            new_strides.insert(0, old_total_size)
-            for cur_range_size in range_size[:-1]:
-                new_strides.insert(0, accumulator)  # insert before (mult with volumes)
-                accumulator = accumulator * cur_range_size
-
             extended_size = range_size + extended_size
             new_offsets = [0 for _ in next_map.map.params] + new_offsets  # add 0 per dimension
 
         new_shape = extended_size + list(array_desc.shape)
+        # Packed C-layout strides for the prepended dims: each dimension steps over the full
+        # extent of everything nested below it (the more-inner prepended dims plus the original
+        # array). Built innermost-first so a dimension's extent multiplies the accumulator only
+        # after that dimension's own stride has been recorded. Packed-Fortran support would need
+        # a separate stride order here.
+        new_strides = list(array_desc.strides)
+        accumulator = array_desc.total_size
+        for extent in reversed(extended_size):
+            new_strides.insert(0, accumulator)
+            accumulator = accumulator * extent
         new_total_size = functools.reduce(sympy.Mul, extended_size, 1) * array_desc.total_size
 
         return new_shape, new_strides, new_total_size, new_offsets
