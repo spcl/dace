@@ -64,13 +64,15 @@ def tsvc2_recipe(kernel_name):
     return {'l1': int(l1), 'l2': int(l2)}
 
 
-def tsvc2_prepare(kernel_name, recipe, name_tag, pipeline_fn):
-    """Returns (sdfg, call_kwargs, collect): a built+pipelined SDFG, its call
-    kwargs, and collect(call_kwargs, ret) -> comparison dict."""
+def tsvc2_prepare(kernel_name, recipe, name_tag, pipeline_fn, device='cpu'):
+    """Returns (sdfg, call_kwargs, collect): a built+pipelined SDFG (on `device`,
+    'cpu' or 'gpu'), its call kwargs, and collect(call_kwargs, ret) -> comparison
+    dict. On 'gpu' the pipeline's auto_optimize inserts the H2D/D2H copies, so the
+    host numpy call_kwargs are unchanged."""
     l1, l2 = recipe['l1'], recipe['l2']
     kernel = t2.tsvc.collect(name=kernel_name)[0]
     sdfg = t2.tsvc.to_sdfg(kernel, f'{name_tag}', simplify=False)  # names it <kernel>_<name_tag>
-    sdfg = pipeline_fn(sdfg, 'cpu')
+    sdfg = pipeline_fn(sdfg, device)
     _, arrays, sym, sparams = t2._inputs(kernel_name, l1, l2)
     call_kwargs = {**{n: a.copy() for n, a in arrays.items()}, **sparams, **sym}
     return sdfg, call_kwargs, lambda ck, ret: ck
@@ -118,12 +120,12 @@ def tsvc2_5_recipe(kernel_name):
     return {'sizes': t25.size_scale_for_kernel(program)}
 
 
-def tsvc2_5_prepare(kernel_name, recipe, name_tag, pipeline_fn):
+def tsvc2_5_prepare(kernel_name, recipe, name_tag, pipeline_fn, device='cpu'):
     sizes = recipe['sizes']
     program = t25._program(kernel_name)
     sdfg = program.to_sdfg(simplify=False)
     sdfg.name = f'{_safe(name_tag)}_{_safe(kernel_name)}'
-    sdfg = pipeline_fn(sdfg, 'cpu')
+    sdfg = pipeline_fn(sdfg, device)
     _, arrays, scalars = t25._inputs(kernel_name, sizes)
     sym = t25._symbol_values(sdfg, sizes)
     call_kwargs = {**{n: a.copy() for n, a in arrays.items()}, **scalars, **sym}
@@ -219,7 +221,7 @@ def numpy_ref_available(kernel_name):
         return False
 
 
-def np_prepare(kernel_name, recipe, name_tag, pipeline_fn):
+def np_prepare(kernel_name, recipe, name_tag, pipeline_fn, device='cpu'):
     info = npp.load_bench_info(kernel_name)
     params = info['parameters'][npp.PRESET]
     # build_program_and_data returns the params dict AUGMENTED with any derived
@@ -228,7 +230,7 @@ def np_prepare(kernel_name, recipe, name_tag, pipeline_fn):
     program, arrays, params = npp.build_program_and_data(kernel_name, info, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = f'{_safe(name_tag)}_{_safe(kernel_name)}'
-    sdfg = pipeline_fn(sdfg, 'cpu')
+    sdfg = pipeline_fn(sdfg, device)
     call_kwargs = npp._dace_call_kwargs(sdfg, arrays, params)
     return sdfg, call_kwargs, lambda ck, ret: npp._collect_outputs(info['output_args'], ret, ck)
 
@@ -298,24 +300,29 @@ def adapter(corpus):
 # ==========================================================================
 # Generic job functions (run in the isolated subprocess). Dispatch by corpus.
 # ==========================================================================
-def _run_dace_variant(corpus, kernel_name, recipe, name_tag, pipeline_fn):
+def _run_dace_variant(corpus, kernel_name, recipe, name_tag, pipeline_fn, device='cpu'):
     a = ADAPTERS[corpus]
-    sdfg, call_kwargs, collect = a['prepare'](kernel_name, recipe, name_tag, pipeline_fn)
+    sdfg, call_kwargs, collect = a['prepare'](kernel_name, recipe, name_tag, pipeline_fn, device)
+    call_kwargs = engine.to_device_args(sdfg, call_kwargs, device)  # np -> cupy per-arg (GPU-storage only)
     ret = sdfg.compile()(**call_kwargs)
+    call_kwargs, ret = engine.args_to_host(call_kwargs, ret, device)  # cupy -> np for the comparison
     return collect(call_kwargs, ret)
 
 
-def check_dace_job(corpus, kernel_name, recipe, dace_lane):
+def check_dace_job(corpus, kernel_name, recipe, dace_lane, device='cpu'):
     engine.configure_dace_process()
-    ref = _run_dace_variant(corpus, kernel_name, recipe, _REF_TAG, engine.pipeline_parallel)
-    cand = _run_dace_variant(corpus, kernel_name, recipe, dace_lane, DACE_PIPELINE[dace_lane])
+    # Ground-truth reference is ALWAYS the CPU parallel build (the trusted oracle); the candidate runs
+    # on the target device, so a GPU candidate is validated against the CPU result.
+    ref = _run_dace_variant(corpus, kernel_name, recipe, _REF_TAG, engine.pipeline_parallel, 'cpu')
+    cand = _run_dace_variant(corpus, kernel_name, recipe, dace_lane, DACE_PIPELINE[dace_lane], device)
     return ADAPTERS[corpus]['compare'](ref, cand)
 
 
-def time_dace_job(corpus, kernel_name, recipe, dace_lane, reps):
+def time_dace_job(corpus, kernel_name, recipe, dace_lane, reps, device='cpu'):
     engine.configure_dace_process()
     a = ADAPTERS[corpus]
-    sdfg, call_kwargs, _ = a['prepare'](kernel_name, recipe, dace_lane, DACE_PIPELINE[dace_lane])
+    sdfg, call_kwargs, _ = a['prepare'](kernel_name, recipe, dace_lane, DACE_PIPELINE[dace_lane], device)
+    call_kwargs = engine.to_device_args(sdfg, call_kwargs, device)  # resident device buffers (GPU-storage args)
     return engine.time_sdfg(sdfg, call_kwargs, reps)
 
 
