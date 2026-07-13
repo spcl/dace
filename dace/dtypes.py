@@ -78,17 +78,16 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
-# A subset of GPU schedule types for ExperimentalCUDACodeGen
+# A subset of on-GPU storage types for ExperimentalCUDACodeGen
+GPU_RESIDENT_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+]
+
 GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_Warp,
-]
-
-# A subset of on-GPU storage types for ExperimentalCUDACodeGen
-GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN = [
-    StorageType.GPU_Global,
-    StorageType.GPU_Shared,
 ]
 
 # A subset of CPU schedule types
