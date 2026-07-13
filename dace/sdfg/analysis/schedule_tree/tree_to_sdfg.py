@@ -23,7 +23,6 @@ class StateBoundaryBehavior(Enum):
 
 PREFIX_PASSTHROUGH_IN: Final[str] = "IN_"
 PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
-PREFIX_SINK_TASKLET: Final[str] = "__stree_sink_tasklet"
 
 
 @dataclass
@@ -578,11 +577,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect writes to map_exit node
         for name in to_connect:
-            # Special case:
-            # This tasklet is a sink node and just needs an (empty) memlet connection to the MapExit node.
-            if name.startswith(PREFIX_SINK_TASKLET):
-                tasklet_to_connect, empty_memlet = to_connect[name]
-                self._current_state.add_nedge(tasklet_to_connect, map_exit, empty_memlet)
+            access_node, memlet = to_connect[name]
+            # Special case: connect tasklets without outputs via an empty Memlet to the MapExit node.
+            if isinstance(memlet, Memlet) and memlet.is_empty():
+                self._current_state.add_nedge(access_node, map_exit, memlet)
                 continue
 
             in_connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
@@ -592,7 +590,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assert new_in_connector == new_out_connector
 
             # connect "inside the map"
-            access_node, memlet = to_connect[name]
             if isinstance(access_node, nodes.NestedSDFG):
                 self._current_state.add_edge(access_node, name, map_exit, in_connector_name, memlet)
             else:
@@ -764,7 +761,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Add empty memlet if this tasklet is a sink node
         if isinstance(scope_node, nodes.MapEntry) and not node.out_memlets:
-            to_connect[f"{PREFIX_SINK_TASKLET}_{id(tasklet)}"] = (tasklet, Memlet())
+            to_connect[f"tasklet_{id(tasklet)}"] = (tasklet, Memlet())
 
     def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
