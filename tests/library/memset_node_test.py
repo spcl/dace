@@ -257,5 +257,39 @@ def test_memset_register_inside_kernel_routes_to_sequential():
     assert any(isinstance(n, dace.nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
 
 
+def test_memset_single_gpu_shared_inside_kernel_expands_clean():
+    """A single-element memset targeting GPU-resident storage *inside* a GPU kernel is valid device
+    code (a device-side ``_out = 0``) and must expand cleanly. Regression: the ``tasklet`` guard fired
+    on exactly this valid case, and its error path dereferenced the output *name* (a ``str``) as
+    ``inp.storage`` -> ``AttributeError``."""
+    sdfg = dace.SDFG('memset_shared_inside_kernel')
+    sdfg.add_array('s', [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
+    state = sdfg.add_state('s')
+
+    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    s_acc = state.add_access('s')
+    memset_node = MemsetLibraryNode(name='memset_s')
+    state.add_node(memset_node)
+    state.add_memlet_path(me, memset_node, memlet=dace.Memlet())
+    state.add_edge(memset_node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, s_acc, None, dace.Memlet('s[0]'))
+    state.add_memlet_path(s_acc, mx, memlet=dace.Memlet())
+
+    sdfg.expand_library_nodes()  # must not raise
+
+    assert any(isinstance(n, dace.nodes.Tasklet) and '= 0' in n.code.as_string
+               for n, _ in sdfg.all_nodes_recursive()), "Expected a scalar zero-assignment tasklet."
+
+
+def test_memset_tasklet_rejects_gpu_storage_from_host_scope():
+    """The single-element ``tasklet`` expansion emits ``_out = 0`` in its own scope; from host scope it
+    cannot target GPU-resident storage (a scalar assignment cannot write device memory), so it must
+    raise a clean ``ValueError``. Regression: the guard tested the wrong side, letting this host->GPU
+    case through instead of rejecting it."""
+    sdfg = _make_memset_sdfg("tasklet", (1, ), "0:1", gpu=True, name="memset_tasklet_host_gpu")
+    sdfg.validate()
+    with pytest.raises(ValueError):
+        sdfg.expand_library_nodes()
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
