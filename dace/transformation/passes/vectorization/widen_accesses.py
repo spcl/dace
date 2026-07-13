@@ -34,6 +34,7 @@ from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
@@ -399,8 +400,7 @@ class WidenAccesses(ppl.Pass):
                     # stale pre-widen rank and ``validate`` rejects it ("other_subset does not match
                     # node dimension").
                     src_desc = inner_sdfg.arrays.get(src_name)
-                    src_is_scalar_like = (src_desc is not None and src_desc.transient
-                                          and self._is_widenable(src_desc))
+                    src_is_scalar_like = (src_desc is not None and src_desc.transient and self._is_widenable(src_desc))
                     if (not src_is_scalar_like
                             and not self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars)):
                         continue
@@ -409,6 +409,8 @@ class WidenAccesses(ppl.Pass):
                         continue
                     if dst_name in index_symbols:
                         continue  # index/address symbol -> stays scalar
+                    if self._is_narrowed_constant_transient(inner_sdfg, dst_name):
+                        continue  # narrowed compile-time constant -> stays a Scalar broadcast
                     if not self._is_widenable(desc):
                         raise self._unwidenable_lane_dep_error(dst_name, desc)
                     if dst_name not in lane_dep_transients:
@@ -436,12 +438,55 @@ class WidenAccesses(ppl.Pass):
                                 continue
                             if nm in index_symbols:
                                 continue  # index/address symbol -> stays scalar
+                            if self._is_narrowed_constant_transient(inner_sdfg, nm):
+                                continue  # narrowed compile-time constant -> stays a Scalar broadcast
                             if not self._is_widenable(desc):
                                 raise self._unwidenable_lane_dep_error(nm, desc)
                             if nm not in lane_dep_transients:
                                 lane_dep_transients.add(nm)
                                 changed = True
         return lane_dep_transients
+
+    @staticmethod
+    def _is_narrowed_constant_transient(inner_sdfg: SDFG, name: str) -> bool:
+        """True iff transient ``name`` is produced SOLELY by pure compile-time constant
+        assignments -- ``out = <numeric literal>`` or a SAME-DOMAIN dtype cast
+        ``out = TYPE(<numeric literal>)`` (fp -> fp / int -> int) with NO data inputs.
+
+        Such a scalar is a narrowed compile-time constant (design 6.5): the consuming tile
+        op splats it as a single-element broadcast operand, so it must stay a Scalar rather
+        than widen into a per-lane fill tile -- keeping ``dace.float16(0.125) * b`` on the
+        same broadcast path as the un-cast literal ``0.125 * b``. A cross-domain cast
+        (fp <-> int) is a real numeric conversion and is NOT matched (it stays widenable).
+        Any non-tasklet producer (a copy / lib node) or a data-input tasklet disqualifies
+        the name (it is a genuine produced per-lane value).
+        """
+        desc = inner_sdfg.arrays.get(name)
+        if desc is None:
+            return False
+        found_producer = False
+        for state in inner_sdfg.states():
+            for node in state.nodes():
+                if not (isinstance(node, AccessNode) and node.data == name):
+                    continue
+                for edge in state.in_edges(node):
+                    if not isinstance(edge.src, Tasklet):
+                        return False  # a copy / lib-node producer -> not a pure constant
+                    tasklet = edge.src
+                    if any(e.data is not None and e.data.data is not None for e in state.in_edges(tasklet)):
+                        return False  # has a DATA input -> a produced per-lane value, not a constant
+                    body = tasklet.code.as_string if tasklet.code is not None else ""
+                    body = body.strip().rstrip(";").strip()
+                    out_conn = next(iter(tasklet.out_connectors), None)
+                    if out_conn is None or not body.startswith(f"{out_conn} = "):
+                        return False
+                    rhs = body[len(f"{out_conn} = "):].strip()
+                    if rhs.startswith("(") and rhs.endswith(")"):
+                        rhs = rhs[1:-1].strip()
+                    if not is_same_domain_constant(rhs, desc.dtype):
+                        return False
+                    found_producer = True
+        return found_producer
 
     def _edge_reads_lane_dependent(self, edge, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> bool:
         """True if the copy edge's SOURCE-side subset has >=1 non-CONSTANT (lane-dependent) dim.
@@ -502,10 +547,9 @@ class WidenAccesses(ppl.Pass):
         under-widened (which the post-widen invariant would later flag as a broken
         invariant instead of an honest unsupported-pattern refusal).
         """
-        return NotImplementedError(
-            f"WidenAccesses: lane-dependent transient '{name}' has non-scalar shape "
-            f"{tuple(desc.shape)}; widening a multi-element per-lane buffer to (W, ...) is "
-            f"unsupported. Refusing rather than emitting an under-widened tile.")
+        return NotImplementedError(f"WidenAccesses: lane-dependent transient '{name}' has non-scalar shape "
+                                   f"{tuple(desc.shape)}; widening a multi-element per-lane buffer to (W, ...) is "
+                                   f"unsupported. Refusing rather than emitting an under-widened tile.")
 
     # --- Step 5: seed per-lane symbols for Bypass-form gathers --------------
     def _seed_per_lane_symbols(self,
@@ -597,8 +641,7 @@ class WidenAccesses(ppl.Pass):
                 # its ``other_subset`` to ``[0:W]`` on a shape-``(1,)`` array is out-of-bounds. Keep
                 # ``other_subset`` un-widened when the OTHER endpoint stays single-element (not
                 # itself a tile being widened this sweep).
-                if edge.data.other_subset is not None and self._other_endpoint_widens(
-                        edge, name, inner_sdfg, to_widen):
+                if edge.data.other_subset is not None and self._other_endpoint_widens(edge, name, inner_sdfg, to_widen):
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
         return True
 
@@ -677,8 +720,7 @@ class WidenAccesses(ppl.Pass):
                     m = edge.data
                     if m is None or m.wcr is not None or m.subset is None:
                         continue
-                    if not (isinstance(edge.dst, AccessNode) and edge.dst.data == oc
-                            and ist.out_degree(edge.dst) == 0):
+                    if not (isinstance(edge.dst, AccessNode) and edge.dst.data == oc and ist.out_degree(edge.dst) == 0):
                         continue
                     if not isinstance(edge.src, AccessNode):
                         continue
@@ -700,8 +742,8 @@ class WidenAccesses(ppl.Pass):
         """
         priv_node = edge.src
         priv_sub = copy.deepcopy(edge.data.subset)
-        oc_sub = (copy.deepcopy(edge.data.other_subset)
-                  if edge.data.other_subset is not None else subsets.Range([(0, 0, 1)]))
+        oc_sub = (copy.deepcopy(edge.data.other_subset) if edge.data.other_subset is not None else subsets.Range([(0, 0,
+                                                                                                                   1)]))
         tasklet = ist.add_tasklet('reduce_accum', {'__in1', '__in2'}, {'__out'}, f'__out = {body_expr}')
         ist.add_edge(ist.add_access(oc), None, tasklet, '__in1', Memlet(data=oc, subset=copy.deepcopy(oc_sub)))
         ist.add_edge(priv_node, None, tasklet, '__in2', Memlet(data=priv_node.data, subset=priv_sub))

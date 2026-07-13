@@ -98,6 +98,72 @@ def _cast_call_inner(rhs: str) -> Optional[Tuple[str, str]]:
     return (name, inner) if inner else None
 
 
+def numeric_constant_domain(rhs: str) -> Optional[str]:
+    """Numeric domain of a bare compile-time literal ``rhs``: ``"int"`` for an integer
+    literal, ``"float"`` for a floating-point literal, ``None`` when ``rhs`` is not a pure
+    numeric constant (a symbol, an expression with free symbols, or unparseable).
+
+    Drives the "constant stays a single-element broadcast" decision: a scalar produced by
+    a pure ``out = <literal>`` (or a same-domain ``out = TYPE(<literal>)`` cast) is a
+    narrowed compile-time constant that the consuming tile op splats across lanes, so it
+    must NOT be materialised as a per-lane fill tile. Domain is read off the sympy literal
+    type (``Integer`` vs ``Float``), never a hardcoded dtype.
+    """
+    try:
+        expr = dace.symbolic.pystr_to_symbolic(rhs)
+    except Exception:  # noqa: BLE001 -- unparseable RHS is not a numeric constant
+        return None
+    if expr is None or expr.free_symbols or not bool(expr.is_number):
+        return None
+    if expr.is_Integer:
+        return "int"
+    if expr.is_Float:
+        return "float"
+    return None  # bare Rational / complex / unrecognised literal -- treat as non-simple
+
+
+def dtype_numeric_domain(dtype) -> Optional[str]:
+    """Numeric domain of a DaCe descriptor ``dtype``: ``"int"`` (signed/unsigned integer),
+    ``"float"`` (floating point), else ``None`` (bool / complex / no numpy mapping).
+
+    Inferred from the numpy dtype kind so no specific dtype is hardcoded; the classifier
+    only ever compares the *kind* (int vs fp) of a constant against its target descriptor.
+    """
+    if dtype is None:
+        return None
+    try:
+        npdt = np.dtype(dtype.as_numpy_dtype())
+    except Exception:  # noqa: BLE001 -- exotic dtype without a numpy mapping
+        return None
+    if np.issubdtype(npdt, np.integer):
+        return "int"
+    if np.issubdtype(npdt, np.floating):
+        return "float"
+    return None
+
+
+def is_same_domain_constant(rhs: str, target_dtype) -> bool:
+    """True iff ``rhs`` is a pure compile-time numeric constant whose domain matches
+    ``target_dtype``'s domain -- an integer literal into an integer dtype, or a
+    floating-point literal into a floating-point dtype. Sees THROUGH one dtype-cast layer,
+    so both a bare literal (``0.125``) and a cast-of-literal (``dace.float16(0.125)``) are
+    matched against the target descriptor's domain.
+
+    Such a constant is a same-domain narrowing (``dace.float16(0.125)`` into a float16
+    tile): value-preserving in kind, so it stays a single-element broadcast operand fed
+    straight to the tile intrinsic. A CROSS-domain literal (fp -> int, int -> fp) is a
+    genuine numeric conversion (truncation / promotion) and is deliberately excluded --
+    those keep the real, materialised lowering, matching the frontend's conversion
+    semantics. Symbols / free-symbol expressions are not constants and return False.
+    """
+    lit = rhs.strip()
+    hit = _cast_call_inner(lit)
+    if hit is not None:
+        lit = hit[1]  # peel one dtype-cast layer: TYPE(<literal>) -> <literal>
+    lit_domain = numeric_constant_domain(lit)
+    return lit_domain is not None and lit_domain == dtype_numeric_domain(target_dtype)
+
+
 def _normalize_python_tasklet_body(body: str) -> Optional[str]:
     """Rewrite Python boolean syntax (``or`` / ``and``) to the C forms (``||`` / ``&&``)
     the binop detectors match. Returns ``None`` for bodies containing ``@`` (matmul is
@@ -491,6 +557,27 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         return out_conn, rhs
 
+    def _reads_scalar_operand_inline(self, node) -> bool:
+        """True if ``node`` is a compute tasklet that reads a Scalar operand as an INLINE
+        broadcast when converted -- a plain binop (``_o = _a <op> _b``), a binop with an
+        inline symbol operand, a unary op / dtype cast, or a trivial assign. Those lower a
+        single-element operand to a ``_bc[1]`` splat / scalar-in ``TileUnop`` /
+        ``TileLoad(src_kind='Scalar')`` without a per-lane fill, so a same-domain constant
+        feeding them can stay a Scalar broadcast.
+
+        A ``TileITE`` arm / masked-write / reduction consumer materialises a scalar arm
+        through a per-lane fill instead, so it returns ``False`` (the constant keeps the
+        widened ``TileLoad(src_kind='Symbol')`` broadcast). Non-tasklet consumers (a tile
+        lib node, an AccessNode copy) likewise return ``False``.
+        """
+        if not isinstance(node, Tasklet):
+            return False
+        # An ITE / masked-write consumer must NOT keep a scalar arm (it would fill per lane).
+        if self._detect_ite(node) is not None or self._detect_conditional_write(node) is not None:
+            return False
+        return (self._detect_binop(node) is not None or self._detect_binop_with_symbol(node) is not None
+                or self._detect_unop(node) is not None or self._detect_assign(node) is not None)
+
     def _convert_const_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str,
                                                                                                          ...]) -> bool:
         """Replace ``_o = <const_expr>`` (loop-invariant literal / symbol store) with a
@@ -504,6 +591,32 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if not out_edges:
             return False
         out_edge = out_edges[0]
+        # A pure SAME-DOMAIN compile-time constant (fp literal into an fp scalar, int into an
+        # int scalar) is a narrowed constant, not a produced per-lane value: keep it a Scalar
+        # so the consuming compute op splats it (a single-element broadcast operand), instead
+        # of widening it to a tile materialised by a preceding per-lane fill loop. This makes
+        # ``k = 0.125; ... A[i] * dace.float16(k)`` lower to the same broadcast shape as the
+        # inline literal ``0.125 * A[i]``. A cross-domain literal (fp -> int / int -> fp) is a
+        # real conversion and keeps the materialised lowering below. Domain is inferred from
+        # the output descriptor dtype (never hardcoded). The dtype-cast constant form
+        # ``dace.float16(0.125)`` is caught earlier by ``_convert_unop_with_symbol`` (a Symbol
+        # operand), so this only sees bare literals / symbol exprs.
+        #
+        # Gate on the consumer: only a plain binop / unop / assign reads a Scalar operand as an
+        # INLINE broadcast (``_bc[1] = {(T)(scalar)}`` on the TileBinop, a scalar-in TileUnop,
+        # or a ``TileLoad(src_kind='Scalar')`` copy) -- so a constant feeding one of those stays
+        # a Scalar. A ``TileITE`` arm / masked-write / reduction consumer instead materialises a
+        # scalar through a per-lane fill, and a ``TileStore`` ``_src`` / other lib node / AN
+        # copy needs the tile outright; for those the ``TileLoad(src_kind='Symbol')`` broadcast
+        # below is the clean lowering, so keep the widened form. Require EVERY consumer to be an
+        # inline-broadcasting compute tasklet before keeping the scalar.
+        const_dst = out_edge.dst
+        if (out_edge.data is not None and isinstance(const_dst, dace.nodes.AccessNode)):
+            const_desc = inner_state.sdfg.arrays.get(const_dst.data)
+            consumers = [e.dst for e in inner_state.out_edges(const_dst)]
+            if (const_desc is not None and is_same_domain_constant(str(expr), const_desc.dtype) and consumers
+                    and all(self._reads_scalar_operand_inline(c) for c in consumers)):
+                return False  # same-domain constant -> stays a scalar broadcast operand
         # Widen the output transient to tile shape when widenable; a genuinely
         # scalar (non-widenable) output stays the python scalar assign.
         self._ensure_output_widened(inner_state, out_edge)
