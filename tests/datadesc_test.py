@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 
 def test_strides():
@@ -29,6 +30,26 @@ def test_strides_alignment():
     assert perm_strides == (4, 1, 8)
 
 
+def test_numpy_integral_properties():
+    desc = dace.data.Array(dace.float64, (np.int32(10), ), strides=(np.int64(2), ), offset=(np.int16(1), ))
+    assert desc.shape == (10, )
+    assert desc.strides == (2, )
+    assert desc.offset == (1, )
+
+
+@dace.program
+def numpy_integral_shape_program(A: dace.float64[np.int32(10)]):
+    A += 1
+
+
+def test_numpy_integral_shape_program():
+    A = np.ones((10, ))
+    numpy_integral_shape_program(A)
+    np.testing.assert_equal(A, 2)
+
+
 if __name__ == '__main__':
     test_strides()
     test_strides_alignment()
+    test_numpy_integral_properties()
+    test_numpy_integral_shape_program()

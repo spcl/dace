@@ -5,11 +5,23 @@ Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
 from typing import Callable, List, Tuple
 
 import dace
+from dace import dtypes
 from dace.sdfg import nodes
 
-# Ambient GPU stream symbol the libnode CUDA expansions reference; both the
-# legacy and experimental codegens consume this exact name for stream wiring.
+# Both the legacy and experimental codegens consume this exact name for stream wiring.
 CURRENT_STREAM_NAME = "__dace_current_stream"
+
+# Register is intentionally in neither set: it resolves by scope (GPU register
+# in a device scope, host stack slot otherwise).
+GPU_RESIDENT_STORAGES = frozenset({
+    dtypes.StorageType.GPU_Global,
+    dtypes.StorageType.GPU_Shared,
+})
+CPU_RESIDENT_STORAGES = frozenset({
+    dtypes.StorageType.CPU_Heap,
+    dtypes.StorageType.CPU_Pinned,
+    dtypes.StorageType.CPU_ThreadLocal,
+})
 
 
 def collapse_shape_and_strides(
@@ -17,9 +29,8 @@ def collapse_shape_and_strides(
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
     """Drop length-1 dimensions from a (subset, strides) pair.
 
-    Surviving strides are scaled by the subset step (``stride * s``) so they describe the access
-    pattern as a view into the parent array -- a no-op for unit-step subsets, and the effective
-    per-element distance for strided ones.
+    Surviving strides are scaled by the subset step (``stride * s``) to describe the access as a
+    view into the parent array.
 
     :param subset: The access range, one ``(begin, end, step)`` per dimension.
     :param strides: The parent array strides, aligned with ``subset``.
@@ -39,8 +50,7 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
                   select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
     """Dispatch a library node's ``'Auto'`` implementation to the one picked by ``select_fn``.
 
-    Sets ``node.implementation`` to the resolved name so introspection
-    (debug output, downstream passes) reflects what was actually picked.
+    Sets ``node.implementation`` to the resolved name so introspection reflects what was picked.
 
     :param node: the library node being expanded.
     :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).

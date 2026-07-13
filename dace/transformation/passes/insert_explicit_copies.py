@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pass replacing implicit copy patterns (e.g. a path between two access nodes
-without an intermediate tasklet) with explicit ``CopyLibraryNode`` instances.
-"""
+"""Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
 import copy
 from typing import Any, Dict, Optional
 
@@ -11,12 +9,13 @@ from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
-    """Destination subset for a copy memlet that omits it: the full array when the
-    volumes are not provably unequal, else ``src_subset``.
+    """Derive the absent side of a copy memlet: the full array when volumes are not
+    provably unequal, else ``src_subset``.
 
     :param src_subset: the known (source) side of the copy.
     :param dst_desc: descriptor whose subset is being derived.
@@ -34,29 +33,18 @@ class InsertExplicitCopies(ppl.Pass):
     """Replaces implicit copy patterns with ``CopyLibraryNode`` instances.
 
     Detected patterns:
-    - ``AccessNode -> AccessNode`` (direct copy edge) -- lifted to a libnode.
-    - an ``AccessNode <-> View <-> AccessNode`` data-movement edge -- lifted to a libnode with
-      the View as a normal endpoint (treated like an array).
-    - ``AccessNode -> (MapEntry)+ -> AccessNode`` (stage-in) -- libnode placed
-      inside the innermost map scope, wired directly to the MapEntry's output
-      connector.
-    - ``AccessNode -> (MapExit)+ -> AccessNode`` (stage-out) -- symmetric;
-      libnode inside the map scope, output connector wired directly to the outermost
-      MapExit.
+    - ``AccessNode -> AccessNode`` (direct copy edge).
+    - ``AccessNode <-> View <-> AccessNode`` data-movement edge -- View treated as a normal array endpoint.
+    - ``AccessNode -> (MapEntry)+ -> AccessNode`` (stage-in) -- libnode placed inside the innermost map
+      scope, wired to the MapEntry output connector.
+    - ``AccessNode -> (MapExit)+ -> AccessNode`` (stage-out) -- symmetric, wired to the outermost MapExit.
     """
 
     # Storages whose copies CopyLibraryNode can lower. Other storages
     # (e.g. TensorCore_*, FPGA_*, Snitch_*) belong to custom codegen
     # targets that handle copies via their own ``copy_memory`` hook.
-    _STANDARD_STORAGES = frozenset({
-        dtypes.StorageType.Default,
-        dtypes.StorageType.Register,
-        dtypes.StorageType.CPU_Heap,
-        dtypes.StorageType.CPU_Pinned,
-        dtypes.StorageType.CPU_ThreadLocal,
-        dtypes.StorageType.GPU_Global,
-        dtypes.StorageType.GPU_Shared,
-    })
+    _STANDARD_STORAGES = (CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES
+                          | {dtypes.StorageType.Default, dtypes.StorageType.Register})
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -68,7 +56,7 @@ class InsertExplicitCopies(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Lift every implicit copy in ``sdfg`` to a ``CopyLibraryNode``.
+        """Lift every implicit copy in ``sdfg`` (and nested SDFGs) to a ``CopyLibraryNode``.
 
         :param sdfg: The SDFG to transform, recursively including nested SDFGs.
         :param pipeline_results: Results of previously applied passes (unused).
@@ -120,8 +108,7 @@ class InsertExplicitCopies(ppl.Pass):
                     or not isinstance(dst_desc, (data.Array, data.Scalar)):
                 continue
 
-            # Custom-target storages (e.g. TensorCore_A/B/Accumulator from
-            # the tensor_cores sample) are handled by their own codegen.
+            # Custom-target storages are handled by their own codegen, not CopyLibraryNode.
             if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
@@ -136,10 +123,8 @@ class InsertExplicitCopies(ppl.Pass):
                 src_subset = memlet.get_src_subset(edge, state)
                 dst_subset = memlet.get_dst_subset(edge, state)
 
-            # Fill in either side that wasn't carried by the memlet, deriving
-            # a matching range on the absent side from the array shape when
-            # the volumes line up (common for implicit copies between
-            # different-shaped but same-volume arrays).
+            # Derive any side the memlet did not carry from the array shape (handles
+            # implicit copies between different-shaped but same-volume arrays).
             if src_subset is None:
                 src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
             if dst_subset is None:
@@ -164,10 +149,8 @@ class InsertExplicitCopies(ppl.Pass):
     def _replace_map_staging_copies(self, state: SDFGState) -> int:
         """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
 
-        The libnode is placed inside the map scope: for stage-in it keeps the
-        per-iteration memlet on the MapEntry side and a descriptor-derived
-        memlet on the inner AccessNode; stage-out is symmetric. Chained
-        MapEntries / MapExits are followed via ``memlet_path``.
+        The libnode sits inside the map scope; chained MapEntries / MapExits are followed via
+        ``memlet_path``.
 
         :param state: The state to scan (owning SDFG is ``state.sdfg``).
         :returns: Number of libnodes inserted.
@@ -190,7 +173,7 @@ class InsertExplicitCopies(ppl.Pass):
         :returns: True iff the edge was lifted.
         """
         sdfg = state.sdfg
-        # For stage-in the inner side is edge.dst (AccessNode), for stage-out edge.src.
+        # Inner side: edge.dst for stage-in, edge.src for stage-out.
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
@@ -208,8 +191,7 @@ class InsertExplicitCopies(ppl.Pass):
             return False
 
         outer_memlet = edge.data
-        # The inner Memlet may be dst-relative (``data == inner_node.data``,
-        # outer-side subset in ``other_subset``); resolve the subset in the
+        # The memlet may be dst-relative (subset in ``other_subset``); resolve it in the
         # outer array's index space via ``get_src/dst_subset``.
         if stage_in:
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset

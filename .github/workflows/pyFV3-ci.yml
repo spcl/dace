@@ -25,7 +25,7 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
      - name: Checkout to repository
-       uses: actions/checkout@v6
+       uses: actions/checkout@v7
      - name: Set matrix data
        id: set-matrix
        run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT
@@ -40,13 +40,13 @@ jobs:
 
     steps:
     - name: Checkout pyFV3
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         repository: 'NOAA-GFDL/pyFV3'
         path: 'pyFV3'
 
     - name: Checkout dace
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         path: 'dace'
         submodules: 'recursive'
