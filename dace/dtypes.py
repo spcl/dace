@@ -90,6 +90,14 @@ GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
     ScheduleType.GPU_Warp,
 ]
 
+GPU_KERNEL_ACCESSIBLE_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
+    # Register is not added because register outside a kernel
+    # is a CPU stack array, and this will not work
+]
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
