@@ -36,6 +36,7 @@ import dace
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import ControlFlowBlockReachability
 from dace.transformation.transformation import explicit_cf_compatible
 
 # Symbol-name prefix the pass uses for the renamed iterators.  Includes
@@ -156,7 +157,64 @@ class UniqueLoopIterators(ppl.Pass):
         # Stride unknown -- fall back to last-attained value.
         return loop_end
 
-    def _apply_recursive(self, sdfg: dace.SDFG) -> None:
+    def _collect_symbol_readers(self, top_sdfg: dace.SDFG, of_interest: set) -> dict:
+        """Map each symbol in ``of_interest`` to the set of control-flow
+        blocks that READ it, across every (nested) region of ``top_sdfg``.
+
+        A read is either a state's memlet / tasklet use (surfaced by the
+        block's ``free_symbols``) or the consuming end of an interstate
+        edge -- attributed to the edge's DESTINATION block, i.e. the block
+        entered while that read is live.  Built once, before any rename,
+        and queried per loop by :meth:`_post_value_needed`.  Only
+        loop-variable names are of interest, so the map stays small.
+        """
+        readers: dict = {}
+        for cfr in top_sdfg.all_control_flow_regions(recursive=True):
+            for block in cfr.nodes():
+                for sym in block.free_symbols & of_interest:
+                    readers.setdefault(sym, set()).add(block)
+            for edge in cfr.edges():
+                for sym in edge.data.read_symbols() & of_interest:
+                    readers.setdefault(sym, set()).add(edge.dst)
+        return readers
+
+    def _post_value_needed(self, loop: LoopRegion, old_name: str, block_reach: dict, blocks_reading: dict) -> bool:
+        """Decide whether the iterator-after-loop assignment for
+        ``old_name`` should be materialised after ``loop``.
+
+        The assignment exists for one reason (class docstring): DOWNSTREAM
+        reads of the original loop-variable name must observe the
+        iterator-after-loop value.  Emit it when
+
+          * nothing reads ``old_name`` (a dead but harmless write on a
+            pure local -- kept for backward compatibility), or
+          * some reader is reachable AFTER the loop (the genuine
+            after-loop read this feature exists for), or
+          * every reader lives INSIDE this loop (again a pure local).
+
+        Skip it in exactly one structural situation: ``old_name`` is read
+        OUTSIDE the loop yet NOWHERE downstream of it.  That means the
+        name is a free-symbol PARAMETER -- an external value live on entry
+        that inlining collapsed to a per-block index and left sharing its
+        mangled name with a residual block loop, every use sitting in a
+        disjoint / upstream branch.  Materialising the assignment there is
+        dead AND makes frame-codegen declare a local of that name,
+        shadowing the parameter -- a hard C++ compile error.  The decision
+        keys on that structure (external reader, no downstream reader),
+        never on the symbol's name, so a genuine local read past its loop
+        is untouched.
+        """
+        readers = blocks_reading.get(old_name)
+        if not readers:
+            return True
+        reach = block_reach.get(loop.parent_graph.cfg_id, {}).get(loop)
+        if reach and not readers.isdisjoint(reach):
+            return True
+        own = set(loop.all_control_flow_blocks(recursive=True))
+        own.add(loop)
+        return readers.issubset(own)
+
+    def _apply_recursive(self, sdfg: dace.SDFG, block_reach: dict, blocks_reading: dict) -> None:
         # Names DaCe knows are arrays -- ``symstr`` uses this set to
         # render array subscripts as ``arr[idx]`` (Python syntax for
         # interstate-edge assignments) rather than ``arr(idx)`` (sympy
@@ -174,7 +232,8 @@ class UniqueLoopIterators(ppl.Pass):
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{UniqueLoopIterators._loop_var_counter}"
             self._rename_one_loop_var(cfg, old_name, new_name)
 
-            if self.assign_loop_iterator_post_value:
+            if self.assign_loop_iterator_post_value and self._post_value_needed(cfg, old_name, block_reach,
+                                                                                blocks_reading):
                 post_value = self._compute_post_value(cfg)
                 if post_value is not None:
                     post_value_str = dace.symbolic.symstr(post_value, arrayexprs=array_names).strip()
@@ -189,7 +248,27 @@ class UniqueLoopIterators(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_recursive(node.sdfg)
+                    self._apply_recursive(node.sdfg, block_reach, blocks_reading)
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
-        self._apply_recursive(sdfg)
+        # The post-value assignment must only be emitted for a loop
+        # variable that is actually read after its loop (see
+        # ``_post_value_needed``).  Deciding that needs forward
+        # control-flow reachability plus a symbol-reader index; both are
+        # computed ONCE here, before any rename mutates the graph, and
+        # only when the Fortran-specific post-value behaviour is enabled
+        # (pure Python / DaCe callers pay nothing).  Renaming never adds
+        # or removes regions and the post-value states we append are pure
+        # writers, so neither map goes stale for the queries we make.
+        block_reach: dict = {}
+        blocks_reading: dict = {}
+        if self.assign_loop_iterator_post_value:
+            loop_vars = {
+                cfg.loop_variable
+                for cfg in sdfg.all_control_flow_regions(recursive=True)
+                if isinstance(cfg, LoopRegion) and cfg.loop_variable
+            }
+            if loop_vars:
+                block_reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
+                blocks_reading = self._collect_symbol_readers(sdfg, loop_vars)
+        self._apply_recursive(sdfg, block_reach, blocks_reading)
