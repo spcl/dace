@@ -554,7 +554,12 @@ def pipeline_auto_opt(sdfg, device='cpu'):
     before expansion -- the same ``perf_library_prio`` the other lanes force."""
     from dace.transformation.auto.auto_optimize import auto_optimize
     _set_tree_reduction(False)
-    return auto_optimize(sdfg, _device_type(device), find_fast_library_fn=perf_library_prio)
+    # On GPU force all non-transient (I/O) arrays onto GPU_Global storage (use_gpu_storage): the whole
+    # program stays device-resident like pipeline_parallel/canon_gpu. auto_optimize defaults
+    # use_gpu_storage=False, which leaves interface arrays on host -- a mixed-storage interface the
+    # harness would then have to marshal per-arg. All-arrays-on-device is the GPU-path invariant.
+    return auto_optimize(sdfg, _device_type(device), use_gpu_storage=(device == 'gpu'),
+                         find_fast_library_fn=perf_library_prio)
 
 
 def pipeline_parallel(sdfg, device='cpu'):
