@@ -98,8 +98,8 @@ def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, obj
         if subset is None or len(subset) != len(desc.strides):
             continue
         for rng, stride in zip(subset.ndrange(), desc.strides):
-            index_expr = sympy.sympify(rng[0])
-            stride_val = sympy.Abs(sympy.sympify(stride))
+            index_expr = pystr_to_symbolic(rng[0])
+            stride_val = sympy.Abs(pystr_to_symbolic(stride))
             free_names = {str(s) for s in index_expr.free_symbols}
             present = [v for v in var_set if v in free_names]
             if not present:
@@ -218,7 +218,7 @@ class MinimizeStridePermutation(ppl.Pass):
         # (e.g. ``N*M`` versus ``M``), so leaving the nest untouched is the
         # intended, idempotent behavior rather than guessing an order.
         for stride_score, _ in scores:
-            term = sympy.sympify(stride_score)
+            term = pystr_to_symbolic(stride_score)
             if not (term.is_number and term.is_finite and not term.free_symbols):
                 return 0
 

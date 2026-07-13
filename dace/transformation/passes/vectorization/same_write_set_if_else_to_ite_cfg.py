@@ -783,7 +783,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             gsym = f'_gidx_{gidx}'
             sdfg.add_symbol(gsym, sdfg.arrays[index_array].dtype)
             def_edge.data.assignments[gsym] = index_text
-            replace[sub] = sympy.Symbol(gsym)
+            replace[sub] = symbolic.pystr_to_symbolic(gsym)
         return printer.doprint(base.xreplace(replace))
 
     def _inline_interstate_scalar_symbols(self, sdfg: dace.SDFG, rhs_text: str, exclude: set) -> Tuple[str, dict]:

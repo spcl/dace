@@ -148,7 +148,7 @@ def affine_in_iv(
     """
     if expr is None:
         return None
-    e = sympy.sympify(expr)
+    e = symbolic.pystr_to_symbolic(expr)
     iv_names = set(ivs)
     # DaCe uses its own ``symbolic.symbol`` subclass; sympy treats it as a
     # distinct Symbol from ``sympy.Symbol(name)``, so match by name string.
@@ -159,19 +159,19 @@ def affine_in_iv(
     if not referenced:
         if invariant_syms is not None and not (free <= invariant_syms):
             return None
-        return (None, sympy.Integer(0), e)
+        return (None, symbolic.pystr_to_symbolic(0), e)
 
     for iv_name in referenced:
         iv_sym = sym_by_name[iv_name]
         try:
-            scale = sympy.simplify(sympy.diff(e, iv_sym))
+            scale = symbolic.simplify(sympy.diff(e, iv_sym))
         except Exception:
             continue
         scale_free = {str(s) for s in scale.free_symbols}
         if scale_free & iv_names:
             continue
         try:
-            offset = sympy.simplify(e - scale * iv_sym)
+            offset = symbolic.simplify(e - scale * iv_sym)
         except Exception:
             continue
         offset_free = {str(s) for s in offset.free_symbols}
@@ -267,7 +267,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
     step = get_loop_stride(loop)
     if start is None or step is None:
         return ivs
-    if loop.loop_variable in {str(s) for s in sympy.sympify(step).free_symbols}:
+    if loop.loop_variable in {str(s) for s in symbolic.pystr_to_symbolic(step).free_symbols}:
         return ivs
 
     ivs[loop.loop_variable] = InductionVariable(
@@ -308,7 +308,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
                 continue
             # Reject self-referential assignments like ``j = j + i``: the RHS
             # must not mention the name being classified.
-            if name in {str(s) for s in sympy.sympify(rhs_sym).free_symbols}:
+            if name in {str(s) for s in symbolic.pystr_to_symbolic(rhs_sym).free_symbols}:
                 pending.pop(name)
                 continue
             result = affine_in_iv(rhs_sym, ivs)

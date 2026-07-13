@@ -250,12 +250,12 @@ class LoopStridePermutation(ppl.Pass):
                     continue
                 for rng, stride in zip(subset.ndrange(), desc.strides):
                     try:
-                        is_unit = bool(dace.symbolic.simplify(sympy.sympify(stride) - 1) == 0)
+                        is_unit = bool(dace.symbolic.simplify(pystr_to_symbolic(stride) - 1) == 0)
                     except Exception:  # noqa: BLE001
                         is_unit = False
                     if not is_unit:
                         continue
-                    index_expr = sympy.sympify(rng[0])
+                    index_expr = pystr_to_symbolic(rng[0])
                     free = {str(s) for s in index_expr.free_symbols}
                     for v in loop_vars:
                         if v not in free:

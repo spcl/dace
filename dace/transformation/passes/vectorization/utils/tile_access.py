@@ -674,7 +674,7 @@ def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
     if poly.degree() > 1:
         return None
     if poly.degree() == 0:
-        return sympy.Integer(0)
+        return symbolic.pystr_to_symbolic(0)
     return poly.coeff_monomial(sym)  # degree 1
 
 

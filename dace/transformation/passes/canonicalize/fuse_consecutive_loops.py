@@ -78,7 +78,7 @@ def _symbolically_equal(a, b) -> bool:
         diff = symbolic.simplify(symbolic.pystr_to_symbolic(a) - symbolic.pystr_to_symbolic(b))
         if diff == 0:
             return True
-        return sympy.simplify(_int_floor_to_sympy(diff)) == 0
+        return symbolic.simplify(_int_floor_to_sympy(diff)) == 0
     except Exception:
         return False
 

@@ -44,9 +44,12 @@ def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
     undecidable even under the assumption), so it is rejected rather than renamed.
     Returns ``False`` on any sympy uncertainty (``is_nonnegative`` is ``None``).
     """
-    import sympy
+    from dace import symbolic
     try:
-        subs = {s: sympy.Symbol(s.name, nonnegative=True) for s in expr.free_symbols}
+        # Fresh DaCe symbols (uncached ``__xnew__``) carrying the nonnegativity
+        # assumption for a LOCAL proof; ``_eval_subs`` matches by name, so the
+        # substitution lands without polluting the global symbol registry.
+        subs = {s: symbolic.symbol(s.name, nonnegative=True) for s in expr.free_symbols}
         return bool(expr.subs(subs).is_nonnegative)
     except (AttributeError, TypeError):
         return False

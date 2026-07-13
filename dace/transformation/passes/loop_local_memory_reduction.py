@@ -289,7 +289,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
             # Add positive symbol assumption
             if self.assume_positive_symbols and issymbolic(cond):
-                pos_syms = {s: sp.Symbol(s.name, positive=True) for s in cond.free_symbols}
+                pos_syms = {s: symbolic.symbol(s.name, positive=True) for s in cond.free_symbols}
                 cond = cond.xreplace(pos_syms)
 
             # Take maximum from previous accesses into account

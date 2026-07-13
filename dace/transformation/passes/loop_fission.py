@@ -11,6 +11,7 @@ import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
+from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.sdfg.sdfg import InterstateEdge
@@ -34,9 +35,8 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
     """
     if loop_var is None or subset is None:
         return False
-    import sympy as sp
     try:
-        loop_sym = sp.Symbol(loop_var)
+        loop_sym = symbolic.pystr_to_symbolic(loop_var)
     except Exception:
         return False
     saw_loop_var = False
@@ -44,11 +44,11 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
         if rb != re_:
             return False
         try:
-            expr = sp.sympify(str(rb))
+            expr = symbolic.pystr_to_symbolic(str(rb))
         except Exception:
             return False
         if loop_sym in expr.free_symbols:
-            offset = sp.simplify(expr - loop_sym)
+            offset = symbolic.simplify(expr - loop_sym)
             if not (getattr(offset, 'is_number', False) and offset == 0):
                 return False
             saw_loop_var = True

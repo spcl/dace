@@ -94,11 +94,11 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
     stride = get_loop_stride(loop)
     if init is None or end is None or stride is None:
         return False
-    s = sympy.sympify(stride)
+    s = symbolic.pystr_to_symbolic(stride)
     if s.is_positive:
-        diff = sympy.simplify(sympy.sympify(end) - sympy.sympify(init))
+        diff = symbolic.simplify(symbolic.pystr_to_symbolic(end) - symbolic.pystr_to_symbolic(init))
     elif s.is_negative:
-        diff = sympy.simplify(sympy.sympify(init) - sympy.sympify(end))
+        diff = symbolic.simplify(symbolic.pystr_to_symbolic(init) - symbolic.pystr_to_symbolic(end))
     else:
         return False
     return diff.is_nonnegative is True
@@ -116,12 +116,12 @@ def _last_reached_iterate(loop: LoopRegion):
     stride = get_loop_stride(loop)
     if init is None or end is None or stride is None:
         return None
-    init_s = sympy.sympify(init)
-    end_s = sympy.sympify(end)
-    stride_s = sympy.sympify(stride)
+    init_s = symbolic.pystr_to_symbolic(init)
+    end_s = symbolic.pystr_to_symbolic(end)
+    stride_s = symbolic.pystr_to_symbolic(stride)
     if stride_s == 1:
         return end_s
-    return sympy.simplify(init_s + sympy.floor((end_s - init_s) / stride_s) * stride_s)
+    return symbolic.simplify(init_s + sympy.floor((end_s - init_s) / stride_s) * stride_s)
 
 
 def _has_outer_carry(subset, iv: str) -> bool:
@@ -133,15 +133,15 @@ def _has_outer_carry(subset, iv: str) -> bool:
     """
     if subset is None:
         return False
-    iv_sym = sympy.Symbol(iv)
+    iv_sym = symbolic.pystr_to_symbolic(iv)
     for rb, re_, _ in subset.ndrange():
         for expr in (rb, re_):
             try:
-                e = sympy.sympify(str(expr))
+                e = symbolic.pystr_to_symbolic(str(expr))
             except Exception:
                 return True  # unparseable -> assume the worst
             if iv_sym in e.free_symbols:
-                if sympy.simplify(e - iv_sym) != 0:
+                if symbolic.simplify(e - iv_sym) != 0:
                     return True
     return False
 
