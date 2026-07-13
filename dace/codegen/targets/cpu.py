@@ -25,6 +25,29 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
+def gpu_block_reduction_write_slot(subset, base, length):
+    """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
+
+    Returns the index into the per-thread register partial (``offset - base``) for a write the
+    block fold can absorb, or ``None`` if it cannot -- in which case the caller keeps the plain
+    atomic WCR. Only a single 1-D element inside the reduced span ``[base, base + length)`` is
+    foldable; a multi-dimensional subset, a missing subset, or a constant offset outside the span
+    (e.g. from a second reduction edge over the same array) falls back to the atomic.
+
+    :param subset: the write memlet's subset.
+    :param base: the reduced range base recorded when the accumulator was covered.
+    :param length: the reduced span length ``m`` (the register partial has this many slots).
+    :return: the (possibly symbolic) slot expression, or ``None`` to keep the atomic path.
+    """
+    if subset is None or len(subset.ranges) != 1:
+        return None
+    offset = subset.ranges[0][0] - base
+    if not symbolic.issymbolic(offset):
+        if int(offset) < 0 or int(offset) >= length:
+            return None
+    return offset
+
+
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
     """ SDFG CPU code generator. """
@@ -997,9 +1020,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
         cover = self._gpu_block_reduction_covered.get(memlet.data)
         if cover is not None:
-            slot = sym2cpp(memlet.subset.ranges[0][0] - cover['base'])
-            lhs = f"{cover['partial']}[{slot}]"
-            return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
+            slot = gpu_block_reduction_write_slot(memlet.subset, cover['base'], cover['m'])
+            if slot is not None:
+                lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
+                return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)

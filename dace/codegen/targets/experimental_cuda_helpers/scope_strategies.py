@@ -201,6 +201,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                     'credtype': red['credtype'],
                     'ctype': red['ctype'],
                     'base': red['base'],
+                    'm': red['m'],
                 }
 
             # Bounds guards go in their own manager so they close before the block fold: cub's

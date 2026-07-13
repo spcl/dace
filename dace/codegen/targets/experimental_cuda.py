@@ -2,6 +2,7 @@
 """Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
+import numpy as np
 
 import dace
 from dace import data as dt, Memlet
@@ -652,12 +653,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             map_exit = state.exit_node(scope_entry)
         except (KeyError, StopIteration):
             return out
-        # cub::BlockReduce<T, N> requires a compile-time-constant thread count.
+        # cub::BlockReduce templates on the block dimensions, which must be compile-time constants.
         if any(symbolic.issymbolic(b, sdfg.constants) for b in block_dims):
             return out
-        num_threads = 1
-        for b in block_dims:
-            num_threads *= int(b)
+        # block_dims is always the 3D (x, y, z) launch shape; cub reduces over the whole block and
+        # must be told each dimension (the 1-D BlockReduce<T, N> form mis-maps threads whenever
+        # the block is 2-D/3-D, since it assumes threadIdx.y == threadIdx.z == 0).
+        block_x, block_y, block_z = (int(block_dims[0]), int(block_dims[1]), int(block_dims[2]))
         map_params = set(scope_entry.map.params)
         seen_targets: Set[str] = set()
         for i, iedge in enumerate(state.in_edges(map_exit)):
@@ -688,13 +690,22 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             seen_targets.add(iedge.data.data)
             ctype = acc_desc.dtype.ctype
             partial = f'__bpart_{state.block_id}_{state.node_id(scope_entry)}_{i}'
+            # Format the identity as a typed literal. Routing it through ``float`` loses precision
+            # for 64-bit integer extremes (e.g. a Min identity of INT64_MAX rounds to 2**63 and
+            # overflows the cast), so emit integers as integers.
+            if np.issubdtype(acc_desc.dtype.type, np.integer):
+                identity_literal = f'{ctype}({int(identity)})'
+            else:
+                identity_literal = f'{ctype}({float(identity)!r})'
             out.append({
                 'acc_ptr': ptr(iedge.data.data, acc_desc, sdfg, self._frame),
                 'partial': partial,
                 'ctype': ctype,
                 'credtype': 'dace::ReductionType::' + str(redtype).split('.')[-1],
-                'identity': f'{ctype}({float(identity)!r})',
-                'num_threads': num_threads,
+                'identity': identity_literal,
+                'block_x': block_x,
+                'block_y': block_y,
+                'block_z': block_z,
                 'm': m,
                 'base': base,
                 'data': iedge.data.data,
@@ -719,7 +730,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         base_cpp = sym2cpp(red['base'])
         stream.write(
             '{{\n'
-            'typedef cub::BlockReduce<{ctype}, {num_threads}> __brt_{id};\n'
+            'typedef cub::BlockReduce<{ctype}, {block_x}, cub::BLOCK_REDUCE_WARP_REDUCTIONS, {block_y}, {block_z}> '
+            '__brt_{id};\n'
             '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
             'for (int __bk_{id} = 0; __bk_{id} < {m}; ++__bk_{id}) {{\n'
             '    {ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}[__bk_{id}], {functor}());\n'

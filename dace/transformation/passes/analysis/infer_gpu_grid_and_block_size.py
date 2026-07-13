@@ -89,8 +89,13 @@ class InferGPUGridAndBlockSize(ppl.Pass):
                              "as it assumes AddThreadBlockMap was applied beforehand.\n"
                              f"Check for issues in that transformation or ensure AddThreadBlockMap was applied.")
 
-        # Overapproximated block size enclosing all inner ThreadBlock maps
+        # Overapproximated block size enclosing all inner ThreadBlock maps. Normalize a user-set
+        # ``gpu_block_size`` to 3D so it compares like the (always-3D) thread-block sizes below; a
+        # non-3D value (e.g. [128]) would otherwise never match and be flagged as a false conflict,
+        # and would mis-zip in the elementwise ``Max``.
         block_size = kernel_map_entry.map.gpu_block_size
+        if block_size is not None:
+            block_size = to_3d_dims(list(block_size))
         detected_block_sizes = [block_size] if block_size is not None else []
         for tb_map in threadblock_maps:
 
