@@ -1253,12 +1253,19 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
       tail (which would otherwise split into two GPU_Device maps of different
       thread-block sizes). The caller guarantees the even extent.
 
-    The tile ops must run inside a GPU kernel for the ``__device__`` half2 intrinsics
-    to apply, so the target map must be ``GPU_Device``-scheduled; :meth:`apply_pass`
-    runs ``apply_gpu_transformations`` first when the input SDFG has no GPU map yet.
+    The tile ops must run inside a GPU kernel for the ``__device__`` half2 intrinsics to
+    apply, so the target map must ALREADY be ``GPU_Device``-scheduled (or a ``Sequential`` map
+    nested through scopes / NestedSDFG boundaries inside a ``GPU_Device`` scope). This pass does
+    NOT offload / schedule: it assumes the caller -- the canonicalize-GPU pipeline
+    (``finalize_for_target(sdfg, 'gpu')`` -> :func:`~dace.transformation.passes.canonicalize.finalize.offload_to_gpu`)
+    -- moved the SDFG onto the device FIRST, and only vectorizes the already-resident maps
+    (:class:`MarkTileDims` with ``require_gpu_resident=True`` skips host maps). It never calls
+    ``apply_gpu_transformations`` -- device offload is the caller's job, never the vectorizer's,
+    so running the vectorizer is idempotent w.r.t. offloading. On an un-offloaded (host) SDFG it
+    finds no GPU-resident innermost map and no-ops.
     """
 
-    def __init__(self, config: VectorizeConfig, gpu_schedule_if_needed: bool = True):
+    def __init__(self, config: VectorizeConfig):
         """Build the GPU orchestrator from a :class:`VectorizeConfig`.
 
         The GPU row is pinned regardless of the config: ``device=GPU``, ``target_isa=CUDA``,
@@ -1266,23 +1273,11 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         must be even) and the remaining flags come from ``config`` -- GPU callers typically
         pass ``VectorizeConfig(widths=(2,), expand_tile_nodes=False)``.
 
+        The input SDFG must ALREADY be GPU-offloaded (its maps ``GPU_Device``-scheduled). This
+        pass never offloads / schedules the SDFG itself (no ``apply_gpu_transformations``): the
+        canonicalize-GPU pipeline offloads BEFORE the vectorizer runs.
+
         :param config: The vectorizer configuration; its ``device`` / ``target_isa`` /
             ``assume_even`` are overridden with the GPU values.
-        :param gpu_schedule_if_needed: When ``True`` (default), run
-            ``apply_gpu_transformations`` in :meth:`apply_pass` if the SDFG has no
-            ``GPU_Device`` map yet. Set ``False`` when the caller has already scheduled.
         """
         super().__init__(dataclasses.replace(config, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=True))
-        self._gpu_schedule_if_needed = gpu_schedule_if_needed
-
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
-        """GPU-schedule the SDFG (if needed), then run the half2 tile pipeline.
-
-        :param sdfg: SDFG to transform in place.
-        :param pipeline_results: Carry-in from any enclosing pipeline.
-        :returns: Whatever the tile pipeline returned.
-        """
-        if self._gpu_schedule_if_needed and not _has_gpu_device_map(sdfg):
-            sdfg.apply_gpu_transformations()
-            sdfg.simplify(skip={'ArrayElimination'})  # preserve anti-dep snapshots (see apply_pass)
-        return super().apply_pass(sdfg, pipeline_results)

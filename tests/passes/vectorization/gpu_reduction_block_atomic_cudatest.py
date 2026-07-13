@@ -36,6 +36,7 @@ from dace.transformation.interstate import LoopToMap
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileReduce
 
 _HAS_NVCC = shutil.which("nvcc") is not None
@@ -71,12 +72,18 @@ _PROGRAMS = {"sum": (_vsum16, "Sum"), "max": (_vmax16, "Max"), "min": (_vmin16, 
 
 
 def _vectorized(prog):
-    """@dace.program -> simplify + AugAssignToWCR + LoopToMap + VectorizeGPU (half2 GPU)."""
+    """@dace.program -> simplify + AugAssignToWCR + LoopToMap + GPU-offload + VectorizeGPU (half2 GPU).
+
+    ``VectorizeGPU`` assumes an already-offloaded SDFG (it never schedules / offloads itself), so we
+    run the canonicalize-GPU offload (:func:`offload_to_gpu`) FIRST -- mirroring the production
+    ``finalize_for_target(sdfg, 'gpu')`` path -- before vectorizing the resident ``GPU_Device`` map.
+    """
     sdfg = prog.to_sdfg(simplify=True)
     # min/max loop-carried -> WCR writes here; sum already map+WCR from frontend, unaffected.
     sdfg.apply_transformations_repeated(AugAssignToWCR)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
+    offload_to_gpu(sdfg)
     VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     return sdfg
 

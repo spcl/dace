@@ -21,6 +21,7 @@ from dace.libraries.tileops import TileMaskGen, TileBinop
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _TILE_NODE_TYPES
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 
 _HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
@@ -69,10 +70,17 @@ def _heat3d16(A: dace.float16[N, N, N], B: dace.float16[N, N, N]):
 
 
 def _prep(prog):
-    """@dace.program -> simplify + LoopToMap + simplify (the caller-side recipe)."""
+    """@dace.program -> simplify + LoopToMap + simplify, THEN GPU-offload (the caller-side recipe).
+
+    ``VectorizeGPU`` assumes an already-offloaded SDFG -- it does NOT offload / schedule itself --
+    so the test mirrors the production canonicalize-GPU path (``finalize_for_target(sdfg, 'gpu')``
+    -> :func:`offload_to_gpu`) that moves the SDFG onto the device (``GPU_Device`` maps, ``GPU_Global``
+    storage, block sizes) BEFORE the vectorizer runs.
+    """
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
+    offload_to_gpu(sdfg)
     return sdfg
 
 
