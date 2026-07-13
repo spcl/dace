@@ -984,6 +984,21 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', LiftLoopCarriedReduction())]
     s += [('end', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
+    # Terminal fuse: the main ``fuse`` stage runs BEFORE ``normalize_wcr`` and the
+    # terminal ``LoopToMap`` above. Two maps that were not yet fuseable at that point
+    # can become fuseable only afterwards: ``NormalizeWCRSource`` reshapes a reduction
+    # consumer's WCR from the seeded privatized-accumulator form (IN-wcr / plain
+    # copy-out -- which MapFusionVertical's ``_second_map_is_seeded_reduction`` guard
+    # rightly refuses) into a plain map-exit WCR that IS fuseable, and the terminal
+    # LoopToMap lifts residual loops into fresh maps adjacent to existing ones. With no
+    # fuse after those stages, such producer->consumer pairs stay split (polybench
+    # ``syrk``: the ``alpha*A*A`` product map + the ``C += ...`` k-reduction map, both
+    # over the same ``0:i+1`` slice, stayed as two maps == two fork/joins per k step).
+    # Re-run vertical+horizontal fusion in final map form so every fuseable pair is
+    # fused; the seeded-reduction / dependency guards still refuse the unsafe ones. The
+    # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
+    s += [('end', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+
     # Terminal symbol cleanup: after fusion, a fused gather-map body carries
     # duplicate index symbols that map fusion introduced -- ``idx_index`` and
     # ``idx_index_0`` both ``idx[i]`` (``idx[i]`` computed twice). ``SymbolDedup``
