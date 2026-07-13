@@ -218,6 +218,14 @@ def _run_and_queue(fn, args, q):
         os.setsid()
     except OSError:
         pass
+    # Unblock SIGCHLD in this worker. Under srun the inherited signal mask can leave SIGCHLD blocked,
+    # which deadlocks a CMake configure/build (it wait()s on children whose SIGCHLD never gets delivered
+    # -- the classic daint cmake/srun hang, cmake trees left with <defunct> kids). A spawned worker that
+    # shells out to the build toolchain must be able to reap its own subprocesses.
+    try:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+    except (ValueError, OSError):
+        pass
     try:
         q.put(('ok', fn(*args)))
     except Exception as e:
@@ -272,6 +280,53 @@ def _flatten_durations(d):
     return times
 
 
+def _is_array(v):
+    """True for a host (numpy) OR device (cupy) ndarray -- the buffers a kernel reads/writes."""
+    import numpy as np
+    if isinstance(v, np.ndarray):
+        return True
+    try:
+        import cupy
+        return isinstance(v, cupy.ndarray)
+    except ImportError:
+        return False
+
+
+def to_device_args(sdfg, call_kwargs, device):
+    """GPU: copy an ndarray arg to the device (cupy) ONLY when the SDFG's matching interface array is on
+    GPU storage; host-storage args (and scalars) pass through unchanged. CPU: everything unchanged.
+
+    The GPU pipelines move interface arrays to ``GPU_Global`` (``apply_gpu_storage``), so the compiled
+    program expects DEVICE pointers for those -- calling with host numpy would run but leave results on
+    the host buffers (a silent correctness failure). But ``auto_optimize`` may leave SOME interface
+    arrays on HOST (e.g. an arg only touched by host/library code); passing cupy for those trips DaCe's
+    host-array marshalling (`'ndarray' object has no attribute '__array_interface__'`). So the decision
+    is per-argument, keyed on that array's storage in the compiled SDFG -- not a blanket convert."""
+    if device != 'gpu':
+        return call_kwargs
+    import cupy as cp
+    import numpy as np
+
+    def on_device(name):
+        desc = sdfg.arrays.get(name)
+        return desc is not None and 'GPU' in str(getattr(desc, 'storage', ''))
+
+    return {k: (cp.asarray(v) if (isinstance(v, np.ndarray) and on_device(k)) else v)
+            for k, v in call_kwargs.items()}
+
+
+def args_to_host(call_kwargs, ret, device):
+    """Bring a GPU call's outputs back to host numpy for validation: device arrays in the (mutated)
+    kwargs and in the SDFG return value become numpy. No-op on CPU (already host)."""
+    if device != 'gpu':
+        return call_kwargs, ret
+    import cupy as cp
+    to_h = lambda v: cp.asnumpy(v) if isinstance(v, cp.ndarray) else v
+    host_kwargs = {k: to_h(v) for k, v in call_kwargs.items()}
+    ret = tuple(to_h(v) for v in ret) if isinstance(ret, tuple) else to_h(ret)
+    return host_kwargs, ret
+
+
 def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
     """Best-of-`reps` timing via sdfg.instrument + get_latest_report (ms per call).
 
@@ -303,12 +358,14 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
     # cache='name' mode would find and silently reuse the uninstrumented
     # binary, leaving get_latest_report() with nothing recorded.
     sdfg.name = f'{sdfg.name}_timed'
-    # Snapshot initial inputs once; reset each buffer IN PLACE before every call.
-    initial = {k: v.copy() for k, v in call_kwargs.items() if isinstance(v, np.ndarray)}
+    # Snapshot initial inputs once; reset each buffer IN PLACE before every call. Works for host
+    # (numpy) and device (cupy) arrays alike -- `.copy()` and `buf[...] = v0` are defined for both, so
+    # a GPU lane resets its resident device buffers between reps exactly as a CPU lane does its host ones.
+    initial = {k: v.copy() for k, v in call_kwargs.items() if _is_array(v)}
 
     def one_call():
         for k, v0 in initial.items():
-            np.copyto(call_kwargs[k], v0)  # reuse the same buffer -- no realloc between reps
+            call_kwargs[k][...] = v0  # in-place reset (numpy or cupy) -- no realloc between reps
         csdfg(**call_kwargs)
 
     measured = 0
