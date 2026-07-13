@@ -52,16 +52,28 @@ def _length(node: "ScatterConflictCheck", state: dace.SDFGState) -> str:
     return sym2cpp(in_edges[0].data.subset.num_elements())
 
 
-def _scan_body(ct: str) -> str:
-    """Adjacent-equal count over the sorted ``std::vector<ct> _t`` -> host ``_count_out``."""
-    return ("long long _d = 0;\n"
-            "for (size_t _i = 0; _i + 1 < _t.size(); ++_i) if (_t[_i] == _t[_i + 1]) ++_d;\n"
-            f"{OUTPUT_CONNECTOR_NAME} = _d;\n")
+def _tagcount_body(ct: str, n: str, src: str, omp: bool) -> str:
+    """Tagged-write + verify duplicate detection: O(n), NO sort.
+
+    Pass 1 ``owner[idx[i]] = i``; Pass 2 OR-reduce ``owner[idx[i]] != i``. Sorting is unnecessary --
+    if two i's collide on a position, only one wins Pass 1, so the loser reads back a different i in
+    Pass 2 and the OR trips. Pass 2 reads only positions Pass 1 wrote, so ``owner`` needs no init. The
+    Pass-1 last-writer-wins race is benign (any winner is fine; the OR is monotonic). ``owner`` is sized
+    max(idx)+1. ``omp`` toggles the OpenMP pragmas (ignored -> serial O(n), still far below any sort)."""
+    par = (lambda clause: f"#pragma omp parallel for{clause}\n") if omp else (lambda clause: "")
+    return (f"const long long _N = ({n});\n"
+            f"{ct} _mx = 0;\n"
+            f"{par(' reduction(max:_mx)')}for (long long _i = 0; _i < _N; ++_i) if ({src}[_i] > _mx) _mx = {src}[_i];\n"
+            f"std::unique_ptr<long long[]> _own(new long long[(size_t)_mx + 1]);\n"
+            f"{par('')}for (long long _i = 0; _i < _N; ++_i) _own[{src}[_i]] = _i;\n"
+            f"long long _c = 0;\n"
+            f"{par(' reduction(|:_c)')}for (long long _i = 0; _i < _N; ++_i) _c |= (_own[{src}[_i]] != _i);\n"
+            f"{OUTPUT_CONNECTOR_NAME} = _c;\n")
 
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """``std::sort`` a copy + adjacent-equal scan."""
+    """Tagged-write + verify (serial O(n))."""
 
     environments = []
 
@@ -69,36 +81,31 @@ class ExpandPure(ExpandTransformation):
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _in, _out = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
-        code = ("{\n#include <algorithm>\n#include <vector>\n"
-                f"std::vector<{ct}> _t({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n}));\n"
-                "std::sort(_t.begin(), _t.end());\n" + _scan_body(ct) + "}")
+        code = "{\n#include <memory>\n" + _tagcount_body(ct, n, INPUT_CONNECTOR_NAME, omp=False) + "}"
         return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, code, language=dace.Language.CPP)
 
 
 @library.expansion
 class ExpandCPU(ExpandTransformation):
-    """``ska_sort`` a copy + adjacent-equal scan."""
+    """Tagged-write + verify, OpenMP-parallel (2 passes ~= 2x the scatter's own cost)."""
 
-    environments = [environments.SkaSort]
+    environments = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _in, _out = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
-        code = ("{\n#include <vector>\n"
-                f"std::vector<{ct}> _t({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n}));\n"
-                "::ska_sort(_t.begin(), _t.end());\n" + _scan_body(ct) + "}")
+        code = "{\n#include <memory>\n" + _tagcount_body(ct, n, INPUT_CONNECTOR_NAME, omp=True) + "}"
         return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, code, language=dace.Language.CPP)
 
 
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
-    """Copy the device index to host, then host sort + adjacent-equal scan.
+    """Copy the device index to host, then tagged-write + verify (host OpenMP).
 
-    A permutation guard runs once per scatter, so a device->host round-trip is cheaper
-    than staging a device sort + reduction, and ``_count_out`` lands on the host with no
-    extra copy. ``cudaMemcpy`` is a host-callable runtime call, so this tasklet compiles
-    in the host (g++) translation unit like the CPU expansions.
+    A one-shot guard, so a device->host round-trip of the index (O(n)) beats staging a device pass;
+    ``_count_out`` lands on the host with no extra copy. ``cudaMemcpy`` is host-callable, so this
+    compiles in the host (g++) translation unit like the CPU expansions.
     """
 
     environments = [CUDA]
@@ -107,10 +114,10 @@ class ExpandCUDA(ExpandTransformation):
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _in, _out = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
-        code = ("{\n#include <algorithm>\n#include <vector>\n"
+        code = ("{\n#include <memory>\n#include <vector>\n"
                 f"std::vector<{ct}> _t(({n}));\n"
                 f"cudaMemcpy(_t.data(), {INPUT_CONNECTOR_NAME}, ({n}) * sizeof({ct}), cudaMemcpyDeviceToHost);\n"
-                "std::sort(_t.begin(), _t.end());\n" + _scan_body(ct) + "}")
+                + _tagcount_body(ct, n, "_t.data()", omp=True) + "}")
         return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, code, language=dace.Language.CPP)
 
 
