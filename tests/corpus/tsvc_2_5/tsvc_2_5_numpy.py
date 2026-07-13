@@ -616,3 +616,69 @@ def ref_fission_scatter_2body(b: np.ndarray, e: np.ndarray, a: np.ndarray, c: np
     ``e[idx[i]] = c[i]+1``."""
     b[idx] = a * 2.0
     e[idx] = c + 1.0
+
+
+# ---------------------------------------------------------------------------
+#  Generalized 2-D wavefront + disjoint-image challenge kernels
+# ---------------------------------------------------------------------------
+
+
+def ref_wf_north_west(a: np.ndarray) -> None:
+    """Sum-diagonal wavefront ``a[i,j] += a[i-1,j] + a[i,j-1]``. The in-place
+    reads of already-updated neighbours make the loop order significant, so the
+    oracle keeps the explicit sequential sweep."""
+    n = a.shape[0]
+    for i in range(1, n):
+        for j in range(1, n):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i, j - 1]
+
+
+def ref_wf_diff_skew(a: np.ndarray) -> None:
+    """Difference-diagonal wavefront ``a[i,j] += a[i-1,j] + a[i-1,j+1]`` over
+    ``j`` in ``[0, n-1)``. Depends only on the previous row, sequential over ``i``."""
+    n = a.shape[0]
+    for i in range(1, n):
+        for j in range(0, n - 1):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i - 1, j + 1]
+
+
+def ref_wf_triangular(a: np.ndarray) -> None:
+    """Triangular north+west wavefront ``a[i,j] += a[i-1,j] + a[i,j-1]`` over the
+    upper triangle ``j >= i`` (sequential sweep honouring the triangular bounds)."""
+    n = a.shape[0]
+    for i in range(1, n):
+        for j in range(i, n):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i, j - 1]
+
+
+def ref_disjoint_halves_gather(a: np.ndarray, c: np.ndarray) -> None:
+    """Disjoint self-gather ``a[i] += a[i+H]*c[i]`` over the lower half. Reads
+    ``[H, 2H)`` never overlap writes ``[0, H)``, so the vectorized form (upper
+    half read from the un-mutated ``a``) reproduces the sequential loop exactly."""
+    n = a.shape[0]
+    half = n // 2
+    a[:half] = a[:half] + a[half:2 * half] * c[:half]
+
+
+def ref_halo_broadcast(a: np.ndarray, scale: float) -> None:
+    """Fixed-cell carrier read ``a[i] = a[i]*scale + a[0]`` for ``i >= 1``.
+    ``a[0]`` is never written, so its snapshot equals the live value."""
+    a0 = a[0]
+    a[1:] = a[1:] * scale + a0
+
+
+def ref_safety_map_of_scans(b: np.ndarray, a: np.ndarray) -> None:
+    """Per-row prefix scan ``b[i,j] = b[i,j-1] + a[i,j]`` (rows independent,
+    columns carried)."""
+    n = b.shape[0]
+    for i in range(n):
+        for j in range(1, n):
+            b[i, j] = b[i, j - 1] + a[i, j]
+
+
+def ref_safety_column_stencil(a: np.ndarray, bb: np.ndarray) -> None:
+    """Column recurrence ``a[i,:] = a[i-1,:] + bb[i,:]`` (rows carried,
+    columns independent)."""
+    n = a.shape[0]
+    for i in range(1, n):
+        a[i, :] = a[i - 1, :] + bb[i, :]

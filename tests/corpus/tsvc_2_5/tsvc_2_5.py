@@ -1006,6 +1006,90 @@ def fission_scatter_2body(b: dace.float64[LEN_1D], e: dace.float64[LEN_1D], a: d
         e[idx[i]] = c[i] + 1.0
 
 
+# ==========================================================================
+#  %W  Generalized 2-D wavefront + disjoint-image challenge kernels
+# ==========================================================================
+#
+# The generalized ``WavefrontSkew`` targets 2-D affine wavefronts whose only
+# legal parallel front is a skewed diagonal, plus disjoint-image self-reads that
+# are already parallel without any skew. The last two are SAFETY counter-cases:
+# a parallel-outer / sequential-inner map-of-scans and a sequential-outer /
+# parallel-inner column stencil that the pass must NOT rewrite into a wavefront.
+
+
+@dace.program
+def wf_north_west(a: dace.float64[LEN_2D, LEN_2D]):
+    """Sum-diagonal wavefront: ``a[i, j] = a[i, j] + a[i-1, j] + a[i, j-1]``.
+    North ``(1, 0)`` + west ``(0, 1)`` deps serialize both loops; the parallel
+    front is the ``i + j`` anti-diagonal, so ``WavefrontSkew`` must skew before
+    ``LoopToMap`` can fire."""
+    for i in range(1, LEN_2D):
+        for j in range(1, LEN_2D):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i, j - 1]
+
+
+@dace.program
+def wf_diff_skew(a: dace.float64[LEN_2D, LEN_2D]):
+    """Difference-diagonal wavefront: ``a[i, j] = a[i, j] + a[i-1, j] + a[i-1, j+1]``.
+    Deps ``(1, 0)`` and ``(1, -1)`` make the legal skew the ``i - j`` difference
+    diagonal (not the anti-diagonal); ``j`` stops at ``N-2`` so ``j+1`` stays in
+    bounds."""
+    for i in range(1, LEN_2D):
+        for j in range(0, LEN_2D - 1):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i - 1, j + 1]
+
+
+@dace.program
+def wf_triangular(a: dace.float64[LEN_2D, LEN_2D]):
+    """Triangular-domain wavefront: north+west recurrence over the upper triangle
+    ``j >= i``. The skew must honour the triangular iteration space; the parallel
+    front is the ``i + j`` anti-diagonal clipped to ``j >= i``."""
+    for i in range(1, LEN_2D):
+        for j in range(i, LEN_2D):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i, j - 1]
+
+
+@dace.program
+def disjoint_halves_gather(a: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
+    """Disjoint self-gather: ``a[i] = a[i] + a[i + LEN_1D//2] * c[i]`` over the
+    lower half. The read set ``[H, 2H)`` is disjoint from the write set
+    ``[0, H)``, so despite reading ``a`` the loop is fully parallel -- no skew,
+    just ``LoopToMap``."""
+    for i in range(LEN_1D // 2):
+        a[i] = a[i] + a[i + LEN_1D // 2] * c[i]
+
+
+@dace.program
+def halo_broadcast(a: dace.float64[LEN_1D], scale: dace.float64):
+    """Fixed-cell (halo) carrier read: ``a[i] = a[i] * scale + a[0]``. The read of
+    ``a[0]`` is a constant cell never written by any ``i >= 1``, so it is disjoint
+    from the write set and the loop is parallel."""
+    for i in range(1, LEN_1D):
+        a[i] = a[i] * scale + a[0]
+
+
+@dace.program
+def safety_map_of_scans(b: dace.float64[LEN_2D, LEN_2D], a: dace.float64[LEN_2D, LEN_2D]):
+    """SAFETY (must stay parallel-outer / sequential-inner): each row is an
+    independent prefix scan ``b[i, j] = b[i, j-1] + a[i, j]``. The correct
+    schedule is parallel ``i``, sequential ``j``; ``WavefrontSkew`` must REFUSE to
+    skew it (the ``i`` axis is already a map of scans)."""
+    for i in range(LEN_2D):
+        for j in range(1, LEN_2D):
+            b[i, j] = b[i, j - 1] + a[i, j]
+
+
+@dace.program
+def safety_column_stencil(a: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
+    """SAFETY (must stay sequential-outer / parallel-inner): pure column
+    recurrence ``a[i, j] = a[i-1, j] + bb[i, j]``. Row ``i`` needs row ``i-1``; the
+    inner ``j`` is parallel and the outer ``i`` sequential. ``WavefrontSkew`` must
+    REFUSE to skew it into a diagonal front."""
+    for i in range(1, LEN_2D):
+        for j in range(LEN_2D):
+            a[i, j] = a[i - 1, j] + bb[i, j]
+
+
 __all__ = [
     "ext_strided_load_ssym",
     "ext_strided_load_2",
@@ -1072,6 +1156,13 @@ __all__ = [
     "loop_to_map_threshold_gather",
     "fission_gather_2body",
     "fission_scatter_2body",
+    "wf_north_west",
+    "wf_diff_skew",
+    "wf_triangular",
+    "disjoint_halves_gather",
+    "halo_broadcast",
+    "safety_map_of_scans",
+    "safety_column_stencil",
 ]
 
 
