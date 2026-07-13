@@ -17,10 +17,16 @@ count to a symbol, and a trap tasklet ``__builtin_trap()``s if it is positive.
 """
 from typing import Iterable, Optional, Set
 
+import numpy as np
+
 import dace
-from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets
+from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets, symbolic
+from dace.frontend.python import astutils
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import loop_analysis
 
 #: Prefix for the collision-count scalar the guard allocates (one per guarded idx).
 _COUNT_PREFIX = '_scatter_guard_count_'
@@ -66,7 +72,131 @@ class GuardScatterConflicts(ppl.Pass):
         return emitted or None
 
 
-def insert_scatter_guard(sdfg: SDFG, idx_name: str, emit_trap: bool = True) -> Optional[str]:
+def scatter_index_is_provably_injective(sdfg: SDFG, idx_name: str) -> bool:
+    """True iff every runtime value of ``idx_name`` is provably distinct at compile time.
+
+    The runtime ``ScatterConflictCheck`` guard exists to prove, at run time, that the whole
+    index array holds no duplicate values (a duplicate = two scatter iterations writing the
+    same output slot = a race). When that fact is already decidable statically, the guard is
+    pure overhead and can be dropped (*Lever 1*). This is the static side of the same
+    predicate the guard checks dynamically, so eliding on a ``True`` verdict is behaviourally
+    identical to running the guard and having it pass.
+
+    Sound and deliberately conservative -- returns ``True`` ONLY for the forms it can prove,
+    and ``False`` (keep the guard) on any uncertainty. Two forms are recognised:
+
+    1. **Compile-time constant** -- ``idx_name`` is an SDFG constant whose integer values are
+       all distinct (a compile-time permutation / injective sequence).
+    2. **Affine full-domain producer** -- ``idx_name`` is a transient written by exactly one
+       ``LoopRegion`` ``for j in range(0, M): idx[j] = a*j + b`` where ``M`` is the array's
+       full extent, the write lands at the point ``[j]`` (so iterating ``j`` over ``[0, M)``
+       covers every element), and the stored value is an affine function of ``j`` with a
+       non-zero integer leading coefficient. An affine map with ``a != 0`` over a contiguous
+       integer domain is injective, so the values are pairwise distinct.
+
+    Anything outside these forms -- a parameter array (unknown contents), multiple or partial
+    writers, a non-affine or data-dependent producer, a strided/offset write position, or a
+    non-``LoopRegion`` (e.g. already-lifted Map) producer -- returns ``False``.
+
+    :param sdfg: The SDFG owning ``idx_name``.
+    :param idx_name: The candidate scatter index array.
+    :returns: ``True`` iff the values are provably all-distinct; ``False`` otherwise.
+    """
+    # Inline import: the ``sort`` library eagerly pulls in its environments; keep it off the
+    # module-load path (mirrors ``insert_scatter_guard`` below).
+    from dace.libraries.sort.nodes._helpers import is_integer_dtype
+
+    desc = sdfg.arrays.get(idx_name)
+    if not isinstance(desc, data.Array) or len(desc.shape) != 1 or not is_integer_dtype(desc.dtype):
+        return False
+
+    # Form 1: compile-time constant with distinct integer values.
+    const_val = sdfg.constants.get(idx_name)
+    if isinstance(const_val, np.ndarray) and const_val.dtype.kind in ('i', 'u'):
+        flat = const_val.reshape(-1)
+        return int(np.unique(flat).size) == int(flat.size)
+
+    # Form 2: transient fully written by a single injective affine producer loop.
+    if not desc.transient:
+        return False
+
+    writers = [(st, n) for st in sdfg.all_states() for n in st.data_nodes()
+               if n.data == idx_name and st.in_degree(n) > 0]
+    if len(writers) != 1:  # multiple / partial / no writers -> cannot prove full-domain coverage
+        return False
+    state, node = writers[0]
+    in_edges = list(state.in_edges(node))
+    if len(in_edges) != 1:
+        return False
+    write = in_edges[0]
+    if not isinstance(write.src, nodes.Tasklet):  # a copy from another array -> unknown values
+        return False
+
+    region = state.parent_graph
+    if not isinstance(region, LoopRegion) or not region.loop_variable:
+        return False
+    loop_var = symbolic.pystr_to_symbolic(str(region.loop_variable))
+    init = loop_analysis.get_init_assignment(region)
+    end = loop_analysis.get_loop_end(region)
+    stride = loop_analysis.get_loop_stride(region)
+    if init is None or end is None or stride is None:
+        return False
+    # Loop must sweep the array's full extent [0, M) with unit stride, else some element is
+    # left uninitialised (garbage the guard would still sort) or the coverage is non-contiguous.
+    extent = desc.shape[0]
+    if symbolic.simplify(init) != 0 or symbolic.simplify(stride - 1) != 0 or symbolic.simplify(end - (extent - 1)) != 0:
+        return False
+
+    # Write position must be the bare point ``[loop_var]`` so sweeping j covers exactly [0, M).
+    ndrange = list(write.data.subset.ndrange())
+    if len(ndrange) != 1:
+        return False
+    begin, stop, _ = ndrange[0]
+    if (symbolic.simplify(symbolic.pystr_to_symbolic(str(begin)) - loop_var) != 0
+            or symbolic.simplify(symbolic.pystr_to_symbolic(str(stop)) - loop_var) != 0):
+        return False
+
+    # Stored value must be an affine function of the loop variable with a non-zero integer
+    # leading coefficient (a*j + b with a != 0 -> distinct values over the contiguous domain).
+    code = write.src.code.code
+    statements = code if isinstance(code, list) else [code]
+    finder = astutils.FindAssignment()
+    for stmt in statements:
+        finder.visit(stmt)
+    if finder.multiple:
+        return False
+    value_expr = finder.assignments.get(write.src_conn)
+    if value_expr is None:
+        return False
+    return value_is_injective_affine(value_expr, region.loop_variable)
+
+
+def value_is_injective_affine(value_expr: str, loop_var: str) -> bool:
+    """True iff ``value_expr`` is an affine ``a*loop_var + b`` with a non-zero integer ``a``.
+
+    Such a map is injective over any contiguous integer domain, so the values it produces as
+    ``loop_var`` sweeps a range are pairwise distinct. Any input-dependent or non-affine
+    expression (a runtime read, ``loop_var % k``, ``loop_var * loop_var``) yields ``a == 0`` or
+    fails the affinity check and returns ``False``. Parsed through the symbol registry via
+    :func:`dace.symbolic.pystr_to_symbolic` so loop-variable assumptions never break the match.
+
+    :param value_expr: The stored value as a string expression (a producer tasklet's RHS).
+    :param loop_var: The producing loop's iteration variable.
+    :returns: ``True`` iff ``value_expr`` is ``a*loop_var + b`` with a non-zero integer ``a``.
+    """
+    j = symbolic.pystr_to_symbolic(str(loop_var))
+    expr = symbolic.pystr_to_symbolic(str(value_expr))
+    lead = expr.coeff(j, 1)
+    const = expr.coeff(j, 0)
+    if symbolic.simplify(expr - (lead * j + const)) != 0:  # non-affine in loop_var
+        return False
+    return bool(lead.is_Integer) and lead != 0
+
+
+def insert_scatter_guard(sdfg: SDFG,
+                         idx_name: str,
+                         emit_trap: bool = True,
+                         elide_if_injective: bool = True) -> Optional[str]:
     """Emit a sort+compare+abort guard for ``idx_name`` at the earliest legal CFG point.
 
     :param sdfg: The SDFG to mutate in place.
@@ -77,9 +207,17 @@ def insert_scatter_guard(sdfg: SDFG, idx_name: str, emit_trap: bool = True) -> O
         symbol is returned for the caller to thread into its own runtime
         check (e.g. a ``ConditionalBlock`` selecting between a parallel and
         a fallback sequential branch).
-    :returns: ``None`` when ``emit_trap=True``; the duplicate-count symbol
-              name (``__scatter_guard_check_<count>``) when ``emit_trap=False``.
-              Callers in the latter mode dispatch on ``sym > 0``.
+    :param elide_if_injective: When ``True`` (default -- *Lever 1*), first run the
+        compile-time injectivity analysis (:func:`scatter_index_is_provably_injective`).
+        If it proves ``idx_name``'s runtime values are all distinct, no guard is emitted
+        at all (a plain scatter with no runtime check): the runtime ``ScatterConflictCheck``
+        would inevitably find a zero duplicate-count, so the three O(n) passes it runs are
+        pure overhead. Pass ``False`` to force a guard regardless (e.g. structural tests).
+    :returns: ``None`` when ``emit_trap=True`` OR when the guard was elided as provably
+              conflict-free; the duplicate-count symbol name
+              (``__scatter_guard_check_<count>``) when ``emit_trap=False`` and a guard was
+              emitted. Callers in the latter mode dispatch on ``sym > 0``; a ``None`` return
+              there means "no dispatch needed -- proven safe, lift unconditionally".
     :raises ValueError: If ``idx_name`` is not a 1-D integer Array in ``sdfg.arrays``,
         or if a guard already exists for it (its ``_scatter_guard_count_`` scalar is present).
     """
@@ -94,6 +232,11 @@ def insert_scatter_guard(sdfg: SDFG, idx_name: str, emit_trap: bool = True) -> O
         raise ValueError(f"insert_scatter_guard: '{idx_name}' must be 1-D; got shape {tuple(desc.shape)}.")
     if not is_integer_dtype(desc.dtype):
         raise ValueError(f"insert_scatter_guard: '{idx_name}' must have an integer dtype; got {desc.dtype}.")
+
+    # Lever 1: static-injective elision. When the index array is provably a set of distinct
+    # values at compile time, the runtime conflict check is dead weight -- drop it entirely.
+    if elide_if_injective and scatter_index_is_provably_injective(sdfg, idx_name):
+        return None
 
     count_name = f"{_COUNT_PREFIX}{idx_name}"
     if count_name in sdfg.arrays:
@@ -206,4 +349,4 @@ def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, tr
 # the Pass class. Callers that already know which idx arrays need guarding
 # typically use ``insert_scatter_guard`` directly; callers driving a batch via
 # the Pass pipeline use ``GuardScatterConflicts``.
-__all__ = ['GuardScatterConflicts', 'insert_scatter_guard']
+__all__ = ['GuardScatterConflicts', 'insert_scatter_guard', 'scatter_index_is_provably_injective']

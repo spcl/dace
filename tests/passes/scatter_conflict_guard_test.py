@@ -16,7 +16,8 @@ import pytest
 
 import dace
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
-from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard)
+from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard,
+                                                               scatter_index_is_provably_injective)
 
 N = dace.symbol('N')
 
@@ -180,6 +181,133 @@ def test_guard_refuses_double_emit():
         insert_scatter_guard(sdfg, 'ip')
 
 
+# -- Lever 1: static-injective elision ----------------------------------------
+
+
+@dace.program
+def scatter_affine_identity(a: dace.float64[N], b: dace.float64[N]):
+    """``ip[i] = i`` produced in-SDFG (identity permutation), then ``a[ip[i]] = b[i]``."""
+    ip = np.empty(N, np.int64)
+    for i in range(N):
+        ip[i] = i
+    for i in range(N):
+        a[ip[i]] = b[i]
+
+
+@dace.program
+def scatter_affine_strided(a: dace.float64[2 * N], b: dace.float64[N]):
+    """``ip[i] = 2*i + 1`` (injective affine over ``[0, N)``), then ``a[ip[i]] = b[i]``."""
+    ip = np.empty(N, np.int64)
+    for i in range(N):
+        ip[i] = 2 * i + 1
+    for i in range(N):
+        a[ip[i]] = b[i]
+
+
+@dace.program
+def scatter_mod_producer(a: dace.float64[N], b: dace.float64[N]):
+    """``ip[i] = i % 3`` (non-injective) -- genuinely conflicts; the guard must be kept."""
+    ip = np.empty(N, np.int64)
+    for i in range(N):
+        ip[i] = i % 3
+    for i in range(N):
+        a[ip[i]] = b[i]
+
+
+def build_constant_idx_scatter_sdfg(values) -> dace.SDFG:
+    """Build a minimal SDFG whose ``ip`` array is also a compile-time constant.
+
+    Used to exercise the constant-array branch of
+    :func:`scatter_index_is_provably_injective` without a producer loop.
+
+    :param values: The integer values baked into the ``ip`` constant.
+    :returns: An SDFG with an ``ip`` :class:`~dace.data.Array` descriptor whose contents
+              are registered as a compile-time constant.
+    """
+    sdfg = dace.SDFG('const_idx_scatter')
+    sdfg.add_array('ip', [len(values)], dace.int64)
+    sdfg.add_constant('ip', np.asarray(values, dtype=np.int64))
+    sdfg.add_state('s0')
+    return sdfg
+
+
+def test_affine_identity_producer_elides_guard():
+    """An in-SDFG identity producer ``ip[i] = i`` is provably injective: the guard is elided
+    (no ``ScatterConflictCheck`` node) and the plain scatter is value-correct vs numpy."""
+    sdfg = scatter_affine_identity.to_sdfg(simplify=True)
+    assert scatter_index_is_provably_injective(sdfg, 'ip')
+    assert insert_scatter_guard(sdfg, 'ip') is None  # elided -> no guard symbol
+    assert not _has_conflict_check(sdfg)
+    sdfg.validate()
+
+    n = 40
+    b = np.random.default_rng(11).random(n)
+    a = np.zeros(n)
+    a_ref = np.zeros(n)
+    for i in range(n):
+        a_ref[i] = b[i]
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(a, a_ref)
+
+
+def test_strided_affine_producer_elides_guard():
+    """A strided injective producer ``ip[i] = 2*i + 1`` is provably injective: guard elided,
+    value-correct vs numpy."""
+    sdfg = scatter_affine_strided.to_sdfg(simplify=True)
+    assert scatter_index_is_provably_injective(sdfg, 'ip')
+    assert insert_scatter_guard(sdfg, 'ip') is None
+    assert not _has_conflict_check(sdfg)
+    sdfg.validate()
+
+    n = 16
+    b = np.random.default_rng(12).random(n)
+    a = np.zeros(2 * n)
+    a_ref = np.zeros(2 * n)
+    for i in range(n):
+        a_ref[2 * i + 1] = b[i]
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(a, a_ref)
+
+
+def test_conflicting_param_idx_keeps_guard():
+    """A parameter ``ip`` (unknown runtime contents) is NOT provably injective: the guard is
+    kept, and with a permutation the guarded scatter is value-correct vs numpy."""
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    assert not scatter_index_is_provably_injective(sdfg, 'ip')
+    insert_scatter_guard(sdfg, 'ip')
+    assert _has_conflict_check(sdfg)
+    sdfg.validate()
+
+    n = 32
+    ip = _make_permutation(n, seed=13)
+    b = np.random.default_rng(14).random(n)
+    a = np.zeros(n)
+    a_ref = np.zeros(n)
+    for i in range(n):
+        a_ref[ip[i]] = b[i]
+    sdfg(a=a, b=b, ip=ip, N=n)
+    assert np.allclose(a, a_ref)
+
+
+def test_non_injective_producer_not_provably_injective():
+    """A non-affine producer ``ip[i] = i % 3`` can collide: the analysis refuses to prove
+    injectivity (soundness first), so the guard would be kept rather than elided."""
+    sdfg = scatter_mod_producer.to_sdfg(simplify=True)
+    assert not scatter_index_is_provably_injective(sdfg, 'ip')
+
+
+def test_constant_permutation_idx_is_injective():
+    """A compile-time constant ``ip`` holding a permutation is provably injective."""
+    sdfg = build_constant_idx_scatter_sdfg([3, 0, 2, 1])
+    assert scatter_index_is_provably_injective(sdfg, 'ip')
+
+
+def test_constant_duplicate_idx_not_injective():
+    """A compile-time constant ``ip`` with a repeated value is NOT injective."""
+    sdfg = build_constant_idx_scatter_sdfg([0, 1, 1, 2])
+    assert not scatter_index_is_provably_injective(sdfg, 'ip')
+
+
 # -- Abort-on-duplicate (subprocess; SIGABRT/SIGILL is expected) --------------
 
 _DUPLICATE_ABORT_SCRIPT = textwrap.dedent(f"""
@@ -227,4 +355,18 @@ def test_duplicate_idx_aborts_the_process():
 
 
 if __name__ == '__main__':
-    sys.exit(pytest.main([__file__, '-v']))
+    test_s4113_permutation_runs_cleanly()
+    test_s491_permutation_runs_cleanly()
+    test_vas_permutation_runs_cleanly()
+    test_guard_states_inserted_before_scatter()
+    test_guard_pass_emits_for_each_named_idx()
+    test_guard_refuses_non_integer_idx()
+    test_guard_refuses_unknown_idx_name()
+    test_guard_refuses_double_emit()
+    test_affine_identity_producer_elides_guard()
+    test_strided_affine_producer_elides_guard()
+    test_conflicting_param_idx_keeps_guard()
+    test_non_injective_producer_not_provably_injective()
+    test_constant_permutation_idx_is_injective()
+    test_constant_duplicate_idx_not_injective()
+    test_duplicate_idx_aborts_the_process()
