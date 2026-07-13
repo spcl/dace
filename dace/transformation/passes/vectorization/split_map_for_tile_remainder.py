@@ -94,7 +94,22 @@ class SplitMapForTileRemainder(ppl.Pass):
         "GPU path, which emits no remainder loop; the caller guarantees the even extent.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8, ), tail_mode: str = "masked", assume_even: bool = False):
+    range_check = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Under ``assume_even``, guard the even-extent assumption at runtime: for every tiled "
+        "dim whose extent is not PROVABLY a multiple of its width, emit a host-side side-effect "
+        "tasklet that checks ``extent % W == 0`` before the kernel and, on violation, writes to "
+        "stderr and traps (``abort``) rather than silently reading/writing out of bounds. A "
+        "provably-divisible extent needs no check. Ignored when ``assume_even`` is False (the "
+        "remainder is peeled, so no assumption to guard).",
+    )
+
+    def __init__(self,
+                 widths: Tuple[int, ...] = (8, ),
+                 tail_mode: str = "masked",
+                 assume_even: bool = False,
+                 range_check: bool = True):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -104,6 +119,9 @@ class SplitMapForTileRemainder(ppl.Pass):
             :data:`TILE_K1_TAIL_MARKER`, the single-lane tile-op variant).
         :param assume_even: ``True`` -> mark every eligible map ``__tile_main``
             without splitting (whole extent assumed divisible, no remainder).
+        :param range_check: Under ``assume_even``, emit a host-side runtime
+            ``extent % W == 0`` guard (stderr + ``abort`` on violation) for every
+            not-provably-divisible tiled dim. No effect when ``assume_even`` is False.
         :raises ValueError: If ``widths`` length not in ``{1, 2, 3}`` or
             ``tail_mode`` invalid.
         """
@@ -116,6 +134,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         self.widths = list(widths)
         self.tail_mode = tail_mode
         self.assume_even = assume_even
+        self.range_check = range_check
 
     def modifies(self) -> ppl.Modifies:
         """Pass replicates scopes and retightens ranges.
@@ -173,6 +192,15 @@ class SplitMapForTileRemainder(ppl.Pass):
         # ``assume_even``: caller guarantees every tiled extent is a multiple of W,
         # so no boundary -> skip peel, mark whole map ``__tile_main`` (mask-free).
         if self.assume_even:
+            if self.range_check:
+                # Guard the even-extent assumption: record every tiled dim whose extent is not
+                # PROVABLY a multiple of W, so a host-side runtime check can trap a violation
+                # instead of letting the strided ``0:N:W`` map read/write out of bounds
+                # (see _emit_range_checks). A provably-divisible extent needs no check.
+                for d, W in zip(tiled_dims, self.widths):
+                    lb, ub, _ = map_entry.map.range[d]
+                    if not self._provably_divisible(lb, ub, W):
+                        self._range_checks.append((state.sdfg, symbolic.simplify(ub - lb + 1), int(W)))
             if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
             return True
@@ -213,6 +241,8 @@ class SplitMapForTileRemainder(ppl.Pass):
         """
         K = len(self.widths)
         applied = 0
+        # Collector for assume_even runtime guards, filled by ``_split`` and drained below.
+        self._range_checks = []
         # Snapshot up front: splitting mutates the graph; must not re-split a
         # freshly replicated remainder map.
         eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
@@ -222,6 +252,8 @@ class SplitMapForTileRemainder(ppl.Pass):
         for n, g in eligible:
             if self._split(g, n, K):
                 applied += 1
+        if self.assume_even and self.range_check and self._range_checks:
+            self._emit_range_checks()
         if applied:
             # ``replicate_scope`` deep-copies body NestedSDFGs without registering
             # the clone in ``cfg_list``; rebuild so later passes (and
@@ -230,3 +262,31 @@ class SplitMapForTileRemainder(ppl.Pass):
         assert_invariant(no_memlet_dim_mismatch(sdfg), "SplitMapForTileRemainder",
                          "memlet subset and other_subset have matching dimensionality")
         return applied or None
+
+    def _emit_range_checks(self) -> None:
+        """Emit the host-side even-extent guards recorded during ``assume_even`` splitting.
+
+        One guard state is prepended (as the new start block) to each SDFG that owns a checked
+        map, so the check runs before that SDFG's kernels. Every distinct ``(extent, width)``
+        pair becomes a side-effect CPP tasklet that writes to stderr and ``abort``\\ s when
+        ``extent`` is not a whole multiple of ``width`` -- turning a silent out-of-bounds tile
+        access into a loud, deterministic failure. ``side_effects=True`` keeps the guard from
+        being fused into a neighbour or eliminated as dead code.
+        """
+        by_sdfg = {}
+        for owner, extent, width in self._range_checks:
+            by_sdfg.setdefault(owner, set()).add((symbolic.symstr(extent, cpp_mode=True), width))
+        for owner, checks in by_sdfg.items():
+            guard = owner.add_state_before(owner.start_block, label="tile_even_range_check", is_start_block=True)
+            for extent_c, width in sorted(checks):
+                code = (f'if ((long long)({extent_c}) % {width} != 0) {{\n'
+                        f'    fprintf(stderr, "DaCe tile vectorization: extent %lld is not a multiple of tile '
+                        f'width {width} (assume_even violated); aborting.\\n", (long long)({extent_c}));\n'
+                        f'    abort();\n'
+                        f'}}')
+                tasklet = guard.add_tasklet(name="tile_range_check",
+                                            inputs={},
+                                            outputs={},
+                                            code=code,
+                                            language=dace.dtypes.Language.CPP)
+                tasklet.side_effects = True

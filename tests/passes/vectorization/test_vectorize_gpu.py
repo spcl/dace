@@ -231,3 +231,39 @@ def test_gpu_half2_reduce_lowers_to_native_f16x2():
         for f in (tmp, ptx):
             if os.path.exists(f):
                 os.remove(f)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("width", [4, 8])
+def test_gpu_vectorize_width_gt2_numeric(width):
+    """Widths > 2 (4, 8) tile the GPU map by ``width`` and compute correctly. Only width 2 uses
+    the half2 intrinsic; 4/8 lower via the width-generic per-lane path -- still one strided
+    ``0:N:width`` GPU_Device map (assume_even), numerically exact for a divisible extent."""
+    import numpy as np
+    import cupy
+    sdfg = _prep(_add16)
+    sdfg.name = f"add16_w{width}"
+    VectorizeGPU(VectorizeConfig(widths=(width, ))).apply_pass(sdfg, {})
+    maps = _inner_maps(sdfg)
+    assert len(maps) == 1, f"assume_even keeps one map; got {len(maps)}"
+    n = 8 * width  # a multiple of the width (assume_even)
+    A = np.random.rand(n).astype(np.float16)
+    B = np.random.rand(n).astype(np.float16)
+    dA, dB, dC = cupy.asarray(A), cupy.asarray(B), cupy.zeros(n, cupy.float16)
+    sdfg(A=dA, B=dB, C=dC, N=n)
+    assert np.allclose(dC.get().astype(np.float32), (A + B).astype(np.float32), rtol=1e-2, atol=1e-2)
+
+
+if __name__ == "__main__":
+    test_assume_even_single_strided_gpu_map_no_mask()
+    test_deferred_tile_nodes_are_cuda_stamped()
+    test_scalar_cast_constant_broadcasts()
+    test_gpu_half2_emits_tile_ops_in_device_tu()
+    test_gpu_half2_compiles("add16", _add16)
+    test_gpu_half2_compiles("jacobi2d16", _jacobi2d16)
+    test_gpu_half2_compiles("heat3d16", _heat3d16)
+    test_gpu_reduction_uses_gpu_expansion()
+    test_gpu_half2_lowers_to_native_f16x2()
+    test_gpu_half2_reduce_lowers_to_native_f16x2()
+    test_gpu_vectorize_width_gt2_numeric(4)
+    test_gpu_vectorize_width_gt2_numeric(8)
