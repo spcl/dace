@@ -11,6 +11,7 @@ import ctypes
 import dataclasses
 
 from collections import OrderedDict
+from numbers import Integral
 from typing import Any, Dict, List, Set, Tuple, Union
 
 import numpy as np
@@ -89,7 +90,8 @@ class Data:
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.shape):
             raise TypeError('Shape must be a list or tuple of integer values '
                             'or symbols')
         if any((shp < 0) == True for shp in self.shape):
@@ -528,9 +530,10 @@ class Array(Data):
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
 
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer values or symbols')
-        if any(not isinstance(off, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
                for off in self.offset):
             raise TypeError('Offset must be a list or tuple of integer values or symbols')
 
