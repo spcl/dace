@@ -37,8 +37,7 @@ def find_outgoing_edges(node, dfg):
         return list(dfg.out_edges(node))
 
 
-
-@lru_cache(maxsize=16384, typed=True)
+@functools.lru_cache(maxsize=16384, typed=True)
 def _sym2cpp(s, arrayexprs):
     return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 
