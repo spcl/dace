@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Hoist ``if cond(i): acc = acc OP expr`` out of a ``ConditionalBlock`` by
-masking the addend with the OP's identity on the false case, so that
-:class:`~dace.transformation.dataflow.wcr_conversion.AugAssignToWCR` plus
-:class:`~dace.transformation.interstate.loop_to_map.LoopToMap` can lift the
-loop to a parallel Map with a WCR-on-scalar reduction.
+"""Lower ``if cond(i): acc = acc OP expr`` (a guarded reduction) to an
+UNCONDITIONAL masked reduction, so the standard reduction machinery lifts it to
+the fast tree-reduction -- an OpenMP ``reduction(OP:acc)`` clause on CPU / a
+block-warp tree-reduce on GPU -- instead of the per-passing-thread guarded
+atomic the raw conditional lowers to.
 
 Target patterns (TSVC ``s3111``, conditional ``+=``):
 
@@ -15,45 +15,32 @@ Target patterns (TSVC ``s3111``, conditional ``+=``):
             sum_val = sum_val + a[i]
 
 In DaCe IR the conditional accumulator chain sits *inside* the
-``ConditionalBlock``'s true-branch -- so ``AugAssignToWCR``'s state-level
-``input AN -> tasklet -> output AN`` matcher cannot reach it, the carry on
-``sum_val`` blocks ``LoopToMap``, and the loop stays sequential.
+``ConditionalBlock``'s true-branch, and codegen lowers the guarded WCR write to
+``reduce_atomic`` (one atomic per passing thread) -- the slow path.
 
-Rewrite shape::
+The rewrite folds the guard into the accumulated value using the reduction
+identity and splits the computation into a mask tasklet and a plain accumulate::
 
-    Before:                              After:
-      Loop[i]                              Loop[i]
-        block_pre                            block_pre   (unchanged)
-        iedge: sym := ...                    iedge: sym := ...
-        ConditionalBlock(cond)               state:   <-- replaces ConditionalBlock
-          true:                                acc <- tasklet(__out =
-            acc = acc OP expr                    __acc OP (__addend if (cond) else IDENTITY))
-                                                ^ same content as the original
-                                                  true-branch state, with the
-                                                  update tasklet's body rewritten
+    if cond: acc OP= x   ==>   masked_val = (x if cond else IDENTITY(OP))
+                               acc        = acc OP masked_val
 
-Operator identities used for the mask:
+The masking is value-exact: a false iteration contributes ``IDENTITY(OP)``,
+which ``OP`` leaves the accumulator unchanged -- exactly the sequential
+semantics of the original guarded update. The accumulate tasklet reads the
+masked value BARE (``acc OP __masked``), so it is the same "compute then
+accumulate" shape as a dot product (``s += a[i]*b[i]``); the downstream
+``reduction_to_wcr_map`` canonicalize stage lifts it to a parallel WCR-on-scalar
+map whose codegen emits the tree reduction. (A single fused tasklet ``acc OP=
+(x if cond else id)`` would instead be mis-lifted by ``LoopToReduce``'s
+single-tasklet matcher, which keys off the top-level ``OP`` and would silently
+drop the mask -- hence the two-tasklet split.)
 
-============  ==========
-OP            identity
-============  ==========
-``+``         ``0``
-``-``         ``0`` (treated as ``+``; subtraction with addend on the right
-              is associative when the order is fixed)
-``*``         ``1``
-============  ==========
+Identities come from :func:`~dace.dtypes.reduction_identity` keyed on the
+reduction type detected for the op (``+``/``-`` -> ``0``, ``*`` -> ``1``), never
+a hand-maintained table.
 
-``min`` / ``max`` are dtype-specific (require ``+inf`` / ``-inf`` or
-``dtype::lowest()``); the v1 matcher refuses them so the loop stays
-sequential. They lift via :class:`ArgMaxLift` instead.
-
-The rewrite is value-preserving because OP-identity guarantees: applying
-``OP(acc, IDENTITY)`` returns ``acc`` unchanged, so a masked iteration where
-``cond`` is false contributes nothing, which is exactly the sequential
-semantics of the original guarded update.
-
-Scope of v1
------------
+Scope
+-----
 
 * Single ``ConditionalBlock`` in the loop body (with optional empty wrapper
   states); single non-else branch; no else with content.
@@ -62,7 +49,8 @@ Scope of v1
   endpoints are :class:`data.Scalar` or length-1 :class:`data.Array` with
   the SAME data name.
 * Update tasklet body is exactly ``__out = (__lhs OP __rhs)`` for a single
-  associative binary op (``+``, ``-``, ``*``).
+  associative binary op (``+``, ``-``, ``*``). ``min`` / ``max`` are left for
+  :class:`ArgMaxLift`.
 * No other writes (to non-transient arrays) inside the true-branch.
 
 Refusals leave the loop unmodified so downstream stages still see it.
@@ -79,28 +67,57 @@ def _copy_ast(node: ast.AST) -> ast.AST:
     return _copy_module.deepcopy(node)
 
 
+import numpy as np
+
 from dace import SDFG, data, dtypes, properties
+from dace import memlet as mm
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import (LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock)
+from dace.frontend import operations
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
-#: AST binop class -> ``(op_str, identity_literal)``. The identity is a Python
-#: literal suitable for embedding in a tasklet body's ternary expression.
-_BINOP_TO_OP_IDENTITY: Dict[type, tuple] = {
-    ast.Add: ('+', '0.0'),
-    ast.Sub: ('-', '0.0'),
-    ast.Mult: ('*', '1.0'),
+#: AST binop class -> associative reduction operator string.
+_BINOP_TO_OP: Dict[type, str] = {
+    ast.Add: '+',
+    ast.Sub: '-',
+    ast.Mult: '*',
 }
 
-#: OP -> WCR lambda string. Matches what :class:`AugAssignToWCR` emits for
-#: each op so downstream codegen (OpenMP ``reduction`` clause, CUDA atomics)
-#: lowers the WCR memlet through the same path.
-_WCR_LAMBDAS: Dict[str, str] = {
+#: Reduction operator string -> WCR lambda. Used ONLY to reuse
+#: :func:`~dace.frontend.operations.detect_reduction_type` so the neutral
+#: (identity) element comes from :func:`~dace.dtypes.reduction_identity`, not a
+#: hand-maintained per-op identity table. ``-`` maps to ``+`` because
+#: ``acc - x1 - x2`` masks against the SAME additive identity ``0``
+#: (``acc - 0 == acc``).
+_OP_TO_WCR: Dict[str, str] = {
     '+': 'lambda a, b: a + b',
-    '-': 'lambda a, b: a + b',  # subtraction-of-positive-addends -> add (we negated above)
+    '-': 'lambda a, b: a + b',
     '*': 'lambda a, b: a * b',
 }
+
+#: Reduction operator string -> AST binary-operator node class, for building the
+#: unconditional accumulator tasklet body ``__out = __acc OP (...)`` as an AST.
+_OP_TO_AST: Dict[str, type] = {
+    '+': ast.Add,
+    '-': ast.Sub,
+    '*': ast.Mult,
+}
+
+
+def _identity_value(op_str: str, dtype: dtypes.typeclass):
+    """The neutral element of ``op_str`` in ``dtype`` as a plain Python scalar,
+    from :func:`~dace.dtypes.reduction_identity` (``+``/``-`` -> ``0``,
+    ``*`` -> ``1``, and by extension min -> dtype-max, max -> dtype-min). A
+    masked-out iteration contributes this value, which ``OP`` leaves the
+    accumulator unchanged -- exactly the sequential semantics of the original
+    guarded update. Returns ``None`` if the op has no known identity."""
+    redtype = operations.detect_reduction_type(_OP_TO_WCR[op_str])
+    ident = dtypes.reduction_identity(dtype, redtype)
+    if ident is None:
+        return None
+    return ident.item() if isinstance(ident, np.generic) else ident
 
 
 class _Match(NamedTuple):
@@ -115,15 +132,16 @@ class _Match(NamedTuple):
     addend_in_conn: str
     out_conn: str
     op_str: str
-    identity_str: str
+    identity_value: object
 
 
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToConditionalReduce(ppl.Pass):
     """Rewrite ``if cond: acc = acc OP expr`` to an unconditional masked
-    accumulator chain so the canonical ``AugAssignToWCR + LoopToMap`` pair
-    can pick it up."""
+    reduction (mask tasklet + plain accumulate) so the ``reduction_to_wcr_map``
+    stage lowers it to a tree-reduction (OMP ``reduction`` clause / GPU block
+    reduce) instead of a guarded atomic."""
 
     CATEGORY: str = 'Optimization Preparation'
 
@@ -148,8 +166,8 @@ class LoopToConditionalReduce(ppl.Pass):
                 m = self._match(region, sd)
                 if m is None:
                     continue
-                self._rewrite(m, sd)
-                rewritten += 1
+                if self._rewrite(m, sd):
+                    rewritten += 1
         return rewritten or None
 
     # --------------------------- match ---------------------------
@@ -246,10 +264,12 @@ class LoopToConditionalReduce(ppl.Pass):
         rhs = assign.value
         if not isinstance(rhs, ast.BinOp):
             return None
-        op_info = _BINOP_TO_OP_IDENTITY.get(type(rhs.op))
-        if op_info is None:
+        op_str = _BINOP_TO_OP.get(type(rhs.op))
+        if op_str is None:
             return None
-        op_str, identity_str = op_info
+        identity_value = _identity_value(op_str, sdfg.arrays[acc_name].dtype)
+        if identity_value is None:
+            return None
         if not (isinstance(rhs.left, ast.Name) and isinstance(rhs.right, ast.Name)):
             return None
         lhs_name, rhs_name = rhs.left.id, rhs.right.id
@@ -290,7 +310,7 @@ class LoopToConditionalReduce(ppl.Pass):
             addend_in_conn=addend_in_conn,
             out_conn=out_conn,
             op_str=op_str,
-            identity_str=identity_str,
+            identity_value=identity_value,
         )
 
     # ------------------------- match helpers -------------------------
@@ -353,83 +373,119 @@ class LoopToConditionalReduce(ppl.Pass):
                 return None
             cur = ins[0].src
 
+    def _addend_gather(self, m: _Match):
+        """Return ``(array_name, subset)`` for the addend read, or ``None`` if
+        the shape is unrecognized. Handles BOTH the raw transient-hop form
+        (``arr -> arr_index(transient) -> tasklet``, as the frontend emits) AND
+        the folded direct-read form (``arr -> tasklet``) the scalar-slice fold
+        passes produce mid-pipeline -- in the folded form the addend source
+        AccessNode is a pure array read (``in_degree == 0``) and the gather
+        subset lives on the tasklet input edge itself."""
+        addend_edge = next((e for e in m.true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn), None)
+        if addend_edge is None or not isinstance(addend_edge.src, nodes.AccessNode):
+            return None
+        src = addend_edge.src
+        if m.true_state.in_degree(src) == 1:
+            pred = m.true_state.in_edges(src)[0]
+            if isinstance(pred.src, nodes.AccessNode) and pred.data is not None:
+                return pred.src.data, pred.data.subset
+        return src.data, addend_edge.data.subset
+
     # ---------------------------- rewrite ----------------------------
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
-        """Replace the ConditionalBlock with a fresh body state that holds a
-        single mask tasklet writing the (possibly identity-masked) addend
-        directly into the accumulator via a WCR memlet.
+        """Replace the ``ConditionalBlock`` with a fresh body state holding an
+        UNCONDITIONAL masked reduction -- a mask tasklet writing a fresh
+        per-iteration transient, then a plain accumulate reading it BARE::
 
-        The original conditional-accumulator chain is discarded entirely:
-        there is no longer a per-iteration ``acc_read -> ... -> acc_write``
-        chain inside the loop body, because the WCR edge makes the write
-        atomic. ``LoopToMap`` then lifts the loop with no loop-carried RAW
-        to worry about, and codegen emits the standard OpenMP
-        ``#pragma omp parallel for reduction(<op>:acc)`` clause for CPU /
-        the corresponding atomic intrinsic for CUDA.
+            masked_val = (__addend if (cond) else IDENTITY)
+            __out      = __acc OP __masked
 
-        The cond expression is resolved against iedge symbol bindings; any
-        array reference that matches an existing addend memlet is rewritten
-        to use the new mask tasklet's input connector. References that
-        don't match (e.g. a cond that reads a *different* array than the
-        addend) get their own input edge added to the mask tasklet.
+        Folding the guard into the masked value via the reduction identity is
+        value-exact -- a false iteration contributes the neutral element, so
+        ``OP`` leaves the accumulator unchanged, which is exactly the sequential
+        semantics of the original guarded update. The accumulate writes back
+        with a PLAIN (non-WCR) memlet and keeps the loop-carried scalar, so the
+        loop stays sequential through ``parallelize``; the downstream
+        ``reduction_to_wcr_map`` stage then lifts the "compute then accumulate"
+        shape to a parallel WCR-on-scalar map whose codegen emits an OpenMP
+        ``reduction(OP:acc)`` clause (CPU) / a block/warp tree-reduce (GPU) --
+        the fast tree reduction -- instead of the guarded atomic. See the module
+        docstring for why the mask must be a SEPARATE tasklet.
+
+        The cond expression is resolved against iedge symbol bindings; the
+        addend's array gather is rewritten to the mask tasklet's ``__addend``
+        connector and remaining references resolve to loop symbols. Returns
+        ``True`` on a successful rewrite, ``False`` if the addend shape is
+        unrecognized (loop left untouched).
         """
-        import dace
-        from dace import memlet as mm
         loop = m.loop
-        # The new mask tasklet's addend input connector is ``__addend``; the
-        # cond resolution rewrites array accesses that match the addend's
-        # gather to use this connector name.
+        # The new tasklet's addend input connector is ``__addend``; the cond
+        # resolution rewrites the addend gather to that connector name.
         cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name='__addend')
 
-        # 1. Trace back to the addend's source array + subset (one transient
-        #    hop through ``a_index_0``).
-        addend_edge = next(e for e in m.true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn)
-        addend_src_an = addend_edge.src
-        if (isinstance(addend_src_an, nodes.AccessNode) and m.true_state.in_degree(addend_src_an) == 1):
-            pred = m.true_state.in_edges(addend_src_an)[0]
-            if isinstance(pred.src, nodes.AccessNode):
-                addend_src_name = pred.src.data
-                addend_subset = pred.data.subset
-            else:
-                addend_src_name = addend_src_an.data
-                addend_subset = addend_edge.data.subset
-        else:
-            return  # unexpected shape
+        # 1. Trace back to the addend's source array + subset.
+        gather = self._addend_gather(m)
+        if gather is None:
+            return False  # unexpected shape -- leave the loop untouched
+        addend_src_name, addend_subset = gather
 
-        # 2. Build a fresh body state in the parent CFG of the loop. We'll
-        #    populate it then replace the loop body's start_block with it.
+        # 2. Two-tasklet split (mask THEN accumulate). The masked value is
+        #    computed in its own elementwise tasklet writing a fresh per-iteration
+        #    transient, and the accumulation reads that transient BARE:
+        #
+        #        masked_val = (__addend if (cond) else IDENTITY)   # mask tasklet
+        #        __out      = __acc OP __masked                    # accumulate tasklet
+        #
+        #    This is the SAME "compute then accumulate" shape as a dot-product
+        #    (``s += a[i]*b[i]``). A single fused tasklet ``__out = __acc OP
+        #    (__addend if cond else id)`` would instead be mis-lifted by
+        #    ``LoopToReduce``'s single-tasklet ``_extract`` matcher, which keys off
+        #    the top-level ``OP`` and treats the non-accumulator operand as a bare
+        #    array read -- silently dropping the mask. Splitting the mask out gives
+        #    the accumulate tasklet a bare transient operand (correctly lifted) and
+        #    routes the whole loop through the multi-tasklet compute-then-accumulate
+        #    path, which preserves the mask.
+        acc_desc = sdfg.arrays[m.acc_name]
+        masked_val, _ = sdfg.add_scalar(f'{m.acc_name}_masked_val', acc_desc.dtype, transient=True, find_new_name=True)
+
+        mask_body = self._build_mask_body(cond_expr_resolved, m.identity_value)
+        acc_body = self._build_acc_body(m.op_str)
+
+        # 3. Fresh body state with the mask + accumulate tasklets.
         new_state = loop.add_state(loop.label + '_masked_body')
+        mask_tasklet = new_state.add_tasklet(name=f'{m.acc_name}_mask',
+                                             inputs={'__addend'},
+                                             outputs={'__out'},
+                                             code=mask_body,
+                                             language=dtypes.Language.Python)
+        acc_tasklet = new_state.add_tasklet(name=f'{m.acc_name}_masked_acc',
+                                            inputs={'__acc', '__masked'},
+                                            outputs={'__out'},
+                                            code=acc_body,
+                                            language=dtypes.Language.Python)
 
-        # 3. Mask tasklet: ``__out = __addend if (cond) else IDENTITY``.
-        mask_tasklet = new_state.add_tasklet(
-            name=f'{m.acc_name}_masked_acc',
-            inputs={'__addend'},
-            outputs={'__out'},
-            code=f'__out = __addend if ({cond_expr_resolved}) else {m.identity_str}',
-            language=dtypes.Language.Python,
-        )
-
-        # 4. Wire the addend source -> mask_tasklet input, and
-        #    mask_tasklet output --(WCR)--> accumulator.
+        # 4. Wire: addend_src -> mask -> masked_val -> accumulate; acc_read ->
+        #    accumulate -> acc_write (PLAIN, no WCR). The loop keeps its scalar RMW
+        #    carry so it stays sequential until ``reduction_to_wcr_map`` lifts it.
+        acc_subset = '0'  # scalar / length-1 carrier; matcher enforces this
         src_read = new_state.add_read(addend_src_name)
+        masked_an = new_state.add_access(masked_val)
+        acc_read = new_state.add_read(m.acc_name)
         acc_write = new_state.add_write(m.acc_name)
         new_state.add_edge(src_read, None, mask_tasklet, '__addend',
                            mm.Memlet(data=addend_src_name, subset=addend_subset))
-        # WCR write to the accumulator. ``Memlet`` accepts a ``wcr`` lambda
-        # string; the codegen lowers it through the standard reduction
-        # pipeline (OpenMP ``reduction`` / CUDA atomics).
-        wcr_lambda = _WCR_LAMBDAS[m.op_str]
-        acc_subset = '0'  # scalar / length-1 carrier; matcher enforces this
-        new_state.add_edge(mask_tasklet, '__out', acc_write, None,
-                           mm.Memlet(data=m.acc_name, subset=acc_subset, wcr=wcr_lambda))
+        new_state.add_edge(mask_tasklet, '__out', masked_an, None, mm.Memlet(data=masked_val, subset=acc_subset))
+        new_state.add_edge(masked_an, None, acc_tasklet, '__masked', mm.Memlet(data=masked_val, subset=acc_subset))
+        new_state.add_edge(acc_read, None, acc_tasklet, '__acc', mm.Memlet(data=m.acc_name, subset=acc_subset))
+        new_state.add_edge(acc_tasklet, '__out', acc_write, None, mm.Memlet(data=m.acc_name, subset=acc_subset))
 
         # 5. Reroute the loop body: replace ``... -> cond_block`` and
         #    ``cond_block -> ...`` with ``... -> new_state`` /
         #    ``new_state -> ...``, stripping dead iedge assignments (the
         #    resolved cond no longer references the gather symbols).
         for ie in list(loop.in_edges(m.cond_block)):
-            stripped = dace.InterstateEdge(condition=ie.data.condition, assignments={})
+            stripped = InterstateEdge(condition=ie.data.condition, assignments={})
             loop.add_edge(ie.src, new_state, stripped)
             loop.remove_edge(ie)
         for oe in list(loop.out_edges(m.cond_block)):
@@ -441,9 +497,36 @@ class LoopToConditionalReduce(ppl.Pass):
         loop.remove_node(m.cond_block)
         # 7. Collapse empty wrapper states; if ``new_state`` ends up being
         #    the unique non-empty block, the loop body is a clean single-
-        #    state shape that ``LoopToMap`` lifts.
+        #    state accumulator that ``reduction_to_wcr_map`` lifts.
         self._collapse_empty_wrappers(loop)
         sdfg.reset_cfg_list()
+        return True
+
+    def _build_mask_body(self, cond_expr: str, identity_value) -> str:
+        """Return Python source for the elementwise mask tasklet
+        ``__out = (__addend if (cond) else IDENTITY)``, built as an AST so the
+        resolved cond sub-expression is spliced structurally (no string surgery)."""
+        cond_ast = ast.parse(cond_expr, mode='eval').body
+        masked = ast.IfExp(test=cond_ast,
+                           body=ast.Name(id='__addend', ctx=ast.Load()),
+                           orelse=ast.Constant(value=identity_value))
+        assign = ast.Assign(targets=[ast.Name(id='__out', ctx=ast.Store())], value=masked)
+        module = ast.Module(body=[assign], type_ignores=[])
+        ast.fix_missing_locations(module)
+        return ast.unparse(module)
+
+    def _build_acc_body(self, op_str: str) -> str:
+        """Return Python source for the accumulate tasklet
+        ``__out = __acc OP __masked`` (both operands bare connectors), built as an
+        AST. The bare masked operand is what lets ``LoopToReduce`` lift the
+        accumulation without dropping the mask."""
+        rhs = ast.BinOp(left=ast.Name(id='__acc', ctx=ast.Load()),
+                        op=_OP_TO_AST[op_str](),
+                        right=ast.Name(id='__masked', ctx=ast.Load()))
+        assign = ast.Assign(targets=[ast.Name(id='__out', ctx=ast.Store())], value=rhs)
+        module = ast.Module(body=[assign], type_ignores=[])
+        ast.fix_missing_locations(module)
+        return ast.unparse(module)
 
     def _resolve_cond(self, m: _Match, sdfg: SDFG, addend_conn_name: str = '__addend') -> str:
         """Resolve the cond expression to use only tasklet input connectors.
@@ -475,26 +558,21 @@ class LoopToConditionalReduce(ppl.Pass):
                 except SyntaxError:
                     continue
 
-        # Step 2a: discover the addend's gather (arr + subset) by walking
-        # back from the addend input edge through one transient hop. Map
-        # the matching ``(arr, idx)`` to ``addend_conn_name`` -- the new
-        # mask tasklet's input connector name (not the original update
-        # tasklet's, which doesn't survive the rewrite).
+        # Step 2a: discover the addend's gather (arr + subset) -- handling both
+        # the transient-hop and folded direct-read forms via ``_addend_gather``
+        # -- and map the matching ``(arr, idx)`` to ``addend_conn_name`` (the new
+        # accumulator tasklet's input connector, so a cond that reads the SAME
+        # element as the addend, e.g. ``a[i] > K``, resolves to ``__addend``).
         connector_for_access: Dict[tuple, str] = {}
-        addend_edge = next((e for e in m.true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn), None)
-        if addend_edge is not None:
-            src = addend_edge.src
-            if isinstance(src, nodes.AccessNode) and m.true_state.in_degree(src) == 1:
-                pred = m.true_state.in_edges(src)[0]
-                if isinstance(pred.src, nodes.AccessNode):
-                    arr_name = pred.src.data
-                    sub = pred.data.subset if pred.data is not None else None
-                    if sub is not None:
-                        try:
-                            key = tuple(str(lo) for lo, _hi, _st in sub.ranges)
-                            connector_for_access[(arr_name, key)] = addend_conn_name
-                        except Exception:
-                            pass
+        gather = self._addend_gather(m)
+        if gather is not None:
+            arr_name, sub = gather
+            if sub is not None:
+                try:
+                    key = tuple(str(lo) for lo, _hi, _st in sub.ranges)
+                    connector_for_access[(arr_name, key)] = addend_conn_name
+                except Exception:
+                    pass
 
         # Step 2b: AST-rewrite the cond.
         class _Subst(ast.NodeTransformer):
@@ -517,7 +595,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
                     idx = idx.value
                 try:
-                    idx_str = ast.unparse(idx) if hasattr(ast, 'unparse') else _ast_to_str(idx)
+                    idx_str = ast.unparse(idx)
                 except Exception:
                     return node
                 key = (arr_name, (idx_str, ))

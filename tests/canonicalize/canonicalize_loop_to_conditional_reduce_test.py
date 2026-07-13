@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.sdfg import nodes as nd
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
@@ -21,10 +21,6 @@ def _num_loops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
 
 
-def _num_maps(sdfg):
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
-
-
 # -----------------------------------------------------------------------------
 # Positive: TSVC s3111-style conditional accumulators.
 # -----------------------------------------------------------------------------
@@ -32,12 +28,15 @@ def _num_maps(sdfg):
 
 def test_tsvc_s3111_conditional_sum():
     """``if a[i] > 0: sum += a[i]`` -- the canonical conditional reduction.
-    After the rewrite, the body is a single state with a mask tasklet
-    (``__out = __addend if cond else 0.0``) whose output is a WCR ``+`` write
-    to the accumulator scalar. ``LoopToMap`` then lifts the loop with no
-    loop-carried RAW to worry about; the WCR makes the write atomic and
-    codegen emits the standard ``#pragma omp parallel for reduction(+:s)``
-    clause for CPU.
+    After the rewrite the ``ConditionalBlock`` is gone and the body is an
+    UNCONDITIONAL masked reduction: a mask tasklet (``__out = __addend if cond
+    else 0.0``) writing a per-iteration transient, then a plain accumulate
+    (``__out = __acc + __masked``). The loop keeps its scalar RMW carry so it
+    stays sequential here; the full ``reduction_to_wcr_map`` stage of the
+    canonicalize pipeline is what lifts it to a parallel WCR-map + OMP
+    ``reduction(+:s)`` clause (covered end-to-end in
+    ``tests/passes/canonicalize/conditional_reduction_tree_reduce_test.py``).
+    This test pins the rewrite's structural contract + value preservation.
     """
 
     @dace.program
@@ -52,10 +51,14 @@ def test_tsvc_s3111_conditional_sum():
     assert _num_loops(sdfg) == 1
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res == 1
-    sdfg.apply_transformations_repeated(LoopToMap, validate=False)
     sdfg.validate()
-    assert _num_loops(sdfg) == 0
-    assert _num_maps(sdfg) >= 1
+
+    # The guard is folded into the accumulated value: no ConditionalBlock left.
+    assert not any(
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
+    # The unconditional masked-reduction tasklets replace the guarded update.
+    bodies = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet)]
+    assert any('if ' in b and 'else' in b for b in bodies), "expected a masked (ternary) tasklet"
 
     n = 32
     rng = np.random.default_rng(3111)

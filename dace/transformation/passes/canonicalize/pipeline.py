@@ -674,6 +674,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (matvec / matmul / transpose) must be claimed as a single Einsum node before
     # LoopToReduce lifts its reduction axis to a Reduce. It probes on a throwaway
     # copy and is a clean no-op on any nest that does not collapse to one Einsum.
+    # LoopToConditionalReduce folds a guarded accumulator ``if cond: acc OP= x`` into an
+    # UNCONDITIONAL masked reduction -- ``masked = (x if cond else IDENTITY); acc OP= masked``
+    # -- the exact "compute then accumulate" shape an unguarded reduction (``s += a[i]*b[i]``)
+    # has -- so the later ``reduction_to_wcr_map`` stage lifts it to a parallel WCR-on-scalar
+    # Map whose codegen emits the OpenMP ``reduction(op:acc)`` clause (CPU) / block-warp
+    # tree-reduce (GPU), instead of the per-passing-thread guarded atomic the raw conditional
+    # lowers to.
     s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
           ('loop_to_x', LoopToConditionalReduce())]
