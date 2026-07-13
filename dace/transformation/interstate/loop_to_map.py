@@ -157,6 +157,29 @@ def _affine_coeffs(expr, itersym):
     return a, b
 
 
+def _same_injective_index(idx1, idx2, itersym) -> bool:
+    """ True iff ``idx1`` and ``idx2`` are the SAME injective affine function ``a*i+b``
+        (``a != 0``) of the iteration variable.
+
+        When two accesses index a dimension by such a function, a collision on that dimension
+        (``a*p+b == a*q+b``) forces the two iterations to coincide (``p == q``). Any overlap between
+        them is therefore confined to a single iteration -- where program order in the map body is
+        preserved -- and never becomes a cross-iteration dependency. Used both for write/write
+        overlap (:func:`_writes_may_overlap`) and read/write RAW (:func:`_read_write_same_iteration`).
+
+        Both indices and the iteration symbol are re-parsed through the symbol registry (via their
+        string form) before the comparison: a read subset and a write subset can carry copies of the
+        iteration variable that share the NAME ``i`` but different sympy assumptions, so ``idx1 -
+        idx2`` would not simplify to zero and ``coeff`` would not see them as the same symbol.
+        Canonicalizing drops the assumption metadata and makes both refer to one registry symbol.
+    """
+    sym = symbolic.pystr_to_symbolic(str(itersym))
+    e1 = symbolic.pystr_to_symbolic(str(idx1))
+    e2 = symbolic.pystr_to_symbolic(str(idx2))
+    coeffs = _affine_coeffs(e1, sym)
+    return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
+
+
 def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     """ True iff ``idx1`` at any iteration can never equal ``idx2`` at any
         iteration, for any pair of in-domain iterations and any loop bounds.
@@ -246,6 +269,32 @@ def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, iters
     return False
 
 
+def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym) -> bool:
+    """ True iff some point dimension indexes both ``read`` and ``write`` by the SAME injective
+        affine function of the iteration variable (see :func:`_same_injective_index`).
+
+        Then a read/write collision on that dimension forces the reading and writing iterations to
+        coincide, so the read and write touch the same element only WITHIN one iteration (where the
+        map body preserves program order) and never across iterations. This is the read/write analog
+        of the injective-index rule in :func:`_writes_may_overlap`: it recognizes that iteration
+        ``i`` reads and writes only its own slab (e.g. syrk's ``C[i, :i+1]`` row), so lifting the
+        loop to a DOALL map is safe even though the read and write overlap in-iteration.
+
+        Only ONE such dimension is required: if a collision on dimension ``d`` already forces
+        ``p == q``, no pair of distinct iterations can address the same multidimensional element.
+    """
+    rnd = list(read.ndrange())
+    wnd = list(write.ndrange())
+    if len(rnd) != len(wnd) or len(rnd) == 0:
+        return False
+    for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
+        if rb != re_ or wb != we_:  # only point dimensions carry an injective index
+            continue
+        if _same_injective_index(rb, wb, itersym):
+            return True
+    return False
+
+
 def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
     """ Prove that two point-subset writes ``m1``, ``m2`` to the same container can only address
         the same element when their loop iterations coincide.
@@ -326,8 +375,7 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step=1, s
         # Both writes index this dim by the same injective function of the iter var: a collision
         # forces the two iterations equal, so they coincide only within one iteration (program
         # order in the map body), never across distinct iterations.
-        coeffs = _affine_coeffs(b1, itersym)
-        if coeffs is not None and coeffs[0] != 0 and sp.simplify(b1 - b2) == 0:
+        if _same_injective_index(b1, b2, itersym):
             return False
         if _dim_provably_disjoint(b1, b2, itersym, step, start):
             return False
@@ -690,6 +738,14 @@ class LoopToMap(xf.MultiStateTransformation):
             # than the propagate+intersect fallback below, which drops constant
             # disproving dims and ignores the loop stride.
             if _read_write_dims_disjoint(read, write, itersym, step, start):
+                continue
+            # Same-iteration collision: if some point dimension indexes both the read and the write
+            # by the same injective function of the iter var (e.g. syrk's ``C[i, :i+1]`` -- row ``i``
+            # read and written by iteration ``i``), a collision forces the read and write iterations
+            # to coincide. The overlap is then confined to one iteration (program order in the map
+            # body preserves it) and is never a cross-iteration RAW. Mirrors the write/write
+            # injective-index rule in :func:`_writes_may_overlap`.
+            if _read_write_same_iteration(read, write, itersym):
                 continue
             ridx = _dependent_indices(itervar, read)
             widx = _dependent_indices(itervar, write)
