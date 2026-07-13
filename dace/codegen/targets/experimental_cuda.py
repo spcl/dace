@@ -666,18 +666,23 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         for i, iedge in enumerate(state.in_edges(map_exit)):
             if iedge.data is None or iedge.data.wcr is None:
                 continue
-            # A GPU atomic takes a pointer, so a scalar OR a length-1 Array slot is a valid target.
+            # The reduced range must be a single contiguous 1-D span of the accumulator: a scalar
+            # (``m == 1``, GPU atomic on the one slot) or a length-``m`` subset (folded element-wise
+            # by the drain loop). Multi-dimensional or strided targets keep the atomic fallback.
             acc_desc = sdfg.arrays.get(iedge.data.data)
-            if acc_desc is None or iedge.data.data in seen_targets:
+            subset = iedge.data.subset
+            if acc_desc is None or iedge.data.data in seen_targets or subset is None:
                 continue
+            if len(subset) != 1 or subset.ranges[0][2] != 1:
+                continue
+            base, end, _ = subset.ranges[0]
             try:
-                if int(iedge.data.subset.num_elements()) != 1:
-                    continue
-            except (TypeError, ValueError, AttributeError):
-                continue
+                m = int(end - base) + 1
+            except (TypeError, ValueError):
+                continue  # symbolic length: cannot size the register partial / drain loop
             # Loop-invariant target (not indexed by this map's iteration variables); a
-            # param-dependent subset is a scatter, not a reduction.
-            if iedge.data.subset is not None and any(str(s) in map_params for s in iedge.data.subset.free_symbols):
+            # param-dependent range is a scatter, not a reduction.
+            if any(str(s) in map_params for s in subset.free_symbols):
                 continue
             redtype = operations.detect_reduction_type(iedge.data.wcr)
             identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
@@ -693,32 +698,40 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 'credtype': 'dace::ReductionType::' + str(redtype).split('.')[-1],
                 'identity': f'{ctype}({float(identity)!r})',
                 'num_threads': num_threads,
+                'm': m,
+                'base': base,
                 'data': iedge.data.data,
             })
         return out
 
     def emit_gpu_block_reduction(self, red: Dict[str, Any], idstr: str, cfg: ControlFlowRegion, state_id: int,
                                  node: nodes.Node, stream: CodeIOStream) -> None:
-        """Emit the thread-block fold for one reduction: ``cub::BlockReduce`` over each thread's
-        register partial, then one ``reduce_atomic`` from thread 0.
+        """Emit the thread-block fold for one reduction: for each of the ``m`` reduced elements,
+        ``cub::BlockReduce`` over each thread's register partial, then one ``reduce_atomic`` from
+        thread 0 into that accumulator element.
 
-        Emitted after the bounds guard closes so every thread reaches the (barrier-using) cub
-        call; out-of-range threads carry the identity set at scope entry.
+        Emitted after the bounds guard closes so every thread reaches the (barrier-using) cub call;
+        out-of-range threads carry the identity set at scope entry. The ``__syncthreads`` between
+        iterations lets the single shared ``TempStorage`` be reused for the next element.
 
         :param red: a field dict produced by :meth:`collect_gpu_block_reductions`.
         :param idstr: a per-reduction unique suffix for the emitted cub type/storage names.
         :param stream: the code stream to append the fold to.
         """
         functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
+        base_cpp = sym2cpp(red['base'])
         stream.write(
             '{{\n'
             'typedef cub::BlockReduce<{ctype}, {num_threads}> __brt_{id};\n'
             '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
-            '{ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}, {functor}());\n'
-            'if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{\n'
-            '    {functor}::reduce_atomic({acc_ptr}, __bres_{id});\n'
+            'for (int __bk_{id} = 0; __bk_{id} < {m}; ++__bk_{id}) {{\n'
+            '    {ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}[__bk_{id}], {functor}());\n'
+            '    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{\n'
+            '        {functor}::reduce_atomic({acc_ptr} + (({base_cpp}) + __bk_{id}), __bres_{id});\n'
+            '    }}\n'
+            '    __syncthreads();\n'
             '}}\n'
-            '}}'.format(id=idstr, functor=functor, **red), cfg, state_id, node)
+            '}}'.format(id=idstr, functor=functor, base_cpp=base_cpp, **red), cfg, state_id, node)
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,

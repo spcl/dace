@@ -88,6 +88,28 @@ def test_block_reduction_max():
 
 
 @pytest.mark.gpu
+def test_block_reduction_subset():
+    """A length-m subset (vector) accumulator folds element-wise via a per-element for-loop of
+    ``cub::BlockReduce`` instead of one atomic per thread per element."""
+    M = 4
+
+    @dace.program
+    def vecred(B: dace.float64[N, M], acc: dace.float64[M]):
+        acc[:] = 0.0
+        for i in dace.map[0:N]:
+            acc[:] += B[i, :]
+
+    sdfg = _gpu_sdfg(vecred)
+    code = "\n".join(c.code for c in sdfg.generate_code())
+    assert "cub::BlockReduce" in code
+
+    B = np.random.rand(N, M)
+    acc = np.zeros(M)
+    sdfg(B=B, acc=acc)
+    assert np.allclose(acc, B.sum(axis=0), rtol=0, atol=1e-9)
+
+
+@pytest.mark.gpu
 def test_block_reduction_disabled_falls_back_to_atomic():
     """With ``compiler.tree_reduction`` off, no ``cub::BlockReduce`` is emitted, but the plain
     per-thread atomic WCR still produces the correct result."""
@@ -113,4 +135,5 @@ if __name__ == '__main__':
     test_block_reduction_sum()
     test_block_reduction_sequential_tile()
     test_block_reduction_max()
+    test_block_reduction_subset()
     test_block_reduction_disabled_falls_back_to_atomic()

@@ -192,8 +192,16 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 reductions = self.codegen.collect_gpu_block_reductions(sdfg, state, node, kernel_block_dims)
             covered = self.codegen._cpu_codegen._gpu_block_reduction_covered
             for red in reductions:
-                callsite_stream.write(f"{red['ctype']} {red['partial']} = {red['identity']};", cfg, state_id, node)
-                covered[red['data']] = {'partial': red['partial'], 'credtype': red['credtype'], 'ctype': red['ctype']}
+                callsite_stream.write(
+                    f"{red['ctype']} {red['partial']}[{red['m']}];\n"
+                    f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};", cfg,
+                    state_id, node)
+                covered[red['data']] = {
+                    'partial': red['partial'],
+                    'credtype': red['credtype'],
+                    'ctype': red['ctype'],
+                    'base': red['base'],
+                }
 
             # Bounds guards go in their own manager so they close before the block fold: cub's
             # Reduce is a block-wide barrier, so every thread (in-range or not) must reach it.

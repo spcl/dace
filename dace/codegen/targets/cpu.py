@@ -990,13 +990,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
         redtype = operations.detect_reduction_type(memlet.wcr)
         # Enclosing GPU thread-block map folds this target via a tree reduction: accumulate the
-        # value into a thread-private register partial (no atomic) and let ``cub::BlockReduce``
-        # at the map exit drain it (one atomic per block). Emitting the per-thread atomic here
-        # would both contend and, with the block fold, double-count.
+        # value into this thread's private register partial (no atomic) and let ``cub::BlockReduce``
+        # at the map exit drain it (one atomic per block). Emitting the per-thread atomic here would
+        # both contend and, with the block fold, double-count. The partial is a register array whose
+        # index is the accumulator offset relative to the reduced range base, so a single scalar
+        # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
         cover = self._gpu_block_reduction_covered.get(memlet.data)
         if cover is not None:
-            return (f"{cover['partial']} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()"
-                    f"({cover['partial']}, {inname})")
+            slot = sym2cpp(memlet.subset.ranges[0][0] - cover['base'])
+            lhs = f"{cover['partial']}[{slot}]"
+            return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
