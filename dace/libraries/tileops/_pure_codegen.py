@@ -8,12 +8,45 @@ pure expansion plugs in its own per-lane body via :func:`nested_loops`
 and uses :func:`tile_offset` to flatten the tile transient's index
 (register tiles are always row-major-contiguous).
 """
+import numbers
 from typing import Sequence
+
+
+def constant_trip_count(width) -> bool:
+    """True iff ``width`` is a compile-time-constant integer loop bound.
+
+    A per-lane tile loop with a constant trip count (the register-tile /
+    vector width, e.g. ``2`` for an ``fp16x2`` fill) is safe to force-unroll:
+    the bound is known at code-gen time and never a runtime / symbolic value.
+    This guard keeps the ``#pragma unroll`` (see :func:`nested_loops`) off any
+    hypothetical symbolic-width loop, where an unroll pragma on a runtime bound
+    is meaningless. Tile widths are ``ListProperty(element_type=int)`` today, so
+    the common path is the plain ``int`` check; the sympy branch is defensive.
+
+    :param width: A per-tile-dim width (``int`` in practice; a sympy expression
+        is tolerated and accepted only when it is a concrete integer).
+    :returns: ``True`` for a compile-time-constant integer width, else ``False``.
+    """
+    if isinstance(width, numbers.Integral):
+        return True
+    import sympy
+    return isinstance(width, sympy.Basic) and bool(width.is_Integer)
 
 
 def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     """Wrap ``body`` in a K-fold nested for-loop iterating per-dim
     lane indices ``__l0, __l1, ...``.
+
+    Each fixed-width lane loop is preceded by ``#pragma unroll`` (guarded by
+    :func:`constant_trip_count`): the trip count is the compile-time
+    register-tile width -- the vector width -- so a full unroll strips the loop
+    overhead of a broadcast / scalar-fill (e.g. the ``fp16`` constant-multiply
+    ``_c[__l] = float16(0.125)``) and lets the backend keep the tile in
+    registers. This mirrors the CPU map-unroll pragma (``cpu.py`` ``#pragma
+    unroll``) and the per-lane ``#pragma unroll`` the CUDA tile-op header emits;
+    the same pure tasklet body is emitted verbatim by both the CPU and CUDA
+    targets, so NVCC / Clang honour the pragma and GCC harmlessly ignores the
+    unknown pragma.
 
     :param widths: Per-tile-dim widths, innermost-last.
     :param body: The per-lane C++ body (already trailing-``;`` if
@@ -24,6 +57,8 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     K = len(widths)
     lines = []
     for d, w in enumerate(widths):
+        if constant_trip_count(w):
+            lines.append(f"{indent * d}#pragma unroll")
         lines.append(f"{indent * d}for (std::size_t __l{d} = 0; __l{d} < {w}; ++__l{d}) {{")
     for line in body.splitlines():
         lines.append(f"{indent * K}{line}")
