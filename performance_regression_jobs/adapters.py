@@ -190,13 +190,15 @@ def np_recipe(kernel_name):
 
 
 def numpy_ref(info):
-    """The numpy oracle for a bench_info entry. Tries the declared relative_path
-    form first, then falls back to the FLAT ``npbench_numpy_refs.<module>.<module>_numpy``
-    form (some polybench refs are vendored flat, without the polybench/ prefix).
-    Raises ImportError/AttributeError only when NEITHER form resolves."""
+    """The numpy oracle for a bench_info entry. polybench oracles are vendored in
+    their own top-level ``polybench_numpy_refs/`` dir (not under npbench_numpy_refs);
+    npbench ones live under ``npbench_numpy_refs/<relative_path>/``. Tries the
+    relative-path form, then both FLAT ``<pkg>.<module>.<module>_numpy`` forms.
+    Raises ImportError/AttributeError only when NONE resolves."""
     module = info['module_name']
     candidates = [
         'npbench_numpy_refs.' + info['relative_path'].replace('/', '.') + f'.{module}_numpy',
+        f'polybench_numpy_refs.{module}.{module}_numpy',
         f'npbench_numpy_refs.{module}.{module}_numpy',
     ]
     last = None
@@ -220,20 +222,23 @@ def numpy_ref_available(kernel_name):
 def np_prepare(kernel_name, recipe, name_tag, pipeline_fn):
     info = npp.load_bench_info(kernel_name)
     params = info['parameters'][npp.PRESET]
-    program, arrays = npp.build_program_and_data(kernel_name, info, params)
+    # build_program_and_data returns the params dict AUGMENTED with any derived
+    # scalars the npbench initializer produced (a new dict, not mutated in place);
+    # the call-kwargs below need that augmented copy, not the raw preset params.
+    program, arrays, params = npp.build_program_and_data(kernel_name, info, params)
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = f'{_safe(name_tag)}_{_safe(kernel_name)}'
     sdfg = pipeline_fn(sdfg, 'cpu')
-    call_kwargs = npp._dace_call_kwargs(info, arrays, params)
+    call_kwargs = npp._dace_call_kwargs(sdfg, arrays, params)
     return sdfg, call_kwargs, lambda ck, ret: npp._collect_outputs(info['output_args'], ret, ck)
 
 
 def np_run_numpy(kernel_name):
     info = npp.load_bench_info(kernel_name)
     params = info['parameters'][npp.PRESET]
-    _, arrays = npp.build_program_and_data(kernel_name, info, params)
+    _, arrays, params = npp.build_program_and_data(kernel_name, info, params)
     fn = numpy_ref(info)
-    kwargs = npp._numpy_call_kwargs(info, arrays, params)
+    kwargs = npp._numpy_call_kwargs(fn, arrays, params)
     ret = fn(**kwargs)
     return npp._collect_outputs(info['output_args'], ret, kwargs)
 
@@ -242,11 +247,11 @@ def np_time_numpy(kernel_name, reps, warmup=1):
     import time
     info = npp.load_bench_info(kernel_name)
     params = info['parameters'][npp.PRESET]
-    _, arrays = npp.build_program_and_data(kernel_name, info, params)
+    _, arrays, params = npp.build_program_and_data(kernel_name, info, params)
     fn = numpy_ref(info)
     times = []
     for i in range(warmup + reps):
-        kwargs = npp._numpy_call_kwargs(info, arrays, params)
+        kwargs = npp._numpy_call_kwargs(fn, arrays, params)
         t0 = time.perf_counter()
         fn(**kwargs)
         dt = (time.perf_counter() - t0) * 1000.0
