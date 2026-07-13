@@ -1,0 +1,139 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Shared helpers for resolving canonical data accesses into repository
+containers, subsets, and connector-substituted tasklet code.
+"""
+import ast
+import copy
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+from dace import data, subsets, symbolic
+from dace.frontend.python import astutils
+from dace.frontend.python.nextgen.common import UnsupportedFeatureError
+from dace.frontend.python.nextgen.lowering.registry import LoweringState
+
+
+@dataclass
+class DataAccess:
+    """A resolved read or write of a repository container."""
+    container: str  #: Repository container name
+    subset: subsets.Range  #: Accessed subset (in container index space)
+    descriptor: data.Data
+
+    @property
+    def is_scalar_access(self) -> bool:
+        return self.subset.num_elements() == 1
+
+
+def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]:
+    """
+    Resolve a canonical ``Name`` or ``Subscript(Name, ...)`` expression to a
+    repository data access. Returns None if the expression does not refer to a
+    data container (e.g., a symbol or constant).
+    """
+    if isinstance(node, ast.Name):
+        binding = state.context.resolve(node.id)
+        if binding is None or binding.kind != 'container':
+            return None
+        descriptor = state.context.containers[binding.container]
+        return DataAccess(binding.container, subsets.Range.from_array(descriptor), descriptor)
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        binding = state.context.resolve(node.value.id)
+        if binding is None or binding.kind != 'container':
+            return None
+        expr = state.inference.parse_access(node)
+        subset = expr.subset
+        if isinstance(subset, subsets.Indices):
+            subset = subsets.Range.from_indices(subset)
+        if expr.arrdims:
+            raise UnsupportedFeatureError('Advanced (array-valued) indexing is not supported yet',
+                                          state.context.filename, node)
+        return DataAccess(binding.container, subset, state.context.containers[binding.container])
+    return None
+
+
+def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Return a copy of an expression with source-level names replaced by their
+    repository names, so emitted code blocks reference tree containers and
+    symbols directly.
+    """
+    result = copy.deepcopy(node)
+
+    class _Renamer(ast.NodeTransformer):
+
+        def visit_Name(self, name_node: ast.Name) -> ast.Name:
+            binding = state.context.resolve(name_node.id)
+            if binding is not None and binding.kind == 'container':
+                name_node.id = binding.container
+            return name_node
+
+    return ast.fix_missing_locations(_Renamer().visit(result))
+
+
+def substitute_data_operands(expr: ast.expr,
+                             state: LoweringState,
+                             connector_prefix: str = '__in') -> Tuple[str, List[Tuple[str, DataAccess]]]:
+    """
+    Replace every data access in a canonical (flat) expression with a fresh
+    tasklet connector name.
+
+    :return: A 2-tuple of (rewritten expression source, list of
+             (connector, access) pairs in order of first appearance).
+    """
+    operands: List[Tuple[str, DataAccess]] = []
+    seen: dict = {}
+    rewritten = copy.deepcopy(expr)
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Subscript(self, subscript_node: ast.Subscript) -> ast.AST:
+            if isinstance(subscript_node.ctx, ast.Load):
+                access = resolve_access(subscript_node, state)
+                if access is not None:
+                    return self._connector_for(subscript_node, access)
+            return self.generic_visit(subscript_node)
+
+        def visit_Name(self, name_node: ast.Name) -> ast.AST:
+            if isinstance(name_node.ctx, ast.Load):
+                access = resolve_access(name_node, state)
+                if access is not None:
+                    return self._connector_for(name_node, access)
+            return name_node
+
+        def _connector_for(self, original: ast.expr, access: DataAccess) -> ast.Name:
+            key = astutils.unparse(original)
+            if key not in seen:
+                connector = f'{connector_prefix}{len(operands)}'
+                operands.append((connector, access))
+                seen[key] = connector
+            return ast.copy_location(ast.Name(id=seen[key], ctx=ast.Load()), original)
+
+    code = astutils.unparse(ast.fix_missing_locations(_Substituter().visit(rewritten)))
+    return code, operands
+
+
+def indexed_subset(access: DataAccess, params: List[str], result_shape: List) -> subsets.Range:
+    """
+    Compute the per-element subset of an operand access inside a map with the
+    given parameters, applying NumPy-style broadcasting: dimensions of size 1
+    are pinned, and missing leading dimensions are dropped (right-aligned).
+
+    :param access: The operand access (its subset defines extents and offsets).
+    :param params: Map parameter names, one per result dimension.
+    :param result_shape: The broadcast result shape.
+    """
+    operand_size = access.subset.size()
+    ranges = []
+    # Right-align operand dims against result dims
+    param_offset = len(result_shape) - len(operand_size)
+    for dim_index, (dim_size, (start, _, step)) in enumerate(zip(operand_size, access.subset.ranges)):
+        aligned = dim_index + param_offset
+        if dim_size == 1:
+            index = start
+        else:
+            param = symbolic.pystr_to_symbolic(params[aligned])
+            index = start + param * step
+        ranges.append((index, index, 1))
+    return subsets.Range(ranges)
