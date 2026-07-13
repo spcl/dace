@@ -215,6 +215,55 @@ def test_finalize_nested_reduction_stays_sequential():
     assert np.allclose(y, A.sum(axis=1)), "nested row-sum not bit-exact"
 
 
+def test_reduction_in_sequential_loop_is_not_parallelized():
+    """A compute-then-accumulate reduction nested inside a NON-parallelizable sequential loop
+    (both outer axes carry a dependence) must stay a sequential loop -- NOT be lifted to a
+    parallel WCR-map. Lifted, the map is re-entered once per outer iteration, so the OpenMP
+    fork/join dominates the tiny inner reduction: this is the nussinov ``table[i,j] = max(...,
+    table[i,k] + table[k+1,j])`` k-reduction, which measured ~340x slower than the sequential
+    baseline ``auto_optimize`` keeps. The lifting is pinned off (``pinned_sequential``) for a
+    reduction nested in a sequential loop, so the generated code holds NO parallel region and
+    the result stays bit-exact."""
+    import numpy as np
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    Nsym = dace.symbol("N", dtype=dace.int64)
+
+    @dace.program
+    def nested_seq_reduction(A: dace.float64[Nsym, Nsym], out: dace.float64[Nsym, Nsym]):
+        for i in range(1, Nsym):
+            for j in range(1, Nsym):
+                out[i, j] = out[i, j - 1] + out[i - 1, j]  # carried on BOTH i and j -> both sequential
+                for k in range(Nsym):
+                    # in-place compute-then-accumulate max-reduction over k (nussinov's shape)
+                    out[i, j] = max(out[i, j], A[i, k] + A[k, j])
+
+    sdfg = nested_seq_reduction.to_sdfg(simplify=False)
+    sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
+                        interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+    finalize_for_target(sdfg, "cpu")
+
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count("#pragma omp parallel") == 0, \
+        (f"a reduction nested in a sequential loop must not be parallelized "
+         f"(got {code.count('#pragma omp parallel')} parallel regions -- fork-per-outer-iteration)")
+
+    rng = np.random.default_rng(0)
+    N = 24
+    A = rng.random((N, N))
+    out = rng.random((N, N))
+    ref = out.copy()
+    for i in range(1, N):
+        for j in range(1, N):
+            ref[i, j] = ref[i, j - 1] + ref[i - 1, j]
+            for k in range(N):
+                ref[i, j] = max(ref[i, j], A[i, k] + A[k, j])
+    got = out.copy()
+    sdfg.compile()(A=A, out=got, N=N)
+    assert np.allclose(got, ref), "nested sequential reduction not bit-exact"
+
+
 def test_finalize_never_selects_mkl_prefers_openblas():
     """The canonicalize perf tail must never pick ``MKL`` -- it prefers OpenBLAS (and OpenMP /
     HPTT / cuBLAS). A large matmul lowers to OpenBLAS, and no library node is left on ``MKL``."""
