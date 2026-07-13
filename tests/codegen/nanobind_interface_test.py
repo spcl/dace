@@ -184,9 +184,11 @@ def test_nanobind_interface_rename_own_build_folder():
         assert renamed == f'{base_name}_0'
 
         # Own folder, derived from the new name - no artifacts of the renamed
-        # program inside the original build folder.
+        # program inside the original build folder. DaCe may append the SDFG
+        # hash to the build-folder basename to disambiguate a pre-existing
+        # cache directory (as happens on CI), so match the prefix, not equality.
         renamed_folder = csdfg2.sdfg.build_folder
-        assert os.path.basename(renamed_folder) == renamed
+        assert os.path.basename(renamed_folder).startswith(renamed)
         assert os.path.isfile(os.path.join(renamed_folder, 'INTERFACE'))
         assert not os.path.isfile(os.path.join(original_folder, 'build', f'lib{renamed}.so'))
 
@@ -288,6 +290,24 @@ def test_nanobind_interface_pyobject_rejected():
     arg_sdfg.add_scalar('cb', dtypes.pyobject())
     with pytest.raises(NotImplementedError, match='part 2'):
         generate_bindings_code(arg_sdfg)
+
+
+def test_nanobind_interface_callback_rejected():
+    """A callback argument (dtypes.callback) is refused at codegen, not compiled.
+
+    Callbacks surface as scalars whose dtype is a dtypes.callback typeclass whose
+    ctype is not a valid C++ type ("dace.callback"). The generator must reject
+    them with a clear NotImplementedError instead of emitting code that fails to
+    compile. Callback support is deferred to part 2 of the port.
+    """
+    import pytest
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    cb_sdfg = dace.SDFG('callback_arg_reject_probe')
+    cb_sdfg.add_scalar('cb', dtypes.callback(None))
+    with pytest.raises(NotImplementedError, match='callback'):
+        generate_bindings_code(cb_sdfg)
 
 
 def test_nanobind_interface_string_argument():

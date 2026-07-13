@@ -59,6 +59,14 @@ def _argument_binding(arglist, binding_order=None):
             raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is not supported yet '
                                       f'(callbacks are deferred to part 2 of the port); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
+        # Callbacks (a dtypes.callback scalar) are not a pyobject subclass, so
+        # the check above misses them; their ctype ("dace.callback") is not a
+        # C++ type, so refuse here instead of emitting code that fails to
+        # compile. Callback support is deferred to part 2 of the port.
+        if isinstance(desc.dtype, dtypes.callback):
+            raise NotImplementedError(f'Nanobind interface: callback argument "{name}" is not supported yet '
+                                      f'(callbacks are deferred to part 2 of the port); '
+                                      f'use the ctypes interface (compiler.interface=ctypes).')
         # Return values must be arrays; a non-array return (scalar, structure)
         # cannot carry output back, so refuse it here at codegen time.
         if name.startswith('__return') and not isinstance(desc, dt.Array):
