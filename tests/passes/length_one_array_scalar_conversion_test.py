@@ -1,8 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the length-1 ``Array`` <-> ``Scalar`` conversion passes."""
 import dace
-from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
-                                                                           ConvertScalarsToLengthOneArrays)
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 
 def test_scalarize_rewrites_length_one_array():
@@ -47,20 +46,6 @@ def test_collapsed_memlet_preserves_dynamic():
 
     assert isinstance(sdfg.arrays['a'], dace.data.Scalar)
     assert state.edges()[0].data.dynamic is True
-
-
-def test_roundtrip_scalar_to_array_and_back():
-    """``Scalar`` -> length-1 ``Array`` -> ``Scalar`` returns to the original descriptor kind."""
-    sdfg = dace.SDFG('roundtrip')
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    sdfg.add_state('only')
-
-    ConvertScalarsToLengthOneArrays(recursive=False).apply_pass(sdfg, {})
-    assert isinstance(sdfg.arrays['s'], dace.data.Array)
-    assert tuple(sdfg.arrays['s'].shape) == (1, )
-
-    ConvertLengthOneArraysToScalars(recursive=False).apply_pass(sdfg, {})
-    assert isinstance(sdfg.arrays['s'], dace.data.Scalar)
 
 
 # ---------------------------------------------------------------------------

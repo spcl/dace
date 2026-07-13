@@ -5,8 +5,6 @@
 (shape ``(1,)``) to a true ``Scalar`` and drops the now-redundant
 ``[0]`` accessors from interstate-edge assignments, conditional-block
 guards, loop-region conditions and memlet subsets.
-``ConvertScalarsToLengthOneArrays`` is the inverse (``Scalar`` ->
-length-1 ``Array``).
 
 The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as
 a post-generation cleanup: ``Scalar`` data on the SDFG signature binds
@@ -185,65 +183,4 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict) -> Optional[Set[str]]:
         rewritten = self._rewrite(sdfg, self.transient_only, apply_filter=True)
-        return rewritten or None
-
-
-@properties.make_properties
-@transformation.explicit_cf_compatible
-class ConvertScalarsToLengthOneArrays(ppl.Pass):
-    """Inverse of ``ConvertLengthOneArraysToScalars``: rewrite every
-    ``Scalar`` to a length-1 ``Array`` (shape ``(1,)``).  Useful when a
-    consumer requires a 1-element buffer rather than a by-value scalar.
-
-    :param recursive: Recurse into nested SDFGs (transient-only there).
-    :param transient_only: Restrict the top-level rewrite to transient
-        scalars.
-    """
-
-    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
-    transient_only = properties.Property(dtype=bool,
-                                         default=False,
-                                         desc="Restrict the top-level rewrite to transient scalars.")
-
-    def __init__(self, recursive: bool = True, transient_only: bool = False):
-        super().__init__()
-        self.recursive = recursive
-        self.transient_only = transient_only
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
-        arrayized: Set[str] = set()
-        for name, desc in [(k, v) for k, v in sdfg.arrays.items()]:
-            if isinstance(desc, dace.data.Scalar) and ((not transient_only) or desc.transient):
-                sdfg.remove_data(name, validate=False)
-                sdfg.add_array(name=name,
-                               shape=(1, ),
-                               dtype=desc.dtype,
-                               storage=desc.storage,
-                               transient=desc.transient,
-                               lifetime=desc.lifetime,
-                               debuginfo=desc.debuginfo,
-                               find_new_name=False)
-                arrayized.add(name)
-        # Re-point scalar memlets at element 0 of the new length-1 array.
-        for state in sdfg.all_states():
-            for edge in state.edges():
-                mem = edge.data
-                if mem is None or mem.data is None or mem.data not in arrayized:
-                    continue
-                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
-        if self.recursive:
-            for state in sdfg.all_states():
-                for node in state.nodes():
-                    if isinstance(node, dace.nodes.NestedSDFG):
-                        self._rewrite(node.sdfg, transient_only=True)
-        return arrayized
-
-    def apply_pass(self, sdfg: dace.SDFG, _: dict) -> Optional[Set[str]]:
-        rewritten = self._rewrite(sdfg, self.transient_only)
         return rewritten or None

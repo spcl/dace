@@ -58,8 +58,6 @@ class GPUCodegenPreprocessPipeline(Pipeline):
     def __init__(self):
         # Imports done locally to avoid the circular-import dance in
         # ``dace.transformation`` package init.
-        from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
-            AssignmentAndCopyKernelToMemsetAndMemcpy)
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (AddThreadBlockMaps,
                                                                                              ExpandLibraryNodes,
                                                                                              ReinferConnectorTypes)
@@ -68,10 +66,12 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
             DemoteKernelInternalArraysToScalars)
+        from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         # Order constraints:
-        #   * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` before the stream scheduler: it moves
-        #     the map's dynamic-input edges onto the new libnode and a pre-wired ``__stream``
-        #     connector would clash.
+        #   * ``NestedGPUDeviceMapLowering`` first: flattens nested ``GPU_Device`` maps into a
+        #     single kernel (union of the inner ranges on the outer map + a per-body bound-check
+        #     NestedSDFG). Every downstream pass -- scalar promotion, copy insertion, stream
+        #     scheduling, thread-block tiling -- assumes one-level kernels.
         #   * ``NaiveGPUStreamScheduler`` after ``ExpandLibraryNodes``: the scheduler walks real
         #     kernel/runtime-call nodes and would miss opaque libnodes.
         #   * ``AddThreadBlockMaps`` after the kernel-internal transient hoist (in
@@ -89,8 +89,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         super().__init__([
             InferDefaultSchedulesAndStorages(),
+            NestedGPUDeviceMapLowering(),
             PromoteGPUScalarsToArrays(),
-            AssignmentAndCopyKernelToMemsetAndMemcpy(),
             InsertExplicitGPUGlobalMemoryCopies(),
             ExpandLibraryNodes(),
             # NOTE: This is a bit strange since the `strategy` is called on its own and then as

@@ -93,13 +93,15 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         assert if_body_state in if_body.nodes()
         assert if_body_state in inner_sdfg.all_states()
 
-        # inout nodes can be written inside kernels (not inside nsdfg)
+        # inout nodes can be written inside kernels (not inside nsdfg).
+        # ``inputs`` / ``outputs`` hold data names (strings), so key off
+        # ``n.data`` -- not the AccessNode itself.
         for n in map_inner_nodes:
             if isinstance(n, dace.nodes.AccessNode) and state.sdfg.arrays[n.data].transient is False:
-                if n not in inputs and state.out_degree(n) > 0:
-                    inputs.add(n)
-                if n not in outputs and state.in_degree(n) > 0:
-                    outputs.add(n)
+                if n.data not in inputs and state.out_degree(n) > 0:
+                    inputs.add(n.data)
+                if n.data not in outputs and state.in_degree(n) > 0:
+                    outputs.add(n.data)
 
         nsdfg = state.add_nested_sdfg(
             sdfg=inner_sdfg,
