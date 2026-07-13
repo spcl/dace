@@ -261,13 +261,21 @@ def relocate_nodes(
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.in_edges(from_node))):
         helpers.redirect_edge(state, empty_edge, new_dst=to_node)
 
-    # We now ensure that there is only one empty Memlet from the `to_node` to any other node.
-    #  Although it is allowed, we try to prevent it.
-    empty_targets: Set[nodes.Node] = set()
+    # We now ensure that there is only one empty Memlet between `to_node` and any
+    #  other node, i.e. we drop genuinely-duplicate empty Memlets while keeping every
+    #  distinct one. The key is the `(src, dst)` pair, NOT `dst` alone: empty Memlets
+    #  are ordering (WAW/WAR) dependencies, and two of them into `to_node` coming from
+    #  *different* source nodes encode *different* dependencies (e.g. the write-ordering
+    #  chains of two different arrays fused into one Map). Keying on `dst` alone would
+    #  collapse every empty in-edge (they all share `dst == to_node`) down to one,
+    #  dropping real dependencies and -- because the surviving one depends on edge
+    #  iteration order -- producing an order-dependent miscompile.
+    seen_empty_pairs: Set[Tuple[nodes.Node, nodes.Node]] = set()
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.all_edges(to_node))):
-        if empty_edge.dst in empty_targets:
+        pair = (empty_edge.src, empty_edge.dst)
+        if pair in seen_empty_pairs:
             state.remove_edge(empty_edge)
-        empty_targets.add(empty_edge.dst)
+        seen_empty_pairs.add(pair)
 
     # Relocation of the edges that carry data.
     for edge_to_move in list(state.in_edges(from_node)):
