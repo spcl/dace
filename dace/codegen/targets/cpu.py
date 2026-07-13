@@ -95,6 +95,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
+        # Accumulator data-names whose map-exit WCR is folded by an enclosing GPU thread-block
+        # tree reduction. Maps ``data-name -> {'partial', 'credtype', 'ctype'}``: while a name is
+        # present, ``write_and_resolve_expr`` redirects the per-thread atomic into a register
+        # accumulate on the named partial (``partial = op(partial, value)``) instead, which the
+        # CUDA codegen then folds across the block with ``cub::BlockReduce`` (one atomic/block).
+        # The CUDA codegen adds/removes the entries around the thread-block body.
+        self._gpu_block_reduction_covered = {}
+
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
         self._define_sdfg_arguments(sdfg, arglist)
@@ -981,6 +989,14 @@ class CPUCodeGen(TargetCodeGenerator):
         """
 
         redtype = operations.detect_reduction_type(memlet.wcr)
+        # Enclosing GPU thread-block map folds this target via a tree reduction: accumulate the
+        # value into a thread-private register partial (no atomic) and let ``cub::BlockReduce``
+        # at the map exit drain it (one atomic per block). Emitting the per-thread atomic here
+        # would both contend and, with the block fold, double-count.
+        cover = self._gpu_block_reduction_covered.get(memlet.data)
+        if cover is not None:
+            return (f"{cover['partial']} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()"
+                    f"({cover['partial']}, {inname})")
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)

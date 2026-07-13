@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 
 from dace import dtypes, subsets, symbolic
+from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion
 from dace.codegen.prettycode import CodeIOStream
@@ -167,6 +168,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             node = dfg_scope.source_nodes()[0]
             scope_map = node.map
             kernel_block_dims = self._current_kernel_spec.block_dims
+            state = cfg.state(state_id)
 
             map_range, symbolic_indices, _sym_coords = _emit_dim_index_definitions(
                 scope_map, 'threadIdx', self._current_kernel_spec.gpu_index_ctype, callsite_stream, cfg, state_id, node,
@@ -179,35 +181,67 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
-            # Guard each dim so out-of-bounds threads in a trailing block are skipped.
-            minels = map_range.min_element()
-            maxels = map_range.max_element()
-            for dim, (var_name, start, end) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
+            # Tree reduction: a scalar WCR accumulator written from this thread-block map folds
+            # via one cub::BlockReduce + one atomic per block instead of one atomic per thread.
+            # Each thread's register partial is declared and identity-initialized BEFORE the
+            # bounds guard (so out-of-range threads still carry the identity into the barrier
+            # fold); the per-thread atomic is redirected into that partial while the covered
+            # entry is registered; the block fold is drained AFTER the guard closes.
+            reductions = []
+            if Config.get_bool('compiler', 'tree_reduction'):
+                reductions = self.codegen.collect_gpu_block_reductions(sdfg, state, node, kernel_block_dims)
+            covered = self.codegen._cpu_codegen._gpu_block_reduction_covered
+            for red in reductions:
+                callsite_stream.write(f"{red['ctype']} {red['partial']} = {red['identity']};", cfg, state_id, node)
+                covered[red['data']] = {'partial': red['partial'], 'credtype': red['credtype'], 'ctype': red['ctype']}
 
-                # Optimize conditions if they are always true
-                condition = ''
+            # Bounds guards go in their own manager so they close before the block fold: cub's
+            # Reduce is a block-wide barrier, so every thread (in-range or not) must reach it.
+            with ScopeManager(frame_codegen=self.codegen._frame,
+                              sdfg=sdfg,
+                              cfg=cfg,
+                              dfg_scope=dfg_scope,
+                              state_id=state_id,
+                              function_stream=function_stream,
+                              callsite_stream=callsite_stream,
+                              comment=self.SCOPE_COMMENT,
+                              brackets_on_enter=False) as guard_manager:
 
-                # Block range start
-                if dim >= 3 or (symbolic_indices[dim] >= start) != True:
-                    condition += f'{var_name} >= {sym2cpp(start)}'
+                # Guard each dim so out-of-bounds threads in a trailing block are skipped.
+                minels = map_range.min_element()
+                maxels = map_range.max_element()
+                for dim, (var_name, start, end) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
 
-                # Special case: block size is exactly the range of the map (0:b)
-                if dim >= 3:
-                    skipcond = False
-                else:
-                    skipcond = symbolic_index_bounds[dim].subs({symbolic_indices[dim]: start}) == end
+                    # Optimize conditions if they are always true
+                    condition = ''
 
-                # Block range end
-                if dim >= 3 or (not skipcond and (symbolic_index_bounds[dim] < end) != True):
+                    # Block range start
+                    if dim >= 3 or (symbolic_indices[dim] >= start) != True:
+                        condition += f'{var_name} >= {sym2cpp(start)}'
+
+                    # Special case: block size is exactly the range of the map (0:b)
+                    if dim >= 3:
+                        skipcond = False
+                    else:
+                        skipcond = symbolic_index_bounds[dim].subs({symbolic_indices[dim]: start}) == end
+
+                    # Block range end
+                    if dim >= 3 or (not skipcond and (symbolic_index_bounds[dim] < end) != True):
+                        if len(condition) > 0:
+                            condition += ' && '
+                        condition += f'{var_name} < {sym2cpp(end + 1)}'
+
+                    # Emit condition in code if any
                     if len(condition) > 0:
-                        condition += ' && '
-                    condition += f'{var_name} < {sym2cpp(end + 1)}'
+                        guard_manager.open(condition=condition)
 
-                # Emit condition in code if any
-                if len(condition) > 0:
-                    scope_manager.open(condition=condition)
+                self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+            # Drain: fold each register partial across the block, one atomic per block.
+            for i, red in enumerate(reductions):
+                self.codegen.emit_gpu_block_reduction(red, f'{state.block_id}_{state.node_id(node)}_{i}', cfg, state_id,
+                                                      node, callsite_stream)
+                covered.pop(red['data'], None)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):

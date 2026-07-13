@@ -115,6 +115,19 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            tree_reduction:
+                type: bool
+                default: true
+                title: Emit tree reductions for parallel WCR
+                description: >
+                    If enabled, a conflict-free (WCR) reduction accumulator written from a
+                    parallel map is lowered to a privatize-and-tree-reduce form: on CPU an
+                    OpenMP ``reduction(op:var)`` clause on the ``parallel for``, and on GPU a
+                    per-thread-block ``cub::BlockReduce`` (one atomic per block). If disabled,
+                    the same reduction instead lowers to a plain atomic WCR (one atomic per
+                    iteration on CPU / ``atomicAdd`` per thread on GPU) -- correct but
+                    contended. Only affects codegen; the SDFG is unchanged either way.
+
             build_folder_mode:
                 type: str
                 default: development
