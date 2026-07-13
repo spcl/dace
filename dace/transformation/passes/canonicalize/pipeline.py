@@ -79,6 +79,7 @@ from dace.transformation.passes.canonicalize.early_exit_to_find_index import Ear
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
+from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
@@ -368,6 +369,20 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # plain reduction nest.
     if semantic_lifting and lift:
         s += [('loop_to_symm', LoopToSymm())]
+
+    # lift_inv (semantic lift, on the raw frontend shape, gated like loop_to_symm):
+    # recognise ``A^-1`` written as ``solve(A, eye(N))`` -- a ``Solve`` library
+    # node whose RHS operand is a freshly-built identity matrix
+    # (``numpy.eye`` / ``numpy.identity``: a square ``val = 1 if i == j else 0``
+    # mapped tasklet) -- and replace the ``Solve`` + identity-construction map
+    # with a single ``Inv`` node (getrf + getri, the direct inverse that never
+    # materialises an identity RHS). It runs BEFORE ``MapToForLoop`` lowers the
+    # identity map to a loop and before the ITE-lowering passes rewrite its
+    # ``1 if ... else 0`` body, so the identity is still its raw mapped-tasklet
+    # form. A strict no-op on any deviation (non-identity RHS, shifted diagonal,
+    # a reused identity), like the other semantic lifts.
+    if semantic_lifting and lift:
+        s += [('lift_inv', LiftInv())]
 
     # privatize_scatter (BEFORE normalize_reduction): surface a data-dependent scatter
     # reduction (``hist[bin[i]] (+)= w[i]`` -- the azimint histogram) onto the whole-buffer
