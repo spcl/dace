@@ -639,7 +639,7 @@ class Array(Data):
         """
         Used to set properties which depend on the shape of the array
         either to their default value, which depends on the shape, or
-        if explicitely provided to the given value. For internal use only.
+        if explicitly provided to the given value. For internal use only.
         """
         if shape is None:
             raise IndexError('Shape must not be None')
