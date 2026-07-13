@@ -309,13 +309,17 @@ class StateFusion(transformation.MultiStateTransformation):
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
 
-            if len(resulting_ccs) > 1:
-                # Side-effect tasklets cannot be fused if could lead to data races
-                for node in first_state.nodes():
-                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+            # A state carrying a side-effect node -- a Tasklet with side effects (a fusion barrier,
+            # a callback / I/O), or a side-effecting library node -- must never be fused: state
+            # fusion preserves only dataflow order, so an effect whose ordering is guaranteed by the
+            # interstate edge (not by a data dependence) would be reordered or run concurrently once
+            # the two states become one. Unconditional -- NOT gated on the resulting-CC count -- so a
+            # single-CC fusion cannot slip a side-effect node (e.g. a fusion barrier) through.
+            for state in (first_state, second_state):
+                for node in state.nodes():
+                    if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
                         return False
-                for node in second_state.nodes():
-                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                    if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
                         return False
 
             # Check for data races

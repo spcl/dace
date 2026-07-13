@@ -492,6 +492,48 @@ def test_check_paths():
     assert not do_fuse
 
 
+def _fusible_single_cc(add_barrier: bool):
+    """Two states forming ONE connected component after fusion: ``s1`` writes ``A``,
+    ``s2`` reads ``A`` (true RAW dependence), so plain StateFusion fuses them into a
+    single state. When ``add_barrier`` is set the producer is marked side-effecting
+    (a fusion barrier / dace.callback / I/O tasklet) -- it stays part of that single
+    connected component, so a guard gated on the resulting-CC count would miss it."""
+    sdfg = dace.SDFG('state_fusion_side_effect_test')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+
+    produce = s1.add_tasklet('produce', {}, {'a'}, 'a = 1.0')
+    s1.add_edge(produce, 'a', s1.add_write('A'), None, dace.Memlet('A'))
+
+    consume = s2.add_tasklet('consume', {'a'}, {'b'}, 'b = a + 1.0')
+    s2.add_edge(s2.add_read('A'), None, consume, 'a', dace.Memlet('A'))
+    s2.add_edge(consume, 'b', s2.add_write('B'), None, dace.Memlet('B'))
+
+    if add_barrier:
+        produce.side_effects = True
+    return sdfg
+
+
+def test_side_effect_free_single_cc_fuses():
+    """Control: without a side-effect node the single-CC RAW dataflow fuses to one state."""
+    sdfg = _fusible_single_cc(add_barrier=False)
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.number_of_nodes() == 1
+
+
+def test_side_effect_tasklet_blocks_single_cc_fusion():
+    """A side-effect tasklet (fusion barrier) blocks fusion even when the fused result
+    is a single connected component -- the guard is unconditional, not gated on the
+    resulting-CC count. Regression: a CC-gated check let a single-CC fusion slip a
+    fusion barrier through (heat3d copy-in/copy-out states)."""
+    sdfg = _fusible_single_cc(add_barrier=True)
+    assert sdfg.apply_transformations_repeated(StateFusion) == 0
+    assert sdfg.number_of_nodes() == 2
+
+
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -510,3 +552,5 @@ if __name__ == "__main__":
     test_inout_second_state()
     test_inout_second_state_2()
     test_check_paths()
+    test_side_effect_free_single_cc_fuses()
+    test_side_effect_tasklet_blocks_single_cc_fusion()
