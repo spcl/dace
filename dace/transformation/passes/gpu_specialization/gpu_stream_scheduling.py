@@ -7,9 +7,8 @@ Wiring (allocate ``gpu_streams``, wire connectors, insert sync tasklets) is owne
 SDFGs share its decisions and a non-root :meth:`apply_pass` raises.
 """
 import warnings
-from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
@@ -104,61 +103,6 @@ def _both_within_gpu_kernel(state: SDFGState, src: nodes.Node, dst: nodes.Node) 
             and is_within_schedule_types(state, dst, dtypes.GPU_SCHEDULES))
 
 
-@dataclass
-class _EdgeCtx:
-    """Per-edge context handed to every sync-rule predicate / selector."""
-    state: SDFGState
-    src: nodes.Node
-    dst: nodes.Node
-    in_kernel: bool
-    is_sink: bool
-
-
-@dataclass
-class _SyncRule:
-    """A predicate + stream-id selector + optional per-node sync target.
-
-    First match wins; rule ordering is the contract.
-    """
-    predicate: Callable[['_EdgeCtx'], bool]
-    stream_id: Callable[['_EdgeCtx', Dict[nodes.Node, int]], int]
-    per_node_sync_target: Optional[Callable[['_EdgeCtx'], Optional[nodes.Node]]] = None
-
-
-_NAIVE_SYNC_RULES: List[_SyncRule] = [
-    # GPU AccessNode -> host AccessNode (host needs to wait on the GPU stream).
-    _SyncRule(
-        predicate=lambda c:
-        (_is_gpu_global_access(c.src, c.state) and _is_non_gpu_accessible(c.dst, c.state) and not c.in_kernel),
-        stream_id=lambda c, s: s[c.dst],
-        per_node_sync_target=lambda c: c.dst if not c.is_sink else None,
-    ),
-    # host AccessNode -> GPU AccessNode (GPU needs to see the host write).
-    _SyncRule(
-        predicate=lambda c:
-        (_is_non_gpu_accessible(c.src, c.state) and _is_gpu_global_access(c.dst, c.state) and not c.in_kernel),
-        stream_id=lambda c, s: s[c.dst],
-    ),
-    # Kernel exit -> GPU AccessNode: sync the kernel's own stream.
-    _SyncRule(
-        predicate=lambda c: _is_gpu_device_exit(c.src) and _is_gpu_global_access(c.dst, c.state),
-        stream_id=lambda c, s: s[c.dst if c.is_sink else c.src],
-    ),
-    # Stream-bound copy/memset libnode that needs sync after.
-    _SyncRule(
-        predicate=lambda c:
-        (is_gpu_copy_or_memset_libnode(c.src, c.state.sdfg, c.state) and STREAM_CONNECTOR in c.src.in_connectors),
-        stream_id=lambda c, s: s[c.src],
-    ),
-    # Already-lowered GPU runtime tasklet (``cudaMemcpyAsync`` etc.): like the libnode rule,
-    # state-end sync on the tasklet's assigned stream.
-    _SyncRule(
-        predicate=lambda c: is_already_lowered_gpu_runtime_call(c.src),
-        stream_id=lambda c, s: s[c.src],
-    ),
-]
-
-
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
@@ -166,7 +110,8 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
 
     Nodes in one weakly connected component share a stream. Each top-level component gets a fresh
     stream (wrapping per ``compiler.cuda.max_concurrent_streams``); nested-SDFG components inherit
-    the parent's. Sync placement uses the ``_NAIVE_SYNC_RULES`` per-edge classifier.
+    the parent's. Sync placement uses the first-match per-edge classifier in
+    :meth:`_classify_sync_points`.
     """
 
     def __init__(self):
@@ -237,20 +182,28 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
         for edge, parent in sdfg.all_edges_recursive():
             if not isinstance(parent, SDFGState):
                 continue
-            ctx = _EdgeCtx(state=parent,
-                           src=edge.src,
-                           dst=edge.dst,
-                           in_kernel=_both_within_gpu_kernel(parent, edge.src, edge.dst),
-                           is_sink=parent.out_degree(edge.dst) == 0)
-            for rule in _NAIVE_SYNC_RULES:
-                if not rule.predicate(ctx):
-                    continue
-                state_end.setdefault(parent, set()).add(rule.stream_id(ctx, assignments))
-                if rule.per_node_sync_target is not None:
-                    target = rule.per_node_sync_target(ctx)
-                    if target is not None:
-                        per_node[target] = parent
-                break
+            src, dst = edge.src, edge.dst
+            in_kernel = _both_within_gpu_kernel(parent, src, dst)
+            is_sink = parent.out_degree(dst) == 0
+
+            # First-match per-edge sync classification; the order of these branches is the contract.
+            if _is_gpu_global_access(src, parent) and _is_non_gpu_accessible(dst, parent) and not in_kernel:
+                # GPU AccessNode -> host AccessNode: the host must wait on the GPU stream.
+                state_end.setdefault(parent, set()).add(assignments[dst])
+                if not is_sink:
+                    per_node[dst] = parent
+            elif _is_non_gpu_accessible(src, parent) and _is_gpu_global_access(dst, parent) and not in_kernel:
+                # host AccessNode -> GPU AccessNode: the GPU must see the host write.
+                state_end.setdefault(parent, set()).add(assignments[dst])
+            elif _is_gpu_device_exit(src) and _is_gpu_global_access(dst, parent):
+                # Kernel exit -> GPU AccessNode: sync the kernel's own stream.
+                state_end.setdefault(parent, set()).add(assignments[dst if is_sink else src])
+            elif is_gpu_copy_or_memset_libnode(src, parent.sdfg, parent) and STREAM_CONNECTOR in src.in_connectors:
+                # Stream-bound copy/memset libnode: state-end sync on its assigned stream.
+                state_end.setdefault(parent, set()).add(assignments[src])
+            elif is_already_lowered_gpu_runtime_call(src):
+                # Already-lowered GPU runtime tasklet (cudaMemcpyAsync etc.): state-end sync on its stream.
+                state_end.setdefault(parent, set()).add(assignments[src])
         return {s: ids for s, ids in state_end.items() if ids}, per_node
 
 
