@@ -152,7 +152,7 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
         return False
     if is_pipeline_sync_tasklet(node):
         return False
-    if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
+    if has_stream_connector(node):
         return True
     return STREAM_CONNECTOR in node.code.as_string
 

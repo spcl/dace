@@ -23,11 +23,6 @@ from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import 
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import weakly_connected_node_sets
 
 
-def _weakly_connected_components(state: SDFGState) -> List[Set[nodes.Node]]:
-    """Weakly connected components of ``state``'s dataflow."""
-    return weakly_connected_node_sets(state)
-
-
 def _wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> _Kind:
     """Fold ``_classify_node`` over ``wcc``'s nodes to get the component-level kind."""
     return _fold_kinds(_classify_node(n, sdfg, state) for n in wcc)
@@ -121,7 +116,7 @@ class SplitStateByGPUClass(ppl.Pass):
 
     @staticmethod
     def _split_one_state(state: SDFGState, sdfg: SDFG) -> bool:
-        wccs = _weakly_connected_components(state)
+        wccs = weakly_connected_node_sets(state)
         if not wccs:
             return False
 

@@ -11,6 +11,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
 
 
 @properties.make_properties
@@ -158,25 +159,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                     self._move_map_to_if(state, node)
 
-    def _get_device_map_parents(self, state: SDFGState, cur_map: dace.nodes.MapEntry, gpu_dev_map: dace.nodes.MapEntry):
-        sdict = state.scope_dict()
-        cur_parent = sdict[cur_map]
-        parents = [cur_parent]
-        while cur_parent is not None:
-            cur_parent = sdict[cur_parent]
-            if cur_parent is not None:
-                parents.append(cur_parent)
-
-        num_dev_maps = len({
-            k
-            for k in parents
-            if isinstance(k, dace.nodes.MapEntry) and k.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-        })
-        if gpu_dev_map is not None:
-            assert gpu_dev_map in parents, f"{gpu_dev_map} not in {parents}"
-
-        return num_dev_maps
-
     def _get_next_level_maps(self, state: SDFGState, gpu_dev_map: dace.nodes.MapEntry):
         # If inside same nsdfg, then it means no parent
         gpu_maps_between = {
@@ -217,12 +199,12 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
             next_level_maps = {(state, m)
                                for (state, m) in next_level_map_candidates
-                               if self._get_device_map_parents(state, m, None) == 0}
+                               if len(enclosing_map_chain(state, m, dace.dtypes.ScheduleType.GPU_Device)) == 0}
             return next_level_maps
         else:
             next_level_maps = {(state, m)
                                for (state, m) in gpu_maps_between
-                               if self._get_device_map_parents(state, m, gpu_dev_map) == 1}
+                               if len(enclosing_map_chain(state, m, dace.dtypes.ScheduleType.GPU_Device)) == 1}
             return next_level_maps
 
     def _apply(self, sdfg: SDFG) -> int:

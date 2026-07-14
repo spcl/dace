@@ -16,7 +16,8 @@ from typing import Any, Dict, Optional, Set
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_inside_gpu_device_kernel,
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (innermost_enclosing_map,
+                                                                               is_inside_gpu_device_kernel,
                                                                                written_by_gpu_map_exit)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
@@ -140,19 +141,11 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
         scope (and at least one access exists)."""
         seen = False
         for state in sdfg.states():
-            scope = state.scope_dict()
             for node in state.nodes():
                 if not (isinstance(node, nodes.AccessNode) and node.data == name):
                     continue
                 seen = True
-                parent = scope[node]
-                in_gpu = False
-                while parent is not None:
-                    if isinstance(parent, nodes.MapEntry) and parent.map.schedule == dtypes.ScheduleType.GPU_Device:
-                        in_gpu = True
-                        break
-                    parent = scope[parent]
-                if not in_gpu:
+                if innermost_enclosing_map(state, node, dtypes.ScheduleType.GPU_Device) is None:
                     return False
         return seen
 

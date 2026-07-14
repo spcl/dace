@@ -17,7 +17,7 @@ from dace.config import Config
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from dace.sdfg.graph import Graph, NodeT
+from dace.sdfg.graph import NodeT
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -180,7 +180,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
 
     def _assign_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState, assignments: Dict[nodes.Node, int],
                          gpu_stream: int):
-        for component in self._weakly_connected(state):
+        for component in weakly_connected_node_sets(state):
             if not self._requires_gpu_stream(state, component):
                 continue
             # Idempotency: if any node already has a stream id (prior run or deserialised
@@ -200,11 +200,6 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                         self._assign_in_state(node.sdfg, True, nested_state, assignments, gpu_stream)
             if not in_nested_sdfg and len(assignments) > assigned_before:
                 gpu_stream = self._next_stream(gpu_stream)
-
-    def _weakly_connected(self, graph: Graph) -> List[Set[NodeT]]:
-        """Weakly connected components of ``graph``'s dataflow (delegates to the shared
-        :func:`weakly_connected_node_sets`)."""
-        return weakly_connected_node_sets(graph)
 
     def _next_stream(self, gpu_stream: int) -> int:
         if self._max_concurrent_streams == 0:
