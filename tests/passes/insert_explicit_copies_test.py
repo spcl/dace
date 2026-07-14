@@ -936,5 +936,24 @@ def test_polybench_covariance():
     _run_and_compare(covariance, _init_covariance, ["cov"], {"N": 32, "M": 28}, "covariance")
 
 
+def test_iec_skips_dtype_converting_copy():
+    """A direct copy between different dtypes is a cast, not a byte move: the pass must leave it
+    for tasklet lowering rather than insert a ``CopyLibraryNode`` (memcpy), which cannot convert.
+    Regression: the direct-copy path lacked the dtype guard its staging path already has."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("iec_dtype_convert")
+    sdfg.add_array("A", [64], dace.float32, cpu)
+    sdfg.add_array("B", [64], dace.float64, cpu)
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    b = st.add_access("B")
+    st.add_edge(a, None, b, None, Memlet("A[0:64]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a dtype-converting copy must not be lowered to CopyLibraryNode"
+    assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
