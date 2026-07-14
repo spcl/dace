@@ -46,17 +46,28 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         change the caller's contract).
     :param transient_only: Restrict the top-level rewrite to transient
         arrays (default ``False`` -- both signature and local rewrites).
+    :param keep_program_outputs: When ``transient_only`` is ``False``, keep a
+        non-transient length-1 array that the SDFG WRITES (a program output --
+        the caller passes a 1-element numpy buffer to receive the return) as an
+        ``Array``, and scalarize every other length-1 array (transients and
+        read-only non-transient inputs). Has no effect when ``transient_only``
+        is ``True`` (no non-transient is rewritten then anyway).
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient arrays.")
+    keep_program_outputs = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Keep written non-transient length-1 arrays (program outputs) as Arrays; scalarize the rest.")
 
-    def __init__(self, recursive: bool = True, transient_only: bool = False):
+    def __init__(self, recursive: bool = True, transient_only: bool = False, keep_program_outputs: bool = False):
         super().__init__()
         self.recursive = recursive
         self.transient_only = transient_only
+        self.keep_program_outputs = keep_program_outputs
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols
@@ -66,7 +77,17 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
         scalarized: Set[str] = set()
+        # Program outputs (non-transient arrays the SDFG writes) must stay Arrays: the caller passes a
+        # 1-element numpy buffer to receive the return, which a scalar-by-value output cannot fill.
+        program_outputs: Set[str] = set()
+        if not transient_only and self.keep_program_outputs:
+            for state in sdfg.states():
+                for node in state.data_nodes():
+                    if state.in_degree(node) > 0 and not sdfg.arrays[node.data].transient:
+                        program_outputs.add(node.data)
         for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
+            if arr_name in program_outputs:
+                continue
             if isinstance(arr.dtype, dace.dtypes.opaque):
                 continue
             if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1]):
