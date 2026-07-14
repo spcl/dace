@@ -129,9 +129,8 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = (len(inp.shape) == len(out.shape)
                   and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
-    if ({inp.storage, out.storage} <= host_storages and same_shape
-            and in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)
-            and _both_packed_same_layout(inp, out)):
+    if ({inp.storage, out.storage} <= host_storages and same_shape and in_subset.is_contiguous_subset(inp)
+            and out_subset.is_contiguous_subset(out) and _both_packed_same_layout(inp, out)):
         return 'MemcpyCPU'
 
     # 5. Coarse pick by storage pair: any copy touching GPU memory goes through
