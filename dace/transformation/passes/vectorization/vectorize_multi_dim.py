@@ -1245,9 +1245,10 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
     * ``device = DeviceType.GPU`` — CPU horizontal folds are replaced by GPU-placed
       ``Reduce`` nodes; lifted library nodes finalize for the GPU.
     * ``target_isa = "CUDA"`` — the innermost tile op lowers to ``dace/tile_ops/cuda.h``
-      (native ``__hadd2`` / ``__hmul2`` / ... half2 intrinsics, 2 lanes per instruction;
-      fp8 computes through ``float``).
-    * ``widths = (2,)`` default — a half2 packs exactly two fp16 lanes.
+      (native ``__hadd2`` / ``__hmul2`` / ... half2 intrinsics, 2 fp16 lanes per instruction).
+    * ``widths = (2,)`` default — half2 processes two fp16 lanes per instruction; a wider
+      even width (4, 8) uses the SAME half2 fast path, looping ``i += 2`` (``#pragma unroll``)
+      to emit ``width / 2`` consecutive half2 instructions per tile.
     * ``assume_even = True`` — a GPU kernel emits NO remainder loop: the map extent is
       an exact multiple of 2, so it is a single ``0:N:2`` strided map with no masked
       tail (which would otherwise split into two GPU_Device maps of different

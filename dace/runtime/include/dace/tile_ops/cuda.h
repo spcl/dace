@@ -347,21 +347,36 @@ DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
 // ('+' sum, '*' prod, 'm' min, 'M' max). Returns the reduced ELEMENT (a ``__half`` for
 // an fp16 tile), not a vector.
 //
-// CUDA has NO single "reduce half2 -> half" intrinsic, so for an fp16 tile we compose
-// one: accumulate the lanes pairwise with the half2 arithmetic intrinsic (``__hadd2`` /
-// ... two lanes per op), then fold the surviving half2's two lanes into one ``__half``
-// with the scalar combine (``__hadd`` / ...). The generic template keeps the portable
-// per-lane scalar fold for every other element type.
+// An fp16 tile folds as a balanced tree of half2 ops (consecutive pairs (0,1)(2,3)...;
+// an odd trailing element forwards unchanged). CUDA has NO single "reduce half2 -> half"
+// intrinsic, so we compose one: pack the VLEN lanes into VLEN/2 ``half2`` values and fold
+// that array as a balanced tree of the half2 intrinsic (``__hadd2`` / ..., two lanes per op
+// -- a sequence of half2 trees), then combine the surviving half2's two lanes into one
+// ``__half`` with the scalar combine (``__hadd`` / ...). The O(log VLEN) critical path lets
+// the compiler re-vectorise the partials. Every other element type (fp32 / fp64) folds
+// through the plain per-lane scalar accumulate. Over a compile-time-constant ``VLEN`` every
+// loop unrolls.
 template <typename T, int VLEN, char Op>
 DACE_DFI T tile_reduce(const T* __restrict__ src) {
 #if defined(__CUDACC__)
   if constexpr (__is_same(T, __half) && VLEN >= 2 && (VLEN % 2 == 0) && _is_half2_reduce<Op>()) {
-    __half2 acc = __halves2half2(src[0], src[1]);
+    constexpr int H = VLEN / 2;
+    __half2 buf[H];
 #pragma unroll
-    for (int i = 2; i < VLEN; i += 2) acc = _half2_apply<Op>(acc, __halves2half2(src[i], src[i + 1]));
-    return _half_combine<Op>(__low2half(acc), __high2half(acc));
+    for (int i = 0; i < H; ++i) buf[i] = __halves2half2(src[2 * i], src[2 * i + 1]);
+    int n = H;
+    while (n > 1) {
+      int half = n / 2;
+#pragma unroll
+      for (int i = 0; i < half; ++i) buf[i] = _half2_apply<Op>(buf[2 * i], buf[2 * i + 1]);
+      if (n & 1) buf[half] = buf[n - 1];
+      n = half + (n & 1);
+    }
+    return _half_combine<Op>(__low2half(buf[0]), __high2half(buf[0]));
   }
 #endif
+  // Every other element type (fp32 / fp64) folds through the plain per-lane scalar
+  // accumulate (unrolled over the compile-time-constant VLEN).
   T acc = src[0];
 #pragma unroll
   for (int i = 1; i < VLEN; ++i) acc = tile_apply<T, Op>(acc, src[i]);
