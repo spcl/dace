@@ -207,6 +207,14 @@ template <char Op>
 DACE_DFI constexpr bool _is_half2_reduce() {
   return Op == '+' || Op == '*' || Op == 'm' || Op == 'M';
 }
+
+// Aligned 32-bit pair load/store for the FP16x2 fast paths. The tile buffers the
+// vectorizer stages are DACE_ALIGN(64) and every non-broadcast half2 access starts
+// at an even lane, so ``&p[i]`` is 4-byte aligned. A single LD.U32 / ST.U32 then
+// replaces the two-element ``__halves2half2`` pack (two 16-bit loads + a pack) and
+// the ``__low2half`` / ``__high2half`` unpack (two extracts + two 16-bit stores).
+DACE_DFI __half2 _load_half2(const __half* __restrict__ p) { return *reinterpret_cast<const __half2*>(p); }
+DACE_DFI void _store_half2(__half* __restrict__ p, __half2 v) { *reinterpret_cast<__half2*>(p) = v; }
 #endif
 
 // ----------------------------- tile_binop -----------------------------
@@ -219,11 +227,10 @@ DACE_DFI void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* 
   if constexpr (__is_same(T, __half) && (VLEN % 2 == 0) && !Masked && _is_half2_binop<Op>()) {
 #pragma unroll
     for (int i = 0; i < VLEN; i += 2) {
-      const __half2 av = BroadcastA ? __half2half2(a[0]) : __halves2half2(a[i], a[i + 1]);
-      const __half2 bv = BroadcastB ? __half2half2(b[0]) : __halves2half2(b[i], b[i + 1]);
+      const __half2 av = BroadcastA ? __half2half2(a[0]) : _load_half2(&a[i]);
+      const __half2 bv = BroadcastB ? __half2half2(b[0]) : _load_half2(&b[i]);
       const __half2 rv = _half2_apply<Op>(av, bv);
-      out[i] = __low2half(rv);
-      out[i + 1] = __high2half(rv);
+      _store_half2(&out[i], rv);
     }
     return;
   }
@@ -255,12 +262,11 @@ DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __
   if constexpr (__is_same(T, __half) && (VLEN % 2 == 0) && !Masked) {
 #pragma unroll
     for (int i = 0; i < VLEN; i += 2) {
-      const __half2 av = BroadcastA ? __half2half2(a[0]) : __halves2half2(a[i], a[i + 1]);
-      const __half2 bv = BroadcastB ? __half2half2(b[0]) : __halves2half2(b[i], b[i + 1]);
-      const __half2 cv = BroadcastC ? __half2half2(c[0]) : __halves2half2(c[i], c[i + 1]);
+      const __half2 av = BroadcastA ? __half2half2(a[0]) : _load_half2(&a[i]);
+      const __half2 bv = BroadcastB ? __half2half2(b[0]) : _load_half2(&b[i]);
+      const __half2 cv = BroadcastC ? __half2half2(c[0]) : _load_half2(&c[i]);
       const __half2 rv = __hfma2(av, bv, cv);  // av*bv + cv
-      out[i] = __low2half(rv);
-      out[i + 1] = __high2half(rv);
+      _store_half2(&out[i], rv);
     }
     return;
   }
@@ -287,10 +293,9 @@ DACE_DFI void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool
   if constexpr (__is_same(T, __half) && (VLEN % 2 == 0) && !Masked && _is_half2_unop<Op>()) {
 #pragma unroll
     for (int i = 0; i < VLEN; i += 2) {
-      const __half2 av = Broadcast ? __half2half2(a[0]) : __halves2half2(a[i], a[i + 1]);
+      const __half2 av = Broadcast ? __half2half2(a[0]) : _load_half2(&a[i]);
       const __half2 rv = _half2_unop_apply<Op>(av);
-      out[i] = __low2half(rv);
-      out[i + 1] = __high2half(rv);
+      _store_half2(&out[i], rv);
     }
     return;
   }
@@ -402,7 +407,7 @@ DACE_DFI T tile_reduce(const T* __restrict__ src) {
     constexpr int H = VLEN / 2;
     __half2 buf[H];
 #pragma unroll
-    for (int i = 0; i < H; ++i) buf[i] = __halves2half2(src[2 * i], src[2 * i + 1]);
+    for (int i = 0; i < H; ++i) buf[i] = _load_half2(&src[2 * i]);
     int n = H;
     while (n > 1) {
       int half = n / 2;
