@@ -10,6 +10,21 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 
 
+def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
+    """True iff ``node`` is a ``GPU_Shared`` AccessNode with a non-empty incoming (write) edge.
+
+    Single source of truth for the pass's several "writes shared memory" checks, so the test
+    cannot drift between them -- querying ``in_edges`` on the wrong node was a past source of a
+    crash inside ``LoopRegion`` traversal.
+
+    :param node: Candidate node.
+    :param state: The state (or control-flow region) that owns ``node`` and its edges.
+    :returns: True if ``node`` writes GPU shared memory.
+    """
+    return (isinstance(node, AccessNode) and node.desc(state).storage == dtypes.StorageType.GPU_Shared
+            and any(not edge.data.is_empty() for edge in state.in_edges(node)))
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
@@ -24,21 +39,16 @@ class DefaultSharedMemorySync(ppl.Pass):
     instead); nested TB maps sync only at the outermost TB exit.
     """
 
-    def __init__(self):
-        # Cache each node's parent state during apply_pass()
-        self._node_to_parent_state: Dict[Node, SDFGState] = dict()
-
     def apply_pass(self, sdfg: SDFG, _):
         """Insert ``__syncthreads()`` barriers so shared-memory writes are visible to subsequent reads.
 
         :param sdfg: SDFG to insert barriers into (modified in place).
         """
 
-        # Cache parent states; collect TB MapExits and collaborative shared-memory writes.
+        # Collect TB MapExits and collaborative shared-memory writes.
         tb_map_exits: Dict[MapExit, SDFGState] = dict()
         collaborative_smem_copies: Dict[AccessNode, SDFGState] = dict()
         for node, parent_state in sdfg.all_nodes_recursive():
-            self._node_to_parent_state[node] = parent_state
             if isinstance(node, MapExit) and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 tb_map_exits[node] = parent_state
             elif isinstance(node, AccessNode) and self.is_collaborative_smem_write(node, parent_state):
@@ -127,11 +137,8 @@ class DefaultSharedMemorySync(ppl.Pass):
         nested_sdfgs: Set[NestedSDFG] = set()
 
         for node in state.all_nodes_between(map_entry, map_exit):
-            if not writes_to_shared_memory and isinstance(node, AccessNode):
-                if (node.desc(state).storage == dtypes.StorageType.GPU_Shared
-                        and any(not edge.data.is_empty() for edge in state.in_edges(node))):
-                    writes_to_shared_memory = True
-
+            if not writes_to_shared_memory and is_shared_memory_write(node, state):
+                writes_to_shared_memory = True
             elif isinstance(node, NestedSDFG):
                 nested_sdfgs.add(node)
 
@@ -146,9 +153,9 @@ class DefaultSharedMemorySync(ppl.Pass):
 
         # Sequential inner maps writing shared memory are a race hazard.
         if not race_cond_danger:
-            race_cond_danger = any(
-                inner_scope.map.schedule == dtypes.ScheduleType.Sequential and self.map_writes_to_smem(inner_scope)
-                for _, inner_scope in helpers.get_internal_scopes(state, map_entry))
+            race_cond_danger = any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
+                                   and self.map_writes_to_smem(inner_scope, inner_state)
+                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry))
 
         # Is this TB map nested within another TB map (before the GPU_Device map)?
         parent = helpers.get_parent_map(state, map_entry)
@@ -170,9 +177,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         for node in sdfg.nodes():
             if isinstance(node, LoopRegion):
                 for subnode, parent in node.all_nodes_recursive():
-                    if (isinstance(subnode, AccessNode)
-                            and subnode.desc(parent).storage == dtypes.StorageType.GPU_Shared
-                            and any(not edge.data.is_empty() for edge in parent.in_edges(subnode))):
+                    if is_shared_memory_write(subnode, parent):
                         return True
 
             elif isinstance(node, NestedSDFG):
@@ -185,15 +190,17 @@ class DefaultSharedMemorySync(ppl.Pass):
         """True if the SDFG has a GPU_Shared AccessNode with a non-empty
         incoming edge (i.e. writes shared memory)."""
         for node, state in sdfg.all_nodes_recursive():
-            if (isinstance(node, AccessNode) and node.desc(state).storage == dtypes.StorageType.GPU_Shared
-                    and any(not edge.data.is_empty() for edge in state.in_edges(node))):
+            if is_shared_memory_write(node, state):
                 return True
         return False
 
-    def map_writes_to_smem(self, map_entry: MapEntry) -> bool:
+    def map_writes_to_smem(self, map_entry: MapEntry, state: SDFGState) -> bool:
         """True if the map writes shared memory -- at its MapExit, within its
-        scope, or via a nested SDFG."""
-        state = self._node_to_parent_state[map_entry]
+        scope, or via a nested SDFG.
+
+        :param map_entry: The map to inspect.
+        :param state: The state that owns ``map_entry``.
+        """
         map_exit = state.exit_node(map_entry)
 
         for edge in state.out_edges(map_exit):
@@ -202,8 +209,7 @@ class DefaultSharedMemorySync(ppl.Pass):
                 return True
 
         for node in state.all_nodes_between(map_entry, map_exit):
-            if (isinstance(node, AccessNode) and node.desc(state).storage == dtypes.StorageType.GPU_Shared
-                    and any(not edge.data.is_empty() for edge in state.in_edges(node))):
+            if is_shared_memory_write(node, state):
                 return True
 
             if isinstance(node, NestedSDFG) and self.sdfg_writes_to_smem(node.sdfg):
