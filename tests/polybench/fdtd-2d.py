@@ -89,8 +89,5 @@ def fdtd2d(ex: datatype[NX, NY], ey: datatype[NX, NY], hz: datatype[NX, NY], _fi
 
 
 if __name__ == '__main__':
-    # Imported here, not at module scope: polybench pulls in an absl-based CLI
-    # harness, and keeping it local lets other tests import this kernel/init
-    # without that dependency.
     import polybench
     polybench.main(sizes, args, [(0, 'ex'), (1, 'ey'), (2, 'hz')], init_array, fdtd2d)

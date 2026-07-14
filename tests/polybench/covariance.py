@@ -67,8 +67,5 @@ def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
 
 
 if __name__ == '__main__':
-    # Imported here, not at module scope: polybench pulls in an absl-based CLI
-    # harness, and keeping it local lets other tests import this kernel/init
-    # without that dependency.
     import polybench
     polybench.main(sizes, args, [(1, 'cov')], init_array, covariance)

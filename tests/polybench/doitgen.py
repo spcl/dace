@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 NQ = dace.symbol('NQ')
 NR = dace.symbol('NR')
@@ -68,4 +67,5 @@ def doitgen(A: datatype[NR, NQ, NP], C4: datatype[NP, NP]):
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(0, 'A')], init_array, doitgen)

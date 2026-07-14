@@ -212,3 +212,6 @@ _all_tests/
 /cmake_install.cmake
 /Makefile
 /lib*.a
+
+# Local secrets / tokens
+.mtoken

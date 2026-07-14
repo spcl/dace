@@ -9,7 +9,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES, auto_dispatch, collapse_shape_and_strides
 
 
 def _make_memset_skeleton(node: "MemsetLibraryNode",
@@ -34,18 +34,14 @@ def _make_memset_skeleton(node: "MemsetLibraryNode",
 
 
 def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
-    """Build a direct memset tasklet.
-
-    Emits the stream-bound ``cudaMemsetAsync`` form when ``cuda`` is set,
-    otherwise plain ``memset``.
+    """Build a direct memset tasklet (``cudaMemsetAsync`` if ``cuda`` else ``memset``).
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
     :param cuda: Emit ``cudaMemsetAsync`` (else ``memset``).
     :returns: The memset tasklet.
-    :raises ValueError: if the output subset is non-contiguous; the single-call
-        ``cudaMemsetAsync`` / ``memset`` form would silently zero memory outside
-        the subset. Use the ``pure`` expansion (mapped tasklet) for those.
+    :raises ValueError: if the output subset is non-contiguous (single-call memset
+        would zero outside the subset); use the ``pure`` expansion instead.
     """
     out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     if not out_subset.is_contiguous_subset(out):
@@ -70,11 +66,9 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
-    Returns ``'pure'`` (Sequential element-zero map) in device scope since
-    ``cudaMemsetAsync`` cannot be issued from a kernel, and for non-contiguous
-    subsets where the single-call memset forms would zero outside the region;
-    ``'CUDA'`` (``cudaMemsetAsync``) for host-issued GPU-destination contiguous
-    memsets; otherwise ``'CPU'`` (``std::memset``).
+    ``'pure'`` in device scope (no ``cudaMemsetAsync`` from a kernel) and for
+    non-contiguous subsets; ``'CUDA'`` for host-issued GPU-destination contiguous
+    memsets; otherwise ``'CPU'``.
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
@@ -87,7 +81,7 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
             return 'tasklet'
         return 'pure'
 
-    if out_subset.num_elements_exact() == 1 and (out.storage in dace.dtypes.CPU_RESIDENT_STORAGES
+    if out_subset.num_elements_exact() == 1 and (out.storage in CPU_RESIDENT_STORAGES
                                                  or out.storage == dace.dtypes.StorageType.Register):
         return 'tasklet'
 
@@ -101,9 +95,7 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
 
 @library.expansion
 class ExpandAuto(ExpandTransformation):
-    """Default expansion: dispatches to the implementation chosen by
-    :func:`select_memset_implementation` based on the destination storage
-    and the surrounding scope."""
+    """Default expansion: dispatches via :func:`select_memset_implementation`."""
     environments = []
 
     @staticmethod
@@ -163,20 +155,19 @@ class ExpandTasklet(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp, out, out_subset = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
         out_volume = out_subset.num_elements_exact()
         if out_volume != 1:
             raise ValueError(f"Tasklet expansion requires single-element subsets "
                              f"(got output volume {out_volume}). "
                              f"Use MappedTasklet for multi-element copies.")
 
-        # Single-element Shared involvement is a valid thread-level
-        # assignment; the auto dispatcher routes it here when the copy is
-        # inside a thread-block scope.
-        if (is_devicelevel_gpu(parent_state.sdfg, parent_state, node)
-                and out.storage in dace.dtypes.GPU_RESIDENT_STORAGES):
-            raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
-                             f"got {inp.storage} -> {out.storage}. Use a Memset variant instead.")
+        # The tasklet emits ``_out = 0`` in its own scope. Inside a GPU kernel that is a valid
+        # device-side store to GPU-resident memory; from host scope it is not (a scalar assignment
+        # cannot write device memory) -- route that to the ``CUDA`` (cudaMemsetAsync) expansion.
+        if (not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and out.storage in GPU_RESIDENT_STORAGES):
+            raise ValueError(f"Tasklet expansion cannot zero GPU-resident storage ({out.storage}) for "
+                             f"'{out_name}' from host scope; use the 'CUDA' Memset expansion instead.")
 
         return nodes.Tasklet(node.name,
                              inputs={},
@@ -189,10 +180,9 @@ class ExpandTasklet(ExpandTransformation):
 class MemsetLibraryNode(nodes.LibraryNode):
     """Library node representing a 0-memset over a contiguous output subset.
 
-    Design rationale: the libnode does NOT accept dynamic (Scalar) input
-    connectors -- the subset expression must use symbols already in scope at
-    construction time. This keeps the contract simple and lets the auto
-    selector reason purely from the static memlet subset.
+    Does NOT accept dynamic (Scalar) input connectors: the subset expression must
+    use symbols already in scope, so the auto selector reasons purely from the
+    static memlet subset.
     """
 
     implementations = {
@@ -204,7 +194,6 @@ class MemsetLibraryNode(nodes.LibraryNode):
     }
     default_implementation = 'Auto'
 
-    # Connector name exposed for library node builders.
     OUTPUT_CONNECTOR_NAME = "_mset_out"
 
     def __init__(self, name: str, *args, **kwargs):
@@ -216,16 +205,14 @@ class MemsetLibraryNode(nodes.LibraryNode):
         :param sdfg: The SDFG owning the data descriptors.
         :param state: The state containing this node.
         :returns: ``(out_name, out, out_subset)``.
-        :raises ValueError: If the node lacks exactly one output edge or has
-            any non-empty non-reserved input connector wired.
+        :raises ValueError: If the node lacks exactly one output edge, or has any
+            non-empty non-reserved input connector wired.
         """
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == MemsetLibraryNode.OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "
                              f"``{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` output edge.")
 
-        # Reject any non-empty input connector: the libnode does not accept
-        # dynamic inputs (see class docstring's design rationale).
         reserved = {CURRENT_STREAM_NAME}
         extra = [ie.dst_conn for ie in state.in_edges(self) if ie.dst_conn not in reserved and not ie.data.is_empty()]
         if extra:
