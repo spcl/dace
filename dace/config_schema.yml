@@ -122,11 +122,12 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
-            tree_reduction:
+            emit_tree_reductions:
                 type: bool
                 default: true
                 title: Emit tree reductions for parallel WCR
                 description: >
+                    Experimental automated tree-reduction emission for certain WCR patterns.
                     If enabled, a conflict-free (WCR) reduction accumulator written from a
                     parallel map is lowered to a privatize-and-tree-reduce form: on CPU an
                     OpenMP ``reduction(op:var)`` clause on the ``parallel for``, and on GPU a

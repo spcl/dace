@@ -65,26 +65,26 @@ def test_tree_reduction_wcr_map_gets_deep_block():
     # A WCR-reduction device map (tree_reduction on) takes the deep 512-thread block, not the
     # 1-D 128 default, so the block-reduce folds more of the reduction per block.
     sdfg, m = make_wcr_reduction_sdfg()
-    prev = dace.Config.get_bool('compiler', 'tree_reduction')
-    dace.Config.set('compiler', 'tree_reduction', value=True)
+    prev = dace.Config.get_bool('compiler', 'emit_tree_reductions')
+    dace.Config.set('compiler', 'emit_tree_reductions', value=True)
     try:
         select_gpu_device_block_size(sdfg)
         assert m.gpu_block_size == [512, 1, 1]
     finally:
-        dace.Config.set('compiler', 'tree_reduction', value=prev)
+        dace.Config.set('compiler', 'emit_tree_reductions', value=prev)
 
 
 def test_wcr_map_uses_default_block_when_tree_reduction_off():
     # With tree_reduction off the WCR write is a plain atomic, not a block tree-reduce, so the
     # map keeps the ordinary 1-D default block.
     sdfg, m = make_wcr_reduction_sdfg()
-    prev = dace.Config.get_bool('compiler', 'tree_reduction')
-    dace.Config.set('compiler', 'tree_reduction', value=False)
+    prev = dace.Config.get_bool('compiler', 'emit_tree_reductions')
+    dace.Config.set('compiler', 'emit_tree_reductions', value=False)
     try:
         select_gpu_device_block_size(sdfg)
         assert m.gpu_block_size == [128, 1, 1]
     finally:
-        dace.Config.set('compiler', 'tree_reduction', value=prev)
+        dace.Config.set('compiler', 'emit_tree_reductions', value=prev)
 
 
 def test_pick_block_size_2d_mild_ratio_stays_square():

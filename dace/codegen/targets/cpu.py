@@ -2112,11 +2112,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # pairs are pushed onto ``_omp_reduction_scope_stack`` so the
             # downstream ``write_and_resolve_expr`` skips the now-redundant
             # ``reduce_atomic`` for them.
-            # Gated by compiler.tree_reduction: OFF leaves omp_reductions empty, so no
+            # Gated by compiler.emit_tree_reductions: OFF leaves omp_reductions empty, so no
             # reduction(op:var) clause is emitted and the WCR write below takes the plain
             # atomic path (correct but contended) instead of privatize-and-tree-reduce.
             omp_reductions = []
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and Config.get_bool('compiler', 'tree_reduction'):
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                    and Config.get_bool('compiler', 'emit_tree_reductions')):
                 omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
                 declares = []
                 for op_str, clause_target, _dname, declare in omp_reductions:

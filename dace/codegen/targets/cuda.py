@@ -2394,11 +2394,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Default path only (no explicit tb map). Partial register identity-inited BEFORE the
         # bounds guard (out-of-range threads still join the fold); per-thread atomic suppressed;
         # block fold emitted once the guard closes below.
-        # Gated by compiler.tree_reduction: OFF skips the block fold so the WCR falls back to
+        # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back to
         # a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
         self._gpu_block_reductions = []
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
-                and Config.get_bool('compiler', 'tree_reduction')):
+                and Config.get_bool('compiler', 'emit_tree_reductions')):
             self._gpu_block_reductions = self._collect_gpu_reductions(sdfg, cfg.node(state_id), node, block_dims)
         for red in self._gpu_block_reductions:
             kernel_stream.write('%s = %s;' % (red['partial'], red['identity']), cfg, state_id, node)
@@ -2837,10 +2837,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # threads still join the fold); per-thread atomic suppressed; fold emitted once the
             # guard closes at the thread-block MapExit. Detected on the enclosing device map,
             # whose exit carries the reduction WCR.
-            # Gated by compiler.tree_reduction: OFF skips the block fold so the WCR falls back
+            # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back
             # to a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
             self._gpu_block_reductions = []
-            if Config.get_bool('compiler', 'tree_reduction'):
+            if Config.get_bool('compiler', 'emit_tree_reductions'):
                 self._gpu_block_reductions = self._collect_gpu_reductions(sdfg, dfg, scope_entry, self._block_dims)
             for red in self._gpu_block_reductions:
                 callsite_stream.write('%s = %s;' % (red['partial'], red['identity']), cfg, state_id, scope_entry)
