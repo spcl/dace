@@ -26,7 +26,7 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
         (including errors).
 
         `func` will be run once as a dace program, and once using python.
-        The inputs to the function will be randomly intialized arrays with
+        The inputs to the function will be randomly initialized arrays with
         shapes and dtypes according to the argument annotations.
 
         Note that this should be used *instead* of the `@dace.program`

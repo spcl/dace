@@ -1209,6 +1209,6 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         raise NotImplementedError('Unsupported type for py2cpp')
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)

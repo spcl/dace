@@ -15,6 +15,7 @@ from dace.config import Config
 from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
 from dace.registry import undefined_safe_enum
+from dace.version import __version__
 
 
 @undefined_safe_enum
@@ -886,7 +887,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Data):
                 pass
             elif isinstance(arg, str):
-                arg = json_to_typeclass(arg)
+                arg = json_to_typeclass(arg, {'version': __version__})
             else:
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
@@ -1117,7 +1118,7 @@ class callback(typeclass):
 
         import dace.serialize  # Avoid import loop
 
-        return callback([json_to_typeclass(rettype) if rettype else None for rettype in rettypes],
+        return callback([json_to_typeclass(rettype, context) if rettype else None for rettype in rettypes],
                         *(dace.serialize.from_json(arg, context) for arg in json_obj['arguments']))
 
     def __str__(self):

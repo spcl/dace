@@ -7,6 +7,7 @@ from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from dace.codegen.tools import gpu_runtime
+from functools import lru_cache
 from io import StringIO
 import functools
 import os
@@ -37,7 +38,7 @@ def find_outgoing_edges(node, dfg):
         return list(dfg.out_edges(node))
 
 
-@functools.lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def _sym2cpp(s, arrayexprs):
     return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 

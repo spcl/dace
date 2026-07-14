@@ -1,13 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace import nodes
+from dace import nodes, data, subsets
+from dace import Memlet
 
+import dace
 import pytest
 
 
 @pytest.fixture
-def tasklet() -> nodes.Tasklet:
+def tasklet() -> tn.TaskletNode:
     return tn.TaskletNode(nodes.Tasklet("noop", {}, {}, code="pass"), {}, {})
 
 
@@ -17,7 +19,7 @@ def tasklet() -> nodes.Tasklet:
     tn.GBlock,
     tn.ElseScope,
 ))
-def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], tasklet: nodes.Tasklet) -> None:
+def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], tasklet: tn.TaskletNode) -> None:
     scope = ScopeClass(children=[tasklet])
 
     for child in scope.children:
@@ -42,7 +44,7 @@ def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], ta
     tn.WhileScope,
     tn.DoWhileScope,
 ))
-def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: nodes.Tasklet) -> None:
+def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: tn.TaskletNode) -> None:
     scope = LoopScope(loop=None, children=[tasklet])
 
     for child in scope.children:
@@ -66,7 +68,7 @@ def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: nodes.Taskl
     tn.StateIfScope,
     tn.ElifScope,
 ))
-def test_if_scope_children(IfScope: type[tn.IfScope], tasklet: nodes.Tasklet) -> None:
+def test_if_scope_children(IfScope: type[tn.IfScope | tn.ElifScope], tasklet: tn.TaskletNode) -> None:
     scope = IfScope(condition=None, children=[tasklet])
 
     for child in scope.children:
@@ -90,7 +92,7 @@ def test_if_scope_children(IfScope: type[tn.IfScope], tasklet: nodes.Tasklet) ->
     tn.MapScope,
     tn.ConsumeScope,
 ))
-def test_dataflow_scope_children(DataflowScope: type[tn.DataflowScope], tasklet: nodes.Tasklet) -> None:
+def test_dataflow_scope_children(DataflowScope: type[tn.DataflowScope], tasklet: tn.TaskletNode) -> None:
     scope = DataflowScope(node=None, children=[tasklet])
 
     for child in scope.children:
@@ -109,6 +111,36 @@ def test_dataflow_scope_children(DataflowScope: type[tn.DataflowScope], tasklet:
         assert child.parent == scope
 
 
+def test_scope_inputs_outputs() -> None:
+    write_scalar = tn.TaskletNode(
+        nodes.Tasklet('bla', {}, {'out'}, 'out = 1'),
+        {},
+        {'out': Memlet('scalar[0]')},
+    )
+    read_scalar = tn.TaskletNode(
+        nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp + 1'),
+        {'inp': Memlet('scalar[0]')},
+        {'out': Memlet('A[1]')},
+    )
+    map_scope = tn.MapScope(
+        node=nodes.MapEntry(nodes.Map('map', ['i'], subsets.Range.from_string("0:20"))),
+        children=[write_scalar, read_scalar],
+    )
+
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'scalar': data.Scalar(dace.float64)
+        },
+        children=[map_scope],
+    )
+
+    assert stree
+    assert len(map_scope.input_memlets()) == 0
+    assert len(map_scope.output_memlets()) == 2
+
+
 if __name__ == '__main__':
     test_schedule_tree_scope_children(tn.ScheduleTreeScope, tasklet)
     test_schedule_tree_scope_children(tn.ControlFlowScope, tasklet)
@@ -124,3 +156,4 @@ if __name__ == '__main__':
     test_dataflow_scope_children(tn.DataflowScope, tasklet)
     test_dataflow_scope_children(tn.MapScope, tasklet)
     test_dataflow_scope_children(tn.ConsumeScope, tasklet)
+    test_scope_inputs_outputs()

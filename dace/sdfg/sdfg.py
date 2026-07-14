@@ -119,13 +119,14 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
+    :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
     :return: A list of Memlet objects in the order they appear in the AST.
     """
     result: List[mm.Memlet] = []
@@ -136,6 +137,10 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif include_scalars and isinstance(subnode, ast.Name):
+            data = astutils.rname(subnode)
+            if data in arrays and isinstance(arrays[data], dace.data.Scalar):
+                result.append(mm.Memlet.from_array(data, arrays[data]))
 
     return result
 
@@ -393,19 +398,20 @@ class InterstateEdge(object):
 
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
-    def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+    def get_read_memlets(self, arrays: Dict[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.
 
         :param arrays: A dictionary mapping names to their corresponding data descriptors (a-la ``sdfg.arrays``)
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         :return: A list of Memlet objects for each read.
         """
         result: List[mm.Memlet] = []
-        result.extend(memlets_in_ast(self.condition.code[0], arrays))
+        result.extend(memlets_in_ast(self.condition.code[0], arrays, include_scalars=include_scalars))
         for assign in self.assignments.values():
             vast = ast.parse(assign)
-            result.extend(memlets_in_ast(vast, arrays))
+            result.extend(memlets_in_ast(vast, arrays, include_scalars=include_scalars))
 
         return result
 
@@ -688,6 +694,7 @@ class SDFG(ControlFlowRegion):
     @classmethod
     def from_json(cls, json_obj, context=None):
         context = context or {'sdfg': None}
+        context['version'] = json_obj.get('dace_version', context.get('version'))
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -699,13 +706,16 @@ class SDFG(ControlFlowRegion):
         edges = json_obj['edges']
 
         if 'constants_prop' in attrs:
-            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']), context=context)
         else:
             constants_prop = None
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
+        dace.serialize.set_properties_from_json(ret,
+                                                json_obj,
+                                                context=context,
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -717,7 +727,7 @@ class SDFG(ControlFlowRegion):
             nodelist.append(block)
 
         for e in edges:
-            e = dace.serialize.from_json(e)
+            e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_block' in json_obj:
