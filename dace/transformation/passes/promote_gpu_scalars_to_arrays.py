@@ -195,9 +195,9 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         # a state-machine walk reaches; other blocks embed no user expressions.
         for block in sdfg.all_control_flow_blocks(recursive=True):
             if isinstance(block, ConditionalBlock):
-                for i in range(len(block._branches)):
-                    if block._branches[i][0] is not None:
-                        block._branches[i][0] = self._rewrite_codeblock(pattern, block._branches[i][0])
+                for branch in block.branches:
+                    if branch[0] is not None:
+                        branch[0] = self._rewrite_codeblock(pattern, branch[0])
             elif isinstance(block, LoopRegion):
                 # init/update are optional -- a ``while`` LoopRegion has only the condition.
                 if block.update_statement is not None:

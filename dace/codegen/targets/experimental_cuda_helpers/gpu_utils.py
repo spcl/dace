@@ -17,10 +17,8 @@ def get_cuda_dim(idx):
 
 def generate_sync_debug_call() -> str:
     """Return backend sync + error-check calls when ``compiler.cuda.syncdebug`` is set, else empty string."""
+    if not Config.get_bool('compiler', 'cuda', 'syncdebug'):
+        return ""
     backend: str = common.get_gpu_backend()
-    sync_call: str = ""
-    if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-        sync_call = (f"DACE_GPU_CHECK({backend}GetLastError());\n"
-                     f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
-
-    return sync_call
+    return (f"DACE_GPU_CHECK({backend}GetLastError());\n"
+            f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")

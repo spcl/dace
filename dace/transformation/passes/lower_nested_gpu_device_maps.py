@@ -189,12 +189,10 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                              for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)})
                 return new_all_nsdfgs, next_level_map_candidates
 
-            all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
-
-            while len(next_level_map_candidates) == 0:
+            # Descend NSDFG levels until a level yields map candidates or there are no deeper NSDFGs.
+            while True:
                 all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
-
-                if len(all_nsdfgs) == 0:
+                if next_level_map_candidates or not all_nsdfgs:
                     break
 
             next_level_maps = {(state, m)
@@ -244,9 +242,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                         ])
 
                 # Append the new dimensions
-                new_range_list = []
-                for (b, e, s) in gpu_dev_map.map.range:
-                    new_range_list.append((b, e, s))
+                new_range_list = list(gpu_dev_map.map.range)
                 for k, v in new_ranges_to_add.items():
                     gpu_dev_map.map.params.append(k)
                     assert len(v) == 1
