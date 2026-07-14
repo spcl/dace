@@ -106,26 +106,39 @@ def test_branched_tail_refused_on_cpu():
         VectorizeMultiDim(VectorizeConfig(widths=(8, ), device=DeviceType.CPU, remainder_strategy="branched_tail"))
 
 
-def test_branched_tail_default_off_leaves_pipeline_unchanged():
-    """Default off (any other strategy) -> ``branched_tail`` machinery is inert: the GPU pipeline is
-    the existing ``assume_even`` result (single strided map, NO ``ConditionalBlock``, no fused map)."""
+def test_assume_even_opts_out_of_branched_tail():
+    """Explicit ``assume_even=True`` opts out of the branched_tail machinery (it is the GPU K=1
+    default): the pipeline carries NO fuse pass and emits the single strided map with no
+    ``ConditionalBlock``. (Without it, the K=1 GPU default is branched_tail -- see
+    :func:`test_default_gpu_k1_is_branched_tail`.)"""
+    from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+
+    even = VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True))
+    assert not any(isinstance(p, FuseBranchedTailRemainder) for p in even.passes), \
+        "assume_even pipeline must NOT contain the branched-tail fuse pass"
+
+    sdfg = _prep(_add16)
+    even.apply_pass(sdfg, {})
+    assert len(_top_maps(sdfg)) == 1, "assume_even keeps a single map"
+    assert not _conditionals(sdfg), "assume_even must emit no ConditionalBlock"
+
+
+def test_default_gpu_k1_is_branched_tail():
+    """The GPU K=1 default (widths=(W,), no explicit strategy) IS branched_tail: the fuse pass is in
+    the pipeline so a non-divisible extent works out of the box (one kernel, scalar remainder loop)."""
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 
     default = VectorizeGPU(VectorizeConfig(widths=(2, )))
-    assert not any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes), \
-        "default GPU pipeline must NOT contain the branched-tail fuse pass"
-
-    sdfg = _prep(_add16)
-    default.apply_pass(sdfg, {})
-    assert len(_top_maps(sdfg)) == 1, "assume_even keeps a single map"
-    assert not _conditionals(sdfg), "default off must emit no ConditionalBlock"
+    assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes), \
+        "GPU K=1 default must be branched_tail (fuse pass present)"
 
 
 def test_branched_tail_provably_nondivisible_does_not_raise():
-    """The provably-non-divisible extent (1022 @ W=8) RAISES under default ``assume_even`` but takes
-    the fused path under ``branched_tail`` -- one fused map over the ORIGINAL [1:1023) range."""
+    """The provably-non-divisible extent (1022 @ W=8) RAISES under explicit ``assume_even`` but takes
+    the fused path under ``branched_tail`` (the GPU K=1 default) -- one fused map over the ORIGINAL
+    [1:1023) range."""
     with pytest.raises(ValueError, match="provably not a multiple of tile width 8"):
-        VectorizeGPU(VectorizeConfig(widths=(8, ))).apply_pass(_prep(_add16_literal), {})
+        VectorizeGPU(VectorizeConfig(widths=(8, ), assume_even=True)).apply_pass(_prep(_add16_literal), {})
 
     sdfg = _prep(_add16_literal)
     VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
@@ -252,7 +265,8 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
 
 if __name__ == "__main__":
     test_branched_tail_refused_on_cpu()
-    test_branched_tail_default_off_leaves_pipeline_unchanged()
+    test_assume_even_opts_out_of_branched_tail()
+    test_default_gpu_k1_is_branched_tail()
     test_branched_tail_provably_nondivisible_does_not_raise()
     test_branched_tail_structure_if_vector_else_scalar()
     test_branched_tail_emits_single_kernel()

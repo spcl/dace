@@ -89,11 +89,11 @@ def _inner_maps(sdfg):
 
 
 def test_assume_even_single_strided_gpu_map_no_mask():
-    """``assume_even`` (the GPU default) emits ONE ``0:N:2`` GPU_Device map per
-    original map -- no remainder split, no ``TileMaskGen`` (so no mismatched
-    thread-block sizes on GPU)."""
+    """``assume_even=True`` emits ONE ``0:N:2`` GPU_Device map per original map --
+    no remainder split, no ``TileMaskGen`` (so no mismatched thread-block sizes on
+    GPU). ``assume_even`` is opt-in: the GPU K=1 default is ``branched_tail``."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even must not split the map; got {len(maps)} maps"
     m = maps[0]
@@ -169,7 +169,7 @@ def test_gpu_reduction_uses_gpu_expansion():
     reduction on the device rather than a CPU horizontal fold; it compiles with nvcc."""
     from dace.sdfg.nodes import MapExit
     sdfg = _prep(_vsum16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
     # The reduction stays a map-exit WCR (an in-edge to a MapExit carrying a CR).
     wcr_exits = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
                  if isinstance(n, MapExit) and any(e.data is not None and e.data.wcr is not None
@@ -244,7 +244,7 @@ def test_gpu_vectorize_width_gt2_numeric(width):
     import cupy
     sdfg = _prep(_add16)
     sdfg.name = f"add16_w{width}"
-    VectorizeGPU(VectorizeConfig(widths=(width, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(width, ), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even keeps one map; got {len(maps)}"
     n = 8 * width  # a multiple of the width (assume_even)

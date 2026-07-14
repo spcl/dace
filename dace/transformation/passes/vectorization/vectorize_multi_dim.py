@@ -187,8 +187,7 @@ def _wcr_output_is_injective_rmw(graph, map_exit, array: str, params) -> bool:
     """
     param_syms = {str(p) for p in params}
     inner = [
-        e for e in graph.in_edges(map_exit)
-        if e.data is not None and e.data.data == array and e.data.subset is not None
+        e for e in graph.in_edges(map_exit) if e.data is not None and e.data.data == array and e.data.subset is not None
     ]
     if not inner:
         return False
@@ -231,9 +230,8 @@ class _MultiOutputReductionMapFission(MapFission):
         params = self.map_entry.map.params
         wcr_arrays = {
             e.data.data
-            for e in graph.out_edges(map_exit)
-            if e.data is not None and e.data.data is not None and e.data.wcr is not None
-            and not _wcr_output_is_injective_rmw(graph, map_exit, e.data.data, params)
+            for e in graph.out_edges(map_exit) if e.data is not None and e.data.data is not None
+            and e.data.wcr is not None and not _wcr_output_is_injective_rmw(graph, map_exit, e.data.data, params)
         }
         if len(wcr_arrays) < 2:
             return False
@@ -759,13 +757,11 @@ class VectorizeMultiDim(ppl.Pipeline):
             # GPU-only: on CPU the two maps are already one loop nest (no kernel-launch cost to
             # fold away), so the strategy is refused rather than silently downgraded.
             if not is_gpu_device:
-                raise NotImplementedError(
-                    "VectorizeMultiDim: remainder_strategy='branched_tail' is GPU-only "
-                    "(needs device=GPU / target_isa='CUDA').")
+                raise NotImplementedError("VectorizeMultiDim: remainder_strategy='branched_tail' is GPU-only "
+                                          "(needs device=GPU / target_isa='CUDA').")
             if len(widths_t) != 1:
-                raise NotImplementedError(
-                    "VectorizeMultiDim: remainder_strategy='branched_tail' supports K=1 "
-                    f"(one tiled dim); got widths={widths_t!r}.")
+                raise NotImplementedError("VectorizeMultiDim: remainder_strategy='branched_tail' supports K=1 "
+                                          f"(one tiled dim); got widths={widths_t!r}.")
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode="scalar"))
         elif remainder_strategy in ("masked_tail", "scalar_postamble"):
             # Split each K-dim tile map into a provably-divisible interior (marked
@@ -1304,10 +1300,12 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
     def __init__(self, config: VectorizeConfig):
         """Build the GPU orchestrator from a :class:`VectorizeConfig`.
 
-        The GPU row is pinned regardless of the config: ``device=GPU``, ``target_isa=CUDA``,
-        ``assume_even=True`` (a half2 kernel emits no remainder loop). ``widths`` (innermost
-        must be even) and the remaining flags come from ``config`` -- GPU callers typically
-        pass ``VectorizeConfig(widths=(2,), expand_tile_nodes=False)``.
+        The GPU row pins ``device=GPU`` and ``target_isa=CUDA``. The K=1 default remainder
+        handling is ``branched_tail`` (one kernel: if full-tile -> vectorized / else -> scalar
+        remainder loop), so a non-divisible extent works out of the box (``assume_even=False``);
+        pass ``assume_even=True`` to opt into the even fast path (single strided map, no
+        remainder). ``widths`` (innermost must be even) and the remaining flags come from
+        ``config`` -- GPU callers typically pass ``VectorizeConfig(widths=(2,), expand_tile_nodes=False)``.
 
         The input SDFG must ALREADY be GPU-offloaded (its maps ``GPU_Device``-scheduled). This
         pass never offloads / schedules the SDFG itself (no ``apply_gpu_transformations``): the
@@ -1316,13 +1314,20 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         :param config: The vectorizer configuration; its ``device`` / ``target_isa`` /
             ``assume_even`` are overridden with the GPU values.
         """
-        # ``branched_tail`` deliberately handles a non-divisible extent (it peels a scalar tail
-        # and fuses it into an if/else branch), so it must NOT run under ``assume_even`` (which
-        # would instead RAISE on the provably-non-divisible case). Every other GPU strategy keeps
-        # the even-extent fast path (single strided map, no remainder).
-        branched = coerce_remainder_strategy(config.remainder_strategy) == RemainderStrategy.BRANCHED_TAIL
+        # GPU multidim DEFAULT (K=1): the ``branched_tail`` remainder strategy -- one kernel with
+        # ``if(full-tile) -> vectorized tile body / else -> scalar remainder loop`` -- so
+        # vectorization works out of the box on ANY extent (assume_even=False, no RAISE on a
+        # provably-non-divisible extent, no second remainder kernel). Applied only when the caller
+        # left the base default (``masked_tail``) and the tile is single-dim; ``branched_tail`` is
+        # K=1-only, so a K>1 request keeps the even-extent fast path. An explicit non-default
+        # strategy (masked_tail via another route, full_mask, scalar_postamble) is honored as given.
+        resolved = config
+        if (len(config.widths) == 1 and not config.assume_even
+                and coerce_remainder_strategy(config.remainder_strategy) == RemainderStrategy.MASKED_TAIL):
+            resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_TAIL)
+        # ``branched_tail`` handles the non-divisible extent itself, so it must NOT run under
+        # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
+        # other strategy keeps the even-extent fast path (single strided map, no remainder).
+        branched = coerce_remainder_strategy(resolved.remainder_strategy) == RemainderStrategy.BRANCHED_TAIL
         super().__init__(
-            dataclasses.replace(config,
-                                device=DeviceType.GPU,
-                                target_isa=ISA.CUDA,
-                                assume_even=not branched))
+            dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched))
