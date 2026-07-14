@@ -65,12 +65,16 @@ from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 _SKEW_T_PREFIX = '_skew_t_'
 _SKEW_P_PREFIX = '_skew_p_'
 
-#: Candidate diagonal skews, in preference order. ``tau = (a, b)`` with ``a == 1``
-#: so ``(t = u + b*v, p = v)`` is unimodular (``u = t - b*p``). ``b = +1`` is the
-#: sum diagonal (heat-flux / Smith-Waterman / nussinov), ``b = -1`` the difference
-#: diagonal. ``b = 0`` is not a skew (it is the axis-aligned schedule tested for
-#: refusal).
-_SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1))
+#: Candidate diagonal skews, in preference order. ``tau = (a, b)``; the skew is
+#: unimodular when ``|a| == 1`` (``p = v``, ``u = a*(t - b*p)``) or ``|b| == 1``
+#: (``p = u``, ``v = b*(t - a*p)``). The shallow 45-degree family comes first:
+#: ``(1, 1)`` sum diagonal (heat-flux / Smith-Waterman / nussinov), ``(1, -1)``
+#: difference diagonal. The steeper diagonals follow -- ``(2, +-1)`` is the
+#: Gauss-Seidel case whose stored deps ``{(0,-1),(-1,0),(-1,-1),(-1,1)}`` need
+#: ``a > b > 0`` (seidel_2d), the ``(1, +-2)`` transposes cover the reflected
+#: nests. ``b = 0`` / ``a = 0`` is not a skew (that is the axis-aligned schedule
+#: tested for refusal).
+_SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
 
 
 def sym(name: str):
@@ -445,8 +449,10 @@ class WavefrontSkew(ppl.Pass):
     def _rewrite(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str,
                  tau: Tuple[int, int], bounds) -> None:
         """Relabel ``outer -> t`` and ``inner -> p`` with the projected bounds, then
-        substitute ``u = t - b*p, v = p`` in the inner body and lift it to a Map."""
-        _a, b = tau
+        substitute the original iterators in terms of ``(t, p)`` in the inner body
+        and lift it to a parallel Map. The substitution matches the unimodular
+        family ``skew_bounds`` used: ``p = v`` when ``|a| == 1``, else ``p = u``."""
+        a, b = tau
         nid = _next_id(sdfg)
         t_var = f"{_SKEW_T_PREFIX}{nid}"
         p_var = f"{_SKEW_P_PREFIX}{nid}"
@@ -473,9 +479,15 @@ class WavefrontSkew(ppl.Pass):
         inner.loop_condition = properties.CodeBlock(f"{p_var} <= ({p_hi})")
         inner.update_statement = properties.CodeBlock(f"{p_var} = {p_var} + 1")
 
-        # u = a*(t - b*p) with a in {1,-1}; a == 1 for every candidate, so u = t - b*p.
-        u_expr = symbolic.symstr(sym(t_var) - b * sym(p_var))
-        inner.replace_dict({u: u_expr, v: p_var})
+        # Express the original iterators in (t, p). The parallel axis p is v when
+        # |a| == 1 (u = a*(t - b*p)); it is u when the steep skew forces |b| == 1
+        # (v = b*(t - a*p)). Both keep the (u, v) -> (t, p) map unimodular.
+        if abs(a) == 1:
+            u_expr = symbolic.symstr(a * (sym(t_var) - b * sym(p_var)))
+            inner.replace_dict({u: u_expr, v: p_var})
+        else:
+            v_expr = symbolic.symstr(b * (sym(t_var) - a * sym(p_var)))
+            inner.replace_dict({u: p_var, v: v_expr})
 
         self._convert_inner_to_map(outer, inner, sdfg)
 

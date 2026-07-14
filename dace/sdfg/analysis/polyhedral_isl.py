@@ -182,7 +182,14 @@ def classify_dim(e, dsym) -> Tuple[List, List, bool]:
     coeff == 0  -> not a bound on this dim (ignore).
     coeff == 1  -> dsym >= -rest.
     coeff == -1 -> dsym <= rest.
-    |coeff| > 1 -> integer-division bound; unsupported (ok=False).
+    |coeff| > 1 -> an integer-division bound: ``c*dsym + rest >= 0`` gives, for
+    ``c > 0``, ``dsym >= ceil(-rest / c)`` (a lower bound); for ``c < 0``,
+    ``dsym <= floor(rest / -c)`` (an upper bound). This is exact over the
+    integers -- it is the shape a steep skew (``tau = (2, 1)``, Gauss-Seidel)
+    leaves on the parallel ``p`` axis, where the complementary coordinate scales
+    ``p`` by ``|a|`` (here ``2``). ``int_ceil`` / ``int_floor`` render to DaCe's
+    native integer-division intrinsics, so the resulting loop / Map bound is
+    codegen-legal.
     """
     coeff = e.coeff(dsym, 1)
     rest = symbolic.simplify(e - coeff * dsym)
@@ -192,7 +199,40 @@ def classify_dim(e, dsym) -> Tuple[List, List, bool]:
         return [symbolic.simplify(-rest)], [], True
     if coeff == -1:
         return [], [symbolic.simplify(rest)], True
-    return [], [], False
+    if coeff > 0:
+        return [int_ceil(symbolic.simplify(-rest), coeff)], [], True
+    return [], [int_floor(symbolic.simplify(rest), -coeff)], True
+
+
+def pwaff_bound(pw, inv_map: Dict[str, str]):
+    """A single-piece ``isl.PwAff`` (as returned by ``Set.dim_min`` / ``dim_max``)
+    rendered to a symbolic expression, with ISL-safe names mapped back through
+    ``inv_map``. The piece's parameter guard (e.g. ``N >= 3``, a mere
+    nonemptiness condition) is ignored -- an out-of-range outer index just yields
+    an empty inner range. Returns ``None`` when the bound is genuinely piecewise
+    (several affine pieces over disjoint parameter regions) or carries an integer
+    ``div`` term, neither of which is a single loop-bound expression.
+
+    This is the exact-integer route for the ``t`` (sequential-diagonal) range of a
+    steep skew: projecting the parallel axis out of a slanted (non-unit-scaled)
+    domain leaves an ISL *existential* that per-constraint reading cannot turn
+    into a clean bound, but ``dim_min`` / ``dim_max`` resolve it exactly.
+    """
+    pieces: List = []
+    pw.foreach_piece(lambda st, aff: pieces.append(aff))
+    if len(pieces) != 1:
+        return None
+    aff = pieces[0]
+    if aff.dim(isl.dim_type.div) != 0:
+        return None
+    expr = symbolic.pystr_to_symbolic(value_to_int(aff.get_constant_val()))
+    for kind in (isl.dim_type.param, isl.dim_type.in_):
+        for i in range(aff.dim(kind)):
+            co = value_to_int(aff.get_coefficient_val(kind, i))
+            if co:
+                nm = aff.get_dim_name(kind, i)
+                expr = expr + co * symbolic.pystr_to_symbolic(inv_map.get(nm, nm))
+    return symbolic.simplify(expr)
 
 
 def dedupe_terms(terms: List) -> List:

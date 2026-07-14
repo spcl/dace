@@ -118,11 +118,25 @@ def test_classify_dim_negative_unit_coefficient_is_upper_bound():
     assert hi and not lo
 
 
-def test_classify_dim_non_unit_coefficient_is_unsupported():
-    """``|coeff| > 1`` (an integer-division bound) is unsupported -> ``ok=False``."""
+def test_classify_dim_positive_non_unit_coefficient_is_ceil_lower_bound():
+    """``2*i - 3 >= 0`` => ``i >= ceil(3/2)`` -- a positive non-unit coefficient is
+    an exact integer-division lower bound (``int_ceil``), the shape a steep skew
+    leaves on the parallel axis."""
+    from dace.symbolic import int_ceil
     lo, hi, ok = poly.classify_dim(p('2*i - 3'), p('i'))
-    assert ok is False
-    assert not lo and not hi
+    assert ok is True
+    assert not hi
+    assert len(lo) == 1 and lo[0] == int_ceil(p('3'), p('2'))
+
+
+def test_classify_dim_negative_non_unit_coefficient_is_floor_upper_bound():
+    """``7 - 2*i >= 0`` => ``i <= floor(7/2)`` -- a negative non-unit coefficient is
+    an exact integer-division upper bound (``int_floor``)."""
+    from dace.symbolic import int_floor
+    lo, hi, ok = poly.classify_dim(p('7 - 2*i'), p('i'))
+    assert ok is True
+    assert not lo
+    assert len(hi) == 1 and hi[0] == int_floor(p('7'), p('2'))
 
 
 # --- constraint_to_sympy ------------------------------------------------------------

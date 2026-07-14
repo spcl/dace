@@ -226,5 +226,68 @@ def test_wavefront_skew_runtime_guard_traps_on_violation():
                                  f'(stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})')
 
 
+@dace.program
+def seidel_perfect(aa: dace.float64[N, N]):
+    """Gauss-Seidel 2-D stencil as an explicit perfect nest. Its stored deps
+    ``{(0,-1),(-1,0),(-1,-1),(-1,1)}`` need a skew ``tau`` with ``a > b > 0``:
+    both 45-degree diagonals ``(1, 1)`` / ``(1, -1)`` are illegal, so the pass
+    must reach the steeper ``(2, 1)`` candidate."""
+    for i in range(1, N - 1):
+        for j in range(1, N - 1):
+            aa[i, j] = (aa[i, j - 1] + aa[i - 1, j] + aa[i - 1, j - 1] + aa[i - 1, j + 1]) / 4.0
+
+
+def test_wavefront_skew_steep_gauss_seidel_lifts_inner_to_map():
+    """The steep ``tau = (2, 1)`` case: neither axis is parallel and neither
+    45-degree diagonal is legal, so the pass skews on the steeper diagonal and
+    lifts the inner ``p``-loop to a Map (one sequential ``t``-loop remains)."""
+    from dace.sdfg import nodes
+
+    sdfg = seidel_perfect.to_sdfg(simplify=True)
+    res = WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+
+    loops = _loops(sdfg)
+    assert len(loops) == 1 and loops[0].loop_variable.startswith(_SKEW_T_PREFIX)
+    map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(map_entries) == 1
+    assert map_entries[0].map.params[0].startswith(_SKEW_P_PREFIX)
+
+
+def test_wavefront_skew_steep_gauss_seidel_value_preserving():
+    """End-to-end: the steep-skewed Gauss-Seidel nest reproduces the sequential
+    reference exactly (the int-division ``p`` bounds and the ISL ``dim_min`` /
+    ``dim_max`` ``t`` range must be right for this to hold)."""
+    n = 10
+    rng = np.random.default_rng(4711)
+    aa0 = rng.standard_normal((n, n))
+    ref = aa0.copy()
+    for i in range(1, n - 1):
+        for j in range(1, n - 1):
+            ref[i, j] = (ref[i, j - 1] + ref[i - 1, j] + ref[i - 1, j - 1] + ref[i - 1, j + 1]) / 4.0
+
+    sdfg = seidel_perfect.to_sdfg(simplify=True)
+    WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = aa0.copy()
+    sdfg(aa=got, N=n)
+    assert np.allclose(got, ref)
+
+
+def test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop():
+    """After the steep skew a subsequent ``LoopToMap`` finds the inner already a
+    Map and leaves the diagonal ``t``-loop sequential (pinned)."""
+    from dace.sdfg import nodes
+
+    sdfg = seidel_perfect.to_sdfg(simplify=True)
+    WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
+    n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert n_maps >= 1
+    assert len(_loops(sdfg)) <= 1
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -34,7 +34,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from dace import symbolic
 from dace.sdfg.analysis.polyhedral_isl import (HAVE_ISL, isl, classify_dim, collect_basic_sets, constraint_to_sympy,
-                                               dedupe_terms, is_domain_empty, make_set, subs_by_name)
+                                               dedupe_terms, is_domain_empty, make_set, pwaff_bound, subs_by_name)
 
 
 class SkewBounds:
@@ -52,18 +52,30 @@ class SkewBounds:
 
 def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints, tau: Tuple[int, int],
                 t_name: str, p_name: str) -> Optional[SkewBounds]:
-    """Project the domain through ``(t = a*u + b*v, p = v)`` and read back bound
-    terms. ``dims`` are ``(u, v)``; ``tau = (a, b)`` with ``a in {1, -1}`` so the
-    map is unimodular (``p = v``). Returns a :class:`SkewBounds` or ``None`` if a
-    bound is non-unit in ``p`` (an integer-division bound ISL expresses with an
-    existential -- outside the simple loop-bound form we splice back)."""
+    """Project the domain through the unimodular skew ``t = a*u + b*v`` and read
+    back bound terms. ``dims`` are ``(u, v)``; ``tau = (a, b)``. The parallel axis
+    ``p`` is the coordinate whose complement inverts over the integers:
+
+    * ``|a| == 1``: ``p = v``, ``u = a*(t - b*p)`` -- the shallow ``(1, +-1)`` /
+      ``(1, +-2)`` family.
+    * ``|b| == 1``: ``p = u``, ``v = b*(t - a*p)`` -- the steep ``(2, +-1)``
+      Gauss-Seidel family, where the diagonal is steeper than 45 degrees.
+
+    When both hold either works; when neither does (``(2, 3)``) there is no
+    single-coordinate unimodular complement and the skew is refused. Returns a
+    :class:`SkewBounds` or ``None`` if a bound is not expressible as a simple
+    (possibly int-division) loop bound."""
     u, v = dims
     a, b = tau
     tsym = symbolic.pystr_to_symbolic(t_name)
     psym = symbolic.pystr_to_symbolic(p_name)
-    # Skewed set S(t, p): substitute u = a*(t - b*p), v = p  (a in {1,-1} => a == 1/a).
-    usub = a * (tsym - b * psym)
-    skewed = [subs_by_name(c, {u: usub, v: psym}) for c in domain_constraints]
+    if abs(a) == 1:
+        subs = {u: a * (tsym - b * psym), v: psym}  # a in {1,-1} => 1/a == a
+    elif abs(b) == 1:
+        subs = {u: psym, v: b * (tsym - a * psym)}  # b in {1,-1} => 1/b == b
+    else:
+        return None
+    skewed = [subs_by_name(c, subs) for c in domain_constraints]
     sdims = (t_name, p_name)
 
     s_set, nmap = make_set(sdims, params, skewed)
@@ -72,7 +84,9 @@ def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints
     safe_dims = [nmap[t_name], nmap[p_name]]
     safe_params = [nmap[p] for p in params]
 
-    # p-range at fixed t.
+    # p-range at fixed t (parametric in t): read directly from the skewed set. A
+    # steep skew scales p by |a| > 1, which ``classify_dim`` turns into an exact
+    # int_ceil / int_floor bound.
     p_lo_terms: List = []
     p_hi_terms: List = []
     for b_set in collect_basic_sets(s_set):
@@ -90,27 +104,19 @@ def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints
                 p_lo_terms += lo2
                 p_hi_terms += hi2
 
-    # t-range: project p out.
+    # t-range: project the parallel axis out and take the exact integer min / max
+    # of the remaining diagonal dim. Per-constraint reading is unsound here --
+    # projecting p out of a slanted (non-unit-scaled) domain leaves an ISL
+    # existential (a divisibility on t) that ``classify_dim`` cannot read -- so
+    # ``dim_min`` / ``dim_max`` resolve the integer shadow exactly.
     t_set = s_set.project_out(isl.dim_type.set, 1, 1).coalesce()
-    t_lo_terms: List = []
-    t_hi_terms: List = []
-    for b_set in collect_basic_sets(t_set):
-        for c in b_set.get_constraints():
-            e = constraint_to_sympy(c, [nmap[t_name]], safe_params, inv)
-            lo, hi, ok = classify_dim(e, tsym)
-            if not ok:
-                return None
-            t_lo_terms += lo
-            t_hi_terms += hi
-            if c.is_equality():
-                lo2, hi2, ok2 = classify_dim(symbolic.simplify(-e), tsym)
-                if not ok2:
-                    return None
-                t_lo_terms += lo2
-                t_hi_terms += hi2
+    t_lo = pwaff_bound(t_set.dim_min(0), inv)
+    t_hi = pwaff_bound(t_set.dim_max(0), inv)
+    if t_lo is None or t_hi is None:
+        return None
+    t_lo_terms = [t_lo]
+    t_hi_terms = [t_hi]
 
-    t_lo_terms = dedupe_terms(t_lo_terms)
-    t_hi_terms = dedupe_terms(t_hi_terms)
     p_lo_terms = dedupe_terms(p_lo_terms)
     p_hi_terms = dedupe_terms(p_hi_terms)
     if not (t_lo_terms and t_hi_terms and p_lo_terms and p_hi_terms):
