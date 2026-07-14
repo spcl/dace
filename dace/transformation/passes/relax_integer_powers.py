@@ -37,6 +37,7 @@ def _ordered_range(
     """
     if step is None:
         return None
+    step = sympy.sympify(step)  # a range step may be a raw Python int, which has no is_positive
     if step.is_positive:
         return (begin, end)
     if step.is_negative:

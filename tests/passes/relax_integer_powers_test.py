@@ -217,6 +217,14 @@ def test_loop_range_direction_from_stride_sign():
     assert rng('i > 0', 'i = K', 'i = i + sstep') is None  # unknown-sign stride -> no trusted range
 
 
+def test_ordered_range_accepts_raw_int_step():
+    """A range step can be a raw Python ``int`` (not a sympy object); ``_ordered_range`` must
+    handle it rather than crash on ``int.is_positive``."""
+    from dace.transformation.passes.relax_integer_powers import _ordered_range
+    assert _ordered_range(0, 10, 1) == (0, 10)
+    assert _ordered_range(10, 0, -1) == (0, 10)
+
+
 def test_refuses_pow_under_unknown_sign_stride():
     """The stride sign is the only thing that changes between these two loops: ``K - p`` is
     provably >= 0 over an ascending sweep, so it relaxes; under an unknown-sign stride there is
