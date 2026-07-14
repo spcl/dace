@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``InsertExplicitCopies`` pass."""
 import copy as _copy
-import importlib.util
-import os
 
 import dace
 import numpy as np
@@ -13,19 +11,9 @@ from dace.sdfg import utils as sdutils
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
-import tests.polybench
-from tests.polybench.correlation import correlation, init_array as _correlation_init_array
-from tests.polybench.covariance import covariance, init_array as _covariance_init_array
-
-# fdtd-2d.py's hyphenated filename is not a valid module identifier. Load it from
-# its path under a clean module name so the SDFG name (derived from the module
-# path) is valid -- without importing or mutating the canonical hyphenated module.
-_fdtd2d_path = os.path.join(os.path.dirname(tests.polybench.__file__), "fdtd-2d.py")
-_fdtd2d_spec = importlib.util.spec_from_file_location("polybench_fdtd_2d", _fdtd2d_path)
-_fdtd2d_module = importlib.util.module_from_spec(_fdtd2d_spec)
-_fdtd2d_spec.loader.exec_module(_fdtd2d_module)
-fdtd2d = _fdtd2d_module.fdtd2d
-_fdtd2d_init_array = _fdtd2d_module.init_array
+from tests.corpus.polybench.datamining.correlation import correlation, init_array as _correlation_init_array
+from tests.corpus.polybench.datamining.covariance import covariance, init_array as _covariance_init_array
+from tests.corpus.polybench.stencils.fdtd_2d import fdtd2d, init_array as _fdtd2d_init_array
 
 
 def _count_copy_nodes(sdfg):
