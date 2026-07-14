@@ -2,7 +2,7 @@
 """Correctness of the experimental-CUDA thread-block tree reduction.
 
 A scalar WCR accumulator written from a GPU thread-block map folds via one ``cub::BlockReduce``
-+ one atomic per block (gated by ``compiler.tree_reduction``) instead of one atomic per thread.
++ one atomic per block (gated by ``compiler.emit_tree_reductions``) instead of one atomic per thread.
 These tests cover the base one-element-per-thread case, a sequential tile per thread
 (multiple WCR writes per thread), a non-sum operator, and the atomic fallback -- checking both
 bit-close results against numpy and that the ``cub::BlockReduce`` is (or is not) emitted."""
@@ -111,7 +111,7 @@ def test_block_reduction_subset():
 
 @pytest.mark.gpu
 def test_block_reduction_disabled_falls_back_to_atomic():
-    """With ``compiler.tree_reduction`` off, no ``cub::BlockReduce`` is emitted, but the plain
+    """With ``compiler.emit_tree_reductions`` off, no ``cub::BlockReduce`` is emitted, but the plain
     per-thread atomic WCR still produces the correct result."""
 
     @dace.program
@@ -120,7 +120,7 @@ def test_block_reduction_disabled_falls_back_to_atomic():
         for i in dace.map[0:N]:
             s[0] += A[i]
 
-    with dace.config.set_temporary('compiler', 'tree_reduction', value=False):
+    with dace.config.set_temporary('compiler', 'emit_tree_reductions', value=False):
         sdfg = _gpu_sdfg(blockred)
         code = "\n".join(c.code for c in sdfg.generate_code())
         assert "cub::BlockReduce" not in code

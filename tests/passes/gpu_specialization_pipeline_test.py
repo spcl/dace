@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``GPUSpecializationPipeline`` idempotency and ``is_inside_gpu_device_kernel`` across nesting shapes."""
+"""``GPUStreamPipeline`` idempotency and ``is_inside_gpu_device_kernel`` across nesting shapes."""
 import dace
 from dace import SDFG, dtypes
 from dace.memlet import Memlet
-from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUSpecializationPipeline
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     get_gpu_stream_array_name,
-    is_gpu_lowering_applied,
+    is_stream_wiring_applied,
     is_inside_gpu_device_kernel,
 )
 
@@ -41,10 +41,10 @@ def test_pipeline_idempotent_on_simple_sdfg():
     """Re-applying the pipeline leaves topology + properties untouched."""
     sdfg = _build_simple_gpu_copy_sdfg()
 
-    pipeline = GPUSpecializationPipeline()
+    pipeline = GPUStreamPipeline()
 
     pipeline.apply_pass(sdfg, {})
-    assert is_gpu_lowering_applied(sdfg), 'first pass must mark wiring as applied'
+    assert is_stream_wiring_applied(sdfg), 'first pass must mark wiring as applied'
     assert get_gpu_stream_array_name() in sdfg.arrays
     sig_after_first = _topology_signature(sdfg)
     streams_after_first = {

@@ -2,41 +2,22 @@
 """``DemoteKernelInternalArraysToScalars`` -- the inverse of
 :class:`~dace.transformation.passes.promote_gpu_scalars_to_arrays.PromoteGPUScalarsToArrays`.
 
-``PromoteGPUScalarsToArrays`` widens the scalars that *cross* a GPU kernel's
-output boundary into length-1 ``Array``s (they must live in addressable global
-memory to be returned). This pass enforces the symmetric half of the invariant:
-*a single value that lives entirely inside the kernel stays a ``Scalar``*. Any
-length-1 ``Array`` that is kernel-internal -- a register-scoped temporary or a
-``NestedSDFG`` (device-function) connector that merely mirrors an outer scalar
--- is demoted back to a ``Scalar`` so codegen emits ``double`` / ``double&``
-instead of a needless ``double*`` indirection.
-
-A length-1 ``Array`` is demoted when **all** hold:
-
-* its storage is kernel-local (not ``GPU_Global`` / ``GPU_Shared`` -- those are
-  genuinely addressable / cross-thread and must stay arrays);
-* it is inside a ``GPU_Device`` scope -- either declared in a sub-SDFG that *is*
-  a device function (:func:`is_inside_gpu_device_kernel`), or every one of its
-  access nodes sits within a ``GPU_Device`` map in its own SDFG;
-* it is **not** a kernel output -- it is never written across a ``GPU_Device``
-  ``MapExit`` (that write is exactly what ``PromoteGPUScalarsToArrays`` keeps as
-  an array).
-
-The scalarization itself (descriptor swap, ``[0]`` accessor stripping, memlet
-subset collapse) is delegated to
-:class:`~dace.transformation.passes.length_one_array_scalar_conversion.ConvertLengthOneArraysToScalars`
-via its ``filter`` knob, which scalarizes a named descriptor regardless of its
-``transient`` flag (so a non-transient device-function connector like a
-reduction's ``_out`` is covered). After the swap the stale pointer-typed
-``NestedSDFG`` connectors are reset and re-inferred so they become scalar
-references again.
+That pass widens scalars crossing a GPU kernel's output boundary into length-1
+``Array``s (outputs must live in addressable global memory). This pass enforces
+the symmetric half of the invariant: a value living entirely inside the kernel
+stays a ``Scalar``, so codegen emits ``double`` / ``double&`` instead of a
+needless ``double*`` indirection. The scalarization is delegated to
+:class:`~dace.transformation.passes.length_one_array_scalar_conversion.ConvertLengthOneArraysToScalars`;
+afterward the stale pointer-typed ``NestedSDFG`` connectors are reset and
+re-inferred as scalar references.
 """
 from typing import Any, Dict, Optional, Set
 
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_inside_gpu_device_kernel
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_inside_gpu_device_kernel,
+                                                                               written_by_gpu_map_exit)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 # Length-1 arrays in these storages are addressable global memory or
@@ -46,35 +27,11 @@ from dace.transformation.passes.length_one_array_scalar_conversion import Conver
 _KEEP_STORAGES = frozenset({dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared})
 
 
-def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
-    """``True`` iff ``name`` is written across a GPU-scheduled map's ``MapExit``
-    in ``sdfg`` -- i.e. it is a kernel output.
-
-    This is the exact predicate ``PromoteGPUScalarsToArrays`` uses to *promote*
-    a scalar; the demotion pass uses it (negated) to leave genuine kernel
-    outputs alone.
-    """
-    for state in sdfg.states():
-        for node in state.nodes():
-            if not (isinstance(node, nodes.AccessNode) and node.data == name):
-                continue
-            for in_edge in state.in_edges(node):
-                src = in_edge.src
-                if not isinstance(src, nodes.ExitNode):
-                    continue
-                entry = state.entry_node(src)
-                if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
-                    return True
-    return False
-
-
 def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
     """The GPU-relevant schedule of ``node`` if it carries one, else ``None``.
 
-    Only maps and library nodes expose a schedule. Tasklets and nested SDFGs do **not** (in this
-    codebase a ``NestedSDFG`` is always a sequential device function -- neither the node nor its
-    inner SDFG has a ``schedule`` -- so accessing ``.schedule`` on one raises ``AttributeError``);
-    they yield ``None`` and are handled by the other predicates / not treated as sub-kernels.
+    Only maps and library nodes expose a schedule; tasklets and nested SDFGs yield ``None``
+    (accessing ``.schedule`` on a ``NestedSDFG`` raises ``AttributeError``).
     """
     if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
         return node.map.schedule
@@ -85,22 +42,19 @@ def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
 
 def _accessed_by_unscalarizable_node(sdfg: SDFG, name: str) -> bool:
     """``True`` iff an access node for ``name`` is adjacent to a node whose generated code we cannot
-    rewrite to scalar access -- demoting the length-1 buffer to a ``Scalar`` would then break codegen
-    (``float buf; ... buf[0] = ...``).
+    rewrite to scalar access -- demoting the length-1 buffer would break codegen (``float buf; buf[0]``).
 
     Blocking neighbours:
 
-    * a :class:`~dace.sdfg.nodes.LibraryNode` -- it emits its own indexing (e.g. an *unexpanded* cub
+    * a :class:`~dace.sdfg.nodes.LibraryNode` -- emits its own indexing (e.g. an unexpanded cub
       block ``Reduce``);
-    * a **non-Python** tasklet -- a C++ tasklet such as the *expanded* cub block reduce, whose body
-      is raw text (``buf[0] = cub::BlockReduce...``) the scalar-conversion never sees. Because
-      ``ExpandLibraryNodes`` runs before this pass, this is the predicate that actually fires for the
-      block-reduction case;
-    * a GPU-scheduled map / library node -- a thread-block collective / sub-kernel, i.e. a
-      multi-thread buffer rather than a single per-thread value.
+    * a non-Python tasklet -- e.g. the expanded cub block reduce whose C++ body is raw text
+      (``buf[0] = cub::BlockReduce...``) the scalar-conversion never sees; since ``ExpandLibraryNodes``
+      runs before this pass, this predicate is what actually fires for the block-reduction case;
+    * a GPU-scheduled map / library node -- a thread-block collective, i.e. a multi-thread buffer.
 
-    A Python tasklet (connector-based access) and a sequential nested SDFG (device function) are
-    safe: their boundary length-1 buffers are scalarized cleanly via memlet / connector rewrite.
+    Python tasklets and sequential nested SDFGs (device functions) are safe: their boundary length-1
+    buffers scalarize cleanly via memlet / connector rewrite.
     """
     for state in sdfg.states():
         for node in state.nodes():
@@ -123,8 +77,7 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
     """Scalarize kernel-internal length-1 ``Array``s (inverse of ``PromoteGPUScalarsToArrays``)."""
 
     def modifies(self) -> ppl.Modifies:
-        # Descriptors (Array -> Scalar), Memlets (subset collapse) and NestedSDFG
-        # node connectors (reset to re-infer) -- the last live under ``Nodes``.
+        # Array->Scalar (Descriptors), subset collapse (Memlets), NestedSDFG connector reset (Nodes).
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -146,10 +99,9 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
             }
             if not names:
                 continue
-            # Reuse the scalar conversion; ``filter`` scalarizes the named descriptors
-            # regardless of their ``transient`` flag (device-function connectors are
-            # non-transient). ``recursive=False`` -- we visit the hierarchy ourselves so
-            # each level's kernel-internal set is computed independently.
+            # ``filter`` scalarizes the named descriptors regardless of their ``transient``
+            # flag (device-function connectors are non-transient). ``recursive=False`` -- we
+            # visit the hierarchy ourselves so each level's set is computed independently.
             ConvertLengthOneArraysToScalars(recursive=False, filter=names).apply_pass(sub, {})
             self._reset_parent_connectors(sub, names)
             demoted += len(names)
@@ -172,14 +124,12 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
         # Kernel outputs must stay arrays -- they cross the GPU_Device boundary.
         if written_by_gpu_map_exit(sdfg, name):
             return False
-        # A buffer touched by a node whose code we cannot rewrite to scalar access -- a library
-        # node, a non-Python (C++) tasklet such as the expanded cub block ``Reduce``, or a
-        # GPU-scheduled sub-kernel -- must stay an array (else codegen emits ``float buf; buf[0]``).
+        # A buffer touched by a node whose code we cannot rewrite to scalar access
+        # (see ``_accessed_by_unscalarizable_node``) must stay an array.
         if _accessed_by_unscalarizable_node(sdfg, name):
             return False
         # A descriptor inside a device-function sub-SDFG is kernel-internal by
-        # construction. Otherwise (e.g. a transient declared in the kernel-owning
-        # SDFG) every access must sit within a GPU_Device map scope.
+        # construction; otherwise every access must sit within a GPU_Device map scope.
         if device_function:
             return True
         return self._all_accesses_within_gpu_device(sdfg, name)

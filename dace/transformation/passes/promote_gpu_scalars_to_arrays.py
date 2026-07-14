@@ -1,22 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``PromoteGPUScalarsToArrays`` -- replace GPU-incompatible ``Scalar``
-descriptors with length-1 ``Array`` descriptors (after storage/schedule
-inference; depends on ``InferDefaultSchedulesAndStorages``).
+descriptors with length-1 ``Array`` descriptors. Runs after storage/schedule
+inference (depends on ``InferDefaultSchedulesAndStorages``).
 
-Two rules: (1) a ``Scalar`` with ``GPU_Global``/``GPU_Shared`` storage keeps
-its storage and is widened to length-1; (2) a ``Scalar`` that is a
-**kernel output** -- written by a GPU map's ``MapExit`` -- is widened and
-forced to ``GPU_Global``. ``Register`` storage is exempt (thread-local
-stack), and the ``non_transient_only`` knob further restricts rule 2 to
-non-transient scalars (kernel-local transients then stay as registers).
-
-Bare-identifier references to a promoted name are subscripted ``name[0]``
-in interstate assignments, interstate conditions, ``LoopRegion``
-init/update/condition, ``ConditionalBlock`` branch conditions, and
-``NestedSDFG.symbol_mapping`` values. Memlets are left intact -- a
-``Scalar`` access already has subset ``[0]``, matching the length-1 array's
-subset. Nested SDFGs are recursed via the connector that carries the
-promoted descriptor (inner name may differ from outer).
+Two rules: (1) a ``Scalar`` with ``GPU_Global``/``GPU_Shared`` storage is
+widened to length-1 keeping its storage; (2) a ``Scalar`` written by a GPU
+map's ``MapExit`` (kernel output) is widened and forced to ``GPU_Global``.
+Bare-identifier references to a promoted name are subscripted ``name[0]`` in
+interstate/loop/branch code slots and ``symbol_mapping`` values; memlets are
+left intact since a ``Scalar`` access already carries subset ``[0]``.
 """
 import re
 from typing import Any, Dict, Optional, Callable
@@ -25,21 +17,20 @@ from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
 
 PatternApplier: type = Callable[[str], str]
 
 
 def invalidate_array_connectors(sdfg: SDFG):
-    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` so a follow-up
-    ``infer_connector_types`` re-derives them as pointer-typed.
+    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` to
+    ``typeclass(None)`` so a follow-up ``infer_connector_types`` re-derives
+    them as pointer-typed.
 
     A connector typed at construction time as a scalar dtype against an
     ``Array`` inner descriptor produces a wrapper signature ``T name`` that the
-    body indexes ``name[0]`` (compile error); resetting to ``typeclass(None)``
-    forces re-inference. Common cause: cuBLAS expansion's ``gpu_streams``
-    connector.
-
-    :param sdfg: SDFG whose nested-SDFG connectors are reset in place.
+    body indexes ``name[0]`` (compile error). Common cause: cuBLAS expansion's
+    ``gpu_streams`` connector.
     """
     uninferred = dtypes.typeclass(None)
     for nsdfg in sdfg.all_sdfgs_recursive():
@@ -61,17 +52,13 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
     """Pipeline-shaped wrapper around
     :func:`dace.sdfg.infer_types.set_default_schedule_and_storage_types`.
 
-    The function itself is the actual implementation -- this class exists
-    so the call can participate in a ``Pipeline`` with a real
-    ``depends_on`` edge from later passes. ``PromoteGPUScalarsToArrays``
-    in particular relies on every descriptor having a final, non-default
-    storage decision, which is exactly what this pass establishes.
+    Exists so the call can participate in a ``Pipeline`` with a real
+    ``depends_on`` edge: ``PromoteGPUScalarsToArrays`` relies on every
+    descriptor having a final, non-default storage decision.
     """
 
     def modifies(self) -> ppl.Modifies:
-        # Storage and schedule attributes live on descriptors and on
-        # ``Map`` instances respectively; both are reachable through
-        # ``Modifies.Descriptors | Modifies.Nodes``.
+        # Storage lives on descriptors, schedule on ``Map`` nodes.
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -112,14 +99,11 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Promote every GPU-incompatible scalar across the SDFG hierarchy.
 
-        :param sdfg: Root SDFG to promote scalars in (modified in place).
-        :param pipeline_results: Results of prior pipeline passes (unused).
         :returns: Number of scalars promoted, or ``None`` if nothing changed.
         """
         promoted = 0
-        # Top-down so a parent's promotion is visible when we visit the
-        # child's matching descriptor (children inherit the parent's choice
-        # -- see ``_promote_one`` for the recursion into nested SDFGs).
+        # Top-down so a parent's promotion is visible when we visit the child's
+        # matching descriptor (children inherit the parent's choice).
         for nsdfg in list(sdfg.all_sdfgs_recursive()):
             for name in list(nsdfg.arrays):
                 if not self._needs_promotion(nsdfg, name):
@@ -127,8 +111,6 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                 self._promote_one(nsdfg, name)
                 promoted += 1
 
-        # Reset NestedSDFG connectors whose inner descriptor became an Array
-        # so ``infer_connector_types`` re-derives them as pointer-typed.
         invalidate_array_connectors(sdfg)
 
         return promoted if promoted > 0 else None
@@ -142,34 +124,17 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
             return True
 
-        # Rule 2: scalar is a kernel output -- written by a GPU map's ``MapExit``.
-        # Transient kernel outputs are skipped under the default knob (the
-        # host can never observe the value, so it can live in registers).
+        # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
         if desc.storage in self._RULE2_EXEMPT_STORAGES:
             return False
         if self.non_transient_only and desc.transient:
             return False
-        for state in sdfg.states():
-            for node in state.nodes():
-                if not (isinstance(node, nodes.AccessNode) and node.data == name):
-                    continue
-                for in_edge in state.in_edges(node):
-                    src = in_edge.src
-                    if not isinstance(src, nodes.ExitNode):
-                        continue
-                    entry = state.entry_node(src)
-                    if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
-                        return True
-        return False
+        return written_by_gpu_map_exit(sdfg, name)
 
     def _promote_one(self, sdfg: SDFG, name: str):
-        """Replace a Scalar descriptor with a length-1 Array and propagate the change.
-
-        Rewrites memlets referencing it and recurses into nested SDFGs that
-        re-declare the same name as a Scalar.
-
-        :param sdfg: SDFG owning the descriptor (modified in place).
-        :param name: Name of the Scalar descriptor to promote.
+        """Replace a Scalar descriptor with a length-1 Array and propagate the
+        change, recursing into nested SDFGs that re-declare the same name as a
+        Scalar.
         """
         scalar_desc: data.Scalar = sdfg.arrays[name]
 
@@ -208,13 +173,10 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         return properties.CodeBlock(new_codeblock_str, codeblock.language)
 
     def _rewrite_state_machine(self, sdfg: SDFG, pattern: PatternApplier) -> None:
-        """Rewrite bare-identifier references on every state-machine code
-        slot: interstate edges (assignments + condition), ``LoopRegion`` and
+        """Rewrite bare-identifier references on every state-machine code slot:
+        interstate edges (assignments + condition), ``LoopRegion`` and
         ``ConditionalBlock`` CodeBlocks. ``InterstateEdge.assignments`` and
         ``.condition`` are class-level properties so they always exist.
-
-        :param sdfg: SDFG whose state-machine slots are rewritten.
-        :param pattern: The rewrite pattern.
         """
         for cfg in sdfg.all_control_flow_regions():
             for edge in cfg.edges():
@@ -229,18 +191,15 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                         ise.assignments[k] = new_v
                 ise.condition = self._rewrite_codeblock(pattern, ise.condition)
 
-        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock
-        # slots reached from a state-machine walk -- a ``ControlFlowBlock``
-        # doesn't otherwise embed user expressions. Both subclass
-        # ``ControlFlowBlock`` so they appear via ``all_control_flow_blocks``.
+        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock slots
+        # a state-machine walk reaches; other blocks embed no user expressions.
         for block in sdfg.all_control_flow_blocks(recursive=True):
             if isinstance(block, ConditionalBlock):
                 for i in range(len(block._branches)):
                     if block._branches[i][0] is not None:
                         block._branches[i][0] = self._rewrite_codeblock(pattern, block._branches[i][0])
             elif isinstance(block, LoopRegion):
-                # ``init_statement`` / ``update_statement`` are optional --
-                # a bare ``while`` LoopRegion has only the condition.
+                # init/update are optional -- a ``while`` LoopRegion has only the condition.
                 if block.update_statement is not None:
                     block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
                 if block.init_statement is not None:
@@ -249,12 +208,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                     block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
 
     def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier) -> None:
-        """Applies the promotion, `Scalar` to 'One-Element-Array', in all states.
-
-        :param sdfg: The SDFG on which we operate.
-        :param name: The name of the data that was promoted.
-        :param pattern: The rewrite pattern that we need to apply.
-        """
+        """Apply the promotion in all states."""
         for state in sdfg.states():
             self._rewrite_state(state=state, name=name, pattern=pattern)
 
@@ -267,10 +221,6 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         as a ``Scalar``, and (b) ``symbol_mapping`` values that bare-reference
         the promoted name (frontend symbol-promotion threads scalars into the
         nested scope this way).
-
-        :param state: The state in which to apply the promotion.
-        :param name: The name of the data that was promoted.
-        :param pattern: The pattern to apply.
         """
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):

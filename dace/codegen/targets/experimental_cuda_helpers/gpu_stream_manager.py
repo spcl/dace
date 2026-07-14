@@ -8,11 +8,9 @@ class GPUStreamManager:
     """
     Manage GPU backend streams (CUDA/HIP) for SDFG nodes.
 
-    Resolves a node's stream assignment by reading ``Node.gpu_stream_id``
-    (persisted by :class:`GPUStreamSchedulingStrategy`), and exposes the
-    stream count from the ``gpu_streams`` descriptor shape. GPU events are not
-    yet supported. "Stream" here means a backend GPU stream, not a DaCe data
-    stream.
+    Resolves assignments from ``Node.gpu_stream_id`` (persisted by
+    :class:`GPUStreamSchedulingStrategy`). "Stream" here means a backend GPU
+    stream, not a DaCe data stream.
     """
 
     def __init__(self, sdfg: SDFG):

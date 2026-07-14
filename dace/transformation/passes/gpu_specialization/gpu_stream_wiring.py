@@ -1,19 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU stream wiring pass.
+"""GPU stream wiring pass: follow-up to a :class:`GPUStreamSchedulingStrategy` that reads the
+``Node.gpu_stream_id`` set by the strategy, allocates the root-scope ``gpu_streams`` transient,
+wires each consumer's stream connector to ``gpu_streams[<i>]``, and delegates sync-tasklet insertion.
 
-Single-shot follow-up to a :class:`GPUStreamSchedulingStrategy`. Reads
-``Node.gpu_stream_id`` set by the strategy, allocates the ``gpu_streams``
-transient at the SDFG-root scope, wires each consumer's stream connector
-to a ``gpu_streams[<i>]`` source, and delegates strategy-specific sync
-tasklet insertion. Gated by :func:`is_stream_wiring_applied` so it is
-idempotent across pipeline re-application -- the *scheduling* pass stays
-idempotent via the per-node Property.
+Gated by :func:`is_stream_wiring_applied` for idempotency across pipeline re-application; the
+scheduling pass stays idempotent via the per-node Property.
 """
-import warnings
 from typing import Any, Dict, Optional, Set, Type, Union
 
 from dace import SDFG
-from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import GPUStreamSchedulingStrategy
@@ -26,8 +21,8 @@ from dace.transformation.passes.gpu_specialization.stream_lowering_helpers impor
 class GPUStreamWiring(ppl.Pass):
     """Allocate ``gpu_streams`` + wire connectors + insert sync tasklets.
 
-    The strategy reference is needed for :meth:`insert_sync_tasklets`
-    (strategy-specific). Allocation and connector wiring are strategy-agnostic.
+    Holds a strategy reference only for the strategy-specific :meth:`insert_sync_tasklets`;
+    allocation and connector wiring are strategy-agnostic.
     """
 
     def __init__(self, strategy: GPUStreamSchedulingStrategy):
@@ -53,13 +48,6 @@ class GPUStreamWiring(ppl.Pass):
         assignments = _collect_assignments(sdfg)
         num_streams = max(assignments.values(), default=-1) + 1
 
-        max_concurrent = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
-        warnings.warn(
-            f"GPUStreamWiring: allocating {num_streams} stream(s) "
-            f"(max_concurrent_streams={max_concurrent}).",
-            UserWarning,
-            stacklevel=2)
-
         allocate_stream_array(sdfg, num_streams)
         wire_stream_connectors(sdfg, assignments)
         self._strategy.insert_sync_tasklets(sdfg, assignments)
@@ -67,10 +55,9 @@ class GPUStreamWiring(ppl.Pass):
 
 
 def _collect_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
-    """Dict view of every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy.
+    """Transient dict view of every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy.
 
-    Used by the wiring helpers + the strategy's sync-tasklet inserter. The
-    per-node property is the durable source; this is a transient view.
+    The per-node property is the durable source of truth; this view is rebuilt on demand.
     """
     out: Dict[nodes.Node, int] = {}
     for sub_sdfg in sdfg.all_sdfgs_recursive():

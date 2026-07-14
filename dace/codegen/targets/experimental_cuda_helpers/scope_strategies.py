@@ -18,13 +18,12 @@ from dace.transformation.dataflow.add_threadblock_map import product
 
 def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
                                 state_id: int, anchor_node, dispatcher: TargetDispatcher):
-    """Emit ``{ctype} {var_name} = {expr};`` per map dim using the symbolic-coordinate substitution.
+    """Emit ``{ctype} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
 
     ``axis`` is ``'blockIdx'`` (kernel scope) or ``'threadIdx'`` (thread-block scope). The first
     three dims map directly to ``axis.{x|y|z}``; further dims delinearize off ``axis.z``.
 
-    :returns: ``(map_range, sym_indices, sym_coords)`` for callers that need the symbolic forms
-              downstream (e.g. for guard conditions).
+    :returns: ``(map_range, sym_indices, sym_coords)`` for callers building downstream guards.
     """
     map_range = subsets.Range(scope_map.range[::-1])  # reversed for memory coalescing
     dimensions = len(map_range)
@@ -52,10 +51,8 @@ def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_strea
 class ScopeGenerationStrategy(ABC):
     """Base strategy for generating GPU scope code.
 
-    Subclasses set ``SCHEDULE`` to the schedule type they handle and
-    ``SCOPE_COMMENT`` to the human-readable label used by ``ScopeManager``.
-    The base ``applicable()`` matches ``SCHEDULE`` against the source
-    MapEntry's schedule; subclasses implement ``generate()`` and reuse the
+    Subclasses set ``SCHEDULE`` (matched by ``applicable()`` against the source MapEntry's
+    schedule) and ``SCOPE_COMMENT``, implement ``generate()``, and reuse the
     ``_dispatch_and_deallocate`` tail.
     """
 
@@ -143,7 +140,6 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             else:
                 launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{min_warps_per_eu})'
 
-        # Emit kernel function signature
         callsite_stream.write(f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ', cfg,
                               state_id, node)
 
@@ -188,7 +184,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             # fold); the per-thread atomic is redirected into that partial while the covered
             # entry is registered; the block fold is drained AFTER the guard closes.
             reductions = []
-            if Config.get_bool('compiler', 'tree_reduction'):
+            if Config.get_bool('compiler', 'emit_tree_reductions'):
                 reductions = self.codegen.collect_gpu_block_reductions(sdfg, state, node, kernel_block_dims)
             covered = self.codegen._cpu_codegen._gpu_block_reduction_covered
             for red in reductions:
@@ -221,10 +217,9 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 maxels = map_range.max_element()
                 for dim, (var_name, start, end) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
 
-                    # Optimize conditions if they are always true
+                    # Emit only the bounds that are not provably always-true.
                     condition = ''
 
-                    # Block range start
                     if dim >= 3 or (symbolic_indices[dim] >= start) != True:
                         condition += f'{var_name} >= {sym2cpp(start)}'
 
@@ -234,13 +229,11 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                     else:
                         skipcond = symbolic_index_bounds[dim].subs({symbolic_indices[dim]: start}) == end
 
-                    # Block range end
                     if dim >= 3 or (not skipcond and (symbolic_index_bounds[dim] < end) != True):
                         if len(condition) > 0:
                             condition += ' && '
                         condition += f'{var_name} < {sym2cpp(end + 1)}'
 
-                    # Emit condition in code if any
                     if len(condition) > 0:
                         guard_manager.open(condition=condition)
 
@@ -286,7 +279,6 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             warp_dim_bounds = [max_elem + 1 for max_elem in map_range.max_element()]
             num_warps = product(warp_dim_bounds)
 
-            # The C type that defines the (flat) threadId and warpId variables
             ids_ctype = kernel_spec.gpu_index_ctype
 
             self._handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
@@ -433,9 +425,8 @@ class ScopeManager:
         """Initialize the scope manager.
 
         :param frame_codegen: frame codegen used for in-scope array (de)allocation.
-        :param comment: label describing the opened block, used by ``debug`` mode.
-        :param brackets_on_enter: open a bracket on ``__enter__``.
-        :param debug: annotate brackets with ``comment``.
+        :param comment: block label surfaced in ``debug`` mode.
+        :param brackets_on_enter: open a bracket on ``__enter__`` (default).
         """
         self.frame_codegen = frame_codegen
         self.sdfg = sdfg
@@ -467,10 +458,7 @@ class ScopeManager:
             self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
 
     def open(self, condition: str = None):
-        """Open a bracket, emitting ``if (condition) {`` when ``condition`` is given else ``{``.
-
-        :param condition: optional guard condition for the opening bracket.
-        """
+        """Open a bracket, emitting ``if (condition) {`` when ``condition`` is given else ``{``."""
         line = f"if ({condition}) {{" if condition else "{"
         if self.debug:
             line += f" // {self.comment} (open {self._opened + 1})"

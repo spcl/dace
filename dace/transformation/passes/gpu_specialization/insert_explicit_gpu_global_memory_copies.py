@@ -1,15 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift transient ``GPU_Global`` arrays out of kernel scopes (legacy
-back-compat for SDFGs allocating ``GPU_Global`` inside ``GPU_Device`` maps),
-then lift every implicit copy edge to an ``Auto``-impl ``CopyLibraryNode``.
+"""Hoist transient ``GPU_Global`` arrays out of kernel scopes, then lift every
+implicit copy edge to an ``Auto``-impl ``CopyLibraryNode``.
 
-Raises if any transient ``GPU_Global -> GPU_Global`` copy still survives
-inside a kernel after the hoist -- those need manual restructuring.
+Raises if any transient ``GPU_Global -> GPU_Global`` copy survives inside a
+kernel after the hoist -- those need manual restructuring.
 """
 import warnings
 from typing import Any, Dict, List
 
-from dace import SDFG, dtypes, properties, nodes, data
+from dace import SDFG, dtypes, properties, nodes, data, symbolic
 from dace.sdfg import is_devicelevel_gpu
 from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -26,17 +25,14 @@ def _is_register_demotable(desc, max_elements: int) -> bool:
     ``MoveArrayOutOfKernel`` instead of a per-thread slab).
     """
     total = 1
-    try:
-        for dim in desc.shape:
-            if isinstance(dim, int) and dim > 0:
-                total *= dim
-            elif hasattr(dim, 'is_Integer') and dim.is_Integer and int(dim) > 0:
-                total *= int(dim)
-            else:
-                return False
-        return total <= max_elements
-    except Exception:
-        return False
+    for dim in desc.shape:
+        if symbolic.issymbolic(dim):
+            return False
+        dim = int(dim)
+        if dim <= 0:
+            return False
+        total *= dim
+    return total <= max_elements
 
 
 def _has_wcr_incoming(sdfg, data_name: str) -> bool:
@@ -60,12 +56,8 @@ def _has_wcr_incoming(sdfg, data_name: str) -> bool:
 class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
     """Hoist transient ``GPU_Global`` arrays out of kernel scopes, then lift every implicit copy.
 
-    Implicit copy edges become ``Auto``-impl ``CopyLibraryNode``s. The
-    hoist runs ``MoveArrayOutOfKernel`` per transient ``GPU_Global``
-    array inside a ``GPU_Device`` map; afterwards the array is a
-    non-transient connector parameter on the kernel-owning SDFG. A
-    post-hoist guard raises with the offender list if any in-kernel
-    transient ``GPU_Global`` copy survives.
+    A post-hoist guard raises with the offender list if any in-kernel transient
+    ``GPU_Global`` copy survives.
     """
 
     register_demotion_max_elements = properties.Property(
@@ -97,11 +89,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         return {}
 
     def _hoist_transient_gpu_global_out_of_kernels(self, sdfg: SDFG):
-        """Run ``MoveArrayOutOfKernel`` for every transient ``GPU_Global``
-        array defined inside a ``GPU_Device`` map.
-
-        Mirrors the ``GPUTransformSDFG`` call site but runs inside the
-        gpu_specialization pipeline so the hoist always precedes copy
+        """Run ``MoveArrayOutOfKernel`` for every transient ``GPU_Global`` array
+        defined inside a ``GPU_Device`` map, so the hoist always precedes copy
         lifting regardless of how the SDFG was produced."""
         transients_in_kernels = set()
         transients_outside = set()
@@ -129,10 +118,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             else:
                 transients_outside.add((node.data, desc))
 
-        # Only hoist transients that are *only* defined inside the kernel --
-        # if the same (name, desc) pair appears outside, leave the inner
-        # one alone (``MoveArrayOutOfKernel`` handles naming for us when it
-        # runs).
+        # Only hoist transients defined *solely* inside the kernel -- if the same
+        # (name, desc) pair also appears outside, leave the inner one alone.
         to_hoist = set()
         for data_name, desc, kernel_entry in transients_in_kernels:
             if (data_name, desc) in transients_outside:
@@ -140,17 +127,9 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             to_hoist.add((data_name, desc, kernel_entry))
 
         for data_name, desc, kernel_entry in to_hoist:
-            # Demote to per-thread Register storage if the transient is
-            # safe to make thread-local:
-            #   * literal shape with ``prod(shape) <=
-            #     register_demotion_max_elements`` (a symbolic dim would
-            #     leak into host-side ``cudaMalloc`` size expressions on
-            #     the lift path, which is the failure mode this gate
-            #     avoids);
-            #   * no incoming WCR memlet (a cross-thread atomic
-            #     accumulator must stay shared -- per-thread registers
-            #     would silently drop the accumulation).
-            # Anything else falls through to ``MoveArrayOutOfKernel``.
+            # Demote small, WCR-free, literal-shape transients to per-thread
+            # Register storage (see the two helpers for why each condition is
+            # required); anything else falls through to ``MoveArrayOutOfKernel``.
             if (_is_register_demotable(desc, self.register_demotion_max_elements)
                     and not _has_wcr_incoming(sdfg, data_name)):
                 desc.storage = dtypes.StorageType.Register
@@ -161,10 +140,9 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, data_name)
 
     def _fail_on_in_kernel_global_global(self, sdfg: SDFG):
-        # A transient GPU_Global array inside a kernel scope cannot be
-        # allocated by the codegen (no host-side allocator on that path).
-        # Non-transient GPU_Global through-flows are fine -- they're
-        # connector-bound and the kernel just passes data through them.
+        # A transient GPU_Global array inside a kernel scope cannot be allocated
+        # by the codegen (no host-side allocator there). Non-transient
+        # through-flows are fine -- they're connector-bound pass-through.
         offenders: List[str] = []
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():

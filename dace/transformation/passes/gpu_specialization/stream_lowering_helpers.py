@@ -1,11 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared graph-mutation primitives for GPU stream-scheduling strategies.
 
-Strategies (:class:`GPUStreamSchedulingStrategy` subclasses) own the
-policy -- which stream, which sync points. The resulting mutations are
-identical across strategies and live here: :func:`allocate_stream_array`,
-:func:`wire_stream_connectors`, :func:`insert_state_end_syncs`,
-:func:`insert_per_node_syncs`. No policy lives here.
+Strategies (:class:`GPUStreamSchedulingStrategy` subclasses) own the policy
+(which stream, which sync points); the mutations they apply are identical
+across strategies and live here. No policy lives here.
 """
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -177,12 +175,11 @@ def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.Ma
     """Thread a stream handle from a source AccessNode through every map in
     ``scope_chain`` (outermost -> innermost) into ``target.target_conn``.
 
-    Each map gets ``IN_<STREAM_CONNECTOR>``/``OUT_<STREAM_CONNECTOR>``
-    pass-through connectors. ``IN_<STREAM_CONNECTOR>`` takes a single
-    incoming edge, so routing is idempotent (a sibling reuses the wire and
-    only the innermost segment is added). ``get_source_access`` and
-    ``memlet_factory`` are parameterised so both top-level wiring and
-    post-expansion reconnect share this logic.
+    Each map gets ``IN_``/``OUT_`` pass-through connectors. ``IN_`` takes a
+    single incoming edge, so routing is idempotent (a sibling reuses the wire;
+    only the innermost segment is added). ``get_source_access``/
+    ``memlet_factory`` are parameterised so top-level wiring and post-expansion
+    reconnect share this logic.
     """
     in_conn = f"IN_{STREAM_CONNECTOR}"
     out_conn = f"OUT_{STREAM_CONNECTOR}"
@@ -284,19 +281,16 @@ def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignme
 
 
 def _stream_connector_name(stream_id: int) -> str:
-    """Connector name on a sync tasklet for stream ``<stream_id>`` -- the
-    suffix is the offset into the ``gpu_streams`` array bound by the
-    matching memlet."""
+    """Connector name on a sync tasklet for stream ``<stream_id>``; the suffix
+    is the ``gpu_streams`` offset bound by the matching memlet."""
     return f"{STREAM_CONNECTOR}_{stream_id}"
 
 
 def _make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
-    """Build a side-effect-only fused-sync tasklet.
-
-    Carries one ``__stream_<id>`` in-connector per requested stream id
-    (typed ``gpuStream_t``). The body chains one ``cudaStreamSynchronize``
-    call per connector. Caller wires each connector to the matching
-    ``gpu_streams[<id>]`` AccessNode after construction.
+    """Build a side-effect-only fused-sync tasklet: one ``__stream_<id>``
+    in-connector (typed ``gpuStream_t``) per stream id, body chaining one
+    ``cudaStreamSynchronize`` per connector. Caller wires each connector to
+    the matching ``gpu_streams[<id>]`` AccessNode after construction.
     """
     backend: str = common.get_gpu_backend()
     sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({_stream_connector_name(sid)}));" for sid in stream_ids]

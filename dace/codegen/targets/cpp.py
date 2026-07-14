@@ -266,6 +266,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
+
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
         elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
@@ -881,9 +882,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # ``gpuStream_t``-typed in-connector. Bind the legacy
         # ``__dace_current_stream`` symbol to that connector value so any
         # Tasklet body that still names the symbol (e.g. an already-lowered
-        # ``cudaMemcpyAsync`` libnode expansion) keeps compiling without
-        # the ``_cuda_stream`` attribute / ``_annotate_legacy_cuda_stream``
-        # back-channel.
+        # ``cudaMemcpyAsync`` libnode expansion) keeps compiling without the
+        # legacy ``_cuda_stream`` back-channel.
         gpu_stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t),
                                None)
         body_str = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
@@ -917,9 +917,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             # is set, yet library code (e.g. the cuBLAS env's
             # ``cublasSetStream(_, __dace_current_stream)``) still references
             # the variable. Emit a nullptr fallback so that compiles.
-            # Experimental codegen never reaches this branch: it explicitly
-            # sets ``_cuda_stream`` on every tasklet that references
-            # ``__dace_current_stream`` via ``_annotate_legacy_cuda_stream``.
+            # Experimental codegen never reaches this branch: its tasklets carry
+            # a ``gpuStream_t`` connector and take the connector-rebind branch above.
             callsite_stream.write(
                 '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
                 cfg,

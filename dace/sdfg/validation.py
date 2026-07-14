@@ -342,9 +342,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
 
-        # Check for interstate edges that write to scalars or arrays
-        _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
-
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
@@ -356,17 +353,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         sdfg.save(fpath, exception=ex, compress=True)
         ex.path = fpath
         raise
-
-
-def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
-    from dace.sdfg import InterstateEdge
-    for edge, graph in sdfg.all_edges_recursive():
-        if edge.data is not None and isinstance(edge.data, InterstateEdge):
-            # sdfg.arrays return arrays and scalars, it is invalid to write to them
-            if any([key in graph.sdfg.arrays for key in edge.data.assignments]):
-                raise InvalidSDFGInterstateEdgeError(
-                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', graph.sdfg,
-                    graph.edge_id(edge))
 
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):

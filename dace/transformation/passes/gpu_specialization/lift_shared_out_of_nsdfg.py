@@ -2,11 +2,10 @@
 """Lift ``GPU_Shared`` transients out of nested SDFGs into the SDFG owning
 the enclosing ``GPU_Device`` map.
 
-``__shared__`` is only valid inside a CUDA kernel; a Shared transient buried
-in an inner NestedSDFG escapes the ``__global__`` function (the framecode
-allocation walker loses the kernel-home signal), leaving an undeclared
-identifier. This pass promotes the descriptor to the kernel-owning SDFG,
-wires it through the NestedSDFG via connectors, and adds kernel
+``__shared__`` is only valid inside a CUDA kernel, but a Shared transient
+buried in an inner NestedSDFG escapes the ``__global__`` function and emits
+an undeclared identifier. This pass promotes the descriptor to the
+kernel-owning SDFG, wires it through the NestedSDFG via connectors, and adds
 ``MapEntry``/``MapExit`` dependency edges to pin allocation to the kernel.
 """
 import copy
@@ -29,10 +28,9 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
     via connectors with kernel entry/exit dependency edges."""
 
     def depends_on(self):
-        # ``InsertExplicitGPUGlobalMemoryCopies`` must run first: it lifts
-        # AccessNode->AccessNode Shared edges into ``CopyLibraryNode``s;
-        # without it, Shared transients used only on a copy edge never
-        # surface as ``transient=True`` descriptors.
+        # Must run first: it lifts AccessNode->AccessNode Shared edges into
+        # ``CopyLibraryNode``s. Without it, Shared transients used only on a
+        # copy edge never surface as ``transient=True`` descriptors.
         return {InsertExplicitGPUGlobalMemoryCopies}
 
     def modifies(self) -> ppl.Modifies:
@@ -83,12 +81,12 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         SDFG."""
         is_read, is_written = _classify_inner_usage(inner_sdfg, name)
         if not is_read and not is_written:
-            return False  # unused: lifting without edges/connectors corrupts the SDFG
+            return False
 
         inner_desc = inner_sdfg.arrays[name]
 
-        # find_new_name=True returns the (possibly renamed) unique name, so the lift never
-        # overwrites an existing outer descriptor -- no hand-rolled name search needed.
+        # find_new_name=True returns a unique name, so the lift never overwrites
+        # an existing outer descriptor.
         outer_name = outer_sdfg.add_datadesc(name, inner_desc, find_new_name=True)
         inner_param_desc = copy.deepcopy(inner_desc)
         inner_param_desc.transient = False
@@ -117,8 +115,8 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         if is_written and not is_read:
             outer_state.add_edge(kernel_entry, None, an_write, None, dependency_edge())
 
-        # Topology changed: drop the scope cache so a sibling ``_lift_one``
-        # in the same state doesn't read it stale.
+        # Topology changed: drop the scope cache so a sibling ``_lift_one`` in
+        # the same state doesn't read it stale.
         outer_state._clear_scopedict_cache()
         return True
 

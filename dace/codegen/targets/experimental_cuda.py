@@ -100,12 +100,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG):
         """Prepare the SDFG for GPU code generation.
 
-        All SDFG-level transformation lives in
-        :class:`GPUCodegenPreprocessPipeline`. This method only does
-        framecode-target bookkeeping: the ``gpu_context`` statestruct
-        entry, kernel-dimension cache hand-off, frame symbol cache rebuild,
-        ``GPUStreamManager`` construction, pool-release computation, and
-        the per-kernel arglist build.
+        All SDFG-level transformation lives in :class:`GPUCodegenPreprocessPipeline`;
+        this method only does framecode-target bookkeeping (statestruct entry, cache
+        rebuild, stream manager, pool-release, per-kernel arglists).
         """
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
         self._dispatcher._used_targets.add(self)
@@ -113,9 +110,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         pipeline_results: Dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
 
-        # The ``AddThreadBlockMaps`` Pass returns the kernel-dimension
-        # map and the set of kernels it tiled; the codegen consults both
-        # when emitting kernel launches.
+        # AddThreadBlockMaps returns the kernel-dimension map and the set of kernels it
+        # tiled; both are consulted when emitting kernel launches.
         atb_results = pipeline_results.get('AddThreadBlockMaps', {}) or {}
         self._kernel_dimensions_map = atb_results.get('kernel_dimensions_map', {})
         self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', set())
@@ -179,11 +175,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
             # Kept as a lazy ``filter`` to mirror the legacy ``cuda`` target bug-for-bug:
-            # materializing it (``set(...)``) would actually populate ``pool_release``,
-            # but ``deallocate_array`` looks up that dict by ``ptr()``-resolved name while
-            # the keys here are raw names, so a Persistent/External pooled array would be
-            # freed both in ``generate_state`` and in ``deallocate_array``. The filter+key
-            # mismatch is a coupled pre-existing issue to fix in both targets together.
+            # materializing it would populate ``pool_release``, but ``deallocate_array`` keys
+            # that dict by ``ptr()``-resolved names while these are raw names, so a
+            # Persistent/External pooled array would be double-freed (generate_state +
+            # deallocate_array). A coupled pre-existing issue to fix in both targets together.
             pooled = filter(lambda aname: sdfg.arrays[aname].lifetime in _GLOBAL_LIFETIMES, pooled)
 
             if reachability is None:
@@ -630,21 +625,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         one ``cub::BlockReduce`` + one atomic per block -- the GPU mirror of an OpenMP
         ``reduction(op:var)`` clause.
 
-        Each thread accumulates its contribution into a private register partial and cub folds
-        the partials, so thread 0 commits a single atomic (versus one atomic per thread: correct
-        but heavily contended). The register accumulate replaces the per-thread atomic via
-        :attr:`CPUCodeGen._gpu_block_reduction_covered`, so it works whether a thread writes the
-        accumulator once (one element per thread) or many times (a sequential tile per thread).
+        Each thread accumulates into a private register partial and cub folds the partials, so
+        thread 0 commits a single atomic (versus one contended atomic per thread). The register
+        accumulate replaces the per-thread atomic via
+        :attr:`CPUCodeGen._gpu_block_reduction_covered`, working whether a thread writes the
+        accumulator once or many times (a sequential tile).
 
         The guard is deliberately narrow: a single-element, loop-invariant accumulator (a
         param-dependent subset is a scatter, not a reduction), a built-in op with a known
         identity element, and a compile-time-constant thread count (cub templates on it).
         Anything not matching keeps the per-thread atomic fallback.
 
-        :param sdfg: the SDFG being generated.
-        :param state: the state holding ``scope_entry``.
-        :param scope_entry: the thread-block map entry whose exit carries the reduction WCR.
-        :param block_dims: kernel block dimensions; the thread count is their product.
         :return: one field dict per qualifying accumulator, consumed by
                  :meth:`emit_gpu_block_reduction` and registered in the covered map.
         """
@@ -679,8 +670,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 m = int(end - base) + 1
             except (TypeError, ValueError):
                 continue  # symbolic length: cannot size the register partial / drain loop
-            # Loop-invariant target (not indexed by this map's iteration variables); a
-            # param-dependent range is a scatter, not a reduction.
+            # Loop-invariant target: not indexed by this map's iteration variables.
             if any(str(s) in map_params for s in subset.free_symbols):
                 continue
             redtype = operations.detect_reduction_type(iedge.data.wcr)
@@ -724,7 +714,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         :param red: a field dict produced by :meth:`collect_gpu_block_reductions`.
         :param idstr: a per-reduction unique suffix for the emitted cub type/storage names.
-        :param stream: the code stream to append the fold to.
         """
         functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
         base_cpp = sym2cpp(red['base'])
@@ -1102,7 +1091,6 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
             hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += " -G -g"
             flags += ' ' + ' '.join(
                 '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
                 for arch in hip_arch)

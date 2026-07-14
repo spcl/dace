@@ -26,7 +26,6 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         """
         Determine the 3D grid and block sizes for all ``GPU_Device`` map entries.
 
-        :param sdfg: the SDFG whose ``GPU_Device`` maps are configured.
         :param kernels_with_added_tb_maps: kernel map entries whose thread-block map was inserted
                                            by ``AddThreadBlockMap`` (their block size is read from
                                            ``gpu_block_size`` rather than inferred).
@@ -35,7 +34,6 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         :raises ValueError: if a kernel has neither a set ``gpu_block_size`` nor a nested
                             ``GPU_ThreadBlock`` map, or if explicit and inferred block sizes conflict.
         """
-        # Collect all GPU_Device map entries across the SDFG
         kernel_maps: Set[Tuple[
             nodes.MapEntry,
             SDFGState,
@@ -46,11 +44,9 @@ class InferGPUGridAndBlockSize(ppl.Pass):
 
         kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = dict()
         for map_entry, state in kernel_maps:
-            # Compute grid size
             raw_grid = map_entry.map.range.size(True)[::-1]
             grid_size = to_3d_dims(raw_grid)
 
-            # Compute Block size
             if map_entry in kernels_with_added_tb_maps:
                 block_size = self._get_inserted_gpu_block_size(map_entry)
             else:
@@ -81,7 +77,6 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         within it; otherwise the block size over-approximates the range sizes of all inner
         ``GPU_ThreadBlock`` maps.
         """
-        # Identify nested threadblock maps
         threadblock_maps = self._get_internal_threadblock_maps(state, kernel_map_entry)
 
         if not threadblock_maps:
@@ -100,7 +95,6 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         for tb_map in threadblock_maps:
 
             # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-            # and collapse to GPU-compatible 3D dimensions
             tb_size = [symbolic.overapproximate(s) for s in tb_map.range.size()[::-1]]
             tb_size = to_3d_dims(tb_size)
 
@@ -116,9 +110,8 @@ class InferGPUGridAndBlockSize(ppl.Pass):
             if tb_size not in detected_block_sizes:
                 detected_block_sizes.append(tb_size)
 
-        # Check for conflicting or multiple thread-block sizes
-        # - If gpu_block_size is explicitly defined (by the user) and conflicts with detected map sizes, raise an error
-        # - Otherwise, emit a warning when multiple differing sizes are detected, and over-approximate
+        # A user-set ``gpu_block_size`` conflicting with detected map sizes is an error; multiple
+        # differing map sizes without one only warn (and over-approximate).
         if len(detected_block_sizes) > 1:
             kernel_map_label = kernel_map_entry.map.label
 

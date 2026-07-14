@@ -81,10 +81,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
-                # ``PromoteGPUScalarsToArrays`` runs before codegen and
-                # rewrites every GPU-storage Scalar into a length-1 Array,
-                # so by the time we get here a Scalar is necessarily a
-                # value-typed CPU-side scalar -- register it as such.
+                # GPU global memory is only accessed via pointers
+                # TODO(later): Fix workaround somehow
+                if arg_type.storage is dtypes.StorageType.GPU_Global:
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
+                    continue
+
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
@@ -1130,7 +1132,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
-                    return
+                    continue
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)

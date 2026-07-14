@@ -115,17 +115,15 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
-            tree_reduction:
+            emit_tree_reductions:
                 type: bool
                 default: true
                 title: Emit tree reductions for parallel WCR
                 description: >
-                    If enabled, a conflict-free (WCR) reduction accumulator written from a
-                    parallel map is lowered to a privatize-and-tree-reduce form: on CPU an
-                    OpenMP ``reduction(op:var)`` clause on the ``parallel for``, and on GPU a
-                    per-thread-block ``cub::BlockReduce`` (one atomic per block). If disabled,
-                    the same reduction instead lowers to a plain atomic WCR (one atomic per
-                    iteration on CPU / ``atomicAdd`` per thread on GPU) -- correct but
+                    Experimental automated tree-reduction emission for certain WCR patterns.
+                    If enabled, a conflict-free (WCR) reduction accumulator written from a GPU
+                    thread-block map is lowered to a per-thread-block ``cub::BlockReduce`` (one
+                    atomic per block) instead of a plain ``atomicAdd`` per thread -- correct but
                     contended. Only affects codegen; the SDFG is unchanged either way.
 
             build_folder_mode:
@@ -361,7 +359,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '80'
+                        default: '60'
 
                     hip_arch:
                         type: str
@@ -438,9 +436,9 @@ required:
                         type: bool
                         title: Synchronous Debugging
                         description: >
-                            Enables debugging mode where each asynchronous GPU call is followed by
-                            device-wide synchronization and error checking.
-                        default: False
+                            Enables Synchronous Debugging mode, where each library call
+                            is followed by full-device synchronization and error checking.
+                        default: false
 
                     libs:
                         type: str
@@ -495,8 +493,8 @@ required:
                         title: CUDA codegen implementation
                         description: >
                             Choose between available CUDA code generation implementations.
-                            "legacy" is stable, "experimental" is used by Berkay Aydogdu and
-                            Yakup Koray Budanaz for Berkays master-thesis.
+                            "legacy" is the stable implementation; "experimental" is a
+                            work-in-progress rewrite (ExperimentalCUDACodeGen).
                         enum: [legacy, experimental]
                         default: legacy
 
@@ -504,6 +502,12 @@ required:
                         type: bool
                         title: Allow the implicit conversion of Memlets to Maps during code generation.
                         default: true
+                        description: >
+                            If ``true`` the code generator will implicitly convert Memlets that cannot be
+                            represented by a native library call, such as ``cudaMemcpy()`` into Maps that
+                            explicitly copy the data around. If this value is ``false`` the code generator
+                            will raise an exception if such a Memlet is encountered. This allows the user
+                            to have full control over all Maps in the SDFG.
 
                     gpu_index_type:
                         type: str
@@ -546,7 +550,7 @@ required:
                             This is a simple safeguard for correctness - it may not be complete, but it
                             does the job for basic SDFGs. Disable if you handle synchronization manually
                             or use other mechanisms like async copies or pipelines.
-                        default: True
+                        default: true
 
                     synchronize_on_exit:
                         type: bool
@@ -561,25 +565,14 @@ required:
                             the dominant cost on launch-bound stencils. Sink states that write
                             host-visible (CPU) outputs are ALWAYS synchronized regardless of this
                             setting, so numpy / copy-out SDFGs stay correct.
-                        default: True
-
-                    current_thread_block_name:
-                        type: str
-                        title: Variable name for the current thread block
-                        description: >
-                            Specifies the name of the variable that holds the current thread block group,
-                            initialized using `cooperative_groups::this_thread_block()`. This is useful in
-                            contexts like custom tasklets, where the variable is explicitly referenced
-                            (e.g., `cooperative_groups::wait(block)`). Setting this allows users to customize the
-                            variable name without modifying the source code or relying on a fixed name.
-                        default: block
+                        default: true
 
                     gpu_stream_name:
                         type: str
                         title: Name for the GPU stream object
                         description: >
                             GPU streams allow GPU operations, such as kernel execution or memory transfers, to run asynchronously
-                            and in parallel. This field specifies the naming convention for the hpu stream array and its connectors
+                            and in parallel. This field specifies the naming convention for the GPU stream array and its connectors
                             in the SDFG. For example: 'gpu_streams,gpu_stream' means 'gpu_streams' is the array containing the
                             stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a
                             connector for gpu_streams[0].

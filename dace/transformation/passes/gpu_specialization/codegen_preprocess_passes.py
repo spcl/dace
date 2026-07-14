@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Wrapper :class:`Pass` classes exposing the ``experimental_cuda.preprocess`` steps as composable
-Pipeline members, so codegen-preprocess ordering is declarative and testable.
-"""
+"""Wrapper :class:`Pass` classes exposing ``experimental_cuda.preprocess`` steps as composable Pipeline
+members so codegen-preprocess ordering is declarative and testable."""
 from typing import Any, Dict, Optional
 
 from dace import SDFG, dtypes, nodes, properties
@@ -23,8 +22,7 @@ class ExpandLibraryNodes(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[bool]:
         from dace.sdfg import infer_types
         sdfg.expand_library_nodes(recursive=True)
-        # Expansion can spawn fresh NSDFGs whose inner Maps still carry
-        # ``ScheduleType.Default``; the codegen dispatcher rejects those.
+        # Expansion can spawn NSDFGs whose inner Maps carry ``ScheduleType.Default``; codegen rejects those.
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         return True
 
