@@ -629,7 +629,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if not Config.get('compiler', 'cuda', 'implementation') == 'experimental':
             return
 
-        from dace.transformation import helpers
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         import warnings
 
@@ -652,13 +651,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
             # Check whether the transient/access node occurs within a kernel.
             in_kernel = False
-            parent_map_info = helpers.get_parent_map(state=parent, node=node)
+            parent_map_info = xfh.get_parent_map(state=parent, node=node)
             while parent_map_info is not None:
                 map_entry, map_state = parent_map_info
                 if (isinstance(map_entry, nodes.MapEntry) and map_entry.map.schedule == dtypes.ScheduleType.GPU_Device):
                     in_kernel = True
                     break
-                parent_map_info = helpers.get_parent_map(map_state, map_entry)
+                parent_map_info = xfh.get_parent_map(map_state, map_entry)
 
             if in_kernel:
                 transients_in_kernels.add((node.data, desc, map_entry))

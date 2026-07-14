@@ -20,7 +20,8 @@ from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (_classify_node, _fold_kinds, _Kind)
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import weakly_connected_node_sets
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
+                                                                               weakly_connected_node_sets)
 
 
 def _wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> _Kind:
@@ -99,7 +100,6 @@ class SplitStateByGPUClass(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: Dict) -> Optional[Dict[str, int]]:
         # Skip when the stream pipeline has already run: the SDFG carries ``gpu_streams`` (and
         # consumers carry ``gpu_stream_id``), so a second split would corrupt the wired structure.
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_stream_wiring_applied
         if is_stream_wiring_applied(sdfg):
             return None
         # Only split root-level ``SDFGState`` blocks. Other top-level kinds (``LoopRegion``,

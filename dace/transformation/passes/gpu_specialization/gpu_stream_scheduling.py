@@ -15,6 +15,8 @@ import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.config import Config
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import NodeT
@@ -290,9 +292,6 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
     @staticmethod
     def _not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
         """One-line reason ``node`` violates the all-on-GPU contract, or ``None`` if acceptable."""
-        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-        from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-
         if isinstance(node, nodes.Tasklet):
             if is_devicelevel_gpu(nsdfg, state, node) or is_already_lowered_gpu_runtime_call(node):
                 return None
@@ -336,7 +335,6 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         (pre-expansion) and an already-lowered memcpy Tasklet naming a host<->device
         direction (post-expansion).
         """
-        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
         cpu_storages = CPU_RESIDENT_STORAGES
         gpu_storages = GPU_RESIDENT_STORAGES
         for node in state.nodes():
