@@ -58,8 +58,9 @@ def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
                 memlet = edge.data
                 if memlet.is_empty():
                     continue
-                if any(isinstance(an, nodes.AccessNode) and isinstance(nsdfg.arrays[an.data], dace.data.View)
-                       and sdutils.get_view_edge(state, an) is edge for an in (edge.src, edge.dst)):
+                if any(
+                        isinstance(an, nodes.AccessNode) and isinstance(nsdfg.arrays[an.data], dace.data.View)
+                        and sdutils.get_view_edge(state, an) is edge for an in (edge.src, edge.dst)):
                     continue
                 assert memlet.other_subset is None, (
                     f"Memlet on edge {edge.src}->{edge.dst} in SDFG '{nsdfg.name}' still "
