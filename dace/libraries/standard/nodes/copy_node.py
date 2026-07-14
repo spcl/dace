@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ ``CopyLibraryNode`` representing copies explicitly. """
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import dace
 from dace import data, library, nodes, dtypes, symbolic
@@ -139,6 +139,39 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     return impl or 'MappedTasklet'
 
 
+def cuda2d_pitch_params(
+    copy_shape: List[symbolic.SymExpr], src_strides: List[symbolic.SymExpr], dst_strides: List[symbolic.SymExpr]
+) -> Optional[Tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr]]:
+    """Element-count ``cudaMemcpy2DAsync`` pitch parameters for a 2D (or ``(N, 1)``-promoted) copy.
+
+    Single source of truth for both the ``MemcpyCUDA2D`` selector gate and the expander so the two
+    cannot drift: the selector treats a non-``None`` result as "``MemcpyCUDA2D`` applies", and the
+    expander formats the same components into the emitted call.
+
+    :param copy_shape: Two-element collapsed copy shape ``(rows, columns)``.
+    :param src_strides: Two-element source strides aligned with ``copy_shape``.
+    :param dst_strides: Two-element destination strides aligned with ``copy_shape``.
+    :returns: ``(dpitch, spitch, width, height)`` in elements -- the caller multiplies the pitch
+        and width by ``sizeof(dtype)`` -- or ``None`` if the pattern is not a single
+        ``cudaMemcpy2DAsync`` (contiguous rows, contiguous columns, or an outer/inner stride ratio
+        equal to the inner width).
+    """
+    if src_strides[1] == 1 and dst_strides[1] == 1:
+        return dst_strides[0], src_strides[0], copy_shape[1], copy_shape[0]
+    if src_strides[0] == 1 and dst_strides[0] == 1:
+        return dst_strides[1], src_strides[1], copy_shape[0], copy_shape[1]
+    try:
+        # ``inequal_symbols`` normalizes same-named symbols across both sides (e.g. ``N`` declared
+        # once with ``positive=True`` and once without), so the ratio check is not defeated by
+        # sympy-assumption identity drift.
+        if (not symbolic.inequal_symbols(src_strides[0] / src_strides[1], copy_shape[1])
+                and not symbolic.inequal_symbols(dst_strides[0] / dst_strides[1], copy_shape[1])):
+            return dst_strides[1], src_strides[1], 1, copy_shape[0] * copy_shape[1]
+    except (TypeError, ZeroDivisionError):
+        return None
+    return None
+
+
 def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> Optional[str]:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
@@ -167,23 +200,9 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
 
     src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
     if src_rank == 2 and dst_rank == 2:
-        # It is a 2D copy if the stride 1 dimensions are compatible, i.e. are at the same place
-        # or the outer/inner stride ratio equals the inner width.
-        cuda2d_2d = False
-        s0, s1 = in_strides_collapsed
-        d0, d1 = out_strides_collapsed
-        w = in_shape_collapsed[1]
-        if (s0 == 1 and d0 == 1) or (s1 == 1 and d1 == 1):
-            cuda2d_2d = True
-        else:
-            try:
-                # ``inequal_symbols`` normalizes same-named symbols across both sides
-                # (e.g. ``N`` declared once with ``positive=True`` and once without),
-                # so the ratio check isn't defeated by sympy-assumption identity drift.
-                cuda2d_2d = (not symbolic.inequal_symbols(s0 / s1, w) and not symbolic.inequal_symbols(d0 / d1, w))
-            except (TypeError, ZeroDivisionError):
-                pass
-        if cuda2d_2d:
+        # A single cudaMemcpy2DAsync applies iff the expander can compute pitch params for it;
+        # ask that one function so selector and expander cannot disagree.
+        if cuda2d_pitch_params(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed) is not None:
             return 'MemcpyCUDA2D'
 
     elif src_rank == 1 and dst_rank == 1:
@@ -557,25 +576,15 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
         ctype = inp.dtype.ctype
         backend = get_gpu_backend()
 
-        if src_strides[1] == 1 and dst_strides[1] == 1:
-            dpitch = f"{sym2cpp(dst_strides[0])} * sizeof({ctype})"
-            spitch = f"{sym2cpp(src_strides[0])} * sizeof({ctype})"
-            width = f"{sym2cpp(copy_shape[1])} * sizeof({ctype})"
-            height = sym2cpp(copy_shape[0])
-        elif src_strides[0] == 1 and dst_strides[0] == 1:
-            dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
-            spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
-            width = f"{sym2cpp(copy_shape[0])} * sizeof({ctype})"
-            height = sym2cpp(copy_shape[1])
-        elif (not symbolic.inequal_symbols(src_strides[0] / src_strides[1], copy_shape[1])
-              and not symbolic.inequal_symbols(dst_strides[0] / dst_strides[1], copy_shape[1])):
-            dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
-            spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
-            width = f"sizeof({ctype})"
-            height = sym2cpp(copy_shape[0] * copy_shape[1])
-        else:
+        pitch = cuda2d_pitch_params(copy_shape, src_strides, dst_strides)
+        if pitch is None:
             raise NotImplementedError(f"Unsupported 2D memory copy: shape={copy_shape}, "
                                       f"src_strides={src_strides}, dst_strides={dst_strides}.")
+        dpitch_elems, spitch_elems, width_elems, height_elems = pitch
+        dpitch = f"{sym2cpp(dpitch_elems)} * sizeof({ctype})"
+        spitch = f"{sym2cpp(spitch_elems)} * sizeof({ctype})"
+        width = f"{sym2cpp(width_elems)} * sizeof({ctype})"
+        height = sym2cpp(height_elems)
 
         code = (
             f"{backend}Memcpy2DAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {dpitch}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, {spitch}, "

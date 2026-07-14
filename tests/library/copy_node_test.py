@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import dace
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, select_copy_implementation
+from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, cuda2d_pitch_params, select_copy_implementation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_memset_libnode
 
 import pytest
@@ -1950,6 +1950,20 @@ def test_register_location_detection():
         if isinstance(n, dace.nodes.Tasklet) and 'cudaMemcpy' in n.code.as_string
     ]
     assert assignments, "Expected at least one ``cudaMemcpy`` Tasklet from the expansion."
+
+
+def test_cuda2d_pitch_params_branches():
+    """``cuda2d_pitch_params`` returns element-count ``(dpitch, spitch, width, height)`` for each
+    supported 2D stride pattern and ``None`` otherwise. It is the single source of truth shared by
+    the ``MemcpyCUDA2D`` selector gate and the expander, so selector and expander cannot drift."""
+    # Contiguous rows (inner stride 1): pitch = outer stride, width = columns, height = rows.
+    assert cuda2d_pitch_params([4, 3], [3, 1], [10, 1]) == (10, 3, 3, 4)
+    # Contiguous columns (outer stride 1): the roles of the two axes swap.
+    assert cuda2d_pitch_params([4, 3], [1, 4], [1, 8]) == (8, 4, 4, 3)
+    # Neither axis unit-strided, but outer/inner ratio equals the inner width -> one strided run.
+    assert cuda2d_pitch_params([4, 2], [4, 2], [6, 3]) == (3, 2, 1, 8)
+    # No single cudaMemcpy2DAsync expresses this pattern.
+    assert cuda2d_pitch_params([4, 3], [5, 2], [5, 2]) is None
 
 
 if __name__ == "__main__":
