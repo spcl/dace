@@ -114,7 +114,14 @@ def _ndarray_conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 
 @oprepo.replaces('abs')
 def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
-    return simple_call(pv, sdfg, state, input, 'abs')
+    # ``abs`` of a complex value is real-valued (the magnitude). Without an explicit result type,
+    # simple_call defaults it to the input dtype, leaving the output typed complex -- then a comparison
+    # like ``abs(z) < 1.0`` fails to compile (no ``operator<`` on ``std::complex``). Reduce to the scalar
+    # type for complex inputs, mirroring the np.abs ufunc path.
+    restype = None
+    if isinstance(input, str) and input in sdfg.arrays:
+        restype = complex_to_scalar(sdfg.arrays[input].dtype)
+    return simple_call(pv, sdfg, state, input, 'abs', restype)
 
 
 @oprepo.replaces('round')
