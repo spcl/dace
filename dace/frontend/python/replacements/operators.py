@@ -274,7 +274,11 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
             if dtype1 != restype:
                 left_cast = cast_str(restype)
-            if dtype2 != restype:
+            # For ``**`` keep an integer exponent integral: ``base ** int`` is an exact integer power in
+            # both numpy and C++ (each special-cases it), whereas casting the exponent up to a float/complex
+            # base forces the exp/log power path and loses bit-exactness (e.g. ``Z ** 2`` on complex ``Z``
+            # became ``Z ** complex128(2)``).
+            if dtype2 != restype and not (operator == 'Pow' and coarse_types[1] < 2):
                 right_cast = cast_str(restype)
 
         elif _is_op_bitwise(operator):
