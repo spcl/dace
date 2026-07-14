@@ -25,6 +25,7 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+import re
 import shutil
 
 import numpy as np
@@ -127,7 +128,10 @@ def test_emits_block_reduce_and_single_atomic(kind):
     from thread 0 with the op's reduction functor; the per-thread atomic is suppressed."""
     cu = _device_code(_vectorized(_PROGRAMS[kind][0]))
     suffix = _PROGRAMS[kind][1]
-    assert "cub::BlockReduce<dace::float16, 32>" in cu, "block reduce not typed to the 32-thread block"
+    # The block-reduce is typed to the reduction map's block thread count -- a compile-time
+    # constant chosen by gpu_block_size_selection (not a fixed magic number).
+    assert re.search(r"cub::BlockReduce<dace::float16,\s*\d+>", cu), \
+        "block reduce not emitted / not typed to a constant-thread block"
     assert ".Reduce(" in cu, "cub block Reduce call missing"
     assert f"dace::ReductionType::{suffix}" in cu, f"block reduce not using the {suffix} functor"
     assert "reduce_atomic" in cu, "thread-0 atomic to the global accumulator missing"
@@ -156,16 +160,21 @@ def _run_inputs(kind, nval):
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
 def test_runs_exact_multiblock(kind):
+    import cupy
     sdfg = _vectorized(_PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_run_{kind}"
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     csdfg = sdfg.compile()
-    for nval in (64, 257, 1000, 4000):  # up to ~63 blocks (int_ceil(N, 64))
+    # Even extents only: width-2 half2 tiling under assume_even requires N % 2 == 0 (an odd N
+    # trips the even-extent guard). Sizes span several thread-blocks / a non-block-aligned tail.
+    for nval in (64, 258, 1024, 4000):
         a, ref = _run_inputs(kind, nval)
-        out = np.zeros(1, dtype=np.float16)
-        csdfg(A=a.copy(), out=out, N=nval)
+        dA = cupy.asarray(a)  # GPU_Global inputs need device arrays
+        dout = cupy.zeros(1, dtype=cupy.float16)
+        csdfg(A=dA, out=dout, N=nval)
         exp = np.float16(ref(a))
-        assert out[0] == exp, f"{kind} N={nval}: {float(out[0])} != {float(exp)}"
+        got = dout.get()[0]
+        assert got == exp, f"{kind} N={nval}: {float(got)} != {float(exp)}"
 
 
 if __name__ == "__main__":

@@ -69,10 +69,16 @@ class ExpandTileMMAPure(ExpandTransformation):
                                             if e.src_conn == "_c").data.data].dtype.ctype
         alpha = node.alpha
         beta = node.beta
+        # ``M`` / ``N`` / ``K_inner`` are compile-time-constant tile widths, so every loop
+        # (including the ``k`` dot-product accumulation) carries ``DACE_UNROLL`` -- the
+        # accumulator stays in a register and the compiler can re-vectorise the fold.
         lines = [
+            "DACE_UNROLL",
             f"for (std::size_t i = 0; i < {M}; ++i) {{",
+            "    DACE_UNROLL",
             f"    for (std::size_t j = 0; j < {N}; ++j) {{",
             f"        {out_dtype} acc = {out_dtype}(0);",
+            "        DACE_UNROLL",
             f"        for (std::size_t k = 0; k < {K_inner}; ++k) {{",
             f"            acc += _a[i * {K_inner} + k] * _b[k * {N} + j];",
             "        }",

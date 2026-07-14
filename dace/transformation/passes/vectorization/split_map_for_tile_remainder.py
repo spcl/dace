@@ -171,6 +171,33 @@ class SplitMapForTileRemainder(ppl.Pass):
         except Exception:  # noqa: BLE001 - non-decidable symbolic trip -> split
             return False
 
+    def _trip_class(self, lb, ub, W: int) -> str:
+        """Classify a tiled dim's extent against width ``W`` for the ``assume_even`` path.
+
+        ``'divisible'``   -- provably a whole number of tiles (constant OR symbolic like ``4*M``).
+        ``'below'``       -- provably ``< W``: too small to tile, keep the map scalar.
+        ``'nondivisible'``-- provably not a whole multiple of ``W`` (a constant ``>= W``, or a
+                             symbolic extent whose remainder reduces to a nonzero constant, e.g.
+                             ``4*M + 1``): a provable ``assume_even`` violation (rerun with
+                             ``assume_even=False``).
+        ``'symbolic'``    -- non-decidable extent: guard the assumption at runtime.
+        """
+        if self._provably_divisible(lb, ub, W):  # constant or symbolic (``4*M % 4 == 0``)
+            return 'divisible'
+        trip = symbolic.simplify(ub - lb + 1)
+        try:
+            t = int(trip)
+        except (TypeError, ValueError):
+            # Symbolic, not provably divisible: a remainder that reduces to a nonzero CONSTANT is a
+            # provable violation; an undecidable remainder falls through to a runtime guard.
+            try:
+                if int((trip % W).simplify()) != 0:
+                    return 'nondivisible'
+            except (TypeError, ValueError):
+                pass
+            return 'symbolic'
+        return 'below' if t < W else 'nondivisible'
+
     def _split(self, state: dace.SDFGState, map_entry: MapEntry, K: int) -> bool:
         """Peel ``map_entry``'s K innermost dims into interior + K slabs.
 
@@ -192,15 +219,27 @@ class SplitMapForTileRemainder(ppl.Pass):
         # ``assume_even``: caller guarantees every tiled extent is a multiple of W,
         # so no boundary -> skip peel, mark whole map ``__tile_main`` (mask-free).
         if self.assume_even:
-            if self.range_check:
-                # Guard the even-extent assumption: record every tiled dim whose extent is not
-                # PROVABLY a multiple of W, so a host-side runtime check can trap a violation
-                # instead of letting the strided ``0:N:W`` map read/write out of bounds
-                # (see _emit_range_checks). A provably-divisible extent needs no check.
-                for d, W in zip(tiled_dims, self.widths):
-                    lb, ub, _ = map_entry.map.range[d]
-                    if not self._provably_divisible(lb, ub, W):
-                        self._range_checks.append((state.sdfg, symbolic.simplify(ub - lb + 1), int(W)))
+            classes = []
+            for d, W in zip(tiled_dims, self.widths):
+                lb, ub, _ = map_entry.map.range[d]
+                classes.append((self._trip_class(lb, ub, W), d, W, lb, ub))
+            # A provably-too-small dim (extent < W) cannot be tiled -> keep the WHOLE map scalar.
+            # MarkTileDims refuses the same dim, so the two passes agree (no strided-map/scalar-body
+            # desync). Takes precedence over a nondivisible sibling dim: an untiled map is never wrong.
+            if any(c == 'below' for c, *_ in classes):
+                return False
+            for c, d, W, lb, ub in classes:
+                if c == 'nondivisible':
+                    # Provable violation of the caller's even-extent guarantee: fail loudly at
+                    # transform time (a runtime guard would only abort once the kernel launches).
+                    raise ValueError(f"SplitMapForTileRemainder: map {map_entry.map.label!r} dim {d} has extent "
+                                     f"{symbolic.simplify(ub - lb + 1)}, which is provably not a multiple of tile "
+                                     f"width {W} that assume_even requires. Rerun with assume_even=False to peel a "
+                                     f"masked remainder.")
+                # Non-decidable extent: record a host-side runtime guard (extent % W == 0 and
+                # extent >= W). A provably-divisible extent needs no check.
+                if c == 'symbolic' and self.range_check:
+                    self._range_checks.append((state.sdfg, symbolic.simplify(ub - lb + 1), int(W)))
             if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
             return True
@@ -268,10 +307,13 @@ class SplitMapForTileRemainder(ppl.Pass):
 
         One guard state is prepended (as the new start block) to each SDFG that owns a checked
         map, so the check runs before that SDFG's kernels. Every distinct ``(extent, width)``
-        pair becomes a side-effect CPP tasklet that writes to stderr and ``abort``\\ s when
-        ``extent`` is not a whole multiple of ``width`` -- turning a silent out-of-bounds tile
-        access into a loud, deterministic failure. ``side_effects=True`` keeps the guard from
-        being fused into a neighbour or eliminated as dead code.
+        pair becomes a side-effect CPP tasklet that writes to stderr and ``abort``\\ s when the
+        even-extent assumption is violated at runtime -- ``extent`` is not a whole multiple of
+        ``width`` OR ``extent < width`` (a symbolic extent that turns out shorter than one tile) --
+        turning a silent out-of-bounds tile access into a loud, deterministic failure that names
+        the fix (rerun with ``assume_even=False``). Host-side, so it guards CPU and GPU alike.
+        ``side_effects=True`` keeps the guard from being fused into a neighbour or eliminated as
+        dead code.
         """
         by_sdfg = {}
         for owner, extent, width in self._range_checks:
@@ -279,9 +321,10 @@ class SplitMapForTileRemainder(ppl.Pass):
         for owner, checks in by_sdfg.items():
             guard = owner.add_state_before(owner.start_block, label="tile_even_range_check", is_start_block=True)
             for extent_c, width in sorted(checks):
-                code = (f'if ((long long)({extent_c}) % {width} != 0) {{\n'
-                        f'    fprintf(stderr, "DaCe tile vectorization: extent %lld is not a multiple of tile '
-                        f'width {width} (assume_even violated); aborting.\\n", (long long)({extent_c}));\n'
+                code = (f'if ((long long)({extent_c}) % {width} != 0 || (long long)({extent_c}) < {width}) {{\n'
+                        f'    fprintf(stderr, "DaCe tile vectorization: extent %lld violates assume_even '
+                        f'(must be a multiple of tile width {width} and >= {width}); rerun with '
+                        f'assume_even=False.\\n", (long long)({extent_c}));\n'
                         f'    abort();\n'
                         f'}}')
                 tasklet = guard.add_tasklet(name="tile_range_check",

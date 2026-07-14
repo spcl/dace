@@ -9,7 +9,7 @@ confusing downstream masked-tail failure.
 from typing import Dict, Optional, Tuple
 
 import dace
-from dace import properties
+from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
@@ -115,10 +115,21 @@ class MarkTileDims(ppl.Pass):
         # region -> short, symbolic, or wavefront trips handled by masking (or the scalar
         # remainder loop under ``scalar_postamble``). No ``trip >= W`` precondition, no runtime
         # trap: too-small trip just runs fewer active lanes.
-        for (lb, ub, step), iv in zip(slice_ranges, iter_vars):
+        for (lb, ub, step), iv, W in zip(slice_ranges, iter_vars, widths):
             if step != 1 and str(step) != "1":
                 return self._fail_or_skip(
                     f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1")
+            # A provably-too-small dim (extent < tile width) cannot be tiled -- keep the whole map
+            # scalar. NOT an error (unlike step != 1): a scalar / constant ``gmap`` or a short loop
+            # simply is not a width-W vector target (widening it reads past the extent). Return
+            # None to skip; SplitMapForTileRemainder refuses the same dim, so the two passes agree.
+            # A symbolic extent stays tiled -- the masked remainder / assume_even runtime guard
+            # handles a runtime trip < W.
+            try:
+                if int(symbolic.simplify(ub - lb + 1)) < W:
+                    return None
+            except (TypeError, ValueError):
+                pass
             global_ubs.append(str(ub + 1))
         return TileDimSpec(
             iter_vars=iter_vars,

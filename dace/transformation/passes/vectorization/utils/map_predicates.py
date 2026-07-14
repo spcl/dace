@@ -133,6 +133,10 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     on a tiled map param (triangular ``for i in range(1, j+1)``, TSVC s232): W lanes need divergent
     trip counts a single tiled loop cannot honour. Graceful-refuse gate: ineligible map left as
     correct scalar rather than tiled incorrectly.
+
+    (A provably-too-small tiled dim -- extent < the tile width -- is refused by the width-aware
+    passes ``MarkTileDims`` / ``SplitMapForTileRemainder``, not here: this predicate is width
+    agnostic, and the same map may be tiled at width 1 (a scalar tail) but not at width 8.)
     """
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
         if isinstance(node, dace.nodes.NestedSDFG) and _sdfg_has_self_recurrent_assign(node.sdfg):
