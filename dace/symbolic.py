@@ -1173,7 +1173,9 @@ class ipow(sympy.Function):
 
     @classmethod
     def eval(cls, base, exp):
-        """Fold a literal non-negative integer power; stay symbolic otherwise."""
+        # negative constant exp would wrap the C++ ``unsigned`` -> reject at construction
+        if exp.is_Number and exp.is_integer and exp.is_negative:
+            raise ValueError(f'ipow exponent must be non-negative, got {exp}')
         if base.is_Number and exp.is_Number and exp.is_integer and exp.is_nonnegative:
             return base**exp
 
@@ -2031,6 +2033,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'Le': sympy.Le,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
+        'ipow': ipow,
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
         'Attr': Attr,
