@@ -230,6 +230,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(b, LoopRegion):
                 if b.loop_variable is not None:
                     inner_assignments.add(b.loop_variable)
+        # The non-identity symbol_mapping keys are lowered below to interstate-edge assignments
+        # (``inner_K = outer_expr``) planted on the edge entering the inlined SDFG, i.e. they become
+        # symbols *defined* inside the inlined region. Treat them like inner assignments so that, if such a
+        # key collides with a symbol used elsewhere in the outer SDFG (e.g. a callback of the same name used
+        # by a sibling branch), it is disambiguated to a fresh name instead of hijacking the outer symbol
+        # and dropping it from the compiled signature (which left an uninitialized callback pointer -> crash).
+        inner_assignments |= set(non_identity_mapping.keys())
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
