@@ -82,11 +82,12 @@ class CPUCodeGen(TargetCodeGenerator):
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
                 # A GPU_Global scalar is a device pointer on the host side: allocate_array
-                # cudaMallocs it as ``T*`` and connector-type inference treats GPU_Global
-                # data as pointer-typed, so it must be registered as a pointer to match the
-                # allocation. This is reachable on the legacy target (which does not run
-                # PromoteGPUScalarsToArrays) and for GPU-storage scalars created by passes
-                # that run after promotion.
+                # cudaMallocs it as ``T*`` and connector-type inference (infer_types) treats
+                # GPU_Global data as pointer-typed, so it must be registered as a pointer to
+                # match the allocation rather than as a value-typed CPU scalar. This branch is
+                # reachable on the legacy CUDA target, which shares this codegen but never runs
+                # PromoteGPUScalarsToArrays -- the pass that would otherwise widen such scalars
+                # to 1-element arrays before codegen.
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
