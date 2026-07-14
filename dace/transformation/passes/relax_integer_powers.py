@@ -26,14 +26,31 @@ from dace.transformation.passes.analysis import loop_analysis
 _Ranges = Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
 
 
+def _ordered_range(
+        begin: symbolic.SymbolicType, end: symbolic.SymbolicType,
+        step: Optional[symbolic.SymbolicType]) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+    """Inclusive ``(low, high)`` for an iterator ``begin..end`` stepping by ``step``.
+
+    Direction needs the *provable* sign of ``step``. Unknown sign (``0:K:s``) -> which end is
+    smaller is unknown -> ``None`` (no trusted range). Guessing ascending would "prove" a
+    negative exponent non-negative and relax it to an out-of-range ``ipow``.
+    """
+    if step is None:
+        return None
+    if step.is_positive:
+        return (begin, end)
+    if step.is_negative:
+        return (end, begin)
+    return None
+
+
 def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
-    """The inclusive ``(low, high)`` range of a loop's iteration variable."""
+    """Loop iterator's inclusive ``(low, high)``, or ``None`` if bounds or stride sign unknown."""
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     if start is None or end is None:
         return None
-    step = loop_analysis.get_loop_stride(loop)
-    return (end, start) if (step is not None and step.is_negative) else (start, end)
+    return _ordered_range(start, end, loop_analysis.get_loop_stride(loop))
 
 
 @transformation.explicit_cf_compatible
@@ -223,11 +240,11 @@ class RelaxIntegerPowers(ppl.Pass):
                         inner[str(var)] = rng
                     else:
                         inner.pop(str(var), None)  # rebound to an unknown range
-                # The loop's bound / condition / init / update are code blocks, not
-                # descriptors -- relax the powers in them under the ranges live inside the
-                # loop (its own iterator + the enclosing ones).
-                self._relax_code(block.loop_condition, inner)
-                self._relax_code(block.init_statement, inner)
+                # condition + init see the iterator OUTSIDE its body range (condition fails at
+                # ``i = end + step``; init runs pre-bind) -> relax under enclosing ranges, no own
+                # iterator. update runs with in-body values -> keep them.
+                self._relax_code(block.loop_condition, ranges)
+                self._relax_code(block.init_statement, ranges)
                 self._relax_code(block.update_statement, inner)
                 self._visit_region(block, inner, relaxed_arrays)
             elif isinstance(block, SDFGState):
@@ -255,7 +272,11 @@ class RelaxIntegerPowers(ppl.Pass):
                         if not conn.startswith('IN_'):
                             inner.pop(conn, None)
                     for param, rng in zip(node.map.params, node.map.range.ranges):
-                        inner[str(param)] = (rng[0], rng[1])
+                        prng = _ordered_range(rng[0], rng[1], rng[2])  # (begin, end, step)
+                        if prng is not None:
+                            inner[str(param)] = prng
+                        else:
+                            inner.pop(str(param), None)  # unknown-sign step: direction unknown
                     descend(node, inner)
                 elif isinstance(node, nodes.NestedSDFG):
                     self._relax_symbol_mapping(node, live)

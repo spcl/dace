@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``ipow`` symbolic Function and the ``RelaxIntegerPowers`` pass."""
 import numpy as np
+import pytest
 import sympy
 
 import dace
@@ -8,7 +9,7 @@ from dace import data, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import ipow, pystr_to_symbolic, symstr
-from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers, _loop_range
 
 
 def _ipow_count(sdfg: dace.SDFG) -> int:
@@ -188,3 +189,90 @@ def test_end_to_end_complex_power_shape_compiles():
     ref = x * 2.0
     sdfg(x=x, R=Rv, K=Kv)
     assert np.allclose(x, ref)
+
+
+def test_rejects_negative_constant_exponent():
+    """A negative constant exponent would wrap the C++ ``unsigned`` -- ``ipow`` rejects it at
+    construction, so a bad relaxation can never reach codegen."""
+    R = symbolic.symbol('R', positive=True, integer=True)
+    for bad in (sympy.Integer(-1), sympy.Integer(-7)):
+        with pytest.raises(ValueError):
+            ipow(R, bad)
+    # ... and even when a symbolic exponent is later driven negative by substitution.
+    K = symbolic.symbol('K', positive=True, integer=True)
+    with pytest.raises(ValueError):
+        ipow(R, K).subs(K, -1)
+
+
+def test_loop_range_direction_from_stride_sign():
+    """``_loop_range`` orders (low, high) by the stride sign, and refuses when the sign is
+    unknown -- a wrong direction guess would relax a negative exponent."""
+    sstep = dace.symbol('sstep', integer=True)  # unknown sign
+
+    def rng(cond, init, update):
+        return _loop_range(LoopRegion('L', condition_expr=cond, loop_var='i', initialize_expr=init, update_expr=update))
+
+    assert str(rng('i < K', 'i = 0', 'i = i + 1')) == '(0, K - 1)'  # ascending
+    assert str(rng('i > 0', 'i = K', 'i = i - 1')) == '(1, K)'  # descending
+    assert rng('i > 0', 'i = K', 'i = i + sstep') is None  # unknown-sign stride -> no trusted range
+
+
+def test_refuses_pow_under_unknown_sign_stride():
+    """The stride sign is the only thing that changes between these two loops: ``K - p`` is
+    provably >= 0 over an ascending sweep, so it relaxes; under an unknown-sign stride there is
+    no trusted range, so it must stay ``pow`` (if the stride were negative it would go negative)."""
+    R = dace.symbol('R', positive=True, integer=True)
+    K = dace.symbol('K', positive=True, integer=True)
+    p = dace.symbol('p', integer=True)
+    sstep = dace.symbol('sstep', integer=True)  # unknown sign
+
+    def count(name, update):
+        sdfg = dace.SDFG(name)
+        sdfg.add_array('x', [100], dace.float64)  # constant shape -> only the subscript carries a power
+        loop = LoopRegion('L', condition_expr='p < K', loop_var='p', initialize_expr='p = 0', update_expr=update)
+        sdfg.add_node(loop, is_start_block=True)
+        body = loop.add_state('body', is_start_block=True)
+        t = body.add_tasklet('set', {}, {'o'}, 'o = 1.0')
+        body.add_edge(t, 'o', body.add_write('x'), None, dace.Memlet('x[R**(K - p)]'))
+        RelaxIntegerPowers().apply_pass(sdfg, {})
+        return _ipow_count(sdfg)
+
+    assert count('ascending', 'p = p + 1') > 0  # p in [0, K-1] -> K-p in [1, K] -> relax
+    assert count('unknown', 'p = p + sstep') == 0  # unknown-sign stride -> stays pow
+
+
+def test_descending_loop_still_relaxes():
+    """A radix subscript proven non-negative over a descending loop's range relaxes (direction
+    is handled, not just refused)."""
+    R = dace.symbol('R', positive=True, integer=True)
+    K = dace.symbol('K', positive=True, integer=True)
+
+    sdfg = dace.SDFG('descending')
+    sdfg.add_array('x', [100], dace.float64)
+    loop = LoopRegion('L', condition_expr='i > 0', loop_var='i', initialize_expr='i = K', update_expr='i = i - 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    t = body.add_tasklet('set', {}, {'o'}, 'o = 1.0')
+    body.add_edge(t, 'o', body.add_write('x'), None, dace.Memlet('x[R**(K - i)]'))  # i in [1, K] -> K-i in [0, K-1]
+
+    RelaxIntegerPowers().apply_pass(sdfg, {})
+    assert _ipow_count(sdfg) > 0
+
+
+def test_loop_condition_off_by_one_not_relaxed():
+    """The loop condition is evaluated one past the body range (``i = end + step``), so an
+    exponent that uses the iterator must not relax there; a constant-exponent bound still does."""
+    R = dace.symbol('R', positive=True, integer=True)
+    K = dace.symbol('K', positive=True, integer=True)
+
+    def build(cond):
+        sdfg = dace.SDFG('cond')
+        sdfg.add_array('x', [R**K], dace.float64)  # shape carries K -> pass knows K is a positive int
+        loop = LoopRegion('L', condition_expr=cond, loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+        sdfg.add_node(loop, is_start_block=True)
+        loop.add_state('body', is_start_block=True)
+        RelaxIntegerPowers().apply_pass(sdfg, {})
+        return loop.loop_condition.as_string
+
+    assert 'ipow' not in build('i < R**(K - i - 1)')  # exponent uses i, negative at i = K
+    assert 'ipow' in build('i < R**K')  # constant exponent -> safe to relax
