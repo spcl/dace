@@ -119,14 +119,29 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 4. Coarse pick by storage pair: any copy touching GPU memory goes through
+    # 4. Host-level CPU-resident multi-element copy: a same-shape, contiguous,
+    # same-layout region is a single physical run on both sides, so one
+    # ``std::memcpy`` (MemcpyCPU) is exact -- and it satisfies ExpandMemcpyCPU's
+    # contiguity precondition, so a picked MemcpyCPU always expands cleanly.
+    # Non-contiguous, mixed-layout, mismatched-per-dim-shape (e.g. a transpose),
+    # or rank-changing reshapes have no single flat form and fall through to the
+    # MappedTasklet path below (which rejects transposes and walks reshapes 1-D).
+    host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
+    same_shape = (len(inp.shape) == len(out.shape)
+                  and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
+    if ({inp.storage, out.storage} <= host_storages and same_shape
+            and in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)
+            and _both_packed_same_layout(inp, out)):
+        return 'MemcpyCPU'
+
+    # 5. Coarse pick by storage pair: any copy touching GPU memory goes through
     # the cudaMemcpy family; everything else falls through to MappedTasklet.
     gpu = dtypes.StorageType.GPU_Global
     allowed = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
     impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu) and inp.storage in allowed
                                and out.storage in allowed) else None)
 
-    # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
+    # 6. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
     # MappedTasklet for unsupported stride mixs).
     if impl == 'MemcpyCUDA1D':
         refined = _refine_cuda_impl_for_subsets(node, parent_state)
