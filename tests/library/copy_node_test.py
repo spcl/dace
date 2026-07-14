@@ -162,7 +162,9 @@ def test_copy_cpu_memcpy():
 
 
 def test_copy_fortran_packed_same_rank():
-    """Same-rank Fortran-packed (column-major) copy lowers via the Auto-routed MappedTasklet."""
+    """Same-rank Fortran-packed (column-major) full copy is contiguous and same-layout, so the
+    Auto path routes it to the serial ``std::memcpy`` (``MemcpyCPU``); a flat byte copy is exact
+    for two Fortran-packed operands."""
     sdfg, libnode = _make_copy_sdfg(
         _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
         _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
@@ -170,7 +172,7 @@ def test_copy_fortran_packed_same_rank():
     )
     sdfg.validate()
     sdfg.expand_library_nodes()
-    assert libnode.implementation == 'MappedTasklet'
+    assert libnode.implementation == 'MemcpyCPU'
 
     src_data = np.arange(120, dtype=np.float64).reshape(4, 5, 6, order='F').copy(order='F')
     dst_data = np.zeros((4, 5, 6), dtype=np.float64, order='F')
