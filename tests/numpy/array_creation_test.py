@@ -188,6 +188,24 @@ def test_linspace_6():
     return np.linspace(-5, 5.5, dtype=np.float32)
 
 
+@compare_numpy_output()
+def test_linspace_scalar_default_num():
+    # Scalar endpoints with the default num=50: the endpoints have empty shape and the
+    # step-first formula must reproduce numpy's samples.
+    return np.linspace(0.0, 1.0)
+
+
+@compare_numpy_output()
+def test_linspace_scalar_endpoint_false():
+    return np.linspace(2.0, 7.0, num=13, endpoint=False)
+
+
+@compare_numpy_output()
+def test_linspace_scalar_retstep():
+    space, step = np.linspace(-3.0, 4.0, num=9, retstep=True)
+    return space, step
+
+
 @dace.program
 def program_strides_0():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
