@@ -506,7 +506,7 @@ required:
                             "legacy" is the stable implementation; "experimental" is a
                             work-in-progress rewrite (ExperimentalCUDACodeGen).
                         enum: [legacy, experimental]
-                        default: legacy
+                        default: experimental
 
                     allow_implicit_memlet_to_map:
                         type: bool
