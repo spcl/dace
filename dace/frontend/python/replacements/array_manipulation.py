@@ -142,6 +142,47 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
     return arr_copy
 
 
+@oprepo.replaces('numpy.triu')
+def triu(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, m: str, k: int = 0) -> str:
+    """Copy of ``m`` with the elements below the k-th diagonal zeroed (upper triangle kept). For an input
+    with more than two dimensions the mask applies to the final two axes, matching numpy."""
+    return triangle_mask(pv, sdfg, state, m, k, upper=True)
+
+
+@oprepo.replaces('numpy.tril')
+def tril(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, m: str, k: int = 0) -> str:
+    """Copy of ``m`` with the elements above the k-th diagonal zeroed (lower triangle kept). For an input
+    with more than two dimensions the mask applies to the final two axes, matching numpy."""
+    return triangle_mask(pv, sdfg, state, m, k, upper=False)
+
+
+def triangle_mask(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, m: str, k, upper: bool) -> str:
+    if m not in sdfg.arrays:
+        raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=m))
+    desc = sdfg.arrays[m]
+    if not isinstance(desc, (data.Array, data.View)):
+        raise mem_parser.DaceSyntaxError(pv, None, "numpy.triu/numpy.tril only support Arrays and Views!")
+    ndim = len(desc.shape)
+    if ndim < 2:
+        raise mem_parser.DaceSyntaxError(pv, None, "numpy.triu/numpy.tril require an at least two-dimensional input.")
+
+    out_name, _ = sdfg.add_temp_transient_like(desc, name=pv.get_target_name())
+
+    # Element (i, j) on the last two axes lies on diagonal ``j - i``; triu keeps ``j - i >= k`` (zeroing
+    # below the k-th diagonal), tril keeps ``j - i <= k``. Every masked-out element is set to zero.
+    row, col = f'__i{ndim - 2}', f'__i{ndim - 1}'
+    cmp = '>=' if upper else '<='
+    idx = ','.join(f'__i{i}' for i in range(ndim))
+    state.add_mapped_tasklet(name='triu' if upper else 'tril',
+                             map_ranges={f'__i{i}': f'0:{s}:1'
+                                         for i, s in enumerate(desc.shape)},
+                             inputs={'__inp': Memlet(f'{m}[{idx}]')},
+                             code=f'__out = __inp if ({col} - {row} {cmp} ({k})) else 0',
+                             outputs={'__out': Memlet(f'{out_name}[{idx}]')},
+                             external_edges=True)
+    return out_name
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
