@@ -337,8 +337,17 @@ def _linspace(pv: ProgramVisitor,
 
     # Start and stop are broadcast together, then, a new dimension is added to axis (taken from ``ndim + 1``),
     # along which the numbers are filled.
-    start_shape = sdfg.arrays[start].shape if (isinstance(start, str) and start in sdfg.arrays) else []
-    stop_shape = sdfg.arrays[stop].shape if (isinstance(stop, str) and stop in sdfg.arrays) else []
+    def _endpoint_shape(x):
+        # numpy.linspace of 0-d (scalar) endpoints is 1-D of length ``num``. A DaCe Scalar reports shape
+        # (1,), which would otherwise add a spurious trailing axis -- making the result (num, 1), a column
+        # that then mis-broadcasts against other 1-D arrays. Treat a true scalar endpoint as contributing
+        # no dimensions; a genuine size-1 *array* endpoint keeps its (1,) shape (numpy also returns a column).
+        if isinstance(x, str) and x in sdfg.arrays and not isinstance(sdfg.arrays[x], data.Scalar):
+            return sdfg.arrays[x].shape
+        return []
+
+    start_shape = _endpoint_shape(start)
+    stop_shape = _endpoint_shape(stop)
 
     shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape)
     shape_with_axis = _add_axis_to_shape(shape, axis, num)
@@ -368,23 +377,32 @@ def _linspace(pv: ProgramVisitor,
         num -= 1
 
     # Fill in input memlets as necessary
+    def _endpoint_index(name, ind):
+        # A broadcast index if the endpoint carries one; else a scalar endpoint (no broadcast axis) must
+        # still read its single element explicitly ([0]) so memlet propagation sees a concrete subset
+        # rather than a bare, subset-less scalar memlet (which trips propagation with a None range).
+        if ind:
+            return f'[{ind}]'
+        return '[0]' if isinstance(sdfg.arrays[name], data.Scalar) else ''
+
     inputs = {}
     if isinstance(start, str) and start in sdfg.arrays:
-        index = f'[{ind1}]' if ind1 else ''
-        inputs['__start'] = Memlet(f'{start}{index}')
+        inputs['__start'] = Memlet(f'{start}{_endpoint_index(start, ind1)}')
         startcode = '__start'
     else:
         startcode = symbolic.symstr(start)
 
     if isinstance(stop, str) and stop in sdfg.arrays:
-        index = f'[{ind2}]' if ind2 else ''
-        inputs['__stop'] = Memlet(f'{stop}{index}')
+        inputs['__stop'] = Memlet(f'{stop}{_endpoint_index(stop, ind2)}')
         stopcode = '__stop'
     else:
         stopcode = symbolic.symstr(stop)
 
     # Create tasklet code based on inputs
-    code = f'__out = {startcode} + __sind * decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})'
+    # Compute the step first (``i * (delta/num)``), matching numpy.linspace's ``start + arange*step`` order.
+    # Multiplying before dividing (``i*delta/num``) is a different floating-point rounding and is not
+    # bit-exact with numpy.
+    code = f'__out = {startcode} + __sind * (decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)}))'
 
     state.add_mapped_tasklet(name="linspace",
                              map_ranges=ranges_with_axis,
