@@ -430,3 +430,30 @@ def test_aug_assign_cross_element_operand_trisolv_shape():
     sdfg.validate()
     # ``x[j]`` operand vs ``x[i]`` output: cross-element, not an accumulator -> refused.
     assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_combine_copyback_map():
+    """A min/max reduction expressed as a ``dace.map`` -- ``m = max(m, A[j])`` -- lowers (via the
+    frontend's 2-arg Call form) to a combine + private slice + trivial copyback INSIDE the map. The
+    in-map combine-copyback pattern converts that loop-invariant accumulation to a map-exit WCR so
+    the map parallelizes without a race (without it, every lane writes ``m`` un-synchronized)."""
+    import numpy as np
+
+    @dace.program
+    def sdfg_max_reduce_map(A: dace.float64[64], res: dace.float64[1]):
+        m = dace.float64(-1e30)
+        for j in dace.map[0:64]:
+            m = max(m, A[j])
+        res[0] = m
+
+    sdfg = sdfg_max_reduce_map.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    wcrs = [
+        e.data.wcr for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapExit)
+        for e in st.in_edges(n) if e.data is not None and e.data.wcr is not None
+    ]
+    assert wcrs and all('max' in w for w in wcrs), f"expected a max map-exit WCR, got {wcrs}"
+    a = np.random.rand(64)
+    res = np.zeros(1)
+    sdfg(A=a, res=res)
+    assert np.isclose(res[0], a.max()), f"{res[0]} != {a.max()}"
