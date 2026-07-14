@@ -3,7 +3,6 @@
 from typing import Dict, FrozenSet, Set, Tuple, List
 import copy
 import functools
-from collections import deque
 
 import sympy
 
@@ -17,6 +16,11 @@ from dace.subsets import Range
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.memlet import Memlet
 from dace.symbolic import symbol
+
+# The GPU map hierarchy this pass hoists through: a GPU_Device kernel and the GPU_ThreadBlock
+# maps tiled inside it. Deliberately NOT ``dtypes.GPU_SCHEDULES``, which also includes the
+# dynamic / persistent thread-block schedules that this pass does not lift.
+GPU_HIERARCHY_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
 def _tile_extent(max_elem, min_elem):
@@ -280,7 +284,7 @@ class MoveArrayOutOfKernel(Pass):
         """
         subset = []
         for next_map in map_chain:
-            if not next_map.map.schedule in [dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock]:
+            if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
                 continue
 
             map_parent_state = self._node_to_state_cache[next_map]
@@ -311,51 +315,27 @@ class MoveArrayOutOfKernel(Pass):
         map_entry_chain, _ = self.get_maps_between(kernel_entry, outermost_node)
         params_as_ranges = self.get_memlet_subset(map_entry_chain, outermost_node)
 
-        # Update in and out path memlets
+        # Rewrite every edge in each access node's in/out dataflow cone exactly once. edge_bfs
+        # yields the same edge set the old per-path enumeration flattened, but linearly instead
+        # of enumerating every complete path (exponential in fan-in/out). The incoming/outgoing
+        # flag distinguishes the dst-subset vs src-subset rewrite on a direct edge to/from the node.
         visited: Set[MultiConnectorEdge[Memlet]] = set()
         for access_node in access_nodes:
-            # in paths
-            for path in self.in_paths(access_node):
-                for edge in path:
-                    if edge in visited:
-                        continue
-
-                    if edge.data.data == array_name:
-                        old_range = edge.data.subset.ndrange()
-                        new_range = params_as_ranges + old_range
-                        edge.data.subset = Range(new_range)
-                        visited.add(edge)
-
-                    elif edge.data.data != array_name and edge.dst is access_node and edge.data.dst_subset is not None:
-                        old_range = edge.data.dst_subset.ndrange()
-                        new_range = params_as_ranges + old_range
-                        edge.data.dst_subset = Range(new_range)
-                        visited.add(edge)
-
-                    else:
-                        continue
-
-            # out paths
-            for path in self.out_paths(access_node):
-                for edge in path:
-                    if edge in visited:
-                        continue
-
-                    if edge.data.data == array_name:
-                        old_range = edge.data.subset.ndrange()
-                        new_range = params_as_ranges + old_range
-                        edge.data.subset = Range(new_range)
-                        visited.add(edge)
-
-                    elif (edge.data.data
-                          != array_name) and edge.src is access_node and edge.data.src_subset is not None:
-                        old_range = edge.data.src_subset.ndrange()
-                        new_range = params_as_ranges + old_range
-                        edge.data.src_subset = Range(new_range)
-                        visited.add(edge)
-
-                    else:
-                        continue
+            state = self._node_to_state_cache[access_node]
+            incoming = [(edge, True) for edge in state.edge_bfs(access_node, reverse=True)]
+            outgoing = [(edge, False) for edge in state.edge_bfs(access_node)]
+            for edge, is_incoming in incoming + outgoing:
+                if edge in visited:
+                    continue
+                if edge.data.data == array_name:
+                    edge.data.subset = Range(params_as_ranges + edge.data.subset.ndrange())
+                    visited.add(edge)
+                elif is_incoming and edge.dst is access_node and edge.data.dst_subset is not None:
+                    edge.data.dst_subset = Range(params_as_ranges + edge.data.dst_subset.ndrange())
+                    visited.add(edge)
+                elif not is_incoming and edge.src is access_node and edge.data.src_subset is not None:
+                    edge.data.src_subset = Range(params_as_ranges + edge.data.src_subset.ndrange())
+                    visited.add(edge)
 
     # Array, symbol and renaming related helper functions
     def get_new_shape_info(self, array_desc: dt.Array, map_exit_chain: List[nodes.MapEntry]):
@@ -377,7 +357,7 @@ class MoveArrayOutOfKernel(Pass):
         extended_size = []
         new_offsets = list(array_desc.offset)
         for next_map in map_exit_chain:
-            if not next_map.map.schedule in [dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock]:
+            if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
                 continue
 
             map_range: Range = next_map.map.range
@@ -443,9 +423,7 @@ class MoveArrayOutOfKernel(Pass):
         """
         all_symbols = set()
         for next_map in map_entry_chain:
-            if not next_map.map.schedule in [
-                    dace.dtypes.ScheduleType.GPU_Device, dace.dtypes.ScheduleType.GPU_ThreadBlock
-            ]:
+            if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
                 continue
             all_symbols = all_symbols | next_map.used_symbols_within_scope(self._node_to_state_cache[next_map])
 
@@ -662,67 +640,3 @@ class MoveArrayOutOfKernel(Pass):
                     queue.append(neighbor)
 
         raise RuntimeError(f"No access node found connected to the given node {node}. ")
-
-    def in_paths(self, access_node: nodes.AccessNode) -> List[List[MultiConnectorEdge[Memlet]]]:
-        """All incoming dataflow paths to ``access_node`` within its state.
-
-        :returns: List of edge paths (each a list of edges).
-        """
-        state = self._node_to_state_cache[access_node]
-
-        initial_paths = [[edge] for edge in state.in_edges(access_node)]
-        queue = deque(initial_paths)
-        complete_paths = []
-
-        while queue:
-            current_path = queue.popleft()
-            first_edge = current_path[0]
-            current_node = first_edge.src
-            incoming_edges = [edge for edge in state.in_edges(current_node)]
-
-            # No further in-edges: path is complete.
-            if len(incoming_edges) == 0:
-
-                complete_paths.append(current_path)
-                continue
-
-            for edge in incoming_edges:
-                if edge in current_path:
-                    raise ValueError("Unexpected cycle detected")
-
-                extended_path = [edge] + current_path
-                queue.append(extended_path)
-
-        return complete_paths
-
-    def out_paths(self, access_node: nodes.AccessNode) -> List[List[MultiConnectorEdge[Memlet]]]:
-        """All outgoing dataflow paths from ``access_node`` within its state.
-
-        :returns: List of edge paths (each a list of edges).
-        """
-        state: SDFGState = self._node_to_state_cache[access_node]
-
-        initial_paths = [[edge] for edge in state.out_edges(access_node)]
-        queue = deque(initial_paths)
-        complete_paths = []
-
-        while queue:
-            current_path = queue.popleft()
-            last_edge = current_path[-1]
-            current_node = last_edge.dst
-            outgoing_edges = [edge for edge in state.out_edges(current_node)]
-
-            # No further out-edges: path is complete.
-            if len(outgoing_edges) == 0:
-                complete_paths.append(current_path)
-                continue
-
-            for edge in outgoing_edges:
-
-                if edge in current_path:
-                    raise ValueError("Unexpected cycle detected")
-
-                extended_path = current_path + [edge]
-                queue.append(extended_path)
-
-        return complete_paths
