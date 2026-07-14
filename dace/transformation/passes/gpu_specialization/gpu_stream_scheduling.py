@@ -8,7 +8,7 @@ SDFGs share its decisions and a non-root :meth:`apply_pass` raises.
 """
 import warnings
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
@@ -638,7 +638,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         # Snapshot iedges first; splicing mutates each region's edge set. Walking every nested
         # CFG makes a sync inserted on a ``LoopRegion`` / ``ConditionalBlock`` body edge land in
         # that owning region, not the root SDFG -- the correct per-iteration sync semantics.
-        edges_to_splice: List[Tuple['AbstractControlFlowRegion', any]] = []
+        edges_to_splice: List[Tuple['AbstractControlFlowRegion', Any]] = []
         for region in sdfg.all_control_flow_regions(recursive=True):
             for edge in list(region.edges()):
                 src, dst = edge.src, edge.dst

@@ -250,8 +250,6 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], as
         sorted_streams = sorted(streams)
         tasklet = _make_sync_tasklet(state, "gpu_streams_synchronization", sorted_streams)
         for sink in existing_sinks:
-            if sink is tasklet:
-                continue
             if isinstance(sink, nodes.AccessNode) and sink.desc(state).dtype == dtypes.gpuStream_t:
                 continue
             state.add_edge(sink, None, tasklet, None, dependency_edge())

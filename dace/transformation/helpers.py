@@ -1588,6 +1588,8 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
             return False
         current, state = parent
 
+    return False
+
 
 def redirect_edge(state: SDFGState,
                   edge: graph.MultiConnectorEdge[Memlet],
