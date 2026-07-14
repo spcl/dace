@@ -28,7 +28,8 @@ from dace import properties, symbolic
 from dace.dtypes import DeviceType
 import dataclasses
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, coerce_remainder_strategy
+from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
@@ -252,7 +253,7 @@ class _MultiOutputReductionMapFission(MapFission):
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
 _VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA")
-_VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble")
+_VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail")
 _VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
@@ -749,6 +750,23 @@ class VectorizeMultiDim(ppl.Pipeline):
         # makes GenerateTileIterationMask skip its mask (no mismatched GPU thread-block sizes).
         if assume_even:
             passes.append(SplitMapForTileRemainder(widths=widths_t, assume_even=True))
+        elif remainder_strategy == RemainderStrategy.BRANCHED_TAIL:
+            # GPU-only branched-tail remainder (ONE kernel: if full-tile -> vectorized tile body /
+            # else -> scalar tail). Reuse the SAME split the scalar_postamble path uses: a
+            # provably-divisible ``__tile_main`` interior (vectorized below) + a step-1
+            # ``__scalar_tail`` (kept scalar). A post pass (appended last, after the tile emitters)
+            # fuses the two maps into one map whose body is an if/else ``ConditionalBlock``.
+            # GPU-only: on CPU the two maps are already one loop nest (no kernel-launch cost to
+            # fold away), so the strategy is refused rather than silently downgraded.
+            if not is_gpu_device:
+                raise NotImplementedError(
+                    "VectorizeMultiDim: remainder_strategy='branched_tail' is GPU-only "
+                    "(needs device=GPU / target_isa='CUDA').")
+            if len(widths_t) != 1:
+                raise NotImplementedError(
+                    "VectorizeMultiDim: remainder_strategy='branched_tail' supports K=1 "
+                    f"(one tiled dim); got widths={widths_t!r}.")
+            passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode="scalar"))
         elif remainder_strategy in ("masked_tail", "scalar_postamble"):
             # Split each K-dim tile map into a provably-divisible interior (marked
             # ``__tile_main`` → GenerateTileIterationMask skips its mask → lowered with
@@ -848,6 +866,14 @@ class VectorizeMultiDim(ppl.Pipeline):
             # wires _mask onto Tile{Binop, Unop, ITE, Reduce}.
             ConvertTaskletsToTileOps(widths=widths_t),
         ]
+        # ``branched_tail`` (GPU-only) post-transform: after the tile emitters vectorized the
+        # ``__tile_main`` interior and left the ``__scalar_tail`` scalar, fuse each pair into ONE
+        # GPU kernel with an if(full-tile)/else(scalar-tail) ``ConditionalBlock`` body -- reusing
+        # the vectorized tile ops UNCHANGED inside the if-branch (no arithmetic-select flatten).
+        # Runs LAST so it sees the fully-lowered tile ops. Gated on the strategy (default off);
+        # the GPU-only + K=1 preconditions were enforced at the split site above.
+        if remainder_strategy == RemainderStrategy.BRANCHED_TAIL:
+            passes.append(FuseBranchedTailRemainder(widths=widths_t))
         super().__init__(passes)
         self._widths = widths_t
         self._target_isa = target_isa
@@ -1290,4 +1316,13 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         :param config: The vectorizer configuration; its ``device`` / ``target_isa`` /
             ``assume_even`` are overridden with the GPU values.
         """
-        super().__init__(dataclasses.replace(config, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=True))
+        # ``branched_tail`` deliberately handles a non-divisible extent (it peels a scalar tail
+        # and fuses it into an if/else branch), so it must NOT run under ``assume_even`` (which
+        # would instead RAISE on the provably-non-divisible case). Every other GPU strategy keeps
+        # the even-extent fast path (single strided map, no remainder).
+        branched = coerce_remainder_strategy(config.remainder_strategy) == RemainderStrategy.BRANCHED_TAIL
+        super().__init__(
+            dataclasses.replace(config,
+                                device=DeviceType.GPU,
+                                target_isa=ISA.CUDA,
+                                assume_even=not branched))

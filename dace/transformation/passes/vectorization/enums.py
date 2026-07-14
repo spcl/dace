@@ -26,6 +26,9 @@ class RemainderStrategy(str, enum.Enum):
     FULL_MASK = "full_mask"                #: single W-strided map, mask every tile
     MASKED_TAIL = "masked_tail"            #: mask-free interior + masked boundary
     SCALAR_POSTAMBLE = "scalar_postamble"  #: divisible interior + step-1 scalar tail (K=1 only)
+    BRANCHED_TAIL = "branched_tail"  #: GPU-only: ONE kernel with a control-flow branch,
+    #: if(full-tile)=vectorized tile body / else=scalar tail, over the fused tile range. K=1 only.
+    #: See :class:`~dace.transformation.passes.vectorization.fuse_branched_tail_remainder.FuseBranchedTailRemainder`.
 
 
 class BranchMode(str, enum.Enum):
