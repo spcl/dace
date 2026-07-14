@@ -81,8 +81,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
-                # GPU global memory is only accessed via pointers
-                # TODO(later): Fix workaround somehow
+                # A GPU_Global scalar is a device pointer on the host side: allocate_array
+                # cudaMallocs it as ``T*`` and connector-type inference treats GPU_Global
+                # data as pointer-typed, so it must be registered as a pointer to match the
+                # allocation. This is reachable on the legacy target (which does not run
+                # PromoteGPUScalarsToArrays) and for GPU-storage scalars created by passes
+                # that run after promotion.
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
