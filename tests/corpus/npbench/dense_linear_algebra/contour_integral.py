@@ -41,10 +41,9 @@ def reference(NR, NM, slab_per_bc, Ham, int_pts, Y, P0, P1):
         for n in range(slab_per_bc + 1):
             zz = np.power(z, slab_per_bc / 2 - n)
             Tz += zz * Ham[n]
-        if NR == NM:
-            X = np.linalg.inv(Tz)
-        else:
-            X = np.linalg.solve(Tz, Y)
+        # solve is the general, well-conditioned form the dace kernel uses for every NR/NM;
+        # the old ``if NR == NM: inv`` special case only rebound X to a divergent (NR, NR) shape.
+        X = np.linalg.solve(Tz, Y)
         if abs(z) < 1.0:
             X = -X
         P0 += X
