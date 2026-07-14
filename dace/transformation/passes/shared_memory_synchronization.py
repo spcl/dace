@@ -172,7 +172,7 @@ class DefaultSharedMemorySync(ppl.Pass):
                 for subnode, parent in node.all_nodes_recursive():
                     if (isinstance(subnode, AccessNode)
                             and subnode.desc(parent).storage == dtypes.StorageType.GPU_Shared
-                            and any(not edge.data.is_empty() for edge in parent.in_edges(node))):
+                            and any(not edge.data.is_empty() for edge in parent.in_edges(subnode))):
                         return True
 
             elif isinstance(node, NestedSDFG):
