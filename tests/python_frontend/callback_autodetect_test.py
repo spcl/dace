@@ -12,6 +12,10 @@ skip_callbacks_on_nanobind = pytest.mark.skipif(
     dace.Config.get('compiler', 'interface') == 'nanobind',
     reason='nanobind does not support callbacks yet (deferred to part 2 of the port)')
 
+skip_pyobject_return_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind returns arrays only (pyobject returns unsupported by design)')
+
 N = dace.symbol('N')
 
 
@@ -873,6 +877,7 @@ def test_unknown_pyobject():
     assert success_counter == 20
 
 
+@skip_pyobject_return_on_nanobind
 def test_pyobject_return():
     counter = 1
 
@@ -899,6 +904,7 @@ def test_pyobject_return():
     assert obj.q == 2
 
 
+@skip_pyobject_return_on_nanobind
 def test_pyobject_return_tuple():
     counter = 1
 
