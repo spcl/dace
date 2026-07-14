@@ -171,7 +171,14 @@ class LoopFusion(ppl.Pass):
 
     def _fusion_legal(self, first: LoopRegion, second: LoopRegion, s1: SDFGState, s2: SDFGState) -> bool:
         """Whether running ``s1`` then ``s2`` per iteration preserves the value of
-        the two loops run in sequence. See the module docstring for the rule."""
+        the two loops run in sequence. See the module docstring for the rule.
+
+        :param first: The first (surviving) loop; its iterator names the dependence axis.
+        :param second: The second loop, whose body runs after ``first``'s each iteration.
+        :param s1: ``first``'s single compute state.
+        :param s2: ``second``'s single compute state.
+        :returns: ``True`` if fusing is value-preserving, ``False`` otherwise.
+        """
         ivar = first.loop_variable
         classifier = BreakAntiDependence()
         r1, w1 = self._accesses(s1)
@@ -217,13 +224,18 @@ class LoopFusion(ppl.Pass):
         return True
 
     @staticmethod
-    def _merge(sdfg: SDFG, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion) -> None:
+    def _merge(sdfg: SDFG, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion):
         """Append ``second``'s body to ``first``'s and splice ``second`` out.
 
         ``first`` keeps its header and iterator; ``second``'s compute state is
         renamed to ``first``'s iterator and appended after ``first``'s last body
         block. ``second``'s successors are re-homed onto ``first``. The adjacent
         body states are merged by the ``StateFusionExtended`` in the next cleanup.
+
+        :param sdfg: The SDFG owning ``cfg`` (for nested-SDFG parent fixup).
+        :param cfg: The control-flow region holding both loops.
+        :param first: The surviving loop (kept as the fused loop).
+        :param second: The loop whose body is appended and which is then removed.
         """
         v1 = first.loop_variable
         v2 = second.loop_variable

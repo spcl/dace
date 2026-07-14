@@ -149,5 +149,6 @@ if __name__ == "__main__":
     test_refuse_forward_flow_dependence()
     test_refuse_read_behind_anti_dependence()
     test_doall_pair_not_fused()
+    test_fused_loop_blocks_uniquely_named()
     test_refuse_different_iteration_space()
     print("loop_fusion tests ok")
