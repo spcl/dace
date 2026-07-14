@@ -477,6 +477,15 @@ class LoopToMap(xf.MultiStateTransformation):
             in_order_loop_blocks = list(
                 cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
             for block in in_order_loop_blocks:
+                # A symbol read in the block's own dataflow (e.g. a memlet subset ``b[im]``) is read
+                # before any symbol the block assigns on its out-edges; if the loop later reassigns it,
+                # it is loop-carried. The per-edge ``read_symbols()`` below only sees interstate-edge
+                # reads, so fold in these in-state reads.
+                try:
+                    block_reads = {str(s) for s in block.free_symbols}
+                except Exception:
+                    block_reads = set()
+                used_before_assignment |= (block_reads - symbols_that_may_be_used)
                 for e in block.parent_graph.out_edges(block):
                     # Collect read-before-assigned symbols (states are in order; see
                     # blockorder_topological_sort above).
@@ -490,14 +499,18 @@ class LoopToMap(xf.MultiStateTransformation):
                             fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
                         except AttributeError:
                             fsyms = set()
-                        if k in fsyms:
-                            # Self-recurrent assignment (k = f(k), e.g. k = k + inc) is a loop-carried
-                            # recurrence: each iteration reads the previous value, so the loop cannot be
-                            # parallelized -- refuse REGARDLESS of how k is used. Affine induction
-                            # variables are substituted to a closed form upstream, so a self-recurrence
-                            # that survives to here is a genuine carried dependency.
+                        if k in fsyms and k not in symbols_that_may_be_used:
+                            # Self-recurrent assignment (k = f(k), e.g. k = k + inc) whose ``k`` has
+                            # NOT been (re)assigned earlier this iteration is a loop-carried recurrence:
+                            # each iteration reads the previous value, so the loop cannot be
+                            # parallelized. Affine induction variables are substituted to a closed form
+                            # upstream, so a self-recurrence that survives to here is a genuine carried
+                            # dependency. If ``k`` was already assigned earlier in the iteration (e.g.
+                            # reset ``k = 0`` then ``k = k + 1``) it is a loop-local counter, not carried,
+                            # so it is handled by the read-before-assignment check below instead.
                             return refuse(f"self-recurrent carried symbol '{k}' (assignment {k} = {v})")
-                        assigned_symbols.add(k)
+                        if k not in fsyms:
+                            assigned_symbols.add(k)
                     if assigned_symbols & used_before_assignment:
                         return refuse("carried symbol dependency - "
                                       f"{assigned_symbols & used_before_assignment} read before being assigned")

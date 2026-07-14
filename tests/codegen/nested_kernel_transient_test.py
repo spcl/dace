@@ -24,7 +24,15 @@ def _test_kernel_transient(persistent: bool):
     state.add_edge(n, 'A', w, None, dace.Memlet('A'))
 
     if persistent:
-        sdfg.arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        arrays = sdfg.cfg_list[-1].arrays
+        if dace.Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+            # Special case for ExperimentalCUDACodeGen, where transient GPU_Global arrays
+            # Are moved out of the kernel, name is not equal to "gpu_A" anymore, but has the
+            # form local_{counter}_gpuA
+            target_name = next(k for k in arrays if "gpu_A" in k)
+        else:
+            target_name = "gpu_A"
+        arrays[target_name].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -50,7 +58,15 @@ def _test_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        arrays = sdfg.cfg_list[-1].arrays
+        if dace.Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+            # Special case for ExperimentalCUDACodeGen, where transient GPU_Global arrays
+            # Are moved out of the kernel, name is not equal to "gpu_A" anymore, but has the
+            # form local_{counter}_gpuA
+            target_name = next(k for k in arrays if "gpu_A" in k)
+        else:
+            target_name = "gpu_A"
+        arrays[target_name].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -87,7 +103,15 @@ def _test_double_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        arrays = sdfg.cfg_list[-1].arrays
+        if dace.Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+            # Special case for ExperimentalCUDACodeGen, where transient GPU_Global arrays
+            # Are moved out of the kernel, name is not equal to "gpu_A" anymore, but has the
+            # form local_{counter}_gpuA
+            target_name = next(k for k in arrays if "gpu_A" in k)
+        else:
+            target_name = "gpu_A"
+        arrays[target_name].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)

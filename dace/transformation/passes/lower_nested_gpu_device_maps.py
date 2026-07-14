@@ -11,26 +11,17 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NestedGPUDeviceMapLowering(ppl.Pass):
     """
-    for i in dace.map[0:128] @ GPU_Device:
-        for j in dace.map[0:32]  @ GPU_Device:
-            with dace.tasklet:
-                out >> A[i, j]
-                out = 5
-
-        for j in dace.map[33:60]  @ GPU_Device:
-            with dace.tasklet:
-                inp << A[i, j]
-                out >> A[i, j]
-                out = 6 + inp
-
-    Is implement through special codegen features for nested GPU Device maps
-    This should become and IfCheck though
+    Lowers nested ``GPU_Device`` maps (a ``GPU_Device`` map whose body contains further
+    ``GPU_Device`` maps): the outer map is range-expanded to absorb the inner maps' params
+    and each inner body is wrapped in an if-bound-check NSDFG, realizing the nesting through
+    the codegen's special support for nested GPU Device maps.
     """
 
     CATEGORY: str = 'Simplification'
@@ -46,10 +37,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         map_exit = state.exit_node(map_entry)
         map_inner_nodes = {n for n in state.all_nodes_between(map_entry, map_exit)}
         map_inner_edges = state.all_edges(*map_inner_nodes)
-        # Rm all edges
         for e in map_inner_edges:
             state.remove_edge(e)
-        # Rm body nodes
         for n in map_inner_nodes:
             state.remove_node(n)
 
@@ -69,10 +58,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         map_out_edges = state.out_edges(map_exit)
         inputs = {ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None}
         outputs = {oe.data.data for oe in state.out_edges(state.exit_node(map_entry)) if oe.data.data is not None}
-        #assert all({isinstance(ie.src, dace.nodes.AccessNode) for ie in map_in_edges if ie.data is not None}), f"{[ie.src for ie in map_in_edges if ie.data is not None]}"
-        #assert all({isinstance(oe.dst, dace.nodes.AccessNode) for oe in map_out_edges if oe.data is not None}), f"{[oe.dst for oe in map_out_edges if ot.data is not None]}"
 
-        # Inputs -> Map (range)[MapNodes] -> Outputs need to become
         inner_sdfg = SDFG(name=f"if_of_nested_{map_entry.label}")
 
         if_bound_check = ConditionalBlock(label=f"bound_check_{map_entry.label}", sdfg=inner_sdfg, parent=inner_sdfg)
@@ -93,13 +79,14 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         assert if_body_state in if_body.nodes()
         assert if_body_state in inner_sdfg.all_states()
 
-        # inout nodes can be written inside kernels (not inside nsdfg)
+        # inout nodes can be written inside kernels (not inside nsdfg). ``inputs``/``outputs``
+        # hold data names (strings), so key off ``n.data`` -- not the AccessNode itself.
         for n in map_inner_nodes:
             if isinstance(n, dace.nodes.AccessNode) and state.sdfg.arrays[n.data].transient is False:
-                if n not in inputs and state.out_degree(n) > 0:
-                    inputs.add(n)
-                if n not in outputs and state.in_degree(n) > 0:
-                    outputs.add(n)
+                if n.data not in inputs and state.out_degree(n) > 0:
+                    inputs.add(n.data)
+                if n.data not in outputs and state.in_degree(n) > 0:
+                    outputs.add(n.data)
 
         nsdfg = state.add_nested_sdfg(
             sdfg=inner_sdfg,
@@ -107,7 +94,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             outputs=outputs,
         )
 
-        # Connect nsdfg
         for ie in map_in_edges:
             if ie.data.data is not None:
                 state.add_edge(ie.src, ie.src_conn, nsdfg, ie.data.data,
@@ -133,6 +119,15 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             if sym not in nsdfg.symbol_mapping:
                 nsdfg.symbol_mapping[sym] = sym
 
+        # The inner map's iteration params (``__i``, ``__j``) are referenced by the if-bound-check,
+        # but ``symbols_defined_at`` may miss them (stale scope cache after the in-place
+        # ``map.params``/``map.range`` mutation). Thread them explicitly for a complete symbol_mapping.
+        for sym in map_entry.map.params:
+            if sym not in inner_sdfg.symbols:
+                inner_sdfg.add_symbol(sym, dace.dtypes.int32)
+            if sym not in nsdfg.symbol_mapping:
+                nsdfg.symbol_mapping[sym] = sym
+
         # Copy over nodes (and generate accesses when needed)
         node_map = {n: copy.deepcopy(n) for n in map_inner_nodes}
         for v in node_map.values():
@@ -153,7 +148,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             else:
                 assert False
 
-        # Rm map from the state
         self._rm_map(state, map_entry)
 
         sdutil.set_nested_sdfg_parent_references(state.sdfg)
@@ -163,31 +157,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                    # Nested GPU Device map move the map to an If
-                    # Move the body of the map to an If
                     self._move_map_to_if(state, node)
 
-    def _get_device_map_parents(self, state: SDFGState, cur_map: dace.nodes.MapEntry, gpu_dev_map: dace.nodes.MapEntry):
-        sdict = state.scope_dict()
-        cur_parent = sdict[cur_map]
-        parents = [cur_parent]
-        while cur_parent is not None:
-            cur_parent = sdict[cur_parent]
-            if cur_parent is not None:
-                parents.append(cur_parent)
-
-        num_dev_maps = len({
-            k
-            for k in parents
-            if isinstance(k, dace.nodes.MapEntry) and k.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-        })
-        if gpu_dev_map is not None:
-            assert gpu_dev_map in parents, f"{gpu_dev_map} not in {parents}"
-
-        return num_dev_maps
-
     def _get_next_level_maps(self, state: SDFGState, gpu_dev_map: dace.nodes.MapEntry):
-        # Gets all the maps of the next depth
         # If inside same nsdfg, then it means no parent
         gpu_maps_between = {
             (state, n)
@@ -202,40 +174,35 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 if isinstance(n, dace.nodes.NestedSDFG)
             }
 
-            # While candidates are zero increase depth
-            # Iterate the graphs one by one if we have a lot of GPU device maps in the NestedSDFG
-            # Then we first process top-level gpu device maps one by one
-            # And as long as we have nestedSDFGs or GPU device maps we iterate one level further
+            # Descend one NSDFG level at a time until the next level of map candidates is found.
             def collect_map_candidates_and_new_nsdfg(all_nsdfgs):
                 new_all_nsdfgs = set()
                 next_level_map_candidates = set()
                 for nsdfg in all_nsdfgs:
                     for state in nsdfg.sdfg.all_states():
                         for node in state.nodes():
-                            if isinstance(node, dace.nodes.MapEntry):
+                            if (isinstance(node, dace.nodes.MapEntry)
+                                    and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
                                 next_level_map_candidates.add((state, node))
                         new_all_nsdfgs = new_all_nsdfgs.union(
                             {n
                              for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)})
                 return new_all_nsdfgs, next_level_map_candidates
 
-            all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
-
-            while len(next_level_map_candidates) == 0:
+            # Descend NSDFG levels until a level yields map candidates or there are no deeper NSDFGs.
+            while True:
                 all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
-
-                # If we exchaust all nsdfgs it is time to stop
-                if len(all_nsdfgs) == 0:
+                if next_level_map_candidates or not all_nsdfgs:
                     break
 
             next_level_maps = {(state, m)
                                for (state, m) in next_level_map_candidates
-                               if self._get_device_map_parents(state, m, None) == 0}
+                               if len(enclosing_map_chain(state, m, dace.dtypes.ScheduleType.GPU_Device)) == 0}
             return next_level_maps
         else:
             next_level_maps = {(state, m)
                                for (state, m) in gpu_maps_between
-                               if self._get_device_map_parents(state, m, gpu_dev_map) == 1}
+                               if len(enclosing_map_chain(state, m, dace.dtypes.ScheduleType.GPU_Device)) == 1}
             return next_level_maps
 
     def _apply(self, sdfg: SDFG) -> int:
@@ -275,15 +242,28 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                         ])
 
                 # Append the new dimensions
-                new_range_list = []
-                for (b, e, s) in gpu_dev_map.map.range:
-                    new_range_list.append((b, e, s))
+                new_range_list = list(gpu_dev_map.map.range)
                 for k, v in new_ranges_to_add.items():
                     gpu_dev_map.map.params.append(k)
                     assert len(v) == 1
                     (b, e, s) = v[0]
                     new_range_list.append((b, e, s))
                 gpu_dev_map.map.range = dace.subsets.Range(new_range_list)
+
+                # Thread the newly added outer-map params up through every NSDFG between the outer
+                # ``GPU_Device`` map and each inner kernel state; otherwise validation fires
+                # ``Missing symbols on nested SDFG: ['__i', '__j']``.
+                new_symbol_names = list(new_ranges_to_add.keys())
+                for map_state, _inner_gpu_map in next_level_maps:
+                    cur_sdfg = map_state.sdfg
+                    while cur_sdfg.parent_nsdfg_node is not None and cur_sdfg is not sdfg:
+                        nsdfg_node = cur_sdfg.parent_nsdfg_node
+                        for sym in new_symbol_names:
+                            if sym not in cur_sdfg.symbols:
+                                cur_sdfg.add_symbol(sym, dace.dtypes.int32)
+                            if sym not in nsdfg_node.symbol_mapping:
+                                nsdfg_node.symbol_mapping[sym] = sym
+                        cur_sdfg = cur_sdfg.parent_sdfg
 
                 for map_state, inner_gpu_map in next_level_maps:
                     self._move_map_to_if(map_state, inner_gpu_map)

@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the ``InsertExplicitCopies`` pass: builder-API structural cases plus Polybench numerical checks."""
+"""Tests for the ``InsertExplicitCopies`` pass."""
 import copy as _copy
-import math
 
 import dace
 import numpy as np
@@ -10,6 +9,10 @@ from dace import nodes
 from dace.memlet import Memlet
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+
+from tests.corpus.polybench.datamining.correlation import correlation, init_array as _correlation_init_array
+from tests.corpus.polybench.datamining.covariance import covariance, init_array as _covariance_init_array
+from tests.corpus.polybench.stencils.fdtd_2d import fdtd2d, init_array as _fdtd2d_init_array
 
 
 def _count_copy_nodes(sdfg):
@@ -43,12 +46,7 @@ def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
 
 
 def _assert_no_copynd(sdfg: dace.SDFG) -> None:
-    """Assert ``generate_code`` emits no ``dace::CopyND`` template instantiations.
-
-    The libnodes are designed to displace the runtime CopyND fallback entirely.
-    Generated code for any SDFG run through ``InsertExplicitCopies`` + the
-    libnode expansions should reach zero ``CopyND<`` references.
-    """
+    """Assert ``generate_code`` emits no ``dace::CopyND`` template instantiations."""
     sdfg.expand_library_nodes()
     for obj in sdfg.generate_code():
         code = obj.code if isinstance(obj.code, str) else getattr(obj.code, 'code', str(obj.code))
@@ -72,14 +70,13 @@ def _assert_copy_storages(sdfg, src_storage, dst_storage):
     found = False
     for n, parent in sdfg.all_nodes_recursive():
         if isinstance(n, CopyLibraryNode):
-            assert n.src_storage(parent, parent.sdfg) == src_storage
-            assert n.dst_storage(parent, parent.sdfg) == dst_storage
+            assert n.src_storage(parent) == src_storage
+            assert n.dst_storage(parent) == dst_storage
             found = True
     assert found, "No CopyLibraryNode found in SDFG"
 
 
 def _compile_and_run(sdfg, inputs):
-    """Expand library nodes, compile, and run with ``inputs`` as kwargs."""
     sdfg.expand_library_nodes()
     exe = sdfg.compile()
     exe(**inputs)
@@ -128,8 +125,7 @@ def test_insert_cpu_to_cpu_2d_slice():
 ],
                          ids=["data_is_dst", "data_is_src"])
 def test_insert_other_subset_data_convention(sdfg_name, memlet):
-    """Either memlet convention (``data=src`` or ``data=dst``) yields the same copy ``_in=A[2:10]``,
-    ``_out=B[0:8]`` with no ``other_subset``."""
+    """Both memlet conventions yield the same copy ``_in=A[2:10]``, ``_out=B[0:8]`` with no ``other_subset``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, st, _, _ = _build_copy_sdfg(sdfg_name, [("A", [20], cpu), ("B", [20], cpu)], memlet)
 
@@ -262,10 +258,8 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
     gpu = dace.StorageType.GPU_Global
 
     sdfg = dace.SDFG("scalar_copies")
-    # Cross-CPU storage scalars (CPU_Heap -> CPU_Pinned, single element).
     sdfg.add_array("c_in", [1], dace.float64, cpu)
     sdfg.add_array("c_out", [1], dace.float64, pinned)
-    # Same-side GPU register scalars.
     sdfg.add_array("r_in", [1], dace.float64, register, transient=True)
     sdfg.add_array("r_out", [1], dace.float64, register, transient=True)
 
@@ -286,7 +280,6 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
         "Single-element copies should expand to a direct Tasklet, not a NestedSDFG. "
         f"Found {_count_nested_sdfgs(sdfg)} NestedSDFG(s) after expansion.")
 
-    # Sanity: the expansions left tasklets behind that do the copy assignment.
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
     assert any(
         "_cpy_out = _cpy_in" in t.code.as_string
@@ -304,79 +297,76 @@ def test_insert_validates_after_pass():
     sdfg.validate()
 
 
-def test_insert_view_dst_round_trip_lifts_source_edge():
-    """An AN -> View -> AN round-trip collapses so the source array's single out-edge targets the
-    ``CopyLibraryNode`` and the View is removed."""
+def _make_view_round_trip_sdfg(name, *, dst_side=False):
+    """Build a round-trip through ``A_view``, a 5x6 view of the 4x5x6 array ``A``.
+
+    Source-side (default) flows ``A[1] -> A_view -> other``; dst-side flows
+    ``other -> A_view -> A[1]`` (view aliases the write target).
+
+    :returns: ``(sdfg, state, a, view, other)`` -- ``a`` is the 4x5x6 array, ``other`` the 5x6 one.
+    """
     cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_dst_intermediate")
+    sdfg = dace.SDFG(name)
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
     sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
-    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
-
+    sdfg.add_array("other", [5, 6], dace.float64, storage=cpu)
     st = sdfg.add_state("s")
-    a = st.add_access("A")
-    v = st.add_access("A_view")
-    out = st.add_access("sink")
-    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
-    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
+    a, v, o = st.add_access("A"), st.add_access("A_view"), st.add_access("other")
+    if dst_side:
+        st.add_edge(o, None, v, None, Memlet("other[0:5, 0:6]"))
+        st.add_edge(v, None, a, None, Memlet("A[1, 0:5, 0:6]"))
+    else:
+        st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
+        st.add_edge(v, None, o, None, Memlet("A_view[0:5, 0:6]"))
+    return sdfg, st, a, v, o
 
+
+def test_insert_view_src_round_trip_lifts_movement_edge():
+    """``A -> A_view -> sink``: alias edge kept, movement edge lifted to ``A -> A_view -> Copy -> sink``."""
+    sdfg, st, a, v, out = _make_view_round_trip_sdfg("view_src_movement")
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    out_edges = list(st.out_edges(a))
-    assert len(out_edges) == 1 and isinstance(out_edges[0].dst, CopyLibraryNode)
-    assert v not in st.nodes()
-
-
-def test_insert_view_src_round_trip_lifts_destination_edge():
-    """An AN -> View -> AN round-trip collapses so the sink's single in-edge comes from the
-    ``CopyLibraryNode`` and the View is removed."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_src_intermediate")
-    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
-    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
-    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
-
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    v = st.add_access("A_view")
-    out = st.add_access("sink")
-    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
-    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-
-    in_edges = list(st.in_edges(out))
-    assert len(in_edges) == 1 and isinstance(in_edges[0].src, CopyLibraryNode)
-    assert v not in st.nodes()
-
-
-def test_insert_view_round_trip_collapses_to_single_copy():
-    """An AN -> View -> AN round-trip yields exactly one ``CopyLibraryNode`` and the now-unused View is removed."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_round_trip")
-    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
-    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
-    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
-
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    v = st.add_access("A_view")
-    out = st.add_access("sink")
-    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
-    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-
+    assert v in st.nodes(), "the view must be preserved as a copy endpoint"
     assert _count_copy_nodes(sdfg) == 1
-    assert v not in st.nodes()
+    a_out = list(st.out_edges(a))
+    assert len(a_out) == 1 and a_out[0].dst is v, "alias edge A -> A_view must be untouched"
+    v_out = list(st.out_edges(v))
+    assert len(v_out) == 1 and isinstance(v_out[0].dst, CopyLibraryNode)
+    assert isinstance(list(st.in_edges(out))[0].src, CopyLibraryNode)
+
+
+def test_insert_view_src_round_trip_numerical():
+    """The copy lifted onto a source-side view reads the viewed slice correctly end to end."""
+    sdfg, st, a, v, out = _make_view_round_trip_sdfg("view_src_numerical")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_copynd(sdfg)
+
+    A = np.arange(4 * 5 * 6, dtype=np.float64).reshape(4, 5, 6).copy()
+    other = np.zeros((5, 6), dtype=np.float64)
+    sdfg(A=A, other=other)
+    np.testing.assert_array_equal(other, A[1])
+
+
+def test_insert_view_dst_round_trip_numerical():
+    """``other -> A_view -> A``: the view aliases the write target, is preserved, and data lands in ``A[1]``."""
+    sdfg, st, a, v, o = _make_view_round_trip_sdfg("view_dst_numerical", dst_side=True)
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert v in st.nodes(), "the view must be preserved as a copy endpoint"
+    assert _count_copy_nodes(sdfg) == 1
+
+    _assert_no_copynd(sdfg)
+    other = np.arange(5 * 6, dtype=np.float64).reshape(5, 6).copy()
+    A = np.zeros((4, 5, 6), dtype=np.float64)
+    sdfg(A=A, other=other)
+    np.testing.assert_array_equal(A[1], other)
+    assert np.all(A[0] == 0) and np.all(A[2:] == 0)
 
 
 def test_insert_self_copy_subset_is_dst_side():
-    """On a self-copy ``p -> p`` the ``subset`` side maps to the ``_out`` (dst) edge and ``other_subset`` to
-    ``_in`` (src); reversing them would silently produce a backwards copy."""
+    """Self-copy ``p -> p``: ``subset`` maps to ``_out`` (dst), ``other_subset`` to ``_in`` (src); reversing them
+    would silently produce a backwards copy."""
     sdfg = dace.SDFG("self_copy_subset_dst")
     sdfg.add_array("p", [4, 5], dace.float64)
 
@@ -399,8 +389,7 @@ def test_insert_self_copy_subset_is_dst_side():
 
 
 def _check_reshape_copy(sdfg, dst_name, dst_shape):
-    """Assert the SDFG validates and the single lifted ``CopyLibraryNode``'s output memlet spans the full
-    ``dst_shape``."""
+    """Assert the SDFG validates and the single lifted ``CopyLibraryNode`` output memlet spans the full ``dst_shape``."""
     sdfg.validate()
     copies = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)]
     assert len(copies) == 1, f"expected exactly one CopyLibraryNode, got {len(copies)}"
@@ -410,6 +399,16 @@ def _check_reshape_copy(sdfg, dst_name, dst_shape):
     assert out_e.data.data == dst_name
     assert str(out_e.data.subset) == ', '.join(
         f"0:{s}" for s in dst_shape), (f"dst memlet subset should span full {dst_shape}, got {out_e.data.subset}")
+
+
+def _run_reshape_copy_test(prefix, src_shape, dst_shape):
+    """Build ``A[full] -> B`` (no other_subset), lift, and assert the derived destination range spans all of ``B``."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg, _, _, _ = _build_copy_sdfg(f"{prefix}_{len(src_shape)}_to_{len(dst_shape)}", [("A", src_shape, cpu),
+                                                                                        ("B", dst_shape, cpu)],
+                                     Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    _check_reshape_copy(sdfg, "B", dst_shape)
 
 
 @pytest.mark.parametrize(
@@ -422,20 +421,8 @@ def _check_reshape_copy(sdfg, dst_name, dst_shape):
         ([8, 12, 5, 3], [1440]),  # full flatten
     ])
 def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
-    """When the destination shape collapses contiguous source dims, the pass derives a full-destination subset
-    rather than reusing the rank-mismatched ``src_subset``."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG(f"reshape_collapse_{len(src_shape)}_to_{len(dst_shape)}")
-    sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
-    sdfg.add_array("B", dst_shape, dace.float64, storage=cpu)
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    b = st.add_access("B")
-    # No other_subset, so the pass must derive the destination range itself.
-    st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    _check_reshape_copy(sdfg, "B", dst_shape)
+    """Collapsing contiguous source dims derives a full-destination subset, not the rank-mismatched ``src_subset``."""
+    _run_reshape_copy_test("reshape_collapse", src_shape, dst_shape)
 
 
 @pytest.mark.parametrize(
@@ -447,19 +434,8 @@ def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
         ([6, 20], [2, 3, 4, 5]),  # double split
     ])
 def test_insert_consecutive_split_reshape(src_shape, dst_shape):
-    """The inverse split case: a higher-rank destination reached by splitting source dims is handled by the same
-    symmetric code path."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG(f"reshape_split_{len(src_shape)}_to_{len(dst_shape)}")
-    sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
-    sdfg.add_array("B", dst_shape, dace.float64, storage=cpu)
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    b = st.add_access("B")
-    st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    _check_reshape_copy(sdfg, "B", dst_shape)
+    """Inverse split case: a higher-rank destination by splitting source dims, via the same symmetric code path."""
+    _run_reshape_copy_test("reshape_split", src_shape, dst_shape)
 
 
 @pytest.mark.parametrize(
@@ -470,36 +446,14 @@ def test_insert_consecutive_split_reshape(src_shape, dst_shape):
         ([1, 96, 5, 3], [8, 12, 5, 3]),  # leading 1 + split
     ])
 def test_insert_reshape_with_squeezed_ones(src_shape, dst_shape):
-    """Unit-length dimensions on either side are ignored when matching a consecutive collapse or split."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG(f"reshape_squeeze_{len(src_shape)}_to_{len(dst_shape)}")
-    sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
-    sdfg.add_array("B", dst_shape, dace.float64, storage=cpu)
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    b = st.add_access("B")
-    st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
-
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    _check_reshape_copy(sdfg, "B", dst_shape)
+    """Unit-length dims on either side are ignored when matching a consecutive collapse or split."""
+    _run_reshape_copy_test("reshape_squeeze", src_shape, dst_shape)
 
 
 def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
-    """Repeated ``apply_pass`` calls do not accumulate extra ``CopyLibraryNode``s; runs after the first are
-    no-ops since the round-trip pattern is gone."""
-    cpu = dace.StorageType.CPU_Heap
-    sdfg = dace.SDFG("view_rewrite_idempotent")
-    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
-    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
-    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
-
-    st = sdfg.add_state("s")
-    a = st.add_access("A")
-    v = st.add_access("A_view")
-    out = st.add_access("sink")
-    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
-    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
-
+    """Repeated ``apply_pass`` calls do not accumulate extra ``CopyLibraryNode``s; the only remaining ``AN -> AN``
+    edge is the view's alias edge, so later runs are no-ops."""
+    sdfg, st, _, _, _ = _make_view_round_trip_sdfg("view_rewrite_idempotent")
     p = InsertExplicitCopies()
     p.apply_pass(sdfg, {})
     n_after_first = _count_copy_nodes(sdfg)
@@ -549,47 +503,27 @@ def test_iec_skips_array_to_view_edge():
     assert len(in_e) == 1 and in_e[0].src is a
 
 
-def test_iec_collapses_round_trip_view():
-    """An A -> View -> sink round-trip collapses to one ``CopyLibraryNode``, removes the View, and stays
-    numerically correct."""
-    sdfg = dace.SDFG('collapse_round_trip_view')
-    sdfg.add_array('A', [4, 5, 6], dace.float64)
-    sdfg.add_view('Av', [5, 6], dace.float64)
-    sdfg.add_array('sink', [5, 6], dace.float64)
-    state = sdfg.add_state()
-    a = state.add_access('A')
-    v = state.add_access('Av')
-    out = state.add_access('sink')
-    state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
-    state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
+def test_iec_round_trip_view_lifts_one_copy():
+    """An A -> View -> sink round-trip lifts one ``CopyLibraryNode``, keeps the View, and stays correct."""
+    sdfg, state, _, v, _ = _make_view_round_trip_sdfg("round_trip_view")
     InsertExplicitCopies().apply_pass(sdfg, {})
     assert _count_copy_nodes(sdfg) == 1
-    assert v not in state.nodes()
+    assert v in state.nodes()
     sdfg.validate()
     A = np.copy(np.arange(120, dtype=np.float64).reshape(4, 5, 6))
-    sink = np.zeros((5, 6), dtype=np.float64)
-    sdfg(A=A, sink=sink)
-    assert np.array_equal(sink, A[1])
+    other = np.zeros((5, 6), dtype=np.float64)
+    sdfg(A=A, other=other)
+    assert np.array_equal(other, A[1])
 
 
-def test_iec_collapse_keeps_view_with_other_consumers():
-    """A round-trip collapse keeps the View when it still has another consumer edge."""
-    sdfg = dace.SDFG('collapse_keeps_view_with_other_consumers')
-    sdfg.add_array('A', [4, 5, 6], dace.float64)
-    sdfg.add_view('Av', [5, 6], dace.float64)
-    sdfg.add_array('sink', [5, 6], dace.float64)
-    sdfg.add_array('also_reads', [5, 6], dace.float64)
-    state = sdfg.add_state()
-    a = state.add_access('A')
-    v = state.add_access('Av')
-    out = state.add_access('sink')
-    other = state.add_access('also_reads')
-    state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
-    state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
-    state.add_edge(v, None, other, None, Memlet('Av[0:5, 0:6]'))
+def test_iec_view_multiple_consumers_each_lifted():
+    """Each movement edge off a multiply-consumed View is lifted; the View is kept."""
+    sdfg, state, _, v, _ = _make_view_round_trip_sdfg("view_multiple_consumers")
+    sdfg.add_array("also_reads", [5, 6], dace.float64, storage=dace.StorageType.CPU_Heap)
+    state.add_edge(v, None, state.add_access("also_reads"), None, Memlet("A_view[0:5, 0:6]"))
     InsertExplicitCopies().apply_pass(sdfg, {})
-    # v survives because v->also_reads still consumes it after the collapse.
     assert v in state.nodes()
+    assert _count_copy_nodes(sdfg) == 2
     sdfg.validate()
 
 
@@ -606,75 +540,27 @@ def test_iec_skips_reshape_view_edge():
     assert _count_copy_nodes(sdfg) == 0
 
 
-def test_iec_array_to_array_constant_first_dim():
-    """A rank-mismatched copy whose extra leading dim is a constant index collapses to matching rank and copies
-    correctly."""
-    sdfg = dace.SDFG('const_first_dim_copy')
-    sdfg.add_array('src', [5, 4, 3], dace.float64)
-    sdfg.add_array('dst', [4, 3], dace.float64)
-    state = sdfg.add_state()
-    s = state.add_access('src')
-    d = state.add_access('dst')
-    state.add_edge(s, None, d, None, Memlet(data='src', subset='2, 0:4, 0:3', other_subset='0:4, 0:3'))
+@pytest.mark.parametrize(
+    "name,src_shape,dst_shape,subset,other_subset,expected",
+    [
+        # constant-index dims collapse to matching rank...
+        ("const_first", [5, 4, 3], [4, 3], "2, 0:4, 0:3", "0:4, 0:3", lambda s: s[2]),
+        ("const_middle", [4, 5, 3], [4, 3], "0:4, 2, 0:3", "0:4, 0:3", lambda s: s[:, 2, :]),
+        # ...and volume-equal reshapes take the MappedTasklet rank-mismatch path.
+        ("rank_change", [2, 3, 4], [8, 3], "0:2, 0:3, 0:4", "0:8, 0:3", lambda s: s.reshape(8, 3)),
+        ("flatten", [4, 3], [12], "0:4, 0:3", "0:12", lambda s: s.reshape(12)),
+    ])
+def test_iec_array_to_array_rank_mismatch(name, src_shape, dst_shape, subset, other_subset, expected):
+    """Rank-mismatched copies (constant-index collapse or volume-equal reshape) copy correctly."""
+    default = dace.StorageType.Default
+    sdfg, _, _, _ = _build_copy_sdfg(f"a2a_{name}", [("src", src_shape, default), ("dst", dst_shape, default)],
+                                     Memlet(data="src", subset=subset, other_subset=other_subset))
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
-    src = np.copy(np.arange(60, dtype=np.float64).reshape(5, 4, 3))
-    dst = np.zeros((4, 3), dtype=np.float64)
+    src = np.copy(np.arange(int(np.prod(src_shape)), dtype=np.float64).reshape(src_shape))
+    dst = np.zeros(dst_shape, dtype=np.float64)
     sdfg(src=src, dst=dst)
-    assert np.array_equal(dst, src[2])
-
-
-def test_iec_array_to_array_constant_middle_dim():
-    """A rank-mismatched copy whose extra middle dim is a constant index collapses to matching rank and copies
-    correctly."""
-    sdfg = dace.SDFG('const_middle_dim_copy')
-    sdfg.add_array('src', [4, 5, 3], dace.float64)
-    sdfg.add_array('dst', [4, 3], dace.float64)
-    state = sdfg.add_state()
-    s = state.add_access('src')
-    d = state.add_access('dst')
-    state.add_edge(s, None, d, None, Memlet(data='src', subset='0:4, 2, 0:3', other_subset='0:4, 0:3'))
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-    src = np.copy(np.arange(60, dtype=np.float64).reshape(4, 5, 3))
-    dst = np.zeros((4, 3), dtype=np.float64)
-    sdfg(src=src, dst=dst)
-    assert np.array_equal(dst, src[:, 2, :])
-
-
-def test_iec_array_to_array_rank_change_uses_mapped_tasklet():
-    """A volume-equal rank-changing copy with no constant dim takes the ``MappedTasklet`` rank-mismatch path and
-    copies correctly."""
-    sdfg = dace.SDFG('rank_change_copynd')
-    sdfg.add_array('src', [2, 3, 4], dace.float64)
-    sdfg.add_array('dst', [8, 3], dace.float64)
-    state = sdfg.add_state()
-    s = state.add_access('src')
-    d = state.add_access('dst')
-    state.add_edge(s, None, d, None, Memlet(data='src', subset='0:2, 0:3, 0:4', other_subset='0:8, 0:3'))
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-    src = np.copy(np.arange(24, dtype=np.float64).reshape(2, 3, 4))
-    dst = np.zeros((8, 3), dtype=np.float64)
-    sdfg(src=src, dst=dst)
-    assert np.array_equal(dst, src.reshape(8, 3))
-
-
-def test_iec_array_to_array_flatten_uses_mapped_tasklet():
-    """A 2D -> 1D flatten copy takes the ``MappedTasklet`` rank-mismatch path and copies correctly."""
-    sdfg = dace.SDFG('flatten_copynd')
-    sdfg.add_array('src', [4, 3], dace.float64)
-    sdfg.add_array('dst', [12], dace.float64)
-    state = sdfg.add_state()
-    s = state.add_access('src')
-    d = state.add_access('dst')
-    state.add_edge(s, None, d, None, Memlet(data='src', subset='0:4, 0:3', other_subset='0:12'))
-    InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
-    src = np.copy(np.arange(12, dtype=np.float64).reshape(4, 3))
-    dst = np.zeros(12, dtype=np.float64)
-    sdfg(src=src, dst=dst)
-    assert np.array_equal(dst, src.reshape(12))
+    assert np.array_equal(dst, expected(src))
 
 
 @dace.program
@@ -713,11 +599,9 @@ def test_iec_reinterpret_does_not_lift_view():
     assert np.array_equal(A, expected)
 
 
-# Map-staging lift: AN -> MapEntry -> AN and AN -> MapExit -> AN copies are
-# rewritten to put a CopyLibraryNode INSIDE the map scope, wired directly to
-# the map node's connector. Views on the outer side stay in place. Chained
-# MapEntries / MapExits are followed via memlet_path. Generated code emits
-# no CopyND template instantiations.
+# Map-staging lift: AN -> MapEntry/MapExit -> AN copies put a CopyLibraryNode INSIDE the map
+# scope, wired directly to the map connector; outer-side Views stay in place; chained
+# MapEntries/MapExits are followed via memlet_path; generated code emits no CopyND.
 
 _CPU = dace.dtypes.StorageType.CPU_Heap
 _N_STAGE = 128
@@ -794,8 +678,8 @@ def _assert_lifted_libnode(state, side: str, expected_scope=None):
 
     :param side: ``'in'`` for stage-in (libnode input edge from MapEntry) or
         ``'out'`` for stage-out (libnode output edge to MapExit).
-    :param expected_scope: optional MapEntry node identity to require for the
-        libnode's enclosing scope; when ``None``, any MapEntry passes.
+    :param expected_scope: optional MapEntry to require for the libnode's
+        enclosing scope; when ``None``, any MapEntry passes.
     :returns: ``(libnode, enclosing_map_entry)``.
     """
     cn, parent = _find_libnode_and_scope(state)
@@ -869,59 +753,55 @@ def test_lift_stage_out_copy_through_view():
     _run_and_check(sdfg, lambda A: A + 1.0)
 
 
-def test_lift_stage_in_copy_chained_map_entries():
-    """``A -> ME1 -> ME2 -> local``: lift through nested MapEntries; libnode at innermost scope."""
+def _build_chained_stage_sdfg(name, *, stage_in):
+    """2-level tiled map nest with a chained stage-in (``A -> ME1 -> ME2 -> local``) or
+    stage-out (``local -> MX2 -> MX1 -> B``) copy through the inner-block scope.
+
+    :returns: ``(sdfg, state, inner_block_entry)`` -- the inner-block map (ME2), where the
+        lifted libnode is expected to land.
+    """
     N, TILE, INNER = 64, 16, 4
-    sdfg = dace.SDFG("stage_in_nested")
+    sdfg = dace.SDFG(name)
     sdfg.add_array("A", [N], dace.float64, storage=_CPU)
     sdfg.add_array("B", [N], dace.float64, storage=_CPU)
     sdfg.add_array("local", [INNER], dace.float64, storage=_CPU, transient=True)
     state = sdfg.add_state("s")
-    a = state.add_access("A")
-    b = state.add_access("B")
-    local = state.add_access("local")
+    a, b, local = state.add_access("A"), state.add_access("B"), state.add_access("local")
     me1, mx1 = state.add_map("outer", {"bi": f"0:{N}:{TILE}"})
     me2, mx2 = state.add_map("inner_block", {"si": f"0:{TILE}:{INNER}"})
-    # Stage-in flows through both MapEntries down to `local`.
-    state.add_memlet_path(a, me1, me2, local, memlet=Memlet(f"A[bi+si:bi+si+{INNER}]"))
     ime, imx = state.add_map("inner", {"ti": f"0:{INNER}"})
     t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
-    state.add_memlet_path(local, ime, t, dst_conn="_in", memlet=Memlet("local[ti]"))
-    state.add_memlet_path(t, imx, mx2, mx1, b, src_conn="_out", memlet=Memlet("B[bi+si+ti]"))
+    if stage_in:
+        state.add_memlet_path(a, me1, me2, local, memlet=Memlet(f"A[bi+si:bi+si+{INNER}]"))
+        state.add_memlet_path(local, ime, t, dst_conn="_in", memlet=Memlet("local[ti]"))
+        state.add_memlet_path(t, imx, mx2, mx1, b, src_conn="_out", memlet=Memlet("B[bi+si+ti]"))
+    else:
+        state.add_memlet_path(a, me1, me2, ime, t, dst_conn="_in", memlet=Memlet("A[bi+si+ti]"))
+        state.add_memlet_path(t, imx, local, src_conn="_out", memlet=Memlet("local[ti]"))
+        state.add_memlet_path(local, mx2, mx1, b, memlet=Memlet(f"B[bi+si:bi+si+{INNER}]"))
+    return sdfg, state, me2
 
+
+def test_lift_stage_in_copy_chained_map_entries():
+    """``A -> ME1 -> ME2 -> local``: lift through nested MapEntries; libnode at innermost scope."""
+    sdfg, state, me2 = _build_chained_stage_sdfg("stage_in_nested", stage_in=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
     _assert_lifted_libnode(state, side="in", expected_scope=me2)
     _assert_no_copynd(sdfg)
-    A = np.arange(N, dtype=np.float64)
-    B = np.zeros(N, dtype=np.float64)
+    A = np.arange(64, dtype=np.float64)
+    B = np.zeros(64, dtype=np.float64)
     sdfg(A=A, B=B)
     np.testing.assert_array_equal(B, A + 1.0)
 
 
 def test_lift_stage_out_copy_chained_map_exits():
     """Symmetric: ``local -> MX2 -> MX1 -> B`` -- libnode at innermost scope, wired directly to MX2."""
-    N, TILE, INNER = 64, 16, 4
-    sdfg = dace.SDFG("stage_out_nested")
-    sdfg.add_array("A", [N], dace.float64, storage=_CPU)
-    sdfg.add_array("B", [N], dace.float64, storage=_CPU)
-    sdfg.add_array("local", [INNER], dace.float64, storage=_CPU, transient=True)
-    state = sdfg.add_state("s")
-    a = state.add_access("A")
-    b = state.add_access("B")
-    local = state.add_access("local")
-    me1, mx1 = state.add_map("outer", {"bi": f"0:{N}:{TILE}"})
-    me2, mx2 = state.add_map("inner_block", {"si": f"0:{TILE}:{INNER}"})
-    ime, imx = state.add_map("inner", {"ti": f"0:{INNER}"})
-    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
-    state.add_memlet_path(a, me1, me2, ime, t, dst_conn="_in", memlet=Memlet("A[bi+si+ti]"))
-    state.add_memlet_path(t, imx, local, src_conn="_out", memlet=Memlet("local[ti]"))
-    state.add_memlet_path(local, mx2, mx1, b, memlet=Memlet(f"B[bi+si:bi+si+{INNER}]"))
-
+    sdfg, state, me2 = _build_chained_stage_sdfg("stage_out_nested", stage_in=False)
     InsertExplicitCopies().apply_pass(sdfg, {})
     _assert_lifted_libnode(state, side="out", expected_scope=me2)
     _assert_no_copynd(sdfg)
-    A = np.arange(N, dtype=np.float64)
-    B = np.zeros(N, dtype=np.float64)
+    A = np.arange(64, dtype=np.float64)
+    B = np.zeros(64, dtype=np.float64)
     sdfg(A=A, B=B)
     np.testing.assert_array_equal(B, A + 1.0)
 
@@ -976,14 +856,11 @@ def test_lift_stage_in_copy_with_nested_sdfg_consumer():
 
 
 # Polybench-derived tests: the pass must preserve numerical output on real programs.
-
-_ = None  # needed for dace.map range syntax
-_DATATYPE = dace.float64
+# Init wrappers allocate the arrays and delegate to the canonical programs' ``init_array``.
 
 
 def _run_and_compare(program, init_fn, check_arrays, sizes, name):
-    """Run a DaCe program before and after InsertExplicitCopies,
-    assert numerical correctness."""
+    """Run a program before and after InsertExplicitCopies, asserting numerical correctness."""
     sdfg_ref = program.to_sdfg(simplify=True)
     ref_exe = sdfg_ref.compile()
     ref_arrays = init_fn(**sizes)
@@ -1006,219 +883,64 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
                                    err_msg=f"{name}: array '{arr_name}' mismatch after pass")
 
 
-NX = dace.symbol('NX')
-NY = dace.symbol('NY')
-TMAX = dace.symbol('TMAX')
-
-
-@dace.program(_DATATYPE[NX, NY], _DATATYPE[NX, NY], _DATATYPE[NX, NY], _DATATYPE[TMAX])
-def fdtd2d_v(ex, ey, hz, _fict_):
-    for t in range(TMAX):
-
-        @dace.map
-        def col0(j: _[0:NY]):
-            fict << _fict_[t]
-            out >> ey[0, j]
-            out = fict
-
-        @dace.map
-        def update_ey(i: _[1:NX], j: _[0:NY]):
-            eyin << ey[i, j]
-            hz1 << hz[i, j]
-            hz2 << hz[i - 1, j]
-            eyout >> ey[i, j]
-            eyout = eyin - _DATATYPE(0.5) * (hz1 - hz2)
-
-        @dace.map
-        def update_ex(i: _[0:NX], j: _[1:NY]):
-            exin << ex[i, j]
-            hz1 << hz[i, j]
-            hz2 << hz[i, j - 1]
-            exout >> ex[i, j]
-            exout = exin - _DATATYPE(0.5) * (hz1 - hz2)
-
-        @dace.map
-        def update_hz(i: _[0:NX - 1], j: _[0:NY - 1]):
-            hzin << hz[i, j]
-            ex1 << ex[i, j + 1]
-            ex2 << ex[i, j]
-            ey1 << ey[i + 1, j]
-            ey2 << ey[i, j]
-            hzout >> hz[i, j]
-            hzout = hzin - _DATATYPE(0.7) * (ex1 - ex2 + ey1 - ey2)
-
-
 def _init_fdtd2d(NX, NY, TMAX):
-    nx, ny, tmax = NX, NY, TMAX
-    _fict_ = np.array([np.float64(i) for i in range(tmax)])
-    ex = np.zeros((nx, ny), dtype=np.float64)
-    ey = np.zeros((nx, ny), dtype=np.float64)
-    hz = np.zeros((nx, ny), dtype=np.float64)
-    for i in range(nx):
-        for j in range(ny):
-            ex[i, j] = np.float64(i * (j + 1)) / nx
-            ey[i, j] = np.float64(i * (j + 2)) / ny
-            hz[i, j] = np.float64(i * (j + 3)) / nx
-    return {"ex": ex, "ey": ey, "hz": hz, "_fict_": _fict_}
+    ex = np.zeros((NX, NY), dtype=np.float64)
+    ey = np.zeros((NX, NY), dtype=np.float64)
+    hz = np.zeros((NX, NY), dtype=np.float64)
+    fict = np.zeros(TMAX, dtype=np.float64)
+    _fdtd2d_init_array(ex, ey, hz, fict, NX, NY, TMAX)
+    return {"ex": ex, "ey": ey, "hz": hz, "_fict_": fict}
+
+
+def _init_correlation(N, M):
+    data = np.zeros((N, M), dtype=np.float64)
+    corr = np.zeros((M, M), dtype=np.float64)
+    mean = np.zeros(M, dtype=np.float64)
+    stddev = np.zeros(M, dtype=np.float64)
+    _correlation_init_array(data, corr, mean, stddev, N, M)
+    return {"data": data, "corr": corr, "mean": mean, "stddev": stddev}
+
+
+def _init_covariance(N, M):
+    data = np.zeros((N, M), dtype=np.float64)
+    cov = np.zeros((M, M), dtype=np.float64)
+    mean = np.zeros(M, dtype=np.float64)
+    _covariance_init_array(data, cov, mean, N, M)
+    return {"data": data, "cov": cov, "mean": mean}
 
 
 def test_polybench_fdtd2d():
     """``InsertExplicitCopies`` preserves fdtd2d output versus the untransformed reference."""
-    _run_and_compare(fdtd2d_v, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
-
-
-M_corr = dace.symbol('M_corr')
-N_corr = dace.symbol('N_corr')
-
-
-@dace.program(_DATATYPE[N_corr, M_corr], _DATATYPE[M_corr, M_corr], _DATATYPE[M_corr], _DATATYPE[M_corr])
-def correlation_v(data, corr, mean, stddev):
-
-    @dace.map
-    def comp_mean(j: _[0:M_corr], i: _[0:N_corr]):
-        inp << data[i, j]
-        out >> mean(1, lambda x, y: x + y, 0)[j]
-        out = inp
-
-    @dace.map
-    def comp_mean2(j: _[0:M_corr]):
-        inp << mean[j]
-        out >> mean[j]
-        out = inp / N_corr
-
-    @dace.map
-    def comp_stddev(j: _[0:M_corr], i: _[0:N_corr]):
-        inp << data[i, j]
-        inmean << mean[j]
-        out >> stddev(1, lambda x, y: x + y, 0)[j]
-        out = (inp - inmean) * (inp - inmean)
-
-    @dace.map
-    def comp_stddev2(j: _[0:M_corr]):
-        inp << stddev[j]
-        out >> stddev[j]
-        out = math.sqrt(inp / N_corr)
-        if out <= 0.1:
-            out = 1.0
-
-    @dace.map
-    def center_data(i: _[0:N_corr], j: _[0:M_corr]):
-        ind << data[i, j]
-        m << mean[j]
-        sd << stddev[j]
-        oud >> data[i, j]
-        oud = (ind - m) / (math.sqrt(_DATATYPE(N_corr)) * sd)
-
-    @dace.map
-    def comp_corr_diag(i: _[0:M_corr]):
-        corrout >> corr[i, i]
-        corrout = 1.0
-
-    @dace.mapscope
-    def comp_corr_row(i: _[0:M_corr - 1]):
-
-        @dace.mapscope
-        def comp_corr_col(j: _[i + 1:M_corr]):
-
-            @dace.map
-            def comp_cov_k(k: _[0:N_corr]):
-                indi << data[k, i]
-                indj << data[k, j]
-                cov_ij >> corr(1, lambda x, y: x + y, 0)[i, j]
-                cov_ij = (indi * indj)
-
-    @dace.mapscope
-    def symmetrize(i: _[0:M_corr - 1]):
-
-        @dace.map
-        def symmetrize_col(j: _[i + 1:M_corr]):
-            corrin << corr[i, j]
-            corrout >> corr[j, i]
-            corrout = corrin
-
-
-def _init_correlation(N_corr, M_corr):
-    n, m = N_corr, M_corr
-    data = np.zeros((n, m), dtype=np.float64)
-    for i in range(n):
-        for j in range(m):
-            data[i, j] = np.float64(i * j) / m + i
-    corr = np.zeros((m, m), dtype=np.float64)
-    mean = np.zeros(m, dtype=np.float64)
-    stddev = np.zeros(m, dtype=np.float64)
-    return {"data": data, "corr": corr, "mean": mean, "stddev": stddev}
+    _run_and_compare(fdtd2d, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
 
 
 def test_polybench_correlation():
     """``InsertExplicitCopies`` preserves correlation output versus the untransformed reference."""
-    _run_and_compare(correlation_v, _init_correlation, ["corr"], {"N_corr": 32, "M_corr": 28}, "correlation")
-
-
-M_cov = dace.symbol('M_cov')
-N_cov = dace.symbol('N_cov')
-
-
-@dace.program(_DATATYPE[N_cov, M_cov], _DATATYPE[M_cov, M_cov], _DATATYPE[M_cov])
-def covariance_v(data, cov, mean):
-    mean[:] = 0.0
-
-    @dace.map
-    def comp_mean(j: _[0:M_cov], i: _[0:N_cov]):
-        inp << data[i, j]
-        out >> mean(1, lambda x, y: x + y)[j]
-        out = inp
-
-    @dace.map
-    def comp_mean2(j: _[0:M_cov]):
-        inp << mean[j]
-        out >> mean[j]
-        out = inp / N_cov
-
-    @dace.map
-    def sub_mean(i: _[0:N_cov], j: _[0:M_cov]):
-        ind << data[i, j]
-        m << mean[j]
-        oud >> data[i, j]
-        oud = ind - m
-
-    @dace.mapscope
-    def comp_cov_row(i: _[0:M_cov]):
-
-        @dace.mapscope
-        def comp_cov_col(j: _[i:M_cov]):
-            with dace.tasklet:
-                cov_ij >> cov[i, j]
-                cov_ij = 0.0
-
-            @dace.map
-            def comp_cov_k(k: _[0:N_cov]):
-                indi << data[k, i]
-                indj << data[k, j]
-                cov_ij >> cov(1, lambda x, y: x + y)[i, j]
-                cov_ij = (indi * indj)
-
-            with dace.tasklet:
-                cov_ij_in << cov[i, j]
-                cov_ij_out >> cov[i, j]
-                cov_ji_out >> cov[j, i]
-                cov_ij_out = cov_ij_in / (N_cov - 1)
-                cov_ji_out = cov_ij_out
-
-
-def _init_covariance(N_cov, M_cov):
-    n, m = N_cov, M_cov
-    data = np.zeros((n, m), dtype=np.float64)
-    for i in range(n):
-        for j in range(m):
-            data[i, j] = np.float64(i * j) / m
-    cov = np.zeros((m, m), dtype=np.float64)
-    mean = np.zeros(m, dtype=np.float64)
-    return {"data": data, "cov": cov, "mean": mean}
+    _run_and_compare(correlation, _init_correlation, ["corr"], {"N": 32, "M": 28}, "correlation")
 
 
 def test_polybench_covariance():
     """``InsertExplicitCopies`` preserves covariance output versus the untransformed reference."""
-    _run_and_compare(covariance_v, _init_covariance, ["cov"], {"N_cov": 32, "M_cov": 28}, "covariance")
+    _run_and_compare(covariance, _init_covariance, ["cov"], {"N": 32, "M": 28}, "covariance")
+
+
+def test_iec_skips_dtype_converting_copy():
+    """A direct copy between different dtypes is a cast, not a byte move: the pass must leave it
+    for tasklet lowering rather than insert a ``CopyLibraryNode`` (memcpy), which cannot convert.
+    Regression: the direct-copy path lacked the dtype guard its staging path already has."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("iec_dtype_convert")
+    sdfg.add_array("A", [64], dace.float32, cpu)
+    sdfg.add_array("B", [64], dace.float64, cpu)
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    b = st.add_access("B")
+    st.add_edge(a, None, b, None, Memlet("A[0:64]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a dtype-converting copy must not be lowered to CopyLibraryNode"
+    assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
 
 
 if __name__ == "__main__":

@@ -1,15 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" ``CopyLibraryNode`` to represent copies explicitly. """
+""" ``CopyLibraryNode`` representing copies explicitly. """
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import dace
 from dace import data, library, nodes, dtypes, symbolic
-from dace.codegen.common import sym2cpp
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
-                                            is_parallel_cpu_transfer_size, make_parallel_cpu_transfer_sdfg)
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.transformation.helpers import get_parent_map_and_loop_scopes
+from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES, auto_dispatch, collapse_shape_and_strides
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
@@ -17,8 +15,7 @@ from .. import environments
 @dataclass
 class CopyExpansion:
     """Inputs + collapsed-shape state shared across :class:`CopyLibraryNode`
-    expansions that build a wrapper SDFG. Returned by
-    :func:`_make_expansion_sdfg`."""
+    expansions that build a wrapper SDFG. Returned by :func:`_make_expansion_sdfg`."""
     sdfg: dace.SDFG
     state: dace.SDFGState
     inp_name: str
@@ -32,11 +29,19 @@ class CopyExpansion:
     out_shape_collapsed: List[symbolic.SymExpr]
 
 
-def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> bool:
+def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType, copy_node: "CopyLibraryNode",
+                      parent_state: dace.SDFGState) -> bool:
     """Return True if src and dst crosses the CPU/GPU boundary. ``Register``
-    adopts its enclosing scope's side and assumed it is never cross-boundary."""
-    return ((src_storage in dtypes.CPU_RESIDENT_STORAGES and dst_storage in dtypes.GPU_RESIDENT_STORAGES)
-            or (src_storage in dtypes.GPU_RESIDENT_STORAGES and dst_storage in dtypes.CPU_RESIDENT_STORAGES))
+    depends on the scope, within GPU scope we assume it is in GPU, and in CPU scope we assume it is in CPU."""
+    in_gpu = is_devicelevel_gpu(parent_state.sdfg, parent_state, copy_node)
+
+    src_gpu = (src_storage in GPU_RESIDENT_STORAGES) or (src_storage == dtypes.StorageType.Register and in_gpu)
+    dst_gpu = (dst_storage in GPU_RESIDENT_STORAGES) or (dst_storage == dtypes.StorageType.Register and in_gpu)
+
+    src_cpu = (src_storage in CPU_RESIDENT_STORAGES) or (src_storage == dtypes.StorageType.Register and not in_gpu)
+    dst_cpu = (dst_storage in CPU_RESIDENT_STORAGES) or (dst_storage == dtypes.StorageType.Register and not in_gpu)
+
+    return (src_cpu and dst_gpu) or (src_gpu and dst_cpu)
 
 
 def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
@@ -46,38 +51,9 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
 
 
-def _is_flat_cpu_contiguous_copy(inp: data.Data, in_subset: dace.subsets.Range, out: data.Data,
-                                 out_subset: dace.subsets.Range) -> bool:
-    """True when the copy is a same-side CPU main-memory transfer for which a flat
-    ``std::memcpy`` is byte-identical to the element-wise copy.
-
-    Requires: identical CPU main-memory storage on both sides (``Register`` excluded --
-    its thread-level Sequential map belongs to ``MappedTasklet``), both subsets contiguous
-    in their arrays, the same packed major order (both C or both Fortran -- a mixed order
-    is a memory transpose), and matching per-dim subset sizes (dropping singletons). The
-    size check keeps transposes (``(3,4) -> (4,3)``) and rank-mismatch reshapes
-    (``(2,3,4) -> (24,)``) on the ``MappedTasklet`` path, whose 1-D walker handles them.
-
-    :param inp: source descriptor.
-    :param in_subset: source memlet subset.
-    :param out: destination descriptor.
-    :param out_subset: destination memlet subset.
-    :returns: True iff a single ``std::memcpy`` (serial or OpenMP-chunked) is valid.
-    """
-    allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
-    if inp.storage != out.storage or inp.storage not in allowed:
-        return False
-    if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-        return False
-    if not _both_packed_same_layout(inp, out):
-        return False
-    in_sizes = [s for s in in_subset.size() if s != 1]
-    out_sizes = [s for s in out_subset.size() if s != 1]
-    return list(in_sizes) == list(out_sizes)
-
-
 def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], layout: str) -> List[symbolic.SymExpr]:
     """Multi-dim index expressions for a 1-D walker into a packed-layout array.
+    Only C-style (packed row-major) and Fortran-style (packed column-major) layouts are supported.
 
     :param b_i: the 1-D map symbol.
     :param shape: per-dim extents in descriptor order.
@@ -95,115 +71,126 @@ def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], lay
     return [symbolic.int_floor(b_i, cum_strides[d]) % shape[d] for d in range(len(shape))]
 
 
-def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> str:
+def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve ``CopyLibraryNode.implementation`` when set to ``'Auto'`` (the default).
-
-    Picks a concrete implementation from endpoint storages, subset shapes,
-    and the surrounding scope.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
-    :param parent_sdfg: SDFG containing ``parent_state``.
     :returns: a concrete implementation name from
               ``CopyLibraryNode.implementations`` -- never ``'Auto'`` itself.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=True)
 
-    # 1. GPU_Shared involvement -> block-cooperative ``SharedMemoryCollective``
-    # (``dace::CopyND<>`` + ``__syncthreads()``). Shared memory is per-block
-    # and only meaningful inside a kernel scope.
-    # FUTURE WORK: write a fast ND<->ND shared-memory collective load (128-bit
-    # transactions, vectorized) and route here instead of going through CopyND.
+    # Invariant: single-element copies never route to ``MappedTasklet``
+    # (its 0-D map crashes in memlet propagation). Steps 1 and 2 handle
+    # the single-element case explicitly.
+    single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
+
+    # 1. GPU_Shared involvement: block-cooperative ``SharedMemoryCollective``,
+    # unless thread-level (Register endpoint or inside a ``GPU_ThreadBlock`` map).
+    # TODO, FUTURE WORK: replace ``dace::CopyND`` with a vectorized 128-bit
+    # collective load.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
+        thread_level = (inp.storage == dtypes.StorageType.Register or out.storage == dtypes.StorageType.Register
+                        or is_in_scope(parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]))
+        if thread_level:
+            return 'Tasklet' if single_elt else 'MappedTasklet'
         return 'SharedMemoryCollective'
 
-    # 2. Single-element copies. Route around MappedTasklet (a 0-D map crashes)
-    #
-    #   endpoints              in kernel  impl          why
-    #   ---------------------  ---------  ------------  ------------------------
-    #   cross CPU/GPU          any        MemcpyCUDA1D  cudaMemcpyAsync
-    #   same side, GPU<->GPU   yes        Tasklet       device-side _out = _in
-    #   same side, GPU<->GPU   no         MemcpyCUDA1D  D2D; host cannot deref
-    #                                                   device pointers
-    #   same side, has host    any        Tasklet       host runs the assignment
-    in_volume = in_subset.num_elements()
-    out_volume = out_subset.num_elements()
-    if in_volume == 1 and out_volume == 1:
-        if _is_cross_cpu_gpu(inp.storage, out.storage):
+    # 2. Single-element non-Shared copies route to bare ``Tasklet`` or ``MemcpyCUDA1D``:
+    #   cross CPU/GPU                 -> MemcpyCUDA1D (cudaMemcpyAsync)
+    #   same-side GPU<->GPU in kernel -> Tasklet (device-side _out = _in)
+    #   same-side GPU<->GPU host      -> MemcpyCUDA1D (D2D; host cannot deref device ptrs)
+    #   same-side w/ host endpoint    -> Tasklet (host runs the assignment)
+    if single_elt:
+        if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
             return 'MemcpyCUDA1D'
-        inside_kernel = is_devicelevel_gpu(parent_sdfg, parent_state, node)
+        inside_kernel = is_devicelevel_gpu(parent_state.sdfg, parent_state, node)
         both_gpu_global = (inp.storage == dtypes.StorageType.GPU_Global
                            and out.storage == dtypes.StorageType.GPU_Global)
         if both_gpu_global and not inside_kernel:
             return 'MemcpyCUDA1D'
         return 'Tasklet'
 
-    # 3. Multi-element in-device-scope (single-element was handled in Step 2):
-    # ``cudaMemcpyAsync`` cannot be issued from device code, so emit a map
-    # inside the existing kernel scope.
-    if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+    # 3. Multi-element in-device-scope: ``cudaMemcpyAsync`` cannot be issued
+    # from device code, so emit a map inside the existing kernel scope.
+    if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 3b. Same-side CPU main-memory contiguous copy for which a flat byte copy is
-    # exact: route to ``std::memcpy``. Above ``PARALLEL_COPY_MIN_BYTES`` (or when the
-    # size is symbolic) take the OpenMP-chunked expansion, which saturates memory
-    # bandwidth on a many-core NUMA domain; below it a single ``std::memcpy`` wins
-    # (no fork/join). Non-contiguous, mixed-layout, rank-mismatch, and Register copies
-    # fall through to ``MappedTasklet`` below.
-    if _is_flat_cpu_contiguous_copy(inp, in_subset, out, out_subset):
-        num_bytes = in_subset.num_elements() * inp.dtype.bytes
-        return 'MemcpyParallelCPU' if is_parallel_cpu_transfer_size(num_bytes) else 'MemcpyCPU'
-
-    # 4. Coarse pick by storage pair: any copy touching GPU memory goes
-    # through the cudaMemcpy family; everything else falls through to
-    # MappedTasklet at the end.
+    # 4. Coarse pick by storage pair: any copy touching GPU memory goes through
+    # the cudaMemcpy family; everything else falls through to MappedTasklet.
     gpu = dtypes.StorageType.GPU_Global
-    allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
+    allowed = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
     impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu) and inp.storage in allowed
                                and out.storage in allowed) else None)
 
     # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
     # MappedTasklet for unsupported stride mixs).
     if impl == 'MemcpyCUDA1D':
-        refined = _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg)
+        refined = _refine_cuda_impl_for_subsets(node, parent_state)
         if refined is not None:
             impl = refined
 
     # Rank-mismatched copies (e.g. ``(2,3,4) -> (8,3)``) fall through to
-    # MappedTasklet, whose expansion handles the collapse with a 1-D walker
-    # and per-side ``int_floor``/``%`` delinearization -- supported only when
-    # both endpoints are packed-same-layout with contiguous subsets; rejected
-    # otherwise with a specific error message.
+    # MappedTasklet, which collapses via a 1-D walker with per-side
+    # delinearization (packed-same-layout contiguous endpoints only).
     return impl or 'MappedTasklet'
 
 
-def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState,
-                                  parent_sdfg: dace.SDFG) -> Optional[str]:
+def cuda2d_pitch_params(
+    copy_shape: List[symbolic.SymExpr], src_strides: List[symbolic.SymExpr], dst_strides: List[symbolic.SymExpr]
+) -> Optional[Tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr]]:
+    """Element-count ``cudaMemcpy2DAsync`` pitch parameters for a 2D (or ``(N, 1)``-promoted) copy.
+
+    Single source of truth for both the ``MemcpyCUDA2D`` selector gate and the expander so the two
+    cannot drift: the selector treats a non-``None`` result as "``MemcpyCUDA2D`` applies", and the
+    expander formats the same components into the emitted call.
+
+    :param copy_shape: Two-element collapsed copy shape ``(rows, columns)``.
+    :param src_strides: Two-element source strides aligned with ``copy_shape``.
+    :param dst_strides: Two-element destination strides aligned with ``copy_shape``.
+    :returns: ``(dpitch, spitch, width, height)`` in elements -- the caller multiplies the pitch
+        and width by ``sizeof(dtype)`` -- or ``None`` if the pattern is not a single
+        ``cudaMemcpy2DAsync`` (contiguous rows, contiguous columns, or an outer/inner stride ratio
+        equal to the inner width).
+    """
+    if src_strides[1] == 1 and dst_strides[1] == 1:
+        return dst_strides[0], src_strides[0], copy_shape[1], copy_shape[0]
+    if src_strides[0] == 1 and dst_strides[0] == 1:
+        return dst_strides[1], src_strides[1], copy_shape[0], copy_shape[1]
+    try:
+        # ``inequal_symbols`` normalizes same-named symbols across both sides (e.g. ``N`` declared
+        # once with ``positive=True`` and once without), so the ratio check is not defeated by
+        # sympy-assumption identity drift.
+        if (not symbolic.inequal_symbols(src_strides[0] / src_strides[1], copy_shape[1])
+                and not symbolic.inequal_symbols(dst_strides[0] / dst_strides[1], copy_shape[1])):
+            return dst_strides[1], src_strides[1], 1, copy_shape[0] * copy_shape[1]
+    except (TypeError, ZeroDivisionError):
+        return None
+    return None
+
+
+def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> Optional[str]:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
-    Routing table (after collapsing length-1 dims):
-
-      condition                                            impl
-      ---------------------------------------------------  --------------------
-      both subsets are contiguous                          ``None`` (keep CUDA1D)
-      collapsed rank == 2 and 2D pitched layout matches    ``MemcpyCUDA2D``
-      collapsed rank == 1 (both sides equal length)        ``MemcpyCUDA2D``    (degenerate ``(1, N)`` form)
-      same-side (no CPU/GPU boundary)                      ``MappedTasklet``   (per-element loop nest handles arbitrary strides)
-      cross CPU/GPU, same rank, common stride-1 axis       ``MemcpyCUDANDStrided`` (Sequential map of ``cudaMemcpyAsync`` over outer dims, one stride-1 chunk per iteration)
-      cross CPU/GPU, no common stride-1 axis               raise -- no ``cudaMemcpy*`` lowering exists for this pattern
+      both subsets contiguous                       -> ``None`` (keep CUDA1D)
+      collapsed rank 2, 2D pitched layout matches    -> ``MemcpyCUDA2D``
+      collapsed rank 1, both sides equal length      -> ``MemcpyCUDA2D`` (degenerate ``(1, N)``)
+      same-side (no CPU/GPU boundary)                -> ``MappedTasklet`` (per-element loop nest)
+      cross CPU/GPU, same rank, common stride-1 axis -> ``MemcpyCUDANDStrided`` (seq map of cudaMemcpyAsync, one chunk/iter)
+      cross CPU/GPU, no common stride-1 axis         -> raise (no ``cudaMemcpy*`` lowering exists)
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
-    :param parent_sdfg: SDFG containing ``parent_state``.
     :returns: the refined implementation name, or ``None`` when both subsets
               are contiguous (caller keeps ``MemcpyCUDA1D``).
     :raises ValueError: a cross-CPU/GPU strided pattern with no common stride-1
         axis -- the host cannot issue ``cudaMemcpyAsync`` for non-contiguous
         regions and device code cannot issue ``cudaMemcpyAsync`` at all.
     """
-    _, inp, in_subset, _, out, out_subset = node.validate(parent_sdfg, parent_state, allow_cross_storage=True)
+    _, inp, in_subset, _, out, out_subset = node.validate(parent_state.sdfg, parent_state, allow_cross_storage=True)
 
     if in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out):
         return None
@@ -211,29 +198,21 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
-    # ``cudaMemcpy2D`` covers two patterns: a true 2D strided copy, and a 1D strided copy lowered as a
-    # degenerate ``(1, N)`` 2D copy (width=1, height=N, pitch=stride). A 2D pattern is supported when
-    # either dim has stride 1 on both sides, or the outer/inner stride ratio equals the inner width.
     src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
-    cuda2d_2d = False
     if src_rank == 2 and dst_rank == 2:
-        s0, s1 = in_strides_collapsed
-        d0, d1 = out_strides_collapsed
-        w = in_shape_collapsed[1]
-        if (s0 == 1 and d0 == 1) or (s1 == 1 and d1 == 1):
-            cuda2d_2d = True
-        else:
-            try:
-                cuda2d_2d = (s0 / s1 == w and d0 / d1 == w)
-            except (TypeError, ZeroDivisionError):
-                pass
-    cuda2d_1d = (src_rank == 1 and dst_rank == 1 and in_shape_collapsed[0] == out_shape_collapsed[0])
-    if cuda2d_2d or cuda2d_1d:
-        return 'MemcpyCUDA2D'
+        # A single cudaMemcpy2DAsync applies iff the expander can compute pitch params for it;
+        # ask that one function so selector and expander cannot disagree.
+        if cuda2d_pitch_params(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed) is not None:
+            return 'MemcpyCUDA2D'
 
-    # Same-side strided ND -- MappedTasklet. The codegen emits the same nested
-    # loops as ``dace::CopyND<>`` would.
-    if not _is_cross_cpu_gpu(inp.storage, out.storage):
+    elif src_rank == 1 and dst_rank == 1:
+        # Special case of 1D copy were either the source or the destination (or both) does not have
+        #  stride 1 increment, i.e. `a[:, 1] = b[4, :]` and both have C order.
+        if not symbolic.inequal_symbols(in_shape_collapsed[0], out_shape_collapsed[0]):
+            return 'MemcpyCUDA2D'
+
+    # Same-side strided ND -- MappedTasklet.
+    if not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         return 'MappedTasklet'
 
     # Cross-boundary ND-strided: Sequential map of cudaMemcpyAsync along any
@@ -253,18 +232,16 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
 
 def _make_expansion_sdfg(node: "CopyLibraryNode",
                          parent_state: dace.SDFGState,
-                         parent_sdfg: dace.SDFG,
                          allow_cross_storage: bool = False) -> CopyExpansion:
     """Shared validation + wrapper-SDFG skeleton for expansions.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
-    :param parent_sdfg: SDFG containing ``parent_state``.
     :param allow_cross_storage: permit differing src/dst storages.
     :returns: a :class:`CopyExpansion` with the skeleton SDFG and collapsed
               shape/stride state.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=allow_cross_storage)
 
@@ -274,6 +251,13 @@ def _make_expansion_sdfg(node: "CopyLibraryNode",
     sdfg = dace.SDFG(f"{node.label}_sdfg")
     sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+    # When the experimental GPU codegen has already wired the ambient stream onto this
+    # libnode (in-connector ``__dace_current_stream`` typed ``gpuStream_t``), the resulting
+    # NestedSDFG inherits that outer connector, so the inner SDFG needs a matching
+    # descriptor or NestedSDFG.validate() rejects it. The legacy codegen never adds the
+    # connector, so this branch is a no-op there.
+    if CURRENT_STREAM_NAME in node.in_connectors:
+        sdfg.add_scalar(CURRENT_STREAM_NAME, dtypes.gpuStream_t, transient=False)
 
     state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
     map_lengths = [s for s in in_subset.size() if s != 1]
@@ -293,40 +277,34 @@ def _make_expansion_sdfg(node: "CopyLibraryNode",
 
 def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
                                    parent_state: dace.SDFGState,
-                                   parent_sdfg: dace.SDFG,
                                    allow_cross_storage: bool = False) -> dace.SDFG:
     """Element-wise mapped tasklet expansion.
 
-    Schedule comes from the storages: ``Sequential`` for Register/Register
-    or Register<->GPU_Shared (thread-level) and for any in-kernel copy (a
-    new ``GPU_Device`` map inside an existing kernel would create an invalid
-    nesting), ``GPU_Device`` if any side is GPU storage and
-    we're at host level, else ``Default`` (CPU<->CPU -- inferred
-    post-expansion).
+    Schedule comes from the storages: ``Sequential`` for thread-level
+    (Register/Register, Register<->GPU_Shared) and any in-kernel copy,
+    ``GPU_Device`` if any side is GPU storage at host level, else ``Default``.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
-    :param parent_sdfg: SDFG containing ``parent_state``.
     :param allow_cross_storage: permit differing src/dst storages.
     :returns: the wrapper SDFG holding the mapped tasklet.
     :raises ValueError: the copy crosses the CPU/GPU boundary.
     """
-    ctx = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=allow_cross_storage)
+    ctx = _make_expansion_sdfg(node, parent_state, allow_cross_storage=allow_cross_storage)
     inp, out = ctx.inp, ctx.out
 
-    if _is_cross_cpu_gpu(inp.storage, out.storage):
+    if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         raise ValueError("MappedTasklet expansion cannot cross the CPU/GPU boundary "
                          f"(got {inp.storage} -> {out.storage}). Use a MemcpyCUDA1D variant.")
 
-    # Schedule from storages and surrounding scope.
     is_register = lambda s: s == dtypes.StorageType.Register
     is_thread_local = (is_register(inp.storage) and is_register(out.storage)) or (
         (is_register(inp.storage) and out.storage == dtypes.StorageType.GPU_Shared) or
         (is_register(out.storage) and inp.storage == dtypes.StorageType.GPU_Shared))
-    in_kernel = is_devicelevel_gpu(parent_sdfg, parent_state, node)
+    in_kernel = is_devicelevel_gpu(parent_state.sdfg, parent_state, node)
     if is_thread_local or in_kernel:
         schedule = dtypes.ScheduleType.Sequential
-    elif inp.storage in dtypes.GPU_RESIDENT_STORAGES or out.storage in dtypes.GPU_RESIDENT_STORAGES:
+    elif inp.storage in GPU_RESIDENT_STORAGES or out.storage in GPU_RESIDENT_STORAGES:
         schedule = dtypes.ScheduleType.GPU_Device
     else:
         schedule = dtypes.ScheduleType.Default
@@ -340,10 +318,13 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
 
     if len(in_shape) == len(out_shape):
         # Same-rank: per-dim map params, shared access expression on both sides.
-        # Per-dim shapes must match; otherwise the shared index expression
-        # walks past the smaller side (transposes / permutations belong to a
-        # Transpose libnode, reshapes go through the rank-mismatch branch).
-        if list(in_shape) != list(out_shape):
+        # Per-dim shapes must match, else the shared index walks past the smaller
+        # side (permutations -> Transpose libnode; reshapes -> rank-mismatch branch).
+        # ``inequal_symbols`` normalizes same-named SymPy symbols with different
+        # assumption sets (e.g. ``Symbol('N', integer=True)`` vs ``Symbol('N',
+        # integer=True, positive=True)``) before comparing, so a shape mismatch is
+        # real and not a symbol-identity artifact.
+        if any(symbolic.inequal_symbols(a, b) for a, b in zip(in_shape, out_shape)):
             raise ValueError(f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
                              f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
                              f"supported -- use a Transpose libnode. Reshapes must change rank.")
@@ -353,14 +334,11 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
         outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
     else:
-        # Rank-mismatch reshape: 1-D walker + per-side delinearization. Supported
-        # only when both endpoints satisfy the collapsing rules:
-        #   1. Same packed major order (both C-contiguous or both Fortran).
-        #   2. Both subsets contiguous in their parent arrays.
-        # The walker iterates the total element count; the per-side delinearization
-        # (``_delinearized_index``) maps the walker into the multi-dim index using
-        # the shared layout. Mixed C/F is a transpose-reshape; non-packed or
-        # non-contiguous endpoints have no unambiguous flat order.
+        # Rank-mismatch reshape: 1-D walker over the total element count, with
+        # per-side delinearization (``_delinearized_index``) into the multi-dim
+        # index. Supported only when both endpoints share a packed major order
+        # (both C or both Fortran) and have contiguous subsets -- mixed C/F is a
+        # transpose, and non-packed/non-contiguous endpoints have no flat order.
         if not _both_packed_same_layout(inp, out):
             raise ValueError(
                 f"MappedTasklet rank-mismatched copy ({tuple(in_shape)} -> {tuple(out_shape)}) requires "
@@ -378,7 +356,7 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
                 f"dst subset {ctx.out_subset} (contiguous: {out_contig}) on shape {tuple(out.shape)}.")
         layout = 'C' if inp.is_packed_c_strides() else 'F'
 
-        total = ctx.in_subset.num_elements()
+        total = ctx.in_subset.num_elements_exact()
         b_i_name = "__b_i"
         b_i = symbolic.symbol(b_i_name)
         map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
@@ -407,35 +385,45 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     dst_loc = "Device" if out.storage == dace.dtypes.StorageType.GPU_Global else "Host"
-    return f"cudaMemcpy{src_loc}To{dst_loc}"
+    backend = get_gpu_backend()
+    return f"{backend}Memcpy{src_loc}To{dst_loc}"
 
 
-def _make_cuda_memcpy_expansion(node: "CopyLibraryNode", parent_state: dace.SDFGState,
-                                parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-    """Build a Tasklet emitting one ``cudaMemcpyAsync``.
+def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
+    """Build a Tasklet emitting one contiguous-block copy.
 
-    The transfer direction (HostToDevice / DeviceToHost / DeviceToDevice /
-    HostToHost) is inferred from endpoint storages; cross-CPU/GPU is allowed.
+    Emits ``cudaMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU is allowed and
+    the direction (HostToDevice / DeviceToHost / DeviceToDevice / HostToHost) is
+    inferred from endpoint storages -- otherwise a same-storage ``std::memcpy``.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
-    :param parent_state: state containing ``node``.
-    :param parent_sdfg: SDFG containing ``parent_state``.
-    :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the memcpy.
+    :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
+    :param cuda: emit ``cudaMemcpyAsync`` (else ``memcpy``).
+    :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the copy.
+    :raises ValueError: a subset is non-contiguous; the single-call copy form
+        would overrun the region. Use ``MappedTasklet`` for strided subsets.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+    label = "MemcpyCUDA1D" if cuda else "MemcpyCPU"
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
-                                                                        allow_cross_storage=True)
-    if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-        raise ValueError(f"MemcpyCUDA1D requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
+                                                                        allow_cross_storage=cuda)
+    single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
+    if single_elt:
+        # For a single element we must/can ignore the strides.
+        pass
+    elif not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+        raise ValueError(f"{label} requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
                          f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
                          f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
 
-    cp_size = in_subset.num_elements()
-    kind = _memcpy_kind(inp, out)
     in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-    code = (f"cudaMemcpyAsync({out_conn}, {in_conn}, "
-            f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), {kind}, {CURRENT_STREAM_NAME});")
+    nbytes = f"{sym2cpp(in_subset.num_elements_exact())} * sizeof({inp.dtype.ctype})"
+    if cuda:
+        backend = get_gpu_backend()
+        code = f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
+    else:
+        code = f"memcpy({out_conn}, {in_conn}, {nbytes});"
 
     return nodes.Tasklet(node.name,
                          inputs={in_conn: dace.dtypes.pointer(inp.dtype)},
@@ -509,7 +497,7 @@ class ExpandAuto(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return auto_dispatch(node, parent_state, parent_sdfg, select_copy_implementation, CopyLibraryNode)
+        return auto_dispatch(node, parent_state, select_copy_implementation, CopyLibraryNode)
 
 
 @library.expansion
@@ -522,7 +510,7 @@ class ExpandMappedTasklet(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=True)
+        return _make_mapped_tasklet_expansion(node, parent_state, allow_cross_storage=True)
 
 
 @library.expansion
@@ -533,7 +521,7 @@ class ExpandMemcpyCUDA1D(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg)
+        return _make_memcpy_tasklet(node, parent_state, cuda=True)
 
 
 @library.expansion
@@ -542,54 +530,8 @@ class ExpandMemcpyCPU(ExpandTransformation):
     environments = [environments.CPU]
 
     @staticmethod
-    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
-                                                                            parent_state,
-                                                                            allow_cross_storage=False)
-        if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-            raise ValueError(f"MemcpyCPU requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
-                             f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
-                             f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
-
-        cp_size = in_subset.num_elements()
-        in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
-        out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-        return nodes.Tasklet(node.name,
-                             inputs={in_conn: dace.dtypes.pointer(inp.dtype)},
-                             outputs={out_conn: dace.dtypes.pointer(out.dtype)},
-                             code=f"memcpy({out_conn}, {in_conn}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
-                             language=dace.Language.CPP)
-
-
-@library.expansion
-class ExpandMemcpyParallelCPU(ExpandTransformation):
-    """OpenMP-parallel ``std::memcpy`` for a large contiguous CPU<->CPU copy.
-
-    Expands to a wrapper SDFG whose ``CPU_Multicore`` map (lowered by codegen to
-    ``#pragma omp parallel for``) iterates ``ceil(N / chunk)`` chunks, each running one
-    contiguous ``std::memcpy`` over its slice of up to
-    :data:`~dace.libraries.standard.helper.PARALLEL_COPY_CHUNK_BYTES` bytes. Selected by
-    the auto path for contiguous same-layout CPU copies whose size is symbolic or
-    statically ``>= PARALLEL_COPY_MIN_BYTES``. The OpenMP parallelism comes from the map
-    schedule; small symbolic sizes degrade to a single chunk (one thread)."""
-    environments = [environments.CPU]
-
-    @staticmethod
-    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
-                                                                            parent_state,
-                                                                            allow_cross_storage=False)
-        if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-            raise ValueError(f"MemcpyParallelCPU requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
-                             f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
-                             f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
-
-        return make_parallel_cpu_transfer_sdfg(node.label,
-                                               inp.dtype,
-                                               inp.storage,
-                                               in_subset.num_elements(),
-                                               out_array=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
-                                               in_array=CopyLibraryNode.INPUT_CONNECTOR_NAME)
+    def expansion(node, parent_state, parent_sdfg):
+        return _make_memcpy_tasklet(node, parent_state, cuda=False)
 
 
 @library.expansion
@@ -632,28 +574,20 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
         src_strides = in_strides_2d
         dst_strides = out_strides_2d
         ctype = inp.dtype.ctype
+        backend = get_gpu_backend()
 
-        if src_strides[1] == 1 and dst_strides[1] == 1:
-            dpitch = f"{sym2cpp(dst_strides[0])} * sizeof({ctype})"
-            spitch = f"{sym2cpp(src_strides[0])} * sizeof({ctype})"
-            width = f"{sym2cpp(copy_shape[1])} * sizeof({ctype})"
-            height = sym2cpp(copy_shape[0])
-        elif src_strides[0] == 1 and dst_strides[0] == 1:
-            dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
-            spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
-            width = f"{sym2cpp(copy_shape[0])} * sizeof({ctype})"
-            height = sym2cpp(copy_shape[1])
-        elif (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1]):
-            dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
-            spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
-            width = f"sizeof({ctype})"
-            height = sym2cpp(copy_shape[0] * copy_shape[1])
-        else:
+        pitch = cuda2d_pitch_params(copy_shape, src_strides, dst_strides)
+        if pitch is None:
             raise NotImplementedError(f"Unsupported 2D memory copy: shape={copy_shape}, "
                                       f"src_strides={src_strides}, dst_strides={dst_strides}.")
+        dpitch_elems, spitch_elems, width_elems, height_elems = pitch
+        dpitch = f"{sym2cpp(dpitch_elems)} * sizeof({ctype})"
+        spitch = f"{sym2cpp(spitch_elems)} * sizeof({ctype})"
+        width = f"{sym2cpp(width_elems)} * sizeof({ctype})"
+        height = sym2cpp(height_elems)
 
         code = (
-            f"cudaMemcpy2DAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {dpitch}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, {spitch}, "
+            f"{backend}Memcpy2DAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {dpitch}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, {spitch}, "
             f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME});")
 
         in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
@@ -670,12 +604,11 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
     """ND-strided cross-boundary copy: a Sequential map of ``cudaMemcpyAsync``.
 
     Fallback for >=3D-strided patterns that cannot collapse to one
-    ``cudaMemcpyAsync`` / ``cudaMemcpy2DAsync``. Emits one
-    ``cudaMemcpyAsync`` per row, iterating every collapsed dimension except
-    the chunk axis (``stride == 1`` both sides). ``ndims == 1`` degenerates
-    to a flat single-tasklet expansion; ``ndims > 1`` wraps the per-row
-    ``cudaMemcpyAsync`` in a Sequential-map tasklet inside a wrapper SDFG.
-    Both reference ``__dace_current_stream``, bound post-expansion.
+    ``cudaMemcpyAsync`` / ``cudaMemcpy2DAsync``. Emits one ``cudaMemcpyAsync``
+    per row over every collapsed dim except the chunk axis (``stride == 1`` both
+    sides): ``ndims == 1`` becomes a flat single-tasklet; ``ndims > 1`` wraps the
+    per-row copy in a Sequential-map tasklet inside a wrapper SDFG. Both reference
+    ``__dace_current_stream``, bound post-expansion.
     """
     environments = [environments.CUDA]
 
@@ -708,12 +641,13 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         ctype = inp.dtype.ctype
         chunk = sym2cpp(in_shape_collapsed[chunk_dim])
         kind = _memcpy_kind(inp, out)
+        backend = get_gpu_backend()
 
         if ndims == 1:
             # Degenerate case: a single contiguous run. Emit a flat Tasklet
             # with the libnode's connector naming directly -- no wrapper SDFG.
             code = (
-                f"DACE_GPU_CHECK(cudaMemcpyAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, "
+                f"DACE_GPU_CHECK({backend}MemcpyAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
             in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
             return nodes.Tasklet(node.name,
@@ -724,7 +658,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
         # ndims > 1: Sequential map over all non-chunk dims, one
         # cudaMemcpyAsync per row, inside a wrapper SDFG.
-        ctx = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=True)
+        ctx = _make_expansion_sdfg(node, parent_state, allow_cross_storage=True)
 
         # Avoid the connector name ``stream`` colliding with the wrapper SDFG's
         # ``stream`` array name in the codegen scope.
@@ -748,7 +682,8 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         # Inner-tasklet connectors. Must not collide with the wrapper SDFG's
         # parameter arrays, which are named after the libnode's outer connectors.
         inner_in, inner_out = "_in", "_out"
-        code = (f"DACE_GPU_CHECK(cudaMemcpyAsync({inner_out}, {inner_in}, "
+        backend = get_gpu_backend()
+        code = (f"DACE_GPU_CHECK({backend}MemcpyAsync({inner_out}, {inner_in}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
 
         inner_tasklet, map_entry, _map_exit = ctx.state.add_mapped_tasklet(name=f"{node.label}_tasklet",
@@ -770,15 +705,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
 @library.expansion
 class ExpandTasklet(ExpandTransformation):
-    """Single-element same-side scalar copy: ``_cpy_out = _cpy_in`` as a
-    Python tasklet inside a wrapper SDFG.
-
-    Both subsets must be volume 1 and must not cross the CPU/GPU boundary
-    (storages within one side may differ, e.g. ``Register`` <-> ``GPU_Global``).
-    ``GPU_Shared`` is rejected -- a direct write lacks the ``__syncthreads``
-    of block-collective updates; use ``SharedMemoryCollective``. The wrapper
-    SDFG isolates the inner connector names from the outer ``_in`` / ``_out``
-    arrays, which would otherwise trip DaCe's connector-vs-array-name rule."""
+    """Single-element same-side scalar copy: ``_cpy_out = _cpy_in`` as a Python tasklet"""
     environments = []
 
     @staticmethod
@@ -786,19 +713,18 @@ class ExpandTasklet(ExpandTransformation):
         inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
                                                                             parent_state,
                                                                             allow_cross_storage=True)
-        if (inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared):
-            raise ValueError(f"Tasklet expansion: storage types must match (Shared memory needs the "
-                             f"SharedMemoryCollective expansion); got {inp.storage} -> {out.storage}.")
-        if _is_cross_cpu_gpu(inp.storage, out.storage):
-            raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
-                             f"got {inp.storage} -> {out.storage}. Use a MemcpyCUDA1D variant instead.")
-
-        in_volume = in_subset.num_elements()
-        out_volume = out_subset.num_elements()
+        in_volume = in_subset.num_elements_exact()
+        out_volume = out_subset.num_elements_exact()
         if in_volume != 1 or out_volume != 1:
             raise ValueError(f"Tasklet expansion requires single-element subsets "
                              f"(got input volume {in_volume}, output volume {out_volume}). "
                              f"Use MappedTasklet for multi-element copies.")
+        # Single-element Shared involvement is a valid thread-level
+        # assignment; the auto dispatcher routes it here when the copy is
+        # inside a thread-block scope.
+        if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
+            raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
+                             f"got {inp.storage} -> {out.storage}. Use a MemcpyCUDA1D variant instead.")
 
         return nodes.Tasklet(node.name,
                              inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: inp.dtype},
@@ -835,16 +761,12 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
         if inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared:
             raise ValueError("SharedMemoryCollective requires at least one side to be GPU_Shared.")
 
-        # The collective copy IS the thread-block-level operation; it must
-        # not sit inside an enclosing GPU_ThreadBlock map.
-        root_sdfg = parent_sdfg
-        while root_sdfg.parent_nsdfg_node is not None:
-            root_sdfg = root_sdfg.parent_sdfg
-        parent_scopes = get_parent_map_and_loop_scopes(root_sdfg, node, parent_state)
-        for scope in parent_scopes:
-            if (isinstance(scope, dace.sdfg.nodes.MapEntry) and scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
-                raise ValueError("SharedMemoryCollective IS the thread-block-level operation "
-                                 "and must not be nested inside a GPU_ThreadBlock map.")
+        # The collective copy IS the thread-block-level operation; it must not
+        # sit inside an enclosing GPU_ThreadBlock map (``is_in_scope`` walks the
+        # scope dict and up through nested SDFGs).
+        if is_in_scope(parent_sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]):
+            raise ValueError("SharedMemoryCollective IS the thread-block-level operation "
+                             "and must not be nested inside a GPU_ThreadBlock map.")
 
         return nodes.Tasklet(node.name,
                              inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
@@ -861,8 +783,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     (element-wise tasklet, schedule from storages; also handles rank-mismatch
     reshapes via a 1-D walker when both endpoints are packed-same-layout with
     contiguous subsets), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU``
-    (``std::memcpy``), ``MemcpyParallelCPU`` (OpenMP-chunked ``std::memcpy`` for
-    large contiguous CPU copies), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
+    (``std::memcpy``), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
     ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of
     ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (``dace::CopyND`` +
     ``__syncthreads()``; the only remaining ``dace::CopyND`` user).
@@ -878,7 +799,6 @@ class CopyLibraryNode(nodes.LibraryNode):
         "MappedTasklet": ExpandMappedTasklet,
         "Tasklet": ExpandTasklet,
         "MemcpyCPU": ExpandMemcpyCPU,
-        "MemcpyParallelCPU": ExpandMemcpyParallelCPU,
         "MemcpyCUDA1D": ExpandMemcpyCUDA1D,
         "MemcpyCUDA2D": ExpandMemcpyCUDA2D,
         "MemcpyCUDANDStrided": ExpandMemcpyCUDANDStrided,
@@ -897,23 +817,33 @@ class CopyLibraryNode(nodes.LibraryNode):
                          outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME},
                          **kwargs)
 
-    def src_storage(self, state, sdfg) -> dtypes.StorageType:
+    def src_storage(self, state) -> dtypes.StorageType:
+        """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.
+
+        :param state: state containing this libnode (owning SDFG is ``state.sdfg``).
+        :returns: the source :class:`~dace.dtypes.StorageType`.
+        """
         in_edges = [e for e in state.in_edges(self) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
         if not in_edges:
             return dtypes.StorageType.Default
         outer = state.memlet_path(in_edges[0])[0].src
         if not isinstance(outer, nodes.AccessNode):
             return dtypes.StorageType.Default
-        return sdfg.arrays[outer.data].storage
+        return state.sdfg.arrays[outer.data].storage
 
-    def dst_storage(self, state, sdfg) -> dtypes.StorageType:
+    def dst_storage(self, state) -> dtypes.StorageType:
+        """Storage of the array fed by ``_cpy_out``, or ``Default`` if unwired.
+
+        :param state: state containing this libnode (owning SDFG is ``state.sdfg``).
+        :returns: the destination :class:`~dace.dtypes.StorageType`.
+        """
         out_edges = [e for e in state.out_edges(self) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
         if not out_edges:
             return dtypes.StorageType.Default
         outer = state.memlet_path(out_edges[0])[-1].dst
         if not isinstance(outer, nodes.AccessNode):
             return dtypes.StorageType.Default
-        return sdfg.arrays[outer.data].storage
+        return state.sdfg.arrays[outer.data].storage
 
     def validate(self, sdfg, state, allow_cross_storage=True):
         """Resolve in/out edges, names, and subsets.

@@ -493,6 +493,11 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
             if (object_folder / sub_folder).is_dir():
                 found_sub_folder = True
             elif found_sub_folder:
+                # A partial / corrupted cache (some sibling dirs missing). Under ``probe`` the
+                # caller wants to know whether this is a usable cache; report "not usable" so
+                # the next step regenerates from scratch instead of crashing the build.
+                if probe:
+                    return None
                 raise NotADirectoryError(f'Expected that folder ``{object_folder}`` contains ``{sub_folder}``')
 
         if found_sub_folder:

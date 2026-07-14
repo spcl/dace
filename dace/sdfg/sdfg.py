@@ -119,13 +119,14 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
+    :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
     :return: A list of Memlet objects in the order they appear in the AST.
     """
     result: List[mm.Memlet] = []
@@ -136,6 +137,10 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif include_scalars and isinstance(subnode, ast.Name):
+            data = astutils.rname(subnode)
+            if data in arrays and isinstance(arrays[data], dace.data.Scalar):
+                result.append(mm.Memlet.from_array(data, arrays[data]))
 
     return result
 
@@ -393,19 +398,20 @@ class InterstateEdge(object):
 
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
-    def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+    def get_read_memlets(self, arrays: Dict[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.
 
         :param arrays: A dictionary mapping names to their corresponding data descriptors (a-la ``sdfg.arrays``)
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         :return: A list of Memlet objects for each read.
         """
         result: List[mm.Memlet] = []
-        result.extend(memlets_in_ast(self.condition.code[0], arrays))
+        result.extend(memlets_in_ast(self.condition.code[0], arrays, include_scalars=include_scalars))
         for assign in self.assignments.values():
             vast = ast.parse(assign)
-            result.extend(memlets_in_ast(vast, arrays))
+            result.extend(memlets_in_ast(vast, arrays, include_scalars=include_scalars))
 
         return result
 
@@ -2152,17 +2158,33 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+    # Names reserved by framework pipelines (currently just ``gpu_streams``
+    # for the gpu_specialization pipeline). User SDFG code can't add these;
+    # only the owning pipeline can, via ``_internal_use=True`` below.
+    RESERVED_NAMES = frozenset({"gpu_streams"})
+
+    def add_datadesc(self,
+                     name: str,
+                     datadesc: dt.Data,
+                     find_new_name: bool = False,
+                     _internal_use: bool = False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
             :param find_new_name: If True and data descriptor with this name
                                   exists, finds a new name to add.
+            :param _internal_use: Bypass for framework pipelines that own
+                                  reserved descriptor names (see
+                                  :attr:`RESERVED_NAMES`). Not for user code.
             :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+        if name in self.RESERVED_NAMES and not _internal_use:
+            raise NameError(f'Data descriptor name "{name}" is reserved for framework pipeline use. '
+                            f'Pick a different name.')
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members

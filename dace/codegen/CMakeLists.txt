@@ -35,7 +35,8 @@ foreach(DACE_FILE ${DACE_FILES})
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
-  if(${DACE_FILE_TARGET} STREQUAL "cuda")
+  # previous: if(${DACE_FILE_TARGET} STREQUAL "cuda"). Needed to work with experimental
+  if(${DACE_FILE_TARGET} STREQUAL "experimental_cuda" OR ${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
       set(DACE_ENABLE_HIP ON)
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
@@ -280,6 +281,11 @@ endforeach()
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+# The OpenMP INTERFACE options don't always propagate through to this target;
+# inject -fopenmp at the front of both compile and link lines so libgomp is
+# considered before -Wl,--as-needed can drop it.
+target_compile_options(${DACE_PROGRAM_NAME} BEFORE PRIVATE ${OpenMP_CXX_FLAGS})
+target_link_options(${DACE_PROGRAM_NAME} BEFORE PRIVATE ${OpenMP_CXX_FLAGS})
 
 # Set C++ standard to C++20 (or the configured standard)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
@@ -287,6 +293,10 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
 target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+# Same -fopenmp injection as above: dacestub.cpp calls omp_get_max_threads() at
+# load time, so the symbol must be resolved even after --as-needed.
+target_compile_options(dacestub_${DACE_PROGRAM_NAME} BEFORE PRIVATE ${OpenMP_CXX_FLAGS})
+target_link_options(dacestub_${DACE_PROGRAM_NAME} BEFORE PRIVATE ${OpenMP_CXX_FLAGS})
 
 # Windows-specific fixes
 if (MSVC_IDE)

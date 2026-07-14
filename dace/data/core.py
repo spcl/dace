@@ -272,6 +272,13 @@ class Scalar(Data):
     def __repr__(self):
         return 'Scalar (dtype=%s)' % self.dtype
 
+    def is_packed_fortran_strides(self) -> bool:
+        # A scalar is a single element; any layout question is trivially yes.
+        return True
+
+    def is_packed_c_strides(self) -> bool:
+        return True
+
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
                       self.debuginfo)
@@ -639,7 +646,7 @@ class Array(Data):
         """
         Used to set properties which depend on the shape of the array
         either to their default value, which depends on the shape, or
-        if explicitely provided to the given value. For internal use only.
+        if explicitly provided to the given value. For internal use only.
         """
         if shape is None:
             raise IndexError('Shape must not be None')

@@ -19,7 +19,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
 
 import re
 
@@ -146,8 +146,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
-                # GPU global memory is only accessed via pointers
-                # TODO(later): Fix workaround somehow
+                # A GPU_Global scalar is a device pointer on the host side: allocate_array
+                # cudaMallocs it as ``T*`` and connector-type inference (infer_types) treats
+                # GPU_Global data as pointer-typed, so it must be registered as a pointer to
+                # match the allocation rather than as a value-typed CPU scalar. This branch is
+                # reachable on the legacy CUDA target, which shares this codegen but never runs
+                # PromoteGPUScalarsToArrays -- the pass that would otherwise widen such scalars
+                # to 1-element arrays before codegen.
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
@@ -201,6 +206,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
+
+        # Accumulator data-names whose map-exit WCR is folded by an enclosing GPU thread-block
+        # tree reduction. Maps ``data-name -> {'partial', 'credtype', 'ctype'}``: while a name is
+        # present, ``write_and_resolve_expr`` redirects the per-thread atomic into a register
+        # accumulate on the named partial (``partial = op(partial, value)``) instead, which the
+        # CUDA codegen then folds across the block with ``cub::BlockReduce`` (one atomic/block).
+        # The CUDA codegen adds/removes the entries around the thread-block body.
+        self._gpu_block_reduction_covered = {}
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
@@ -275,6 +288,21 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
+    def _viewed_data_is_const(self, sdfg: SDFG, viewed_dnode: nodes.AccessNode) -> bool:
+        """Whether the data viewed by a ``View`` is already declared ``const`` in the emitted code.
+
+        A view aliasing ``const`` data must itself be ``const`` (mirroring its parent). The viewed
+        node is allocated before the view (see :meth:`allocate_view`), so its registered ctype is
+        available -- a leading ``const`` qualifier is the signal.
+        """
+        for key in (self.ptr(viewed_dnode.data, viewed_dnode.desc(sdfg), sdfg), viewed_dnode.data):
+            try:
+                _, ctype = self._dispatcher.defined_vars.get(key)
+            except KeyError:
+                continue
+            return ctype.strip().startswith('const ')
+        return False
+
     def allocate_view(self,
                       sdfg: SDFG,
                       cfg: ControlFlowRegion,
@@ -300,6 +328,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
+        if edge is None:
+            return
+
         # We need to know if this is a read or a write variation
         is_write = edge.src is node
 
@@ -318,7 +349,17 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet.subset is None:
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
-        # Emit memlet as a reference and register defined variable
+        # Emit memlet as a reference and register defined variable. A view must mirror the const
+        # qualifier of the data it views: a ``const`` parent (e.g. a read-only nested-SDFG argument)
+        # cannot be aliased by a non-const ``T*`` view (an illegal ``const T* -> T*`` conversion), so
+        # the view is emitted pointer-to-const too. A non-const parent must keep non-const views --
+        # the view edge's read/write *direction* does not imply the view's contents are never written
+        # (reinterpret / same-name views are read-direction yet written), so const-ness is keyed off
+        # the parent, not the direction. ``_mutated_descriptors`` guarantees a const parent is never
+        # written through any view, so mirroring is always sound.
+        const_view = (not isinstance(sdfg.arrays[viewed_dnode.data],
+                                     (data.Structure, data.ContainerArray, data.ContainerView))
+                      and self._viewed_data_is_const(sdfg, viewed_dnode))
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
@@ -326,7 +367,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         codegen=self,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=is_write,
+                                                        const_read_only_array=const_view)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -357,7 +399,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         value = '&' + value
 
         if not declared:
+            # Keep the registered ctype consistent with the emitted declaration: a read-only view
+            # is declared as a pointer-to-const (see ``const_view`` above), so consumers that look
+            # it up must see the same qualifier.
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            if const_view:
+                ctypedef = 'const ' + ctypedef
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             if isinstance(nodedesc, data.StructureView):
                 for k, v in nodedesc.members.items():
@@ -606,6 +653,19 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
+            # The assignment necessary to unify the explicit streams and streams declared through
+            # the state of the SDFG.
+            if nodedesc.dtype == dtypes.gpuStream_t:
+                ctype = dtypes.gpuStream_t.ctype
+                allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
+                # Local is ``gpuStream_t* {name}`` -- register the matching
+                # pointer ctype so consumers (``emit_memlet_reference``) emit
+                # ``gpuStream_t* gpu_streams`` in nested-SDFG signatures
+                # instead of ``gpuStream_t gpu_streams`` (1 vs. 2 pointer
+                # levels).
+                define_var(name, DefinedType.Pointer, dtypes.pointer(dtypes.gpuStream_t).ctype)
+                return
+
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -680,6 +740,9 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+            return
+        elif nodedesc.dtype == dtypes.gpuStream_t:
+            callsite_stream.write(f"{alloc_name} = nullptr;")
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
@@ -1121,6 +1184,11 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_edge = dfg.memlet_path(edge)[-1]
             dst_node = dst_edge.dst
 
+            if isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state).dtype == dtypes.gpuStream_t:
+                # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
+                # Thus, nothing needs to be written and out memlets of this kind should be ignored.
+                continue
+
             # Target is neither a data nor a tasklet node
             if isinstance(node, nodes.AccessNode) and (not isinstance(dst_node, nodes.AccessNode)
                                                        and not isinstance(dst_node, nodes.CodeNode)):
@@ -1162,8 +1230,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
-                    raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
-                        str(edge.src), str(edge.dst)))
+                    continue
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -1381,7 +1448,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
-
             else:
                 if not memlet.dynamic:
                     if is_scalar:
@@ -1391,6 +1457,19 @@ class CPUCodeGen(TargetCodeGenerator):
                         # constexpr arrays
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        elif (var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer)
+                              and not isinstance(desc.dtype, dtypes.opaque)):
+                            # Scalar source feeding a pointer-typed connector
+                            # (e.g. CopyLibraryNode -> cudaMemcpyAsync from a host
+                            # scalar argument). The connector's pointer type wins
+                            # over the source's scalar ctypedef, and we have to
+                            # take the address of the host variable. Skip for
+                            # opaque dtypes (MPI_Comm / MPI_Request / cuda handles
+                            # etc.) -- the value is already a pointer-like handle,
+                            # so address-of would add an unwanted indirection
+                            # that breaks the libnode call (e.g. ``MPI_Bcast``
+                            # expects ``MPI_Comm``, not ``MPI_Comm *``).
+                            result += "{} {} = &{};".format(conntype.ctype, local_name, expr)
                         else:
                             # Pointer reference. ``ctypedef`` may already include
                             # ``__restrict__`` (from a parent scope's Scalar->Pointer
@@ -1423,8 +1502,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Stream
-        else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+
+        # Set Defined Type for GPU Stream connectors
+        # Shadowing for stream variable needs to be allowed
+        if memlet_type == 'gpuStream_t':
+            var_type = DefinedType.GPUStream
+            defined = DefinedType.GPUStream
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)
@@ -1599,8 +1682,19 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit post-memlet tasklet preamble code
         callsite_stream.write(after_memlets_stream.getvalue())
 
-        # Instrumentation: Pre-tasklet
-        instr = self._dispatcher.instrumentation[node.instrument]
+        # Instrumentation: Pre-tasklet. Fall back to the enclosing state's
+        # ``instrument`` flag if the node itself wasn't tagged -- this makes
+        # state-level annotations (e.g. ``GPU_TX_MARKERS`` on a copyin
+        # state) surface for tasklets generated by library-node expansions
+        # (CopyLibraryNode -> cudaMemcpyAsync) which don't carry their own
+        # instrument attribute. The provider's hook can still filter by
+        # node identity / label.
+        instr_type = node.instrument
+        if (instr_type == dtypes.InstrumentationType.No_Instrumentation
+                and getattr(state_dfg, 'instrument', dtypes.InstrumentationType.No_Instrumentation)
+                != dtypes.InstrumentationType.No_Instrumentation):
+            instr_type = state_dfg.instrument
+        instr = self._dispatcher.instrumentation.get(instr_type)
         if instr is not None:
             instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
 
@@ -1654,6 +1748,10 @@ class CPUCodeGen(TargetCodeGenerator):
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
+            pass
+        elif isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state_dfg).dtype == dtypes.gpuStream_t:
+            # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
+            # Thus, nothing needs to be written.
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
@@ -1720,14 +1818,66 @@ class CPUCodeGen(TargetCodeGenerator):
         ])
         return f'{sdfg_label}({args});'
 
+    @staticmethod
+    def _mutated_descriptors(nsdfg: SDFG) -> Set[str]:
+        """Names of descriptors in ``nsdfg`` that may be mutated -- the set that must *not* be
+        ``const``-qualified as a device-function argument.
+
+        Beyond data written directly, this propagates non-const *up* a ``View`` chain: a write
+        through a view is recorded by :func:`read_and_write_sets` against the *view's* name, so the
+        underlying parent it aliases would otherwise look read-only. A written view exposes its
+        parent through a non-const pointer, which is the C++ rule made explicit -- a non-const view
+        of const data is illegal, while a const (read-only) view of non-const data is fine, so only
+        *written* views taint their parent. Propagation runs to a fixpoint to cover view-of-view.
+        """
+        mutated: Set[str] = set()
+        # Underlying (parent) descriptor of each *write-direction* view -- the data it aliases and
+        # writes through. A view's direction is read off its view edge exactly as ``allocate_view``
+        # does (``is_write = view_edge.src is view_node``); a read-direction view never writes its
+        # parent and so does not taint it. Note: ``read_and_write_sets`` counts the view-*linking*
+        # edge as a write to the view itself, so the view's own name being in the write set is not a
+        # reliable signal -- the edge direction is.
+        write_view_parent: Dict[str, str] = {}
+        for nstate in nsdfg.states():
+            mutated |= nstate.read_and_write_sets()[1]
+            for vn in nstate.nodes():
+                if not (isinstance(vn, nodes.AccessNode) and isinstance(nsdfg.arrays[vn.data], data.View)):
+                    continue
+                view_edge = sdutils.get_view_edge(nstate, vn)
+                if view_edge is None or view_edge.src is not vn:
+                    continue  # read-direction view (or no view edge) -> does not write its parent
+                parent = view_edge.dst
+                if isinstance(parent, nodes.AccessNode):
+                    write_view_parent[vn.data] = parent.data
+
+        # A write-direction view writes its parent through a non-const pointer, so the parent is
+        # mutated. Propagate to a fixpoint so a view-of-view write chain taints the deepest parent.
+        changed = True
+        while changed:
+            changed = False
+            for parent in write_view_parent.values():
+                if parent not in mutated:
+                    mutated.add(parent)
+                    changed = True
+        return mutated
+
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
+
+        # An input array argument is ``const``-qualifiable only if the callee never mutates its
+        # data. ``read_and_write_sets`` records a write against the *written access node's* name,
+        # so a write through a ``View`` registers against the view -- not the underlying array.
+        # ``_mutated_descriptors`` therefore propagates non-const *up* a view chain (a written
+        # view exposes its parent through a non-const pointer), mirroring the C++ rule that a
+        # non-const view of const data is illegal while a const view of non-const data is fine.
+        written_inside = self._mutated_descriptors(node.sdfg)
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ''):
             if vconn in inout or in_memlet.data is None:
                 continue
+            const_read_only = vconn not in written_inside
             memlet_references.append(
                 cpp.emit_memlet_reference(self._dispatcher,
                                           sdfg,
@@ -1735,6 +1885,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           vconn,
                                           codegen=self,
                                           is_write=vconn in node.out_connectors,
+                                          const_read_only_array=const_read_only,
                                           conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ''):

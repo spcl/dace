@@ -285,3 +285,6 @@ id_ecdsa*
 .ssh/
 *.p12
 *.pfx
+
+# Local secrets / tokens
+.mtoken
