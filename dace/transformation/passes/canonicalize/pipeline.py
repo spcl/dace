@@ -73,6 +73,7 @@ from dace.transformation.passes.parallelize_under_constraint import ParallelizeU
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
@@ -273,7 +274,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   target: str = 'cpu',
                   lift: bool = True,
                   lift_copy: bool = True,
-                  semantic_lifting: bool = True) -> List[Tuple[str, ppl.Pass]]:
+                  semantic_lifting: bool = True,
+                  loop_fusion: bool = False) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
@@ -722,7 +724,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``LoopToMap`` in the ``parallelize`` stage. The rewrite is a relabelling
     # of the iteration space + an in-body substitution; symbolic offsets get a
     # runtime ``__builtin_trap`` non-positivity guard planted in a pre-state.
-    s += [('wavefront_skew', WavefrontSkew())]
+    #
+    # ``loop_fusion`` moves this to a POST-parallelize position (see the
+    # ``loop_fuse`` block after ``post_l2m``): with LoopFusion enabled, wavefront
+    # skewing is the final parallelization attempt on the residual loops left by
+    # ``LoopToMap`` (and any that LoopFusion merged), so it runs there instead.
+    if not loop_fusion:
+        s += [('wavefront_skew', WavefrontSkew())]
 
     # loop_to_scan (late, post-fission + post-skew): a second LoopToScan pass
     # catches prefix-scan recurrences that only emerged AFTER ``LoopFission``
@@ -801,6 +809,21 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
+
+    # loop_fuse (post-parallelize recovery, opt-in): every DOALL loop is now a
+    # Map, so the remaining LoopRegions are exactly the sequential residue
+    # LoopToMap refused. ``LoopFusion`` fuses consecutive same-range sequential
+    # siblings (locality; it cannot touch the already-parallel Maps, which it
+    # never matches). ``WavefrontSkew`` then makes its final parallelization
+    # attempt on those residual 2-D nests (seidel / nussinov and any fused
+    # nest), and a second ``LoopToMap`` maps the inner axis it exposes. This is
+    # the home of wavefront skewing when ``loop_fusion`` is on (it is skipped in
+    # its pre-parallelize position above).
+    if loop_fusion:
+        s += [('loop_fuse', LoopFusion())]
+        s += [('loop_fuse', WavefrontSkew())]
+        s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
+        s += _structural_cleanup('loop_fuse')
 
     # lift_copy (cleaning, post-parallelize): now that loops are maps, extract pure
     # data-movement out of them -- a contiguous element-wise copy -> a Copy library
@@ -1193,6 +1216,12 @@ class CanonicalizationPipeline(ppl.Pass):
         default=True,
         desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Memset). '
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
+    loop_fusion = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Run the post-LoopToMap recovery phase: LoopFusion (fuse residual sequential sibling '
+        'loops) + relocated WavefrontSkew + a second LoopToMap. Off by default (experimental); when '
+        'off the pipeline is unchanged (wavefront skewing stays pre-parallelize).')
 
     def __init__(self,
                  validate: bool = False,
@@ -1208,7 +1237,8 @@ class CanonicalizationPipeline(ppl.Pass):
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
                  lift_copy: bool = True,
-                 semantic_lifting: bool = True):
+                 semantic_lifting: bool = True,
+                 loop_fusion: bool = False):
         if target not in _TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -1237,6 +1267,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self.lift = lift
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
+        self.loop_fusion = loop_fusion
         self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -1273,7 +1304,8 @@ class CanonicalizationPipeline(ppl.Pass):
                                target=self.target,
                                lift=self.lift,
                                lift_copy=self.lift_copy,
-                               semantic_lifting=self.semantic_lifting)
+                               semantic_lifting=self.semantic_lifting,
+                               loop_fusion=self.loop_fusion)
         for _label, unit in stages:
             _assert_self_contained(unit)
             unit.apply_pass(sdfg, {})
@@ -1298,7 +1330,8 @@ def canonicalize(sdfg: SDFG,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
                  lift_copy: bool = True,
-                 semantic_lifting: bool = True) -> SDFG:
+                 semantic_lifting: bool = True,
+                 loop_fusion: bool = False) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -1350,6 +1383,12 @@ def canonicalize(sdfg: SDFG,
                              lifts (Einsum + Copy/Memset). Default ``True``; the
                              vectorizer sets ``False`` to keep the residual as raw
                              maps (a library node is not vectorizable).
+    :param loop_fusion: Run the post-LoopToMap parallelization-recovery phase
+                        (``LoopFusion`` + relocated ``WavefrontSkew`` + a second
+                        ``LoopToMap``): fuse the residual sequential sibling loops
+                        LoopToMap refused, then skew/parallelize what remains.
+                        Off by default (experimental); when off the pipeline is
+                        unchanged (wavefront skewing stays pre-parallelize).
     :returns: The same ``sdfg`` instance, canonicalized.
     """
     CanonicalizationPipeline(validate=validate,
@@ -1365,7 +1404,8 @@ def canonicalize(sdfg: SDFG,
                              specialize_constants=specialize_constants,
                              lift=lift,
                              lift_copy=lift_copy,
-                             semantic_lifting=semantic_lifting).apply_pass(sdfg, {})
+                             semantic_lifting=semantic_lifting,
+                             loop_fusion=loop_fusion).apply_pass(sdfg, {})
     # Canonicalized output opts in to OpenMP array-section reduction codegen (whole-buffer
     # WCR accumulators of a parallel map -> ``reduction(op:A[0:n])`` instead of per-element
     # atomics; complex via ``declare reduction``). Off by default elsewhere; only provably
