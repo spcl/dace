@@ -613,9 +613,17 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         const_dst = out_edge.dst
         if (out_edge.data is not None and isinstance(const_dst, dace.nodes.AccessNode)):
             const_desc = inner_state.sdfg.arrays.get(const_dst.data)
+            # The keep-scalar shortcut only applies when the output is STILL single-element. A
+            # reduction SEED (``_nnr_priv = <identity>``) whose accumulator ``WidenAccesses``
+            # already widened to a ``(W,)`` tile is no longer a scalar: assigning a scalar into
+            # the tile pointer will not compile, and lanes 1..W-1 would be uninitialised. Skip
+            # the shortcut for an already-widened tile output and fall through to the
+            # ``TileLoad(src_kind='Symbol')`` broadcast fill below (which splats the identity
+            # across every lane).
+            out_is_tile = (isinstance(const_desc, dace.data.Array) and tuple(const_desc.shape) == tuple(self.widths))
             consumers = [e.dst for e in inner_state.out_edges(const_dst)]
-            if (const_desc is not None and is_same_domain_constant(str(expr), const_desc.dtype) and consumers
-                    and all(self._reads_scalar_operand_inline(c) for c in consumers)):
+            if (const_desc is not None and not out_is_tile and is_same_domain_constant(str(expr), const_desc.dtype)
+                    and consumers and all(self._reads_scalar_operand_inline(c) for c in consumers)):
                 return False  # same-domain constant -> stays a scalar broadcast operand
         # Widen the output transient to tile shape when widenable; a genuinely
         # scalar (non-widenable) output stays the python scalar assign.
