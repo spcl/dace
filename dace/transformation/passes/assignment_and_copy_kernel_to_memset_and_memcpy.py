@@ -218,17 +218,19 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
         return len(n)
 
-    def _subst_and_overapprox(self, data_range: List, range_list: dict, data_name: str,
-                              sdfg: dace.SDFG) -> Optional[List]:
-        """Substitute map parameters into ``data_range`` and, when
-        ``overapproximate_first_dimension`` is set, widen the stride-1 axis
-        to the array's full contiguous extent.
+    @staticmethod
+    def _subst_range(data_range: List, range_list: Dict) -> List:
+        """Substitute map parameters into ``data_range``, one dimension at a time.
+
+        Each map symbol is replaced by its own ``(begin, end)`` bound, yielding the exact
+        dense box the map sweeps. No widening is applied -- this is the substituted subset
+        BEFORE any :meth:`_overapprox_first_dimension` extension, so its collapsed volume is
+        exactly the set the body wrote (see the exactness guard in
+        :meth:`_begin_and_length_from_ranges`).
 
         :param data_range: ``(begin, end, step)`` per dimension (map-relative).
         :param range_list: map symbol -> ``(begin, end, step)``.
-        :param data_name: array the subset addresses.
-        :param sdfg: SDFG owning ``data_name``.
-        :returns: the rewritten range, or ``None`` if it cannot be lowered.
+        :returns: the substituted range.
         """
         new_range = []
         for (b, e, s) in data_range:
@@ -238,16 +240,36 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 ne = ne.subs(p, e2)
                 assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
             new_range.append((nb, ne, ns))
-
-        if self.overapproximate_first_dimension:
-            arr = sdfg.arrays[data_name]
-            stride_one = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
-            assert len(stride_one) <= 1  # a view inside a nested SDFG can have 0
-            if len(stride_one) == 0:
-                return None
-            dim_offset, extent = stride_one.pop()
-            new_range[dim_offset] = (0, extent - 1, 1)
         return new_range
+
+    def _overapprox_first_dimension(self, subst_range: List, data_name: str,
+                                    sdfg: dace.SDFG) -> Optional[List]:
+        """Widen the stride-1 axis of a substituted range to the array's full contiguous extent.
+
+        Applies only when ``overapproximate_first_dimension`` is set; otherwise the range is
+        returned unchanged. This is a user-opted-in extension for dimensions known to be
+        contiguous in memory, distinct from the exactness guard: the widened run is what the
+        lifted library node actually transfers, so the contiguity check and the returned copy
+        subset use this (widened) range, while the exactness guard uses the un-widened
+        substituted range so a correlated / strided index is still rejected.
+
+        :param subst_range: the substituted (non-widened) range.
+        :param data_name: array the subset addresses.
+        :param sdfg: SDFG owning ``data_name``.
+        :returns: the widened range; the input range unchanged when the flag is off; or ``None``
+            when the flag is set but the array has no stride-1 axis to widen.
+        """
+        if not self.overapproximate_first_dimension:
+            return subst_range
+        arr = sdfg.arrays[data_name]
+        stride_one = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
+        assert len(stride_one) <= 1  # a view inside a nested SDFG can have 0
+        if len(stride_one) == 0:
+            return None
+        dim_offset, extent = stride_one.pop()
+        widened = list(subst_range)
+        widened[dim_offset] = (0, extent - 1, 1)
+        return widened
 
     @staticmethod
     def _reject_if_not_contiguous(new_range: List, data_name: str, sdfg: dace.SDFG, *, is_input: bool) -> bool:
@@ -309,12 +331,17 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         """
         has_in = in_data is not None
 
-        new_out = self._subst_and_overapprox([(b, e, s) for (b, e, s) in out_subset], range_list, out_data, sdfg)
+        # Substitute first (the exact box the map sweeps), then optionally widen the stride-1 axis.
+        # The exactness guard below compares the un-widened ``subst_out`` volume against the trip
+        # count; the widened ``new_out`` is what the lifted node actually transfers.
+        subst_out = self._subst_range([(b, e, s) for (b, e, s) in out_subset], range_list)
+        new_out = self._overapprox_first_dimension(subst_out, out_data, sdfg)
         if new_out is None:
             return None, None, None
         new_in = []
         if has_in:
-            new_in = self._subst_and_overapprox([(b, e, s) for (b, e, s) in in_subset], range_list, in_data, sdfg)
+            subst_in = self._subst_range([(b, e, s) for (b, e, s) in in_subset], range_list)
+            new_in = self._overapprox_first_dimension(subst_in, in_data, sdfg)
             if new_in is None:
                 return None, None, None
 
@@ -338,10 +365,17 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         # assignments -- the correct lowering for a non-contiguous / strided write), never a Copy /
         # Memset library node. The ``has_in`` cross-check above does NOT catch this: for a copy both
         # subsets widen identically, so their collapsed lengths still match (both wrong).
+        #
+        # Measure the guard on the UN-WIDENED ``subst_out`` volume, not ``out_length_collapsed``:
+        # ``overapproximate_first_dimension`` is a separate, user-opted-in extension of a genuine
+        # 1:1-per-iteration write to its full contiguous extent (sound by the flag's contract). If we
+        # measured the widened volume the guard would spuriously reject every overapproximated
+        # sub-range copy; measuring the substituted volume still rejects ``A[i, i]`` / ``A[2*i]``,
+        # whose substituted box is already strictly larger than the trip count before any widening.
         trip_count = dace.symbolic.SymExpr(1)
         for (b2, e2, _s2) in range_list.values():
             trip_count *= (e2 + 1) - b2
-        if dace.symbolic.simplify(out_length_collapsed - trip_count) != 0:
+        if dace.symbolic.simplify(self._collapsed_length(subst_out) - trip_count) != 0:
             return None, None, None
 
         return new_in, new_out, out_length_collapsed
