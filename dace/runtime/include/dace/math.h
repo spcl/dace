@@ -86,7 +86,7 @@ static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus)
     return value - floor(value / modulus) * modulus;
 }
 
-// Implement to support a match wtih Fortran's intrinsic EXPONENT
+// Implement to support a match with Fortran's intrinsic EXPONENT
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   int exponent = 0;
@@ -254,7 +254,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::com
 // Computes Python modulus (also NumPy remainder)
 // Formula: num - (num // den) * den
 // NOTE: This is different than Python math.remainder and C remainder,
-// which are equaivalent to the IEEE remainder: num - round(num / den) * den
+// which are equivalent to the IEEE remainder: num - round(num / den) * den
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
     T quotient = py_floor(numerator, denominator);
@@ -392,7 +392,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(const std::complex<T>
 
 #if __cplusplus < 201703L
 
-// Compute the greates common divisor of two integers
+// Compute the greatest common divisor of two integers
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T gcd(T a, T b) {
     // Modern Euclidian algorithm
@@ -417,7 +417,7 @@ static DACE_CONSTEXPR DACE_HDFI T lcm(T a, T b) {
 
 #else
 
-// Compute the greates common divisor of two integers
+// Compute the greatest common divisor of two integers
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T gcd(const T& a, const T& b) {
     return std::gcd(a, b);
@@ -514,6 +514,16 @@ namespace dace
         {
             return (T)std::exp(a);
         }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T exp2(const T& a)
+        {
+            return (T)std::exp2(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T expm1(const T& a)
+        {
+            return (T)std::expm1(a);
+        }
 
 #ifdef __CUDACC__
         template<typename T>
@@ -585,9 +595,19 @@ namespace dace
             return std::sin(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T asin(const T& a)
+        {
+            return std::asin(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T sinh(const T& a)
         {
             return std::sinh(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T asinh(const T& a)
+        {
+            return std::asinh(a);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T cos(const T& a)
@@ -595,9 +615,19 @@ namespace dace
             return std::cos(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T acos(const T& a)
+        {
+            return std::acos(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T cosh(const T& a)
         {
             return std::cosh(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T acosh(const T& a)
+        {
+            return std::acosh(a);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T tan(const T& a)
@@ -605,14 +635,34 @@ namespace dace
             return std::tan(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T atan(const T& a)
+        {
+            return std::atan(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T atan2(const T& a)
+        {
+            return std::atan2(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T tanh(const T& a)
         {
             return std::tanh(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T atanh(const T& a)
+        {
+            return std::atanh(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T sqrt(const T& a)
         {
             return std::sqrt(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T cbrt(const T& a)
+        {
+            return std::cbrt(a);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T log(const T& a)
@@ -623,6 +673,66 @@ namespace dace
         DACE_CONSTEXPR DACE_HDFI T log10(const T& a)
         {
           return std::log10(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T log1p(const T& a)
+        {
+            return std::log1p(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T log2(const T& a)
+        {
+            return std::log2(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T fmod(const T& a, const T& b)
+        {
+            return std::fmod(a, b);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T lgamma(const T& a)
+        {
+            return std::lgamma(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T tgamma(const T& a)
+        {
+            return std::tgamma(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T ceil(const T& a)
+        {
+            return std::ceil(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T trunc(const T& a)
+        {
+            return std::trunc(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T erf(const T& a)
+        {
+            return std::erf(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T erfc(const T& a)
+        {
+            return std::erfc(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T nearbyint(const T& a)
+        {
+            return std::nearbyint(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T round(const T& a)
+        {
+            return std::round(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T hypot(const T& a, const T& b)
+        {
+            return std::hypot(a, b);
         }
     }
 
