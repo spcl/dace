@@ -326,6 +326,74 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 }
 
 // ===================================================================
+// tile_fma : out[i] = fma(a, b, c) = a*b + c (single rounding). ZERO-FILL
+// inactive (operand reads are in-tile, always safe to evaluate). fp32/fp64 use
+// the AVX2 fused multiply-add ``_mm256_fmadd_p{s,d}`` (available under -mfma,
+// hence the ``#if defined(__FMA__)`` guard); integer types / a non-FMA build use
+// scalar ``std::fma`` so the pure and ISA lowerings agree bit-for-bit.
+// ===================================================================
+template <typename T, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                     const bool* __restrict__ mask, int vlen) {
+  auto scalar_tail = [&](int i) {
+    const T av = (!BroadcastA) ? a[i] : a[0];
+    const T bv = (!BroadcastB) ? b[i] : b[0];
+    const T cv = (!BroadcastC) ? c[i] : c[0];
+    if constexpr (Masked)
+      out[i] = mask[i] ? T(std::fma(av, bv, cv)) : T(0);
+    else
+      out[i] = T(std::fma(av, bv, cv));
+  };
+
+#if defined(__FMA__)
+  if constexpr (std::is_same<T, float>::value) {
+    constexpr int W = 8;
+    const __m256 avb = (BroadcastA) ? _mm256_set1_ps(a[0]) : _mm256_setzero_ps();
+    const __m256 bvb = (BroadcastB) ? _mm256_set1_ps(b[0]) : _mm256_setzero_ps();
+    const __m256 cvb = (BroadcastC) ? _mm256_set1_ps(c[0]) : _mm256_setzero_ps();
+    int i = 0;
+    for (; i + W <= vlen; i += W) {
+      __m256 va = (!BroadcastA) ? _mm256_loadu_ps(a + i) : avb;
+      __m256 vb = (!BroadcastB) ? _mm256_loadu_ps(b + i) : bvb;
+      __m256 vc = (!BroadcastC) ? _mm256_loadu_ps(c + i) : cvb;
+      __m256 res = _mm256_fmadd_ps(va, vb, vc);  // va*vb + vc
+      if constexpr (Masked)
+        res = _mm256_blendv_ps(_mm256_setzero_ps(), res, _mm256_castsi256_ps(detail::mask32_from_bools(mask, i, W)));
+      _mm256_storeu_ps(out + i, res);
+    }
+    for (; i < vlen; ++i) scalar_tail(i);
+    return;
+  }
+  if constexpr (std::is_same<T, double>::value) {
+    constexpr int W = 4;
+    const __m256d avb = (BroadcastA) ? _mm256_set1_pd(a[0]) : _mm256_setzero_pd();
+    const __m256d bvb = (BroadcastB) ? _mm256_set1_pd(b[0]) : _mm256_setzero_pd();
+    const __m256d cvb = (BroadcastC) ? _mm256_set1_pd(c[0]) : _mm256_setzero_pd();
+    int i = 0;
+    for (; i + W <= vlen; i += W) {
+      __m256d va = (!BroadcastA) ? _mm256_loadu_pd(a + i) : avb;
+      __m256d vb = (!BroadcastB) ? _mm256_loadu_pd(b + i) : bvb;
+      __m256d vc = (!BroadcastC) ? _mm256_loadu_pd(c + i) : cvb;
+      __m256d res = _mm256_fmadd_pd(va, vb, vc);  // va*vb + vc
+      if constexpr (Masked)
+        res = _mm256_blendv_pd(_mm256_setzero_pd(), res, _mm256_castsi256_pd(detail::mask64_from_bools(mask, i, W)));
+      _mm256_storeu_pd(out + i, res);
+    }
+    for (; i < vlen; ++i) scalar_tail(i);
+    return;
+  }
+#endif
+  // Integer types, or a build without -mfma: scalar std::fma (bit-exact with pure).
+  for (int i = 0; i < vlen; ++i) scalar_tail(i);
+}
+
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                     const bool* __restrict__ mask) {
+  tile_fma<T, BroadcastA, BroadcastB, BroadcastC, Masked>(out, a, b, c, mask, VLEN);
+}
+
+// ===================================================================
 // tile_ite : out[i] = cond[i] ? t : e ; ZERO-FILL inactive.
 // The select is via blendv (per-lane high-bit), with cond built as an
 // all-ones/zero vector mask from the cond tile.

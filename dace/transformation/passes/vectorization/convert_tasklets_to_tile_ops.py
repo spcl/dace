@@ -433,6 +433,29 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     return out_conn, a, b, op
         return None
 
+    def _detect_fma(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
+        """If ``tasklet`` is a fused multiply-add ``__out = fma(__a, __b, __c)`` over three data
+        connectors, return ``(out_conn, a_conn, b_conn, c_conn)`` (``a*b + c``); else ``None``.
+
+        :class:`~dace.transformation.passes.vectorization.fuse_multiply_add.FuseMultiplyAdd` mints
+        this shape -- all three operands are data connectors -- so it lowers to a :class:`TileFMA`.
+        """
+        if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 3:
+            return None
+        if tasklet.language is not dace.dtypes.Language.Python:
+            return None
+        body = _normalize_python_tasklet_body(tasklet.code.as_string.strip().rstrip(";").strip())
+        if body is None:
+            return None
+        out_conn = next(iter(tasklet.out_connectors))
+        m = re.match(r'^(\w+)\s*=\s*\(?\s*fma\(\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)\s*\)?$', body)
+        if m is None:
+            return None
+        o, a, b, c = m.groups()
+        if o != out_conn or {a, b, c} != set(tasklet.in_connectors):
+            return None
+        return out_conn, a, b, c
+
     def _detect_binop_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
         """Detect a binop with ONE Tile/Scalar operand and ONE Symbol operand.
 
@@ -1204,6 +1227,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         affine_sym = self._detect_affine_unit_with_symbol(tasklet)
         if affine_sym is not None:
             return self._convert_binop_with_symbol(inner_state, tasklet, affine_sym, iter_vars)
+        # Fused multiply-add ``_o = fma(_a, _b, _c)`` (minted by FuseMultiplyAdd). Detect before
+        # ITE (also 3-in-conn) -- the ``fma(`` head is unambiguous vs every other op shape.
+        fma_detected = self._detect_fma(tasklet)
+        if fma_detected is not None:
+            return self._convert_fma(inner_state, tasklet, fma_detected)
         # ITE (``if..else`` or ``ITE(...)``) — detect before binop/reduction so the
         # 2-in-conn ``ITE(_cond, _t, <symbol>)`` isn't miscaptured. Precise body match
         # keeps binop fall-through safe.
@@ -1653,6 +1681,56 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             _out_memlet = dace.Memlet.from_memlet(out_edge.data)
 
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
+        for edge in list(in_edges.values()) + out_edges:
+            inner_state.remove_edge(edge)
+        inner_state.remove_node(tasklet)
+        return True
+
+    def _convert_fma(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
+        """Replace a ``__out = fma(__a, __b, __c)`` tasklet with a :class:`TileFMA` node
+        (``a*b + c``). Mirror of :meth:`_convert_binop` with a third data operand (``_c``) and
+        the ``_o`` output connector."""
+        from dace.libraries.tileops import TileFMA
+        out_conn, a_conn, b_conn, c_conn = detected
+        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = list(inner_state.out_edges(tasklet))
+        if a_conn not in in_edges or b_conn not in in_edges or c_conn not in in_edges or not out_edges:
+            return False
+        out_edge = out_edges[0]
+        a_edge, b_edge, c_edge = in_edges[a_conn], in_edges[b_conn], in_edges[c_conn]
+        # One dtype per lib node (design 6.2): refuse a mixed-dtype fma so callers cast upstream.
+        sdfg = inner_state.sdfg
+        dtypes_seen = {
+            sdfg.arrays[e.data.data].dtype
+            for e in (a_edge, b_edge, c_edge, out_edge) if e.data is not None and e.data.data is not None
+        }
+        if len(dtypes_seen) > 1:
+            raise NotImplementedError(
+                f"vec(K-dim): mixed-dtype fma NOT supported. Tasklet {tasklet.label!r} body "
+                f"{tasklet.code.as_string!r} mixes dtypes {dtypes_seen}. Add an explicit cast tasklet "
+                f"upstream OR widen the destination dtype.")
+        kind_a = self._operand_kind(inner_state, a_edge)
+        kind_b = self._operand_kind(inner_state, b_edge)
+        kind_c = self._operand_kind(inner_state, c_edge)
+        mask_an = self._find_mask_an(inner_state)
+        fma = TileFMA(name=f"{tasklet.label}_fma",
+                      widths=tuple(self.widths),
+                      kind_a=kind_a,
+                      kind_b=kind_b,
+                      kind_c=kind_c,
+                      has_mask=mask_an is not None)
+        inner_state.add_node(fma)
+        self._wire_mask(inner_state, fma, mask_an)
+        inner_state.add_edge(a_edge.src, a_edge.src_conn, fma, "_a", dace.Memlet.from_memlet(a_edge.data))
+        inner_state.add_edge(b_edge.src, b_edge.src_conn, fma, "_b", dace.Memlet.from_memlet(b_edge.data))
+        inner_state.add_edge(c_edge.src, c_edge.src_conn, fma, "_c", dace.Memlet.from_memlet(c_edge.data))
+        _was_widened = self._ensure_output_widened(inner_state, out_edge, fma)
+        if _was_widened:
+            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
+        else:
+            _out_memlet = dace.Memlet.from_memlet(out_edge.data)
+        inner_state.add_edge(fma, "_o", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         inner_state.remove_node(tasklet)

@@ -180,7 +180,7 @@ def _resolve_operand_ctype(node, parent_state, parent_sdfg, conns, out_dtype: st
 
 def _operand_exprs(node, conns):
     """Per-operand inline ``expr_*`` strings, aligned with ``conns`` order."""
-    mapping = {"_a": node.expr_a, "_b": getattr(node, "expr_b", None)}
+    mapping = {"_a": node.expr_a, "_b": getattr(node, "expr_b", None), "_c": getattr(node, "expr_c", None)}
     return [mapping.get(conn) for _kind, conn in conns]
 
 
@@ -280,6 +280,86 @@ def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
         inputs={c: None
                 for c in inputs},
         outputs={"_c": None},
+        code="\n".join(pre + [call]),
+        language=dace.dtypes.Language.CPP,
+    )
+
+
+def make_fma_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tasklet:
+    """CPP tasklet calling ``dace::tileops::tile_fma`` for ``node`` (K=1).
+
+    Fused multiply-add ``_o = _a * _b + _c`` with a single rounding. Each
+    operand's ``kind`` -> the broadcast boolean (Tile reads the per-lane
+    connector with ``Broadcast=false``; Scalar / Symbol are materialised into a
+    length-1 ``T`` buffer read with ``Broadcast=true``, casting to the output
+    type); ``has_mask`` -> ``Masked``. Mirrors :func:`make_binop_tasklet` with a
+    third operand (``_c``) and the ``_o`` output connector (no op char).
+    """
+    node.validate(parent_sdfg, parent_state)
+    # A scalar-shaped output (volume-1 Scalar / length-1 Array, emitted by value as
+    # ``T _o;``) cannot bind to ``tile_fma``'s ``T* out`` pointer argument. Delegate
+    # to the pure expansion's ``out_is_scalar`` branch (mirrors make_binop_tasklet).
+    # Gated on all operands non-Tile, matching the pure path's own predicate.
+    from dace.libraries.tileops.nodes.tile_fma import ExpandTileFMAPure
+    from dace.libraries.tileops.nodes.tile_binop import _is_scalar_shape
+    out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
+    no_tile = node.kind_a != _TILE and node.kind_b != _TILE and node.kind_c != _TILE
+    if no_tile and _is_scalar_shape(out_desc):
+        return ExpandTileFMAPure.expansion(node, parent_state, parent_sdfg)
+    vlen = _require_k1(node)
+    in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
+    out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_o")
+    # The single-``T`` ISA runtime cannot carry an op whose operands and output
+    # differ in type; defer to the ``pure`` expansion rather than emitting a
+    # value-truncating C-style cast (user direction 2026-06-15).
+    operand_ctype = _resolve_operand_ctype(node, parent_state, parent_sdfg, [(node.kind_a, "_a"), (node.kind_b, "_b"),
+                                                                             (node.kind_c, "_c")], out_dtype)
+    if operand_ctype != out_dtype:
+        return ExpandTileFMAPure.expansion(node, parent_state, parent_sdfg)
+    pre = []
+
+    def operand(kind, conn, expr):
+        if kind == _TILE:
+            src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
+            if src == out_dtype:
+                return "false", conn
+            # Widening promotion (validate() already rejected narrowing): the
+            # header takes a uniform ``T*``, so copy the input tile into an
+            # out-dtype buffer with a per-lane cast before the op.
+            buf = f"_cast{conn}"
+            pre.append(f"{out_dtype} {buf}[{vlen}];")
+            pre.append(f"for (int _ci = 0; _ci < {vlen}; ++_ci) {buf}[_ci] = ({out_dtype}){conn}[_ci];")
+            return "false", buf
+        if kind == _SYMBOL:
+            val = f"({out_dtype})({expr})"
+        else:
+            desc = parent_sdfg.arrays[in_e[conn].data.data]
+            val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
+        buf = f"_bc{conn}"
+        pre.append(f"{out_dtype} {buf}[1] = {{ {val} }};")
+        return "true", buf
+
+    a_bcast, a_ptr = operand(node.kind_a, "_a", node.expr_a)
+    b_bcast, b_ptr = operand(node.kind_b, "_b", node.expr_b)
+    c_bcast, c_ptr = operand(node.kind_c, "_c", node.expr_c)
+    masked = "true" if node.has_mask else "false"
+    mask_arg = "_mask" if node.has_mask else "nullptr"
+    call = (f"dace::tileops::tile_fma<{out_dtype}, {vlen}, "
+            f"{a_bcast}, {b_bcast}, {c_bcast}, {masked}>(_o, {a_ptr}, {b_ptr}, {c_ptr}, {mask_arg});")
+    inputs = set()
+    if node.kind_a in (_TILE, _SCALAR):
+        inputs.add("_a")
+    if node.kind_b in (_TILE, _SCALAR):
+        inputs.add("_b")
+    if node.kind_c in (_TILE, _SCALAR):
+        inputs.add("_c")
+    if node.has_mask:
+        inputs.add("_mask")
+    return nodes.Tasklet(
+        label=f"{node.label}_{suffix}",
+        inputs={c: None
+                for c in inputs},
+        outputs={"_o": None},
         code="\n".join(pre + [call]),
         language=dace.dtypes.Language.CPP,
     )

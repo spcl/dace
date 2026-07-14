@@ -239,6 +239,45 @@ DACE_DFI void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* 
   }
 }
 
+// ----------------------------- tile_fma -------------------------------
+// out[i] = fma(a, b, c) = a*b + c (single rounding). A ``__half`` tile at even
+// width uses the native FP16x2 fused multiply-add ``__hfma2(av, bv, cv)`` (=
+// av*bv + cv, single-rounded per lane); every other element type computes
+// through ``float`` with ``fmaf`` (matching the sibling ``tile_binop`` compute
+// path -- a double tile degrades through float exactly as tile_binop does).
+// ``fmaf`` / ``__hfma2`` are fused single-rounded, so the GPU and the CPU pure
+// lowerings agree.
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                       const bool* __restrict__ mask) {
+#if defined(__CUDACC__)
+  // FP16x2 path: __half tile, even width, unmasked. Two lanes per __hfma2.
+  if constexpr (__is_same(T, __half) && (VLEN % 2 == 0) && !Masked) {
+#pragma unroll
+    for (int i = 0; i < VLEN; i += 2) {
+      const __half2 av = BroadcastA ? __half2half2(a[0]) : __halves2half2(a[i], a[i + 1]);
+      const __half2 bv = BroadcastB ? __half2half2(b[0]) : __halves2half2(b[i], b[i + 1]);
+      const __half2 cv = BroadcastC ? __half2half2(c[0]) : __halves2half2(c[i], c[i + 1]);
+      const __half2 rv = __hfma2(av, bv, cv);  // av*bv + cv
+      out[i] = __low2half(rv);
+      out[i + 1] = __high2half(rv);
+    }
+    return;
+  }
+#endif
+#pragma unroll
+  for (int i = 0; i < VLEN; ++i) {
+    const float af = _cuda_to_compute<T>(BroadcastA ? a[0] : a[i]);
+    const float bf = _cuda_to_compute<T>(BroadcastB ? b[0] : b[i]);
+    const float cf = _cuda_to_compute<T>(BroadcastC ? c[0] : c[i]);
+    const T rv = _cuda_from_compute<T>(fmaf(af, bf, cf));  // single-rounded a*b + c
+    if constexpr (Masked)
+      out[i] = mask[i] ? rv : T(0);
+    else
+      out[i] = rv;
+  }
+}
+
 // ----------------------------- tile_unop ------------------------------
 template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
 DACE_DFI void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
@@ -420,6 +459,20 @@ DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_binop(Out&& out, A&
   const T av = tile_load_value<T>(a);
   const T bv = tile_load_value<T>(b);
   T rv = tile_apply<T, Op>(av, bv);
+  if constexpr (Masked)
+    tile_store_value<T>(out, mask[0] ? rv : T(0));
+  else
+    tile_store_value<T>(out, rv);
+}
+
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked, typename Out,
+          typename A, typename B, typename C>
+DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_fma(Out&& out, A&& a, B&& b, C&& c,
+                                                                const bool* __restrict__ mask) {
+  const float af = _cuda_to_compute<T>(tile_load_value<T>(a));
+  const float bf = _cuda_to_compute<T>(tile_load_value<T>(b));
+  const float cf = _cuda_to_compute<T>(tile_load_value<T>(c));
+  T rv = _cuda_from_compute<T>(fmaf(af, bf, cf));
   if constexpr (Masked)
     tile_store_value<T>(out, mask[0] ? rv : T(0));
   else

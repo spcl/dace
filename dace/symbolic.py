@@ -967,8 +967,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'ipow', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND',
-    'OR', 'pow', 'round', 'ITE'
+    'int_floor', 'int_ceil', 'ipow', 'fma', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne',
+    'AND', 'OR', 'pow', 'round', 'ITE'
 }
 
 
@@ -1201,6 +1201,32 @@ class ipow(sympy.Function):
         # ``Function`` blocks) can ``.rewrite(sympy.Pow)`` -- without changing how ``ipow``
         # itself lowers (repeated-multiply integer ``dace::math::ipow``) at codegen.
         return sympy.Pow(base, exp)
+
+
+class fma(sympy.Function):
+    """Fused multiply-add ``a * b + c``.
+
+    Minted by the vectorizer's FMA-fusion pass from an ``a * b + c`` chain so the tile-op
+    lowering can emit a single fused multiply-add -- ``std::fma`` (scalar), ``__hfma2`` (CUDA
+    fp16), ``_mm*_fmadd`` (AVX), ``vfmaq`` (NEON), ``svmla`` (SVE) -- where the ISA supports
+    it, and multiply-then-add where it does not. A residual (non-tiled) ``fma`` tasklet lowers
+    to the C ``fma`` (``std::fma``). The argument order matches C ``fma(a, b, c) == a*b + c``."""
+
+    @classmethod
+    def eval(cls, a, b, c):
+        """Fold a fully-constant multiply-add; stay symbolic otherwise."""
+        if a.is_Number and b.is_Number and c.is_Number:
+            return a * b + c
+
+    def _eval_is_real(self):
+        if all(arg.is_real for arg in self.args):
+            return True
+
+    def _eval_rewrite_as_Add(self, a, b, c, **kwargs):
+        # ``fma(a, b, c)`` is exactly ``a*b + c`` as a value; expose it on request so a caller
+        # that needs ordinary arithmetic reasoning can ``.rewrite(sympy.Add)`` without changing
+        # how ``fma`` lowers (a single fused multiply-add) at codegen.
+        return a * b + c
 
 
 class OR(sympy.Function):
@@ -2407,6 +2433,7 @@ _PYSTR2SYM_locals = {
     'id': sympy.Symbol('id'),
     'diag': sympy.Symbol('diag'),
     'jn': sympy.Symbol('jn'),
+    'yn': sympy.Symbol('yn'),  # spherical Bessel Y_n; shadows a common size-symbol name (mirror of 'jn')
 }
 # _clash1 enables all one-letter variables like N as symbols
 # _clash also allows pi, beta, zeta and other common greek letters

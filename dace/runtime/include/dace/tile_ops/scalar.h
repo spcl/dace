@@ -129,6 +129,26 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   }
 }
 
+// ----------------------------- tile_fma -------------------------------
+// out[i] = fma(a-operand, b-operand, c-operand) = a*b + c with a SINGLE
+// rounding (``std::fma``). ZERO-FILL inactive (operand reads are in-tile, always
+// safe to evaluate). ``std::fma`` is used on EVERY backend (the SIMD siblings use
+// the native fused FMA) so the pure and ISA lowerings agree bit-for-bit; the
+// caller opts into FMA's single-rounded result over a separate ``*`` then ``+``.
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                     const bool* __restrict__ mask) {
+  _dace_tile_vectorize(VLEN) for (int i = 0; i < VLEN; ++i) {
+    const T av = BroadcastA ? a[0] : a[i];
+    const T bv = BroadcastB ? b[0] : b[i];
+    const T cv = BroadcastC ? c[0] : c[i];
+    if constexpr (Masked)
+      out[i] = mask[i] ? T(std::fma(av, bv, cv)) : T(0);
+    else
+      out[i] = T(std::fma(av, bv, cv));
+  }
+}
+
 // Per-lane unary op. Op codes (single char):
 //   ``n`` neg(-a)  ``!`` not(!a)  ``a`` abs  ``e`` exp  ``l`` log  ``s`` sqrt
 //   ``S`` sin      ``C`` cos  ``f`` floor ``c`` ceil ``t`` tanh
@@ -369,6 +389,20 @@ inline std::enable_if_t<VLEN == 1, void> tile_binop(Out&& out, A&& a, B&& b, con
   const T av = tile_load_value<T>(a);
   const T bv = tile_load_value<T>(b);
   T rv = tile_apply<T, Op>(av, bv);
+  if constexpr (Masked)
+    tile_store_value<T>(out, mask[0] ? rv : T(0));
+  else
+    tile_store_value<T>(out, rv);
+}
+
+// VLEN=1 tile_fma.
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked, typename Out,
+          typename A, typename B, typename C>
+inline std::enable_if_t<VLEN == 1, void> tile_fma(Out&& out, A&& a, B&& b, C&& c, const bool* __restrict__ mask) {
+  const T av = tile_load_value<T>(a);
+  const T bv = tile_load_value<T>(b);
+  const T cv = tile_load_value<T>(c);
+  T rv = T(std::fma(av, bv, cv));
   if constexpr (Masked)
     tile_store_value<T>(out, mask[0] ? rv : T(0));
   else

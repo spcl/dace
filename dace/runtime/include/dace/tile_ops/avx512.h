@@ -182,6 +182,84 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   }
 }
 
+// ----------------------------- tile_fma -------------------------------
+// out[i] = fma(a, b, c) = a*b + c (single rounding). fp32/fp64 -> AVX-512 W-chunk
+// fused multiply-add (``_mm512_fmadd_p{s,d}``) + a scalar ``std::fma`` tail;
+// integer types / a no-AVX512 build take the scalar ``std::fma`` loop. ``std::fma``
+// everywhere (native FMA is single-rounded too) so pure and ISA agree bit-for-bit.
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                     const bool* __restrict__ mask) {
+#if defined(__AVX512F__)
+  if constexpr (std::is_same<T, float>::value) {
+    constexpr int W = 16;
+    int i = 0;
+    for (; i + W <= VLEN; i += W) {
+      __m512 va = BroadcastA ? _mm512_set1_ps(a[0]) : _mm512_loadu_ps(a + i);
+      __m512 vb = BroadcastB ? _mm512_set1_ps(b[0]) : _mm512_loadu_ps(b + i);
+      __m512 vc = BroadcastC ? _mm512_set1_ps(c[0]) : _mm512_loadu_ps(c + i);
+      __m512 r = _mm512_fmadd_ps(va, vb, vc);  // va*vb + vc
+      if constexpr (Masked) {
+        __mmask16 k = 0;
+        for (int j = 0; j < W; ++j)
+          if (mask[i + j]) k |= __mmask16(1) << j;
+        _mm512_storeu_ps(out + i, _mm512_maskz_mov_ps(k, r));  // zero-fill inactive
+      } else {
+        _mm512_storeu_ps(out + i, r);
+      }
+    }
+    for (; i < VLEN; ++i) {
+      const float av = BroadcastA ? a[0] : a[i];
+      const float bv = BroadcastB ? b[0] : b[i];
+      const float cv = BroadcastC ? c[0] : c[i];
+      if constexpr (Masked)
+        out[i] = mask[i] ? std::fma(av, bv, cv) : 0.0f;
+      else
+        out[i] = std::fma(av, bv, cv);
+    }
+    return;
+  }
+  if constexpr (std::is_same<T, double>::value) {
+    constexpr int W = 8;
+    int i = 0;
+    for (; i + W <= VLEN; i += W) {
+      __m512d va = BroadcastA ? _mm512_set1_pd(a[0]) : _mm512_loadu_pd(a + i);
+      __m512d vb = BroadcastB ? _mm512_set1_pd(b[0]) : _mm512_loadu_pd(b + i);
+      __m512d vc = BroadcastC ? _mm512_set1_pd(c[0]) : _mm512_loadu_pd(c + i);
+      __m512d r = _mm512_fmadd_pd(va, vb, vc);  // va*vb + vc
+      if constexpr (Masked) {
+        __mmask8 k = 0;
+        for (int j = 0; j < W; ++j)
+          if (mask[i + j]) k |= __mmask8(1) << j;
+        _mm512_storeu_pd(out + i, _mm512_maskz_mov_pd(k, r));
+      } else {
+        _mm512_storeu_pd(out + i, r);
+      }
+    }
+    for (; i < VLEN; ++i) {
+      const double av = BroadcastA ? a[0] : a[i];
+      const double bv = BroadcastB ? b[0] : b[i];
+      const double cv = BroadcastC ? c[0] : c[i];
+      if constexpr (Masked)
+        out[i] = mask[i] ? std::fma(av, bv, cv) : 0.0;
+      else
+        out[i] = std::fma(av, bv, cv);
+    }
+    return;
+  }
+#endif
+  // Integer types / no-AVX512 build: scalar std::fma (bit-exact with the pure path).
+  for (int i = 0; i < VLEN; ++i) {
+    const T av = BroadcastA ? a[0] : a[i];
+    const T bv = BroadcastB ? b[0] : b[i];
+    const T cv = BroadcastC ? c[0] : c[i];
+    if constexpr (Masked)
+      out[i] = mask[i] ? T(std::fma(av, bv, cv)) : T(0);
+    else
+      out[i] = T(std::fma(av, bv, cv));
+  }
+}
+
 // ----- merge / load / store / gather / scatter -----
 // Correct per-lane forms (matching scalar.h); SIMD-ized incrementally. Producers
 // ZERO-FILL inactive + guard the read; writers RMW skip-inactive.

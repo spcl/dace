@@ -56,6 +56,7 @@
 
 #include <arm_sve.h>
 
+#include <cmath>
 #include <cstdint>
 #include <type_traits>
 
@@ -118,6 +119,11 @@ inline svfloat32_t sve_max(svbool_t pg, svfloat32_t a, svfloat32_t b) { return s
 inline svint32_t sve_max(svbool_t pg, svint32_t a, svint32_t b) { return svmax_s32_x(pg, a, b); }
 inline svfloat64_t sve_max(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svmax_f64_x(pg, a, b); }
 inline svint64_t sve_max(svbool_t pg, svint64_t a, svint64_t b) { return svmax_s64_x(pg, a, b); }
+
+// ---- fused multiply-add: svmla_x(pg, c, a, b) == c + a*b (single rounding) ----
+// fp only -- the integer tile_fma path uses scalar ``std::fma`` (see tile_fma).
+inline svfloat32_t sve_mla(svbool_t pg, svfloat32_t c, svfloat32_t a, svfloat32_t b) { return svmla_f32_x(pg, c, a, b); }
+inline svfloat64_t sve_mla(svbool_t pg, svfloat64_t c, svfloat64_t a, svfloat64_t b) { return svmla_f64_x(pg, c, a, b); }
 
 // ---- comparisons -> svbool_t (active set = ``pg`` AND (a OP b)) ----
 inline svbool_t sve_cmplt(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svcmplt_f32(pg, a, b); }
@@ -300,6 +306,50 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
     }
     sve_st1(pg, out + i, res);
   }
+}
+
+// ===========================================================================
+// tile_fma : out[i] = fma(a, b, c) = a*b + c (single rounding).
+// PRODUCER -> ZERO-FILL inactive (operand reads are in-tile, always safe).
+// float / double lower to the SVE fused multiply-add ``sve_mla(pg, c, a, b)``
+// (= c + a*b); integers use scalar ``std::fma`` so the pure and ISA lowerings
+// agree bit-for-bit (an integer SVE MLA would differ from the pure std::fma).
+// ===========================================================================
+template <typename T, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                     const bool* __restrict__ mask, int vlen) {
+  if constexpr (std::is_same<T, float>::value || std::is_same<T, double>::value) {
+    using VecT = decltype(sve_dup(T(0)));  // vec type for T, from the sve_dup overload set
+    const VecT zero = sve_dup(T(0));
+    for (int i = 0; i < vlen; i += sve_cnt<T>()) {
+      svbool_t pg = sve_whilelt<T>(i, vlen);
+      const VecT av = (!BroadcastA) ? sve_ld1(pg, a + i) : sve_dup(a[0]);
+      const VecT bv = (!BroadcastB) ? sve_ld1(pg, b + i) : sve_dup(b[0]);
+      const VecT cv = (!BroadcastC) ? sve_ld1(pg, c + i) : sve_dup(c[0]);
+      VecT res = sve_mla(pg, cv, av, bv);  // c + a*b
+      if constexpr (Masked) {
+        svbool_t m = sve_mask<T>(pg, mask, i);
+        res = sve_sel(m, res, zero);  // zero-fill in-tile-but-masked-off lanes
+      }
+      sve_st1(pg, out + i, res);
+    }
+  } else {
+    // Integer / other types: scalar std::fma to match the pure path bit-for-bit.
+    for (int i = 0; i < vlen; ++i) {
+      const T av = BroadcastA ? a[0] : a[i];
+      const T bv = BroadcastB ? b[0] : b[i];
+      const T cv = BroadcastC ? c[0] : c[i];
+      if constexpr (Masked)
+        out[i] = mask[i] ? T(std::fma(av, bv, cv)) : T(0);
+      else
+        out[i] = T(std::fma(av, bv, cv));
+    }
+  }
+}
+template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
+inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
+                     const bool* __restrict__ mask) {
+  tile_fma<T, BroadcastA, BroadcastB, BroadcastC, Masked>(out, a, b, c, mask, VLEN);
 }
 
 // ===========================================================================

@@ -95,11 +95,13 @@ from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNeste
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
-from dace.libraries.tileops.nodes import (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
+from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore,
+                                          TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
+from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-_TILE_NODE_TYPES = (TileBinop, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
+_TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
 
 
 class VectorizeUnsupported(Exception):
@@ -624,6 +626,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         validate = config.validate
         validate_all = config.validate_all
         assume_even = config.assume_even
+        fuse_multiply_add = config.fuse_multiply_add
         device = config.device
         _validate_knobs(widths, target_isa, remainder_strategy, branch_mode, scalar_remainder_emit)
         # K-dependent knob support: K=1 and K≥2 both support every (branch, remainder)
@@ -767,6 +770,12 @@ class VectorizeMultiDim(ppl.Pipeline):
         # tiled bodies; scalar-tail scopes stay step-1 loops keeping the valid bare-if. So it
         # MUST run AFTER the remainder split.
         passes.append(NormalizeMaskedWriteTasklets())
+        if fuse_multiply_add:
+            # ``a*b + c`` -> ``fma(a, b, c)`` on the split single-op tasklets, BEFORE the body is
+            # nested + tiled, so the converter later lowers it to a single ``TileFMA`` (a native
+            # FMA per ISA). Opt-in: a fused single-rounding differs from the separate ``*`` then
+            # ``+`` (and a NumPy reference) by up to one ULP.
+            passes.append(FuseMultiplyAdd())
         # Always-on under walker-primary: every innermost map body must be nested in a body
         # NSDFG so the walker (InsertTileLoadStore) — the only emit path — has something to
         # traverse. A flat body without an NSDFG wrapper would leave the walker idle: the map

@@ -39,6 +39,10 @@ class VectorizeConfig:
     :param validate: Validate the SDFG once after the whole pipeline.
     :param validate_all: Also validate between every subpass.
     :param assume_even: Assume every tiled extent is divisible (skip the remainder).
+    :param fuse_multiply_add: Fuse ``a*b + c`` into a single fused multiply-add (``fma`` ->
+        ``TileFMA`` -> native FMA per ISA). Off by default: a fused FMA rounds once where the
+        separate ``*`` then ``+`` rounds twice, so results differ by up to one ULP from a plain
+        ``a*b + c`` / a NumPy reference. Enable for the throughput win when that is acceptable.
     :param device: Target device (CPU / GPU).
     """
     widths: Tuple[int, ...]
@@ -51,6 +55,7 @@ class VectorizeConfig:
     validate: bool = True
     validate_all: bool = False
     assume_even: bool = False
+    fuse_multiply_add: bool = False
     device: DeviceType = DeviceType.CPU
 
     def __post_init__(self) -> None:
