@@ -28,7 +28,12 @@ def _is_register_demotable(desc, max_elements: int) -> bool:
     for dim in desc.shape:
         if symbolic.issymbolic(dim):
             return False
-        dim = int(dim)
+        try:
+            dim = int(dim)
+        except (TypeError, ValueError):
+            # Non-symbolic but not a finite integer (e.g. sympy.oo): cannot size
+            # a per-thread array, so it is not demotable.
+            return False
         if dim <= 0:
             return False
         total *= dim

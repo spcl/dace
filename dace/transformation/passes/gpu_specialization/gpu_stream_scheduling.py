@@ -21,10 +21,11 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
+from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES, STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name,
-    is_already_lowered_gpu_runtime_call, is_gpu_copy_or_memset_libnode, is_gpu_relevant_node, is_gpu_stream_consumer,
-    is_inside_gpu_device_kernel, is_stream_wiring_applied, weakly_connected_node_sets)
+    STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name, is_already_lowered_gpu_runtime_call,
+    is_gpu_copy_or_memset_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
+    is_stream_wiring_applied, weakly_connected_node_sets)
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (_make_sync_tasklet,

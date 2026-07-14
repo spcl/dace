@@ -14,16 +14,6 @@ from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 # it) and the experimental codegen (whose type-based prelude binds it).
 STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
-# On-GPU / on-CPU storage sets. Deliberately duplicated from the libnode-layer
-# sets: the experimental GPU path owns its own constants rather than reaching
-# across into ``dace.libraries.standard.helper``.
-GPU_RESIDENT_STORAGES = frozenset({dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared})
-CPU_RESIDENT_STORAGES = frozenset({
-    dtypes.StorageType.CPU_Heap,
-    dtypes.StorageType.CPU_Pinned,
-    dtypes.StorageType.CPU_ThreadLocal,
-})
-
 
 def get_gpu_stream_array_name() -> str:
     return "gpu_streams"

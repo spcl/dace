@@ -211,7 +211,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
     # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
