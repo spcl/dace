@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from dace import nodes
 from dace.memlet import Memlet
+from dace.sdfg import utils as sdutils
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
@@ -33,12 +34,20 @@ def _count_direct_copy_edges(sdfg):
 
 
 def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
-    """Assert no memlet in any state or nested SDFG still carries an ``other_subset`` after copy-node insertion."""
+    """Assert no data-movement memlet still carries an ``other_subset`` after copy-node insertion.
+
+    View-defining (alias) edges are excluded: they reference the underlying buffer rather than
+    moving data, so ``InsertExplicitCopies`` correctly leaves them direct with ``other_subset``
+    intact (mirrors the pass's own view-edge skip); a copy would change the SDFG's semantics.
+    """
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for edge in state.edges():
                 memlet = edge.data
                 if memlet.is_empty():
+                    continue
+                if any(isinstance(an, nodes.AccessNode) and isinstance(nsdfg.arrays[an.data], dace.data.View)
+                       and sdutils.get_view_edge(state, an) is edge for an in (edge.src, edge.dst)):
                     continue
                 assert memlet.other_subset is None, (
                     f"Memlet on edge {edge.src}->{edge.dst} in SDFG '{nsdfg.name}' still "
