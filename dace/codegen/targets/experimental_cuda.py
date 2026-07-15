@@ -663,6 +663,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             subset = iedge.data.subset
             if acc_desc is None or iedge.data.data in seen_targets or subset is None:
                 continue
+            # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
+            if isinstance(acc_desc.dtype, dtypes.vector):
+                continue
             if len(subset) != 1 or subset.ranges[0][2] != 1:
                 continue
             base, end, _ = subset.ranges[0]
@@ -987,12 +990,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_experimental_cuda({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_experimental_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_init_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
+int __dace_init_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -1030,7 +1033,7 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
+int __dace_exit_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -1054,6 +1057,7 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 {localcode}
 """.format(params=params_comma,
            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
+           sdfg_name=self._global_sdfg.name,
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),

@@ -27,6 +27,29 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
+def gpu_block_reduction_write_slot(subset, base, length):
+    """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
+
+    Returns the index into the per-thread register partial (``offset - base``) for a write the
+    block fold can absorb, or ``None`` if it cannot -- in which case the caller keeps the plain
+    atomic WCR. Only a single 1-D element inside the reduced span ``[base, base + length)`` is
+    foldable; a multi-dimensional subset, a missing subset, or a constant offset outside the span
+    (e.g. from a second reduction edge over the same array) falls back to the atomic.
+
+    :param subset: the write memlet's subset.
+    :param base: the reduced range base recorded when the accumulator was covered.
+    :param length: the reduced span length ``m`` (the register partial has this many slots).
+    :return: the (possibly symbolic) slot expression, or ``None`` to keep the atomic path.
+    """
+    if subset is None or len(subset.ranges) != 1:
+        return None
+    offset = subset.ranges[0][0] - base
+    if not symbolic.issymbolic(offset):
+        if int(offset) < 0 or int(offset) >= length:
+            return None
+    return offset
+
+
 def replace_float_literals(expr: str) -> str:
     """
     Replace floating-point literals like 1.0, 2.000, 3., .5 with integer literals.
@@ -196,13 +219,6 @@ class CPUCodeGen(TargetCodeGenerator):
         # strictly wasted work (and would be incorrect in the rare case
         # the OMP runtime privatizes-by-value rather than by-pointer).
         self._omp_reduction_scope_stack = []
-
-        # Accumulator data-names whose map-exit WCR is folded by an enclosing GPU
-        # thread-block reduction (cub::BlockReduce + one atomic/block, emitted by CUDA
-        # codegen at device-map exit). While present, write_and_resolve_expr must NOT
-        # emit the per-thread atomic (partial stays in register, block reduce drains it).
-        # CUDA codegen adds/removes the names.
-        self._gpu_block_reduction_covered = set()
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
@@ -1101,11 +1117,22 @@ class CPUCodeGen(TargetCodeGenerator):
         """
 
         redtype = operations.detect_reduction_type(memlet.wcr)
-        # Enclosing GPU device map folds this target via thread-block reduction:
-        # partial stays in register, cub::BlockReduce at map exit drains it (one
-        # atomic/block). Emitting the per-thread atomic here would double-count.
-        if memlet.data in self._gpu_block_reduction_covered:
-            return '/* WCR folded by GPU block reduction at map exit */'
+        # Enclosing GPU thread-block map folds this target via a tree reduction: accumulate the
+        # value into this thread's private register partial (no atomic) and let ``cub::BlockReduce``
+        # at the map exit drain it (one atomic per block). Emitting the per-thread atomic here would
+        # both contend and, with the block fold, double-count. The partial is a register array whose
+        # index is the accumulator offset relative to the reduced range base, so a single scalar
+        # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
+        cover = self._gpu_block_reduction_covered.get(memlet.data)
+        if cover is not None:
+            slot = gpu_block_reduction_write_slot(memlet.subset, cover['base'], cover['m'])
+            if slot is not None:
+                lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
+                # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
+                if isinstance(dtype, dtypes.vector):
+                    return (f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::"
+                            f"vreduce<{dtype.veclen}>(&{lhs}, {inname})")
+                return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         # Skip the atomic call entirely when an enclosing OMP map has put this
         # target in a ``reduction(...)`` clause -- the OMP runtime privatizes
         # the variable per thread and tree-reduces at the end, so adding an
