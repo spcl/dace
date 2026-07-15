@@ -52,6 +52,22 @@ from dace.sdfg import nodes as dace_nodes
 import engine
 import npbench_polybench_perf as base
 
+# The cmake (BEFORE) lane runs a real CMake configure inside each MPI rank. srun/mpirun start
+# tasks with SIGCHLD BLOCKED, which every child inherits; CMake (KWSys) then spins forever in
+# select() waiting to reap its compiler-id / try_compile helpers, and any child touching a PMI/PMIx
+# client hangs in init. DaCe fixes both -- compiler._build_subprocess_sigmask unblocks SIGCHLD around
+# the build Popen, compiler._build_subprocess_env strips the rank identity (PMI_/PMIX_/OMPI_...) --
+# and configure_and_compile wires them into the cmake path. This job reaches that path via
+# sdfg.compile(); refuse to run against a DaCe predating the fix rather than deadlocking the sweep.
+from dace.codegen import compiler as dace_compiler
+
+missing_sigchld_fix = [
+    n for n in ('_build_subprocess_env', '_build_subprocess_sigmask') if n not in vars(dace_compiler)
+]
+if missing_sigchld_fix:
+    raise SystemExit(f'native_vs_cmake: this DaCe lacks {missing_sigchld_fix}; the cmake lane would hang under '
+                     f'srun (SIGCHLD-blocked mask). Run on the extended branch, which carries the fix.')
+
 CORPUS = base.CORPUS
 PRESET = base.PRESET
 #: Paper CPU lane. The corpus's own "parallel" pipeline == simplify + LoopToMap + MapFusion.
