@@ -605,11 +605,19 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Memory from the aligned operator new[] must be released by the
                 # aligned operator delete[] (a plain delete[] would pair the
                 # unaligned deallocation function). The direct operator call
-                # skips destructors, which is fine - all DaCe element types are
-                # trivially destructible.
+                # skips destructors and relies on the new-expression emitting no
+                # array cookie - both only hold for trivially destructible
+                # element types (true for all DaCe element types); the emitted
+                # static_assert turns a future violation into a compile error
+                # instead of silent UB. Should destruction ever be needed, the
+                # allocation scheme must move to an allocator (raw aligned
+                # allocation + explicit construct/destroy), not new/delete
+                # expressions.
                 if _use_aligned_operator_new():
-                    callsite_stream.write(f"::operator delete[]({alloc_name}, std::align_val_t(64));\n", cfg, state_id,
-                                          node)
+                    callsite_stream.write(
+                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
+                        f"\"aligned heap deallocation skips destructors\");\n"
+                        f"::operator delete[]({alloc_name}, std::align_val_t(64));\n", cfg, state_id, node)
                 else:
                     callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
             else:
@@ -617,9 +625,11 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
-                # Aligned pairing as above.
+                # Aligned pairing + trivial-destructibility guard as above.
                 if _use_aligned_operator_new():
-                    delete_stmt = f"::operator delete[]({alloc_name}, std::align_val_t(64));"
+                    delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
+                                   f"\"aligned heap deallocation skips destructors\"); "
+                                   f"::operator delete[]({alloc_name}, std::align_val_t(64));")
                 else:
                     delete_stmt = f"delete[] {alloc_name};"
             else:

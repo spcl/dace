@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cmath>
 #include <new>  // std::align_val_t (aligned heap-array allocation)
+#include <type_traits>  // std::is_trivially_destructible (aligned deallocation guard)
 #include <numeric>
 #include <tuple>
 #include <cstring>
