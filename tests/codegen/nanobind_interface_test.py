@@ -1040,8 +1040,24 @@ def test_nanobind_interface_many_return_values():
         assert tuple(int(r[0]) for r in result) == tuple(range(1, 13))
 
 
+def test_nanobind_interface_struct_input_binds_as_object():
+    """A struct-element array input binds as nb::object; the pointer is extracted in C++."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+    sdfg = dace.SDFG('struct_input_object_probe')
+    sdfg.add_array('p', [4], pair)  # struct-element array input
+    sdfg.arrays['p'].optional = False  # non-nullable, for the deterministic form
+    code = generate_bindings_code(sdfg)
+    assert 'nb::object p' in code  # bound as a generic Python object
+    assert 'PyObject_GetBuffer' in code  # pointer pulled via the buffer protocol in C++
+    assert '_DacePyBuffer p_buf(p.ptr())' in code  # via the RAII helper
+    assert 'reinterpret_cast<pair *>(p_buf.data())' in code  # cast to the struct pointer
+    assert 'nb::ndarray<uint8_t, nb::device::cpu> p' not in code  # no Python-side byte-view form
+
+
 def test_nanobind_interface_optional_struct_array_binding():
-    """A nullable dtypes.struct-element array binds std::optional + .none(); a non-nullable one does not."""
+    """A struct-element array binds as nb::object; nullable -> guarded optional + None->null, non-nullable -> unconditional."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
@@ -1052,12 +1068,16 @@ def test_nanobind_interface_optional_struct_array_binding():
     sdfg.arrays['q'].optional = False
     code = generate_bindings_code(sdfg)
 
-    # nullable p: std::optional wrapper + .none()
-    assert 'std::optional<nb::ndarray<uint8_t, nb::device::cpu>> p' in code
-    assert 'nb::arg("p").noconvert().none()' in code
-    # non-nullable q: plain ndarray, no .none()
-    assert 'nb::ndarray<uint8_t, nb::device::cpu> q' in code
-    assert 'nb::arg("q").noconvert().none()' not in code
+    # both bind as nb::object
+    assert 'nb::object p' in code
+    assert 'nb::object q' in code
+    # nullable p: guarded optional buffer + None -> null pointer
+    assert 'std::optional<_DacePyBuffer> p_buf' in code
+    assert 'p.is_none()' in code
+    # non-nullable q: unconditional buffer extraction
+    assert '_DacePyBuffer q_buf(q.ptr())' in code
+    # no old byte-view ndarray form remains
+    assert 'nb::ndarray<uint8_t' not in code
 
 
 def test_nanobind_interface_optional_struct_array_input():

@@ -15,6 +15,30 @@ extra keyword arguments, which the old ctypes interface allowed.
 from dace import data as dt, dtypes
 from dace.config import Config
 
+# FIX: This should probably be a nested class inside the generated handle.
+# RAII wrapper around a Python buffer view, emitted once per module when the
+# SDFG has struct arguments. It pulls a struct argument's raw data pointer
+# (== ctypes.addressof for a ctypes.Structure, or the record array's data
+# pointer) from the Python buffer protocol. PyBUF_SIMPLE returns the contiguous
+# bytes, ignoring the compound dtype that makes nanobind's ndarray reject a
+# record array. The object is kept alive by nanobind for the call's duration;
+# PyBuffer_Release runs on destruction under the re-acquired GIL (the guard
+# outlives the nested gil_scoped_release scope in call()).
+_PYBUFFER_HELPER = '''struct _DacePyBuffer {
+    Py_buffer view{};
+    bool ok = false;
+    explicit _DacePyBuffer(PyObject *o) {
+        ok = (PyObject_GetBuffer(o, &view, PyBUF_SIMPLE) == 0);
+        if (!ok) throw nb::python_error();
+    }
+    _DacePyBuffer(_DacePyBuffer &&other) noexcept : view(other.view), ok(other.ok) { other.ok = false; }
+    _DacePyBuffer(const _DacePyBuffer &) = delete;
+    _DacePyBuffer &operator=(const _DacePyBuffer &) = delete;
+    ~_DacePyBuffer() { if (ok) PyBuffer_Release(&view); }
+    void *data() const { return view.buf; }
+};
+'''
+
 
 def _has_gpu_code(sdfg) -> bool:
     """Same detection as the ctypes ``CompiledSDFG``, evaluated at codegen time."""
@@ -44,6 +68,10 @@ def _argument_binding(arglist, binding_order=None):
     params_by_name = {}
     nb_args_by_name = {}
     call_args = []
+    # C++ statements (in arglist order) that must run under the GIL before the
+    # kernel call - used to extract raw pointers from `nb::object` struct
+    # arguments via the Python buffer protocol. Empty for SDFGs without structs.
+    setup_stmts = []
     strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
     for name, desc in arglist.items():
         # pyobject (arguments and returns, incl. the PR#2206 bug-compatible
@@ -110,28 +138,32 @@ def _argument_binding(arglist, binding_order=None):
             # builds the C struct (as a ``ctypes.Structure`` filled with the raw
             # pointers of its members) and we forward a pointer to it. The struct
             # type is forward-declared in the module (see generate_bindings_code).
-            # A richer alternative would marshal a Python dict/object field by
-            # field into the struct inside C++ - but that needs the full struct
-            # definition and per-member handling (including array pointers and
-            # nested structs), so it is deferred as a future improvement.
-            params_by_name[name] = f'std::uintptr_t {name}'
-            call_args.append(f'reinterpret_cast<{ctype}>({name})')
+            # The caller passes the ctypes.Structure directly; its data pointer
+            # (== ctypes.addressof) is pulled from the Python buffer protocol in
+            # C++, so no Python-side marshalling is needed.
+            params_by_name[name] = f'nb::object {name}'
+            setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
+            call_args.append(f'reinterpret_cast<{ctype}>({name}_buf.data())')
             nb_args_by_name[name] = f'nb::arg("{name}")'
 
         elif isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
-            # Array of a C struct declared with `dace.struct(...)`. Because `nanobind`
-            # rejects such inputs, we pass it as a byte array (`NanobindCompiledSDFG`
-            # byte-views the caller's record array) and cast it back here. A nullable
-            # one (optional is not False) accepts None -> null pointer, like plain
-            # arrays; .none() is required.
+            # Array of a C struct declared with `dace.struct(...)`. nanobind's
+            # `ndarray` rejects a numpy record array (DLPack has no compound
+            # dtype), so we take it as a generic `nb::object` and pull its raw
+            # data pointer from the Python buffer protocol in C++ (PyBUF_SIMPLE
+            # gives the contiguous bytes, ignoring the compound format). A
+            # nullable one (optional is not False) accepts None -> null pointer.
+            params_by_name[name] = f'nb::object {name}'
             if desc.optional is False:
-                params_by_name[name] = f'nb::ndarray<uint8_t, nb::device::cpu> {name}'
-                call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
-                nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
+                setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
+                call_args.append(f'reinterpret_cast<{ctype} *>({name}_buf.data())')
+                nb_args_by_name[name] = f'nb::arg("{name}")'
             else:
-                params_by_name[name] = f'std::optional<nb::ndarray<uint8_t, nb::device::cpu>> {name}'
-                call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
-                nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
+                setup_stmts.append(
+                    f'std::optional<_DacePyBuffer> {name}_buf; if (!{name}.is_none()) {name}_buf.emplace({name}.ptr());'
+                )
+                call_args.append(f'{name}.is_none() ? nullptr : reinterpret_cast<{ctype} *>({name}_buf->data())')
+                nb_args_by_name[name] = f'nb::arg("{name}").none()'
 
         elif isinstance(desc, dt.Array):
             # The ndarray scalar type may differ from the cast target: a vector
@@ -174,7 +206,7 @@ def _argument_binding(arglist, binding_order=None):
     binding_order = list(arglist.keys()) if binding_order is None else binding_order
     params = [params_by_name[n] for n in binding_order]
     nb_args = [nb_args_by_name[n] for n in binding_order]
-    return params, call_args, nb_args
+    return params, call_args, nb_args, setup_stmts
 
 
 def _referenced_struct_name(desc):
@@ -268,11 +300,11 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # as the old interface's positional calls expect), rest in arglist order.
     arg_names = [n for n in (sdfg.arg_names or []) if n in arglist]
     binding_order = arg_names + [n for n in arglist.keys() if n not in set(arg_names)]
-    params, call_args, nb_args = _argument_binding(arglist, binding_order)
+    params, call_args, nb_args, setup_stmts = _argument_binding(arglist, binding_order)
 
     free_symbols = sorted(k for k in sdfg.used_symbols(all_symbols=False) if not k.startswith('__dace'))
     init_arglist = {k: v for k, v in arglist.items() if k in free_symbols}
-    init_params, _, init_nb_args = _argument_binding(init_arglist)
+    init_params, _, init_nb_args, _ = _argument_binding(init_arglist)
 
     program_params = f'{state_t} *__state' + (f', {sig_decl}' if sig_decl else '')
     program_args = 'm_state' + (f', {", ".join(call_args)}' if call_args else '')
@@ -316,6 +348,29 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     struct_decls = _structure_forward_decls(arglist)
     struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
 
+    # Struct arguments arrive as nb::object; their raw pointers are pulled from
+    # the Python buffer protocol under the GIL (setup_stmts), then the GIL is
+    # released only around the kernel call. SDFGs without struct arguments keep
+    # the simpler whole-body form. The `_DacePyBuffer` RAII helper is emitted
+    # only when needed; its destructor releases the buffer under the re-acquired
+    # GIL (it outlives the nested gil_scoped_release scope).
+    if setup_stmts:
+        pybuffer_helper = _PYBUFFER_HELPER
+        setup_block = '\n        '.join(setup_stmts)
+        call_body = (f'{setup_block}\n'
+                     f'        {{\n'
+                     f'            nb::gil_scoped_release _nogil;\n'
+                     f'            init_impl({init_call});\n'
+                     f'            __program_{name}({program_args});\n'
+                     f'        }}')
+    else:
+        pybuffer_helper = ''
+        call_body = (f'// Reading ndarray fields (.data()) needs no Python API, so the whole\n'
+                     f'        // init + program call runs with the GIL released, as ctypes did.\n'
+                     f'        nb::gil_scoped_release _nogil;\n'
+                     f'        init_impl({init_call});\n'
+                     f'        __program_{name}({program_args});')
+
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
 #include <cstdint>
 #include <optional>
@@ -348,7 +403,7 @@ void __program_{name}({program_params});
 }}
 
 namespace dace {{ namespace generated {{ namespace {name} {{
-
+{pybuffer_helper}
 struct DaceHandle_{name} {{
     {state_t} *m_state = nullptr;
 {sym_members}
@@ -410,11 +465,7 @@ struct DaceHandle_{name} {{
     }}
 
     void call({call_param_list}) {{
-        // Reading ndarray fields (.data()) needs no Python API, so the whole
-        // init + program call runs with the GIL released, as ctypes did.
-        nb::gil_scoped_release _nogil;
-        init_impl({init_call});
-        __program_{name}({program_args});
+        {call_body}
     }}
 }};
 

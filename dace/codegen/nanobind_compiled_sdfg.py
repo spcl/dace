@@ -32,7 +32,10 @@ class NanobindCompiledSDFG:
         goes out of scope.
     - Marshalling Python arguments into C arguments happens in the generated
         C++ code (nanobind's dispatcher), with the GIL released around the
-        C calls.
+        C calls. This includes struct arguments (a ``dt.Structure`` or an array
+        of a ``dace.struct`` element): they bind as ``nb::object`` and the
+        generated C++ pulls their raw pointer via the Python buffer protocol
+        (see ``nanobind_bindings._argument_binding``).
 
     Unlike ``CompiledSDFG`` there is only ``__call__()``; the advanced
     three-step interface (``construct_arguments()`` / ``fast_call()`` /
@@ -67,16 +70,6 @@ class NanobindCompiledSDFG:
             self._is_single_value_ret = False
             assert return_names == set(self._return_values)
 
-        # Arguments that are structures. Needs to be a `set` for fast lookups.
-        self._struct_args = frozenset(name for name, desc in sdfg.arrays.items()
-                                      if (not desc.transient) and isinstance(desc, dt.Structure))
-
-        # Input arguments that are arrays of a `dace.struct` element (bound as
-        # nb::ndarray<uint8_t>); the caller's record array is byte-viewed before
-        # the call. Excludes `__return*` (handled in `_allocate_return_arrays`).
-        self._struct_array_args = frozenset(name for name, desc in sdfg.arrays.items() if (not desc.transient) and (
-            name not in self._return_values) and isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct))
-
     @property
     def sdfg(self) -> "dace.SDFG":
         return self._sdfg
@@ -104,12 +97,9 @@ class NanobindCompiledSDFG:
         Arguments are passed positionally (in ``arg_names`` order) and/or by
         keyword. Return-value arrays are freshly allocated and returned - a
         single array, or a tuple when there are several; with no return values
-        the result is ``None``.
+        the result is ``None``. Struct arguments pass straight through as
+        ``nb::object`` - the generated C++ extracts their pointer.
         """
-        if self._struct_args or self._struct_array_args:
-            # keepalive keeps the ctypes objects alive until the handle returns.
-            args, kwargs, keepalive = self._process_struct_inputs(args, kwargs)
-
         # Early exit: no return values, no need to do more processing.
         if not self._return_values:
             self._handle(*args, **kwargs)
@@ -135,37 +125,6 @@ class NanobindCompiledSDFG:
         if self._is_single_value_ret:
             return return_arrays[0]
         return tuple(return_arrays)
-
-    def _process_struct_inputs(self, args: Tuple[Any],
-                               kwargs: Dict[str, Any]) -> Tuple[Tuple[Any], Dict[str, Any], List[Any]]:
-        """Processes the struct inputs.
-
-        These arguments can not be handled by `nanobind` directly, thus we are performing
-        type punning, by replacing them by their address or "cast" them into a byte array.
-
-        Note that this function does not modify its arguments, i.e. `args` and `kwargs`,
-        but returns transformed ones. It also returns a third value which contains
-        the original arguments. This is needed to keep them in scope.
-        """
-        keepalive = []
-
-        # NOTE: Only the inputs need processing here. A struct-element return array
-        #   is byte-viewed in `_allocate_return_arrays` (where it is allocated), and
-        #   a `dt.Structure` is never a return value.
-
-        def _process(name, value):
-            if name in self._struct_args:
-                keepalive.append(value)
-                return ctypes.addressof(value)
-            if name in self._struct_array_args:
-                # A nullable struct array may be None -> pass it through as the
-                # empty optional (null pointer); otherwise byte-view the buffer.
-                return value.view(np.uint8) if value is not None else None
-            return value
-
-        args = tuple(_process(self._arg_names[i], v) if i < len(self._arg_names) else v for i, v in enumerate(args))
-        kwargs = {k: _process(k, v) for k, v in kwargs.items()}
-        return args, kwargs, keepalive
 
     def _allocate_return_arrays(self, kwargs: Dict[str, Any]) -> List[Any]:
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
