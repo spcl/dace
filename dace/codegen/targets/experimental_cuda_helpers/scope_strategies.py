@@ -11,6 +11,8 @@ from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
+from dace.codegen.targets.cpu import (collect_gpu_block_reductions, register_gpu_block_reduction,
+                                      drain_gpu_block_reduction)
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
 from dace.transformation.dataflow.add_threadblock_map import product
@@ -185,20 +187,10 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             # entry is registered; the block fold is drained AFTER the guard closes.
             reductions = []
             if Config.get_bool('compiler', 'emit_tree_reductions'):
-                reductions = self.codegen.collect_gpu_block_reductions(sdfg, state, node, kernel_block_dims)
+                reductions = collect_gpu_block_reductions(sdfg, state, node, kernel_block_dims, self.codegen._frame)
             covered = self.codegen._cpu_codegen._gpu_block_reduction_covered
             for red in reductions:
-                callsite_stream.write(
-                    f"{red['ctype']} {red['partial']}[{red['m']}];\n"
-                    f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};", cfg,
-                    state_id, node)
-                covered[red['data']] = {
-                    'partial': red['partial'],
-                    'credtype': red['credtype'],
-                    'ctype': red['ctype'],
-                    'base': red['base'],
-                    'm': red['m'],
-                }
+                callsite_stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, node)
 
             # Bounds guards go in their own manager so they close before the block fold: cub's
             # Reduce is a block-wide barrier, so every thread (in-range or not) must reach it.
@@ -241,9 +233,9 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
             # Drain: fold each register partial across the block, one atomic per block.
             for i, red in enumerate(reductions):
-                self.codegen.emit_gpu_block_reduction(red, f'{state.block_id}_{state.node_id(node)}_{i}', cfg, state_id,
-                                                      node, callsite_stream)
-                covered.pop(red['data'], None)
+                callsite_stream.write(
+                    drain_gpu_block_reduction(red, f'{state.block_id}_{state.node_id(node)}_{i}', covered), cfg,
+                    state_id, node)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
