@@ -4,6 +4,8 @@ from .dot import Dot
 from .gemv import Gemv
 from .gemm import Gemm
 from .symm import Symm
+from .syrk import Syrk
+from .syr2k import Syr2k
 from .ger import Ger
 from .batched_matmul import BatchedMatMul
 
