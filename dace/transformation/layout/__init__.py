@@ -12,4 +12,6 @@ from dace.transformation.layout.shuffle_elements import ShuffleElements
 from dace.transformation.layout.rewrite_libnodes import (GemmToTensorDot, transform_einsum, remap_contracted_axes,
                                                          permute_reduce, block_scan_stride)
 from dace.transformation.layout.split_array import SplitArray
+from dace.transformation.layout.brute_force import (sweep, best, time_cpu, permutation_candidates, block_candidates,
+                                                    SweepResult)
 from dace.transformation.layout.prepare import prepare_for_layout
