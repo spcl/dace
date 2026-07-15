@@ -185,8 +185,8 @@ class PermuteDimensions(ppl.Pass):
 
     def modifies(self) -> ppl.Modifies:
         # This is an analysis pass, so it does not modify anything
-        return (ppl.Modifies.States & ppl.Modifies.AccessNodes & ppl.Modifies.Edges & ppl.Modifies.Descriptors
-                & ppl.Modifies.NestedSDFGs & ppl.Modifies.Memlets)
+        return (ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
+                | ppl.Modifies.NestedSDFGs | ppl.Modifies.Memlets)
 
     def __init__(self,
                  permute_map: Dict[str, List[int]],
@@ -220,7 +220,7 @@ class PermuteDimensions(ppl.Pass):
         For CPU arrays, the pure (map-based) implementation is used.
         """
         if self._use_permute_libnodes:
-            from dace.libraries.standard import TensorTranspose
+            from dace.libraries.linalg import TensorTranspose
 
             old_access = state.add_access(old_name)
             new_access = state.add_access(new_name)

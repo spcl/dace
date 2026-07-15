@@ -12,14 +12,8 @@ from sympy import simplify
 @dataclass
 class SplitDimensions(ppl.Pass):
 
-    def _block_maps():
-        pass
-
-    def _simplify_memlets():
-        pass
-
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nodes & ppl.Modifies.Memlets & ppl.Modifies.Descriptors
+        return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
