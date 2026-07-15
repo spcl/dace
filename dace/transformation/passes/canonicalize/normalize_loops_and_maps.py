@@ -175,6 +175,58 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
 
 @transformation.explicit_cf_compatible
+class NormalizeLoopBounds(NormalizeLoopsAndMaps):
+    """Rebase every ``LoopRegion`` counter to start at 0, KEEPING its stride:
+    ``for i in b:e:s`` -> ``for j in 0:(e-b):s`` with body ``i -> b + j`` (an
+    offset-only shift, no ``s*j`` step-collapse). Maps are left untouched.
+
+    Two loops of the same extent but different offset (a slice map ``0:N-2``
+    beside an in-row scan ``1:N-1``) become the same range once both are rebased
+    to 0, so the same-range ``LoopFusion`` can join them. Keeping the stride is
+    deliberate: the sibling ``NormalizeLoopsAndMaps`` (``i -> b + s*j``) was
+    dropped from the pipeline because the ``a[b+s*j]`` form blocks ``LoopToMap``
+    (it no longer sees a unique ``j`` index); the offset-only ``a[b+j]`` here
+    keeps a constant shift ``LoopToMap`` already handles. Idempotent: a loop
+    already based at 0 is skipped, so the pass may be re-run freely.
+    """
+
+    def _rebase_loop(self, loop: LoopRegion) -> bool:
+        """Rebase one ``LoopRegion`` to a 0-based counter, keeping its stride.
+
+        Substitutes ``var -> start + var`` in the body (value-preserving) and
+        resets the header to the canonical ``var = 0 ; var <= (end - start) ;
+        var = var + step`` (``end`` is the inclusive last value, so the shifted
+        inclusive last is ``end - start``). The canonical ``var <= bound`` form is
+        required: a substituted ``start + var < E`` leaves the iterator offset on
+        the LHS, which ``loop_analysis`` cannot read back (breaking codegen).
+        ``True`` if rewritten.
+        """
+        var = loop.loop_variable
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)  # inclusive last iteration value
+        step = loop_analysis.get_loop_stride(loop)
+        if not var or start is None or end is None or step is None:
+            return False  # only the affine forms loop_analysis can resolve
+        if start == 0:
+            return False  # already 0-based (any stride) -> idempotent no-op
+        repldict = {str(var): f"(({start}) + {var})"}
+        self._repl_recursive(loop, repldict)
+        new_end = dace.symbolic.simplify(end - start)
+        loop.init_statement = CodeBlock(f"{var} = 0")
+        loop.loop_condition = CodeBlock(f"{var} <= ({new_end})")
+        loop.update_statement = CodeBlock(f"{var} = {var} + ({step})")
+        return True
+
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict) -> Optional[int]:
+        """Rebase every loop counter to 0 (keeping stride); leave maps untouched."""
+        count = 0
+        for cfg in sdfg.all_control_flow_regions(recursive=True):
+            if isinstance(cfg, LoopRegion) and self._rebase_loop(cfg):
+                count += 1
+        return count or None
+
+
+@transformation.explicit_cf_compatible
 class NormalizeStridedMaps(NormalizeLoopsAndMaps):
     """Normalize only maps that carry a NON-UNIT step to ``0:trip:1``, folding
     the step into the index (``a[i]`` under ``0:N:2`` -> ``a[2*k]`` under

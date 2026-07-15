@@ -279,5 +279,84 @@ def test_normalize_strided_maps_leaves_loops_untouched():
                 "loop counter was normalized"
 
 
+@dace.program
+def loop_bounds_unit(A: dace.float64[N]):
+    for i in range(2, N - 2):
+        A[i] = A[i - 1] + 1.0  # sequential (recurrence): stays a loop
+
+
+@dace.program
+def loop_bounds_strided(A: dace.float64[N]):
+    for i in range(1, N - 1, 2):
+        A[i] = A[i] * 3.0
+
+
+@dace.program
+def two_offset_loops(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(0, N - 2):  # 0:N-2
+        A[i + 1] = A[i] + B[i + 1]
+    for j in range(1, N - 1):  # 1:N-1  -- same extent, offset by 1
+        B[j] = B[j - 1] + A[j]
+
+
+def test_normalize_loop_bounds_rebases_keeping_stride():
+    """``NormalizeLoopBounds`` rebases a loop counter to 0 while KEEPING its stride
+    (unlike ``NormalizeLoopsAndMaps``, which folds the step into the index)."""
+    from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopBounds
+    for prog, expect_stride in ((loop_bounds_unit, '1'), (loop_bounds_strided, '2')):
+        sdfg = prog.to_sdfg(simplify=True)
+        assert NormalizeLoopBounds().apply_pass(sdfg, {}) == 1
+        loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+        assert len(loops) == 1
+        assert str(loop_analysis.get_init_assignment(loops[0])) == '0'
+        assert str(loop_analysis.get_loop_stride(loops[0])) == expect_stride
+
+
+def test_normalize_loop_bounds_value_preserving():
+    """The rebase (``i -> start + i``) is value-preserving end-to-end."""
+    from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopBounds
+    n = 12
+    for prog in (loop_bounds_unit, loop_bounds_strided):
+        rng = np.random.default_rng(4)
+        a = rng.standard_normal(n)
+        ref = prog.to_sdfg(simplify=True)
+        b = a.copy()
+        ref.compile()(A=b, N=n)
+        sdfg = prog.to_sdfg(simplify=True)
+        NormalizeLoopBounds().apply_pass(sdfg, {})
+        got = a.copy()
+        sdfg.compile()(A=got, N=n)
+        assert np.allclose(got, b)
+
+
+def test_normalize_loop_bounds_idempotent_and_equalizes_ranges():
+    """Re-running is a no-op (already-0-based loops are skipped), and two loops of
+    the same extent but different offset are rebased to the SAME range -- the
+    enabler for same-range ``LoopFusion``."""
+    from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopBounds
+    sdfg = two_offset_loops.to_sdfg(simplify=True)
+    # Only the ``1:N-1`` loop is rebased; the ``0:N-2`` loop is already 0-based.
+    assert NormalizeLoopBounds().apply_pass(sdfg, {}) == 1
+    assert NormalizeLoopBounds().apply_pass(sdfg, {}) is None  # idempotent
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    spans = {(str(loop_analysis.get_init_assignment(l)), str(loop_analysis.get_loop_end(l)),
+              str(loop_analysis.get_loop_stride(l))) for l in loops}
+    assert len(spans) == 1, f"ranges not equalized: {spans}"
+    assert next(iter(spans))[0] == '0'
+
+
+def test_normalize_loop_bounds_leaves_zero_based_untouched():
+    """A loop already based at 0 is not rewritten (any stride)."""
+    from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopBounds
+
+    @dace.program
+    def already_zero(A: dace.float64[N]):
+        for i in range(0, N):
+            A[i] = A[i] + 1.0
+
+    sdfg = already_zero.to_sdfg(simplify=True)
+    assert NormalizeLoopBounds().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
