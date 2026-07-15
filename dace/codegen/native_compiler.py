@@ -295,6 +295,45 @@ def _cuda_arch_flags() -> List[str]:
     return flags or ['-arch=native']
 
 
+def _newest_mtime(directory: str) -> float:
+    newest = 0.0
+    for root, _, filenames in os.walk(directory):
+        for f in filenames:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(root, f)))
+            except OSError:
+                pass
+    return newest
+
+
+def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, build_env: dict, run) -> Optional[List[str]]:
+    """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it in the user cache dir.
+
+    The DaCe runtime umbrella header dominates the compile time of a small kernel (~1s of parsing +
+    template instantiation); precompiling it cuts a host translation unit by ~3x. Returns the extra
+    ``-I``/``-include`` flags that make g++/clang++ use the cached PCH, or ``None`` when a PCH could
+    not be produced (the caller then compiles normally -- correctness is unaffected, only speed).
+
+    An invalid or flag-mismatched PCH is silently ignored by the compiler, so this can never change
+    the produced object; the only failure mode is the one-off PCH build itself, which is swallowed.
+    """
+    try:
+        import hashlib
+        key = hashlib.md5(('\0'.join([cxx, runtime_inc] + pch_flags)).encode()).hexdigest()[:16]
+        pch_dir = os.path.join(os.path.expanduser('~/.cache/dace/native_pch'), key)
+        header = os.path.join(pch_dir, 'dace_prewarm.h')
+        gch = header + '.gch'
+        if not (os.path.isfile(gch) and os.path.getmtime(gch) >= _newest_mtime(runtime_inc)):
+            os.makedirs(pch_dir, exist_ok=True)
+            if not os.path.isfile(header):
+                with open(header, 'w') as f:
+                    f.write('#include <dace/dace.h>\n')
+            run([cxx] + pch_flags + ['-I', runtime_inc, '-x', 'c++-header', header, '-o', gch])
+        return ['-I', pch_dir, '-include', 'dace_prewarm.h']
+    except Exception:
+        return None  # any trouble -> compile without the PCH
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -420,11 +459,21 @@ def build_native(program_folder: str,
     cuda_arch_flags = _cuda_arch_flags() if (has_gpu and not is_hip) else []
     ccbin = (['-ccbin', _cxx()] if Config.get('compiler', 'cpu', 'executable') else [])
 
+    # Precompile the DaCe runtime header once (per compiler+flags) to speed up host translation
+    # units. WITH_CUDA/WITH_HIP change what dace.h pulls in, so they are part of the PCH's flags;
+    # the per-program -DDACE_BINARY_DIR and -I dirs are tolerated as extras on the compile line.
+    host_pch: List[str] = []
+    if any(kind == 'host' for kind, _, _ in compile_jobs):
+        pch_flags = [f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags
+        if has_gpu:
+            pch_flags += ['-DWITH_CUDA'] + (['-DWITH_HIP'] if is_hip else [])
+        host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, build_env, run) or []
+
     for kind, src, obj in compile_jobs:
         if up_to_date(obj, src):
             continue
         if kind == 'host':
-            run([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines + includes +
+            run([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines + host_pch + includes +
                 spec.compile_flags + ['-c', src, '-o', obj])
         elif kind == 'cuda':
             run([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
