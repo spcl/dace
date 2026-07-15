@@ -32,6 +32,9 @@ def test_heap_allocation_aligned_new_cpp17():
     assert '::operator delete[](tmp, std::align_val_t(64));' in code
     assert 'DACE_ALIGN(64)[' not in code  # the attribute is invalid in a new expression
     assert 'delete[] tmp' not in code  # would pair the unaligned deallocation function
+    # The direct operator call skips destructors (and assumes no array cookie);
+    # a compile-time guard enforces the trivial-destructibility this relies on.
+    assert 'static_assert(std::is_trivially_destructible<double>::value' in code
 
 
 def test_heap_allocation_plain_new_below_cpp17():
