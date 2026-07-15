@@ -21,13 +21,13 @@ from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.unblock_dimensions import UnblockDimensions
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 from dace.transformation.layout.prepare import prepare_for_layout
-from dace.sdfg.core_dialect import CoreDialectCompliant
 
 I, J, K = (dace.symbol(s) for s in ("I", "J", "K"))
 
 
 def _has_wcr(sdfg) -> bool:
-    return len(CoreDialectCompliant.offenders_wcr_edges(sdfg)) > 0
+    return any(edge.data is not None and edge.data.wcr is not None for nsdfg in sdfg.all_sdfgs_recursive()
+               for state in nsdfg.states() for edge in state.edges())
 
 
 # ---- reduction programs -------------------------------------------------------------------------

@@ -4,7 +4,6 @@ import warnings
 from typing import Dict, List, Any, Tuple
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes as nd
-from dace.sdfg.core_dialect import require_core_dialect
 from dataclasses import dataclass
 
 
@@ -203,10 +202,9 @@ class PermuteDimensions(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
-        # PermuteDimensions operates on Core Dialect: no views, no WCR memlets, no
-        # other_subset memlets, no streams or implicit AN->AN copies. Refuse
-        # to run on non-core-dialect SDFGs rather than silently miscompiling.
-        require_core_dialect(sdfg, source='PermuteDimensions')
+        # Precondition (established by prepare_for_layout): no views except at library nodes,
+        # no implicit AN->AN copies (lifted to CopyLibraryNodes). WCR reduction edges are
+        # supported -- their subset is permuted like any other memlet, the wcr is preserved.
         self._permute_index(sdfg, sdfg, self._permute_map, self._add_permute_maps)
         return 0
 

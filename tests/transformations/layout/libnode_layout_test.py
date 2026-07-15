@@ -94,6 +94,13 @@ def elementwise_copy(A: dace.float64[M, Nn], C: dace.float64[M, Nn]):
         C[i, j] = A[i, j]
 
 
+@dace.program
+def transient_copy(A: dace.float64[M, Nn], C: dace.float64[M, Nn]):
+    B = A.copy()  # an implicit copy A -> B (a transient staging buffer)
+    for i, j in dace.map[0:M, 0:Nn] @ dace.ScheduleType.Sequential:
+        C[i, j] = B[i, j] * 2.0
+
+
 def test_memset_permute_bitexact():
     """A memset (zero-init tasklet) is layout-agnostic: permuting the input array stays exact."""
     _M, _N = 6, 4
@@ -135,6 +142,21 @@ def test_copy_libnode_transposing_rewrite_bitexact():
     assert numpy.allclose(C, A)
 
 
+def test_implicit_copy_normalized_and_layout_correct():
+    """prepare_for_layout lifts the implicit A->B copy to a CopyLibraryNode (InsertExplicitCopies),
+    so a layout change over A stays correct: the relaid-out copy becomes transposing and
+    RewriteCopyForLayout converts it to a TensorTranspose. Bit-exact."""
+    _M, _N = 6, 4
+    A = numpy.random.default_rng(4).random((_M, _N))
+    sdfg = transient_copy.to_sdfg(simplify=True)
+    prepare_for_layout(sdfg, validate=False)  # normalizes the implicit copy to a CopyLibraryNode
+    PermuteDimensions(permute_map={"A": [1, 0]}, add_permute_maps=True).apply_pass(sdfg, {})
+    RewriteCopyForLayout().apply_pass(sdfg, {})
+    C = numpy.zeros((_M, _N))
+    sdfg(A=A.copy(), C=C, M=_M, Nn=_N)
+    assert numpy.allclose(C, 2.0 * A)
+
+
 def test_copy_permutation_axes_helper():
     """The axis-inference used by RewriteCopyForLayout: a distinct-size permutation is recovered; an
     identity / reshape yields None; a repeated-size permutation is ambiguous and raises."""
@@ -154,5 +176,6 @@ if __name__ == "__main__":
     test_memset_permute_bitexact()
     test_copy_libnode_consistent_permute_bitexact()
     test_copy_libnode_transposing_rewrite_bitexact()
+    test_implicit_copy_normalized_and_layout_correct()
     test_copy_permutation_axes_helper()
     print("libnode layout tests PASS")

@@ -2,11 +2,12 @@
 """Shared preprocessing for the layout transformations.
 
 Every layout transformation (Permute, Block, Unblock, Zip, Unzip, Pad, Shuffle)
-assumes the SDFG is in a normal form:
+assumes the SDFG is in a normal form the layout passes establish and rely on themselves:
 
-  * Core Dialect: no views (except views feeding library nodes), no WCR memlets,
-    no ``other_subset`` memlets, no implicit AccessNode->AccessNode copies, no
-    streams.
+  * No views except those feeding library nodes, no ``other_subset`` memlets, no
+    implicit AccessNode->AccessNode copies (lifted to ``CopyLibraryNode``), no streams.
+    WCR reduction edges ARE supported (the subset is rewritten like any memlet and the
+    wcr is preserved).
   * Loops parallelized to maps where legal (so access patterns live on maps).
   * Nested-SDFG in/out memlets widened to full-array subsets, so a layout rewrite
     can recurse into a nested SDFG with full-shape arguments.
@@ -18,9 +19,9 @@ canonicalize), then expand nested-SDFG inputs.
 import warnings
 
 from dace import SDFG, data
-from dace.sdfg.core_dialect import warn_if_not_core_dialect
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.remove_views import RemoveViews
 
 
@@ -68,11 +69,16 @@ def prepare_for_layout(sdfg: SDFG, target: str = 'cpu', validate: bool = True) -
     #    exactly the "only views feeding library nodes are allowed" invariant.
     RemoveViews().apply_pass(sdfg, {})
 
-    # 4. Establish the packed-stride normal form the layout algebra assumes.
-    normalize_to_packed_c(sdfg)
+    # 4. Lift every implicit copy (AccessNode->AccessNode, View endpoints, map staging)
+    #    to an explicit CopyLibraryNode. Implicit copies carry other_subset and are not
+    #    core-dialect, so the layout passes cannot rewrite them (permute would leave the
+    #    other_subset side unpermuted, block refuses it); an explicit CopyLibraryNode is
+    #    handled by the generic memlet rename, and a copy that a layout change turns into a
+    #    transpose is caught by RewriteCopyForLayout (Copy -> TensorTranspose).
+    InsertExplicitCopies().apply_pass(sdfg, {})
 
-    # 5. Report any residual core-dialect violations (never raises).
-    warn_if_not_core_dialect(sdfg, source='prepare_for_layout')
+    # 5. Establish the packed-stride normal form the layout algebra assumes.
+    normalize_to_packed_c(sdfg)
 
     if validate:
         sdfg.validate()

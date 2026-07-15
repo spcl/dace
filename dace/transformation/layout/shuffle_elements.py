@@ -21,7 +21,7 @@ so a body access to the LOGICAL element ``A[.., e, ..]`` reads ``A'[.., sigma^{-
 
 ``sigma`` is CLOSED-FORM: the gather/scatter/consumer index expressions are plain
 sympy-function terms that lower to literal C calls (``A[shuffle_<name>(j, ...)]``), so no
-indirection subgraph is needed. Run after ``prepare_for_layout`` (Core Dialect). A shuffled
+indirection subgraph is needed. Run after ``prepare_for_layout``. A shuffled
 dimension must be accessed point-wise in the body; a strict partial range on ``d`` raises.
 """
 import copy
@@ -31,7 +31,6 @@ from typing import Any, Dict, Tuple
 
 import dace
 from dace.sdfg import nodes as nd
-from dace.sdfg.core_dialect import require_core_dialect
 from dace.transformation import pass_pipeline as ppl
 
 from dace.libraries.layout.shuffle import get_shuffle, emit_shuffle_globals
@@ -56,7 +55,6 @@ class ShuffleElements(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
-        require_core_dialect(sdfg, source='ShuffleElements')
         used = []
         for arr, (name, dim) in self._shuffle_map.items():
             fn = get_shuffle(name)

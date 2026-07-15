@@ -12,7 +12,7 @@ the appended inner dims, so ``[M, N//16, K//32, 16, 32] -> [M, N, K]`` and the a
 ``[i, jo, ko, ji, ki] -> [i, jo*16 + ji, ko*32 + ki]``.
 
 Assumptions (mirrors SplitDimensions):
-  * Core Dialect (no views/other_subset). Runs after ``prepare_for_layout``.
+  * The layout normal form (no views/other_subset). Runs after ``prepare_for_layout``.
   * The blocked array is packed. Reconstructed extent is ``outer_count * factor``
     (exact when the original extent was divisible by the factor; over-approximates
     by the pad amount otherwise).
