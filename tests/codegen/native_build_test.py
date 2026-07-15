@@ -95,6 +95,39 @@ def test_cuda_arch_flags_skips_unsupported():
         assert nc._cuda_arch_flags({80, 89}) == ['-arch=native']
 
 
+def test_cuda_arch_flags_feature_suffix():
+    """An architecture token with a feature suffix (e.g. '90a') is emitted verbatim; only its numeric
+    part is matched against the supported set, so int() never chokes on the letter."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='90a'):
+        assert nc._cuda_arch_flags({90}) == ['-arch=native', '-gencode', 'arch=compute_90a,code=sm_90a']
+
+
+def test_cuda_arch_flags_no_native_uses_explicit():
+    """With no local GPU (allow_native=False) the configured architectures are the only targets."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='80,90'):
+        assert nc._cuda_arch_flags({80, 90}, allow_native=False) == [
+            '-gencode', 'arch=compute_80,code=sm_80', '-gencode', 'arch=compute_90,code=sm_90'
+        ]
+
+
+def test_cuda_arch_flags_no_native_no_arch_errors():
+    """No local GPU and no configured arch is unbuildable -- raise clearly instead of emitting an
+    empty (and thus broken) flag list."""
+    for value in ('', 'auto', 'native'):
+        with set_temporary('compiler', 'cuda', 'cuda_arch', value=value):
+            with pytest.raises(cgx.CompilerConfigurationError, match='cuda_arch'):
+                nc._cuda_arch_flags(None, allow_native=False)
+
+
+def test_lib_subdir(tmp_path):
+    """_lib_subdir prefers lib64, falls back to lib (used by the HIP/ROCm path)."""
+    os.makedirs(tmp_path / 'lib64')
+    assert nc._lib_subdir(str(tmp_path)) == str(tmp_path / 'lib64')
+    root2 = tmp_path / 'r2'
+    os.makedirs(root2 / 'lib')
+    assert nc._lib_subdir(str(root2)) == str(root2 / 'lib')
+
+
 # ---------------------------------------------------------------------------
 # Per-environment resolution
 # ---------------------------------------------------------------------------
@@ -241,6 +274,9 @@ if __name__ == '__main__':
     test_cuda_arch_flags_auto()
     test_cuda_arch_flags_explicit_additional()
     test_cuda_arch_flags_skips_unsupported()
+    test_cuda_arch_flags_feature_suffix()
+    test_cuda_arch_flags_no_native_uses_explicit()
+    test_cuda_arch_flags_no_native_no_arch_errors()
     for e in LIBRARY_ENVIRONMENTS:
         test_every_library_environment_resolves_or_errors_clearly(e)
     test_resolve_cublas_bare_name()

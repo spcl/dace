@@ -152,6 +152,15 @@ def _cuda_paths() -> tuple:
     return nvcc, inc_dirs, lib_dirs
 
 
+def _lib_subdir(root: str) -> str:
+    """The library directory under a toolkit ``root`` (``lib64`` if present, else ``lib``)."""
+    for sub in ('lib64', 'lib'):
+        d = os.path.join(root, sub)
+        if os.path.isdir(d):
+            return d
+    return os.path.join(root, 'lib')
+
+
 def _resolve_rocm_root() -> str:
     cand = os.environ.get('ROCM_PATH') or os.environ.get('HIP_PATH')
     if not cand:
@@ -215,7 +224,7 @@ def _classify_library(spec: _LinkSpec, lib: str) -> None:
 
 def _resolve_environment(env, spec: _LinkSpec, build_env: dict) -> None:
     """Resolve one collected environment into ``spec``, or raise if it needs real CMake."""
-    name = getattr(env, '__name__', str(env))
+    name = env.__name__
 
     if _get_or_eval(env.cmake_files):
         files = ', '.join(_get_or_eval(env.cmake_files))
@@ -269,7 +278,7 @@ def _collect_auxiliary_sources(environments) -> List[str]:
     out: List[str] = []
     for env in environments:
         env_dir = os.path.dirname(env._dace_file_path)
-        for src in _get_or_eval(getattr(env, 'auxiliary_sources', [])):
+        for src in _get_or_eval(vars(env).get('auxiliary_sources', [])):
             out.append(src if os.path.isabs(src) else os.path.join(env_dir, src))
     return out
 
@@ -292,26 +301,48 @@ def _nvcc_supported_arches(nvcc: str, build_env: dict) -> Optional[set]:
     return {int(m) for m in re.findall(r'compute_(\d+)', out.stdout)}
 
 
-def _cuda_arch_flags(supported: Optional[set]) -> List[str]:
-    """Always target the local GPU with ``-arch=native`` (nvcc's built-in detection, matching what
-    CMake's get_cuda_arch.cpp does), plus one ``-gencode`` per *additional* architecture in
-    ``compiler.cuda.cuda_arch`` that the toolkit still supports.
+def _can_use_arch_native(nvcc: str, build_env: dict) -> bool:
+    """Whether ``nvcc -arch=native`` can resolve a local GPU. Native detection queries the driver, so
+    it fails on a host without a visible CUDA device (e.g. a GPU-less build node); there we must fall
+    back to the explicitly configured architectures instead of emitting an unbuildable command."""
+    try:
+        out = subprocess.run([nvcc, '-arch=native', '--dryrun', '-x', 'cu', '-c', os.devnull, '-o', os.devnull],
+                             capture_output=True,
+                             text=True,
+                             env=build_env)
+    except OSError:
+        return False
+    return out.returncode == 0
+
+
+def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> List[str]:
+    """CUDA ``-arch`` / ``-gencode`` flags: target the local GPU with ``-arch=native`` (nvcc's
+    built-in detection, matching CMake's get_cuda_arch.cpp), plus one ``-gencode`` per *additional*
+    architecture in ``compiler.cuda.cuda_arch`` the toolkit still supports.
 
     ``cuda_arch`` is documented as extra architectures excluding the local one, so the local GPU is
     handled by ``-arch=native`` regardless of it; an arch the toolkit dropped is skipped (with a
-    warning) rather than failing the compile.
+    warning) rather than failing the compile. An architecture token may carry a feature suffix
+    (e.g. ``90a``); only its numeric part is checked against the supported set, but the full token is
+    emitted. When ``allow_native`` is false (no local GPU) the configured architectures are the only
+    targets, and an empty result raises rather than producing an unbuildable command.
     """
-    flags = ['-arch=native']
+    flags = ['-arch=native'] if allow_native else []
     cfg = Config.get('compiler', 'cuda', 'cuda_arch').strip()
     if cfg and cfg not in ('auto', 'native'):
         for arch in cfg.split(','):
             arch = arch.strip()
             if not arch:
                 continue
-            if supported is not None and int(arch) not in supported:
+            digits = ''.join(c for c in arch if c.isdigit())
+            if supported is not None and digits and int(digits) not in supported:
                 warnings.warn(f'Native build: the CUDA toolkit does not support architecture sm_{arch}; skipping it.')
                 continue
             flags += ['-gencode', f'arch=compute_{arch},code=sm_{arch}']
+    if not flags:
+        raise cgx.CompilerConfigurationError(
+            'Native build: nvcc -arch=native found no local GPU and compiler.cuda.cuda_arch is empty. Set '
+            'compiler.cuda.cuda_arch to the target architecture(s), or use compiler.build_mode=cmake.')
     return flags
 
 
@@ -348,7 +379,11 @@ def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, build_env
             if not os.path.isfile(header):
                 with open(header, 'w') as f:
                     f.write('#include <dace/dace.h>\n')
-            run([cxx] + pch_flags + ['-I', runtime_inc, '-x', 'c++-header', header, '-o', gch])
+            # Compile to a per-process temp then atomically rename into place, so a concurrent build
+            # (pytest -n4 shares this global cache) can never observe a half-written .gch.
+            tmp_gch = f'{gch}.tmp.{os.getpid()}'
+            run([cxx] + pch_flags + ['-I', runtime_inc, '-x', 'c++-header', header, '-o', tmp_gch])
+            os.replace(tmp_gch, gch)
         return ['-I', pch_dir, '-include', 'dace_prewarm.h']
     except Exception:
         return None  # any trouble -> compile without the PCH
@@ -391,12 +426,12 @@ def build_native(program_folder: str,
     src_folder = os.path.join(program_folder, 'src')
     lib_ext = Config.get('compiler', 'library_extension')
 
-    def run(cmd: List[str]) -> None:
+    def run(cmd: List[str], stream=output_stream) -> None:
         line = ' '.join(shlex.quote(c) for c in cmd)
-        if Config.get('debugprint') == 'verbose':
+        if Config.get_bool('debugprint'):
             print(f'Native build: {line}')
         try:
-            _run_liveoutput(line, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
+            _run_liveoutput(line, shell=True, cwd=build_folder, output_stream=stream, env=build_env)
         except subprocess.CalledProcessError as ex:
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 
@@ -476,50 +511,79 @@ def build_native(program_folder: str,
     includes = ['-I' + runtime_inc, '-I' + generated_inc] + ['-I' + d for d in _dedup(spec.includes)]
 
     # --- compile ------------------------------------------------------------
-    cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc, build_env)) if (has_gpu and not is_hip) else []
+    cuda_arch_flags: List[str] = []
+    if has_gpu and not is_hip:
+        cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc, build_env),
+                                           allow_native=_can_use_arch_native(nvcc, build_env))
     ccbin = (['-ccbin', _cxx()] if Config.get('compiler', 'cpu', 'executable') else [])
 
     # Precompile the DaCe runtime header once (per compiler+flags) to speed up host translation
     # units. WITH_CUDA/WITH_HIP change what dace.h pulls in, so they are part of the PCH's flags;
-    # the per-program -DDACE_BINARY_DIR and -I dirs are tolerated as extras on the compile line.
+    # the per-program -DDACE_BINARY_DIR and -I dirs are tolerated as extras on the compile line. Only
+    # the generated framecode gets the forced ``-include``; an environment's auxiliary .cpp is left
+    # alone, since force-including <dace/dace.h> into a TU that does not expect it can break it.
+    generated_prefix = src_folder + os.sep
     host_pch: List[str] = []
-    if any(kind == 'host' for kind, _, _ in compile_jobs):
+    if any(kind == 'host' and src.startswith(generated_prefix) for kind, src, _ in compile_jobs):
         pch_flags = [f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags
         if has_gpu:
             pch_flags += ['-DWITH_CUDA'] + (['-DWITH_HIP'] if is_hip else [])
         host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, build_env, run) or []
 
-    # Assemble one command per out-of-date translation unit; they are independent (each writes its
-    # own object), so the host .cpp and device .cu compiles run concurrently.
-    compile_cmds: List[List[str]] = []
+    # An object is stale if it predates its source, predates any header it may include, or was built
+    # by a different command (changed flags/defines/build_type). CMake tracks header deps and
+    # reconfigures on flag changes; approximating both here keeps a stale object from being linked.
+    newest_header = max(_newest_mtime(runtime_inc), _newest_mtime(generated_inc))
+
+    def obj_current(obj: str, src: str, cmd: List[str]) -> bool:
+        if not os.path.isfile(obj):
+            return False
+        otime = os.path.getmtime(obj)
+        if not os.path.isfile(src) or os.path.getmtime(src) > otime or newest_header > otime:
+            return False
+        try:
+            with open(obj + '.cmd') as f:
+                return f.read() == ' '.join(cmd)
+        except OSError:
+            return False
+
+    def compile_one(obj: str, cmd: List[str], stream=output_stream) -> None:
+        run(cmd, stream)
+        with open(obj + '.cmd', 'w') as f:  # record the exact command for the staleness check above
+            f.write(' '.join(cmd))
+
+    # Assemble one command per translation unit; they are independent (each writes its own object),
+    # so the host .cpp and device .cu compiles run concurrently.
+    compile_units: List[tuple] = []  # (obj, cmd) for the out-of-date units only
     for kind, src, obj in compile_jobs:
-        if up_to_date(obj, src):
-            continue
         if kind == 'host':
-            compile_cmds.append([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines +
-                                host_pch + includes + spec.compile_flags + ['-c', src, '-o', obj])
+            pch = host_pch if src.startswith(generated_prefix) else []
+            cmd = ([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines + pch + includes +
+                   spec.compile_flags + ['-c', src, '-o', obj])
         elif kind == 'cuda':
-            compile_cmds.append([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
-                                shlex.split(Config.get('compiler', 'cuda', 'args')) + defines + includes +
-                                ['-dc', src, '-o', obj])
+            cmd = ([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
+                   shlex.split(Config.get('compiler', 'cuda', 'args')) + defines + includes + ['-dc', src, '-o', obj])
         else:  # hip  (AMD path -- structurally validated; unvalidated on this NVIDIA host)
             amdclang = shutil.which('amdclang++') or os.path.join(rocm_root, 'llvm', 'bin', 'amdclang++')
-            compile_cmds.append(
+            cmd = (
                 [amdclang, '-x', 'hip', f'-std=c++{std}', '--offload-arch=native', '-fPIC', '-D__HIP_PLATFORM_AMD__'] +
                 shlex.split(Config.get('compiler', 'cuda', 'hip_args')) + defines + includes + ['-c', src, '-o', obj])
+        if not obj_current(obj, src, cmd):
+            compile_units.append((obj, cmd))
 
-    if len(compile_cmds) <= 1:
-        for cmd in compile_cmds:
-            run(cmd)
+    if len(compile_units) <= 1:
+        for obj, cmd in compile_units:
+            compile_one(obj, cmd)
     else:
         import concurrent.futures
         # Bounded so a program with many translation units cannot fan out into an OOM of heavy -O3
-        # compiles on a shared machine; the common case (one host .cpp + one device .cu) is 2.
-        workers = min(len(compile_cmds), 4)
+        # compiles on a shared machine; the common case (one host .cpp + one device .cu) is 2. Each
+        # concurrent compile suppresses live streaming (stream=None) so the worker threads never write
+        # the shared output_stream at once; a failure still carries its output via the raised exception.
+        workers = min(len(compile_units), 4)
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            errors = [
-                f.exception() for f in concurrent.futures.as_completed([pool.submit(run, c) for c in compile_cmds])
-            ]
+            futures = [pool.submit(compile_one, obj, cmd, None) for obj, cmd in compile_units]
+            errors = [f.exception() for f in concurrent.futures.as_completed(futures)]
         errors = [e for e in errors if e is not None]
         if errors:
             raise errors[0]
@@ -527,13 +591,14 @@ def build_native(program_folder: str,
     # --- CUDA device link + archive ----------------------------------------
     cuda_archive = None
     if cuda_objs:
-        dlink_obj = os.path.join(build_folder, 'cuda_dlink.o')
-        run([nvcc] + ccbin + cuda_arch_flags + ['--compiler-options', '-fPIC', '-dlink'] + cuda_objs +
-            ['-o', dlink_obj])
         cuda_archive = os.path.join(build_folder, f'lib{program_name}_cuda.a')
-        if os.path.exists(cuda_archive):
-            os.remove(cuda_archive)
-        run(['ar', 'rcs', cuda_archive] + cuda_objs + [dlink_obj])
+        if not up_to_date(cuda_archive, *cuda_objs):
+            dlink_obj = os.path.join(build_folder, 'cuda_dlink.o')
+            run([nvcc] + ccbin + cuda_arch_flags + ['--compiler-options', '-fPIC', '-dlink'] + cuda_objs +
+                ['-o', dlink_obj])
+            if os.path.exists(cuda_archive):
+                os.remove(cuda_archive)
+            run(['ar', 'rcs', cuda_archive] + cuda_objs + [dlink_obj])
 
     # --- final shared library ----------------------------------------------
     lib_path = os.path.join(build_folder, f'lib{program_name}.{lib_ext}')
