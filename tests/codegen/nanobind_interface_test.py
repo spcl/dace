@@ -365,6 +365,92 @@ def test_nanobind_interface_callback_binding():
     assert 'm_sym_' not in code  # symbol values are never stored on the handle
 
 
+def test_nanobind_interface_symbol_inference_binding():
+    """A size symbol not in arg_names binds as an optional parameter with a shape-derived fallback."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+
+    @dace.program
+    def sym_infer_probe(A: dace.float64[N + 1], B: dace.float64[10]):
+        B[0] = A[0] * N + M  # M appears in no shape: not inferable
+
+    code = generate_bindings_code(sym_infer_probe.to_sdfg())
+    # N: optional, inferred from A's shape (inverted expression N = shape - 1).
+    assert 'N__opt' in code
+    assert 'nb::arg("N") = nb::none()' in code
+    assert 'A.shape(0)' in code
+    # M: optional too, but omitting it is a clear error naming the symbol.
+    assert 'nb::arg("M") = nb::none()' in code
+    assert "missing argument 'M'" in code
+
+
+def test_nanobind_interface_symbol_inference():
+    """Omitted size symbols are inferred from array shapes; explicit values still win."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def infer_e2e_nanobind(A: dace.float64[N], B: dace.float64[N]):
+            B[:] = A + B
+
+        csdfg = infer_e2e_nanobind.to_sdfg().compile()
+        n = 12
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = a + b
+        csdfg(A=a, B=b)  # no N: inferred from A.shape
+        assert np.allclose(b, expected)
+
+        # Explicit N still wins (and behaves as before).
+        a2 = np.random.rand(n)
+        b2 = np.random.rand(n)
+        expected2 = a2 + b2
+        csdfg(A=a2, B=b2, N=np.int32(n))
+        assert np.allclose(b2, expected2)
+
+
+def test_nanobind_interface_symbol_inference_return_requires_symbol():
+    """Symbolic-shaped returns require the symbol explicitly: their shapes are
+    evaluated in Python, and inference happens only in compiled code (a
+    per-call sympy inference in Python would be slow - by choice)."""
+    import pytest
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def infer_ret_nanobind(A: dace.float64[N]):
+            return A + 1.0
+
+        csdfg = infer_ret_nanobind.to_sdfg().compile()
+        a = np.random.rand(16)
+        with pytest.raises(Exception, match='N'):
+            csdfg(A=a)  # the return shape needs N in Python
+        result = csdfg(A=a, N=np.int32(16))
+        assert result.shape == (16, )
+        assert np.allclose(result, a + 1.0)
+
+
+def test_nanobind_interface_symbol_inference_missing():
+    """An omitted symbol that cannot be inferred raises an error naming it."""
+    import pytest
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        M = dace.symbol('M')
+
+        @dace.program
+        def infer_missing_nanobind(A: dace.float64[10], B: dace.float64[10]):
+            B[:] = A * M
+
+        csdfg = infer_missing_nanobind.to_sdfg().compile()
+        a = np.random.rand(10)
+        b = np.zeros(10)
+        with pytest.raises(Exception, match="missing argument 'M'.*not inferable"):
+            csdfg(A=a, B=b)
+        csdfg(A=a, B=b, M=np.int32(3))  # explicit still works
+        assert np.allclose(b, a * 3)
+
+
 def test_nanobind_interface_scalar_callback():
     """A scalar callback is invoked from the GIL-released kernel and its result lands in the output."""
     with set_temporary('compiler', 'interface', value='nanobind'):

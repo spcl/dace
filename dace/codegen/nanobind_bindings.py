@@ -37,6 +37,69 @@ _PYBUFFER_HELPER = '''    struct _DacePyBuffer {
 '''
 
 
+def _symbol_fallbacks(arglist, arg_names, symbol_names):
+    """Optional "artifact" symbols mapped to a C++ shape-inference fallback (or ``None``).
+
+    Numeric scalar **SDFG symbols** (``symbol_names``) that are not in the
+    user-facing ``arg_names`` (array sizes and the like) become optional
+    parameters; when omitted, their value is derived from an array argument's
+    shape. Data scalars are never omittable. The shape expression is inverted
+    with sympy once, at code-generation time, so the run-time fallback is plain
+    arithmetic on ``<array>.shape(<dim>)``.
+
+    Inference sources are user-facing plain arrays only: nullable, struct,
+    container and vector arrays are excluded (their run-time shape is either
+    unavailable or does not equal the descriptor shape). A symbol without a
+    source maps to ``None`` - omitting it raises at run time.
+    """
+    import numpy
+    import sympy
+    from dace import symbolic
+    from dace.codegen.common import sym2cpp
+
+    def _omittable(name, desc) -> bool:
+        # Inclusive support test: an SDFG symbol bound as a scalar of a plain
+        # integer or floating typeclass. Data scalars and subclassed
+        # typeclasses (strings, callbacks, pyobjects, vectors, ...) fall
+        # outside by construction.
+        return (name in symbol_names and isinstance(desc, dt.Scalar) and type(desc.dtype) is dtypes.typeclass and
+                (numpy.issubdtype(desc.dtype.type, numpy.integer) or numpy.issubdtype(desc.dtype.type, numpy.floating)))
+
+    arg_names_set = set(arg_names)
+    candidates = {name for name, desc in arglist.items() if name not in arg_names_set and _omittable(name, desc)}
+    if not candidates:
+        return {}
+
+    sources = [(name, desc) for name, desc in arglist.items()
+               if name in arg_names_set and isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
+               and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is False
+               and not name.startswith('__return')]
+
+    placeholder = sympy.Symbol('__dace_infer_src')
+    fallbacks = {}
+    for sym_name in candidates:
+        fallback = None
+        ctype = arglist[sym_name].dtype.ctype
+        for aname, desc in sources:
+            for i, dim in enumerate(desc.shape):
+                dim_symbols = symbolic.symlist(dim)
+                if set(dim_symbols.keys()) != {sym_name}:
+                    continue
+                try:
+                    solutions = sympy.solve(dim - placeholder, dim_symbols[sym_name])
+                except Exception:
+                    continue
+                if len(solutions) != 1:
+                    continue
+                expr = sym2cpp(solutions[0]).replace('__dace_infer_src', f'{aname}.shape({i})')
+                fallback = f'static_cast<{ctype}>({expr})'
+                break
+            if fallback is not None:
+                break
+        fallbacks[sym_name] = fallback
+    return fallbacks
+
+
 def _has_gpu_code(sdfg) -> bool:
     """Same detection as the ctypes ``CompiledSDFG``, evaluated at codegen time."""
     for _, _, desc in sdfg.arrays_recursive():
@@ -48,17 +111,22 @@ def _has_gpu_code(sdfg) -> bool:
     return False
 
 
-def _argument_binding(arglist, binding_order=None):
+def _argument_binding(arglist, binding_order=None, optional_symbols=None):
     """Per-argument (C++ parameter, program-call expression, nb::arg annotation) lists.
 
     ``binding_order`` controls the order of the bound parameters (the
     user-facing positional order); the program-call expressions are always
     returned in ``arglist`` order, which is the C signature order.
 
+    ``optional_symbols`` (see :func:`_symbol_fallbacks`) marks arguments that
+    may be omitted, mapping them to a shape-inference fallback expression or
+    ``None`` (omitting then raises).
+
     Arrays are taken without implicit conversion: nanobind would otherwise
     silently pass a converted *copy*, breaking DaCe's by-reference argument
     semantics. Scalars keep nanobind's overflow-checked conversion.
     """
+    optional_symbols = optional_symbols or {}
     # params and nb::args are keyed by name so they can be reordered to
     # binding_order at the end; call_args are collected directly in arglist
     # order, which is the C signature order the program call needs.
@@ -166,6 +234,26 @@ def _argument_binding(arglist, binding_order=None):
                 params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, nb::device::cpu>> {name}'
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
+
+        elif isinstance(desc, dt.Scalar) and name in optional_symbols:
+            # An "artifact" argument (a size symbol outside the user-facing
+            # signature): omittable. When omitted, the value comes from an
+            # array's shape via the codegen-time inverted expression - or, with
+            # no source, a clear error instead of nanobind's missing-argument
+            # message. The typed local under the real name keeps init_call and
+            # the program call unchanged. The strict_scalar option does not
+            # apply here (inference is inherently a conversion).
+            params_by_name[name] = f'std::optional<{ctype}> {name}__opt'
+            fallback = optional_symbols[name]
+            if fallback is not None:
+                setup_stmts.append(f'const {ctype} {name} = {name}__opt.has_value() ? *{name}__opt : {fallback};')
+            else:
+                setup_stmts.append(f'if (!{name}__opt.has_value())\n'
+                                   f'            throw std::invalid_argument("SDFG argument error: '
+                                   f'missing argument \'{name}\' (not inferable from any array argument).");\n'
+                                   f'        const {ctype} {name} = *{name}__opt;')
+            call_args.append(name)
+            nb_args_by_name[name] = f'nb::arg("{name}") = nb::none()'
 
         elif isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.bool_:
             # nanobind's bool caster accepts only a Python bool; uint8_t also
@@ -280,10 +368,15 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     init_call = sdfg.init_signature(for_call=True)
 
     # Bound-parameter order = user-facing positional order (arg_names first,
-    # as the old interface's positional calls expect), rest in arglist order.
+    # as the old interface's positional calls expect), rest in arglist order -
+    # with the omittable symbols last, since defaulted parameters must follow
+    # the required ones.
     arg_names = [n for n in (sdfg.arg_names or []) if n in arglist]
-    binding_order = arg_names + [n for n in arglist.keys() if n not in set(arg_names)]
-    params, call_args, nb_args, setup_stmts = _argument_binding(arglist, binding_order)
+    optional_symbols = _symbol_fallbacks(arglist, arg_names, set(sdfg.symbols.keys()))
+    rest = [n for n in arglist.keys() if n not in set(arg_names)]
+    binding_order = (arg_names + [n for n in rest if n not in optional_symbols] +
+                     [n for n in rest if n in optional_symbols])
+    params, call_args, nb_args, setup_stmts = _argument_binding(arglist, binding_order, optional_symbols)
 
     free_symbols = sorted(k for k in sdfg.used_symbols(all_symbols=False) if not k.startswith('__dace'))
     init_arglist = {k: v for k, v in arglist.items() if k in free_symbols}

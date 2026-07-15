@@ -84,11 +84,20 @@ class CompiledSDFGProfiler:
         times = np.ndarray(self.repetitions + 1, dtype=np.float64)
         times[0] = timer()
 
-        for i in iterator:
-            # Call function
-            compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
+        if hasattr(compiled_sdfg, '_handle'):
+            # Nanobind interface: hooks receive the processed keyword arguments
+            # as a 1-tuple, and the handle is the hook-bypassing entry point.
+            kw = args[0]
+            for i in iterator:
+                compiled_sdfg._handle(**kw)
 
-            times[i] = timer()
+                times[i] = timer()
+        else:
+            for i in iterator:
+                # Call function
+                compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
+
+                times[i] = timer()
 
         # compute pairwise differences and convert to milliseconds
         diffs = np.diff(times) * 1e3

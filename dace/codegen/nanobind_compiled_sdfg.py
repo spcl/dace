@@ -12,7 +12,7 @@ import numpy as np
 import ctypes
 
 import dace
-from dace import data as dt, dtypes, symbolic
+from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import compiler
 from dace.config import Config
 
@@ -56,6 +56,10 @@ class NanobindCompiledSDFG:
            ctypes ``CompiledSDFG`` (which reuses the last call's arguments,
            ``_lastargs``), :meth:`get_workspace_sizes` and :meth:`set_workspace`
            take the symbol values they depend on as arguments of that call.
+    :note: Compiled-SDFG call hooks (``dace.hooks``, ``dace.profile``) are
+           supported; a hook's ``args`` parameter is a 1-tuple holding the
+           processed keyword arguments (there is no ctypes-style C-argument
+           tuple - marshalling happens in compiled code).
     """
 
     def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str]):
@@ -63,6 +67,10 @@ class NanobindCompiledSDFG:
         self._module: ModuleType = module
         self._arg_names: List[str] = list(arg_names or [])
         self._handle: Any = module.make_compiled_sdfg()  # TODO: create a protocol for it.
+        #: When True, calls skip the program execution (argument processing and
+        #: hooks still run). Toggled by hooks such as ``dace.profile``, which
+        #: runs the repetitions itself and then suppresses the hooked call.
+        self.do_not_execute: bool = False
 
         if '__return' in sdfg.arrays:
             self._return_values: Tuple[str] = ('__return', )
@@ -113,10 +121,15 @@ class NanobindCompiledSDFG:
         the result is ``None``. Passing a ``__return*`` buffer explicitly is
         refused unless ``compiler.nanobind_allow_return_override`` is enabled.
         """
+        # Reading the private hook list directly keeps the no-hook fast path at
+        # a single truthiness check (entering the invoking context manager
+        # would construct an object per call).
+        hooks_active = bool(hooks._COMPILED_SDFG_CALL_HOOKS)
+
         # Positional arguments must be mapped to names whenever something
-        # downstream needs values by name: return-shape evaluation and
-        # callback wrapping.
-        if args and (self._return_values or self._callback_args):
+        # downstream needs values by name: return-shape evaluation, callback
+        # wrapping, and the hook invocation (hooks receive the kwargs).
+        if args and (self._return_values or self._callback_args or hooks_active):
             if len(args) > len(self._arg_names):
                 raise TypeError(f'Too many positional arguments (got {len(args)}, '
                                 f'expected at most {len(self._arg_names)}).')
@@ -131,18 +144,43 @@ class NanobindCompiledSDFG:
 
         # Early exit: no return values, no need to do more processing.
         if not self._return_values:
-            self._handle(*args, **kwargs)
+            if hooks_active:
+                self._call_handle_with_hooks(kwargs)
+            elif self.do_not_execute is False:
+                self._handle(*args, **kwargs)
             return None
+
+        # NOTE: Return shapes are evaluated here in Python, so symbols they
+        # depend on must be passed explicitly - the compiled shape inference
+        # only serves the kernel call, and running the (sympy-based) Python
+        # inference per call would be slow.
 
         # Will add the return arrays also to `kwargs`.
         return_arrays = self._allocate_return_arrays(kwargs)
 
-        self._handle(**kwargs)
+        if hooks_active:
+            self._call_handle_with_hooks(kwargs)
+        elif self.do_not_execute is False:
+            self._handle(**kwargs)
 
         # A single value is returned bare; a tuple return (even one element) stays a tuple.
         if self._is_single_value_ret:
             return return_arrays[0]
         return tuple(return_arrays)
+
+    def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> None:
+        """Runs the handle inside the registered compiled-SDFG call hooks.
+
+        On this interface a hook's ``args`` parameter is a 1-tuple holding the
+        processed keyword arguments (marshalling happens in compiled code, so
+        there is no ctypes-style C-argument tuple to hand out); re-invoking the
+        program from a hook is ``compiled_sdfg._handle(**args[0])``.
+        """
+        with hooks.invoke_compiled_sdfg_call_hooks(self, (kwargs, )):
+            # Checked inside the hook context: a hook may toggle the flag
+            # (dace.profile does) before the program call would run.
+            if self.do_not_execute is False:
+                self._handle(**kwargs)
 
     def _process_callbacks(self, kwargs: Dict[str, Any]) -> None:
         """Replaces callback callables in ``kwargs`` with C function-pointer addresses.
