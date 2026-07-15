@@ -437,5 +437,55 @@ def test_wavefront_skew_nussinov_value_preserving_through_full_pipeline():
     assert np.array_equal(got, ref)
 
 
+def test_wavefront_skew_five_point_absorbs_split_snapshot_through_full_pipeline():
+    """Regression guard for the snapshot-absorb path. Through the FULL pipeline
+    (not the isolated pass) ``SplitStatements`` breaks the inner anti-dependence
+    ``aa[i, j+1]`` with a per-iteration snapshot ``aa_split_snap = aa`` in the
+    outer body -- an imperfect nest that ``extract_two_level_nest`` used to reject,
+    silently serialising the kernel. :func:`absorb_split_snapshots` now folds the
+    snapshot back into the live array so the diagonal skew still fires: no
+    non-pinned residual loop survives and a parallel ``p``-Map is present."""
+    from dace.sdfg import nodes
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    sdfg = gauss_seidel_5pt.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, target='cpu')
+
+    nonpinned = [l for l in _loops(sdfg) if not getattr(l, 'pinned_sequential', False)]
+    assert not nonpinned, f"expected no non-pinned residual loop; got {[l.loop_variable for l in nonpinned]}"
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert any(m.map.params[0].startswith(_SKEW_P_PREFIX) for m in maps), \
+        f"expected a parallel wavefront p-Map; got maps={[m.map.params for m in maps]}"
+    # The absorbed snapshot must be gone -- no ``_split_snap`` access node, copy,
+    # nor descriptor survives (the terminal SimplifyPass runs ArrayElimination).
+    snap_nodes = [n for n, _ in sdfg.all_nodes_recursive()
+                  if isinstance(n, nodes.AccessNode) and n.data.endswith('_split_snap')]
+    assert not snap_nodes, f"snapshot copy not eliminated: {[n.data for n in snap_nodes]}"
+    assert not any(name.endswith('_split_snap') for name in sdfg.arrays), \
+        f"snapshot descriptor not eliminated: {[n for n in sdfg.arrays if n.endswith('_split_snap')]}"
+
+
+def test_wavefront_skew_five_point_snapshot_absorb_value_preserving():
+    """The snapshot-absorbed, fully-canonicalized 5-point Gauss-Seidel reproduces
+    the sequential reference exactly (the forward reads must still see the old
+    value -- the diagonal schedule guarantees the writer runs on a later
+    diagonal). Checked under multiple sizes."""
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    sdfg = gauss_seidel_5pt.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, target='cpu')
+    csdfg = sdfg.compile()
+    for n in (8, 13, 32):
+        rng = np.random.default_rng(n)
+        aa0 = rng.standard_normal((n, n))
+        ref = aa0.copy()
+        for i in range(1, n - 1):
+            for j in range(1, n - 1):
+                ref[i, j] = (ref[i, j - 1] + ref[i - 1, j] + ref[i, j + 1] + ref[i + 1, j]) / 4.0
+        got = aa0.copy()
+        csdfg(aa=got, N=n)
+        assert np.allclose(got, ref), f"N={n} mismatch (max {np.max(np.abs(got - ref)):.2e})"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

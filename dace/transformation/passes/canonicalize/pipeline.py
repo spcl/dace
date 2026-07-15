@@ -991,21 +991,18 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # end: the final SimplifyPass.
     #
-    # ``ArrayElimination`` is intentionally skipped: its source-merge
-    # (``merge_access_nodes`` with the ``in_degree == 0`` predicate) collapses
-    # two distinct source AccessNodes for the same data into one with
-    # ``out_degree >= 2``. When the body of a loop carries a *different*
-    # transient scalar via a read-AN-at-top / write-AN-at-bottom pair, the
-    # implicit codegen ordering between those two roots is what kept the
-    # carrier's RAW order intact -- merging the source breaks that ordering
-    # and the carrier reads the *new* value instead of the previous one.
-    # TSVC s254 / s255 (single- / two-step scalar lookback) divergence comes
-    # from this exact mechanism. The Phase 2.4a guard refuses the merge when
-    # the merged data itself has writes in the state, but s254's ``b`` is
-    # read-only -- the carrier (``x``) is the affected transient. Until the
-    # guard is widened to account for sibling carrier transients, the safer
-    # disposition is to skip the pass at end-of-canonicalize. Other Simplify
-    # sub-passes still run.
+    # ``ArrayElimination`` now runs at end-of-canonicalize. Two classes of bug
+    # that previously forced it off are fixed: (1) the ``merge_access_nodes``
+    # source-merge reorder that diverged the s254/s255 scalar-lookback carriers
+    # -- guarded by ``_state_has_read_write_sibling_carrier`` / ``_is_war_carrier``
+    # (a read-only merged container whose sibling transient is a read-then-seed
+    # carrier, or the anti-dep snapshot of s212, is left un-merged); and (2) the
+    # dead-data removal that ignored control-flow-region *condition* codeblocks --
+    # ``FindAccessStates`` now records data read by a loop/branch condition as live
+    # in the states the region governs, so a data-dependent bound is no longer
+    # dropped from under its own condition. Running it here reclaims the dead
+    # transients later canon phases strand (e.g. the wavefront's absorbed
+    # ``arr_split_snap`` snapshot copy).
     #
     # relax_powers (before the terminal simplify): freeze a provable non-negative integer
     # ``base ** exp`` to the exact integer ``ipow`` on the size / subscript / bound sites WHILE
@@ -1019,7 +1016,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # an earlier suspicion that it miscompiled gramschmidt was a misdiagnosis -- that was an
     # uninitialized WCR read whose layout the relax merely perturbed.)
     s += [('relax_powers', RelaxIntegerPowers())]
-    s += [('end', SimplifyPass(skip={'ArrayElimination'}))]
+    s += [('end', SimplifyPass())]
 
     # Final parallelize sweep: the symbolic-stride scan specialization
     # (``LoopToScan._specialize_scan_under_stride_guard``) emits its carry-free

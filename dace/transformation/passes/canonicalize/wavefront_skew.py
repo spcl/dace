@@ -50,6 +50,7 @@ References:
 - Bondhugula et al., *"A practical automatic polyhedral parallelizer ..."*
   (PLDI '08) -- Pluto, the affine-schedule generalisation.
 """
+import copy
 from typing import Dict, List, Optional, Tuple
 
 import dace
@@ -64,6 +65,11 @@ from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 #: Prefix for the synthesised skewed iterators.
 _SKEW_T_PREFIX = '_skew_t_'
 _SKEW_P_PREFIX = '_skew_p_'
+
+#: Suffix ``SplitStatements`` gives the per-iteration anti-dependence snapshot it
+#: inserts (``arr`` -> ``arr_split_snap``). Recognising it lets the skew absorb
+#: the snapshot back into the live array (see :func:`absorb_split_snapshots`).
+_SPLIT_SNAP_SUFFIX = '_split_snap'
 
 #: Candidate diagonal skews, in preference order. ``tau = (a, b)``; the skew is
 #: unimodular when ``|a| == 1`` (``p = v``, ``u = a*(t - b*p)``) or ``|b| == 1``
@@ -156,10 +162,30 @@ def unit_positive_stride(loop: LoopRegion) -> bool:
         return False
 
 
+def is_split_snapshot_state(state: SDFGState) -> bool:
+    """``state`` is a pure anti-dependence snapshot ``arr_split_snap = arr`` -- one
+    copy edge ``AccessNode(arr) -> AccessNode(arr_split_snap)`` and nothing else.
+    ``SplitStatements`` inserts exactly this before a loop to break a
+    per-iteration anti-dependence; the wavefront can absorb it (the diagonal
+    schedule already reads the old value before it is overwritten)."""
+    ns = list(state.nodes())
+    if len(ns) != 2 or not all(isinstance(n, nodes.AccessNode) for n in ns):
+        return False
+    edges = list(state.edges())
+    if len(edges) != 1:
+        return False
+    e = edges[0]
+    if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
+        return False
+    return e.dst.data == f'{e.src.data}{_SPLIT_SNAP_SUFFIX}'
+
+
 def extract_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
     """The single inner :class:`LoopRegion` perfectly nested in ``outer`` (its
     body may itself be imperfect); ``None`` if ``outer`` holds anything else with
-    data alongside the one inner loop."""
+    data alongside the one inner loop. A pure ``arr_split_snap = arr`` snapshot
+    state is tolerated -- :func:`absorb_split_snapshots` folds it away before the
+    skew reasons about dependences."""
     blocks = list(outer.nodes())
     inner = [b for b in blocks if isinstance(b, LoopRegion)]
     if len(inner) != 1:
@@ -167,9 +193,112 @@ def extract_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
     for b in blocks:
         if b is inner[0]:
             continue
-        if isinstance(b, SDFGState) and len(list(b.nodes())) > 0:
+        if isinstance(b, SDFGState) and len(list(b.nodes())) > 0 and not is_split_snapshot_state(b):
             return None
     return inner[0]
+
+
+def lex_sign(offset: List[object]) -> Optional[int]:
+    """Sign of the first non-zero component of a distance vector: ``+1`` forward,
+    ``-1`` backward, ``0`` for the zero vector, or ``None`` when that first
+    non-zero component is not a compile-time constant (undecidable)."""
+    for c in offset:
+        cs = symbolic.simplify(c)
+        if cs == 0:
+            continue
+        if cs.is_number:
+            return 1 if cs > 0 else -1
+        return None
+    return 0
+
+
+def live_reader(state: SDFGState, name: str) -> nodes.AccessNode:
+    """A read-only ``AccessNode(name)`` in ``state`` (``in_degree == 0``), reusing
+    one if present so redirected reads coalesce on the existing input node."""
+    for n in state.data_nodes():
+        if n.data == name and state.in_degree(n) == 0:
+            return n
+    return state.add_access(name)
+
+
+def absorb_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> bool:
+    """Redirect every inner-body read of an ``arr_split_snap`` snapshot back to the
+    live array ``arr`` and drop the snapshot copy, so the skew reasons about the
+    real (anti) dependence directly instead of the redundant snapshot.
+
+    Sound because the snapshot only ever stands in for a *forward* read -- an
+    element a later iteration overwrites (``a[i, j+1]`` / ``a[i+1, j]`` in an
+    in-place Gauss-Seidel). Its snapshotted value is the not-yet-overwritten old
+    element, which both the current sequential order *and* the diagonal wavefront
+    preserve (the writer runs on a strictly later diagonal). Refuses -- leaving the
+    SDFG untouched -- if any snapshot read is same-row backward (redirecting would
+    change its value) or its offset from the write is undecidable.
+
+    Returns ``True`` when there is nothing to absorb (already a perfect nest) or
+    the absorb succeeded; ``False`` to abort the skew with no mutation."""
+    copy_states = [
+        b for b in outer.nodes()
+        if isinstance(b, SDFGState) and b is not inner and is_split_snapshot_state(b)
+    ]
+    if not copy_states:
+        return True
+
+    snap_src: Dict[str, str] = {}  # snapshot array -> live source array
+    for st in copy_states:
+        e = list(st.edges())[0]
+        snap_src[e.dst.data] = e.src.data
+    live_names = set(snap_src.values())
+
+    write_idx: Dict[str, List[List[object]]] = {}  # live array -> point write indices
+    snap_reads: List[Tuple[SDFGState, nodes.AccessNode, object, List[object], str]] = []
+    for state in inner.all_states():
+        for node in state.data_nodes():
+            if node.data in snap_src:
+                for e in state.out_edges(node):
+                    if e.data is None or e.data.subset is None:
+                        return False
+                    ridx = point_index(e.data.subset)
+                    if ridx is None:
+                        return False
+                    snap_reads.append((state, node, e, ridx, snap_src[node.data]))
+            if node.data in live_names:
+                for e in state.in_edges(node):
+                    if e.data is None or e.data.subset is None:
+                        continue
+                    widx = point_index(e.data.subset)
+                    if widx is None:
+                        return False
+                    write_idx.setdefault(node.data, []).append(widx)
+
+    # Every snapshot read must be lexicographically forward of (or equal to) the
+    # live write it shadows -- only then does the old snapshot value match the
+    # live element under both the sequential and the diagonal schedule.
+    for (_st, _node, _e, ridx, src_name) in snap_reads:
+        writes = write_idx.get(src_name)
+        if not writes:
+            return False
+        for widx in writes:
+            if len(widx) != len(ridx):
+                return False
+            if lex_sign([r - w for r, w in zip(ridx, widx)]) not in (0, 1):
+                return False
+
+    # Commit: rewire snapshot reads onto the live array, drop the orphaned
+    # snapshot readers, then empty the copy states (structural cleanup removes
+    # the now-empty state and eliminates the dead ``arr_split_snap`` array).
+    for (state, _snap_node, e, _ridx, src_name) in snap_reads:
+        reader = live_reader(state, src_name)
+        redirected = copy.deepcopy(e.data)
+        redirected.data = src_name
+        state.add_edge(reader, None, e.dst, e.dst_conn, redirected)
+        state.remove_edge(e)
+    for (state, snap_node, _e, _ridx, _src) in snap_reads:
+        if snap_node in state.nodes() and state.degree(snap_node) == 0:
+            state.remove_node(snap_node)
+    for st in copy_states:
+        for n in list(st.nodes()):
+            st.remove_node(n)
+    return True
 
 
 def point_index(subset) -> Optional[List[object]]:
@@ -438,6 +567,13 @@ class WavefrontSkew(ppl.Pass):
         # in the inner bound is fine -- that is the triangular case ISL handles.
         vsym = sym(v)
         if vsym in symbolic.simplify(vb[0]).free_symbols or vsym in symbolic.simplify(vb[1]).free_symbols:
+            return False
+
+        # Fold away any per-iteration anti-dependence snapshot SplitStatements
+        # left in the outer body (the imperfect-nest cause) so the dependence is
+        # carried by the diagonal schedule instead. Correctness-preserving on its
+        # own, so a later skew refusal leaves a valid (still sequential) nest.
+        if not absorb_split_snapshots(outer, inner, sdfg):
             return False
 
         carrier = collect_carrier(inner, sdfg, u, v)

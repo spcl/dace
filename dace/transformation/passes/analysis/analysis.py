@@ -344,6 +344,23 @@ class FindAccessStates(ppl.Pass):
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
 
+            # Data referenced in a control-flow-region condition/meta codeblock
+            # (a loop bound/condition/update, a branch or while condition) is read
+            # every time the region is entered even without an AccessNode, so it is
+            # live throughout the region. Record it in every state the region
+            # governs -- otherwise a consumer (dead-data elimination, allocation
+            # scoping) treats a data-dependent loop bound as unused and drops it,
+            # leaving a dangling reference in the condition. Interstate-edge reads
+            # are handled above; this closes the codeblock gap (mirrors the
+            # condition scan in :class:`FindSingleUseData`).
+            for cfr in sdfg.all_control_flow_regions():
+                cond_data = cfr.used_symbols(all_symbols=True, with_contents=False) & anames
+                if not cond_data:
+                    continue
+                region_states = set(cfr.all_states())
+                for access in cond_data:
+                    result[access].update(region_states)
+
             top_result[sdfg.cfg_id] = result
         return top_result
 
