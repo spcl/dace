@@ -299,29 +299,21 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
     has_gpu = 'true' if _has_gpu_code(sdfg) else 'false'
 
-    # Init symbols are stored on the handle: the external-memory entry points
-    # take them as arguments (framecode.py, generate_external_memory_management),
-    # mirroring the ctypes wrapper's use of the last call's arguments.
+    # Symbol values are never stored on the handle: the external-memory entry
+    # points (framecode.py, generate_external_memory_management) take the init
+    # symbols as arguments, so the caller passes them per call - the bound
+    # methods accept the full __call__-style argument set and the dispatcher
+    # picks the ones needed (the trailing nb::kwargs absorbs the rest).
     #
-    # Callbacks are among these symbols: the Python frontend registers a
+    # Callbacks are among these init symbols: the Python frontend registers a
     # callback via `sdfg.add_symbol(name, dtypes.callback(...))`, riding the
     # symbol machinery because a callback shares a symbol's defining property -
     # a scalar, runtime-constant value that parameterizes the execution (here a
     # pointer-sized function pointer). That is why they flow through
-    # `used_symbols()` into the init signature and need an `m_sym_*` member,
-    # and why their member declaration is special-cased below.
+    # `used_symbols()` into the init signature, and why the init setup
+    # statements (the pointer recovery) apply to the workspace methods too.
     init_symbol_names = list(init_arglist.keys())
-
-    def _sym_member(s: str) -> str:
-        # A callback member needs the function-pointer declarator - its ctype
-        # is not a C++ type.
-        dtype = init_arglist[s].dtype
-        decl = dtype.as_arg(f'm_sym_{s}') if isinstance(dtype, dtypes.callback) else f'{dtype.ctype} m_sym_{s}'
-        return f'    {decl} = {{}};'
-
-    sym_members = '\n'.join(_sym_member(s) for s in init_symbol_names)
-    sym_stores = '\n        '.join(f'm_sym_{s} = {s};' for s in init_symbol_names)
-    sym_args = ''.join(f', m_sym_{s}' for s in init_symbol_names)
+    init_sym_args = ''.join(f', {s}' for s in init_symbol_names)
     init_comma_decl = f', {init_decl}' if init_decl else ''
 
     ext_storages = _external_memory_storages(sdfg)
@@ -333,13 +325,17 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # so a module compiled against one DaCe version could be misread by another.
     # The Python side restores the enum via getattr(dtypes.StorageType, name).
     ws_size_entries = '\n        '.join(
-        f'sizes["{s.name}"] = nb::int_(__dace_get_external_memory_size_{s.name}(m_state{sym_args}));'
+        f'sizes["{s.name}"] = nb::int_(__dace_get_external_memory_size_{s.name}(m_state{init_sym_args}));'
         for s in ext_storages)
     ws_set_entries = '\n        '.join(
         f'if (storage == "{s.name}") {{\n'
-        f'            __dace_set_external_memory_{s.name}(m_state, reinterpret_cast<char *>(buffer.data()){sym_args});\n'
+        f'            __dace_set_external_memory_{s.name}(m_state, reinterpret_cast<char *>(buffer.data()){init_sym_args});\n'
         f'            return;\n'
         f'        }}' for s in ext_storages)
+
+    # Callback-pointer recovery for the workspace methods (their init-symbol
+    # parameters arrive like initialize()'s).
+    ws_init_setup = ''.join(f'{stmt}\n        ' for stmt in init_setup)
 
     state_field_appends = '\n            '.join(f'fields.append("{f}");' for f in _pointer_field_names(statestruct))
 
@@ -418,7 +414,6 @@ namespace dace {{ namespace generated {{ namespace {name} {{
 
 struct DaceHandle_{name} {{
 {pybuffer_helper}    {state_t} *m_state = nullptr;
-{sym_members}
 
     void require_state() const {{
         if (!m_state)
@@ -436,21 +431,20 @@ struct DaceHandle_{name} {{
 
     void init_impl({init_decl}) {{
         if (m_state) return;
-        {sym_stores}
         m_state = __dace_init_{name}({init_call});
         if (!m_state) throw std::runtime_error("SDFG '{name}': __dace_init failed.");
     }}
 
-    nb::dict get_workspace_sizes() {{
+    nb::dict get_workspace_sizes({init_param_list}) {{
         require_state();
-        nb::dict sizes;
+        {ws_init_setup}nb::dict sizes;
         {ws_size_entries}
         return sizes;
     }}
 
-    void set_workspace(const std::string &storage, nb::ndarray<> buffer) {{
+    void set_workspace(const std::string &storage, nb::ndarray<> buffer, {init_param_list}) {{
         require_state();
-        {ws_set_entries}
+        {ws_init_setup}{ws_set_entries}
         throw std::invalid_argument("SDFG '{name}': no external memory of storage type " + storage);
     }}
 
@@ -486,9 +480,9 @@ NB_MODULE({name}, m) {{
         .def("initialize", &DaceHandle_{name}::initialize{init_def_args})
         .def("finalize", &DaceHandle_{name}::finalize)
         .def("__call__", &DaceHandle_{name}::call{call_def_args})
-        .def("get_workspace_sizes", &DaceHandle_{name}::get_workspace_sizes)
+        .def("get_workspace_sizes", &DaceHandle_{name}::get_workspace_sizes{init_def_args})
         .def("set_workspace", &DaceHandle_{name}::set_workspace,
-             nb::arg("storage"), nb::arg("buffer"))
+             nb::arg("storage"), nb::arg("buffer"){init_def_args})
         .def("state_fields", [](DaceHandle_{name} &) {{
             // Baked in at code generation time; only pointer fields.
             nb::list fields;

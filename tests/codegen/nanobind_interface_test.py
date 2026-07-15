@@ -280,11 +280,15 @@ def test_nanobind_interface_workspace():
         # Positional: `a` must map to the SDFG argument `a` (user-facing
         # order), NOT to the C++ initialize's first parameter `N`.
         csdfg.initialize(a, N=np.int32(n))
-        sizes = csdfg.get_workspace_sizes()
+        # Symbol values are never stored on the handle; the workspace entry
+        # points take them per call. Any subset of the __call__ arguments is
+        # accepted - the binding picks the ones it needs.
+        sizes = csdfg.get_workspace_sizes(N=np.int32(n))
         assert sizes == {dace.StorageType.CPU_Heap: n * 8}
 
         wsp = np.random.rand(n)
-        csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp)
+        # The full __call__-style argument set (including arrays) is accepted.
+        csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp, a=a, N=np.int32(n))
 
         ref = a + 1
         csdfg(a=a, N=np.int32(n))
@@ -357,8 +361,8 @@ def test_nanobind_interface_callback_binding():
     code = generate_bindings_code(sdfg)
     assert 'std::uintptr_t cb__addr' in code  # shadow parameter
     assert 'reinterpret_cast<double (*)(double)>(cb__addr)' in code  # typed local via setup
-    assert 'double (*m_sym_cb)(double)' in code  # member declarator, not dtype.ctype
     assert 'nb::arg("cb")' in code  # keyword stays the real name
+    assert 'm_sym_' not in code  # symbol values are never stored on the handle
 
 
 def test_nanobind_interface_scalar_callback():

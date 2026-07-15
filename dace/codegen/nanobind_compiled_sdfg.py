@@ -52,6 +52,10 @@ class NanobindCompiledSDFG:
            caller passes their own ``__return*`` buffer.
     :note: Return values are arrays only; unlike the ctypes ``CompiledSDFG`` the
            nanobind interface returns neither Python scalars nor pyobjects.
+    :note: No argument or symbol values are stored between calls; unlike the
+           ctypes ``CompiledSDFG`` (which reuses the last call's arguments,
+           ``_lastargs``), :meth:`get_workspace_sizes` and :meth:`set_workspace`
+           take the symbol values they depend on as arguments of that call.
     """
 
     def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str]):
@@ -149,11 +153,12 @@ class NanobindCompiledSDFG:
         threads). Exceptions raised inside a callback follow ctypes semantics:
         they are printed, not propagated to the caller.
         """
-        # The CFUNCTYPE objects own the synthesized C entry points, and
-        # init_impl stores the first call's pointers in m_sym_* for the
-        # external-memory entry points - so they are retained for the wrapper's
-        # lifetime rather than per call. Return-value references only need to
-        # survive until the kernel has consumed them, i.e. the next call.
+        # The CFUNCTYPE objects own the synthesized C entry points. They are
+        # retained for the wrapper's lifetime rather than per call: the opaque
+        # SDFG state may keep a pointer passed at initialization, so per-call
+        # replacement could leave a stored pointer dangling. Return-value
+        # references only need to survive until the kernel has consumed them,
+        # i.e. the next call.
         self._callback_refs.clear()
         for name, cbtype in self._callback_args.items():
             if name not in kwargs:
@@ -216,13 +221,17 @@ class NanobindCompiledSDFG:
         this is optional - :meth:`__call__` initializes on demand - but it is
         required before querying external-memory workspace sizes.
         """
+        self._handle.initialize(**self._named_call_arguments(args, kwargs))
+
+    def _named_call_arguments(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Maps positional arguments onto their names and wraps callback callables."""
         if args:
             assert not (multiple_names :=
                         kwargs.keys() & self._arg_names[:len(args)]), f"Specified '{multiple_names}' multiple times."
             kwargs.update(zip(self._arg_names, args, strict=False))
         if self._callback_args:
             self._process_callbacks(kwargs)
-        self._handle.initialize(**kwargs)
+        return kwargs
 
     def finalize(self) -> None:
         self._handle.finalize()
@@ -235,19 +244,29 @@ class NanobindCompiledSDFG:
         """
         return compiler.safe_call_precompiled(self._sdfg, args, kwargs)
 
-    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
+    def get_workspace_sizes(self, *args: Any, **kwargs: Any) -> Dict[dtypes.StorageType, int]:
         """Returns the external-memory sizes per storage type.
 
-        The handle keys the sizes by storage-type *name* (stable across changes
-        to the enum values); the conversion back to the ``StorageType`` enum
-        happens here, since the Python enum is not exposed to C++.
+        Symbol values are never stored on the handle, so the sizes are computed
+        from the arguments of *this* call: pass the symbols the sizes depend
+        on. Any subset of the :meth:`__call__` arguments is accepted; only the
+        needed values are consumed.
         """
-        return {getattr(dtypes.StorageType, k): v for k, v in self._handle.get_workspace_sizes().items()}
+        # The handle keys the sizes by storage-type *name* (stable across
+        # changes to the enum values); the Python enum is not exposed to C++,
+        # so the conversion back happens here.
+        kwargs = self._named_call_arguments(args, kwargs)
+        return {getattr(dtypes.StorageType, k): v for k, v in self._handle.get_workspace_sizes(**kwargs).items()}
 
-    def set_workspace(self, storage: Union[str, dtypes.StorageType], workspace: int):
-        """Sets the workspace for the given storage type to the given buffer."""
+    def set_workspace(self, storage: Union[str, dtypes.StorageType], workspace: int, *args: Any, **kwargs: Any):
+        """Sets the workspace for the given storage type to the given buffer.
+
+        As with :meth:`get_workspace_sizes`, the symbol values the external
+        memory depends on are taken from this call's arguments (any subset of
+        the :meth:`__call__` arguments is accepted).
+        """
         name = storage.name if isinstance(storage, dtypes.StorageType) else dtypes.StorageType(storage).name
-        self._handle.set_workspace(name, workspace)
+        self._handle.set_workspace(name, workspace, **self._named_call_arguments(args, kwargs))
 
     def state_fields(self) -> list[str]:
         """Names of the pointer fields in the state struct.
