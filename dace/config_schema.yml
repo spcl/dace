@@ -152,6 +152,19 @@ required:
                     parameter) is still rejected by nanobind regardless of this
                     option. Only consulted when ``compiler.interface`` is "nanobind".
 
+            nanobind_allow_return_override:
+                type: bool
+                default: false
+                title: Allow caller-provided return buffers on the nanobind interface
+                description: >
+                    When true, the caller may pass their own pre-allocated output
+                    buffer for an implicit return value (e.g. ``f(A, __return=out)``):
+                    the kernel writes into it in place and returns that same buffer,
+                    avoiding a per-call allocation. The buffer's shape and dtype must
+                    match the return array. When false (default), passing a
+                    ``__return*`` argument is rejected with an error. Only consulted
+                    when ``compiler.interface`` is "nanobind".
+
             build_folder_mode:
                 type: str
                 default: development

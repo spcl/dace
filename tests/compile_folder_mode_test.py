@@ -9,6 +9,15 @@ import re
 import dace
 from dace.codegen import compiler as sdfg_compiler
 
+# A nanobind extension module cannot be reloaded in-process, so recompiling a
+# same-named SDFG renames it into its own build folder (`<build_folder>_0/build`,
+# see tests/codegen/nanobind_interface_test.py::test_nanobind_interface_rename_own_build_folder).
+# These tests assert the ctypes in-place rebuild (same build_folder), so they are
+# ctypes-only.
+skip_recompile_folder_mode_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind recompile renames into its own build folder; test asserts ctypes in-place rebuild')
+
 
 def _make_test_sdfg() -> dace.SDFG:
     sdfg = dace.SDFG("test_sdfg_" + str(uuid.uuid1()).replace("-", "_"))
@@ -214,6 +223,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
     _run_sdfg(csdfg2)
 
 
+@skip_recompile_folder_mode_on_nanobind
 def test_build_with_scheme_one_and_then_switch():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
@@ -225,6 +235,7 @@ def test_build_with_scheme_one_and_then_switch():
     )
 
 
+@skip_recompile_folder_mode_on_nanobind
 def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",

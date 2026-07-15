@@ -103,6 +103,57 @@ def test_nanobind_interface_return_value():
         assert np.allclose(result, a + 1.0)
 
 
+def test_nanobind_interface_return_override_forbidden_by_default():
+    """By default the nanobind interface refuses a caller-provided __return buffer."""
+    import pytest
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def double_ret_default(A: dace.float64[20]):
+            return A * 2
+
+        csdfg = double_ret_default.to_sdfg().compile()
+        a = np.random.rand(20)
+        out = np.empty(20, dtype=np.float64)
+        with pytest.raises(ValueError, match='nanobind_allow_return_override'):
+            csdfg(A=a, __return=out)
+
+
+def test_nanobind_interface_return_override_allowed():
+    """With the option on, a caller-provided __return buffer is written in place and returned."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
+
+            @dace.program
+            def double_ret_ovr(A: dace.float64[20]):
+                return A * 2
+
+            csdfg = double_ret_ovr.to_sdfg().compile()
+            a = np.random.rand(20)
+            out = np.zeros(20, dtype=np.float64)
+            result = csdfg(A=a, __return=out)
+            assert result is out  # the caller's buffer is returned
+            assert np.allclose(out, a * 2)  # ...and written in place
+
+
+def test_nanobind_interface_return_override_wrong_dtype_rejected_by_binding():
+    """With the option on, no Python-side type check is imposed: a buffer the
+    nanobind binding cannot accept (wrong dtype) is rejected by the binding."""
+    import pytest
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
+
+            @dace.program
+            def double_ret_dtype(A: dace.float64[20]):
+                return A * 2
+
+            csdfg = double_ret_dtype.to_sdfg().compile()
+            a = np.random.rand(20)
+            wrong = np.zeros(20, dtype=np.float32)  # binding expects float64
+            with pytest.raises(Exception):
+                csdfg(A=a, __return=wrong)
+
+
 def test_nanobind_interface_positional_and_extra_kwargs():
     """Positional calls work, and extra keyword arguments are absorbed (old-interface behavior)."""
     with set_temporary('compiler', 'interface', value='nanobind'):

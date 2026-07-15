@@ -7,6 +7,7 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 
 from dace import data as dt, dtypes, symbolic
 from dace.codegen import compiler
+from dace.config import Config
 
 import pathlib
 import numpy as np
@@ -72,6 +73,11 @@ class NanobindCompiledSDFG:
         # the call. Excludes `__return*` (handled in `_allocate_return_arrays`).
         self._struct_array_args = frozenset(name for name, desc in sdfg.arrays.items() if (not desc.transient) and (
             name not in self._return_values) and isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct))
+
+        # Read once here (Config lookups walk the schema and `__call__` is hot):
+        # whether a caller-provided `__return*` buffer may be reused (opt-in,
+        # default off). Consequently the option is bound at construction time.
+        self._allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
 
     @property
     def sdfg(self):
@@ -176,10 +182,26 @@ class NanobindCompiledSDFG:
         return_arrays = []
         for name in self._return_values:
             desc = arrays[name]
-            if name in kwargs:
-                # This constraint also simplifies the implementation of struct handling.
-                raise ValueError(f'The implicit output argument `{name}` can not be passed as explicit input argument.')
             assert isinstance(desc, dt.Array)  # Non-array returns are refused by the bindings generator at codegen
+
+            if name in kwargs:
+                # The caller supplied their own output buffer. This is opt-in: by
+                # default we forbid it (allocating fresh also simplifies struct
+                # handling); when allowed, the kernel writes into and returns the
+                # caller's buffer (skips an allocation). We impose no shape/dtype
+                # check here - the intended use is "allocate the buffer elsewhere
+                # and ship it in", so the caller owns correctness; the nanobind
+                # binding still rejects anything it genuinely cannot accept (e.g.
+                # a wrong dtype or a non-array).
+                if not self._allow_return_override:
+                    raise ValueError(f'The implicit output argument `{name}` can not be passed as an explicit '
+                                     f'input argument; set compiler.nanobind_allow_return_override=true to allow '
+                                     f'reusing a caller-provided output buffer.')
+                arr = kwargs[name]
+                # Same byte-view treatment as an allocated struct return (below).
+                kwargs[name] = arr.view(np.uint8) if isinstance(desc.dtype, dtypes.struct) else arr
+                return_arrays.append(arr)
+                continue
 
             shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
             dtype = desc.dtype.as_numpy_dtype()
