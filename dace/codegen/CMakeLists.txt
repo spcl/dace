@@ -74,7 +74,10 @@ if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
   find_package(CUDAToolkit REQUIRED)
-  set(CMAKE_CUDA_STANDARD 17)
+  # Match the CUDA C++ standard to the CPU one (DACE_CPP_STANDARD, default 20). This governs both
+  # the device compile and the nvcc host-compiler pass, so device code may use the same C++20
+  # features the readable generator emits on the host (e.g. ``consteval`` index/size helpers).
+  set(CMAKE_CUDA_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
