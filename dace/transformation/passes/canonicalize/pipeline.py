@@ -1063,6 +1063,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # AssumeSymbolConstraints, which must stay the terminal stage.
     s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
 
+    # revert_nonreduction_wcr (terminal): the terminal ``LoopToMap`` + fusion above form fresh
+    # ``map_exit -> output`` WCR edges that the earlier ``revert_nonreduction_wcr`` (which ran
+    # before those maps existed) never saw -- an injective slice aug-assign such as seidel's
+    # ``A[i, 1:-1] += <neighbours>`` whose ``j``-loop only became a Map here. Its per-iteration
+    # write is a single conflict-free element and the tasklet already reads the destination back,
+    # so the map-exit WCR is a spurious atomic over a conflict-free store: WCRToAugAssign (expr 4)
+    # drops it to a plain indexed write. The injectivity gate still keeps genuine reductions (a
+    # real ``w[i] += ...`` k-reduction whose write does NOT vary with the map lane).
+    s += [('end', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR
     # accumulator, so a reduction into genuinely-uninitialized scratch reads garbage. That pass

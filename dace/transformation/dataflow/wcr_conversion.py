@@ -966,6 +966,16 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # AT the map boundary (LoopToMap lowers ``a[i] = a[i] - x`` to
             # ``_wcr_priv -(a-b)-> MapExit -> a``). 3rd pattern misses it: MapExit sits between.
             sdutil.node_path_graph(cls.inp, cls.map_exit, cls.output),
+            # ``Tasklet -> MapExit -[wcr]-> AccessNode``: the WCR is stranded on the OUTER
+            # map-exit->output edge (over-approximated to the whole array), while the inner
+            # tasklet->map-exit edge carries the PRECISE per-iteration write with no WCR.
+            # AugAssignToWCR mints a reduction on the outer boundary to let LoopToMap parallelize
+            # the loop; when the per-iteration write is injective over the map (distinct lane ->
+            # distinct element, no reduction) and the tasklet already materialises the RMW
+            # (reads the destination element back), the WCR is spurious -- an atomic over a
+            # conflict-free store -- and reverts to a plain indexed write. Same node topology as
+            # expr 1; distinguished by which edge holds the WCR (see ``_matched_wcr_edge``).
+            sdutil.node_path_graph(cls.tasklet, cls.map_exit, cls.output),
         ]
 
     def _matched_wcr_edge(self, graph, expr_index):
@@ -976,13 +986,70 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edges = graph.edges_between(self.tasklet, self.map_exit)
         elif expr_index == 2:
             edges = graph.edges_between(self.inp, self.output)
-        else:
+        elif expr_index == 3:
             edges = graph.edges_between(self.inp, self.map_exit)
+        else:
+            # expr 4: WCR on the OUTER map_exit->output edge (inner tasklet->map_exit WCR-free,
+            # else it is expr 1's match).
+            inner = graph.edges_between(self.tasklet, self.map_exit)
+            if len(inner) != 1 or inner[0].data.wcr is not None:
+                return None
+            edges = graph.edges_between(self.map_exit, self.output)
         if len(edges) != 1 or edges[0].data.wcr is None:
             return None
         return edges[0]
 
+    def _can_revert_mapexit_wcr(self, graph, sdfg):
+        """expr 4: WCR stranded on the ``map_exit -> output`` edge. Revert (drop the WCR) only
+        when the PRECISE per-iteration write on the inner ``tasklet -> map_exit`` edge is a single
+        conflict-free element AND the tasklet already reads the destination element back, so the
+        read-modify-write is already materialised and a plain indexed store is equivalent."""
+        outer = self._matched_wcr_edge(graph, 4)
+        if outer is None:
+            return False
+        inner = graph.edges_between(self.tasklet, self.map_exit)[0]
+        sub = inner.data.subset
+        if sub is None or inner.data.dynamic is True or outer.data.dynamic is True:
+            return False
+        # Precise single-element per-iteration write only.
+        if sub.num_elements() != 1:
+            return False
+        # Injective over the enclosing map(s): distinct lane -> distinct element (not a reduction).
+        params = _enclosing_map_params(graph, self.tasklet)
+        if not _wcr_write_is_injective(sub, params):
+            return False
+        # Parent-map guard (mirrors the scalar-revert path): across a nested-SDFG boundary the
+        # PARENT's enclosing maps are invisible to ``_enclosing_map_params``. If an outer map's
+        # param does not vary the write index, every one of its (potentially parallel) iterations
+        # writes the SAME element -- a race that is only correct as the reduction it currently is.
+        dst_desc = sdfg.arrays.get(self.output.data)
+        dst_scope_private = (dst_desc is not None and dst_desc.transient
+                             and dst_desc.lifetime == dtypes.AllocationLifetime.Scope)
+        if sdfg.parent is not None and not dst_scope_private:
+            outer_map_params = set()
+            for scope in get_parent_map_and_loop_scopes(sdfg, self.tasklet, graph):
+                if isinstance(scope, nodes.MapEntry):
+                    outer_map_params |= set(scope.map.params)
+            outer_map_params -= set(params)
+            index_syms = _index_syms_across_nesting(sdfg, sub)
+            if any(str(it) not in index_syms for it in outer_map_params):
+                return False
+        # The tasklet must already READ BACK the destination element (same data, same subset), so
+        # ``__out`` already equals ``dest <op> incoming`` and dropping the WCR keeps the accumulate.
+        for ie in graph.in_edges(self.tasklet):
+            if ie.data.data != self.output.data or ie.data.subset is None:
+                continue
+            try:
+                same = ie.data.subset == sub
+            except Exception:
+                same = str(ie.data.subset) == str(sub)
+            if same:
+                return True
+        return False
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if expr_index == 4:
+            return self._can_revert_mapexit_wcr(graph, sdfg)
         edge = self._matched_wcr_edge(graph, expr_index)
         if edge is None:
             return False
@@ -1084,6 +1151,14 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # WCR convention ``lambda acc, new``: ``__in1`` = existing dest value (read back),
         # ``__in2`` = incoming value the edge writes. ``_wcr_augassign_body`` binds by arg name
         # so non-commutative ops (``a - b``) stay correct.
+        if self.expr_index == 4:
+            # Spurious reduction on the outer boundary: the RMW is already materialised in the
+            # tasklet (it reads the destination back) and the write is injective over the map, so
+            # the conflict-free store needs no atomic. Drop the WCR along the whole memlet path.
+            edge = self._matched_wcr_edge(state, 4)
+            for pe in state.memlet_path(edge):
+                pe.data.wcr = None
+            return
         if self.expr_index == 0:
             edge = state.edges_between(self.tasklet, self.output)[0]
             code = _wcr_augassign_body(edge.data.wcr)

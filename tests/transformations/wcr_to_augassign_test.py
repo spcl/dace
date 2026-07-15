@@ -181,6 +181,77 @@ def test_symbolic_overapproximated_wcr_refused_no_typeerror():
     assert xform.can_be_applied(state, 2, sdfg) is False
 
 
+def test_mapexit_wcr_injective_reverts():
+    """expr_index-4: WCR stranded on the OUTER ``map_exit -> output`` edge (over-approximated to
+    the whole array), while the inner ``tasklet -> map_exit`` edge carries the precise per-iteration
+    write with NO WCR. This is the shape ``AugAssignToWCR`` + ``LoopToMap`` leave for an injective
+    in-place slice aug-assign whose loop only became a Map late (seidel's ``A[i, 1:-1] +=
+    <neighbours>`` after its ``j``-loop is lifted). The write ``A[j]`` is injective over the map
+    param and the tasklet already reads ``A[j]`` back, so the WCR is a spurious atomic over a
+    conflict-free store and must revert to a plain indexed write."""
+    N = 8
+    sdfg = dace.SDFG('mapexit_wcr_inj')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(j=f'0:{N}'))
+    tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 + __in2)')
+    a_read = state.add_read('A')
+    b_read = state.add_read('B')
+    a_write = state.add_write('A')
+    # tasklet reads the destination element A[j] back (__in1) + the incoming operand B[j] (__in2)
+    state.add_memlet_path(a_read, me, tasklet, dst_conn='__in1', memlet=dace.Memlet('A[j]'))
+    state.add_memlet_path(b_read, me, tasklet, dst_conn='__in2', memlet=dace.Memlet('B[j]'))
+    # inner edge: precise A[j], NO WCR
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(tasklet, '__out', mx, 'IN_A', dace.Memlet('A[j]'))
+    # outer edge: over-approximated A[0:N], the WCR lives HERE
+    state.add_edge(mx, 'OUT_A', a_write, None, dace.Memlet(data='A', subset=f'0:{N}', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1, 'the injective map-exit WCR must revert'
+    sdfg.validate()
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'WCR must be gone after revert'
+
+    rng = np.random.default_rng(3)
+    A0 = rng.random(N)
+    B = rng.random(N)
+    ref = A0 + B  # A[j] = A[j] + B[j]
+    got = A0.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref), f'A[j] += B[j]; got {got}, ref {ref}'
+
+
+def test_mapexit_wcr_reduction_kept():
+    """expr_index-4 must REFUSE a genuine reduction: a map-exit WCR whose per-iteration write is a
+    CONSTANT target (``acc[0]`` does not vary with the map param) is a real cross-lane reduction,
+    not an injective store. Reverting to a plain store would introduce a data race, so the
+    injectivity gate keeps the WCR (later lowered to an OMP reduction / atomic)."""
+    N = 8
+    sdfg = dace.SDFG('mapexit_wcr_reduce')
+    sdfg.add_array('acc', [1], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(j=f'0:{N}'))
+    tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 + __in2)')
+    acc_read = state.add_read('acc')
+    b_read = state.add_read('B')
+    acc_write = state.add_write('acc')
+    state.add_memlet_path(acc_read, me, tasklet, dst_conn='__in1', memlet=dace.Memlet('acc[0]'))
+    state.add_memlet_path(b_read, me, tasklet, dst_conn='__in2', memlet=dace.Memlet('B[j]'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(tasklet, '__out', mx, 'IN_A', dace.Memlet('acc[0]'))
+    state.add_edge(mx, 'OUT_A', acc_write, None, dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 0, 'a constant-target (reduction) map-exit WCR must NOT revert'
+    assert any(e.data.wcr is not None for s in sdfg.all_states() for e in s.edges()), 'reduction WCR must be kept'
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
@@ -188,3 +259,5 @@ if __name__ == '__main__':
     test_scalar_source_multidim_target_subset()
     test_slice_source_offset_wcr()
     test_symbolic_overapproximated_wcr_refused_no_typeerror()
+    test_mapexit_wcr_injective_reverts()
+    test_mapexit_wcr_reduction_kept()
