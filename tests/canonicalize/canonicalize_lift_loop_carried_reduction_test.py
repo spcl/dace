@@ -64,8 +64,11 @@ def _loop_indexed_scan(a: dace.float64[N]):
 def test_lifts_rowsum_reduction_and_parallelizes():
     """``for k: out[i] = out[i] + B[k, i]`` is a reduction of ``out`` over ``k``;
     lifting the in-place accumulation to a WCR lets ``LoopToMap`` parallelize the
-    ``k`` loop. Value-preserving (column sums)."""
+    ``k`` loop. Value-preserving (column sums). Concrete sizes -- the pass refuses
+    symbolic extents."""
+    k, n = 5, 7
     sdfg = _rowsum.to_sdfg(simplify=True)
+    _specialize(sdfg, K=k, N=n)
     assert _apply(sdfg) >= 1
     assert _num_wcr(sdfg) >= 1, 'the accumulation should become a WCR write'
     sdfg.validate()
@@ -73,12 +76,11 @@ def test_lifts_rowsum_reduction_and_parallelizes():
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
     assert _num_loops(sdfg) == 0
 
-    k, n = 5, 7
     rng = np.random.default_rng(0)
     B = rng.standard_normal((k, n))
     out = np.full(n, -123.0)
     ref = B.sum(axis=0)
-    sdfg(B=B.copy(), out=out, K=k, N=n)
+    sdfg(B=B.copy(), out=out)
     assert np.allclose(out, ref)
 
 
@@ -87,6 +89,7 @@ def test_refuses_impure_accumulator():
     pure reduction -- so the WCR lift (which drops the read-back) would change the
     value. Must refuse."""
     sdfg = _impure_accumulator.to_sdfg(simplify=True)
+    _specialize(sdfg, K=5, N=7)  # concrete: prove the refusal is the recurrence gate, not the size guard
     assert _apply(sdfg) == 0
     assert _num_wcr(sdfg) == 0
 
@@ -96,6 +99,7 @@ def test_refuses_loop_indexed_write():
     subset depends on the loop variable, so it is not an invariant-subset
     reduction. Must refuse."""
     sdfg = _loop_indexed_scan.to_sdfg(simplify=True)
+    _specialize(sdfg, N=7)  # concrete: prove the refusal is the invariant-subset gate, not the size guard
     assert _apply(sdfg) == 0
     assert _num_wcr(sdfg) == 0
 
@@ -116,9 +120,20 @@ NR = dace.symbol('NR')
 NM = dace.symbol('NM')
 
 
-def _canon_full(prog):
+def _specialize(sdfg, **subs):
+    """Substitute concrete integer sizes for the kernel's size symbols.
+    ``LiftLoopCarriedReduction`` refuses SYMBOLIC extents (the lift's cost is undecidable
+    without knowing the inner-map size -- see the pass docstring and
+    ``samples/optimization/maximal_parallelism.md``), so the lift-expected tests specialize."""
+    for name, val in subs.items():
+        sdfg.replace(name, str(val))
+    return sdfg
+
+
+def _canon_full(prog, **subs):
     from dace.transformation.passes.canonicalize import canonicalize
     sdfg = prog.to_sdfg(simplify=True)
+    _specialize(sdfg, **subs)
     canonicalize(sdfg, validate=True, target='cpu')
     return sdfg
 
@@ -178,23 +193,23 @@ def _contour_indexed_injective(B: dace.float64[KK, NM], Q: dace.float64[KK, NM])
 def test_contour_pattern_sum_reduction():
     """Single-accumulator whole-array reduction over the outer loop, with a
     per-iteration computed increment: fully parallelizes and sums correctly."""
-    sdfg = _canon_full(_contour_sum)
-    assert _residual_loops(sdfg) == 0
     kk, nr, nm = 6, 5, 7
+    sdfg = _canon_full(_contour_sum, KK=kk, NR=nr, NM=nm)
+    assert _residual_loops(sdfg) == 0
     rng = np.random.default_rng(0)
     B = rng.standard_normal((kk, nr, nm))
     P = np.full((nr, nm), 123.0)
     ref = (B * B).sum(axis=0)
-    sdfg(B=B.copy(), P=P, KK=kk, NR=nr, NM=nm)
+    sdfg(B=B.copy(), P=P)
     assert np.allclose(P, ref)
 
 
 def test_contour_pattern_two_accumulators():
     """Fused multi-output reduction (contour P0/P1): both accumulators lift and
     parallelize; each reduces correctly."""
-    sdfg = _canon_full(_contour_two)
-    assert _residual_loops(sdfg) == 0
     kk, nr, nm = 6, 4, 5
+    sdfg = _canon_full(_contour_two, KK=kk, NR=nr, NM=nm)
+    assert _residual_loops(sdfg) == 0
     rng = np.random.default_rng(1)
     B = rng.standard_normal((kk, nr, nm))
     P0 = np.full((nr, nm), -7.0)
@@ -202,34 +217,46 @@ def test_contour_pattern_two_accumulators():
     X = B + 1.0
     ref0 = X.sum(axis=0)
     ref1 = (2.0 * X).sum(axis=0)
-    sdfg(B=B.copy(), P0=P0, P1=P1, KK=kk, NR=nr, NM=nm)
+    sdfg(B=B.copy(), P0=P0, P1=P1)
     assert np.allclose(P0, ref0) and np.allclose(P1, ref1)
 
 
 def test_contour_pattern_max_reduction():
     """A max-reduction (WCR ``max``) over the outer loop parallelizes + is exact."""
-    sdfg = _canon_full(_contour_max)
-    assert _residual_loops(sdfg) == 0
     kk, nr, nm = 5, 4, 6
+    sdfg = _canon_full(_contour_max, KK=kk, NR=nr, NM=nm)
+    assert _residual_loops(sdfg) == 0
     rng = np.random.default_rng(2)
     B = rng.standard_normal((kk, nr, nm))
     M = np.zeros((nr, nm))
     ref = B.max(axis=0)
-    sdfg(B=B.copy(), M=M, KK=kk, NR=nr, NM=nm)
+    sdfg(B=B.copy(), M=M)
     assert np.allclose(M, ref)
 
 
 def test_contour_pattern_product_reduction():
     """A product-reduction (WCR ``*``) over the outer loop parallelizes + is exact."""
-    sdfg = _canon_full(_contour_prod)
-    assert _residual_loops(sdfg) == 0
     kk, nr, nm = 5, 3, 4
+    sdfg = _canon_full(_contour_prod, KK=kk, NR=nr, NM=nm)
+    assert _residual_loops(sdfg) == 0
     rng = np.random.default_rng(3)
     B = 0.5 + rng.random((kk, nr, nm))  # away from 0 to keep the product well-conditioned
     P = np.zeros((nr, nm))
     ref = B.prod(axis=0)
-    sdfg(B=B.copy(), P=P, KK=kk, NR=nr, NM=nm)
+    sdfg(B=B.copy(), P=P)
     assert np.allclose(P, ref)
+
+
+def test_refuses_symbolic_sizes():
+    """The lift's payoff depends on the inner-map size vs the machine -- undecidable for a
+    SYMBOLIC extent, where lifting usually regresses (measured 3-4x slower past the crossover;
+    see the pass docstring and ``samples/optimization/maximal_parallelism.md``). With symbolic
+    ``KK/NR/NM`` the reduction axis must stay SEQUENTIAL (parallel inner map only). The concrete
+    counterpart ``test_contour_pattern_sum_reduction`` -- same kernel, sizes substituted --
+    confirms it fully parallelizes once the sizes are known, so the residual loop here is the
+    size guard, not a matching failure."""
+    sym = _canon_full(_contour_sum)  # KK, NR, NM left symbolic -- no substitution
+    assert _residual_loops(sym) >= 1, 'symbolic-size reduction axis must stay sequential (lift refused)'
 
 
 def test_contour_pattern_thread_safe_reduction():
@@ -238,9 +265,9 @@ def test_contour_pattern_thread_safe_reduction():
     cross-iteration race. Runs the two-accumulator kernel several times with
     OMP_NUM_THREADS>1 and requires every run to match the reference."""
     import os
-    sdfg = _canon_full(_contour_two)
-    assert _residual_loops(sdfg) == 0
     kk, nr, nm = 8, 6, 5
+    sdfg = _canon_full(_contour_two, KK=kk, NR=nr, NM=nm)
+    assert _residual_loops(sdfg) == 0
     rng = np.random.default_rng(4)
     B = rng.standard_normal((kk, nr, nm))
     X = B + 1.0
@@ -253,7 +280,7 @@ def test_contour_pattern_thread_safe_reduction():
         for _ in range(6):
             P0 = np.full((nr, nm), 0.0)
             P1 = np.full((nr, nm), 0.0)
-            csdfg(B=B.copy(), P0=P0, P1=P1, KK=kk, NR=nr, NM=nm)
+            csdfg(B=B.copy(), P0=P0, P1=P1)
             assert np.allclose(P0, ref0), f"P0 race: maxdiff {np.abs(P0 - ref0).max():.2e}"
             assert np.allclose(P1, ref1), f"P1 race: maxdiff {np.abs(P1 - ref1).max():.2e}"
     finally:
