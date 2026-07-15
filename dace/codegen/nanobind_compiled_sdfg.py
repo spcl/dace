@@ -5,13 +5,16 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 ``dace.codegen.compiler``; this module only contains the wrapper class.
 """
 
-from dace import data as dt, dtypes, symbolic
-from dace.codegen import compiler
-from dace.config import Config
-
+from typing import Union, List, Any, Tuple, Dict, Optional, Callable
+from types import ModuleType
 import pathlib
 import numpy as np
 import ctypes
+
+import dace
+from dace import data as dt, dtypes, symbolic
+from dace.codegen import compiler
+from dace.config import Config
 
 
 class NanobindCompiledSDFG:
@@ -48,14 +51,14 @@ class NanobindCompiledSDFG:
            nanobind interface returns neither Python scalars nor pyobjects.
     """
 
-    def __init__(self, sdfg, module, arg_names):
-        self._sdfg = sdfg
-        self._module = module
-        self._arg_names = list(arg_names or [])
-        self._handle = module.make_compiled_sdfg()
+    def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str]):
+        self._sdfg: "dace.SDFG" = sdfg
+        self._module: ModuleType = module
+        self._arg_names: List[str] = list(arg_names or [])
+        self._handle: Any = module.make_compiled_sdfg()  # TODO: create a protocol for it.
 
         if '__return' in sdfg.arrays:
-            self._return_values = ('__return', )
+            self._return_values: Tuple[str] = ('__return', )
             self._is_single_value_ret = True
         else:
             # Can not use `sorted()` here, because then `__return_11` would be ordered before `__return_2`.
@@ -74,21 +77,16 @@ class NanobindCompiledSDFG:
         self._struct_array_args = frozenset(name for name, desc in sdfg.arrays.items() if (not desc.transient) and (
             name not in self._return_values) and isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct))
 
-        # Read once here (Config lookups walk the schema and `__call__` is hot):
-        # whether a caller-provided `__return*` buffer may be reused (opt-in,
-        # default off). Consequently the option is bound at construction time.
-        self._allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
-
     @property
-    def sdfg(self):
+    def sdfg(self) -> "dace.SDFG":
         return self._sdfg
 
     @property
-    def module(self):
+    def module(self) -> ModuleType:
         return self._module
 
     @property
-    def filename(self):
+    def filename(self) -> str:
         """The resolved absolute path to the loaded extension module (the built .so).
 
         Parity with ``CompiledSDFG.filename``; some callers rely on the path
@@ -100,7 +98,7 @@ class NanobindCompiledSDFG:
     def has_gpu_code(self) -> bool:
         return self._handle.has_gpu_code
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Runs the SDFG, initializing the state on demand on the first call.
 
         Arguments are passed positionally (in ``arg_names`` order) and/or by
@@ -138,7 +136,8 @@ class NanobindCompiledSDFG:
             return return_arrays[0]
         return tuple(return_arrays)
 
-    def _process_struct_inputs(self, args, kwargs):
+    def _process_struct_inputs(self, args: Tuple[Any],
+                               kwargs: Dict[str, Any]) -> Tuple[Tuple[Any], Dict[str, Any], List[Any]]:
         """Processes the struct inputs.
 
         These arguments can not be handled by `nanobind` directly, thus we are performing
@@ -168,7 +167,7 @@ class NanobindCompiledSDFG:
         kwargs = {k: _process(k, v) for k, v in kwargs.items()}
         return args, kwargs, keepalive
 
-    def _allocate_return_arrays(self, kwargs):
+    def _allocate_return_arrays(self, kwargs: Dict[str, Any]) -> List[Any]:
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
 
         Return values are arrays only: every ``__return*`` must be a ``dt.Array``
@@ -179,43 +178,43 @@ class NanobindCompiledSDFG:
         syms = {k: v for k, v in kwargs.items() if k not in arrays}
         syms.update(self._sdfg.constants)
 
+        # Stores the value of `compiler.nanobind_allow_return_override`.
+        nanobind_allow_return_override: Union[bool, None] = None
+
         return_arrays = []
         for name in self._return_values:
             desc = arrays[name]
             assert isinstance(desc, dt.Array)  # Non-array returns are refused by the bindings generator at codegen
 
             if name in kwargs:
-                # The caller supplied their own output buffer. This is opt-in: by
-                # default we forbid it (allocating fresh also simplifies struct
-                # handling); when allowed, the kernel writes into and returns the
-                # caller's buffer (skips an allocation). We impose no shape/dtype
-                # check here - the intended use is "allocate the buffer elsewhere
-                # and ship it in", so the caller owns correctness; the nanobind
-                # binding still rejects anything it genuinely cannot accept (e.g.
-                # a wrong dtype or a non-array).
-                if not self._allow_return_override:
+                # Caller supplied buffer of implicit output buffers, i.e. `__return*`. This is
+                #  opt-in and must be allowed through the configuration.
+                if nanobind_allow_return_override is None:
+                    nanobind_allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
+
+                if not nanobind_allow_return_override:
                     raise ValueError(f'The implicit output argument `{name}` can not be passed as an explicit '
                                      f'input argument; set compiler.nanobind_allow_return_override=true to allow '
                                      f'reusing a caller-provided output buffer.')
                 arr = kwargs[name]
-                # Same byte-view treatment as an allocated struct return (below).
-                kwargs[name] = arr.view(np.uint8) if isinstance(desc.dtype, dtypes.struct) else arr
-                return_arrays.append(arr)
-                continue
 
-            shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
-            dtype = desc.dtype.as_numpy_dtype()
-            total_size = int(symbolic.evaluate(desc.total_size, syms))
-            strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
-            arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
+            else:
+                # Return array is allocated by us.
+                shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
+                dtype = desc.dtype.as_numpy_dtype()
+                total_size = int(symbolic.evaluate(desc.total_size, syms))
+                strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
+                arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
+
             # A dtypes.struct element is bound as nb::ndarray<uint8_t> (nanobind
             # rejects numpy record arrays), so hand the handle a byte view that
             # shares the buffer; the caller still gets the structured array back.
             kwargs[name] = arr.view(np.uint8) if isinstance(desc.dtype, dtypes.struct) else arr
             return_arrays.append(arr)
+
         return return_arrays
 
-    def initialize(self, *args, **kwargs):
+    def initialize(self, *args: Any, **kwargs: Any) -> None:
         """Initializes the SDFG state eagerly, without running it.
 
         Accepts the same arguments as :meth:`__call__` (positional arguments in
@@ -230,10 +229,10 @@ class NanobindCompiledSDFG:
             kwargs.update(zip(self._arg_names, args, strict=False))
         self._handle.initialize(**kwargs)
 
-    def finalize(self):
+    def finalize(self) -> None:
         self._handle.finalize()
 
-    def safe_call(self, *args, **kwargs):
+    def safe_call(self, *args: Any, **kwargs: Any) -> Any:
         """Runs the SDFG in a separate process, so a crash raises here instead of killing the caller.
 
         Output travels through the in/out arguments (return values are not
@@ -241,7 +240,7 @@ class NanobindCompiledSDFG:
         """
         return compiler.safe_call_precompiled(self._sdfg, args, kwargs)
 
-    def get_workspace_sizes(self):
+    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
         """Returns the external-memory sizes per storage type.
 
         The handle keys the sizes by storage-type *name* (stable across changes
@@ -250,12 +249,12 @@ class NanobindCompiledSDFG:
         """
         return {getattr(dtypes.StorageType, k): v for k, v in self._handle.get_workspace_sizes().items()}
 
-    def set_workspace(self, storage, workspace):
+    def set_workspace(self, storage: Union[str, dtypes.StorageType], workspace: int):
         """Sets the workspace for the given storage type to the given buffer."""
         name = storage.name if isinstance(storage, dtypes.StorageType) else dtypes.StorageType(storage).name
         self._handle.set_workspace(name, workspace)
 
-    def state_fields(self):
+    def state_fields(self) -> list[str]:
         """Names of the pointer fields in the state struct.
 
         Baked into the module at code-generation time - no parsing of the
@@ -276,11 +275,12 @@ class NanobindCompiledSDFG:
                ``ctypes.Structure`` dynamically assembled from the parsed source
                (its ``_try_parse_state_struct()``); here only the integer
                pointer value is returned.
+        :todo: Align this function with the `ctypes` version.
         """
         # ``state_pointer`` raises if the state is uninitialized or finalized.
         return self._handle.state_pointer
 
-    def get_exported_function(self, name: str, restype=None):
+    def get_exported_function(self, name: str, restype=None) -> Optional[Callable]:
         """Returns an arbitrary exported symbol as a callable, or None if absent.
 
         Resolved with ``ctypes.CDLL`` on the already-imported module file
