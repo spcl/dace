@@ -59,7 +59,8 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           compare: Callable[[numpy.ndarray, numpy.ndarray], bool] = numpy.allclose,
           reps: int = 5,
           warmup: int = 1,
-          do_time: bool = True) -> List[SweepResult]:
+          do_time: bool = True,
+          timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None) -> List[SweepResult]:
     """Compile, run, verify and (optionally) time each candidate; return results ranked.
 
     :param candidates: ``{name: make_sdfg}`` -- each ``make_sdfg()`` returns a FRESH SDFG with that
@@ -69,6 +70,11 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
     :param reference: the numpy-oracle outputs, ``{output_name: array}``.
     :param compare: elementwise correctness predicate (default ``numpy.allclose``).
     :param do_time: time each CORRECT candidate (never an incorrect one).
+    :param timer: ``timer(sdfg, run, reps, warmup) -> time`` for a correct candidate. ``None`` =
+                  whole-call wall clock (:func:`time_cpu`); pass
+                  ``dace.transformation.layout.timing.compute_region_timer`` to time only the compute
+                  region (excluding the relayout copies). One timer is used for the whole sweep, so
+                  its unit is consistent and the ranking is valid.
     :returns: results, correct-first then ascending time.
     """
     results: List[SweepResult] = []
@@ -77,7 +83,9 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
             sdfg = make()
             out = run(sdfg)
             correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
-            t = time_cpu(lambda: run(sdfg), reps, warmup) if (do_time and correct) else None
+            t = None
+            if do_time and correct:
+                t = timer(sdfg, run, reps, warmup) if timer is not None else time_cpu(lambda: run(sdfg), reps, warmup)
             results.append(SweepResult(name, correct, t))
         except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
             results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}"))
