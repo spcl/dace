@@ -88,12 +88,11 @@ def split_leading_includes(lines: List[str]) -> Tuple[List[str], List[str]]:
     return lines[:split], lines[split:]
 
 
-# Readability / modernize fixes that are safe to apply to generated code. Broad
-# globs are fine: with headers stripped, type-dependent checks simply do not fire.
-# Exclusions: identifier renaming (would rewrite every name), magic-number /
-# cognitive-complexity / identifier-length noise, C-array avoidance (we
-# deliberately emit ``T x[N]`` for const-init and registers), and trailing-return
-# type (hurts readability here).
+# Readability fixes that are safe to apply to generated code. Anything whose fix depends on types
+# or on a variable's full use-set is NOT safe here, because this runs with the includes stripped
+# (see apply_clang_tidy) -- clang-tidy then rewrites on a half-parse. Exclusions below: identifier
+# renaming (would rewrite every name), magic-number / cognitive-complexity / identifier-length
+# noise, and uppercase-literal-suffix.
 #
 # ``readability-non-const-parameter`` is excluded because its const inference is
 # UNSOUND on generated code, and would silently miscompile: a pointer argument
@@ -108,18 +107,30 @@ def split_leading_includes(lines: List[str]) -> Tuple[List[str], List[str]]:
 # ``dace.sdfg.utils.get_constant_data`` for kernel arguments and
 # ``emit_memlet_reference`` for nested-SDFG arguments), so tidy must not
 # second-guess it.
-CLANG_TIDY_CHECKS = ('readability-*,modernize-*,'
+# The whole ``modernize-*`` family is excluded. Its fixes are type-dependent, and this runs with
+# the includes stripped (above), so clang-tidy resolves neither the external types nor the full
+# use-set of a variable -- it then rewrites confidently and wrongly. Two observed miscompiles in
+# the CUDA block-reduction emitted by ``ExperimentalCUDACodeGen``:
+#   * ``modernize-use-using`` turned ``typedef cub::BlockReduce<double, 128, ...> __brt;`` into
+#     ``using __brt = ;`` -- an EMPTY type, because ``cub::BlockReduce`` is undeclared here.
+#   * ``modernize-loop-convert`` turned ``for (int __bk = 0; __bk < 1; ++__bk)`` into
+#     ``for (double& __bk : __bpart)``, but ``__bk`` is also the write-back INDEX
+#     (``reduce_atomic(gpu_S + ((0) + __bk), ...)``), so the value landed where an index was
+#     expected: "error: expression must have integral or unscoped enum type". The check normally
+#     refuses when the index escapes subscripting; stripped headers degrade that analysis.
+# ``modernize-*`` is purely cosmetic on generated code, so it is not worth the miscompile risk.
+CLANG_TIDY_CHECKS = ('readability-*,'
                      '-readability-identifier-naming,-readability-identifier-length,-readability-magic-numbers,'
                      '-readability-function-cognitive-complexity,-readability-uppercase-literal-suffix,'
-                     '-readability-avoid-const-params-in-decls,-readability-non-const-parameter,'
-                     '-modernize-avoid-c-arrays,-modernize-use-trailing-return-type')
+                     '-readability-avoid-const-params-in-decls,-readability-non-const-parameter')
 
 
 def apply_clang_tidy(code_path: str) -> None:
     """
     Best-effort standalone ``clang-tidy -fix-errors`` on a generated ``.cpp`` /
-    ``.cu`` file to improve readability (``modernize-use-auto`` etc.), applied in
-    place -- no CMake / compilation database.
+    ``.cu`` file to improve readability, applied in place -- no CMake / compilation
+    database. Only the vetted ``CLANG_TIDY_CHECKS`` run: a fix that needs types or a
+    variable's full use-set cannot be trusted here (see that constant).
 
     The leading ``#include`` block is stripped before tidying and restored after,
     so clang-tidy never parses any header at all: no DaCe runtime, CUDA, cuBLAS,

@@ -4,7 +4,7 @@ clang-tidy safety for the experimental "readable" code generator.
 
 The experimental generator runs ``clang-tidy -fix-errors`` in place on every
 generated ``.cpp`` / ``.cu`` file (see :func:`dace.codegen.compiler.apply_clang_tidy`).
-Most readability / modernize fixes are safe, but ``readability-non-const-parameter``
+Most readability fixes are safe, but some are not -- ``readability-non-const-parameter``
 is not: it rewrites a pointer parameter to ``const T*`` when it cannot prove the
 pointee is written. A scatter accumulator that is only *forwarded* to a nested-SDFG
 device function (a ``DACE_DFI`` that writes through it -- e.g. ``histu`` / ``histw``
@@ -23,15 +23,24 @@ from dace.codegen.compiler import CLANG_TIDY_CHECKS
 from tests.codegen.readable.conftest import EXPERIMENTAL, gpu_available, use_implementation
 
 
-def test_clang_tidy_excludes_non_const_parameter():
-    """The unsound ``readability-non-const-parameter`` fix must stay disabled: it
-    silently const-qualifies written pointer parameters forwarded to nested-SDFG
-    functions, producing a const/non-const mismatch that fails to compile."""
+def test_clang_tidy_excludes_unsafe_checks():
+    """clang-tidy runs with the includes stripped, so any fix that depends on types or on
+    a variable's full use-set rewrites on a half-parse and can miscompile. Guard the two
+    families proven to do so on generated code:
+
+    * ``readability-non-const-parameter`` const-qualifies a written pointer parameter that is
+      only forwarded to a nested-SDFG function, producing a const/non-const clash.
+    * the whole ``modernize-*`` family: ``modernize-use-using`` emitted an empty type alias for
+      an unresolved ``cub::BlockReduce<...>``, and ``modernize-loop-convert`` turned a reduction
+      index loop into a range-for that used the value where an index was expected.
+    """
     assert '-readability-non-const-parameter' in CLANG_TIDY_CHECKS, (
-        'readability-non-const-parameter must be excluded from the readable code '
-        'generator clang-tidy pass (it miscompiles forwarded scatter accumulators)')
-    # The pass is still meaningfully enabled (broad readability/modernize globs).
-    assert 'readability-*' in CLANG_TIDY_CHECKS and 'modernize-*' in CLANG_TIDY_CHECKS
+        'readability-non-const-parameter must be excluded (miscompiles forwarded scatter accumulators)')
+    assert 'modernize-' not in CLANG_TIDY_CHECKS, (
+        'the modernize-* family must be excluded (it rewrites the CUDA block-reduction on a '
+        'stripped-header half-parse and miscompiles it)')
+    # The pass is still meaningfully enabled.
+    assert 'readability-*' in CLANG_TIDY_CHECKS
 
 
 # --- N = number of samples, B = number of histogram bins ---
@@ -79,7 +88,7 @@ def test_gpu_scatter_accumulator_compiles(require_experimental, require_gpu):
 
 
 if __name__ == '__main__':
-    test_clang_tidy_excludes_non_const_parameter()
+    test_clang_tidy_excludes_unsafe_checks()
     from tests.codegen.readable.conftest import experimental_available
     if experimental_available() and gpu_available():
         test_gpu_scatter_accumulator_compiles(None, None)
