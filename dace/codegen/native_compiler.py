@@ -26,8 +26,10 @@ import warnings
 from typing import Dict, List, Optional
 
 from dace.config import Config
+from dace.dtypes import deduplicate
 from dace.codegen import common
 from dace.codegen import exceptions as cgx
+from dace.codegen.compiler import _get_or_eval
 from dace.codegen.target import make_absolute
 
 #: ``compiler.build_type`` -> optimization/debug flags, appended after ``compiler.cpu.args`` so the
@@ -52,22 +54,6 @@ class _LinkSpec:
         self.libdirs: List[str] = []  # -L values (no prefix)
         self.libs: List[str] = []  # bare names for -l
         self.link_flags: List[str] = []  # raw link tokens (abs paths, -l.., -Wl,..)
-
-
-def _dedup(seq: List[str]) -> List[str]:
-    """Order-preserving de-duplication (linker order matters)."""
-    seen = set()
-    out = []
-    for x in seq:
-        if x not in seen:
-            seen.add(x)
-            out.append(x)
-    return out
-
-
-def _get_or_eval(value_or_function):
-    """Environment attributes may be plain values or zero-arg callables (runtime probes)."""
-    return value_or_function() if callable(value_or_function) else value_or_function
 
 
 def _dace_root() -> str:
@@ -142,9 +128,9 @@ def _cuda_paths() -> tuple:
     nvcc_root = os.path.dirname(os.path.dirname(os.path.realpath(nvcc)))
     roots = [root, nvcc_root, os.path.dirname(nvcc_root), '/usr/local/cuda']
 
-    lib_dirs = _dedup([d for d in (_search_for(f, roots) for f in _CUDA_LIB_FILES) if d])
+    lib_dirs = deduplicate([d for d in (_search_for(f, roots) for f in _CUDA_LIB_FILES) if d])
     header_roots = roots + [os.path.dirname(d) for d in lib_dirs]
-    inc_dirs = _dedup([d for d in (_search_for(h, header_roots) for h in _CUDA_HEADER_FILES) if d])
+    inc_dirs = deduplicate([d for d in (_search_for(h, header_roots) for h in _CUDA_HEADER_FILES) if d])
     if not lib_dirs or not inc_dirs:
         raise cgx.CompilerConfigurationError(
             f'Native build found nvcc at {nvcc} but could not locate libcudart.so / cuda_runtime.h. '
@@ -415,7 +401,7 @@ def build_native(program_folder: str,
     """
     # Reuse the caller's subprocess runner (keeps the SIGCHLD/MPI-env safeguards). Lazy import keeps
     # this module free of an import cycle with compiler.py.
-    from dace.codegen.compiler import _run_liveoutput
+    from dace.codegen.compiler import _run_liveoutput, identical_file_exists
 
     if os.name != 'posix':
         raise cgx.CompilerConfigurationError('Native build mode is Linux-only; use compiler.build_mode=cmake.')
@@ -508,7 +494,7 @@ def build_native(program_folder: str,
         defines.append('-DWITH_CUDA')
         if is_hip:
             defines.append('-DWITH_HIP')
-    includes = ['-I' + runtime_inc, '-I' + generated_inc] + ['-I' + d for d in _dedup(spec.includes)]
+    includes = ['-I' + runtime_inc, '-I' + generated_inc] + ['-I' + d for d in deduplicate(spec.includes)]
 
     # --- compile ------------------------------------------------------------
     cuda_arch_flags: List[str] = []
@@ -541,11 +527,7 @@ def build_native(program_folder: str,
         otime = os.path.getmtime(obj)
         if not os.path.isfile(src) or os.path.getmtime(src) > otime or newest_header > otime:
             return False
-        try:
-            with open(obj + '.cmd') as f:
-                return f.read() == ' '.join(cmd)
-        except OSError:
-            return False
+        return identical_file_exists(obj + '.cmd', ' '.join(cmd))
 
     def compile_one(obj: str, cmd: List[str], stream=output_stream) -> None:
         run(cmd, stream)
@@ -607,9 +589,9 @@ def build_native(program_folder: str,
     if cuda_archive:
         link_cmd += [cuda_archive]
     link_cmd += ['-pthread']
-    link_cmd += ['-L' + d for d in _dedup(spec.libdirs)]
-    link_cmd += _dedup(spec.link_flags)
-    link_cmd += ['-l' + lib for lib in _dedup(spec.libs)]
+    link_cmd += ['-L' + d for d in deduplicate(spec.libdirs)]
+    link_cmd += deduplicate(spec.link_flags)
+    link_cmd += ['-l' + lib for lib in deduplicate(spec.libs)]
     # The CUDA runtime is placed last so libraries that depend on it (e.g. cublas) precede it.
     # ``cudadevrt`` resolves the device-link registration symbols from separable compilation.
     if has_gpu and not is_hip:
