@@ -78,11 +78,12 @@ def test_unzip_homogeneous_standalone():
 
 
 def test_zip_unzip_struct_roundtrip():
-    """Zip A (f64) + K (i64) into a Structure then Unzip back: recovers plain arrays, bit-exact."""
+    """Zip A (f64) + K (i64) into a contiguous array-of-structs then Unzip back: recovers the plain
+    arrays, bit-exact."""
     sdfg = mixed.to_sdfg()
     sdfg.name = "mixed_zip_unzip"
     ZipArrays(zip_map={"Z": ["A", "K"]}).apply_pass(sdfg, {})
-    assert isinstance(sdfg.arrays["Z"], dace.data.Structure)
+    assert isinstance(sdfg.arrays["Z"], dace.data.Array) and isinstance(sdfg.arrays["Z"].dtype, dace.dtypes.struct)
     UnzipArrays(unzip_map={"Z": ["A", "K"]}).apply_pass(sdfg, {})
     sdfg.validate()
 

@@ -6,8 +6,11 @@ The inverse of :class:`~dace.transformation.layout.zip_arrays.ZipArrays`:
   * **Homogeneous** ``Z`` is a plain array ``[*S, F]`` (field-minor AoS). Unzip drops the field
     dimension: an access ``Z[idx, f]`` (constant field ``f``) becomes ``A_f[idx]`` on a fresh array
     ``A_f`` of shape ``[*S]``.
-  * **Heterogeneous struct** ``Z`` is a ``dace.data.Structure``. Unzip renames each dotted access
-    ``Z.A_f[idx]`` back to ``A_f[idx]`` on a fresh array cloned from the struct member.
+  * **Heterogeneous struct** ``Z`` is a contiguous array of structs (``Array`` with a
+    ``dace.dtypes.struct`` dtype -- the true-AoS form ``ZipArrays`` emits). Unzip splits it back into
+    the F member arrays: a whole-struct memlet ``Z[idx]`` becomes ``A_f[idx]``, the tasklet code's
+    member access ``conn.f`` is reverted to ``conn``, and the struct-typed connectors are retyped to
+    the member dtypes.
 
 When the fused array flows WHOLE into a nested SDFG, the single connector is split into F connectors
 (one per field) and the inner fused array is unzipped recursively.
@@ -15,13 +18,30 @@ When the fused array flows WHOLE into a nested SDFG, the single connector is spl
 Run after ``prepare_for_layout``. ``ZipArrays(...)`` then ``UnzipArrays(...)`` with matching field
 lists is a no-op (bit-exact roundtrip).
 """
-import copy
+import ast
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import dace
+from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl
+
+
+class StructMemberReverter(ast.NodeTransformer):
+    """Inverse of ``zip_arrays.StructMemberRewriter``: rewrite a struct member access ``conn.field``
+    back to a bare ``conn`` and record which field each connector accessed (``conn -> field``)."""
+
+    def __init__(self, conns):
+        self.conns = conns
+        self.conn_field = {}
+
+    def visit_Attribute(self, node: ast.Attribute):
+        self.generic_visit(node)
+        if isinstance(node.value, ast.Name) and node.value.id in self.conns:
+            self.conn_field[node.value.id] = node.attr
+            return ast.copy_location(ast.Name(id=node.value.id, ctx=node.ctx), node)
+        return node
 
 
 @dataclass
@@ -47,7 +67,7 @@ class UnzipArrays(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         for fused, fields in self._unzip_map.items():
             desc = sdfg.arrays[fused]
-            if isinstance(desc, dace.data.Structure):
+            if isinstance(desc.dtype, dace.dtypes.struct):
                 self._unzip_struct(sdfg, fused, fields, desc)
             else:
                 axis = len(desc.shape) - 1 if self._field_axis is None else self._field_axis
@@ -229,16 +249,70 @@ class UnzipArrays(ppl.Pass):
     # ------------------------------------------------------------------ #
     #  Heterogeneous struct -> F arrays (drop the dotted prefix)
     # ------------------------------------------------------------------ #
+    def _interior_field(self, state, scope, interior_conn, fields, is_entry):
+        """The field a map connector now carries -- read from its interior edges after they have been
+        renamed from the fused struct to a member array (the inverse of the zip's connector reuse)."""
+        edges = state.out_edges(scope) if is_entry else state.in_edges(scope)
+        attr = "src_conn" if is_entry else "dst_conn"
+        for e in edges:
+            if getattr(e, attr) == interior_conn and e.data is not None and e.data.data in fields:
+                return e.data.data
+        return None
+
     def _unzip_struct(self, sdfg, fused, fields, desc):
+        """Split the contiguous array-of-structs ``fused`` back into its F member arrays -- the exact
+        inverse of ``ZipArrays._zip_struct``. Member dtypes come from the struct's ``fields``; each
+        tasklet's ``conn.f`` member access is reverted to ``conn`` and the connector retyped."""
+        members = dict(desc.dtype.fields)  # {field_name: typeclass}
         for f in fields:
             if f not in sdfg.arrays:
-                sdfg.add_datadesc(f, copy.deepcopy(desc.members[f]))
-        rename = {f"{fused}.{f}": f for f in fields}
+                sdfg.add_array(f,
+                               list(desc.shape),
+                               members[f],
+                               storage=desc.storage,
+                               transient=desc.transient,
+                               lifetime=desc.lifetime,
+                               find_new_name=False)
         for state in sdfg.all_states():
-            for edge in state.edges():
-                if edge.data is not None and edge.data.data in rename:
-                    edge.data.data = rename[edge.data.data]
-            for node in state.nodes():
-                if isinstance(node, nd.AccessNode) and node.data in rename:
-                    node.data = rename[node.data]
+            # 1. Revert each tasklet's member access, retype the struct connector, and rename its
+            #    fused edges to the member array the connector accessed.
+            for node in [n for n in state.nodes() if isinstance(n, nd.Tasklet)]:
+                conns = {e.dst_conn for e in state.in_edges(node) if e.data is not None and e.data.data == fused}
+                conns |= {e.src_conn for e in state.out_edges(node) if e.data is not None and e.data.data == fused}
+                conns.discard(None)
+                if not conns:
+                    continue
+                tree = ast.parse(node.code.as_string)
+                reverter = StructMemberReverter(conns)
+                reverter.visit(tree)
+                ast.fix_missing_locations(tree)
+                node.code = dace.properties.CodeBlock(astutils.unparse(tree))
+                conn_field = reverter.conn_field
+                for e in state.in_edges(node):
+                    if e.data is not None and e.data.data == fused and e.dst_conn in conn_field:
+                        e.data.data = conn_field[e.dst_conn]
+                        node.in_connectors[e.dst_conn] = members[conn_field[e.dst_conn]]
+                for e in state.out_edges(node):
+                    if e.data is not None and e.data.data == fused and e.src_conn in conn_field:
+                        e.data.data = conn_field[e.src_conn]
+                        node.out_connectors[e.src_conn] = members[conn_field[e.src_conn]]
+            # 2. Rename the map-boundary edges: the field is the one its paired interior edge carries.
+            for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
+                for e in list(state.in_edges(scope)):
+                    if e.data is None or e.data.data != fused or not e.dst_conn:
+                        continue
+                    f = self._interior_field(state, scope, "OUT_" + e.dst_conn[len("IN_"):], fields, is_entry=True)
+                    if f is not None:
+                        e.data.data = f
+            for scope in [n for n in state.nodes() if isinstance(n, nd.MapExit)]:
+                for e in list(state.out_edges(scope)):
+                    if e.data is None or e.data.data != fused or not e.src_conn:
+                        continue
+                    f = self._interior_field(state, scope, "IN_" + e.src_conn[len("OUT_"):], fields, is_entry=False)
+                    if f is not None:
+                        e.data.data = f
+            # 3. Point each fused access node at the field its (now-renamed) incident edges carry.
+            for node in list(state.nodes()):
+                if isinstance(node, nd.AccessNode) and node.data == fused:
+                    node.data = fields[self._node_field(state, node, fields)]
         sdfg.remove_data(fused, validate=False)

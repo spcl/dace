@@ -12,8 +12,14 @@ A layout change must reach a library node's SEMANTIC index description, not just
     (``TensorDot`` pins ``alpha=1, beta=0`` and has no accumulator); a scaled/accumulating Gemm is
     left untouched (layout still reaches it through its memlets).
 
-Copy / memset are layout-agnostic: their memlets are renamed/reshaped by the generic passes, so no
-node rewrite is needed here.
+  * ``RewriteCopyForLayout`` -- a ``CopyLibraryNode`` is layout-agnostic ONLY while its two operands
+    keep the same layout; a layout change that leaves them with DIFFERENT layouts turns the copy into
+    a per-dim transpose, which the copy node cannot express. Rewrite such a copy to a
+    ``TensorTranspose`` (the copy analog of ``GemmToTensorDot``). Same-layout copies and
+    rank-changing reshapes are left untouched.
+
+Memset is layout-agnostic: it is a plain tasklet whose memlets are renamed by the generic passes, so
+no node rewrite is needed for it.
 """
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
@@ -139,5 +145,86 @@ class GemmToTensorDot(ppl.Pass):
 
         for e in (a_edge, b_edge, c_edge):
             state.remove_edge(e)
+        state.remove_node(node)
+        return 1
+
+
+def copy_permutation_axes(in_sizes: List, out_sizes: List):
+    """Axes ``P`` such that ``out = transpose(in, P)`` for a copy whose two sides are a permutation
+    of each other (``out_sizes[k] == in_sizes[P[k]]``), or ``None`` when the copy needs no transpose.
+
+    ``None`` covers a same-order copy (identity, incl. an undetectable square transpose) and a
+    genuine rank/shape change (a reshape the copy node handles). Raises ``NotImplementedError`` when
+    the permutation is ambiguous -- a repeated dim size means the mapping is not recoverable from the
+    shapes alone, and must instead be driven from the pass that applied the (known) permutation.
+    """
+
+    def same(a, b) -> bool:
+        return dace.symbolic.simplify(a - b) == 0
+
+    if len(in_sizes) != len(out_sizes) or all(same(a, b) for a, b in zip(in_sizes, out_sizes)):
+        return None  # same order -> plain copy; different rank -> reshape (both left to the copy node)
+    if sorted(str(dace.symbolic.simplify(s))
+              for s in in_sizes) != sorted(str(dace.symbolic.simplify(s)) for s in out_sizes):
+        return None  # not a permutation of the same extents -> a reshape, not a transpose
+
+    axes, used = [], [False] * len(in_sizes)
+    for os in out_sizes:
+        matches = [k for k in range(len(in_sizes)) if not used[k] and same(in_sizes[k], os)]
+        if len(matches) != 1:
+            raise NotImplementedError(
+                "RewriteCopyForLayout: ambiguous copy permutation (a repeated dim size); the "
+                "permutation is not recoverable from the operand shapes alone. Drive the conversion "
+                "from the permute pass, which knows the applied permutation.")
+        axes.append(matches[0])
+        used[matches[0]] = True
+    return axes
+
+
+@dataclass
+class RewriteCopyForLayout(ppl.Pass):
+    """Rewrite every ``CopyLibraryNode`` whose two operands ended up with DIFFERENT layouts (a
+    permutation of each other) into a ``TensorTranspose`` -- a plain copy cannot express a per-dim
+    permutation. Same-layout copies and rank-changing reshapes are left untouched. Run AFTER the
+    layout change (the copy becomes transposing only once one side is relaid out).
+
+    :param implementation: the ``TensorTranspose`` implementation to set (``"pure"`` on CPU).
+    """
+
+    def __init__(self, implementation: str = "pure"):
+        self._impl = implementation
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+        from dace.libraries.linalg import TensorTranspose
+
+        count = 0
+        for state in sdfg.all_states():
+            for node in [n for n in state.nodes() if type(n) is CopyLibraryNode]:
+                count += self._rewrite(state, node, CopyLibraryNode, TensorTranspose)
+        return count
+
+    def _rewrite(self, state, node, CopyLibraryNode, TensorTranspose) -> int:
+        in_edge = next((e for e in state.in_edges(node) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME), None)
+        out_edge = next((e for e in state.out_edges(node) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME), None)
+        if in_edge is None or out_edge is None:
+            return 0
+        axes = copy_permutation_axes(in_edge.data.subset.size(), out_edge.data.subset.size())
+        if axes is None:
+            return 0
+
+        tt = TensorTranspose(f"{node.label}_transpose", axes=axes)
+        tt.implementation = self._impl
+        state.add_node(tt)
+        state.add_edge(in_edge.src, in_edge.src_conn, tt, "_inp_tensor", dace.Memlet.from_memlet(in_edge.data))
+        state.add_edge(tt, "_out_tensor", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        state.remove_edge(in_edge)
+        state.remove_edge(out_edge)
         state.remove_node(node)
         return 1

@@ -19,7 +19,7 @@ import pytest
 import dace
 
 from dace.libraries.blas.nodes.einsum import Einsum
-from dace.transformation.layout.rewrite_libnodes import transform_einsum
+from dace.transformation.layout.rewrite_libnodes import (transform_einsum, RewriteCopyForLayout, copy_permutation_axes)
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
 
@@ -119,21 +119,33 @@ def test_copy_libnode_consistent_permute_bitexact():
     assert numpy.allclose(C, A)
 
 
-@pytest.mark.xfail(reason="Copy->TensorTranspose P3 rewrite not implemented: a copy whose operands "
-                   "are relaid out to DIFFERENT layouts becomes a transpose the CopyLibraryNode "
-                   "cannot express.",
-                   strict=True)
-def test_copy_libnode_transposing_operand_gap():
-    """Permuting only ONE side of a copy makes it transposing; the copy libnode refuses (asks for a
-    Transpose). Documents the missing Copy->TensorTranspose rewrite."""
-    _M, _N = 6, 4
+def test_copy_libnode_transposing_rewrite_bitexact():
+    """Permuting only ONE side of a copy makes it transposing; RewriteCopyForLayout converts that
+    CopyLibraryNode to a TensorTranspose (the copy analog of Gemm->TensorDot), and it runs
+    bit-exact -- the copy region uses DISTINCT dim sizes so the permutation is recoverable."""
+    _M, _N = 6, 4  # distinct extents -> unambiguous permutation
     A = numpy.random.default_rng(2).random((_M, _N))
     sdfg = elementwise_copy.to_sdfg(simplify=True)
     prepare_for_layout(sdfg, validate=False)
     PermuteDimensions(permute_map={"A": [1, 0]}, add_permute_maps=True).apply_pass(sdfg, {})
+    assert RewriteCopyForLayout().apply_pass(sdfg, {}) == 1  # one transposing copy converted
+    sdfg.validate()
     C = numpy.zeros((_M, _N))
-    sdfg(A=A.copy(), C=C, M=_M, Nn=_N)  # raises ValueError in copy-node expansion
+    sdfg(A=A.copy(), C=C, M=_M, Nn=_N)
     assert numpy.allclose(C, A)
+
+
+def test_copy_permutation_axes_helper():
+    """The axis-inference used by RewriteCopyForLayout: a distinct-size permutation is recovered; an
+    identity / reshape yields None; a repeated-size permutation is ambiguous and raises."""
+    assert copy_permutation_axes([4, 6], [6, 4]) == [1, 0]
+    assert copy_permutation_axes([2, 3, 4], [4, 2, 3]) == [2, 0, 1]
+    assert copy_permutation_axes([4, 6], [4, 6]) is None  # identity order
+    assert copy_permutation_axes([4, 4], [4, 4]) is None  # square, identity order -> plain copy
+    assert copy_permutation_axes([4, 6], [4, 6, 1]) is None  # rank change (reshape)
+    # a genuine repeated-size permutation (order differs, sizes repeat) is ambiguous -> raises:
+    with pytest.raises(NotImplementedError):
+        copy_permutation_axes([4, 4, 6], [4, 6, 4])
 
 
 if __name__ == "__main__":
@@ -141,4 +153,6 @@ if __name__ == "__main__":
     test_einsum_permute_operand1_bitexact()
     test_memset_permute_bitexact()
     test_copy_libnode_consistent_permute_bitexact()
+    test_copy_libnode_transposing_rewrite_bitexact()
+    test_copy_permutation_axes_helper()
     print("libnode layout tests PASS")
