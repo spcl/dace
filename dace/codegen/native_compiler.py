@@ -469,19 +469,40 @@ def build_native(program_folder: str,
             pch_flags += ['-DWITH_CUDA'] + (['-DWITH_HIP'] if is_hip else [])
         host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, build_env, run) or []
 
+    # Assemble one command per out-of-date translation unit; they are independent (each writes its
+    # own object), so the host .cpp and device .cu compiles run concurrently.
+    compile_cmds: List[List[str]] = []
     for kind, src, obj in compile_jobs:
         if up_to_date(obj, src):
             continue
         if kind == 'host':
-            run([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines + host_pch + includes +
-                spec.compile_flags + ['-c', src, '-o', obj])
+            compile_cmds.append([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines +
+                                host_pch + includes + spec.compile_flags + ['-c', src, '-o', obj])
         elif kind == 'cuda':
-            run([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
-                shlex.split(Config.get('compiler', 'cuda', 'args')) + defines + includes + ['-dc', src, '-o', obj])
+            compile_cmds.append([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
+                                shlex.split(Config.get('compiler', 'cuda', 'args')) + defines + includes +
+                                ['-dc', src, '-o', obj])
         else:  # hip  (AMD path -- structurally validated; unvalidated on this NVIDIA host)
             amdclang = shutil.which('amdclang++') or os.path.join(rocm_root, 'llvm', 'bin', 'amdclang++')
-            run([amdclang, '-x', 'hip', f'-std=c++{std}', '--offload-arch=native', '-fPIC', '-D__HIP_PLATFORM_AMD__'] +
+            compile_cmds.append(
+                [amdclang, '-x', 'hip', f'-std=c++{std}', '--offload-arch=native', '-fPIC', '-D__HIP_PLATFORM_AMD__'] +
                 shlex.split(Config.get('compiler', 'cuda', 'hip_args')) + defines + includes + ['-c', src, '-o', obj])
+
+    if len(compile_cmds) <= 1:
+        for cmd in compile_cmds:
+            run(cmd)
+    else:
+        import concurrent.futures
+        # Bounded so a program with many translation units cannot fan out into an OOM of heavy -O3
+        # compiles on a shared machine; the common case (one host .cpp + one device .cu) is 2.
+        workers = min(len(compile_cmds), 4)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            errors = [
+                f.exception() for f in concurrent.futures.as_completed([pool.submit(run, c) for c in compile_cmds])
+            ]
+        errors = [e for e in errors if e is not None]
+        if errors:
+            raise errors[0]
 
     # --- CUDA device link + archive ----------------------------------------
     cuda_archive = None
