@@ -663,6 +663,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             subset = iedge.data.subset
             if acc_desc is None or iedge.data.data in seen_targets or subset is None:
                 continue
+            # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
+            if isinstance(acc_desc.dtype, dtypes.vector):
+                continue
             if len(subset) != 1 or subset.ranges[0][2] != 1:
                 continue
             base, end, _ = subset.ranges[0]

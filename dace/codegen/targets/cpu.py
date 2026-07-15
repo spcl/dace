@@ -1030,6 +1030,10 @@ class CPUCodeGen(TargetCodeGenerator):
             slot = gpu_block_reduction_write_slot(memlet.subset, cover['base'], cover['m'])
             if slot is not None:
                 lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
+                # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
+                if isinstance(dtype, dtypes.vector):
+                    return (f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::"
+                            f"vreduce<{dtype.veclen}>(&{lhs}, {inname})")
                 return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
