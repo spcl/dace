@@ -126,3 +126,19 @@ def block_candidates(array: str, ndim: int, factors: Tuple[int, ...] = (8, 16, 3
                 normalize_schedule_for_layout(sdfg)
 
             yield f"block_{array}_d{dim}_{factor}", apply
+
+
+def shuffle_candidates(array: str, dim: int, shuffle_names):
+    """Yield ``(name, apply)`` for renumbering ``array``'s dimension ``dim`` by each REGISTERED
+    shuffle (plus the unshuffled identity). ``apply(sdfg)`` runs ``ShuffleElements``. Every shuffle
+    is transparent (the reorder + inverse-composed consumers preserve the result), so all candidates
+    verify -- the sweep picks the layout, the algebra guarantees correctness."""
+    from dace.transformation.layout.shuffle_elements import ShuffleElements
+
+    yield f"noshuffle_{array}", (lambda sdfg: None)
+    for name in shuffle_names:
+
+        def apply(sdfg, name=name):
+            ShuffleElements(shuffle_map={array: (name, dim)}).apply_pass(sdfg, {})
+
+        yield f"shuffle_{array}_{name}", apply
