@@ -228,6 +228,112 @@ def _build_subprocess_sigmask():
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
 
 
+def _cmake_configure_and_build(program_folder,
+                               program_name,
+                               src_folder,
+                               build_folder,
+                               files,
+                               targets,
+                               environments,
+                               build_env,
+                               output_stream=None) -> None:
+    """Configure and build a prepared program folder with CMake (the default ``build_mode``).
+
+    Writes the shared library + loader stub into ``<build_folder>``; the caller
+    (:func:`configure_and_compile`) locates them afterwards.
+    """
+    # Start forming CMake command
+    dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cmake_command = [
+        "cmake",
+        "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
+        '"' + os.path.join(dace_path, "codegen") + '"',
+        "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
+        "-DDACE_FILES=\"{}\"".format(";".join(files)),
+        "-DDACE_PROGRAM_NAME={}".format(program_name),
+        "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
+    ]
+
+    environment_flags, cmake_link_flags = get_environment_flags(environments)
+    cmake_command += sorted(environment_flags)
+
+    cmake_command += shlex.split(Config.get('compiler', 'extra_cmake_args'))
+
+    # Replace backslashes with forward slashes
+    cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
+
+    # Generate CMake options for each compiler
+    libraries = set()
+    cmake_files = []
+    for target_name, target in sorted(targets.items()):
+        try:
+            cmake_command += target.cmake_options()
+            cmake_files += target.cmake_files()
+            libraries |= unique_flags(Config.get("compiler", target_name, "libs"))
+        except KeyError:
+            pass
+        except ValueError as ex:  # Cannot find compiler executable
+            raise cgx.CompilerConfigurationError(str(ex))
+
+    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
+    cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
+    cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
+
+    # Set linker and linker arguments, iff they have been specified
+    cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
+    cmake_linker = cmake_linker.strip()
+    if cmake_linker:
+        cmake_linker = make_absolute(cmake_linker)
+        cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
+    cmake_link_flags = (' '.join(sorted(cmake_link_flags)) + ' ' +
+                        (Config.get('compiler', 'linker', 'args') or '')).strip()
+    if cmake_link_flags:
+        cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
+    cmake_command = ' '.join(cmake_command)
+
+    if Config.get('debugprint') == 'verbose':
+        print(f'Running CMake: {cmake_command}')
+
+    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
+
+    ##############################################
+    # Configure
+    try:
+        if not identical_file_exists(cmake_filename, cmake_command):
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
+    except subprocess.CalledProcessError as ex:
+        # Clean CMake directory and try once more
+        if Config.get_bool('debugprint'):
+            print('Cleaning CMake build folder and retrying...')
+        shutil.rmtree(build_folder, ignore_errors=True)
+        os.makedirs(build_folder)
+        try:
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
+        except subprocess.CalledProcessError as ex:
+            # If still unsuccessful, print results
+            if Config.get_bool('debugprint'):
+                raise cgx.CompilerConfigurationError('Configuration failure')
+            else:
+                raise cgx.CompilerConfigurationError('Configuration failure:\n' + ex.output)
+
+    with open(cmake_filename, "w") as fp:
+        fp.write(cmake_command)
+
+    # Compile and link
+    try:
+        _run_liveoutput("cmake --build . --config %s" % (Config.get('compiler', 'build_type')),
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream,
+                        env=build_env)
+    except subprocess.CalledProcessError as ex:
+        # If unsuccessful, print results
+        if Config.get_bool('debugprint'):
+            raise cgx.CompilationError('Compiler failure')
+        else:
+            raise cgx.CompilationError('Compiler failure:\n' + ex.output)
+
+
 def configure_and_compile(
     program_folder,
     program_name=None,
@@ -291,106 +397,37 @@ def configure_and_compile(
         elif '/MT' not in os.environ['_CL_']:
             os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
-    # Start forming CMake command
-    dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cmake_command = [
-        "cmake",
-        "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
-        '"' + os.path.join(dace_path, "codegen") + '"',
-        "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
-        "-DDACE_FILES=\"{}\"".format(";".join(files)),
-        "-DDACE_PROGRAM_NAME={}".format(program_name),
-        "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
-    ]
-
-    # Get required environments are retrieve the CMake information
+    # Resolve the environments the SDFG uses (shared by both build backends).
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
         environments = set(l.strip() for l in f)
-
     environments = dace.library.get_environments_and_dependencies(environments)
 
-    environment_flags, cmake_link_flags = get_environment_flags(environments)
-    cmake_command += sorted(environment_flags)
-
-    cmake_command += shlex.split(Config.get('compiler', 'extra_cmake_args'))
-
-    # Replace backslashes with forward slashes
-    cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
-
-    # Generate CMake options for each compiler
-    libraries = set()
-    cmake_files = []
-    for target_name, target in sorted(targets.items()):
-        try:
-            cmake_command += target.cmake_options()
-            cmake_files += target.cmake_files()
-            libraries |= unique_flags(Config.get("compiler", target_name, "libs"))
-        except KeyError:
-            pass
-        except ValueError as ex:  # Cannot find compiler executable
-            raise cgx.CompilerConfigurationError(str(ex))
-
-    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
-    cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
-    cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
-
-    # Set linker and linker arguments, iff they have been specified
-    cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
-    cmake_linker = cmake_linker.strip()
-    if cmake_linker:
-        cmake_linker = make_absolute(cmake_linker)
-        cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
-    cmake_link_flags = (' '.join(sorted(cmake_link_flags)) + ' ' +
-                        (Config.get('compiler', 'linker', 'args') or '')).strip()
-    if cmake_link_flags:
-        cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
-    cmake_command = ' '.join(cmake_command)
-
-    if Config.get('debugprint') == 'verbose':
-        print(f'Running CMake: {cmake_command}')
-
-    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
-
-    # Strip this process's MPI-rank identity from the build subprocesses so CMake and the
+    # Strip this process's MPI-rank identity from the build subprocesses so the compiler and the
     # children it spawns never hang joining the outer MPI/PMI job (see _build_subprocess_env).
     build_env = _build_subprocess_env()
 
-    ##############################################
-    # Configure
-    try:
-        if not identical_file_exists(cmake_filename, cmake_command):
-            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
-    except subprocess.CalledProcessError as ex:
-        # Clean CMake directory and try once more
-        if Config.get_bool('debugprint'):
-            print('Cleaning CMake build folder and retrying...')
-        shutil.rmtree(build_folder, ignore_errors=True)
-        os.makedirs(build_folder)
-        try:
-            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
-        except subprocess.CalledProcessError as ex:
-            # If still unsuccessful, print results
-            if Config.get_bool('debugprint'):
-                raise cgx.CompilerConfigurationError('Configuration failure')
-            else:
-                raise cgx.CompilerConfigurationError('Configuration failure:\n' + ex.output)
-
-    with open(cmake_filename, "w") as fp:
-        fp.write(cmake_command)
-
-    # Compile and link
-    try:
-        _run_liveoutput("cmake --build . --config %s" % (Config.get('compiler', 'build_type')),
-                        shell=True,
-                        cwd=build_folder,
-                        output_stream=output_stream,
-                        env=build_env)
-    except subprocess.CalledProcessError as ex:
-        # If unsuccessful, print results
-        if Config.get_bool('debugprint'):
-            raise cgx.CompilationError('Compiler failure')
-        else:
-            raise cgx.CompilationError('Compiler failure:\n' + ex.output)
+    # Build the shared library either directly (native) or through CMake (default). Both write it to
+    # the same development-mode location that the shared tail below expects.
+    if Config.get('compiler', 'build_mode') == 'native':
+        from dace.codegen import native_compiler
+        native_compiler.build_native(program_folder=program_folder,
+                                     program_name=program_name,
+                                     files=files,
+                                     targets=targets,
+                                     environments=environments,
+                                     build_folder=build_folder,
+                                     build_env=build_env,
+                                     output_stream=output_stream)
+    else:
+        _cmake_configure_and_build(program_folder=program_folder,
+                                   program_name=program_name,
+                                   src_folder=src_folder,
+                                   build_folder=build_folder,
+                                   files=files,
+                                   targets=targets,
+                                   environments=environments,
+                                   build_env=build_env,
+                                   output_stream=output_stream)
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the `development` folder mode.
