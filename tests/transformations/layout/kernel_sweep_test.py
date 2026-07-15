@@ -8,7 +8,8 @@ the oracle and ``best()`` returns a correct one. Timing is not asserted (noisy o
 import numpy
 
 from dace.transformation.layout.brute_force import sweep, best
-from tests.transformations.layout.kernels import k04_mvt, k15_colstore
+from dace.transformation.layout.timing import compute_region_timer
+from tests.transformations.layout.kernels import k04_mvt, k15_colstore, k11_thomas
 
 
 def _sdfg_candidates(program, candidate_dict):
@@ -51,7 +52,29 @@ def test_k15_colstore_layout_sweep_all_verify():
     assert best(results) is not None
 
 
+def test_k11_thomas_layout_sweep_timed():
+    """Batched Thomas solve, interleaved vs system-major coefficient layout. Both verify, and the
+    sweep is timed with the compute-region timer (excludes the relayout copies)."""
+    k, nb = 12, 40
+    inputs = k11_thomas.make_inputs(k, nb)
+    reference = k11_thomas.oracle(inputs["a"], inputs["b"], inputs["c"], inputs["d"])
+    candidates = _sdfg_candidates(k11_thomas.thomas, k11_thomas.candidates())
+
+    results = sweep(candidates,
+                    k11_thomas.run_closure(inputs, k, nb),
+                    reference,
+                    reps=2,
+                    warmup=1,
+                    timer=compute_region_timer)
+    assert set(candidates) == {"interleaved", "system_major"}
+    assert all(r.correct for r in results), [(r.name, r.error) for r in results]
+    # every correct candidate has a compute-region time recorded
+    assert all(r.time is not None and r.time >= 0.0 for r in results)
+    assert best(results) is not None
+
+
 if __name__ == "__main__":
     test_k04_mvt_layout_sweep_all_verify()
     test_k15_colstore_layout_sweep_all_verify()
+    test_k11_thomas_layout_sweep_timed()
     print("kernel sweep tests PASS")
