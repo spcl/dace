@@ -5,10 +5,6 @@ import pytest
 
 from dace.frontend.python.common import DaceSyntaxError
 
-skip_callbacks_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind does not support callbacks yet (deferred to part 2 of the port)')
-
 
 def failed_test():
     raise AssertionError('Should not be called')
@@ -64,10 +60,11 @@ def callback_with_arrays(out_arr: dace.float64[M, N, O], in_arr: dace.float64[M,
         arrfunc(out, inp)
 
 
-@skip_callbacks_on_nanobind
 def test_callback():
-    A = dace.ndarray((2, ), dtype=dace.int32)
-    B = dace.ndarray((2, ), dtype=dace.int32)
+    # uint32, matching the program signature: the nanobind interface rejects a
+    # mismatched array dtype (ctypes only warned).
+    A = dace.ndarray((2, ), dtype=dace.uint32)
+    B = dace.ndarray((2, ), dtype=dace.uint32)
     A[:] = 5
     B[:] = 0
 
@@ -83,7 +80,6 @@ def test_callback():
         assert b == 25
 
 
-@skip_callbacks_on_nanobind
 def test_callback_with_arrays():
     arr_in = numpy.random.randn(2, 3, 4)
     arr_out = dace.ndarray((2, 3, 4), dtype=dace.float64)

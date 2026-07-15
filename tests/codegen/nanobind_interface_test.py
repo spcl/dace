@@ -343,22 +343,43 @@ def test_nanobind_interface_pyobject_rejected():
         generate_bindings_code(arg_sdfg)
 
 
-def test_nanobind_interface_callback_rejected():
-    """A callback argument (dtypes.callback) is refused at codegen, not compiled.
-
-    Callbacks surface as scalars whose dtype is a dtypes.callback typeclass whose
-    ctype is not a valid C++ type ("dace.callback"). The generator must reject
-    them with a clear NotImplementedError instead of emitting code that fails to
-    compile. Callback support is deferred to part 2 of the port.
-    """
-    import pytest
-    from dace import dtypes
+def test_nanobind_interface_callback_binding():
+    """A callback argument binds as a function-pointer address (std::uintptr_t + reinterpret_cast)."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    cb_sdfg = dace.SDFG('callback_arg_reject_probe')
-    cb_sdfg.add_scalar('cb', dtypes.callback(None))
-    with pytest.raises(NotImplementedError, match='callback'):
-        generate_bindings_code(cb_sdfg)
+    sdfg = dace.SDFG('callback_bind_probe')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_symbol('cb', dace.callback(dace.float64, dace.float64))
+    state = sdfg.add_state()
+    t = state.add_tasklet('t', {}, {'o'}, 'o = cb(1.0)')
+    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+
+    code = generate_bindings_code(sdfg)
+    assert 'std::uintptr_t cb__addr' in code  # shadow parameter
+    assert 'reinterpret_cast<double (*)(double)>(cb__addr)' in code  # typed local via setup
+    assert 'double (*m_sym_cb)(double)' in code  # member declarator, not dtype.ctype
+    assert 'nb::arg("cb")' in code  # keyword stays the real name
+
+
+def test_nanobind_interface_scalar_callback():
+    """A scalar callback is invoked from the GIL-released kernel and its result lands in the output."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        cscale = dace.symbol('cscale', dace.callback(dace.float64, dace.float64))
+
+        @dace.program
+        def cb_prog_nanobind(A: dace.float64[10], B: dace.float64[10]):
+
+            @dace.map(_[0:10])
+            def index(i):
+                a << A[i]
+                b >> B[i]
+                b = cscale(a)
+
+        csdfg = cb_prog_nanobind.to_sdfg().compile()
+        A = np.random.rand(10)
+        B = np.zeros(10)
+        csdfg(A=A, B=B, cscale=lambda x: x * 3.0)
+        assert np.allclose(B, A * 3.0)
 
 
 def test_nanobind_interface_bool_scalar_binds_as_uint8():

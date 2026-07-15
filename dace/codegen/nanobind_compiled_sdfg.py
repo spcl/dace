@@ -70,6 +70,15 @@ class NanobindCompiledSDFG:
             self._is_single_value_ret = False
             assert return_names == set(self._return_values)
 
+        # Callback arguments; each call wraps the passed callable in a ctypes
+        # CFUNCTYPE (see _process_callbacks).
+        self._callback_args: Dict[str, Any] = {
+            name: desc.dtype
+            for name, desc in sdfg.arglist().items() if isinstance(desc.dtype, dtypes.callback)
+        }
+        self._callback_keepalive: List[Any] = []
+        self._callback_refs: List[Any] = []
+
     @property
     def sdfg(self) -> "dace.SDFG":
         return self._sdfg
@@ -100,14 +109,10 @@ class NanobindCompiledSDFG:
         the result is ``None``. Passing a ``__return*`` buffer explicitly is
         refused unless ``compiler.nanobind_allow_return_override`` is enabled.
         """
-        # Early exit: no return values, no need to do more processing.
-        if not self._return_values:
-            self._handle(*args, **kwargs)
-            return None
-
-        # With return values, positional arguments must be mapped to names in
-        # Python, since the return-shape evaluation needs the symbol values.
-        if args:
+        # Positional arguments must be mapped to names whenever something
+        # downstream needs values by name: return-shape evaluation and
+        # callback wrapping.
+        if args and (self._return_values or self._callback_args):
             if len(args) > len(self._arg_names):
                 raise TypeError(f'Too many positional arguments (got {len(args)}, '
                                 f'expected at most {len(self._arg_names)}).')
@@ -115,6 +120,15 @@ class NanobindCompiledSDFG:
                 if name in kwargs:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
+            args = ()
+
+        if self._callback_args:
+            self._process_callbacks(kwargs)
+
+        # Early exit: no return values, no need to do more processing.
+        if not self._return_values:
+            self._handle(*args, **kwargs)
+            return None
 
         # Will add the return arrays also to `kwargs`.
         return_arrays = self._allocate_return_arrays(kwargs)
@@ -125,6 +139,29 @@ class NanobindCompiledSDFG:
         if self._is_single_value_ret:
             return return_arrays[0]
         return tuple(return_arrays)
+
+    def _process_callbacks(self, kwargs: Dict[str, Any]) -> None:
+        """Replaces callback callables in ``kwargs`` with C function-pointer addresses.
+
+        Each callable is wrapped in the same trampoline + ctypes CFUNCTYPE the
+        ctypes interface uses - the libffi thunk re-acquires the GIL on entry,
+        so the kernel may invoke it while running GIL-free (also from worker
+        threads). Exceptions raised inside a callback follow ctypes semantics:
+        they are printed, not propagated to the caller.
+        """
+        # The CFUNCTYPE objects own the synthesized C entry points, and
+        # init_impl stores the first call's pointers in m_sym_* for the
+        # external-memory entry points - so they are retained for the wrapper's
+        # lifetime rather than per call. Return-value references only need to
+        # survive until the kernel has consumed them, i.e. the next call.
+        self._callback_refs.clear()
+        for name, cbtype in self._callback_args.items():
+            if name not in kwargs:
+                continue
+            trampoline = cbtype.get_trampoline(kwargs[name], kwargs, self._callback_refs, None)
+            cfunc = cbtype.as_ctypes()(trampoline)
+            self._callback_keepalive.append(cfunc)
+            kwargs[name] = ctypes.cast(cfunc, ctypes.c_void_p).value
 
     def _allocate_return_arrays(self, kwargs: Dict[str, Any]) -> List[Any]:
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
@@ -183,6 +220,8 @@ class NanobindCompiledSDFG:
             assert not (multiple_names :=
                         kwargs.keys() & self._arg_names[:len(args)]), f"Specified '{multiple_names}' multiple times."
             kwargs.update(zip(self._arg_names, args, strict=False))
+        if self._callback_args:
+            self._process_callbacks(kwargs)
         self._handle.initialize(**kwargs)
 
     def finalize(self) -> None:

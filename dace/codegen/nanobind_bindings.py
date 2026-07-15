@@ -81,22 +81,31 @@ def _argument_binding(arglist, binding_order=None):
             raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is not supported yet '
                                       f'(callbacks are deferred to part 2 of the port); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
-        # dtypes.callback is not a pyobject subclass, so the check above misses
-        # it; its ctype is not a C++ type either. Deferred to part 2 of the port.
+
+        # A callback's ctype is not a C++ type, so it cannot go through the
+        # generic branches (hence the early `continue`). The wrapper passes the
+        # address of a ctypes CFUNCTYPE - whose libffi thunk re-acquires the
+        # GIL - and the typed pointer is recovered under the real name, so
+        # init_call, the program call and sym_stores all see the right type.
         if isinstance(desc.dtype, dtypes.callback):
-            raise NotImplementedError(f'Nanobind interface: callback argument "{name}" is not supported yet '
-                                      f'(callbacks are deferred to part 2 of the port); '
-                                      f'use the ctypes interface (compiler.interface=ctypes).')
+            params_by_name[name] = f'std::uintptr_t {name}__addr'
+            setup_stmts.append(f'{desc.dtype.as_arg(name)} = reinterpret_cast<{desc.dtype.as_arg("")}>({name}__addr);')
+            call_args.append(name)
+            nb_args_by_name[name] = f'nb::arg("{name}")'
+            continue
+
         # A non-array return (scalar, structure) cannot carry output back.
         if name.startswith('__return') and not isinstance(desc, dt.Array):
             raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                       f'{type(desc).__name__} is not supported; returns are arrays only.')
+
         # float16 maps to dace::half, which nanobind's ndarray cannot take as a
         # scalar dtype; a proper mapping is a TODO.
         if desc.dtype.base_type == dtypes.float16:
             raise NotImplementedError(f'Nanobind interface: float16 argument/return value "{name}" is not '
                                       f'supported yet (dace::half is not a valid nanobind ndarray dtype); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
+
         ctype = desc.dtype.ctype
         if isinstance(desc, dt.Scalar) and desc.dtype == dtypes.string:
             # A string scalar is a C string (int8_t*). std::optional<std::string>
@@ -278,7 +287,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
     free_symbols = sorted(k for k in sdfg.used_symbols(all_symbols=False) if not k.startswith('__dace'))
     init_arglist = {k: v for k, v in arglist.items() if k in free_symbols}
-    init_params, _, init_nb_args, _ = _argument_binding(init_arglist)
+    init_params, _, init_nb_args, init_setup = _argument_binding(init_arglist)
 
     program_params = f'{state_t} *__state' + (f', {sig_decl}' if sig_decl else '')
     program_args = 'm_state' + (f', {", ".join(call_args)}' if call_args else '')
@@ -293,8 +302,24 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # Init symbols are stored on the handle: the external-memory entry points
     # take them as arguments (framecode.py, generate_external_memory_management),
     # mirroring the ctypes wrapper's use of the last call's arguments.
+    #
+    # Callbacks are among these symbols: the Python frontend registers a
+    # callback via `sdfg.add_symbol(name, dtypes.callback(...))`, riding the
+    # symbol machinery because a callback shares a symbol's defining property -
+    # a scalar, runtime-constant value that parameterizes the execution (here a
+    # pointer-sized function pointer). That is why they flow through
+    # `used_symbols()` into the init signature and need an `m_sym_*` member,
+    # and why their member declaration is special-cased below.
     init_symbol_names = list(init_arglist.keys())
-    sym_members = '\n'.join(f'    {init_arglist[s].dtype.ctype} m_sym_{s} = {{}};' for s in init_symbol_names)
+
+    def _sym_member(s: str) -> str:
+        # A callback member needs the function-pointer declarator - its ctype
+        # is not a C++ type.
+        dtype = init_arglist[s].dtype
+        decl = dtype.as_arg(f'm_sym_{s}') if isinstance(dtype, dtypes.callback) else f'{dtype.ctype} m_sym_{s}'
+        return f'    {decl} = {{}};'
+
+    sym_members = '\n'.join(_sym_member(s) for s in init_symbol_names)
     sym_stores = '\n        '.join(f'm_sym_{s} = {s};' for s in init_symbol_names)
     sym_args = ''.join(f', m_sym_{s}' for s in init_symbol_names)
     init_comma_decl = f', {init_decl}' if init_decl else ''
@@ -322,10 +347,12 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     struct_decls = _structure_forward_decls(arglist)
     struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
 
-    # setup_stmts (struct pointer extraction) need the Python API, so with them
-    # the GIL is released only around the kernel call - the RAII buffer guards
-    # outlive that nested scope and release with the GIL re-acquired. Without
-    # them, call() keeps the simpler whole-body release.
+    # setup_stmts (struct pointer extraction, callback pointer recovery) may
+    # need the Python API, so with them the GIL is released only around the
+    # kernel call - the RAII buffer guards outlive that nested scope and
+    # release with the GIL re-acquired. Without them, call() keeps the simpler
+    # whole-body release. initialize() gets the same treatment for its own
+    # (init-symbol) setup statements - callbacks are init symbols.
     if setup_stmts:
         pybuffer_helper = _PYBUFFER_HELPER
         setup_block = '\n        '.join(setup_stmts)
@@ -342,6 +369,19 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
                      f'        nb::gil_scoped_release _nogil;\n'
                      f'        init_impl({init_call});\n'
                      f'        __program_{name}({program_args});')
+
+    if init_setup:
+        init_setup_block = '\n        '.join(init_setup)
+        initialize_body = (f'{init_setup_block}\n'
+                           f'        {{\n'
+                           f'            nb::gil_scoped_release _nogil;\n'
+                           f'            init_impl({init_call});\n'
+                           f'        }}')
+    else:
+        initialize_body = (f'// GIL released around the C call only; parameter handling stays under\n'
+                           f'        // the GIL (a call_guard would copy Python objects without it).\n'
+                           f'        nb::gil_scoped_release _nogil;\n'
+                           f'        init_impl({init_call});')
 
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
 #include <cstdint>
@@ -422,10 +462,7 @@ struct DaceHandle_{name} {{
     }}
 
     void initialize({init_param_list}) {{
-        // GIL released around the C call only; parameter handling stays under
-        // the GIL (a call_guard would copy Python objects without it).
-        nb::gil_scoped_release _nogil;
-        init_impl({init_call});
+        {initialize_body}
     }}
 
     void finalize() {{
