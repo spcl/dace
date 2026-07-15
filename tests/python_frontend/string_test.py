@@ -9,6 +9,12 @@ def callback_inhibitor(f):
     return f
 
 
+skip_callbacks_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind does not support callbacks yet (deferred to part 2 of the port)')
+
+
+@skip_callbacks_on_nanobind
 def test_string_literal_in_callback():
     success = False
 
@@ -29,6 +35,7 @@ def test_string_literal_in_callback():
     assert success is True
 
 
+@skip_callbacks_on_nanobind
 def test_bytes_literal_in_callback():
     success = False
 
@@ -49,6 +56,7 @@ def test_bytes_literal_in_callback():
     assert success is True
 
 
+@skip_callbacks_on_nanobind
 def test_string_literal_in_callback_2():
     success = False
 
@@ -98,6 +106,7 @@ def test_bytes_literal():
     assert tester()[0] == b'Hello World!'
 
 
+@skip_callbacks_on_nanobind
 def test_string_literal_in_complex_object():
     success = False
 
