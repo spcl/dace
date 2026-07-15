@@ -48,15 +48,6 @@ def _expr(val):
     return val
 
 
-# ``__DACE_NO_SYNC`` (set to any truthy value) disables every
-# ``*Synchronize`` call emitted by the CUDA codegen -- device, stream,
-# and event. Use when the codegen's sync is known-broken and callers
-# handle host-side synchronization themselves. Call
-# ``common.no_sync_emission()`` for the authoritative check; the
-# module-level ``no_sync`` is kept only for call sites that predate
-# the common helper.
-
-
 def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     """ Copy predicate from CPU to GPU that determines when a copy is illegal.
         Returns True if copy is illegal, False otherwise.
@@ -157,9 +148,8 @@ class CUDACodeGen(TargetCodeGenerator):
 
     def _emit_sync(self, codestream: CodeIOStream):
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-            if not common.no_sync_emission():
-                codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
-                DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
+            codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
+            DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
         # Determine GPU backend
@@ -458,7 +448,8 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
 
     // Synchronize and check for CUDA errors
     int __err = static_cast<int>(__state->gpu_context->lasterror);
-    {exit_device_sync}
+    if (__err == 0)
+        __err = static_cast<int>({backend}DeviceSynchronize());
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -501,8 +492,6 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
-           exit_device_sync=('' if common.no_sync_emission() else
-                             f'if (__err == 0)\n        __err = static_cast<int>({self.backend}DeviceSynchronize());'),
            sdfg=self._global_sdfg)
 
         return [self._codeobject]
@@ -1457,10 +1446,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         streams_to_sync = set()
 
                 for stream in streams_to_sync:
-                    if not common.no_sync_emission():
-                        callsite_stream.write(
-                            'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                            (self.backend, stream), cfg, state.block_id)
+                    callsite_stream.write(
+                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
+                        (self.backend, stream), cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1916,10 +1904,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             if hasattr(e, '_cuda_event'):
                 ev = e._cuda_event
-                if not common.no_sync_emission():
-                    callsite_stream.write(
-                        'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
-                            ev=ev, backend=self.backend), cfg, state_id, [e.src, e.dst])
+                callsite_stream.write(
+                    'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
+                        ev=ev, backend=self.backend), cfg, state_id, [e.src, e.dst])
             if e.data is not None and e.data.data == e.dst_conn:
                 warnings.warn(
                     f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."

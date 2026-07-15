@@ -1408,8 +1408,6 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
     state_dfg: SDFGState = dfg.graph if not isinstance(dfg, SDFGState) else dfg
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
-    if common.no_sync_emission():
-        return
     # Resolve the (cfg, state_id) pair to whichever region directly owns the
     # state, so ``callsite_stream.write`` -> ``cfg.state(state_id)`` lands on
     # an SDFGState.
@@ -1458,7 +1456,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', cfg, state_id,
                                   scope_exit)
-            if Config.get_bool('compiler', 'cuda', 'syncdebug') and not common.no_sync_emission():
+            if Config.get_bool('compiler', 'cuda', 'syncdebug'):
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
             to_remove.add((sd, name))
 
