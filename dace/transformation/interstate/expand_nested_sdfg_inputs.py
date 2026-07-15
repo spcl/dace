@@ -23,6 +23,7 @@ from typing import List, Set, Dict, Tuple
 
 from dace import SDFG, dtypes, subsets, symbolic, data
 from dace.codegen.common import CodeBlock
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -421,6 +422,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # per-inner_name offsets BEFORE replace_dict, to avoid clobbering an earlier connector.)
 
 
+@make_properties
 class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
     """Pre-processor for :class:`InlineMultistateSDFG`: widen narrowed NSDFG in/out memlets to
     full-array subsets, reshape inner descriptors, offset inner memlets.
@@ -433,6 +435,11 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
+    top_level_only = Property(dtype=bool,
+                              default=False,
+                              desc='If True, only apply to top-level NSDFGs, i.e. NSDFGs that are '
+                              'not nested inside a Map scope (their enclosing scope entry is None).')
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.nested_sdfg)]
@@ -444,6 +451,9 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
     def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False) -> bool:
         nsdfg_node = self.nested_sdfg
         if nsdfg_node.no_inline:
+            return False
+        # Restrict to top-level NSDFGs (no enclosing Map) when requested.
+        if self.top_level_only and state.entry_node(nsdfg_node) is not None:
             return False
         # Refuse when every in/out edge already reads the full outer array -- nothing to widen,
         # and re-applying would spin ``apply_transformations_repeated`` forever.

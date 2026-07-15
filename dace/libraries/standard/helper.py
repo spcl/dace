@@ -24,6 +24,22 @@ CPU_RESIDENT_STORAGES = frozenset({
 })
 
 
+def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageType:
+    """
+    Return the storage a cuSOLVER/LAPACK status scalar (``devInfo``) should use so that it stays
+    host-checkable. When the matrix operand lives in GPU-resident memory, the status is placed in
+    pinned host memory (DMA-reachable from the device, so cuSOLVER can write it via the unified
+    address space while the host can still read the result). CPU-resident inputs keep their storage.
+
+    Lives here rather than in ``dace.dtypes`` because it keys off ``GPU_RESIDENT_STORAGES``
+    (``{GPU_Global, GPU_Shared}``), which is defined above -- note ``dtypes.GPU_STORAGES`` is a
+    *different*, narrower set (``{GPU_Shared}``) and is not a substitute.
+    """
+    if storage in GPU_RESIDENT_STORAGES:
+        return dtypes.StorageType.CPU_Pinned
+    return storage
+
+
 def collapse_shape_and_strides(
         subset: dace.subsets.Range,
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:

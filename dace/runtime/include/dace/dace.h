@@ -12,6 +12,7 @@
 
 // The order in which these are included matters - sorting them
 // alphabetically causes compilation to fail.
+#include "alloc.h"
 #include "comm.h"
 #include "complex.h"
 #include "copy.h"

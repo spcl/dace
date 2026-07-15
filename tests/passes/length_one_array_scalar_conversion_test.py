@@ -133,8 +133,11 @@ def test_opaque_scalar_is_not_arrayized():
 
 
 def test_passes_expose_property_options():
+    # The forward pass additionally exposes ``keep_program_outputs`` / ``filter`` and
+    # ``single_element`` (scalarize higher-rank all-ones arrays, e.g. a (1, 1) map-fusion
+    # scratch buffer); the inverse exposes none of them.
     assert set(ConvertLengthOneArraysToScalars.__properties__) == {
-        "recursive", "transient_only", "keep_program_outputs", "filter"
+        "recursive", "transient_only", "keep_program_outputs", "filter", "single_element"
     }
     assert set(ConvertScalarsToLengthOneArrays.__properties__) == {"recursive", "transient_only"}
     for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):

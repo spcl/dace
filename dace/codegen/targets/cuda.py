@@ -3175,13 +3175,14 @@ def _get_storagename(storage):
 
 
 def _get_const_params(dfg_scope):
+    # Single source of truth for read-only (const) kernel arguments:
+    # ``sdutil.get_constant_data`` (dace/sdfg/utils.py), which the experimental CUDA
+    # code generator also uses. It derives writes from ``read_and_write_sets`` /
+    # ``all_nodes_between`` so a container written anywhere inside the scope -- e.g.
+    # a scatter accumulator written through a nested SDFG (the write surfaces in the
+    # parent as an incoming memlet) -- is correctly NOT const, whereas the previous
+    # scope-exit-only heuristic missed it and emitted a ``const T*`` argument that
+    # clashed with the nested function's non-const (written) parameter.
     state = dfg_scope.graph
-    sdfg = dfg_scope.parent
     scope_entry = dfg_scope.source_nodes()[0]
-    scope_exit = dfg_scope.sink_nodes()[0]
-    input_params = set(e.data.data for e in state.in_edges(scope_entry))
-    output_params = set(e.data.data for e in state.out_edges(scope_exit))
-    toplevel_params = set(node.data for node in dfg_scope.nodes()
-                          if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel)
-    dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
-    return input_params - (output_params | toplevel_params | dynamic_inputs)
+    return sdutil.get_constant_data(scope_entry, state)

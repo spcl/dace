@@ -2463,9 +2463,13 @@ def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, 
             if ie.data is not None and ie.data.data is not None:
                 used_data.add(ie.data.data)
         for oe in state.out_edges(state.exit_node(scope)):
+            # A dependency edge carries no memlet (``oe.data`` or ``oe.data.data``
+            # is None) -- skip it, otherwise ``oe.data.data`` raises AttributeError.
+            # An output datum is both written and used, so ``used - written`` nets
+            # it out of the const set regardless.
             if oe.data is not None and oe.data.data is not None:
                 written_data.add(oe.data.data)
-            used_data.add(oe.data.data)
+                used_data.add(oe.data.data)
 
         return used_data - written_data
     else:

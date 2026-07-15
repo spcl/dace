@@ -27,6 +27,149 @@ from dace.codegen.target import make_absolute
 T = TypeVar('T')
 
 
+def deduplicate_includes(code: str) -> str:
+    """
+    Removes repeated ``#include`` directives (keeping the first occurrence of
+    each) for readability. Used by the experimental readable code generator.
+    """
+    seen: Set[str] = set()
+    out: List[str] = []
+    for line in code.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith('#include'):
+            if stripped in seen:
+                continue
+            seen.add(stripped)
+        out.append(line)
+    return ''.join(out)
+
+
+def deduplicate_functions(code: str) -> str:
+    """
+    Removes repeated single-line index / size helper definitions (keeping the first)
+    emitted by the experimental readable code generator. Each helper is a file-scope
+    ``static`` free function on one line, e.g.
+    ``static DACE_HDFI constexpr long long A_idx(...) { return ...; }``. A non-inline
+    nested-SDFG function has its own function stream that shares the output file with
+    the outer stream, so the identical definition can appear more than once; C++
+    forbids the redefinition. Matching is conservative -- only single-line ``static``
+    definitions naming an ``*_idx`` / ``*_size`` helper are considered, and a line is
+    dropped only when byte-identical to one already kept, so call sites (which carry
+    distinct index arguments) and any other code are never touched.
+    """
+    seen: Set[str] = set()
+    out: List[str] = []
+    for line in code.splitlines(keepends=True):
+        stripped = line.strip()
+        is_helper = (stripped.startswith('static ') and ('_idx(' in stripped or '_size(' in stripped)
+                     and 'return' in stripped and stripped.endswith('}'))
+        if is_helper:
+            if stripped in seen:
+                continue
+            seen.add(stripped)
+        out.append(line)
+    return ''.join(out)
+
+
+def split_leading_includes(lines: List[str]) -> Tuple[List[str], List[str]]:
+    """
+    Splits a generated source into (leading header block, body). The header block
+    is the contiguous run of comments / blank lines / preprocessor directives
+    (``#include``, ``#pragma``, ``#define``, ...) at the top of the file, before
+    the first line of real code.
+    """
+    split = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == '' or stripped.startswith(('//', '/*', '*', '#')):
+            split = i + 1
+        else:
+            break
+    return lines[:split], lines[split:]
+
+
+# Readability / modernize fixes that are safe to apply to generated code. Broad
+# globs are fine: with headers stripped, type-dependent checks simply do not fire.
+# Exclusions: identifier renaming (would rewrite every name), magic-number /
+# cognitive-complexity / identifier-length noise, C-array avoidance (we
+# deliberately emit ``T x[N]`` for const-init and registers), and trailing-return
+# type (hurts readability here).
+#
+# ``readability-non-const-parameter`` is excluded because its const inference is
+# UNSOUND on generated code, and would silently miscompile: a pointer argument
+# that is only forwarded to a nested-SDFG device function -- e.g. a scatter
+# accumulator (``histu``/``histw`` in npbench ``azimint_hist``) passed to a
+# ``DACE_DFI`` that writes through it -- looks locally unmodified, so clang-tidy
+# rewrites the parameter to ``const T*``. That then clashes with the callee's
+# non-const (written) parameter and nvcc rejects the ``const T*`` -> ``T*``
+# argument. With the leading ``#include`` block stripped (see apply_clang_tidy)
+# clang-tidy also cannot always see the callee's signature to rule this out. The
+# code generator already qualifies every parameter correctly (see
+# ``dace.sdfg.utils.get_constant_data`` for kernel arguments and
+# ``emit_memlet_reference`` for nested-SDFG arguments), so tidy must not
+# second-guess it.
+CLANG_TIDY_CHECKS = ('readability-*,modernize-*,'
+                     '-readability-identifier-naming,-readability-identifier-length,-readability-magic-numbers,'
+                     '-readability-function-cognitive-complexity,-readability-uppercase-literal-suffix,'
+                     '-readability-avoid-const-params-in-decls,-readability-non-const-parameter,'
+                     '-modernize-avoid-c-arrays,-modernize-use-trailing-return-type')
+
+
+def apply_clang_tidy(code_path: str) -> None:
+    """
+    Best-effort standalone ``clang-tidy -fix-errors`` on a generated ``.cpp`` /
+    ``.cu`` file to improve readability (``modernize-use-auto`` etc.), applied in
+    place -- no CMake / compilation database.
+
+    The leading ``#include`` block is stripped before tidying and restored after,
+    so clang-tidy never parses any header at all: no DaCe runtime, CUDA, cuBLAS,
+    or OpenBLAS include path is needed (GPU/vendor libraries do not all live under
+    the CUDA prefix, so relying on include discovery would be fragile). External
+    functions and types then appear undeclared; ``-fix-errors`` tolerates those as
+    black boxes -- their call sites are left intact while the surrounding readable
+    code (loops, index functions, tasklets) is tidied. This is also faster, since
+    the large runtime headers are not re-parsed.
+
+    Never fails the build: a missing binary or a tidy error only emits a warning.
+    """
+    tidy = shutil.which('clang-tidy')
+    if tidy is None:
+        warnings.warn('clang-tidy not found; skipping tidy pass')
+        return
+    try:
+        with open(code_path) as fh:
+            lines = fh.readlines()
+    except OSError as ex:
+        warnings.warn(f'clang-tidy: could not read {code_path}: {ex}')
+        return
+
+    header, body = split_leading_includes(lines)
+    tmp_path = code_path + '.tidytmp'
+    checks = CLANG_TIDY_CHECKS
+    lang_args = ['-std=c++20']
+    if code_path.endswith('.cu'):
+        lang_args = ['-x', 'cuda', '--cuda-host-only', '--no-cuda-version-check', '-std=c++20']
+    try:
+        with open(tmp_path, 'w') as fh:
+            fh.writelines(body)
+        subprocess.run([
+            tidy, '-quiet', '-fix-errors', f'--header-filter={re.escape(os.path.basename(tmp_path))}',
+            '-system-headers=0', f'-checks=-*,{checks}', tmp_path, '--'
+        ] + lang_args,
+                       capture_output=True,
+                       text=True,
+                       timeout=180)
+        with open(tmp_path) as fh:
+            tidied_body = fh.readlines()
+        with open(code_path, 'w') as fh:
+            fh.writelines(header + tidied_body)
+    except (subprocess.SubprocessError, OSError) as ex:
+        warnings.warn(f'clang-tidy failed to run: {ex}')
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 def generate_program_folder(
     sdfg,
     code_objects: List[CodeObject],
@@ -91,23 +234,41 @@ def generate_program_folder(
         code_path = os.path.join(target_folder, basename)
         clean_code = code_object.clean_code
 
-        if Config.get_bool('compiler', 'format_code'):
+        # The experimental (readable) code generator produces human-oriented code;
+        # collapse duplicate headers and format by default for readability.
+        readable = Config.get('compiler', 'cpu', 'implementation') == 'experimental'
+
+        if readable:
+            clean_code = deduplicate_includes(clean_code)
+            clean_code = deduplicate_functions(clean_code)
+
+        if Config.get_bool('compiler', 'format_code') or readable:
             config_file = Config.get('compiler', 'format_config_file')
             if config_file is not None and config_file != "":
                 run_arg_list = ['clang-format', f"-style=file:{config_file}"]
             else:
                 run_arg_list = ['clang-format']
-            result = subprocess.run(run_arg_list, input=clean_code, text=True, capture_output=True)
-            if result.returncode or result.stderr:
-                warnings.warn(f'clang-format failed to run: {result.stderr}')
-            else:
-                clean_code = result.stdout
+            try:
+                result = subprocess.run(run_arg_list, input=clean_code, text=True, capture_output=True)
+                if result.returncode or result.stderr:
+                    warnings.warn(f'clang-format failed to run: {result.stderr}')
+                else:
+                    clean_code = result.stdout
+            except FileNotFoundError:
+                warnings.warn('clang-format not found; skipping code formatting')
 
         # Save the file only if it changed (keeps old timestamps and saves
         # build time)
         if not identical_file_exists(code_path, clean_code):
             with open(code_path, "w") as code_file:
                 code_file.write(clean_code)
+
+        # Readability tidy-up of the generated CPU (.cpp) and GPU (.cu) files,
+        # standalone (no CMake). Run automatically by the experimental readable
+        # generator. Best-effort: never fails the build; a missing clang-tidy is
+        # a no-op.
+        if readable and extension in ('cpp', 'cu'):
+            apply_clang_tidy(code_path)
 
         if code_object.linkable == True:
             filelist.append("{},{},{}".format(target_name, target_type, basename))

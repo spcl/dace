@@ -92,17 +92,24 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         desc="If ``None``, no filtering -- every eligible array is scalarized. If a set is "
         "provided, only top-level arrays whose name appears in it are scalarized, and being "
         "in the filter overrides the ``transient_only`` check.")
+    single_element = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Also scalarize higher-rank single-element arrays (every dim == 1, e.g. a (1, 1) "
+        "map-fusion scratch buffer), not just rank-1 length-1 arrays.")
 
     def __init__(self,
                  recursive: bool = True,
                  transient_only: bool = False,
                  keep_program_outputs: bool = False,
-                 filter: 'Optional[Set[str]]' = None):
+                 filter: 'Optional[Set[str]]' = None,
+                 single_element: bool = False):
         super().__init__()
         self.recursive = recursive
         self.transient_only = transient_only
         self.keep_program_outputs = keep_program_outputs
         self.filter = None if filter is None else frozenset(filter)
+        self.single_element = single_element
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols
@@ -129,10 +136,26 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 for node in state.data_nodes():
                     if state.in_degree(node) > 0 and not sdfg.arrays[node.data].transient:
                         program_outputs.add(node.data)
+        # Arrays written through a nested SDFG connector must stay Arrays: a nested SDFG argument is
+        # a pointer/reference, but a scalar is passed by value -- scalarizing a written array would
+        # silently drop the write. Collect the out-edge data of every NestedSDFG node.
+        nsdfg_written: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    for edge in state.out_edges(node):
+                        if edge.data is not None and edge.data.data is not None:
+                            nsdfg_written.add(edge.data.data)
         for arr_name, arr in list(sdfg.arrays.items()):
-            if not (isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1])):
+            if not isinstance(arr, dace.data.Array):
                 continue
-            if arr_name in program_outputs:
+            is_len1 = arr.shape == (1, ) or arr.shape == [1]
+            # ``single_element`` additionally scalarizes a higher-rank all-ones array (e.g. a (1, 1)
+            # map-fusion scratch buffer), not just a rank-1 length-1 array.
+            is_single = self.single_element and len(arr.shape) >= 1 and all(d == 1 for d in arr.shape)
+            if not (is_len1 or is_single):
+                continue
+            if arr_name in program_outputs or arr_name in nsdfg_written:
                 continue
             if isinstance(arr.dtype, dace.dtypes.opaque):
                 continue

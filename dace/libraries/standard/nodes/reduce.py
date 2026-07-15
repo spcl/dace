@@ -1129,8 +1129,26 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # this removes reduction of size 1 axes from the list
         axes = [axis for axis in axes if axis in isqdim]
 
+        # When the reduce reads a View (e.g. the sliced ``x[:, 2*i:2*i+2, ...]`` window feeding a
+        # maxpool, or a reshaped array), a View is ``source_ptr + offset`` with its own strides/step.
+        # Resolve it to a plain array describing the actual viewed region: fold the input memlet
+        # subset's step into the underlying strides (exactly like :class:`ExpandReducePure`). This lets
+        # the planner schedule the efficient device reduction directly over the (possibly strided) view,
+        # and keeps ``_in`` a plain array rather than a bare View access node (which is an invalid
+        # nested-SDFG input connector with no defining view edge). Non-View inputs are handed to the
+        # planner unchanged.
+        if isinstance(raw_input_data, dace.data.View):
+            in_subset = inedge.data.subset
+            planner_input = dace.data.Array(
+                raw_input_data.dtype,
+                in_subset.size(),
+                storage=raw_input_data.storage,
+                strides=[raw_input_data.strides[i] * in_subset[i][2] for i in range(len(in_subset))])
+        else:
+            planner_input = raw_input_data
+
         # call the planner script
-        schedule = red_planner.get_reduction_schedule(raw_input_data, axes, warp_size=warp_size)
+        schedule = red_planner.get_reduction_schedule(planner_input, axes, warp_size=warp_size)
 
         if schedule.error:
             # return pure expansion if error
@@ -1141,7 +1159,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        input_data = dcpy(raw_input_data)
+        input_data = dcpy(planner_input)
         input_data.transient = False
         input_data.shape = schedule.in_shape
         input_data.strides = schedule.in_strides
@@ -1155,10 +1173,21 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # copied to the real host output by :func:`route_gpu_reduce_result_to_host_output` -- so the GPU
         # kernels never write host memory (and no slow pure fallback is taken).
         output_on_device = raw_output_data.storage in GPU_REDUCE_DEVICE_WRITABLE_STORAGE
+
+        # ``_out``'s declared strides must match the memory it is written into. The planner derives
+        # ``out_strides`` from the INPUT array, which is only a valid layout for the reconciled host
+        # scratch. When ``_out`` IS the real device output (written directly) and that output is a
+        # strided View (e.g. ``output[:, i, j, :]``), those input-derived strides send the writes to
+        # the wrong offsets, so use the real output's strides for the written (squeezed) region.
+        out_strides = schedule.out_strides
+        if output_on_device:
+            osqdim = dcpy(outedge.data.subset).squeeze()
+            if len(osqdim) == len(schedule.out_shape):
+                out_strides = [raw_output_data.strides[i] for i in osqdim]
         nsdfg.add_array('_out',
                         schedule.out_shape,
                         output_data.dtype,
-                        strides=schedule.out_strides,
+                        strides=out_strides,
                         storage=(output_data.storage if output_on_device else dtypes.StorageType.GPU_Global))
 
         nstate = nsdfg.add_state()

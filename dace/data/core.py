@@ -246,6 +246,18 @@ class Scalar(Data):
 
     allow_conflicts = Property(dtype=bool, default=False)
 
+    const_init = Property(dtype=bool,
+                          default=False,
+                          desc='Set by the MarkConstInit pass: this value is written exactly once '
+                          'and then read-only, so the experimental code generator may emit it '
+                          'as const/constexpr.')
+    const_init_kind = Property(dtype=str,
+                               default='none',
+                               choices=['none', 'constexpr_static', 'const_runtime'],
+                               desc="How const_init is realized: 'constexpr_static' (compile-time "
+                               "value, constexpr initializer) or 'const_runtime' (const binding of "
+                               "a runtime value).")
+
     def __init__(self,
                  dtype,
                  transient=False,
@@ -253,8 +265,12 @@ class Scalar(Data):
                  allow_conflicts=False,
                  location=None,
                  lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+                 debuginfo=None,
+                 const_init=False,
+                 const_init_kind='none'):
         self.allow_conflicts = allow_conflicts
+        self.const_init = const_init
+        self.const_init_kind = const_init_kind
         shape = [1]
         super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -281,7 +297,7 @@ class Scalar(Data):
 
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
-                      self.debuginfo)
+                      self.debuginfo, self.const_init, self.const_init_kind)
 
     @property
     def strides(self):
@@ -444,6 +460,18 @@ class Array(Data):
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
+    const_init = Property(dtype=bool,
+                          default=False,
+                          desc='Set by the MarkConstInit pass: this array is written exactly once '
+                          '(possibly partially, the rest implicitly zero) and then read-only, so '
+                          'the experimental code generator may emit it as const/constexpr.')
+    const_init_kind = Property(dtype=str,
+                               default='none',
+                               choices=['none', 'constexpr_static', 'const_runtime'],
+                               desc="How const_init is realized: 'constexpr_static' (compile-time "
+                               "values, constexpr initializer list with zero-filled unwritten "
+                               "elements) or 'const_runtime' (const binding of a runtime value).")
+
     def __init__(self,
                  dtype,
                  shape,
@@ -460,13 +488,17 @@ class Array(Data):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 const_init=False,
+                 const_init_kind='none'):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+        self.const_init = const_init
+        self.const_init_kind = const_init_kind
 
         if start_offset is not None:
             self.start_offset = start_offset
@@ -502,7 +534,8 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+                          self.total_size, self.start_offset, self.optional, self.pool, self.const_init,
+                          self.const_init_kind)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
