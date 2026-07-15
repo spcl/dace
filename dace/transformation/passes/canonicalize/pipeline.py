@@ -80,6 +80,8 @@ from dace.transformation.passes.canonicalize.early_exit_to_find_index import Ear
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
+from dace.transformation.passes.canonicalize.loop_to_syrk import LoopToSyrk
+from dace.transformation.passes.canonicalize.loop_to_syr2k import LoopToSyr2k
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
@@ -416,6 +418,27 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
           ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()),
           ('clean', EarlyExitToFindIndex()), ('clean', SimplifyPass()),
           ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
+
+    # loop_to_syrk / loop_to_syr2k (semantic lift, gated like loop_to_symm): the
+    # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
+    # recognised -- an outer row loop whose body beta-scales a triangular row slice of a
+    # square C and then accumulates onto that same slice in an inner k loop -- and
+    # replaced by a ``Syrk`` / ``Syr2k`` BLAS node (vendor dsyrk / dsyr2k, which compute
+    # only the referenced triangle: half the flops of the equivalent gemm, and threaded).
+    #
+    # They run HERE, right after the clean block's SimplifyPass + StateFusionExtended,
+    # because -- unlike loop_to_symm, which matches a raw frontend map+NestedSDFG
+    # boundary -- these match the *dataflow expression* of a single fused body state.
+    # The frontend spreads each slice statement over several states and staging
+    # temporaries; StateFusionExtended collapses that into the one-state-per-loop-body
+    # shape the recogniser resolves through. They must still run BEFORE 'prep'
+    # (SplitStatements) and 'lower' (MapToForLoop) rewrite the body.
+    #
+    # A strict, no-op-on-any-deviation match (gated on the semantic-lifting knobs, like
+    # LiftEinsum / LoopToSymm), so the vectorizer path (semantic_lifting=False) leaves
+    # syrk / syr2k as plain reduction nests.
+    if semantic_lifting and lift:
+        s += [('loop_to_syrk', LoopToSyrk()), ('loop_to_syr2k', LoopToSyr2k())]
 
     # prep (still maps): push guarding conditionals into maps, then split
     # statements -- replicate a conditional / gather-scatter NestedSDFG per
