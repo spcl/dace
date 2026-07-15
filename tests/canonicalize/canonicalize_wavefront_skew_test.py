@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, _SKEW_T_PREFIX, _SKEW_P_PREFIX)
 
@@ -485,6 +485,115 @@ def test_wavefront_skew_five_point_snapshot_absorb_value_preserving():
         got = aa0.copy()
         csdfg(aa=got, N=n)
         assert np.allclose(got, ref), f"N={n} mismatch (max {np.max(np.abs(got - ref)):.2e})"
+
+
+def _p(s):
+    return dace.symbolic.pystr_to_symbolic(s)
+
+
+def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset():
+    """The snapshot forward-safety gate must reason in ITERATION space (invert the
+    write map), NOT by a raw array-index offset. For a reflected write map
+    ``a[N-1-i, j]`` the two spaces disagree in sign, so an array-offset check would
+    accept a backward (flow) read and reject a forward (anti) one -- exactly
+    inverted, a silent miscompile. This pins the iteration-space classification."""
+    from dace.transformation.passes.canonicalize.wavefront_skew import (WriteMap, snapshot_reads_forward)
+
+    # Reflected row map: row = (N-1) - i  (c1 = -1), col = j.
+    reflected = ('a', WriteMap('i', 'j', c0=_p('N - 1'), c1=-1, d0=_p('0'), d2=1, transposed=False), [])
+    # Array cell [N-i, j] is written by iteration (i-1, j) -> BACKWARD (flow). Its raw
+    # array offset vs the write [N-1-i, j] is [+1, 0] (would look "forward"); iteration
+    # space says backward -> MUST refuse.
+    backward = [(None, None, None, [_p('N - i'), _p('j')], 'a')]
+    assert snapshot_reads_forward(backward, reflected, 'i', 'j') is False
+    # Array cell [N-2-i, j] is written by iteration (i+1, j) -> FORWARD (anti). Raw
+    # array offset is [-1, 0] (would look "backward"); iteration space says forward -> accept.
+    forward = [(None, None, None, [_p('N - 2 - i'), _p('j')], 'a')]
+    assert snapshot_reads_forward(forward, reflected, 'i', 'j') is True
+
+    # Identity map sanity: a[i, j+1] forward (anti), a[i, j-1] backward (flow).
+    identity = ('a', WriteMap('i', 'j', c0=_p('0'), c1=1, d0=_p('0'), d2=1, transposed=False), [])
+    assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j + 1')], 'a')], identity, 'i', 'j') is True
+    assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j - 1')], 'a')], identity, 'i', 'j') is False
+    # A snapshot on a non-carrier array can never be reasoned about -> refuse.
+    assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j + 1')], 'b')], identity, 'i', 'j') is False
+
+
+def test_is_split_snapshot_state_requires_full_array_copy():
+    """``is_split_snapshot_state`` must accept only a WHOLE-array copy; a partial
+    slice would let the absorb redirect a read onto data the snapshot never held."""
+    from dace.transformation.passes.canonicalize.wavefront_skew import is_split_snapshot_state
+
+    for subset, expected in (('a[0:N, 0:N]', True), ('a[0:2, 0:N]', False)):
+        sdfg = dace.SDFG(f'snap_copy_{expected}')
+        sdfg.add_array('a', [N, N], dace.float64)
+        sdfg.add_array('a_split_snap', [N, N], dace.float64, transient=True)
+        st = sdfg.add_state('copy', is_start_block=True)
+        st.add_edge(st.add_access('a'), None, st.add_access('a_split_snap'), None, dace.Memlet(subset))
+        assert is_split_snapshot_state(st) is expected, f"{subset} -> expected {expected}"
+
+
+def _snapshot_nest(external_reader: bool):
+    """A minimal 2-level nest with a per-iteration snapshot ``a_split_snap = a`` in
+    the outer body and an inner read ``a_split_snap[i, j+1]``. With
+    ``external_reader`` a second outer-body state also reads the snapshot."""
+    sdfg = dace.SDFG('snap_nest')
+    sdfg.add_array('a', [N, N], dace.float64)
+    sdfg.add_array('a_split_snap', [N, N], dace.float64, transient=True)
+    outer = LoopRegion('outer', 'i < N - 1', 'i', 'i = 1', 'i = i + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    cp = outer.add_state('cp', is_start_block=True)
+    cp.add_edge(cp.add_access('a'), None, cp.add_access('a_split_snap'), None, dace.Memlet('a[0:N, 0:N]'))
+    inner = LoopRegion('inner', 'j < N - 1', 'j', 'j = 1', 'j = j + 1')
+    outer.add_node(inner)
+    outer.add_edge(cp, inner, dace.InterstateEdge())
+    body = inner.add_state('body', is_start_block=True)
+    r, w = body.add_access('a_split_snap'), body.add_access('a')
+    tk = body.add_tasklet('c', {'inp'}, {'out'}, 'out = inp')
+    body.add_edge(r, None, tk, 'inp', dace.Memlet('a_split_snap[i, j + 1]'))
+    body.add_edge(tk, 'out', w, None, dace.Memlet('a[i, j]'))
+    if external_reader:
+        ext = outer.add_state('ext')
+        etk = ext.add_tasklet('e', {'inp'}, {'out'}, 'out = inp')
+        ext.add_edge(ext.add_access('a_split_snap'), None, etk, 'inp', dace.Memlet('a_split_snap[i, 0]'))
+        ext.add_edge(etk, 'out', ext.add_access('a'), None, dace.Memlet('a[i, 0]'))
+        outer.add_edge(inner, ext, dace.InterstateEdge())
+    return sdfg, outer, inner
+
+
+def test_plan_split_snapshots_refuses_external_snapshot_reader():
+    """A snapshot array read OUTSIDE the inner loop must abort the absorb: dropping
+    the copy would leave that external read consuming a dead transient."""
+    from dace.transformation.passes.canonicalize.wavefront_skew import plan_split_snapshots
+
+    sdfg, outer, inner = _snapshot_nest(external_reader=True)
+    assert plan_split_snapshots(outer, inner, sdfg) is None
+
+
+def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
+    """Planning must not touch the SDFG (so a later skew refusal is a no-op);
+    committing then redirects the read onto the live array and empties the copy."""
+    from dace.sdfg import nodes
+    from dace.transformation.passes.canonicalize.wavefront_skew import (plan_split_snapshots, commit_split_snapshots)
+
+    sdfg, outer, inner = _snapshot_nest(external_reader=False)
+    cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == 'cp')
+    body = next(inner.all_states())
+
+    plan = plan_split_snapshots(outer, inner, sdfg)
+    assert plan is not None
+    snap_src, snap_reads, copy_states = plan
+    assert snap_src == {'a_split_snap': 'a'} and len(snap_reads) == 1 and copy_states == [cp]
+    # Planning is non-mutating: copy state + snapshot read still present.
+    assert len(list(cp.nodes())) == 2
+    assert any(n.data == 'a_split_snap' for n in body.data_nodes())
+
+    commit_split_snapshots(snap_reads, copy_states)
+    # Copy emptied; the inner read now comes from the live array, no snapshot node.
+    assert len(list(cp.nodes())) == 0
+    assert not any(n.data == 'a_split_snap' for n in body.data_nodes())
+    a_readers = [n for n in body.data_nodes() if n.data == 'a' and body.in_degree(n) == 0]
+    assert a_readers and any(body.out_degree(n) > 0 for n in a_readers)
 
 
 if __name__ == '__main__':

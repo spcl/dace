@@ -54,7 +54,7 @@ import copy
 from typing import Dict, List, Optional, Tuple
 
 import dace
-from dace import SDFG, properties, symbolic
+from dace import SDFG, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -164,10 +164,15 @@ def unit_positive_stride(loop: LoopRegion) -> bool:
 
 def is_split_snapshot_state(state: SDFGState) -> bool:
     """``state`` is a pure anti-dependence snapshot ``arr_split_snap = arr`` -- one
-    copy edge ``AccessNode(arr) -> AccessNode(arr_split_snap)`` and nothing else.
-    ``SplitStatements`` inserts exactly this before a loop to break a
-    per-iteration anti-dependence; the wavefront can absorb it (the diagonal
-    schedule already reads the old value before it is overwritten)."""
+    copy edge ``AccessNode(arr) -> AccessNode(arr_split_snap)`` covering the WHOLE
+    array and nothing else. ``SplitStatements`` inserts exactly this before a loop
+    to break a per-iteration anti-dependence; the wavefront can absorb it (the
+    diagonal schedule already reads the old value before it is overwritten).
+
+    The full-array-copy requirement is load-bearing: :func:`commit_split_snapshots`
+    redirects reads at arbitrary indices back to the live array, which only matches
+    the snapshot value when the snapshot mirrored the entire array -- a partial
+    slice would leave a redirected read pointing at data the snapshot never held."""
     ns = list(state.nodes())
     if len(ns) != 2 or not all(isinstance(n, nodes.AccessNode) for n in ns):
         return False
@@ -177,7 +182,12 @@ def is_split_snapshot_state(state: SDFGState) -> bool:
     e = edges[0]
     if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
         return False
-    return e.dst.data == f'{e.src.data}{_SPLIT_SNAP_SUFFIX}'
+    if e.dst.data != f'{e.src.data}{_SPLIT_SNAP_SUFFIX}':
+        return False
+    src_desc = state.sdfg.arrays.get(e.src.data)
+    if src_desc is None or e.data is None or e.data.subset is None:
+        return False
+    return e.data.subset == subsets.Range.from_array(src_desc)
 
 
 def extract_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
@@ -198,20 +208,6 @@ def extract_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
     return inner[0]
 
 
-def lex_sign(offset: List[object]) -> Optional[int]:
-    """Sign of the first non-zero component of a distance vector: ``+1`` forward,
-    ``-1`` backward, ``0`` for the zero vector, or ``None`` when that first
-    non-zero component is not a compile-time constant (undecidable)."""
-    for c in offset:
-        cs = symbolic.simplify(c)
-        if cs == 0:
-            continue
-        if cs.is_number:
-            return 1 if cs > 0 else -1
-        return None
-    return 0
-
-
 def live_reader(state: SDFGState, name: str) -> nodes.AccessNode:
     """A read-only ``AccessNode(name)`` in ``state`` (``in_degree == 0``), reusing
     one if present so redirected reads coalesce on the existing input node."""
@@ -221,71 +217,90 @@ def live_reader(state: SDFGState, name: str) -> nodes.AccessNode:
     return state.add_access(name)
 
 
-def absorb_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> bool:
-    """Redirect every inner-body read of an ``arr_split_snap`` snapshot back to the
-    live array ``arr`` and drop the snapshot copy, so the skew reasons about the
-    real (anti) dependence directly instead of the redundant snapshot.
+#: A single snapshot read to redirect: ``(state, snap_node, edge, read_index, live_array)``.
+SnapRead = Tuple[SDFGState, nodes.AccessNode, object, List[object], str]
+#: A planned absorb: ``(snap_src map, reads to redirect, copy states to drop)``.
+SnapPlan = Tuple[Dict[str, str], List[SnapRead], List[SDFGState]]
 
-    Sound because the snapshot only ever stands in for a *forward* read -- an
-    element a later iteration overwrites (``a[i, j+1]`` / ``a[i+1, j]`` in an
-    in-place Gauss-Seidel). Its snapshotted value is the not-yet-overwritten old
-    element, which both the current sequential order *and* the diagonal wavefront
-    preserve (the writer runs on a strictly later diagonal). Refuses -- leaving the
-    SDFG untouched -- if any snapshot read is same-row backward (redirecting would
-    change its value) or its offset from the write is undecidable.
 
-    Returns ``True`` when there is nothing to absorb (already a perfect nest) or
-    the absorb succeeded; ``False`` to abort the skew with no mutation."""
+def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Optional[SnapPlan]:
+    """Gather the ``arr_split_snap = arr`` snapshots SplitStatements left beside
+    ``inner`` and the inner-body reads that would redirect onto the live array,
+    WITHOUT mutating. The plan is only committed (:func:`commit_split_snapshots`)
+    once a legal skew is found, so a refused skew leaves the snapshot -- and the
+    inner-axis parallelism it enables -- untouched.
+
+    Returns ``({}, [], [])`` when there is no snapshot (proceed unchanged); a
+    ``(snap_src, snap_reads, copy_states)`` plan; or ``None`` to refuse the skew.
+    Refuses if a snapshot array is used anywhere other than its copy-state write
+    and the inner-body reads -- an external reader would be left consuming a dead
+    transient once the copy is dropped -- or if any inner read index is not a
+    single point."""
     copy_states = [
         b for b in outer.nodes()
         if isinstance(b, SDFGState) and b is not inner and is_split_snapshot_state(b)
     ]
     if not copy_states:
-        return True
+        return {}, [], []
 
     snap_src: Dict[str, str] = {}  # snapshot array -> live source array
     for st in copy_states:
         e = list(st.edges())[0]
         snap_src[e.dst.data] = e.src.data
-    live_names = set(snap_src.values())
+    snap_names = set(snap_src)
 
-    write_idx: Dict[str, List[List[object]]] = {}  # live array -> point write indices
-    snap_reads: List[Tuple[SDFGState, nodes.AccessNode, object, List[object], str]] = []
-    for state in inner.all_states():
+    inner_states = set(inner.all_states())
+    copy_set = set(copy_states)
+    snap_reads: List[SnapRead] = []
+    for state in sdfg.all_states():
         for node in state.data_nodes():
-            if node.data in snap_src:
+            if node.data not in snap_names:
+                continue
+            # A snapshot array may ONLY be written in its copy state and read in the
+            # inner body; any other use dangles once the copy is dropped.
+            if state.in_degree(node) > 0 and state not in copy_set:
+                return None
+            if state.out_degree(node) > 0 and state not in inner_states:
+                return None
+            if state in inner_states:
                 for e in state.out_edges(node):
                     if e.data is None or e.data.subset is None:
-                        return False
+                        return None
                     ridx = point_index(e.data.subset)
                     if ridx is None:
-                        return False
+                        return None
                     snap_reads.append((state, node, e, ridx, snap_src[node.data]))
-            if node.data in live_names:
-                for e in state.in_edges(node):
-                    if e.data is None or e.data.subset is None:
-                        continue
-                    widx = point_index(e.data.subset)
-                    if widx is None:
-                        return False
-                    write_idx.setdefault(node.data, []).append(widx)
+    return snap_src, snap_reads, copy_states
 
-    # Every snapshot read must be lexicographically forward of (or equal to) the
-    # live write it shadows -- only then does the old snapshot value match the
-    # live element under both the sequential and the diagonal schedule.
+
+def snapshot_reads_forward(snap_reads: List[SnapRead],
+                           carrier: Tuple[str, 'WriteMap', List['Dependence']], u: str, v: str) -> bool:
+    """Every snapshot read must be a FORWARD (anti) dependence in ITERATION space:
+    the writer of the cell it reads runs strictly later, so its value is the
+    not-yet-overwritten old element the snapshot captured -- which the diagonal
+    schedule preserves. Computed by inverting the carrier's write map (the same
+    machinery :func:`collect_carrier` uses for its dependence distances), so a
+    reflected / negative-stride write map is classified in iteration space, not by
+    a raw array-index offset. Refuses if any snapshot read is a backward (flow)
+    dependence, sits on a non-carrier array, or has an undecidable distance."""
+    arr, wmap, _deps = carrier
     for (_st, _node, _e, ridx, src_name) in snap_reads:
-        writes = write_idx.get(src_name)
-        if not writes:
-            return False
-        for widx in writes:
-            if len(widx) != len(ridx):
-                return False
-            if lex_sign([r - w for r, w in zip(ridx, widx)]) not in (0, 1):
-                return False
+        if src_name != arr or len(ridx) != 2:
+            return False                       # snapshot not on the 2-D carrier -> cannot reason
+        u_r, v_r = wmap.invert(ridx[0], ridx[1])
+        du = symbolic.simplify(u_r - sym(u))
+        dv = symbolic.simplify(v_r - sym(v))
+        if du == 0 and dv == 0:
+            continue                           # reads the very cell being written (old value)
+        if dependence_kind(du, dv) != 'anti':
+            return False                       # backward (flow) or undecidable -> unsafe to redirect
+    return True
 
-    # Commit: rewire snapshot reads onto the live array, drop the orphaned
-    # snapshot readers, then empty the copy states (structural cleanup removes
-    # the now-empty state and eliminates the dead ``arr_split_snap`` array).
+
+def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGState]) -> None:
+    """Rewire the planned snapshot reads onto the live array and drop the copies.
+    Called only after a legal skew is confirmed. Structural cleanup then removes
+    the emptied copy states and eliminates the dead ``arr_split_snap`` arrays."""
     for (state, _snap_node, e, _ridx, src_name) in snap_reads:
         reader = live_reader(state, src_name)
         redirected = copy.deepcopy(e.data)
@@ -298,7 +313,6 @@ def absorb_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> 
     for st in copy_states:
         for n in list(st.nodes()):
             st.remove_node(n)
-    return True
 
 
 def point_index(subset) -> Optional[List[object]]:
@@ -383,17 +397,27 @@ def dependence_kind(du, dv) -> str:
     return 'flow'
 
 
-def collect_carrier(inner: LoopRegion, sdfg: SDFG,
-                    u: str, v: str) -> Optional[Tuple[str, WriteMap, List[Dependence]]]:
+def collect_carrier(inner: LoopRegion, sdfg: SDFG, u: str, v: str,
+                    snap_src: Optional[Dict[str, str]] = None
+                    ) -> Optional[Tuple[str, WriteMap, List[Dependence]]]:
     """Find the unique carrier array (written *and* self-read with a non-zero
     distance) in ``inner``'s body, its write map, and its dependences. ``None``
-    if there is no clean single carrier (refuse)."""
+    if there is no clean single carrier (refuse).
+
+    ``snap_src`` maps each not-yet-committed ``arr_split_snap`` snapshot array to
+    its live source; a read of a snapshot array is attributed to the live array so
+    the carrier's dependence set is COMPLETE before the snapshot is folded away
+    (the actual redirect is deferred until a legal skew is confirmed). Without it,
+    the snapshotted read would be invisible and the skew decided on a partial
+    dependence set."""
+    snap_src = snap_src or {}
     writes: Dict[str, List[List[object]]] = {}
     reads: Dict[str, List[Tuple[List[object], List[Tuple[str, object, object]]]]] = {}
     for state in inner.all_states():
         ctx = None
         for node in state.data_nodes():
-            desc = sdfg.arrays.get(node.data)
+            data_name = snap_src.get(node.data, node.data)
+            desc = sdfg.arrays.get(data_name)
             if desc is None or len(desc.shape) != 2:
                 continue
             if ctx is None:
@@ -406,14 +430,14 @@ def collect_carrier(inner: LoopRegion, sdfg: SDFG,
                 idx = point_index(e.data.subset)
                 if idx is None:
                     return None            # non-point write -> refuse
-                writes.setdefault(node.data, []).append(idx)
+                writes.setdefault(data_name, []).append(idx)
             for e in state.out_edges(node):
                 if e.data is None or e.data.subset is None:
                     continue
                 idx = point_index(e.data.subset)
                 if idx is None:
                     return None            # non-point read of a 2-D carrier -> refuse
-                reads.setdefault(node.data, []).append((idx, ctx))
+                reads.setdefault(data_name, []).append((idx, ctx))
 
     carriers: List[Tuple[str, WriteMap, List[Dependence]]] = []
     for arr, wsubs in writes.items():
@@ -569,17 +593,29 @@ class WavefrontSkew(ppl.Pass):
         if vsym in symbolic.simplify(vb[0]).free_symbols or vsym in symbolic.simplify(vb[1]).free_symbols:
             return False
 
-        # Fold away any per-iteration anti-dependence snapshot SplitStatements
-        # left in the outer body (the imperfect-nest cause) so the dependence is
-        # carried by the diagonal schedule instead. Correctness-preserving on its
-        # own, so a later skew refusal leaves a valid (still sequential) nest.
-        if not absorb_split_snapshots(outer, inner, sdfg):
+        # Plan (do not yet apply) the absorb of any per-iteration anti-dependence
+        # snapshot SplitStatements left in the outer body -- the imperfect-nest
+        # cause. Refuse now if a snapshot is used outside the nest; the reads are
+        # only redirected onto the live array once a legal skew is confirmed, so a
+        # refusal below leaves the snapshot (and the parallelism it enables) intact.
+        plan = plan_split_snapshots(outer, inner, sdfg)
+        if plan is None:
             return False
+        snap_src, snap_reads, copy_states = plan
 
-        carrier = collect_carrier(inner, sdfg, u, v)
+        # Analyse against the live array (snapshot reads attributed virtually), so
+        # the dependence set is complete without mutating.
+        carrier = collect_carrier(inner, sdfg, u, v, snap_src=snap_src)
         if carrier is None:
             return False
         _arr, _wmap, deps = carrier
+
+        # Redirecting a snapshot read is only value-preserving when it is a FORWARD
+        # (anti) dependence in iteration space -- the writer runs on a strictly
+        # later diagonal, so the diagonal schedule reproduces the snapshot's old
+        # value. A backward read would change value, so refuse (no mutation).
+        if not snapshot_reads_forward(snap_reads, carrier, u, v):
+            return False
 
         domain = domain_constraints(u, v, ub, vb)
         dims = [u, v]
@@ -619,6 +655,11 @@ class WavefrontSkew(ppl.Pass):
         bounds = poly.skew_bounds((u, v), params_of(domain, dims), domain, tau, probe_t, probe_p)
         if bounds is None:
             return False
+
+        # Legal skew confirmed -- now (and only now) commit the snapshot absorb,
+        # so every earlier refusal left the snapshot intact. Reads are redirected
+        # onto the live array before ``_rewrite`` skews the inner body over them.
+        commit_split_snapshots(snap_reads, copy_states)
 
         if guard_syms:
             self._emit_positive_guard(outer, deps, guard_syms)
